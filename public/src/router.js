@@ -3,17 +3,17 @@ import { user } from './state.js';
 const routes = new Map();
 let pendingAction = null;
 
+const HIDE_CHROME = new Set(['/welcome', '/onboarding']);
+const SHOW_FAB    = new Set(['/feed']);
+
 export function register(path, loader) {
   routes.set(path, loader);
 }
 
 export function go(path) {
   const target = `#${path}`;
-  if (location.hash === target) {
-    render();
-  } else {
-    location.hash = path;
-  }
+  if (location.hash === target) render();
+  else location.hash = path;
 }
 
 export function setPendingAction(fn) {
@@ -30,31 +30,38 @@ async function render() {
   const path = (location.hash || '#/welcome').slice(1);
   const u = user.get();
 
-  // Welcome gate: until user has seen Welcome, force them through it.
-  // After Welcome, Feed/Rules/Profile-lite are open — no full onboarding required.
   if (!u.welcomeSeen && path !== '/welcome') {
     go('/welcome');
     return;
   }
 
   const loader = routes.get(path) ?? routes.get('/feed');
-  const root = document.getElementById('app');
-  const tabbar = document.getElementById('tabbar');
+
+  const root    = document.getElementById('app');
+  const tabbar  = document.getElementById('tabbar');
+  const fab     = document.getElementById('fab');
+  const shell   = document.getElementById('shell');
+
+  const noChrome = !u.welcomeSeen || HIDE_CHROME.has(path);
+  const hasFab   = !noChrome && SHOW_FAB.has(path);
+
+  tabbar.hidden = noChrome;
+  fab.hidden    = !hasFab;
+
+  shell.classList.toggle('no-chrome',  noChrome);
+  shell.classList.toggle('has-tabbar', !noChrome);
+  shell.classList.toggle('has-fab',    hasFab);
 
   root.replaceChildren();
   const view = await loader();
   root.appendChild(view);
 
-  const hideTabbar = !u.welcomeSeen || path === '/welcome' || path === '/onboarding';
-  tabbar.hidden = hideTabbar;
   syncTabActive(path);
 }
 
 function syncTabActive(path) {
-  const buttons = document.querySelectorAll('#tabbar .tab');
-  for (const btn of buttons) {
-    const route = btn.dataset.route;
-    btn.classList.toggle('tab--active', route === path);
+  for (const btn of document.querySelectorAll('#tabbar [data-route]')) {
+    btn.classList.toggle('active', btn.dataset.route === path);
   }
 }
 

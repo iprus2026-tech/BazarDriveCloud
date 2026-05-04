@@ -1,4 +1,4 @@
-const VERSION = 'v2';
+const VERSION    = 'v3';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -46,8 +46,6 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
-
-  // Prototype is a visual reference, not part of the runtime shell — never cache.
   if (url.pathname.includes('/prototypes/')) return;
 
   event.respondWith(

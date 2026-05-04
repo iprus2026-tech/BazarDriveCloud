@@ -1,19 +1,19 @@
 import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
 
-import welcome from './screens/welcome.js';
-import feed from './screens/feed.js';
-import rules from './screens/rules.js';
-import profile from './screens/profile.js';
+import welcome    from './screens/welcome.js';
+import feed       from './screens/feed.js';
+import rules      from './screens/rules.js';
+import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';
-import composer from './screens/composer.js';
+import composer   from './screens/composer.js';
 
-register('/welcome', welcome);
-register('/feed', feed);
-register('/rules', rules);
-register('/profile', profile);
+register('/welcome',    welcome);
+register('/feed',       feed);
+register('/rules',      rules);
+register('/profile',    profile);
 register('/onboarding', onboarding);
-register('/new', composer);
+register('/new',        composer);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
@@ -24,18 +24,13 @@ export function requireOnboarding(after) {
   go('/onboarding');
 }
 
-const tabbar = document.getElementById('tabbar');
-tabbar.addEventListener('click', (event) => {
-  const btn = event.target.closest('button.tab');
-  if (!btn) return;
+document.getElementById('tabbar').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-route]');
+  if (btn?.dataset.route) go(btn.dataset.route);
+});
 
-  if (btn.dataset.action === 'create-post') {
-    requireOnboarding(() => go('/new'));
-    return;
-  }
-  if (btn.dataset.route) {
-    go(btn.dataset.route);
-  }
+document.getElementById('fab').addEventListener('click', () => {
+  requireOnboarding(() => go('/new'));
 });
 
 start();
