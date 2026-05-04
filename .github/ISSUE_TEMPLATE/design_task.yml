@@ -1,0 +1,33 @@
+name: Design task
+description: Макет, иконка, паттерн интерфейса
+title: "[design] "
+labels: [design, triage]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Контекст
+      description: Почему появилась задача и где она живёт в продукте.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Что нужно сделать
+      placeholder: |
+        - Состояние пустой ленты
+        - Маленькая иллюстрация и CTA
+  - type: input
+    id: surface
+    attributes:
+      label: Где это будет жить
+      placeholder: feed empty state, onboarding step 2, app icon
+  - type: input
+    id: deadline
+    attributes:
+      label: Срок (если есть)
+  - type: textarea
+    id: refs
+    attributes:
+      label: Референсы
+      description: Ссылки или скриншоты вдохновения.

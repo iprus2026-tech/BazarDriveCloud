@@ -1,0 +1,52 @@
+name: Bug report
+description: Что-то сломалось
+title: "[bug] "
+labels: [bug, triage]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло
+      description: Опишите проблему как можно конкретнее.
+      placeholder: При тапе на "+" в табе ничего не происходит.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Открыть PWA
+        2. Пройти Welcome
+        3. Тап на "+"
+    validations:
+      required: true
+  - type: input
+    id: expected
+    attributes:
+      label: Что ожидали
+  - type: input
+    id: actual
+    attributes:
+      label: Что получили
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Где это произошло
+      options:
+        - PWA в браузере
+        - Установленное PWA
+        - Локальная сборка
+        - Другое
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Устройство и браузер
+      placeholder: iPhone 15 / Safari 17, Pixel 7 / Chrome 120
+  - type: textarea
+    id: console
+    attributes:
+      label: Логи консоли (если есть)
+      render: shell

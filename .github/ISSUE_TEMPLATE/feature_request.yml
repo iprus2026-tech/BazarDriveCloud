@@ -1,0 +1,32 @@
+name: Feature request
+description: Идея для улучшения продукта
+title: "[feature] "
+labels: [feature, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решаем
+      description: Что мешает пользователю прямо сейчас.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Как видим решение
+      description: Достаточно одного абзаца — детали догоним в комментариях.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы, которые рассматривали
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Масштаб
+      options:
+        - Маленькая правка
+        - Среднее изменение
+        - Большая фича
+        - Не уверен
+    validations:
+      required: true
