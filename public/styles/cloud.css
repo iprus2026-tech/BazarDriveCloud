@@ -515,3 +515,288 @@ body {
 .gap-4 { gap: 4px; }
 .gap-8 { gap: 8px; }
 .gap-12 { gap: 12px; }
+
+/* ═══════════════════════════════════════════════════════════
+   FEED V2
+═══════════════════════════════════════════════════════════ */
+
+/* ── Feed topbar actions ─────────────────────────────────── */
+.feed-topbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Accent icon button variant (create/add) */
+.bd-iconbtn--accent {
+  background: var(--accent);
+  color: #1a0a04;
+  border-color: transparent;
+}
+.bd-iconbtn--accent:active { transform: scale(0.93); }
+
+/* ── Category chip row ───────────────────────────────────── */
+.feed-chip-row {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  padding: 0 var(--pad) 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.feed-chip-row::-webkit-scrollbar { display: none; }
+
+.feed-chip {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.feed-chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(255, 107, 53, 0.35);
+  font-weight: 600;
+}
+.feed-chip:active { opacity: 0.8; }
+
+/* ── System card ─────────────────────────────────────────── */
+.feed-sys-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 107, 53, 0.08);
+  border: 1px solid rgba(255, 107, 53, 0.25);
+  margin-bottom: 10px;
+  align-items: flex-start;
+}
+.feed-sys-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.feed-sys-content { flex: 1; min-width: 0; }
+.feed-sys-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.feed-sys-body {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* ── Card header ─────────────────────────────────────────── */
+.feed-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.feed-card-header__info { flex: 1; min-width: 0; }
+.feed-card-header__name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-card-header__meta {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.feed-card-menu {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* ── Avatar (initials) ───────────────────────────────────── */
+.feed-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FF6B35, #C2410C);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #1a0a04;
+  flex-shrink: 0;
+  user-select: none;
+  letter-spacing: 0;
+}
+
+/* ── Route row ───────────────────────────────────────────── */
+.feed-route-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border-radius: 14px;
+  margin-bottom: 12px;
+}
+.feed-route-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+}
+.feed-route-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.feed-route-line {
+  width: 2px;
+  height: 18px;
+  background: var(--line-strong);
+}
+.feed-route-sq {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text-2);
+}
+.feed-route-places {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.feed-route-from {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-route-to {
+  font-size: 14px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Trip meta row ───────────────────────────────────────── */
+.feed-trip-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.feed-trip-meta__badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.feed-trip-price {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+/* ── Card body text ──────────────────────────────────────── */
+.feed-card-body {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin-bottom: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── CTA button ──────────────────────────────────────────── */
+.feed-card-cta { margin-bottom: 4px; }
+
+/* ── Post actions ────────────────────────────────────────── */
+.feed-post-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.feed-post-actions__btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.feed-post-actions__share { margin-left: auto; }
+
+/* ── Pinned card ─────────────────────────────────────────── */
+.feed-card--pinned {
+  border-color: rgba(255, 107, 53, 0.35);
+  background: linear-gradient(180deg, rgba(255, 107, 53, 0.06), var(--bg-1));
+}
+
+/* ── Announcement card title ─────────────────────────────── */
+.feed-card-ann-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+}
+
+/* ── Marketplace card ────────────────────────────────────── */
+.feed-card-mkt-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+}
+.feed-card-mkt-price {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.feed-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
