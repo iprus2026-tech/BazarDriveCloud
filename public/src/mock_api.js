@@ -1,3 +1,95 @@
+// ── Feed V2 mock data ──────────────────────────────────────────
+export const FEED_POSTS_V2 = [
+  {
+    id: 'sys-1',
+    type: 'system',
+    pinned: true,
+    author: 'BazarDrive',
+    role: 'Администрация',
+    time: '2 ч',
+    title: 'Новые тарифы с 1 мая',
+    body: 'Базовая ставка по городу повышена на 8%. Минимальная стоимость поездки — 180 ₽. Подробности в разделе «Правила».',
+    likes: 142,
+    comments: 38,
+  },
+  {
+    id: 'trip-1',
+    type: 'trip',
+    author: 'Рустам К.',
+    role: 'Водитель · ★ 4.92',
+    time: '15 мин',
+    from: 'Москва',
+    to: 'Тула',
+    price: '2 800 ₽',
+    seats: 3,
+    when: 'Сегодня, 18:30',
+    body: 'Еду с Юго-Запада, могу заехать по пути. Авто Camry, кондиционер. Курю на остановках.',
+    likes: 8,
+    comments: 4,
+  },
+  {
+    id: 'trip-2',
+    type: 'trip',
+    passenger: true,
+    author: 'Анна М.',
+    role: 'Пассажир',
+    time: '32 мин',
+    from: 'Аэропорт Внуково',
+    to: 'м. Парк Победы',
+    price: null,
+    seats: null,
+    when: 'Завтра, 07:00',
+    body: 'Нужно к 8:00 на работу, 1 чемодан + ручная кладь. Готова заплатить 1 500 ₽.',
+    likes: 2,
+    comments: 6,
+  },
+  {
+    id: 'ann-1',
+    type: 'announcement',
+    pinned: true,
+    author: 'BazarDrive',
+    role: 'Администрация',
+    time: '1 д',
+    title: 'Обновлены правила сообщества',
+    body: 'Добавлен пункт о запрете демпинга и недобросовестной конкуренции. Прочтите перед публикацией.',
+    likes: 67,
+    comments: 22,
+  },
+  {
+    id: 'mkt-1',
+    type: 'marketplace',
+    author: 'Нурлан',
+    role: null,
+    time: '26 ч',
+    title: 'Camry 70 — зимняя резина Bridgestone 215/55 R17',
+    body: 'Использовалась один сезон. Износ 5%. Самовывоз с СТО на Сейфуллина.',
+    price: '45 000 ₸',
+    tags: ['запчасти', 'астана'],
+    likes: 5,
+    comments: 2,
+  },
+  {
+    id: 'trip-3',
+    type: 'trip',
+    author: 'Сергей Л.',
+    role: 'Водитель · ★ 4.78',
+    time: '1 ч',
+    from: 'Казань',
+    to: 'Москва',
+    price: '4 500 ₽',
+    seats: 2,
+    when: 'Пятница, 06:00',
+    body: 'Возвращаюсь в столицу, есть 2 места. Опытный водитель, 12 лет стажа.',
+    likes: 14,
+    comments: 9,
+  },
+];
+
+export async function listFeedPosts() {
+  return FEED_POSTS_V2;
+}
+
+// ── Legacy posts (classic announcements board) ─────────────────
 const STORE_KEY = 'bazardrive.posts.v1';
 
 const SEED = [
