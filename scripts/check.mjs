@@ -70,6 +70,23 @@ if (exists(swPath)) {
   }
 }
 
+const JS_INLINE_STYLE_PATTERNS = [
+  { re: /style\s*=\s*["'`]/, label: 'style= attribute in template literal or string' },
+  { re: /\.setAttribute\s*\(\s*['"`]style['"`]/, label: '.setAttribute("style", ...)' },
+  { re: /\.style\.(?!cssText\s*=\s*''|cssText\s*=\s*"")/, label: '.style.<property> assignment' },
+];
+
+const srcDir = path.join(root, 'public', 'src');
+for (const f of walk(srcDir, ['.js'])) {
+  const src = fs.readFileSync(f, 'utf8');
+  const rel = path.relative(root, f);
+  for (const { re, label } of JS_INLINE_STYLE_PATTERNS) {
+    if (re.test(src)) {
+      errors.push(`${rel}: forbidden inline style pattern — ${label}`);
+    }
+  }
+}
+
 for (const f of walk(path.join(root, 'public'), ['.js'])) {
   try {
     execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' });

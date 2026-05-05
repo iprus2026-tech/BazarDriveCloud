@@ -1,60 +1,114 @@
 # BazarDrive
 
-PWA для объявлений и сообщества водителей. Без шума и накруток.
+Installable PWA для объявлений и сообщества водителей. Без шума и накруток.
+
+**Cloud Design** — тёмная тема, оранжевый акцент `#FF6B35`, мобильный shell max-width 430 px.
 
 Phase 1 — каркас на vanilla HTML / CSS / ES-модулях. Без сборщика, без фреймворка, без зависимостей в рантайме.
 
+---
+
 ## Стек
 
-- Static-host: всё лежит в [public/](public/), эта папка деплоится как есть на GitHub Pages.
-- ES-модули с относительными путями (`./src/...`).
-- Service Worker с precache + offline fallback.
-- localStorage для состояния пользователя, черновика и mock-постов.
-- Строгий CSP без `unsafe-inline`: никаких `<script>` в HTML, `onclick=""`, `<style>`, `style=""`.
+| Слой | Технология |
+|------|-----------|
+| Хостинг | GitHub Pages (`public/` деплоится как есть) |
+| Модули | ES-модули, без бандлера, без зависимостей в рантайме |
+| Стили | `public/styles/cloud.css` — дизайн-токены + компоненты |
+| Роутер | Hash-роутер (`#/feed`, `#/new`, …) |
+| Состояние | `localStorage` (user + посты + черновик) |
+| Офлайн | Service Worker, precache + offline fallback |
+| PWA | `manifest.webmanifest`, PNG-иконки 192/512 (any + maskable) |
+| CSP | Строгий без `unsafe-inline` |
+
+---
 
 ## Структура
 
 ```
 public/
-  index.html              static root
-  manifest.webmanifest    PWA-манифест (PNG-иконки)
-  sw.js                   Service Worker
-  styles/cloud.css        дизайн-токены и компоненты
+  index.html              оболочка приложения (#shell + #app + tabbar + FAB)
+  manifest.webmanifest    PWA-манифест
+  sw.js                   Service Worker (precache v3)
+  styles/
+    cloud.css             дизайн-токены и компоненты Cloud Design
   src/
-    app.js                bootstrap + регистрация SW
-    router.js             hash-router + welcome-gate
-    state.js              user.welcomeSeen / user.onboarded
-    mock_api.js           seed posts + listPosts/createPost
+    app.js                bootstrap + регистрация SW + FAB-логика
+    router.js             hash-роутер + welcome-gate + управление FAB/tabbar
+    state.js              localStorage-обёртка (user)
+    mock_api.js           seed-посты + listPosts / createPost
     util.js               escapeHtml
-    screens/              welcome / feed / rules / profile / onboarding / composer
+    screens/
+      welcome.js          Welcome screen (первый запуск)
+      feed.js             Feed screen (лента постов)
+      composer.js         Composer screen (новое объявление)
+      onboarding.js       Onboarding screen (создание профиля)
+      profile.js          Profile screen
+      rules.js            Rules screen
   icons/                  SVG-source + PNG 192/512 (any + maskable)
-  prototypes/             визуальный референс — не часть рантайма
+  assets/                 Копии иконок 192/512
+  prototypes/             Визуальные эталоны (не кешируются SW)
+
 scripts/
-  check.mjs               статические проверки для CI
-  build_icons.py          PNG из SVG через Pillow
+  check.mjs               CI-проверки: CSP-инварианты, JSON, синтаксис JS
+
 .github/
-  workflows/              CI + Pages
-  ISSUE_TEMPLATE/         bug / feature / design
+  workflows/
+    ci.yml                Статические проверки на push/PR
+    pages.yml             Деплой public/ → GitHub Pages
+  ISSUE_TEMPLATE/
+    bug_report.yml
+    feature_request.yml
+    design_task.yml
 ```
+
+---
+
+## Cloud Design: токены
+
+```css
+--accent:  #FF6B35   /* оранжевый акцент */
+--bg-0:    #0a0a0c   /* фон приложения */
+--bg-1:    #131316   /* карточки */
+--bg-2:    #1a1a1f   /* инпуты, вторичные кнопки */
+--text:    #f3f3f5   /* основной текст */
+--text-2:  #a8a8b3   /* вторичный */
+--text-3:  #6c6c78   /* третичный / подсказки */
+```
+
+---
 
 ## Запустить локально
 
 PWA требует `localhost` или HTTPS — Service Worker не регистрируется с `file://`.
 
-```powershell
+```bash
 # Python
-python -m http.server 8000 --directory public
+python3 -m http.server 8000 --directory public
 
-# или Node
+# Node
+npx serve public
+# или
 npx http-server public -p 8000 -c-1
 ```
 
-Открыть http://localhost:8000/.
+Открыть `http://localhost:8000/`.
 
-## Гость и onboarding
+## Тест на телефоне (та же сеть)
 
-- После Welcome (`user.welcomeSeen = true`) гость может листать Feed, Rules и Profile-lite без регистрации.
-- Onboarding запускается только из CTA-действий, в первую очередь "Опубликовать объявление" (`#/new`). После заполнения формы pendingAction возвращает пользователя ровно туда, откуда его унесли.
+1. Узнайте IP: `ip a` / `ipconfig`
+2. Откройте `http://<IP>:8000` в браузере телефона
+3. Chrome/Safari покажет баннер «Добавить на экран» — установите как PWA
+
+---
+
+## Onboarding-гейт
+
+- Гость может листать Feed, Rules и Profile-lite без регистрации.
+- Onboarding запускается только при CTA-действиях (нажатие FAB `+`, переход в `/new`).
+- После заполнения формы `pendingAction` возвращает пользователя ровно туда, откуда его унесли.
+
+---
 
 ## Локальные проверки
 
@@ -62,27 +116,17 @@ npx http-server public -p 8000 -c-1
 node scripts/check.mjs
 ```
 
-Проверяет:
-- В `index.html` нет inline `<script>`, `<style>`, `style=""`, `onclick=""`.
-- `manifest.webmanifest` — валидный JSON с обязательными полями.
-- Прототип не попал в precache `sw.js`.
-- Все JS-файлы парсятся (`node --check`).
+Проверяет: нет inline-`<script>`, `<style>`, `style=""`, `on*=` в `index.html`; валидный `manifest.webmanifest`; синтаксис всех `.js`.
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) гоняет тот же скрипт на каждый PR.
 
-## Иконки
+---
 
-SVG в [public/icons/](public/icons/) — source. PNG (192/512, any + maskable) генерируются скриптом:
+## GitHub Pages
 
-```bash
-python scripts/build_icons.py
-```
-
-Манифест ссылается только на PNG. Favicon в `index.html` — SVG, как resolution-independent fallback.
-
-## Деплой
-
-[.github/workflows/pages.yml](.github/workflows/pages.yml) пушит [public/](public/) на GitHub Pages при пуше в `main`. Включить Pages в настройках репозитория → Source: GitHub Actions.
+1. `Settings → Pages → Source → GitHub Actions`
+2. При пуше в `main` workflow `pages.yml` деплоит папку `public/`
+3. URL: `https://<org>.github.io/<repo>/`
 
 ## Roadmap
 

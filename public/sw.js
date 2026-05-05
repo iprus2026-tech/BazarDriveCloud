@@ -1,4 +1,4 @@
-const VERSION = 'v2';
+const VERSION    = 'v3';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -18,10 +18,10 @@ const PRECACHE = [
   './src/screens/onboarding.js',
   './src/screens/composer.js',
   './icons/icon.svg',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
   './icons/maskable-192.png',
   './icons/maskable-512.png',
+  './assets/icon-192.png',
+  './assets/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -46,8 +46,6 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
-
-  // Prototype is a visual reference, not part of the runtime shell — never cache.
   if (url.pathname.includes('/prototypes/')) return;
 
   event.respondWith(
