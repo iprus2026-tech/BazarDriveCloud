@@ -40,7 +40,7 @@ export default function profile() {
             </svg>
             Новое объявление
           </button>
-          <div style="height:10px"></div>
+          <div class="profile__spacer"></div>
           <button type="button" class="bd-btn danger" id="profile-reset">Сбросить профиль</button>
         </div>
       </div>
@@ -64,7 +64,7 @@ export default function profile() {
     </div>
     <div class="bd-scroll">
       <div class="bd-card">
-        <p style="color:var(--text-2);line-height:1.55;margin-bottom:16px;">
+        <p class="profile__guest-text">
           Листать ленту и читать правила можно без аккаунта.
           Чтобы публиковать объявления — создайте профиль.
         </p>

@@ -469,6 +469,12 @@ body {
 .profile__name  { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .profile__city  { font-size: 14px; color: var(--text-2); }
 .profile__block { padding: 0 var(--pad) 12px; }
+.profile__spacer { height: 10px; }
+.profile__guest-text {
+  color: var(--text-2);
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
 
 /* ── Rules ────────────────────────────────────────────────── */
 .rules-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
