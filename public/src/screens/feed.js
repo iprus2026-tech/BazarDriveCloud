@@ -1,5 +1,6 @@
 import { listFeedPosts } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
+import { go } from '../router.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -77,7 +78,7 @@ export default async function feed() {
   });
 
   root.querySelector('.feed-btn-new').addEventListener('click', () => {
-    location.hash = '/new';
+    go('/new');
   });
 
   renderList();
