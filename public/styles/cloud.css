@@ -540,8 +540,8 @@ body {
 .feed-chip-row {
   flex-shrink: 0;
   display: flex;
-  gap: 8px;
-  padding: 0 var(--pad) 10px;
+  gap: 6px;
+  padding: 0 var(--pad) 12px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -549,61 +549,25 @@ body {
 }
 .feed-chip-row::-webkit-scrollbar { display: none; }
 
+/* Matches prototype .bd-tab exactly */
 .feed-chip {
   flex-shrink: 0;
-  height: 34px;
+  height: 36px;
   padding: 0 14px;
   border-radius: 999px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   background: var(--bg-2);
   color: var(--text-2);
   border: 1px solid var(--line);
   white-space: nowrap;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 .feed-chip.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: rgba(255, 107, 53, 0.35);
-  font-weight: 600;
+  background: var(--text);
+  color: #0a0a0c;
+  border-color: transparent;
 }
-.feed-chip:active { opacity: 0.8; }
-
-/* ── System card ─────────────────────────────────────────── */
-.feed-sys-card {
-  display: flex;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: rgba(255, 107, 53, 0.08);
-  border: 1px solid rgba(255, 107, 53, 0.25);
-  margin-bottom: 10px;
-  align-items: flex-start;
-}
-.feed-sys-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--accent);
-}
-.feed-sys-content { flex: 1; min-width: 0; }
-.feed-sys-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
-  color: var(--text);
-}
-.feed-sys-body {
-  font-size: 13px;
-  color: var(--text-2);
-  line-height: 1.45;
-}
+.feed-chip:active { opacity: 0.85; }
 
 /* ── Card header ─────────────────────────────────────────── */
 .feed-card-header {
@@ -765,6 +729,12 @@ body {
   color: var(--text-2);
 }
 .feed-post-actions__share { margin-left: auto; }
+
+/* ── Feed list card spacing (prototype uses 12px) ───────── */
+.feed-list .bd-card { margin-bottom: 12px; }
+
+/* ── Feed topbar: tighter top padding (prototype: 8px above status bar) */
+.screen--feed .bd-topbar { padding-top: 12px; }
 
 /* ── Pinned card ─────────────────────────────────────────── */
 .feed-card--pinned {

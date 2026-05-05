@@ -14,7 +14,7 @@ export default async function feed() {
   let activeKey = 'all';
 
   const root = document.createElement('section');
-  root.className = 'screen';
+  root.className = 'screen screen--feed';
 
   root.innerHTML = `
     <div class="bd-topbar">
@@ -102,8 +102,8 @@ function renderCard(p) {
 
 function renderCardHeader(p) {
   const meta = [
-    p.rating ? `★ ${escapeHtml(p.rating)}` : '',
-    p.time ? `${escapeHtml(p.time)} назад` : '',
+    p.role ? escapeHtml(p.role) : '',
+    p.time ? escapeHtml(p.time) : '',
   ].filter(Boolean).join(' · ');
 
   return `
@@ -156,20 +156,14 @@ function renderPostActions(p) {
 }
 
 function renderSystemCard(p) {
+  // Render system posts as pinned announcement cards, matching prototype visual
   return `
-    <div class="feed-sys-card">
-      <div class="feed-sys-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
-          <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-          <path d="M13.73 21a2 2 0 01-3.46 0"/>
-        </svg>
-      </div>
-      <div class="feed-sys-content">
-        <div class="feed-sys-title">${escapeHtml(p.title || '')}</div>
-        <div class="feed-sys-body">${escapeHtml(p.body || '')}</div>
-      </div>
-    </div>
+    <article class="bd-card feed-card--pinned">
+      ${renderCardHeader(p)}
+      ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
+      ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
+      ${renderPostActions(p)}
+    </article>
   `;
 }
 
