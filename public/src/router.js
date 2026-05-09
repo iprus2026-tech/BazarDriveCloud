@@ -4,7 +4,7 @@ const routes = new Map();
 let pendingAction = null;
 
 const HIDE_CHROME = new Set(['/welcome', '/onboarding']);
-const SHOW_FAB    = new Set([]);
+const SHOW_FAB    = new Set(['/feed']);
 
 export function register(path, loader) {
   routes.set(path, loader);
