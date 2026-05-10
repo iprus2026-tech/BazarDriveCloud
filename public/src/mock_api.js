@@ -89,6 +89,16 @@ export async function listFeedPosts() {
   return FEED_POSTS_V2;
 }
 
+export function createFeedPost(post) {
+  FEED_POSTS_V2.unshift({
+    id:       `user-${Date.now()}`,
+    likes:    0,
+    comments: 0,
+    time:     'Только что',
+    ...post,
+  });
+}
+
 // ── Legacy posts (classic announcements board) ─────────────────
 const STORE_KEY = 'bazardrive.posts.v1';
 

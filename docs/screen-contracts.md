@@ -126,12 +126,90 @@ prototype replacement as public/index.html
 major refactor outside Feed V2 audit
 ```
 
+## BD-COMPOSER-01 — Composer V2
+
+### Identity
+
+```text
+Screen:      Composer V2
+Route:       /new
+File:        public/src/screens/composer.js
+Purpose:     создание публикации / поездки / объявления
+Data source: localStorage + createFeedPost() from public/src/mock_api.js
+Draft key:   bazardrive.draft.v2
+Parent issue: #22
+```
+
+### States
+
+```text
+driver offer      — type=trip: поля from/to/when/price/seats/phone/comment
+passenger request — type=passenger: поля from/to/when/budget/phone/comment (seats скрыты)
+marketplace item  — type=marketplace: поля title/listingPrice/description/category/location/photo
+announcement      — type=announcement: поля title/description/category/location/photo (price скрыт)
+service           — type=service: поля title/listingPrice/description/category/location/photo
+preview           — editArea hidden, previewArea visible с карточкой Feed V2
+validation error  — .composer__error полоса с текстом ошибки
+draft saved       — badge «Черновик сохранён» в topbar на 2.2 сек
+submit loading    — кнопка disabled + класс .loading + текст «Публикуем…»
+```
+
+### Actions
+
+```text
+save draft   — кнопка «Черновик» → flashDraftSaved() + saveDraft()
+preview      — кнопка «Предпросмотр» / «Редактировать» переключает режим
+publish      — validate → createFeedPost() → clearDraft() → go('/feed')
+back         — go('/feed')
+type switch  — обновляет activeType, показывает нужные поля, выходит из preview
+auto-save    — form input → saveDraft() при каждом вводе
+```
+
+### Data contract
+
+```text
+Читает:  localStorage[bazardrive.draft.v2]
+Пишет:   localStorage[bazardrive.draft.v2]
+Удаляет: localStorage[bazardrive.draft.v2] при публикации
+Инжектит в ленту: FEED_POSTS_V2.unshift(post) через createFeedPost()
+```
+
+### Preview card
+
+Карточка в режиме предпросмотра использует те же CSS-классы, что и Feed V2:
+`.bd-card`, `.feed-card-header`, `.feed-route-row`, `.feed-trip-meta`, `.feed-card-mkt-title`, etc.
+
+### Out of scope
+
+```text
+backend, Mapbox, auth, payment, APK, реальная загрузка фото
+```
+
+### Acceptance checklist
+
+- [ ] `/new` открывается через hash-роутер
+- [ ] Редирект в onboarding если `user.onboarded === false`, pending action сохраняется
+- [ ] Все 5 типов публикации переключаются чипами
+- [ ] Поля отображаются корректно для каждого типа
+- [ ] Поле «Мест» скрыто для типа «Попутчик»
+- [ ] Поле «Цена» скрыто для типа «Объявление» в листинге
+- [ ] Черновик сохраняется автоматически при любом вводе
+- [ ] Кнопка «Черновик» показывает badge «Черновик сохранён» на 2.2 сек
+- [ ] Кнопка «Предпросмотр» показывает карточку Feed V2
+- [ ] Кнопка «Редактировать» возвращает к форме
+- [ ] Валидация: ошибка если from/to пустые для поездки
+- [ ] Валидация: ошибка если title < 3 символов для листинга
+- [ ] «Опубликовать» добавляет пост в ленту и переходит на /feed
+- [ ] Черновик очищается после публикации
+- [ ] Новый пост виден в ленте сразу после публикации
+- [ ] Нет inline `<script>` / `<style>` / `on*=` / `style=`
+- [ ] `node scripts/check.mjs` проходит
+
 ## Planned minimum screens
 
 These screens are tracked by #19 and should receive their own render/frame and contract before implementation:
 
 ```text
-BD-COMPOSER-01 — Composer V2
 BD-PROFILE-01 — Profile V2
 BD-MAP-01 — MapHome foundation
 BD-MAP-02 — LocationPermission
