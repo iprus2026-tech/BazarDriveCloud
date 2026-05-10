@@ -1,4 +1,4 @@
-const VERSION    = 'v7';
+const VERSION    = 'v8';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -11,6 +11,7 @@ const PRECACHE = [
   './src/state.js',
   './src/util.js',
   './src/mock_api.js',
+  './src/sw-update.js',
   './src/screens/welcome.js',
   './src/screens/feed.js',
   './src/screens/rules.js',
@@ -26,10 +27,12 @@ const PRECACHE = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE))
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

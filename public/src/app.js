@@ -1,5 +1,6 @@
 import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
+import { initSwUpdate } from './sw-update.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -34,9 +35,4 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 start();
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  });
-}
+initSwUpdate();

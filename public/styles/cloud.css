@@ -977,6 +977,29 @@ body {
   pointer-events: none;
 }
 
+/* ── SW Update Banner ────────────────────────────────────── */
+.sw-update-banner {
+  position: absolute;
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 12px);
+  left: var(--pad);
+  right: var(--pad);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  z-index: 50;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  animation: screen-in 0.2s ease both;
+}
+.sw-update-banner[hidden] { display: none; }
+.sw-update-banner__text { color: var(--text); flex: 1; min-width: 0; }
+.sw-update-banner__btn  { flex-shrink: 0; }
+
 /* ── Screen-reader only utility ──────────────────────────── */
 .sr-only {
   position: absolute;
