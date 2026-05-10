@@ -138,7 +138,6 @@ function buildFeedPost(d) {
   }
   if (d.type === 'passenger') {
     const bodyParts = [];
-    if (d.budget) bodyParts.push(`Бюджет: ${d.budget} ₽`);
     if (d.comment) bodyParts.push(d.comment);
     return {
       type: 'trip',
@@ -148,7 +147,7 @@ function buildFeedPost(d) {
       from:  d.from,
       to:    d.to,
       when:  d.when,
-      price: null,
+      price: d.budget ? `${d.budget} ₽` : null,
       seats: null,
       body:  bodyParts.join('. ') || null,
     };
@@ -161,7 +160,7 @@ function buildFeedPost(d) {
       title: d.title,
       price: d.listingPrice ? `${d.listingPrice} ₽` : null,
       body:  d.description || null,
-      tags:  d.category ? [d.category] : [],
+      tags:  [d.category, d.location].filter(Boolean),
     };
   }
   return {
