@@ -205,6 +205,148 @@ backend, Mapbox, auth, payment, APK, реальная загрузка фото
 - [ ] Нет inline `<script>` / `<style>` / `on*=` / `style=`
 - [ ] `node scripts/check.mjs` проходит
 
+## BD-ONBOARDING-01 — Welcome V2 + Onboarding V2
+
+### Identity
+
+```text
+Screen:       Welcome V2 + Onboarding / Auth V2
+Routes:       /welcome → public/src/screens/welcome.js
+              /onboarding → public/src/screens/onboarding.js
+Data source:  localStorage via public/src/state.js
+Design ref:   Claude Design — section "Онбординг · регистрация и вход" (9 artboards)
+Working issue: #27
+Branch:       feature/welcome-onboarding-v2
+```
+
+### Cloud Design render/frame gate
+
+Design section: **Онбординг · регистрация и вход**
+
+Artboards used as visual reference:
+
+```text
+1   · Добро пожаловать       → /welcome
+2   · Выбор роли             → /onboarding step: role
+3   · Номер телефона         → /onboarding step: phone
+4   · Код подтверждения      → /onboarding step: otp
+5   · Профиль                → /onboarding step: profile
+6   · Автомобиль (водитель)  → /onboarding step: car
+7   · Документы (водитель)   → /onboarding step: docs
+8а  · Готово — водитель      → /onboarding step: done (role=driver)
+8б  · Готово — пассажир      → /onboarding step: done (role=passenger)
+```
+
+### State contract
+
+Fields added to `bazardrive.user.v1` (localStorage):
+
+```text
+role        string | null   'passenger' | 'driver' | 'guest'
+phone       string | null   digits only (mock, no real SMS)
+firstName   string | null
+lastName    string | null
+vehicleMake   string | null  driver only
+vehicleModel  string | null  driver only
+vehicleYear   string | null  driver only
+vehiclePlate  string | null  driver only
+vehicleColor  string | null  driver only
+vehicleBody   string | null  driver only
+```
+
+Existing fields preserved: `welcomeSeen`, `onboarded`, `displayName`, `city`.
+
+### Step sequences
+
+```text
+Passenger: role → phone → otp → profile → done          (5 steps)
+Driver:    role → phone → otp → profile → car → docs → done  (7 steps)
+Guest:     role only → clears pending action → /feed
+```
+
+### Actions
+
+```text
+/welcome  "Начать"                  → set welcomeSeen=true → /onboarding
+/welcome  "Войти без регистрации"   → set welcomeSeen=true, role=guest → /feed
+/onboarding  back (step 0)          → /welcome
+/onboarding  back (step > 0)        → previous step
+/onboarding  role=guest → next      → clear pending action, /feed (not onboarded)
+/onboarding  done → "Перейти"       → set onboarded=true + all draft fields
+                                       → consumePendingAction() OR
+                                       → /profile (driver) / /feed (passenger)
+```
+
+### Implemented states
+
+```text
+role step:    none selected (next disabled) | role selected (next enabled)
+phone step:   any input (mock, no validation beyond clearing non-digits)
+otp step:     6-box display, auto-advance after 6 digits entered (mock)
+profile step: optional name fields + skip button
+car step:     make/model/year/color/plate text fields + body type chips
+docs step:    6-item toggle checklist, progress bar (data-pct CSS-driven)
+              required docs: dl, osago, permit (3 of 6)
+done step:    driver variant (doc/car/payments next steps)
+              passenger variant (feed/notifications next steps)
+```
+
+### Mock / stub states
+
+```text
+Phone verification:  no real SMS — any digits accepted
+OTP code:           no real validation — any 6 digits auto-advance
+Document upload:    toggle UI only — no file input or upload
+Camera / avatar:    button rendered, no file picker wired
+"Включите уведомления" card on done: navigates nowhere (stub)
+```
+
+### CSS additions
+
+All styles added to `public/styles/cloud.css` under section `BD-ONBOARDING-01`.
+No inline styles, no style= attributes. All dynamic state driven by classList
+and data-pct attribute selector rules.
+
+### Pending action preservation
+
+`requireOnboarding(fn)` (in app.js) saves a pending action before redirecting
+to /onboarding. On `finish()`, `consumePendingAction()` runs the saved action
+(e.g., go('/new') after user tried to create a post as guest). The guest path
+clears the pending action without running it.
+
+### Acceptance checklist
+
+- [ ] `/welcome` renders Welcome V2 with value props and two CTAs
+- [ ] "Начать" sets `welcomeSeen=true` and goes to `/onboarding`
+- [ ] "Войти без регистрации" sets `welcomeSeen=true, role=guest` and goes to `/feed`
+- [ ] `/onboarding` shows step-based flow with dot progress indicator
+- [ ] Back on step 0 returns to `/welcome`
+- [ ] Role selection enables the Continue button
+- [ ] Guest role selection goes to feed (not through phone/OTP)
+- [ ] Passenger flow: 5 steps, no car/docs steps
+- [ ] Driver flow: 7 steps, includes car and docs steps
+- [ ] OTP auto-advances after 6 digits
+- [ ] Docs checklist toggles card state and updates progress bar
+- [ ] "Загружу позже" skips docs step
+- [ ] Done screen shows driver or passenger variant correctly
+- [ ] `finish()` writes all draft fields + `onboarded=true` to localStorage
+- [ ] Pending action (e.g., /new) is restored after onboarding completes
+- [ ] No inline `<script>` / `<style>` / `on*=` / `style=` attributes
+- [ ] No `.style.<property>` assignments in JS
+- [ ] `node scripts/check.mjs` passes
+
+### Out of scope for BD-ONBOARDING-01
+
+```text
+Real SMS / OTP verification
+Telegram Login Widget
+Real document upload / camera
+Backend API integration
+Mapbox / location
+Payments
+APK / native Android
+```
+
 ## Planned minimum screens
 
 These screens are tracked by #19 and should receive their own render/frame and contract before implementation:
