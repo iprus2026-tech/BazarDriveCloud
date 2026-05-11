@@ -110,6 +110,13 @@ const BODY_TYPES = ['Седан', 'Минивэн', 'Внедорожник', '�
 const REQ_DOC_COUNT = DOCS.filter((d) => d.required).length; // 3
 
 // ── Step sequences ────────────────────────────────────────────────────────────
+function formatPhoneDisplay(raw) {
+  const d = String(raw ?? '').replace(/\D/g, '');
+  if (d.length === 10) return `+7 ${d.slice(0, 3)} ${d.slice(3, 6)}-${d.slice(6, 8)}-${d.slice(8)}`;
+  if (d.length === 11) return `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}`;
+  return raw ? `+7 ${escapeHtml(raw)}` : '+7';
+}
+
 function stepsFor(role) {
   return role === 'driver'
     ? ['role', 'phone', 'otp', 'profile', 'car', 'docs', 'done']
@@ -218,7 +225,7 @@ function renderOTP(draft, step, total) {
     ${renderHeader(true, step, total)}
     <div class="ob-scroll">
       <h1 class="ob-title">Введите код</h1>
-      <p class="ob-subtitle">Код отправлен на номер +7&nbsp;${escapeHtml(draft.phone)}</p>
+      <p class="ob-subtitle">Код отправлен на номер ${formatPhoneDisplay(draft.phone)}</p>
       <div class="ob-otp-wrap">
         <div class="ob-otp-boxes" aria-label="Поля ввода кода">
           ${[0, 1, 2, 3, 4, 5].map((i) =>
@@ -446,12 +453,21 @@ export default function onboarding() {
 
   let step = 0;
   let otpAdvanceTimer = null;
+  let otpSubmitting = false;
 
   function clearOtpAdvanceTimer() {
     if (otpAdvanceTimer !== null) {
       clearTimeout(otpAdvanceTimer);
       otpAdvanceTimer = null;
     }
+  }
+
+  function advanceFromOtpOnce() {
+    if (otpSubmitting) return;
+    if (currentStep() !== 'otp') return;
+    otpSubmitting = true;
+    clearOtpAdvanceTimer();
+    next();
   }
 
   function steps() { return stepsFor(draft.role); }
@@ -501,6 +517,11 @@ export default function onboarding() {
   function render() {
     const name = currentStep();
     const total = totalSteps();
+
+    if (name === 'otp') {
+      clearOtpAdvanceTimer();
+      otpSubmitting = false;
+    }
 
     switch (name) {
       case 'role':    root.innerHTML = renderRole(draft, step, total);    break;
@@ -590,14 +611,13 @@ export default function onboarding() {
               box.classList.toggle('ob-otp-box--filled', Boolean(val[i]));
               box.classList.toggle('ob-otp-box--active', i === val.length && val.length < 6);
             });
-            if (nextBtn) nextBtn.disabled = val.length < 6;
+            if (nextBtn) nextBtn.disabled = val.length !== 6;
             clearOtpAdvanceTimer();
+            if (val.length < 6) otpSubmitting = false;
             if (val.length === 6) {
-              // Mock: auto-advance after brief delay, but only while still on OTP.
-              otpAdvanceTimer = setTimeout(() => {
-                otpAdvanceTimer = null;
-                if (currentStep() === 'otp') next();
-              }, 320);
+              // Mock: accept any 6 digits and auto-advance exactly once.
+              otpSubmitting = false;
+              otpAdvanceTimer = setTimeout(advanceFromOtpOnce, 320);
             }
           });
           // Tap on box row focuses the hidden input
@@ -605,7 +625,11 @@ export default function onboarding() {
           if (boxRow) boxRow.addEventListener('click', () => otpInput.focus());
           otpInput.focus();
         }
-        if (nextBtn) nextBtn.addEventListener('click', next);
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+          const val = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, 6) : '';
+          if (val.length !== 6) return;
+          advanceFromOtpOnce();
+        });
         break;
       }
 
