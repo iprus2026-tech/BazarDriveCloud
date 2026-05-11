@@ -17,6 +17,9 @@ const defaults = {
   vehiclePlate: null,
   vehicleColor: null,
   vehicleBody: null,
+  // v3 — BD-PROFILE-01
+  driverOnline: false,
+  notificationsEnabled: false,
 };
 
 let cache = null;
