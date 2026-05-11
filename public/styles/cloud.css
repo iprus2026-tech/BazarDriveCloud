@@ -279,6 +279,21 @@ body {
 .bd-btn.danger  {
   background: rgba(248,113,113,0.12); color: var(--danger); border-color: transparent;
 }
+
+.bd-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+.bd-btn.primary:disabled {
+  background: var(--bg-3);
+  color: var(--text-3);
+  border-color: var(--line);
+}
+.bd-btn:disabled:active {
+  transform: none;
+}
+
 .bd-btn.sm {
   height: 36px; font-size: 13px; padding: 0 12px;
   border-radius: var(--radius-sm); width: auto;
