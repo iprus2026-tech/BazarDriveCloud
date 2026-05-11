@@ -1640,6 +1640,356 @@ body {
   padding-top: 24px;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   BD-PROFILE-01 — Profile V2
+═══════════════════════════════════════════════════════════ */
+
+/* ── Guest card ───────────────────────────────────────────── */
+.pf-guest-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: 36px var(--pad);
+  margin-top: 16px;
+}
+
+.pf-guest-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1.5px dashed var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.pf-guest-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--text);
+}
+
+.pf-guest-text {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.55;
+  margin: 0;
+  max-width: 280px;
+}
+
+/* ── Hero row ─────────────────────────────────────────────── */
+.pf-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px var(--pad) 12px;
+}
+
+.pf-hero-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pf-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-phone {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+/* ── Stats grid (4-col) ───────────────────────────────────── */
+.pf-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 0 var(--pad) 12px;
+}
+
+.pf-stat {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.pf-stat__num {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1;
+}
+
+.pf-stat__label {
+  font-size: 10px;
+  color: var(--text-2);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* ── Mode tabs ────────────────────────────────────────────── */
+.pf-mode-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 var(--pad) 12px;
+}
+
+.pf-mode-tab {
+  flex: 1;
+  height: 38px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.pf-mode-tab:active { opacity: 0.82; }
+
+.pf-mode-tab--active {
+  background: var(--accent);
+  border-color: transparent;
+  color: #1a0a04;
+}
+
+/* ── Driver status card ───────────────────────────────────── */
+.pf-driver-card { margin-bottom: 10px; }
+
+.pf-online-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pf-online-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pf-online-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pf-online-sub {
+  font-size: 13px;
+  color: var(--success);
+}
+.pf-online-sub--off { color: var(--text-3); }
+
+/* ── Toggle switch ────────────────────────────────────────── */
+.pf-toggle {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.pf-toggle__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.pf-toggle__track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1.5px solid var(--line-strong);
+  transition: background 0.2s, border-color 0.2s;
+  pointer-events: none;
+}
+
+.pf-toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.pf-toggle__input:checked + .pf-toggle__track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.pf-toggle__input:checked + .pf-toggle__track::after {
+  transform: translateX(20px);
+  background: #1a0a04;
+}
+
+/* ── Car summary row ──────────────────────────────────────── */
+.pf-car-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.pf-car-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pf-car-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  display: block;
+}
+
+.pf-car-plate {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: block;
+}
+
+.pf-car-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  display: block;
+}
+
+.pf-icon--warn { color: var(--warning); }
+
+/* ── Readiness checklist ──────────────────────────────────── */
+.pf-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 2px;
+}
+
+.pf-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pf-check-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.pf-checklist-item--done .pf-check-icon { color: var(--success); }
+
+.pf-check-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pf-checklist-item--done .pf-check-label { color: var(--text); }
+
+.pf-check-action {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── Actions card ─────────────────────────────────────────── */
+.pf-actions-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pf-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px var(--pad);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.pf-action:last-child { border-bottom: none; }
+.pf-action:not(.pf-action--toggle):active { opacity: 0.75; }
+
+.pf-action--toggle {
+  cursor: default;
+}
+
+.pf-action-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.pf-action-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.pf-action-chevron {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Danger zone ──────────────────────────────────────────── */
+.pf-danger-zone {
+  padding: 4px var(--pad) 16px;
+}
+
 /* ── Screen-reader only utility ──────────────────────────── */
 .sr-only {
   position: absolute;

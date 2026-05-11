@@ -347,12 +347,116 @@ Payments
 APK / native Android
 ```
 
+## BD-PROFILE-01 — Profile V2
+
+### Identity
+
+```text
+Screen:       Profile V2
+Route:        /profile
+File:         public/src/screens/profile.js
+Data source:  localStorage via public/src/state.js
+Design ref:   Claude Design — section "Профиль"
+Working issue: #26
+Branch:       feature/profile-v2
+```
+
+### Cloud Design render/frame gate
+
+Design section: **Профиль**
+
+States used as visual reference:
+
+```text
+guest     — CTA card prompting registration
+passenger — hero + stats + actions list
+driver    — hero + stats + mode tabs + driver card (online toggle, car, checklist) + actions list
+```
+
+### State contract
+
+Fields added to `bazardrive.user.v1` (localStorage):
+
+```text
+driverOnline          boolean   false    whether driver is currently on-duty
+notificationsEnabled  boolean   false    notification toggle preference
+```
+
+Existing fields consumed (read-only in profile): `role`, `firstName`, `lastName`, `displayName`,
+`phone`, `vehicleMake`, `vehicleModel`, `vehicleYear`, `vehiclePlate`, `vehicleColor`, `vehicleBody`.
+
+### UI states
+
+```text
+guest            — .pf-guest-card with "Создать аккаунт" CTA (goes to /onboarding)
+passenger        — hero + stats + actions
+driver/passenger — mode tabs let driver view Passenger vs Driver pane
+driver pane      — online toggle + car summary row + readiness checklist
+```
+
+### Implemented states
+
+```text
+guest CTA:       shows when !onboarded || role === 'guest'
+hero:            avatar initials, full name, formatted phone, role badge
+stats grid:      Публикации / Поездки / Отклики / Рейтинг (all 0 — stub data)
+mode tabs:       Пассажир | Водитель (driver role only)
+online toggle:   checkbox + CSS-driven track; persists driverOnline to state
+car summary:     vehicleMake + vehicleModel + vehiclePlate from state; warning row if missing
+checklist:       Телефон (done if phone), Автомобиль (done if vehicleMake),
+                 Гос. номер (done if vehiclePlate), Документы (stub — always incomplete)
+notifications:   checkbox toggle; persists notificationsEnabled to state
+reset:           two-click confirmation via dataset.confirm='pending'
+```
+
+### Mock / stub states
+
+```text
+Stats:           all counts are 0 (no backend)
+Replies action:  renders; no navigation (stub)
+Car docs action: renders; no navigation (stub)
+Rules action:    goes to /rules
+```
+
+### CSS additions
+
+All styles added to `public/styles/cloud.css` under section `BD-PROFILE-01`.
+CSS prefix: `pf-*`. No inline styles, no `style=` attributes. Toggle driven entirely
+by `input:checked + .pf-toggle__track` adjacent-sibling selector.
+
+### Acceptance checklist
+
+- [ ] `/profile` renders guest CTA when `role === 'guest'` or `!onboarded`
+- [ ] Guest CTA "Создать аккаунт" goes to `/onboarding`
+- [ ] Hero shows avatar initials, name, phone, role badge for onboarded users
+- [ ] Stats grid shows 4 columns
+- [ ] Mode tabs visible for driver role only
+- [ ] Driver pane shows online toggle, car summary, readiness checklist
+- [ ] Online toggle persists `driverOnline` to localStorage
+- [ ] Car summary shows make/model/plate; shows warning row if no car data
+- [ ] Checklist marks phone/car/plate items done when state fields are set
+- [ ] Notifications toggle persists `notificationsEnabled` to localStorage
+- [ ] "Сбросить аккаунт" requires second click to confirm
+- [ ] Reset calls `user.reset()` and redirects to `/welcome`
+- [ ] No inline `<script>` / `<style>` / `on*=` / `style=` attributes
+- [ ] No `.style.<property>` assignments in JS
+- [ ] `node scripts/check.mjs` passes
+
+### Out of scope for BD-PROFILE-01
+
+```text
+Real stats / post counts from backend
+Document upload / photo avatar
+Real notifications (push / FCM)
+Edit profile flow
+Payments / wallet
+```
+
 ## Planned minimum screens
 
 These screens are tracked by #19 and should receive their own render/frame and contract before implementation:
 
 ```text
-BD-PROFILE-01 — Profile V2
 BD-MAP-01 — MapHome foundation
 BD-MAP-02 — LocationPermission
 BD-MAP-03 — RoutePicker
