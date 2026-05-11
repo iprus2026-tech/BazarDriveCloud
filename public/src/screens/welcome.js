@@ -1,5 +1,5 @@
 import { user } from '../state.js';
-import { go } from '../router.js';
+import { go, consumePendingAction } from '../router.js';
 
 export default function welcome() {
   const root = document.createElement('section');
@@ -70,6 +70,7 @@ export default function welcome() {
 
   root.querySelector('#welcome-guest').addEventListener('click', () => {
     user.set({ welcomeSeen: true, role: 'guest' });
+    consumePendingAction();
     go('/feed');
   });
 

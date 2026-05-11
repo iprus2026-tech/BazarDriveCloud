@@ -445,17 +445,27 @@ export default function onboarding() {
   };
 
   let step = 0;
+  let otpAdvanceTimer = null;
+
+  function clearOtpAdvanceTimer() {
+    if (otpAdvanceTimer !== null) {
+      clearTimeout(otpAdvanceTimer);
+      otpAdvanceTimer = null;
+    }
+  }
 
   function steps() { return stepsFor(draft.role); }
   function totalSteps() { return steps().length; }
   function currentStep() { return steps()[step]; }
 
   function next() {
+    clearOtpAdvanceTimer();
     step = Math.min(step + 1, totalSteps() - 1);
     render();
   }
 
   function back() {
+    clearOtpAdvanceTimer();
     if (step === 0) { go('/welcome'); return; }
     step--;
     render();
@@ -581,9 +591,13 @@ export default function onboarding() {
               box.classList.toggle('ob-otp-box--active', i === val.length && val.length < 6);
             });
             if (nextBtn) nextBtn.disabled = val.length < 6;
+            clearOtpAdvanceTimer();
             if (val.length === 6) {
-              // Mock: auto-advance after brief delay
-              setTimeout(next, 320);
+              // Mock: auto-advance after brief delay, but only while still on OTP.
+              otpAdvanceTimer = setTimeout(() => {
+                otpAdvanceTimer = null;
+                if (currentStep() === 'otp') next();
+              }, 320);
             }
           });
           // Tap on box row focuses the hidden input
