@@ -1,10 +1,22 @@
 const KEY = 'bazardrive.user.v1';
 
 const defaults = {
+  // v1
   welcomeSeen: false,
   onboarded: false,
   displayName: null,
   city: null,
+  // v2 — BD-ONBOARDING-01
+  role: null,        // 'passenger' | 'driver' | 'guest'
+  phone: null,
+  firstName: null,
+  lastName: null,
+  vehicleMake: null,
+  vehicleModel: null,
+  vehicleYear: null,
+  vehiclePlate: null,
+  vehicleColor: null,
+  vehicleBody: null,
 };
 
 let cache = null;
