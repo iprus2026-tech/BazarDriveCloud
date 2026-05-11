@@ -185,6 +185,7 @@ function carSummaryHtml(u) {
 
 function checklistHtml(u) {
   const items = [
+    { label: 'Телефон подтверждён', done: !!u.phone },
     { label: 'Данные автомобиля',  done: !!(u.vehicleMake && u.vehicleModel) },
     { label: 'Госномер',           done: !!u.vehiclePlate },
     { label: 'Документы и ОСАГО',  done: false },
