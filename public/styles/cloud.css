@@ -3018,3 +3018,37 @@ body {
 }
 .pf2-po-report-title { font-size: 15px; font-weight: 600; }
 .pf2-po-report-sub   { font-size: 13px; color: var(--text-2); }
+
+/* ── State: empty-history ─────────────────────────────────── */
+.pf2-po-hist-empty {
+  padding: 28px var(--pad);
+  text-align: center;
+}
+.pf2-po-hist-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0 0 4px;
+}
+.pf2-po-hist-empty-sub {
+  font-size: 13px;
+  color: var(--text-3);
+  margin: 0;
+}
+
+/* ── State: processing-payout (on Вывести button) ─────────── */
+.pf2-po-balance-btn--processing {
+  opacity: 0.7;
+}
+
+/* ── State: report-generating / done (on Сформировать) ───── */
+.bd-btn.pf2-po-report-btn--generating {
+  background: var(--bg-3);
+  color: var(--text-3);
+  border-color: var(--line);
+}
+.bd-btn.pf2-po-report-btn--done {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+  border-color: rgba(74, 222, 128, 0.25);
+}

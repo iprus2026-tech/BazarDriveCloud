@@ -579,10 +579,19 @@ function ipPaneHtml(u) {
 }
 
 // ── Payouts pane (BD-PROFILE-02) ─────────────────────────────────────────────
+// Supported states:
+//   default          — normal populated view
+//   empty-history    — MOCK_PAYOUT_HISTORY is empty → placeholder card
+//   no-card          — MOCK_PAYOUT_METHODS is empty → add-card CTA only
+//   processing-payout — handled via CSS class on Вывести button
+//   report-generating — handled via CSS class on Сформировать отчёт button
 
 function payoutsPaneHtml() {
-  const s = MOCK_PAYOUT_SUMMARY;
+  const s          = MOCK_PAYOUT_SUMMARY;
+  const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
+  const hasHistory = MOCK_PAYOUT_HISTORY.length > 0;
 
+  // ── Methods section ──────────────────────────────────────
   const methodRows = MOCK_PAYOUT_METHODS.map((m) => `
       <button type="button" class="pf2-po-method-row">
         <span class="pf2-po-method-icon">${SVG_CREDIT_CARD_PO}</span>
@@ -593,9 +602,21 @@ function payoutsPaneHtml() {
         <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
       </button>`).join('');
 
+  // no-card: "Добавить карту" row gets a subtitle hint when list is empty
+  const addCardRow = `
+      <button type="button" class="pf2-po-method-row" id="pf2-po-add-card-btn">
+        <span class="pf2-po-method-icon pf2-po-method-icon--add">${SVG_PLUS}</span>
+        <span class="pf2-po-method-info">
+          <span class="pf2-po-method-name">Добавить карту</span>
+          ${!hasMethods ? '<span class="pf2-po-method-sub">Добавьте карту для вывода средств</span>' : ''}
+        </span>
+        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>`;
+
+  // ── History section ──────────────────────────────────────
   const histItems = MOCK_PAYOUT_HISTORY.map((h) => {
-    const badgeCls  = h.status === 'credited' ? 'bd-badge success' : 'bd-badge';
-    const badgeTxt  = h.status === 'credited' ? 'Зачислено' : 'В обработке';
+    const badgeCls = h.status === 'credited' ? 'bd-badge success' : 'bd-badge';
+    const badgeTxt = h.status === 'credited' ? 'Зачислено' : 'В обработке';
     return `
       <div class="pf2-po-hist-item">
         <span class="pf2-po-hist-icon">${SVG_CREDIT_CARD_PO}</span>
@@ -610,6 +631,15 @@ function payoutsPaneHtml() {
       </div>`;
   }).join('');
 
+  // empty-history placeholder
+  const histContent = hasHistory
+    ? histItems
+    : `<div class="pf2-po-hist-empty">
+         <p class="pf2-po-hist-empty-title">Выплат пока нет</p>
+         <p class="pf2-po-hist-empty-sub">Здесь появятся выводы на карту</p>
+       </div>`;
+
+  // ── Tax cards ────────────────────────────────────────────
   const taxCards = MOCK_TAX_ITEMS.map((tax) => {
     const isNpd  = tax.type === 'npd';
     const icon   = isNpd
@@ -667,24 +697,18 @@ function payoutsPaneHtml() {
     ${taxCards}
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">Способы вывода</span>
-      <button type="button" class="pf2-po-sect-action" id="pf2-po-methods-change">Изменить</button>
+      ${hasMethods ? '<button type="button" class="pf2-po-sect-action" id="pf2-po-methods-change">Изменить</button>' : ''}
     </div>
     <div class="pf2-po-methods" id="pf2-po-methods-block">
       ${methodRows}
-      <button type="button" class="pf2-po-method-row" id="pf2-po-add-card-btn">
-        <span class="pf2-po-method-icon pf2-po-method-icon--add">${SVG_PLUS}</span>
-        <span class="pf2-po-method-info">
-          <span class="pf2-po-method-name">Добавить карту</span>
-        </span>
-        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
-      </button>
+      ${addCardRow}
     </div>
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">История выплат</span>
-      <button type="button" class="pf2-po-sect-action" id="pf2-po-hist-all-btn">Все</button>
+      ${hasHistory ? '<button type="button" class="pf2-po-sect-action" id="pf2-po-hist-all-btn">Все</button>' : ''}
     </div>
     <div class="pf2-po-history" id="pf2-po-history-block">
-      ${histItems}
+      ${histContent}
     </div>
     <div class="pf2-po-report">
       <div class="pf2-po-report-hd">
@@ -776,16 +800,20 @@ function renderDriver(root, u) {
 
   // ── Payouts tab interactions ──────────────────────────────────────────────
 
+  // State: processing-payout — class pf2-po-balance-btn--processing added while in flight
   root.querySelector('#pf2-po-withdraw-btn')?.addEventListener('click', () => {
     const btn = root.querySelector('#pf2-po-withdraw-btn');
+    if (btn.classList.contains('pf2-po-balance-btn--processing')) return;
     const orig = btn.textContent;
-    btn.textContent = 'Оформляем вывод…';
+    btn.classList.add('pf2-po-balance-btn--processing');
     btn.disabled = true;
+    btn.textContent = 'Оформляем вывод…';
     setTimeout(() => {
       btn.textContent = 'Заявка принята — заглушка';
       setTimeout(() => {
         btn.textContent = orig;
         btn.disabled = false;
+        btn.classList.remove('pf2-po-balance-btn--processing');
       }, 1500);
     }, 800);
   });
@@ -820,15 +848,24 @@ function renderDriver(root, u) {
     setTimeout(() => { btn.textContent = orig; }, 2000);
   });
 
+  // State: report-generating — class pf2-po-report-btn--generating while in flight,
+  //        pf2-po-report-btn--done briefly on success
   root.querySelector('#pf2-po-report-btn')?.addEventListener('click', () => {
     const btn = root.querySelector('#pf2-po-report-btn');
+    if (btn.classList.contains('pf2-po-report-btn--generating')) return;
     const orig = btn.textContent;
-    btn.textContent = 'Формируем отчёт…';
+    btn.classList.add('pf2-po-report-btn--generating');
     btn.disabled = true;
+    btn.textContent = 'Формируем отчёт…';
     setTimeout(() => {
-      btn.textContent = 'Готово — заглушка';
+      btn.classList.remove('pf2-po-report-btn--generating');
+      btn.classList.add('pf2-po-report-btn--done');
       btn.disabled = false;
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      btn.textContent = 'Отчёт готов — заглушка';
+      setTimeout(() => {
+        btn.classList.remove('pf2-po-report-btn--done');
+        btn.textContent = orig;
+      }, 2000);
     }, 1000);
   });
 }
