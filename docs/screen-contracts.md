@@ -509,9 +509,30 @@ notificationsEnabled  boolean  — persisted on toggle
 1. Телефон подтверждён   — done: !!u.phone
 2. Данные автомобиля     — done: !!(u.vehicleMake && u.vehicleModel)
 3. Госномер              — done: !!u.vehiclePlate
-4. Документы и ОСАГО     — done: false (stub)
-5. Разрешение такси      — done: false (stub)
+4. Документы и ОСАГО     — done: false (stub — document upload not implemented)
+5. Разрешение такси      — done: false (stub — permit verification not implemented)
 ```
+
+### Status-card ready state
+
+The status card ready state is **not** gated on all 5 checklist items.
+Items 4 and 5 are permanent stubs and must not block the ready state.
+
+Ready state logic uses `canShowReadyStatus(u)`:
+
+```text
+ready = u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate && u.driverOnline
+```
+
+Status card subtitles:
+```text
+ready            → "Все требования выполнены"
+action, base ok  → "Можно проверить готовность и документы перед сменой"
+action, missing  → "Заполните телефон, автомобиль и госномер"
+```
+
+The readiness checklist still shows 5 items and tracks progress (e.g. 3/5),
+but its `allDone` value does not control the status card.
 
 ### CSS
 
@@ -526,14 +547,15 @@ driven by discrete `data-done` attribute selectors (no inline width).
 - [ ] 5 tabs render in horizontal scroll row; Обзор active by default
 - [ ] Tab switch shows correct pane, hides others; non-Обзор tabs show placeholder
 - [ ] Hero shows gradient avatar with initials, name, ★4.8, car make+model, edit button
-- [ ] Status card shows green gradient + "На линии" when online, amber + "Оффлайн" + action CTA when offline
+- [ ] Status card shows "Готов принимать заказы" when phone+car+plate are set and driverOnline is true
+- [ ] Status card shows "Нужно действие" with accurate subtitle when base fields are missing or driver is offline
 - [ ] Online toggle persists `driverOnline` to localStorage; syncCardState() updates card without style mutations
 - [ ] Stats grid shows 3 columns (earnings / trips / replies)
 - [ ] Readiness card shows progress bar driven by `data-done` attribute; 5-item checklist
 - [ ] Done checklist items have strikethrough label and green icon; pending items show outline icon
 - [ ] "Заполнить анкету" CTA scrolls to readiness card
 - [ ] Quick actions section renders 4 rows including danger "Выйти"
-- [ ] "Выйти" requires second click to confirm (dataset.confirm='pending')
+- [ ] "Выйти" requires second click to confirm (dataset.confirm='pending'); label changes to "Подтвердить выход" on first click
 - [ ] Reset calls `user.reset()` and redirects to `/welcome`
 - [ ] Guest and Passenger views unchanged from BD-PROFILE-01
 - [ ] No inline `<script>` / `<style>` / `on*=` / `style=` attributes

@@ -61,6 +61,10 @@ function checklistItems(u) {
   ];
 }
 
+function canShowReadyStatus(u) {
+  return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
+}
+
 // ── Guest view ────────────────────────────────────────────────────────────────
 
 function renderGuest(root) {
@@ -207,17 +211,22 @@ function driverHeroHtml(u) {
     </div>`;
 }
 
-function statusCardHtml(u, items) {
-  const allDone = items.every((it) => it.done);
-  const state   = (allDone && u.driverOnline) ? 'ready' : 'action';
+function statusCardHtml(u) {
+  const ready   = canShowReadyStatus(u);
+  const state   = (ready && u.driverOnline) ? 'ready' : 'action';
   const checked = u.driverOnline ? ' checked' : '';
+  const sub     = state === 'ready'
+    ? 'Все требования выполнены'
+    : ready
+      ? 'Можно проверить готовность и документы перед сменой'
+      : 'Заполните телефон, автомобиль и госномер';
   return `
     <div class="pf2-status-card" data-state="${state}" id="pf2-status-card">
       <div class="pf2-status-top">
         <span class="pf2-status-dot" aria-hidden="true"></span>
         <div class="pf2-status-text">
           <p class="pf2-status-title" id="pf2-status-title">${state === 'ready' ? 'Готов принимать заказы' : 'Нужно действие'}</p>
-          <p class="pf2-status-sub" id="pf2-status-sub">${state === 'ready' ? 'Все требования выполнены' : 'Загрузите медосмотр и откройте путевой лист'}</p>
+          <p class="pf2-status-sub" id="pf2-status-sub">${sub}</p>
         </div>
         <label class="pf2-toggle" aria-label="Статус водителя">
           <input type="checkbox" id="pf2-online-toggle"${checked}>
@@ -304,7 +313,7 @@ function renderDriver(root, u) {
     <div class="bd-scroll">
       <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
         ${driverHeroHtml(u)}
-        ${statusCardHtml(u, items)}
+        ${statusCardHtml(u)}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
         ${quickActionsHtml()}
@@ -334,17 +343,19 @@ function renderDriver(root, u) {
   const statusCard  = root.querySelector('#pf2-status-card');
   const statusTitle = root.querySelector('#pf2-status-title');
   const statusSub   = root.querySelector('#pf2-status-sub');
-  const allDone     = items.every((it) => it.done);
 
   function syncCardState(online) {
-    const state = (allDone && online) ? 'ready' : 'action';
+    const ready = canShowReadyStatus(u);
+    const state = (ready && online) ? 'ready' : 'action';
     statusCard.dataset.state = state;
     if (state === 'ready') {
       statusTitle.textContent = 'Готов принимать заказы';
       statusSub.textContent   = 'Все требования выполнены';
     } else {
       statusTitle.textContent = 'Нужно действие';
-      statusSub.textContent   = 'Загрузите медосмотр и откройте путевой лист';
+      statusSub.textContent   = ready
+        ? 'Можно проверить готовность и документы перед сменой'
+        : 'Заполните телефон, автомобиль и госномер';
     }
   }
 
@@ -359,9 +370,15 @@ function renderDriver(root, u) {
 
   root.querySelector('#pf2-edit').addEventListener('click', () => go('/onboarding'));
 
-  root.querySelector('#pf2-act-logout').addEventListener('click', () => {
-    user.reset();
-    go('/welcome');
+  const logoutBtn = root.querySelector('#pf2-act-logout');
+  logoutBtn.addEventListener('click', () => {
+    if (logoutBtn.dataset.confirm === 'pending') {
+      user.reset();
+      go('/welcome');
+    } else {
+      logoutBtn.dataset.confirm = 'pending';
+      logoutBtn.querySelector('.pf2-action-row__label').textContent = 'Подтвердить выход';
+    }
   });
 }
 
