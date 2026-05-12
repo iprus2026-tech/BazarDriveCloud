@@ -2362,3 +2362,250 @@ body {
 /* ── Placeholder panes ──────────────────────────────────── */
 .pf2-placeholder { padding: 48px var(--pad); text-align: center; }
 .pf2-placeholder__text { color: var(--text-3); font-size: 14px; line-height: 1.5; }
+
+/* ═══════════════════════════════════════════════════════════
+   BD-PROFILE-02 — Taxi / IP pane
+═══════════════════════════════════════════════════════════ */
+
+/* ── Danger alert variant ───────────────────────────────── */
+.bd-alert.danger {
+  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+/* ── IP status card ─────────────────────────────────────── */
+.pf2-ip-scard {
+  padding: 0;
+  overflow: hidden;
+}
+.pf2-ip-scard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+.pf2-ip-scard-lbl-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.pf2-ip-scard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--warning);
+}
+.pf2-ip-driver-lbl {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--warning);
+}
+.pf2-ip-scard-body {
+  padding: 8px 16px 4px;
+}
+.pf2-ip-scard-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+.pf2-ip-scard-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.45;
+}
+
+/* ── Shift management card ──────────────────────────────── */
+.pf2-ip-shift-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 12px;
+}
+.pf2-ip-go-btn {
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pf2-ip-shift-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.pf2-ip-shift-sm {
+  height: 44px;
+  font-size: 13px;
+  gap: 6px;
+}
+
+/* ── Warning alert ──────────────────────────────────────── */
+.pf2-ip-warn-alert {
+  align-items: flex-start;
+  gap: 12px;
+}
+.pf2-ip-warn-icon {
+  color: var(--danger);
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+}
+.pf2-ip-warn-text { flex: 1; min-width: 0; }
+.pf2-ip-warn-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--danger);
+  margin: 0 0 4px;
+}
+.pf2-ip-warn-body {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.45;
+}
+
+/* ── Section title ──────────────────────────────────────── */
+.pf2-ip-sect-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 4px 0 10px;
+  letter-spacing: -0.01em;
+}
+
+/* ── Card header row (badge + date) ─────────────────────── */
+.pf2-ip-card-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pf2-ip-badge-dot::before {
+  content: '●';
+  margin-right: 5px;
+  font-size: 9px;
+  vertical-align: middle;
+}
+.pf2-ip-card-date {
+  font-size: 13px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+/* ── INN / permit number ────────────────────────────────── */
+.pf2-ip-inn {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+.pf2-ip-card-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0 0 14px;
+  line-height: 1.4;
+}
+
+/* ── Income progress bar ────────────────────────────────── */
+.pf2-ip-income-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.pf2-ip-income-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  width: 0%;
+}
+.pf2-ip-income-bar[data-pct="34"] .pf2-ip-income-fill { width: 34%; }
+
+/* ── Income label/value row ─────────────────────────────── */
+.pf2-ip-income-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pf2-ip-income-label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pf2-ip-income-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ── Permit card renew button ───────────────────────────── */
+.pf2-ip-permit-btn {
+  margin-top: 4px;
+}
+
+/* ── Park card ──────────────────────────────────────────── */
+.pf2-ip-park-card {
+  padding: 0;
+  overflow: hidden;
+}
+.pf2-ip-park-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  transition: background 0.1s;
+}
+.pf2-ip-park-row:active { background: var(--bg-2); }
+.pf2-ip-park-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.pf2-ip-park-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pf2-ip-park-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  display: block;
+}
+.pf2-ip-park-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  display: block;
+}
+.pf2-ip-park-end {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.pf2-ip-park-row--sel .pf2-ip-park-end { color: var(--success); }
+.pf2-ip-park-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 0 16px;
+}
