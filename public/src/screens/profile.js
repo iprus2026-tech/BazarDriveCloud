@@ -75,6 +75,60 @@ function canShowReadyStatus(u) {
   return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
 }
 
+// Taxi/IP readiness requires profile completeness + waybill + medical check.
+function isTaxiIpReady(u) {
+  return canShowReadyStatus(u) && u.waybillOpen === true && u.medicalCheckPassed === true;
+}
+
+function getTaxiIpStatusState(u) {
+  return (isTaxiIpReady(u) && u.driverOnline) ? 'ready' : 'action';
+}
+
+function getTaxiIpStatusTitle(u) {
+  return getTaxiIpStatusState(u) === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
+}
+
+function getTaxiIpStatusSubtitle(u) {
+  if (!canShowReadyStatus(u)) return 'Заполните телефон, автомобиль и госномер';
+  if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
+  if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
+  if (!u.waybillOpen) return 'Откройте путевой лист перед выходом на линию';
+  return 'Все требования выполнены';
+}
+
+// Syncs both status cards and toggles to the new online value.
+function syncDriverStatusDom(root, u, online) {
+  const patched = { ...u, driverOnline: online };
+
+  const ovCard  = root.querySelector('#pf2-status-card');
+  const ovTitle = root.querySelector('#pf2-status-title');
+  const ovSub   = root.querySelector('#pf2-status-sub');
+  const ovTog   = root.querySelector('#pf2-online-toggle');
+  if (ovCard && ovTitle && ovSub) {
+    const ready = canShowReadyStatus(u);
+    const state = (ready && online) ? 'ready' : 'action';
+    ovCard.dataset.state = state;
+    ovTitle.textContent  = state === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
+    ovSub.textContent    = state === 'ready'
+      ? 'Все требования выполнены'
+      : ready
+        ? 'Можно проверить готовность и документы перед сменой'
+        : 'Заполните телефон, автомобиль и госномер';
+  }
+  if (ovTog) ovTog.checked = online;
+
+  const ipCard  = root.querySelector('#pf2-ip-status-card');
+  const ipTitle = root.querySelector('#pf2-ip-scard-title');
+  const ipSub   = root.querySelector('#pf2-ip-scard-sub');
+  const ipTog   = root.querySelector('#pf2-ip-online-toggle');
+  if (ipCard && ipTitle && ipSub) {
+    ipCard.dataset.state = getTaxiIpStatusState(patched);
+    ipTitle.textContent  = getTaxiIpStatusTitle(patched);
+    ipSub.textContent    = getTaxiIpStatusSubtitle(patched);
+  }
+  if (ipTog) ipTog.checked = online;
+}
+
 // ── Guest view ────────────────────────────────────────────────────────────────
 
 function renderGuest(root) {
@@ -316,9 +370,12 @@ function placeholderPane(label) {
 function ipPaneHtml(u) {
   const online   = !!u.driverOnline;
   const showWarn = !u.waybillOpen || !u.medicalCheckPassed;
+  const ipState  = getTaxiIpStatusState(u);
+  const ipTitle  = getTaxiIpStatusTitle(u);
+  const ipSub    = getTaxiIpStatusSubtitle(u);
 
   return `
-    <div class="pf2-status-card pf2-ip-scard" data-state="action" id="pf2-ip-status-card">
+    <div class="pf2-status-card pf2-ip-scard" data-state="${ipState}" id="pf2-ip-status-card">
       <div class="pf2-ip-scard-top">
         <div class="pf2-ip-scard-lbl-row">
           <span class="pf2-ip-scard-dot" aria-hidden="true"></span>
@@ -330,8 +387,8 @@ function ipPaneHtml(u) {
         </label>
       </div>
       <div class="pf2-ip-scard-body">
-        <p class="pf2-ip-scard-title" id="pf2-ip-scard-title">Нужно действие</p>
-        <p class="pf2-ip-scard-sub" id="pf2-ip-scard-sub">Загрузите медосмотр и откройте путевой лист</p>
+        <p class="pf2-ip-scard-title" id="pf2-ip-scard-title">${ipTitle}</p>
+        <p class="pf2-ip-scard-sub" id="pf2-ip-scard-sub">${ipSub}</p>
       </div>
       <button type="button" class="pf2-action-cta" id="pf2-ip-goto-actions">Перейти к действиям</button>
     </div>
@@ -447,30 +504,12 @@ function renderDriver(root, u) {
     });
   });
 
-  // Online toggle
+  // Overview online toggle — syncs both status cards
   const toggleInput = root.querySelector('#pf2-online-toggle');
-  const statusCard  = root.querySelector('#pf2-status-card');
-  const statusTitle = root.querySelector('#pf2-status-title');
-  const statusSub   = root.querySelector('#pf2-status-sub');
-
-  function syncCardState(online) {
-    const ready = canShowReadyStatus(u);
-    const state = (ready && online) ? 'ready' : 'action';
-    statusCard.dataset.state = state;
-    if (state === 'ready') {
-      statusTitle.textContent = 'Готов принимать заказы';
-      statusSub.textContent   = 'Все требования выполнены';
-    } else {
-      statusTitle.textContent = 'Нужно действие';
-      statusSub.textContent   = ready
-        ? 'Можно проверить готовность и документы перед сменой'
-        : 'Заполните телефон, автомобиль и госномер';
-    }
-  }
-
   toggleInput.addEventListener('change', () => {
-    user.set({ driverOnline: toggleInput.checked });
-    syncCardState(toggleInput.checked);
+    const on = toggleInput.checked;
+    user.set({ driverOnline: on });
+    syncDriverStatusDom(root, u, on);
   });
 
   root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
@@ -490,26 +529,13 @@ function renderDriver(root, u) {
     }
   });
 
-  // ── IP pane event listeners ─────────────────────────────────
-  const ipToggle     = root.querySelector('#pf2-ip-online-toggle');
-  const ipStatusCard = root.querySelector('#pf2-ip-status-card');
-  const ipTitle      = root.querySelector('#pf2-ip-scard-title');
-  const ipSub        = root.querySelector('#pf2-ip-scard-sub');
-
+  // IP pane online toggle — syncs both status cards
+  const ipToggle = root.querySelector('#pf2-ip-online-toggle');
   if (ipToggle) {
     ipToggle.addEventListener('change', () => {
       const on = ipToggle.checked;
       user.set({ driverOnline: on });
-      const ready = canShowReadyStatus(u);
-      const state = (ready && on) ? 'ready' : 'action';
-      ipStatusCard.dataset.state = state;
-      if (state === 'ready') {
-        ipTitle.textContent = 'Готов принимать заказы';
-        ipSub.textContent   = 'Все требования выполнены';
-      } else {
-        ipTitle.textContent = 'Нужно действие';
-        ipSub.textContent   = 'Загрузите медосмотр и откройте путевой лист';
-      }
+      syncDriverStatusDom(root, u, on);
     });
   }
 
