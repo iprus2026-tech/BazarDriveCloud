@@ -14,17 +14,7 @@ const MOCK_REQUEST = {
   price:     1500,
 };
 
-const MOCK_VEHICLE = {
-  id:       'vehicle_camry_demo',
-  name:     'Toyota Camry',
-  plate:    'A123BE77',
-  color:    'Серебристый',
-  seats:    4,
-  features: 'кондиционер',
-};
-
-const PRICE_CHIPS   = [1300, 1500, 1800];
-const DEFAULT_MSG   = 'Здравствуйте! Готов забрать к указанному времени, авто Toyota Camry, есть место для чемодана.';
+const PRICE_CHIPS = [1300, 1500, 1800];
 
 const TIMING_OPTIONS = [
   { key: 'at_time',   label: 'К указанному времени' },
@@ -34,6 +24,11 @@ const TIMING_OPTIONS = [
 
 function saveResponse(data) {
   try { localStorage.setItem(RESPOND_KEY, JSON.stringify(data)); } catch {}
+}
+
+function getDefaultMessage(vehicle) {
+  const carName = vehicle ? vehicle.name : 'моё авто';
+  return `Здравствуйте! Готов забрать к указанному времени, авто ${carName}, есть место для чемодана.`;
 }
 
 function getUserVehicle(u) {
@@ -92,8 +87,9 @@ const ERR_SVG = `
 
 export default function respond() {
   const u          = user.get();
-  const vehicle    = getUserVehicle(u);
-  const hasVehicle = Boolean(vehicle);
+  const vehicle        = getUserVehicle(u);
+  const hasVehicle     = Boolean(vehicle);
+  const defaultMessage = getDefaultMessage(vehicle);
 
   const root = document.createElement('section');
   root.className = 'screen screen--respond';
@@ -170,9 +166,9 @@ export default function respond() {
             <textarea class="bd-textarea respond__textarea" id="respond-message"
                       name="message" rows="4" maxlength="${MAX_MSG}"
                       aria-label="Сообщение пассажиру"
-                      placeholder="Напишите пассажиру…">${escapeHtml(DEFAULT_MSG)}</textarea>
+                      placeholder="Напишите пассажиру…">${escapeHtml(defaultMessage)}</textarea>
             <div class="respond__counter" id="respond-counter" aria-live="polite">
-              ${DEFAULT_MSG.length} / ${MAX_MSG}
+              ${defaultMessage.length} / ${MAX_MSG}
             </div>
           </div>
         </div>
