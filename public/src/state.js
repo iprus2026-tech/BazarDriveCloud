@@ -20,6 +20,11 @@ const defaults = {
   // v3 — BD-PROFILE-01
   driverOnline: false,
   notificationsEnabled: false,
+  // v4 — BD-PROFILE-02 Taxi/IP
+  shiftOpen: false,
+  waybillOpen: false,
+  medicalCheckPassed: false,
+  parkMode: 'independent',
 };
 
 let cache = null;

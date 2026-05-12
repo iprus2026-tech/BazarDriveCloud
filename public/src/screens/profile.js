@@ -26,6 +26,16 @@ const SVG_BELL = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" st
 
 const SVG_RULES = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>`;
 
+const SVG_WARN_TRI = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.29 3.86-8.23 14.27A1 1 0 0 0 2.93 19.7h16.46a1 1 0 0 0 .87-1.57L12.71 3.86a1.34 1.34 0 0 0-2.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+
+const SVG_CAR_FRONT = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"/><path d="M5 17h14"/><path d="M3 9 5 5h14l2 4"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="17.5" r="2.5"/></svg>`;
+
+const SVG_TAG_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+
+const SVG_CLOCK_SM = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+
+const SVG_CHECK_SM = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function initials(u) {
@@ -175,17 +185,17 @@ function renderPassenger(root, u) {
 
 // ── Driver dashboard (BD-PROFILE-02) ─────────────────────────────────────────
 
-function tabsHtml() {
+function tabsHtml(activeId = 'overview') {
   const TABS = [
     { id: 'overview', label: 'Обзор' },
-    { id: 'ip',       label: 'Такси·ИП' },
+    { id: 'ip',       label: 'Такси / ИП' },
     { id: 'docs',     label: 'Документы' },
     { id: 'payouts',  label: 'Выплаты' },
     { id: 'security', label: 'Безопасность' },
   ];
   return `<div class="pf2-tabs-row" role="tablist">${
-    TABS.map((t, i) =>
-      `<button type="button" class="pf2-tab${i === 0 ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${i === 0}">${t.label}</button>`
+    TABS.map((t) =>
+      `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${t.id === activeId}">${t.label}</button>`
     ).join('')
   }</div>`;
 }
@@ -301,6 +311,105 @@ function placeholderPane(label) {
   return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
 }
 
+// ── Taxi / IP pane (BD-PROFILE-02) ───────────────────────────────────────────
+
+function ipPaneHtml(u) {
+  const online   = !!u.driverOnline;
+  const showWarn = !u.waybillOpen || !u.medicalCheckPassed;
+
+  return `
+    <div class="pf2-status-card pf2-ip-scard" data-state="action" id="pf2-ip-status-card">
+      <div class="pf2-ip-scard-top">
+        <div class="pf2-ip-scard-lbl-row">
+          <span class="pf2-ip-scard-dot" aria-hidden="true"></span>
+          <span class="pf2-ip-driver-lbl">СТАТУС ВОДИТЕЛЯ</span>
+        </div>
+        <label class="pf2-toggle" aria-label="Статус водителя">
+          <input type="checkbox" id="pf2-ip-online-toggle"${online ? ' checked' : ''}>
+          <span class="pf2-toggle__track"></span>
+        </label>
+      </div>
+      <div class="pf2-ip-scard-body">
+        <p class="pf2-ip-scard-title" id="pf2-ip-scard-title">Нужно действие</p>
+        <p class="pf2-ip-scard-sub" id="pf2-ip-scard-sub">Загрузите медосмотр и откройте путевой лист</p>
+      </div>
+      <button type="button" class="pf2-action-cta" id="pf2-ip-goto-actions">Перейти к действиям</button>
+    </div>
+
+    <div class="bd-card pf2-ip-shift-card">
+      <p class="pf2-ip-shift-title">Управление сменой</p>
+      <button type="button" class="bd-btn primary pf2-ip-go-btn" id="pf2-ip-go-online">
+        ${SVG_CAR_FRONT} Выйти на линию
+      </button>
+      <div class="pf2-ip-shift-row">
+        <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-open-shift">
+          ${SVG_CLOCK_SM} Открыть смену
+        </button>
+        <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-check-ready">
+          ${SVG_CHECK_SM} Проверить готовность
+        </button>
+      </div>
+    </div>
+
+    ${showWarn ? `
+    <div class="bd-alert danger pf2-ip-warn-alert" role="alert">
+      <span class="pf2-ip-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
+      <div class="pf2-ip-warn-text">
+        <p class="pf2-ip-warn-title">Не открыт путевой лист</p>
+        <p class="pf2-ip-warn-body">Без путевого листа выход на линию запрещён. Также не пройден медосмотр.</p>
+      </div>
+    </div>` : ''}
+
+    <p class="pf2-ip-sect-title">Статус самозанятого</p>
+    <div class="bd-card pf2-ip-se-card">
+      <div class="pf2-ip-card-hd">
+        <span class="bd-badge success pf2-ip-badge-dot">Активен</span>
+        <span class="pf2-ip-card-date">с 12.03.2023</span>
+      </div>
+      <p class="pf2-ip-inn">ИНН 770312345678</p>
+      <p class="pf2-ip-card-sub">Привязан через ФНС «Мой налог»</p>
+      <div class="pf2-ip-income-bar" data-pct="34">
+        <div class="pf2-ip-income-fill"></div>
+      </div>
+      <div class="pf2-ip-income-row">
+        <span class="pf2-ip-income-label">Лимит дохода в год</span>
+        <span class="pf2-ip-income-val">816 200 ₽ / 2,4 млн</span>
+      </div>
+    </div>
+
+    <p class="pf2-ip-sect-title">Разрешение / реестр такси</p>
+    <div class="bd-card pf2-ip-permit-card">
+      <div class="pf2-ip-card-hd">
+        <span class="bd-badge warning pf2-ip-badge-dot">Истекает</span>
+        <span class="pf2-ip-card-date">через 47 дней</span>
+      </div>
+      <p class="pf2-ip-inn">№ 77-456789</p>
+      <p class="pf2-ip-card-sub">Действует до 12.06.2026 · реестр Москвы</p>
+      <button type="button" class="bd-btn pf2-ip-permit-btn">Продлить разрешение</button>
+    </div>
+
+    <p class="pf2-ip-sect-title">Парк / агрегатор</p>
+    <div class="bd-card pf2-ip-park-card">
+      <button type="button" class="pf2-ip-park-row pf2-ip-park-row--sel" id="pf2-ip-park-indep">
+        <span class="pf2-ip-park-icon" aria-hidden="true">${SVG_CAR_FRONT}</span>
+        <span class="pf2-ip-park-info">
+          <span class="pf2-ip-park-name">Самостоятельно</span>
+          <span class="pf2-ip-park-sub">Без привязки к парку</span>
+        </span>
+        <span class="pf2-ip-park-end" aria-hidden="true">${SVG_CHECK_SM}</span>
+      </button>
+      <div class="pf2-ip-park-sep" aria-hidden="true"></div>
+      <button type="button" class="pf2-ip-park-row" id="pf2-ip-park-fleet">
+        <span class="pf2-ip-park-icon" aria-hidden="true">${SVG_TAG_ICON}</span>
+        <span class="pf2-ip-park-info">
+          <span class="pf2-ip-park-name">Подключить парк</span>
+          <span class="pf2-ip-park-sub">Доступ к большему числу заказов</span>
+        </span>
+        <span class="pf2-ip-park-end" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>
+    </div>`;
+}
+
 function renderDriver(root, u) {
   const items = checklistItems(u);
 
@@ -309,16 +418,16 @@ function renderDriver(root, u) {
       <h1 class="pf2-topbar__title">Профиль</h1>
       <button type="button" class="pf2-topbar__gear" id="pf2-gear" aria-label="Настройки">${SVG_GEAR}</button>
     </div>
-    ${tabsHtml()}
+    ${tabsHtml('ip')}
     <div class="bd-scroll">
-      <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
+      <div class="pf2-pane" id="pf2-pane-overview">
         ${driverHeroHtml(u)}
         ${statusCardHtml(u)}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
         ${quickActionsHtml()}
       </div>
-      <div class="pf2-pane" id="pf2-pane-ip">${placeholderPane('Такси·ИП')}</div>
+      <div class="pf2-pane pf2-pane--active" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${placeholderPane('Документы')}</div>
       <div class="pf2-pane" id="pf2-pane-payouts">${placeholderPane('Выплаты')}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
@@ -379,6 +488,33 @@ function renderDriver(root, u) {
       logoutBtn.dataset.confirm = 'pending';
       logoutBtn.querySelector('.pf2-action-row__label').textContent = 'Подтвердить выход';
     }
+  });
+
+  // ── IP pane event listeners ─────────────────────────────────
+  const ipToggle     = root.querySelector('#pf2-ip-online-toggle');
+  const ipStatusCard = root.querySelector('#pf2-ip-status-card');
+  const ipTitle      = root.querySelector('#pf2-ip-scard-title');
+  const ipSub        = root.querySelector('#pf2-ip-scard-sub');
+
+  if (ipToggle) {
+    ipToggle.addEventListener('change', () => {
+      const on = ipToggle.checked;
+      user.set({ driverOnline: on });
+      const ready = canShowReadyStatus(u);
+      const state = (ready && on) ? 'ready' : 'action';
+      ipStatusCard.dataset.state = state;
+      if (state === 'ready') {
+        ipTitle.textContent = 'Готов принимать заказы';
+        ipSub.textContent   = 'Все требования выполнены';
+      } else {
+        ipTitle.textContent = 'Нужно действие';
+        ipSub.textContent   = 'Загрузите медосмотр и откройте путевой лист';
+      }
+    });
+  }
+
+  root.querySelector('#pf2-ip-goto-actions')?.addEventListener('click', () => {
+    root.querySelector('.pf2-ip-warn-alert')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
 
