@@ -75,20 +75,22 @@ function canShowReadyStatus(u) {
   return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
 }
 
-// Taxi/IP readiness requires profile completeness + waybill + medical check.
-function isTaxiIpReady(u) {
+// Single line-readiness rule shared by Overview and Taxi/IP cards.
+// A driver is ready to go online only when basic profile data is complete
+// AND the waybill is open AND the medical check has been passed.
+function isDriverLineReady(u) {
   return canShowReadyStatus(u) && u.waybillOpen === true && u.medicalCheckPassed === true;
 }
 
-function getTaxiIpStatusState(u) {
-  return (isTaxiIpReady(u) && u.driverOnline) ? 'ready' : 'action';
+function getDriverStatusState(u) {
+  return (isDriverLineReady(u) && u.driverOnline) ? 'ready' : 'action';
 }
 
-function getTaxiIpStatusTitle(u) {
-  return getTaxiIpStatusState(u) === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
+function getDriverStatusTitle(u) {
+  return getDriverStatusState(u) === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
 }
 
-function getTaxiIpStatusSubtitle(u) {
+function getDriverStatusSubtitle(u) {
   if (!canShowReadyStatus(u)) return 'Заполните телефон, автомобиль и госномер';
   if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
   if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
@@ -105,15 +107,9 @@ function syncDriverStatusDom(root, u, online) {
   const ovSub   = root.querySelector('#pf2-status-sub');
   const ovTog   = root.querySelector('#pf2-online-toggle');
   if (ovCard && ovTitle && ovSub) {
-    const ready = canShowReadyStatus(u);
-    const state = (ready && online) ? 'ready' : 'action';
-    ovCard.dataset.state = state;
-    ovTitle.textContent  = state === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
-    ovSub.textContent    = state === 'ready'
-      ? 'Все требования выполнены'
-      : ready
-        ? 'Можно проверить готовность и документы перед сменой'
-        : 'Заполните телефон, автомобиль и госномер';
+    ovCard.dataset.state = getDriverStatusState(patched);
+    ovTitle.textContent  = getDriverStatusTitle(patched);
+    ovSub.textContent    = getDriverStatusSubtitle(patched);
   }
   if (ovTog) ovTog.checked = online;
 
@@ -122,9 +118,9 @@ function syncDriverStatusDom(root, u, online) {
   const ipSub   = root.querySelector('#pf2-ip-scard-sub');
   const ipTog   = root.querySelector('#pf2-ip-online-toggle');
   if (ipCard && ipTitle && ipSub) {
-    ipCard.dataset.state = getTaxiIpStatusState(patched);
-    ipTitle.textContent  = getTaxiIpStatusTitle(patched);
-    ipSub.textContent    = getTaxiIpStatusSubtitle(patched);
+    ipCard.dataset.state = getDriverStatusState(patched);
+    ipTitle.textContent  = getDriverStatusTitle(patched);
+    ipSub.textContent    = getDriverStatusSubtitle(patched);
   }
   if (ipTog) ipTog.checked = online;
 }
@@ -276,21 +272,15 @@ function driverHeroHtml(u) {
 }
 
 function statusCardHtml(u) {
-  const ready   = canShowReadyStatus(u);
-  const state   = (ready && u.driverOnline) ? 'ready' : 'action';
+  const state   = getDriverStatusState(u);
   const checked = u.driverOnline ? ' checked' : '';
-  const sub     = state === 'ready'
-    ? 'Все требования выполнены'
-    : ready
-      ? 'Можно проверить готовность и документы перед сменой'
-      : 'Заполните телефон, автомобиль и госномер';
   return `
     <div class="pf2-status-card" data-state="${state}" id="pf2-status-card">
       <div class="pf2-status-top">
         <span class="pf2-status-dot" aria-hidden="true"></span>
         <div class="pf2-status-text">
-          <p class="pf2-status-title" id="pf2-status-title">${state === 'ready' ? 'Готов принимать заказы' : 'Нужно действие'}</p>
-          <p class="pf2-status-sub" id="pf2-status-sub">${sub}</p>
+          <p class="pf2-status-title" id="pf2-status-title">${getDriverStatusTitle(u)}</p>
+          <p class="pf2-status-sub" id="pf2-status-sub">${getDriverStatusSubtitle(u)}</p>
         </div>
         <label class="pf2-toggle" aria-label="Статус водителя">
           <input type="checkbox" id="pf2-online-toggle"${checked}>
@@ -370,9 +360,9 @@ function placeholderPane(label) {
 function ipPaneHtml(u) {
   const online   = !!u.driverOnline;
   const showWarn = !u.waybillOpen || !u.medicalCheckPassed;
-  const ipState  = getTaxiIpStatusState(u);
-  const ipTitle  = getTaxiIpStatusTitle(u);
-  const ipSub    = getTaxiIpStatusSubtitle(u);
+  const ipState  = getDriverStatusState(u);
+  const ipTitle  = getDriverStatusTitle(u);
+  const ipSub    = getDriverStatusSubtitle(u);
 
   return `
     <div class="pf2-status-card pf2-ip-scard" data-state="${ipState}" id="pf2-ip-status-card">
