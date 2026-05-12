@@ -42,6 +42,12 @@ const SVG_UPLOAD_SM = `<svg width="14" height="14" viewBox="0 0 24 24" fill="non
 
 const SVG_PLUS = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
 
+const SVG_CREDIT_CARD_PO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>`;
+
+const SVG_RUBLE_COIN = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9 7h4.5a2.5 2.5 0 0 1 0 5H9v5M8.5 14h5"/></svg>`;
+
+const SVG_CALENDAR_PO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function initials(u) {
@@ -52,6 +58,10 @@ function initials(u) {
 
 function displayName(u) {
   return [u.firstName, u.lastName].filter(Boolean).join(' ') || u.displayName || 'Пользователь';
+}
+
+function fmtRub(n) {
+  return new Intl.NumberFormat('ru-RU').format(n) + ' ₽';
 }
 
 function formatPhone(raw) {
@@ -372,6 +382,50 @@ const MOCK_DOCS = [
   { id: 'inspection', iconColor: 'info',    title: 'Техосмотр / предрейсовый контроль', sub: 'Контроль ТС',        status: 'review',  meta: 'проверка до 18:00' },
 ];
 
+// ── Payouts mock data ─────────────────────────────────────────────────────────
+
+const MOCK_PAYOUT_SUMMARY = {
+  available:     18420,
+  weekEarned:    21580,
+  commissionPct: 12,
+  commissionAmt: 2590,
+  acquiringPct:  1.5,
+  acquiringAmt:  324,
+  weekPayout:    18666,
+};
+
+const MOCK_PAYOUT_METHODS = [
+  { id: 'card-4821', bank: 'Сбербанк', last4: '4821', isDefault: true },
+];
+
+const MOCK_PAYOUT_HISTORY = [
+  { id: 'ph-1', last4: '4821', date: '24.04', time: '22:10', amount: 12000, status: 'credited' },
+  { id: 'ph-2', last4: '4821', date: '17.04', time: '21:48', amount: 15200, status: 'credited' },
+  { id: 'ph-3', last4: '4821', date: '10.04', time: '20:02', amount:  9800, status: 'pending'  },
+  { id: 'ph-4', last4: '4821', date: '03.04', time: '19:30', amount: 14400, status: 'credited' },
+];
+
+const MOCK_TAX_ITEMS = [
+  {
+    id:        'npd-apr',
+    type:      'npd',
+    title:     'Налог НПД за апрель',
+    deadline:  'До 25 мая',
+    rateLabel: 'самозанятость 4%',
+    amount:    4280,
+    action:    'Оплатить через «Мой налог»',
+  },
+  {
+    id:        'usn-q2',
+    type:      'usn',
+    title:     'Налог УСН · аванс за II квартал',
+    deadline:  'До 28 июля',
+    rateLabel: '~6% от дохода',
+    amount:    null,
+    action:    null,
+  },
+];
+
 function pluralDoc(n) {
   const m10 = n % 10, m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return 'документ';
@@ -524,6 +578,126 @@ function ipPaneHtml(u) {
     </div>`;
 }
 
+// ── Payouts pane (BD-PROFILE-02) ─────────────────────────────────────────────
+
+function payoutsPaneHtml() {
+  const s = MOCK_PAYOUT_SUMMARY;
+
+  const methodRows = MOCK_PAYOUT_METHODS.map((m) => `
+      <button type="button" class="pf2-po-method-row">
+        <span class="pf2-po-method-icon">${SVG_CREDIT_CARD_PO}</span>
+        <span class="pf2-po-method-info">
+          <span class="pf2-po-method-name">${escapeHtml(m.bank)}</span>
+          <span class="pf2-po-method-sub">•• ${escapeHtml(m.last4)}${m.isDefault ? ' · по умолчанию' : ''}</span>
+        </span>
+        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>`).join('');
+
+  const histItems = MOCK_PAYOUT_HISTORY.map((h) => {
+    const badgeCls  = h.status === 'credited' ? 'bd-badge success' : 'bd-badge';
+    const badgeTxt  = h.status === 'credited' ? 'Зачислено' : 'В обработке';
+    return `
+      <div class="pf2-po-hist-item">
+        <span class="pf2-po-hist-icon">${SVG_CREDIT_CARD_PO}</span>
+        <span class="pf2-po-hist-info">
+          <span class="pf2-po-hist-name">Вывод на карту •• ${escapeHtml(h.last4)}</span>
+          <span class="pf2-po-hist-date">${escapeHtml(h.date)} · ${escapeHtml(h.time)}</span>
+        </span>
+        <span class="pf2-po-hist-right">
+          <span class="pf2-po-hist-amount">${fmtRub(h.amount)}</span>
+          <span class="${badgeCls}">${badgeTxt}</span>
+        </span>
+      </div>`;
+  }).join('');
+
+  const taxCards = MOCK_TAX_ITEMS.map((tax) => {
+    const isNpd  = tax.type === 'npd';
+    const icon   = isNpd
+      ? `<span class="pf2-po-tax-icon">${SVG_RUBLE_COIN}</span>`
+      : `<span class="pf2-po-tax-icon pf2-po-tax-icon--usn">${SVG_CALENDAR_PO}</span>`;
+    const right  = isNpd
+      ? `<span class="pf2-po-tax-amount">${fmtRub(tax.amount)}</span>`
+      : `<span class="bd-badge">План</span>`;
+    const payBtn = isNpd
+      ? `<button type="button" class="bd-btn primary" id="pf2-po-tax-pay-${escapeHtml(tax.id)}">${escapeHtml(tax.action)}</button>`
+      : '';
+    return `
+      <div class="pf2-po-tax-card${isNpd ? ' pf2-po-tax-card--npd' : ''}">
+        <div class="pf2-po-tax-hd">
+          ${icon}
+          <div class="pf2-po-tax-info">
+            <p class="pf2-po-tax-title">${escapeHtml(tax.title)}</p>
+            <p class="pf2-po-tax-sub">${escapeHtml(tax.deadline)} · ${escapeHtml(tax.rateLabel)}</p>
+          </div>
+          ${right}
+        </div>
+        ${payBtn}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="pf2-po-balance-card">
+      <p class="pf2-po-balance-lbl">Доступно к выводу</p>
+      <p class="pf2-po-balance-amount">${fmtRub(s.available)}</p>
+      <div class="pf2-po-balance-btns">
+        <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--dark" id="pf2-po-withdraw-btn">Вывести</button>
+        <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--sec" id="pf2-po-history-btn">История</button>
+      </div>
+    </div>
+    <div class="pf2-po-weekly">
+      <p class="pf2-po-weekly-title">Расчёт за неделю</p>
+      <div class="pf2-po-weekly-row">
+        <span class="pf2-po-weekly-label">Заработано</span>
+        <span class="pf2-po-weekly-val">${fmtRub(s.weekEarned)}</span>
+      </div>
+      <div class="pf2-po-weekly-row">
+        <span class="pf2-po-weekly-label">Комиссия BazarDrive · ${s.commissionPct}%</span>
+        <span class="pf2-po-weekly-val pf2-po-weekly-val--neg">− ${fmtRub(s.commissionAmt)}</span>
+      </div>
+      <div class="pf2-po-weekly-row">
+        <span class="pf2-po-weekly-label">Эквайринг · ${s.acquiringPct}%</span>
+        <span class="pf2-po-weekly-val pf2-po-weekly-val--neg">− ${fmtRub(s.acquiringAmt)}</span>
+      </div>
+      <div class="pf2-po-weekly-sep" aria-hidden="true"></div>
+      <div class="pf2-po-weekly-total-row">
+        <span class="pf2-po-weekly-total-lbl">К выплате</span>
+        <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
+      </div>
+    </div>
+    ${taxCards}
+    <div class="pf2-po-sect-hdr">
+      <span class="pf2-po-sect-title">Способы вывода</span>
+      <button type="button" class="pf2-po-sect-action" id="pf2-po-methods-change">Изменить</button>
+    </div>
+    <div class="pf2-po-methods" id="pf2-po-methods-block">
+      ${methodRows}
+      <button type="button" class="pf2-po-method-row" id="pf2-po-add-card-btn">
+        <span class="pf2-po-method-icon pf2-po-method-icon--add">${SVG_PLUS}</span>
+        <span class="pf2-po-method-info">
+          <span class="pf2-po-method-name">Добавить карту</span>
+        </span>
+        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>
+    </div>
+    <div class="pf2-po-sect-hdr">
+      <span class="pf2-po-sect-title">История выплат</span>
+      <button type="button" class="pf2-po-sect-action" id="pf2-po-hist-all-btn">Все</button>
+    </div>
+    <div class="pf2-po-history" id="pf2-po-history-block">
+      ${histItems}
+    </div>
+    <div class="pf2-po-report">
+      <div class="pf2-po-report-hd">
+        <span class="pf2-po-report-icon">${SVG_DOC_LG}</span>
+        <span class="pf2-po-report-info">
+          <span class="pf2-po-report-title">Отчёт о доходах</span>
+          <span class="pf2-po-report-sub">PDF / Excel · для налоговой и банка</span>
+        </span>
+      </div>
+      <button type="button" class="bd-btn primary" id="pf2-po-report-btn">Сформировать отчёт</button>
+    </div>`;
+}
+
 function renderDriver(root, u) {
   const items = checklistItems(u);
 
@@ -543,7 +717,7 @@ function renderDriver(root, u) {
       </div>
       <div class="pf2-pane pf2-pane--active" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml()}</div>
-      <div class="pf2-pane" id="pf2-pane-payouts">${placeholderPane('Выплаты')}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
     </div>`;
 
@@ -598,6 +772,64 @@ function renderDriver(root, u) {
 
   root.querySelector('#pf2-ip-goto-actions')?.addEventListener('click', () => {
     root.querySelector('.pf2-ip-warn-alert')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // ── Payouts tab interactions ──────────────────────────────────────────────
+
+  root.querySelector('#pf2-po-withdraw-btn')?.addEventListener('click', () => {
+    const btn = root.querySelector('#pf2-po-withdraw-btn');
+    const orig = btn.textContent;
+    btn.textContent = 'Оформляем вывод…';
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = 'Заявка принята — заглушка';
+      setTimeout(() => {
+        btn.textContent = orig;
+        btn.disabled = false;
+      }, 1500);
+    }, 800);
+  });
+
+  root.querySelector('#pf2-po-history-btn')?.addEventListener('click', () => {
+    root.querySelector('#pf2-po-history-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  root.querySelector('#pf2-po-hist-all-btn')?.addEventListener('click', () => {
+    root.querySelector('#pf2-po-history-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  root.querySelector('#pf2-po-methods-change')?.addEventListener('click', () => {
+    const btn = root.querySelector('#pf2-po-methods-change');
+    const orig = btn.textContent;
+    btn.textContent = 'Скоро здесь';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
+
+  root.querySelector('#pf2-po-add-card-btn')?.addEventListener('click', () => {
+    const nameEl = root.querySelector('#pf2-po-add-card-btn .pf2-po-method-name');
+    if (!nameEl) return;
+    const orig = nameEl.textContent;
+    nameEl.textContent = 'Скоро здесь';
+    setTimeout(() => { nameEl.textContent = orig; }, 1500);
+  });
+
+  root.querySelector('#pf2-po-tax-pay-npd-apr')?.addEventListener('click', () => {
+    const btn = root.querySelector('#pf2-po-tax-pay-npd-apr');
+    const orig = btn.textContent;
+    btn.textContent = 'Откройте «Мой налог» — заглушка';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  });
+
+  root.querySelector('#pf2-po-report-btn')?.addEventListener('click', () => {
+    const btn = root.querySelector('#pf2-po-report-btn');
+    const orig = btn.textContent;
+    btn.textContent = 'Формируем отчёт…';
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = 'Готово — заглушка';
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    }, 1000);
   });
 }
 
