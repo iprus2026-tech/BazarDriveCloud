@@ -2609,3 +2609,111 @@ body {
   background: var(--line);
   margin: 0 16px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   BD-PROFILE-02 — Documents pane
+═══════════════════════════════════════════════════════════ */
+
+/* ── Info badge variant ─────────────────────────────────── */
+.bd-badge.info { background: rgba(96,165,250,0.14); color: var(--info); }
+
+/* ── Document attention alert ───────────────────────────── */
+.pf2-doc-warn { align-items: flex-start; gap: 12px; }
+.pf2-doc-warn-icon {
+  color: var(--warning);
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+}
+.pf2-doc-warn-body { flex: 1; min-width: 0; }
+.pf2-doc-warn-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warning);
+  margin: 0 0 4px;
+}
+.pf2-doc-warn-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.45;
+}
+
+/* ── Document card ──────────────────────────────────────── */
+.pf2-doc-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.pf2-doc-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pf2-doc-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pf2-doc-icon--success { background: rgba(74,222,128,0.15);  color: var(--success); }
+.pf2-doc-icon--info    { background: rgba(96,165,250,0.15);  color: var(--info); }
+.pf2-doc-icon--warning { background: rgba(251,191,36,0.15);  color: var(--warning); }
+.pf2-doc-icon--danger  { background: rgba(248,113,113,0.15); color: var(--danger); }
+
+.pf2-doc-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pf2-doc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+  margin: 0 0 4px;
+}
+
+.pf2-doc-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.pf2-doc-status { flex-shrink: 0; }
+
+.pf2-doc-meta {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 8px 0 0;
+}
+
+.pf2-doc-action { margin-top: 12px; }
+
+/* ── Add document button ────────────────────────────────── */
+.pf2-doc-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 4px;
+  transition: opacity 0.1s;
+}
+.pf2-doc-add-btn:active { opacity: 0.75; }

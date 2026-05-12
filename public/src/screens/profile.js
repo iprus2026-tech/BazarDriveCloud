@@ -36,6 +36,12 @@ const SVG_CLOCK_SM = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none
 
 const SVG_CHECK_SM = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
+const SVG_DOC_LG = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+
+const SVG_UPLOAD_SM = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
+
+const SVG_PLUS = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function initials(u) {
@@ -355,6 +361,67 @@ function placeholderPane(label) {
   return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
 }
 
+// ── Documents pane (BD-PROFILE-02) ───────────────────────────────────────────
+
+const MOCK_DOCS = [
+  { id: 'license',    iconColor: 'success', title: 'Водительское удостоверение',     sub: '99 12 345678',         status: 'ok',      meta: 'до 2031' },
+  { id: 'osago',      iconColor: 'info',    title: 'ОСАГО для такси',                sub: 'ХХХ 0123456789',        status: 'review',  meta: 'до 14.08.2026' },
+  { id: 'permit',     iconColor: 'danger',  title: 'Разрешение / реестр такси',      sub: '№ 77-456789',           status: 'expired', meta: 'истекло 12.04.2026', action: 'Обновить' },
+  { id: 'waybill',    iconColor: 'warning', title: 'Путевой лист',                   sub: 'Электронный, на смену', status: 'missing', action: 'Загрузить' },
+  { id: 'medical',    iconColor: 'warning', title: 'Медосмотр',                      sub: 'Предрейсовый, 24 ч',    status: 'missing', action: 'Загрузить' },
+  { id: 'inspection', iconColor: 'info',    title: 'Техосмотр / предрейсовый контроль', sub: 'Контроль ТС',        status: 'review',  meta: 'проверка до 18:00' },
+];
+
+function pluralDoc(n) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return 'документ';
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'документа';
+  return 'документов';
+}
+
+function docStatusBadgeHtml(status) {
+  if (status === 'ok')      return `<span class="bd-badge success">${SVG_CHECK_SM} Загружен</span>`;
+  if (status === 'review')  return `<span class="bd-badge info">${SVG_CLOCK_SM} Требует проверки</span>`;
+  if (status === 'expired') return `<span class="bd-badge danger">${SVG_WARN_TRI} Истёк</span>`;
+  if (status === 'missing') return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Не загружен</span>`;
+  return '';
+}
+
+function docCardHtml(doc) {
+  const meta   = doc.meta   ? `<p class="pf2-doc-meta">${escapeHtml(doc.meta)}</p>` : '';
+  const action = doc.action ? `<button type="button" class="bd-btn primary pf2-doc-action">${escapeHtml(doc.action)}</button>` : '';
+  return `
+    <div class="pf2-doc-card">
+      <div class="pf2-doc-header">
+        <div class="pf2-doc-icon pf2-doc-icon--${doc.iconColor}" aria-hidden="true">${SVG_DOC_LG}</div>
+        <div class="pf2-doc-info">
+          <p class="pf2-doc-title">${escapeHtml(doc.title)}</p>
+          <p class="pf2-doc-sub">${escapeHtml(doc.sub)}</p>
+        </div>
+        <div class="pf2-doc-status">${docStatusBadgeHtml(doc.status)}</div>
+      </div>
+      ${meta}${action}
+    </div>`;
+}
+
+function docsPaneHtml() {
+  const critical = MOCK_DOCS.filter((d) => d.status === 'expired' || d.status === 'missing').length;
+  const alert = critical > 0 ? `
+    <div class="bd-alert warning pf2-doc-warn" role="alert">
+      <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
+      <div class="pf2-doc-warn-body">
+        <p class="pf2-doc-warn-title">${critical} ${pluralDoc(critical)} требуют внимания</p>
+        <p class="pf2-doc-warn-sub">Без них вы не сможете выйти на линию</p>
+      </div>
+    </div>` : '';
+  return `
+    ${alert}
+    ${MOCK_DOCS.map(docCardHtml).join('')}
+    <button type="button" class="pf2-doc-add-btn" id="pf2-doc-add">
+      ${SVG_PLUS} Добавить документ
+    </button>`;
+}
+
 // ── Taxi / IP pane (BD-PROFILE-02) ───────────────────────────────────────────
 
 function ipPaneHtml(u) {
@@ -475,7 +542,7 @@ function renderDriver(root, u) {
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane pf2-pane--active" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-docs">${placeholderPane('Документы')}</div>
+      <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-payouts">${placeholderPane('Выплаты')}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
     </div>`;
