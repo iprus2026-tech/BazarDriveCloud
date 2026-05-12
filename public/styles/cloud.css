@@ -3052,3 +3052,275 @@ body {
   color: var(--success);
   border-color: rgba(74, 222, 128, 0.25);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   BD-RESPOND-01 — Driver response to passenger request
+═══════════════════════════════════════════════════════════ */
+
+.screen--respond { overflow: hidden; }
+
+/* ── Topbar ─────────────────────────────────────────────── */
+.respond__topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px var(--pad) 8px;
+}
+.respond__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--accent);
+  flex-shrink: 0;
+  transition: transform 0.08s;
+}
+.respond__back:active { transform: scale(0.93); }
+.respond__back svg { width: 18px; height: 18px; }
+.respond__title {
+  flex: 1;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+.respond__title-spacer { width: 34px; flex-shrink: 0; }
+
+/* ── Passenger card ─────────────────────────────────────── */
+.respond__passenger-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.respond__avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.respond__passenger-info { flex: 1; min-width: 0; }
+.respond__passenger-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.respond__passenger-meta {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.respond__route {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.respond__route-arrow { color: var(--text-3); flex-shrink: 0; }
+.respond__route-to    { color: var(--text-2); }
+.respond__when { font-size: 13px; color: var(--text-2); }
+
+/* ── Section ────────────────────────────────────────────── */
+.respond__section { margin-bottom: 16px; }
+
+/* ── Price row ──────────────────────────────────────────── */
+.respond__price-row {
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin-bottom: 10px;
+}
+.respond__price-input {
+  padding-right: 36px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.respond__price-currency {
+  position: absolute;
+  right: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.respond__price-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 8px;
+}
+
+/* ── Chips ──────────────────────────────────────────────── */
+.respond__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.respond-chip {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.respond-chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(255, 107, 53, 0.35);
+}
+.respond-chip:active { opacity: 0.82; }
+
+/* ── Message textarea ───────────────────────────────────── */
+.respond__textarea-wrap { position: relative; }
+.respond__textarea { min-height: 110px; padding-bottom: 28px; }
+.respond__counter {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 11px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+/* ── Vehicle card ───────────────────────────────────────── */
+.respond__vehicle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.respond__vehicle-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.respond__vehicle-info { flex: 1; min-width: 0; }
+.respond__vehicle-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.respond__vehicle-meta {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.respond__vehicle-badge { flex-shrink: 0; }
+
+/* ── No-vehicle CTA ─────────────────────────────────────── */
+.respond__no-vehicle-alert { align-items: flex-start; gap: 12px; }
+.respond__no-vehicle-alert svg { flex-shrink: 0; color: var(--text-3); margin-top: 2px; }
+.respond__no-vehicle-body { flex: 1; min-width: 0; }
+.respond__no-vehicle-label {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.respond__no-vehicle-hint {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+.respond__no-vehicle-cta { margin-top: 2px; }
+
+/* ── Info card ──────────────────────────────────────────── */
+.respond__info-icon { flex-shrink: 0; color: var(--info); }
+.respond__info-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* ── Validation error ───────────────────────────────────── */
+.respond__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(248, 113, 113, 0.10);
+  border: 1px solid rgba(248, 113, 113, 0.30);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+.respond__error svg { flex-shrink: 0; }
+
+/* ── Footer ─────────────────────────────────────────────── */
+.respond__footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: 10px;
+  padding: 12px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 16px);
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
+}
+.respond__btn-cancel {
+  width: 104px;
+  flex-shrink: 0;
+}
+.respond__btn-submit { flex: 1; gap: 8px; }
+
+/* ── Success state ──────────────────────────────────────── */
+.respond__success {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad);
+}
+.respond__success-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  max-width: 280px;
+}
+.respond__success-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+}
+.respond__success-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.respond__success-body {
+  font-size: 15px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0;
+}
