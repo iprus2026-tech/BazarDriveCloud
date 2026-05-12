@@ -85,7 +85,16 @@ const ERR_SVG = `
     <line x1="9" y1="9" x2="15" y2="15"/>
   </svg>`;
 
+function getRouteParam(name) {
+  const hash = window.location.hash || '';
+  const queryIndex = hash.indexOf('?');
+  if (queryIndex === -1) return null;
+  const params = new URLSearchParams(hash.slice(queryIndex + 1));
+  return params.get(name);
+}
+
 export default function respond() {
+  const selectedPostId = getRouteParam('postId') || MOCK_REQUEST.id;
   const u          = user.get();
   const vehicle        = getUserVehicle(u);
   const hasVehicle     = Boolean(vehicle);
@@ -327,7 +336,7 @@ export default function respond() {
 
     const response = {
       id:           'resp_demo_001',
-      requestId:    MOCK_REQUEST.id,
+      requestId:    selectedPostId,
       driverPrice:  Number(price),
       pickupTiming: selectedTiming,
       message,

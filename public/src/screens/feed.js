@@ -81,6 +81,13 @@ export default async function feed() {
     go('/new');
   });
 
+  feedList.addEventListener('click', (e) => {
+    const respondBtn = e.target.closest('[data-action="respond"]');
+    if (!respondBtn) return;
+    const postId = respondBtn.dataset.postId;
+    go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+  });
+
   renderList();
   return root;
 }
@@ -199,7 +206,10 @@ function renderTripCard(p) {
         ${p.price ? `<div class="feed-trip-price">${escapeHtml(p.price)}</div>` : ''}
       </div>
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
-      <button class="bd-btn primary feed-card-cta" type="button">
+      <button class="bd-btn primary feed-card-cta" type="button"
+              ${p.passenger
+                ? `data-action="respond" data-post-id="${escapeHtml(p.id || '')}" aria-label="Откликнуться на заявку попутчика"`
+                : ''}>
         ${p.passenger ? 'Откликнуться' : 'Написать водителю'}
       </button>
       ${renderPostActions(p)}
