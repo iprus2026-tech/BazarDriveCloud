@@ -36,6 +36,18 @@ function saveResponse(data) {
   try { localStorage.setItem(RESPOND_KEY, JSON.stringify(data)); } catch {}
 }
 
+function getUserVehicle(u) {
+  if (!u.vehicleMake || !u.vehicleModel || !u.vehiclePlate) return null;
+  return {
+    id:       'user_vehicle',
+    name:     `${u.vehicleMake} ${u.vehicleModel}`,
+    plate:    u.vehiclePlate,
+    color:    u.vehicleColor || 'Цвет не указан',
+    seats:    4,
+    features: 'кондиционер',
+  };
+}
+
 const CAR_SVG = `
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
@@ -80,7 +92,8 @@ const ERR_SVG = `
 
 export default function respond() {
   const u          = user.get();
-  const hasVehicle = u.role === 'driver' || u.vehicleMake;
+  const vehicle    = getUserVehicle(u);
+  const hasVehicle = Boolean(vehicle);
 
   const root = document.createElement('section');
   root.className = 'screen screen--respond';
@@ -170,10 +183,10 @@ export default function respond() {
               <div class="respond__vehicle-icon">${CAR_SVG}</div>
               <div class="respond__vehicle-info">
                 <div class="respond__vehicle-name">
-                  ${escapeHtml(MOCK_VEHICLE.name)} · ${escapeHtml(MOCK_VEHICLE.plate)}
+                  ${escapeHtml(vehicle.name)} · ${escapeHtml(vehicle.plate)}
                 </div>
                 <div class="respond__vehicle-meta">
-                  ${escapeHtml(MOCK_VEHICLE.color)} · ${MOCK_VEHICLE.seats} места · ${escapeHtml(MOCK_VEHICLE.features)}
+                  ${escapeHtml(vehicle.color)} · ${vehicle.seats} места · ${escapeHtml(vehicle.features)}
                 </div>
               </div>
               <span class="bd-badge accent respond__vehicle-badge">Ваше авто</span>
@@ -309,6 +322,10 @@ export default function respond() {
       msgArea.focus();
       return;
     }
+    if (!hasVehicle) {
+      showError('Добавьте автомобиль в профиле водителя, чтобы отправить отклик');
+      return;
+    }
 
     setLoading(true);
 
@@ -318,7 +335,7 @@ export default function respond() {
       driverPrice:  Number(price),
       pickupTiming: selectedTiming,
       message,
-      vehicleId:    MOCK_VEHICLE.id,
+      vehicleId:    vehicle.id,
       status:       'SENT',
       createdAt:    new Date().toISOString(),
     };
