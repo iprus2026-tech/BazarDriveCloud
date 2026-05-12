@@ -84,7 +84,8 @@ export default async function feed() {
   feedList.addEventListener('click', (e) => {
     const respondBtn = e.target.closest('[data-action="respond"]');
     if (!respondBtn) return;
-    go('/respond');
+    const postId = respondBtn.dataset.postId;
+    go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
   });
 
   renderList();
