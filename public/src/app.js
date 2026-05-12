@@ -8,6 +8,7 @@ import rules      from './screens/rules.js';
 import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';
 import composer   from './screens/composer.js';
+import respond    from './screens/respond.js';
 
 register('/welcome',    welcome);
 register('/feed',       feed);
@@ -15,6 +16,7 @@ register('/rules',      rules);
 register('/profile',    profile);
 register('/onboarding', onboarding);
 register('/new',        composer);
+register('/respond',    respond);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
