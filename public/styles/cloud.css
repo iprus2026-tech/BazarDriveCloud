@@ -2017,3 +2017,348 @@ body {
   white-space: nowrap;
   border: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   PROFILE V3 — BD-PROFILE-02 Driver Dashboard
+═══════════════════════════════════════════════════════════ */
+
+/* ── Topbar ─────────────────────────────────────────────── */
+.pf2-topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px var(--pad) 10px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 18px);
+}
+.pf2-topbar__title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+.pf2-topbar__gear {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+.pf2-topbar__gear:active { opacity: 0.6; }
+
+/* ── Tabs row ───────────────────────────────────────────── */
+.pf2-tabs-row {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  padding: 2px var(--pad) 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.pf2-tabs-row::-webkit-scrollbar { display: none; }
+.pf2-tab {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-3);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pf2-tab.pf2-tab--active {
+  background: var(--text);
+  color: #0a0a0c;
+  border-color: transparent;
+}
+
+/* ── Panes ──────────────────────────────────────────────── */
+.pf2-pane { display: none; }
+.pf2-pane.pf2-pane--active { display: block; }
+
+/* ── Hero card ──────────────────────────────────────────── */
+.pf2-hero {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  padding: 20px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  margin-bottom: 10px;
+}
+.pf2-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, var(--accent) 0%, #ff9f6b 100%);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
+.pf2-hero__name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.pf2-hero__meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.pf2-hero__star { color: var(--warning); display: flex; align-items: center; }
+.pf2-hero__rating { font-weight: 600; color: var(--text); }
+.pf2-hero__sep { color: var(--text-3); }
+.pf2-hero__trips { color: var(--text-2); }
+.pf2-hero__car { font-size: 13px; color: var(--text-2); margin: 0; }
+.pf2-edit-btn {
+  margin-top: 6px;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.1s;
+}
+.pf2-edit-btn:active { opacity: 0.6; }
+
+/* ── Status card ────────────────────────────────────────── */
+.pf2-status-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.pf2-status-card[data-state="ready"] {
+  background: linear-gradient(135deg, rgba(74,222,128,0.10) 0%, var(--bg-2) 60%);
+  border-color: rgba(74,222,128,0.20);
+}
+.pf2-status-card[data-state="action"] {
+  background: linear-gradient(135deg, rgba(251,191,36,0.10) 0%, var(--bg-2) 60%);
+  border-color: rgba(251,191,36,0.20);
+}
+.pf2-status-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+.pf2-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pf2-status-card[data-state="ready"]  .pf2-status-dot { background: var(--success); }
+.pf2-status-card[data-state="action"] .pf2-status-dot { background: var(--warning); }
+.pf2-status-text { flex: 1; min-width: 0; }
+.pf2-status-title { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.pf2-status-sub   { font-size: 12px; color: var(--text-2); margin: 0; line-height: 1.4; }
+
+/* Toggle */
+.pf2-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pf2-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.pf2-toggle__track {
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  position: relative;
+  transition: background 0.2s, border-color 0.2s;
+}
+.pf2-toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.2s, background 0.2s;
+}
+.pf2-toggle input:checked + .pf2-toggle__track {
+  background: var(--success);
+  border-color: var(--success);
+}
+.pf2-toggle input:checked + .pf2-toggle__track::after {
+  transform: translateX(18px);
+  background: #fff;
+}
+
+/* Action CTA (action state only) */
+.pf2-action-cta {
+  display: none;
+  margin: 0 16px 16px;
+  height: 42px;
+  width: calc(100% - 32px);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s;
+}
+.pf2-action-cta:active { opacity: 0.8; }
+.pf2-status-card[data-state="action"] .pf2-action-cta { display: flex; }
+
+/* ── Stats grid ─────────────────────────────────────────── */
+.pf2-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pf2-stat-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf2-stat-val {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.pf2-stat-val--accent { color: var(--accent); }
+.pf2-stat-label { font-size: 11px; color: var(--text-3); }
+
+/* ── Readiness card ─────────────────────────────────────── */
+.pf2-readiness-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+  margin-bottom: 10px;
+}
+.pf2-readiness-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+.pf2-readiness-title { font-size: 15px; font-weight: 600; }
+.pf2-readiness-count { font-size: 13px; color: var(--text-2); }
+.pf2-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.pf2-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  width: 0%;
+}
+.pf2-progress-bar[data-done="1"] .pf2-progress-fill { width: 20%; }
+.pf2-progress-bar[data-done="2"] .pf2-progress-fill { width: 40%; }
+.pf2-progress-bar[data-done="3"] .pf2-progress-fill { width: 60%; }
+.pf2-progress-bar[data-done="4"] .pf2-progress-fill { width: 80%; }
+.pf2-progress-bar[data-done="5"] .pf2-progress-fill { width: 100%; }
+.pf2-checklist { display: flex; flex-direction: column; gap: 10px; }
+.pf2-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.pf2-check-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  border: 1.5px solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.pf2-check-row--done .pf2-check-icon {
+  background: rgba(74,222,128,0.12);
+  border-color: var(--success);
+  color: var(--success);
+}
+.pf2-check-label { color: var(--text-2); flex: 1; min-width: 0; }
+.pf2-check-row--done .pf2-check-label {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+/* ── Quick actions ──────────────────────────────────────── */
+.pf2-actions-section { margin-bottom: 10px; }
+.pf2-actions-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 8px;
+}
+.pf2-action-list {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+.pf2-action-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  transition: background 0.1s;
+}
+.pf2-action-row:last-child { border-bottom: none; }
+.pf2-action-row:active { background: var(--bg-3); }
+.pf2-action-row__label { flex: 1; text-align: left; font-size: 15px; }
+.pf2-action-row svg { color: var(--text-3); flex-shrink: 0; }
+.pf2-action-row--danger .pf2-action-row__label { color: var(--danger); }
+.pf2-action-row--danger svg { color: var(--danger); }
+
+/* ── Placeholder panes ──────────────────────────────────── */
+.pf2-placeholder { padding: 48px var(--pad); text-align: center; }
+.pf2-placeholder__text { color: var(--text-3); font-size: 14px; line-height: 1.5; }
