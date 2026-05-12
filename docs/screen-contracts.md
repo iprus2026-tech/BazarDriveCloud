@@ -452,6 +452,127 @@ Edit profile flow
 Payments / wallet
 ```
 
+## BD-PROFILE-02 — Driver Dashboard Profile
+
+### Identity
+
+```text
+Screen:       Driver Dashboard Profile
+Route:        /profile (role === 'driver')
+File:         public/src/screens/profile.js
+Data source:  localStorage via public/src/state.js
+Design ref:   Claude Design — section "Профиль водителя"
+Working issue: #28
+Branch:       feature/profile-driver-dashboard-v3
+```
+
+### Cloud Design render/frame gate
+
+Design section: **Профиль водителя — Dashboard**
+
+States used as visual reference:
+
+```text
+guest           — inherited from BD-PROFILE-01 (unchanged)
+passenger       — inherited from BD-PROFILE-01 (unchanged)
+driver/Обзор    — pf2-hero + status-card (online toggle) + stats grid + readiness checklist + quick actions
+driver/Такси·ИП — placeholder pane
+driver/Документы — placeholder pane
+driver/Выплаты  — placeholder pane
+driver/Безопасность — placeholder pane
+```
+
+### State contract
+
+Fields read from `bazardrive.user.v1` (localStorage):
+
+```text
+onboarded, role, firstName, lastName, displayName
+phone, vehicleMake, vehicleModel, vehiclePlate, vehicleColor, vehicleBody
+driverOnline          boolean  — persisted on toggle
+notificationsEnabled  boolean  — persisted on toggle
+```
+
+### Tab structure
+
+```text
+Обзор        — full dashboard (default active)
+Такси·ИП     — placeholder stub
+Документы    — placeholder stub
+Выплаты      — placeholder stub
+Безопасность — placeholder stub
+```
+
+### Readiness checklist items
+
+```text
+1. Телефон подтверждён   — done: !!u.phone
+2. Данные автомобиля     — done: !!(u.vehicleMake && u.vehicleModel)
+3. Госномер              — done: !!u.vehiclePlate
+4. Документы и ОСАГО     — done: false (stub — document upload not implemented)
+5. Разрешение такси      — done: false (stub — permit verification not implemented)
+```
+
+### Status-card ready state
+
+The status card ready state is **not** gated on all 5 checklist items.
+Items 4 and 5 are permanent stubs and must not block the ready state.
+
+Ready state logic uses `canShowReadyStatus(u)`:
+
+```text
+ready = u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate && u.driverOnline
+```
+
+Status card subtitles:
+```text
+ready            → "Все требования выполнены"
+action, base ok  → "Можно проверить готовность и документы перед сменой"
+action, missing  → "Заполните телефон, автомобиль и госномер"
+```
+
+The readiness checklist still shows 5 items and tracks progress (e.g. 3/5),
+but its `allDone` value does not control the status card.
+
+### CSS
+
+All styles added to `public/styles/cloud.css` under section `BD-PROFILE-02`.
+CSS prefix: `pf2-*`. No inline styles, no `style=` attributes. Toggle driven entirely
+by `input:checked + .pf2-toggle__track` adjacent-sibling selector. Progress bar fill
+driven by discrete `data-done` attribute selectors (no inline width).
+
+### Acceptance checklist
+
+- [ ] `/profile` renders driver dashboard for `role === 'driver'` and `onboarded === true`
+- [ ] 5 tabs render in horizontal scroll row; Обзор active by default
+- [ ] Tab switch shows correct pane, hides others; non-Обзор tabs show placeholder
+- [ ] Hero shows gradient avatar with initials, name, ★4.8, car make+model, edit button
+- [ ] Status card shows "Готов принимать заказы" when phone+car+plate are set and driverOnline is true
+- [ ] Status card shows "Нужно действие" with accurate subtitle when base fields are missing or driver is offline
+- [ ] Online toggle persists `driverOnline` to localStorage; syncCardState() updates card without style mutations
+- [ ] Stats grid shows 3 columns (earnings / trips / replies)
+- [ ] Readiness card shows progress bar driven by `data-done` attribute; 5-item checklist
+- [ ] Done checklist items have strikethrough label and green icon; pending items show outline icon
+- [ ] "Заполнить анкету" CTA scrolls to readiness card
+- [ ] Quick actions section renders 4 rows including danger "Выйти"
+- [ ] "Выйти" requires second click to confirm (dataset.confirm='pending'); label changes to "Подтвердить выход" on first click
+- [ ] Reset calls `user.reset()` and redirects to `/welcome`
+- [ ] Guest and Passenger views unchanged from BD-PROFILE-01
+- [ ] No inline `<script>` / `<style>` / `on*=` / `style=` attributes
+- [ ] No `.style.<property>` assignments in JS
+- [ ] `node scripts/check.mjs` passes
+
+### Out of scope for BD-PROFILE-02
+
+```text
+Real earnings / trip counts from backend
+Document upload / photo avatar
+Taxi permit verification
+Payments / wallet integration
+Real-time map / active ride
+Non-Обзор tab implementations
+```
+
 ## Planned minimum screens
 
 These screens are tracked by #19 and should receive their own render/frame and contract before implementation:

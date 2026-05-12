@@ -4,68 +4,27 @@ import { escapeHtml } from '../util.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
-const SVG_PERSON_LG = `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.582-7 8-7s8 3 8 7"/>
-</svg>`;
+const SVG_GEAR = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
 
-const SVG_CAR_SM = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M5 17h14M7 17v2M17 17v2"/>
-  <path d="M5 17v-3l2-5h10l2 5v3"/>
-  <circle cx="8" cy="14" r="1.2" fill="currentColor"/>
-  <circle cx="16" cy="14" r="1.2" fill="currentColor"/>
-</svg>`;
+const SVG_STAR = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`;
 
-const SVG_CHEVRON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="m9 18 6-6-6-6"/>
-</svg>`;
+const SVG_PENCIL = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
 
-const SVG_POST = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <rect x="3" y="3" width="18" height="18" rx="3"/>
-  <path d="M7 8h10M7 12h10M7 16h6"/>
-</svg>`;
+const SVG_CHECK = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-const SVG_TRIP = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M5 12h14M12 5l7 7-7 7"/>
-</svg>`;
+const SVG_CHEVRON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
 
-const SVG_REPLY = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="m9 17-4-4 4-4"/><path d="M20 18v-2a4 4 0 0 0-4-4H5"/>
-</svg>`;
+const SVG_PERSON_LG = `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.582-7 8-7s8 3 8 7"/></svg>`;
 
-const SVG_BELL = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M6 8a6 6 0 0 1 12 0c0 6 3 7 3 7H3s3-1 3-7"/>
-  <path d="M10 21a2 2 0 0 0 4 0"/>
-</svg>`;
+const SVG_POST = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>`;
 
-const SVG_RULES = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
-  <rect x="9" y="3" width="6" height="4" rx="1"/>
-  <path d="M9 12h6M9 16h4"/>
-</svg>`;
+const SVG_TRIP = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>`;
 
-const SVG_CHECK_SM = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M20 6 9 17l-5-5"/>
-</svg>`;
+const SVG_REPLY = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 17-4-4 4-4"/><path d="M20 18v-2a4 4 0 0 0-4-4H5"/></svg>`;
 
-const SVG_CIRCLE_SM = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" aria-hidden="true">
-  <circle cx="12" cy="12" r="9"/>
-</svg>`;
+const SVG_BELL = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 6 3 7 3 7H3s3-1 3-7"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>`;
 
-const SVG_WARN = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="m10.29 3.86-8.47 14.14A2 2 0 0 0 3.53 21h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-</svg>`;
+const SVG_RULES = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,6 +32,10 @@ function initials(u) {
   const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.displayName || '';
   if (!name.trim()) return '?';
   return name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+function displayName(u) {
+  return [u.firstName, u.lastName].filter(Boolean).join(' ') || u.displayName || 'Пользователь';
 }
 
 function formatPhone(raw) {
@@ -88,7 +51,21 @@ function roleBadge(role) {
   return `<span class="bd-badge${mod ? ` ${mod}` : ''}">${label}</span>`;
 }
 
-// ── Guest / unonboarded view ──────────────────────────────────────────────────
+function checklistItems(u) {
+  return [
+    { label: 'Телефон подтверждён', done: !!u.phone },
+    { label: 'Данные автомобиля',   done: !!(u.vehicleMake && u.vehicleModel) },
+    { label: 'Госномер',            done: !!u.vehiclePlate },
+    { label: 'Документы и ОСАГО',   done: false },
+    { label: 'Разрешение такси',    done: false },
+  ];
+}
+
+function canShowReadyStatus(u) {
+  return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
+}
+
+// ── Guest view ────────────────────────────────────────────────────────────────
 
 function renderGuest(root) {
   root.innerHTML = `
@@ -112,170 +89,297 @@ function renderGuest(root) {
   root.querySelector('#pf-onboard').addEventListener('click', () => go('/onboarding'));
 }
 
-// ── Hero ──────────────────────────────────────────────────────────────────────
+// ── Passenger view ────────────────────────────────────────────────────────────
 
-function heroHtml(u) {
-  const ini = escapeHtml(initials(u));
-  const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.displayName || 'Пользователь';
+function renderPassenger(root, u) {
+  const ini   = escapeHtml(initials(u));
+  const name  = escapeHtml(displayName(u));
   const phone = u.phone ? formatPhone(u.phone) : null;
-  return `
-    <div class="pf-hero">
-      <div class="bd-avatar xl" aria-hidden="true">${ini}</div>
-      <div class="pf-hero-info">
-        <p class="pf-name">${escapeHtml(displayName)}</p>
-        ${phone ? `<p class="pf-phone">${escapeHtml(phone)}</p>` : ''}
-        ${roleBadge(u.role)}
-      </div>
-    </div>
-  `;
-}
-
-// ── Stats grid ────────────────────────────────────────────────────────────────
-
-function statsHtml() {
-  return `
-    <div class="pf-stats-grid" aria-label="Статистика профиля">
-      <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Публикации</span></div>
-      <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Поездки</span></div>
-      <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Отклики</span></div>
-      <div class="pf-stat"><span class="pf-stat__num">—</span><span class="pf-stat__label">Рейтинг</span></div>
-    </div>
-  `;
-}
-
-// ── Role/mode tabs (driver only) ──────────────────────────────────────────────
-
-function modeTabsHtml(activeMode) {
-  const pax = activeMode === 'passenger' ? ' pf-mode-tab--active' : '';
-  const drv = activeMode === 'driver'    ? ' pf-mode-tab--active' : '';
-  return `
-    <div class="pf-mode-tabs" role="group" aria-label="Режим профиля">
-      <button type="button" class="pf-mode-tab${pax}" data-mode="passenger">Пассажир</button>
-      <button type="button" class="pf-mode-tab${drv}" data-mode="driver">Водитель</button>
-    </div>
-  `;
-}
-
-// ── Driver status card ────────────────────────────────────────────────────────
-
-function carSummaryHtml(u) {
-  if (u.vehicleMake && u.vehicleModel) {
-    const yearPart  = u.vehicleYear  ? ` · ${escapeHtml(u.vehicleYear)}`  : '';
-    const colorPart = u.vehicleColor ? ` · ${escapeHtml(u.vehicleColor)}` : '';
-    return `
-      <div class="pf-car-row">
-        <div class="bd-list-icon">${SVG_CAR_SM}</div>
-        <div class="pf-car-info">
-          <span class="pf-car-name">${escapeHtml(u.vehicleMake)} ${escapeHtml(u.vehicleModel)}${yearPart}${colorPart}</span>
-          ${u.vehiclePlate ? `<span class="pf-car-plate">${escapeHtml(u.vehiclePlate)}</span>` : ''}
-        </div>
-      </div>
-    `;
-  }
-  return `
-    <div class="pf-car-row">
-      <div class="bd-list-icon pf-icon--warn">${SVG_WARN}</div>
-      <div class="pf-car-info">
-        <span class="pf-car-name">Нет данных об автомобиле</span>
-        <span class="pf-car-sub">Добавьте авто в настройках профиля</span>
-      </div>
-    </div>
-  `;
-}
-
-function checklistHtml(u) {
-  const items = [
-    { label: 'Телефон подтверждён', done: !!u.phone },
-    { label: 'Данные автомобиля',  done: !!(u.vehicleMake && u.vehicleModel) },
-    { label: 'Госномер',           done: !!u.vehiclePlate },
-    { label: 'Документы и ОСАГО',  done: false },
-    { label: 'Разрешение такси',   done: false },
-  ];
-  return `
-    <div class="pf-checklist" aria-label="Готовность к выходу на линию">
-      ${items.map((item) => `
-        <div class="pf-checklist-item${item.done ? ' pf-checklist-item--done' : ''}">
-          <div class="pf-check-icon" aria-hidden="true">${item.done ? SVG_CHECK_SM : SVG_CIRCLE_SM}</div>
-          <span class="pf-check-label">${escapeHtml(item.label)}</span>
-          ${!item.done ? `<span class="pf-check-action">Загрузить</span>` : ''}
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-function driverCardHtml(u) {
-  const online = !!u.driverOnline;
-  return `
-    <div class="bd-card pf-driver-card">
-      <div class="pf-online-row">
-        <div class="pf-online-info">
-          <span class="pf-online-label">На линии</span>
-          <span class="pf-online-sub${online ? '' : ' pf-online-sub--off'}" id="pf-online-sub">
-            ${online ? 'Принимаю заказы' : 'Оффлайн'}
-          </span>
-        </div>
-        <label class="pf-toggle" aria-label="Статус на линии">
-          <input type="checkbox" class="pf-toggle__input" id="pf-online-cb"${online ? ' checked' : ''}>
-          <span class="pf-toggle__track"></span>
-        </label>
-      </div>
-      <div class="divider"></div>
-      ${carSummaryHtml(u)}
-      <div class="divider"></div>
-      ${checklistHtml(u)}
-    </div>
-  `;
-}
-
-// ── Actions list ──────────────────────────────────────────────────────────────
-
-function actionsHtml(u) {
   const notif = !!u.notificationsEnabled;
 
-  const baseActions = [
-    { id: 'pf-publications', icon: SVG_POST,  label: 'Мои публикации', route: '/feed'  },
-    { id: 'pf-trips',        icon: SVG_TRIP,  label: 'Мои поездки',    route: '/feed'  },
-    { id: 'pf-replies',      icon: SVG_REPLY, label: 'Мои отклики',    route: null     },
-  ];
-  const driverAction = { id: 'pf-car-docs', icon: SVG_CAR_SM, label: 'Авто и документы', route: null };
-  const rulesAction  = { id: 'pf-rules',    icon: SVG_RULES,  label: 'Правила',           route: '/rules' };
-
-  const actions = u.role === 'driver'
-    ? [...baseActions, driverAction, rulesAction]
-    : [...baseActions, rulesAction];
-
-  return `
-    <div class="bd-card pf-actions-card">
-      ${actions.map((a) => `
-        <button type="button" class="pf-action" id="${a.id}">
-          <div class="pf-action-icon">${a.icon}</div>
-          <span class="pf-action-label">${a.label}</span>
+  root.innerHTML = `
+    <div class="bd-topbar">
+      <div class="bd-topbar__titles">
+        <h1 class="bd-topbar__title">Профиль</h1>
+      </div>
+    </div>
+    <div class="bd-scroll">
+      <div class="pf-hero">
+        <div class="bd-avatar xl" aria-hidden="true">${ini}</div>
+        <div class="pf-hero-info">
+          <p class="pf-name">${name}</p>
+          ${phone ? `<p class="pf-phone">${escapeHtml(phone)}</p>` : ''}
+          ${roleBadge(u.role)}
+        </div>
+      </div>
+      <div class="pf-stats-grid" aria-label="Статистика профиля">
+        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Публикации</span></div>
+        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Поездки</span></div>
+        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Отклики</span></div>
+        <div class="pf-stat"><span class="pf-stat__num">—</span><span class="pf-stat__label">Рейтинг</span></div>
+      </div>
+      <div class="bd-card pf-actions-card">
+        <button type="button" class="pf-action" id="pf-publications">
+          <div class="pf-action-icon">${SVG_POST}</div>
+          <span class="pf-action-label">Мои публикации</span>
           <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
-      `).join('')}
-      <div class="pf-action pf-action--toggle">
-        <div class="pf-action-icon">${SVG_BELL}</div>
-        <span class="pf-action-label">Уведомления</span>
-        <label class="pf-toggle" aria-label="Получать уведомления">
-          <input type="checkbox" class="pf-toggle__input" id="pf-notif-cb"${notif ? ' checked' : ''}>
-          <span class="pf-toggle__track"></span>
-        </label>
+        <button type="button" class="pf-action" id="pf-trips">
+          <div class="pf-action-icon">${SVG_TRIP}</div>
+          <span class="pf-action-label">Мои поездки</span>
+          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+        <button type="button" class="pf-action" id="pf-replies">
+          <div class="pf-action-icon">${SVG_REPLY}</div>
+          <span class="pf-action-label">Мои отклики</span>
+          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+        <button type="button" class="pf-action" id="pf-rules">
+          <div class="pf-action-icon">${SVG_RULES}</div>
+          <span class="pf-action-label">Правила</span>
+          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+        <div class="pf-action pf-action--toggle">
+          <div class="pf-action-icon">${SVG_BELL}</div>
+          <span class="pf-action-label">Уведомления</span>
+          <label class="pf-toggle" aria-label="Получать уведомления">
+            <input type="checkbox" class="pf-toggle__input" id="pf-notif-cb"${notif ? ' checked' : ''}>
+            <span class="pf-toggle__track"></span>
+          </label>
+        </div>
+      </div>
+      <div class="pf-danger-zone">
+        <button type="button" class="bd-btn danger" id="pf-reset">Сбросить профиль и выйти</button>
       </div>
     </div>
   `;
+
+  root.querySelector('#pf-publications')?.addEventListener('click', () => go('/feed'));
+  root.querySelector('#pf-trips')?.addEventListener('click', () => go('/feed'));
+  root.querySelector('#pf-rules')?.addEventListener('click', () => go('/rules'));
+  root.querySelector('#pf-notif-cb').addEventListener('change', (e) => {
+    user.set({ notificationsEnabled: e.target.checked });
+  });
+
+  const resetBtn = root.querySelector('#pf-reset');
+  resetBtn.addEventListener('click', () => {
+    if (resetBtn.dataset.confirm === 'pending') {
+      user.reset();
+      go('/welcome');
+    } else {
+      resetBtn.dataset.confirm = 'pending';
+      resetBtn.textContent = 'Нажмите ещё раз для подтверждения';
+    }
+  });
 }
 
-// ── Danger zone ───────────────────────────────────────────────────────────────
+// ── Driver dashboard (BD-PROFILE-02) ─────────────────────────────────────────
 
-function dangerZoneHtml() {
+function tabsHtml() {
+  const TABS = [
+    { id: 'overview', label: 'Обзор' },
+    { id: 'ip',       label: 'Такси·ИП' },
+    { id: 'docs',     label: 'Документы' },
+    { id: 'payouts',  label: 'Выплаты' },
+    { id: 'security', label: 'Безопасность' },
+  ];
+  return `<div class="pf2-tabs-row" role="tablist">${
+    TABS.map((t, i) =>
+      `<button type="button" class="pf2-tab${i === 0 ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${i === 0}">${t.label}</button>`
+    ).join('')
+  }</div>`;
+}
+
+function driverHeroHtml(u) {
+  const ini  = escapeHtml(initials(u));
+  const name = escapeHtml(displayName(u));
+  const car  = (u.vehicleMake && u.vehicleModel)
+    ? escapeHtml(`${u.vehicleMake} ${u.vehicleModel}${u.vehiclePlate ? ' · ' + u.vehiclePlate : ''}`)
+    : '';
   return `
-    <div class="pf-danger-zone">
-      <button type="button" class="bd-btn danger" id="pf-reset">
-        Сбросить профиль и выйти
-      </button>
+    <div class="pf2-hero">
+      <div class="pf2-avatar" aria-hidden="true">${ini}</div>
+      <p class="pf2-hero__name">${name}</p>
+      <div class="pf2-hero__meta">
+        <span class="pf2-hero__star">${SVG_STAR}</span>
+        <span class="pf2-hero__rating">4.8</span>
+        <span class="pf2-hero__sep">·</span>
+        <span class="pf2-hero__trips">203 поездки</span>
+      </div>
+      ${car ? `<p class="pf2-hero__car">${car}</p>` : ''}
+      <button type="button" class="pf2-edit-btn" id="pf2-edit">${SVG_PENCIL} Изменить</button>
+    </div>`;
+}
+
+function statusCardHtml(u) {
+  const ready   = canShowReadyStatus(u);
+  const state   = (ready && u.driverOnline) ? 'ready' : 'action';
+  const checked = u.driverOnline ? ' checked' : '';
+  const sub     = state === 'ready'
+    ? 'Все требования выполнены'
+    : ready
+      ? 'Можно проверить готовность и документы перед сменой'
+      : 'Заполните телефон, автомобиль и госномер';
+  return `
+    <div class="pf2-status-card" data-state="${state}" id="pf2-status-card">
+      <div class="pf2-status-top">
+        <span class="pf2-status-dot" aria-hidden="true"></span>
+        <div class="pf2-status-text">
+          <p class="pf2-status-title" id="pf2-status-title">${state === 'ready' ? 'Готов принимать заказы' : 'Нужно действие'}</p>
+          <p class="pf2-status-sub" id="pf2-status-sub">${sub}</p>
+        </div>
+        <label class="pf2-toggle" aria-label="Статус водителя">
+          <input type="checkbox" id="pf2-online-toggle"${checked}>
+          <span class="pf2-toggle__track"></span>
+        </label>
+      </div>
+      <button type="button" class="pf2-action-cta" id="pf2-goto-actions">Перейти к действиям</button>
+    </div>`;
+}
+
+function driverStatsHtml() {
+  return `
+    <div class="pf2-stats-grid">
+      <div class="pf2-stat-card">
+        <span class="pf2-stat-val pf2-stat-val--accent">18 420 ₽</span>
+        <span class="pf2-stat-label">За неделю</span>
+      </div>
+      <div class="pf2-stat-card">
+        <span class="pf2-stat-val">42</span>
+        <span class="pf2-stat-label">Поездок</span>
+      </div>
+      <div class="pf2-stat-card">
+        <span class="pf2-stat-val">38</span>
+        <span class="pf2-stat-label">Часов</span>
+      </div>
+    </div>`;
+}
+
+function readinessHtml(items) {
+  const doneCount = items.filter((it) => it.done).length;
+  const rows = items.map((it) => `
+      <div class="pf2-check-row${it.done ? ' pf2-check-row--done' : ''}">
+        <span class="pf2-check-icon" aria-hidden="true">${it.done ? SVG_CHECK : ''}</span>
+        <span class="pf2-check-label">${escapeHtml(it.label)}</span>
+      </div>`).join('');
+  return `
+    <div class="pf2-readiness-card">
+      <div class="pf2-readiness-header">
+        <span class="pf2-readiness-title">Готовность к смене</span>
+        <span class="pf2-readiness-count">${doneCount} из ${items.length}</span>
+      </div>
+      <div class="pf2-progress-bar" data-done="${doneCount}">
+        <div class="pf2-progress-fill"></div>
+      </div>
+      <div class="pf2-checklist">${rows}
+      </div>
+    </div>`;
+}
+
+function quickActionsHtml() {
+  return `
+    <div class="pf2-actions-section">
+      <p class="pf2-actions-title">Быстрые действия</p>
+      <div class="pf2-action-list">
+        <button type="button" class="pf2-action-row" id="pf2-act-car">
+          <span class="pf2-action-row__label">Мой автомобиль</span>${SVG_CHEVRON}
+        </button>
+        <button type="button" class="pf2-action-row" id="pf2-act-contracts">
+          <span class="pf2-action-row__label">Шаблоны договоров</span>${SVG_CHEVRON}
+        </button>
+        <button type="button" class="pf2-action-row" id="pf2-act-notif">
+          <span class="pf2-action-row__label">Уведомления</span>${SVG_CHEVRON}
+        </button>
+        <button type="button" class="pf2-action-row pf2-action-row--danger" id="pf2-act-logout">
+          <span class="pf2-action-row__label">Выйти</span>${SVG_CHEVRON}
+        </button>
+      </div>
+    </div>`;
+}
+
+function placeholderPane(label) {
+  return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
+}
+
+function renderDriver(root, u) {
+  const items = checklistItems(u);
+
+  root.innerHTML = `
+    <div class="pf2-topbar">
+      <h1 class="pf2-topbar__title">Профиль</h1>
+      <button type="button" class="pf2-topbar__gear" id="pf2-gear" aria-label="Настройки">${SVG_GEAR}</button>
     </div>
-  `;
+    ${tabsHtml()}
+    <div class="bd-scroll">
+      <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
+        ${driverHeroHtml(u)}
+        ${statusCardHtml(u)}
+        ${driverStatsHtml()}
+        ${readinessHtml(items)}
+        ${quickActionsHtml()}
+      </div>
+      <div class="pf2-pane" id="pf2-pane-ip">${placeholderPane('Такси·ИП')}</div>
+      <div class="pf2-pane" id="pf2-pane-docs">${placeholderPane('Документы')}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts">${placeholderPane('Выплаты')}</div>
+      <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
+    </div>`;
+
+  // Tab switching
+  const tabBtns = root.querySelectorAll('.pf2-tab');
+  const panes   = root.querySelectorAll('.pf2-pane');
+  tabBtns.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabBtns.forEach((t) => { t.classList.remove('pf2-tab--active'); t.setAttribute('aria-selected', 'false'); });
+      panes.forEach((p) => p.classList.remove('pf2-pane--active'));
+      tab.classList.add('pf2-tab--active');
+      tab.setAttribute('aria-selected', 'true');
+      const pane = root.querySelector(`#pf2-pane-${tab.dataset.pane}`);
+      if (pane) pane.classList.add('pf2-pane--active');
+    });
+  });
+
+  // Online toggle
+  const toggleInput = root.querySelector('#pf2-online-toggle');
+  const statusCard  = root.querySelector('#pf2-status-card');
+  const statusTitle = root.querySelector('#pf2-status-title');
+  const statusSub   = root.querySelector('#pf2-status-sub');
+
+  function syncCardState(online) {
+    const ready = canShowReadyStatus(u);
+    const state = (ready && online) ? 'ready' : 'action';
+    statusCard.dataset.state = state;
+    if (state === 'ready') {
+      statusTitle.textContent = 'Готов принимать заказы';
+      statusSub.textContent   = 'Все требования выполнены';
+    } else {
+      statusTitle.textContent = 'Нужно действие';
+      statusSub.textContent   = ready
+        ? 'Можно проверить готовность и документы перед сменой'
+        : 'Заполните телефон, автомобиль и госномер';
+    }
+  }
+
+  toggleInput.addEventListener('change', () => {
+    user.set({ driverOnline: toggleInput.checked });
+    syncCardState(toggleInput.checked);
+  });
+
+  root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
+    root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  root.querySelector('#pf2-edit').addEventListener('click', () => go('/onboarding'));
+
+  const logoutBtn = root.querySelector('#pf2-act-logout');
+  logoutBtn.addEventListener('click', () => {
+    if (logoutBtn.dataset.confirm === 'pending') {
+      user.reset();
+      go('/welcome');
+    } else {
+      logoutBtn.dataset.confirm = 'pending';
+      logoutBtn.querySelector('.pf2-action-row__label').textContent = 'Подтвердить выход';
+    }
+  });
 }
 
 // ── Main factory ──────────────────────────────────────────────────────────────
@@ -283,90 +387,15 @@ function dangerZoneHtml() {
 export default function profile() {
   const root = document.createElement('section');
   root.className = 'screen screen--profile';
-
   const u = user.get();
 
   if (!u.onboarded || u.role === 'guest') {
     renderGuest(root);
-    return root;
+  } else if (u.role === 'driver') {
+    renderDriver(root, u);
+  } else {
+    renderPassenger(root, u);
   }
 
-  let activeMode = u.role;
-
-  function render() {
-    const u2      = user.get();
-    const isDriver = u2.role === 'driver';
-
-    root.innerHTML = `
-      <div class="bd-topbar">
-        <div class="bd-topbar__titles">
-          <h1 class="bd-topbar__title">Профиль</h1>
-        </div>
-      </div>
-      <div class="bd-scroll">
-        ${heroHtml(u2)}
-        ${statsHtml()}
-        ${isDriver ? modeTabsHtml(activeMode) : ''}
-        ${isDriver && activeMode === 'driver' ? driverCardHtml(u2) : ''}
-        ${actionsHtml(u2)}
-        ${dangerZoneHtml()}
-      </div>
-    `;
-
-    wire();
-  }
-
-  function wire() {
-    root.querySelectorAll('.pf-mode-tab').forEach((tab) => {
-      tab.addEventListener('click', () => {
-        activeMode = tab.dataset.mode;
-        render();
-      });
-    });
-
-    const onlineCb = root.querySelector('#pf-online-cb');
-    if (onlineCb) {
-      onlineCb.addEventListener('change', () => {
-        user.set({ driverOnline: onlineCb.checked });
-        const sub = root.querySelector('#pf-online-sub');
-        if (sub) {
-          sub.textContent = onlineCb.checked ? 'Принимаю заказы' : 'Оффлайн';
-          sub.classList.toggle('pf-online-sub--off', !onlineCb.checked);
-        }
-      });
-    }
-
-    const notifCb = root.querySelector('#pf-notif-cb');
-    if (notifCb) {
-      notifCb.addEventListener('change', () => {
-        user.set({ notificationsEnabled: notifCb.checked });
-      });
-    }
-
-    const routeMap = {
-      'pf-publications': '/feed',
-      'pf-trips':        '/feed',
-      'pf-rules':        '/rules',
-    };
-    Object.entries(routeMap).forEach(([id, route]) => {
-      root.querySelector(`#${id}`)?.addEventListener('click', () => go(route));
-    });
-    // pf-replies and pf-car-docs are stubs — no navigation wired
-
-    const resetBtn = root.querySelector('#pf-reset');
-    if (resetBtn) {
-      resetBtn.addEventListener('click', () => {
-        if (resetBtn.dataset.confirm === 'pending') {
-          user.reset();
-          go('/welcome');
-        } else {
-          resetBtn.dataset.confirm = 'pending';
-          resetBtn.textContent = 'Нажмите ещё раз для подтверждения';
-        }
-      });
-    }
-  }
-
-  render();
   return root;
 }
