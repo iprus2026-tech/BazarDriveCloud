@@ -4243,7 +4243,193 @@ body {
   max-width: 280px;
 }
 
+.active-ride__sheet-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.active-ride__sheet-sub {
+  font-size: 13px;
+  color: var(--text-3);
+  line-height: 1.3;
+}
+
+.active-ride__pickup-eta--progress {
+  background: rgba(255, 107, 53, 0.14);
+  color: var(--accent);
+}
+
+.active-ride__map-banner {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0a0a0c;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 22px rgba(255, 107, 53, 0.35);
+  pointer-events: auto;
+}
+.active-ride__map-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0a0a0c;
+}
+
+.active-ride__passenger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+.active-ride__passenger-main {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 12px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.active-ride__passenger-info { min-width: 0; }
+.active-ride__passenger-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.active-ride__icon-action {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.08s;
+}
+.active-ride__icon-action:active { transform: scale(0.95); }
+
+.active-ride__secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.active-ride__waiting-badge {
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  text-align: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+.active-ride__waiting-badge-value { font-size: 18px; font-weight: 700; }
+.active-ride__waiting-badge-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+
+.active-ride__waiting-card {
+  background: rgba(74, 222, 128, 0.06);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.active-ride__waiting-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.active-ride__waiting-card-title {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.active-ride__waiting-card-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--success);
+}
+.active-ride__waiting-card-foot {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.active-ride__progress-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.18);
+  overflow: hidden;
+}
+.active-ride__progress-bar-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 999px;
+  width: 0%;
+  transition: width 200ms ease;
+}
+.active-ride__progress-bar-fill[data-step="0"]  { width: 0%; }
+.active-ride__progress-bar-fill[data-step="1"]  { width: 10%; }
+.active-ride__progress-bar-fill[data-step="2"]  { width: 20%; }
+.active-ride__progress-bar-fill[data-step="3"]  { width: 30%; }
+.active-ride__progress-bar-fill[data-step="4"]  { width: 40%; }
+.active-ride__progress-bar-fill[data-step="5"]  { width: 50%; }
+.active-ride__progress-bar-fill[data-step="6"]  { width: 60%; }
+.active-ride__progress-bar-fill[data-step="7"]  { width: 70%; }
+.active-ride__progress-bar-fill[data-step="8"]  { width: 80%; }
+.active-ride__progress-bar-fill[data-step="9"]  { width: 90%; }
+.active-ride__progress-bar-fill[data-step="10"] { width: 100%; }
+
+.active-ride__completion {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 4px;
+  text-align: center;
+}
+.active-ride__completion-price {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.05;
+}
+.active-ride__completion-note {
+  font-size: 14px;
+  color: var(--text-2);
+}
+.active-ride__completion-secondary {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 6px;
+  max-width: 320px;
+}
+
 @media (max-width: 380px) {
   .active-ride__price { font-size: 28px; }
   .active-ride__stat-value { font-size: 14px; }
+  .active-ride__completion-price { font-size: 32px; }
 }
