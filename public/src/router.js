@@ -27,7 +27,8 @@ export function consumePendingAction() {
 }
 
 async function render() {
-  const path = (location.hash || '#/welcome').slice(1);
+  const fullPath = (location.hash || '#/welcome').slice(1);
+  const path = fullPath.split('?')[0];
   const u = user.get();
 
   if (!u.welcomeSeen && path !== '/welcome') {
