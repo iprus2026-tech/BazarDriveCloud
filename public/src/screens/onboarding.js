@@ -439,8 +439,12 @@ export default function onboarding() {
   root.className = 'screen screen--onboarding';
 
   // Accumulated draft — cleared on finish
+  const currentUser = user.get();
+  const prefillDocs = currentUser.role === 'driver' && currentUser.documentsReady === true
+    ? DOCS.filter((d) => d.required).map((d) => d.id)
+    : [];
   const draft = {
-    role: user.get().role ?? null,
+    role: currentUser.role ?? null,
     phone: '',
     firstName: '',
     lastName: '',
@@ -450,7 +454,7 @@ export default function onboarding() {
     vehiclePlate: '',
     vehicleColor: '',
     vehicleBody: 'Седан',
-    docs: new Set(),
+    docs: new Set(prefillDocs),
   };
 
   let step = 0;
