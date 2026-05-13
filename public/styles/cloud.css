@@ -3633,7 +3633,7 @@ body {
   contain: paint;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .bd-map-shell--driver  { --bd-map-route: var(--accent); }
