@@ -1,4 +1,4 @@
-const VERSION    = 'v16';
+const VERSION    = 'v17';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -18,6 +18,8 @@ const PRECACHE = [
   './src/screens/profile.js',
   './src/screens/onboarding.js',
   './src/screens/composer.js',
+  './src/screens/respond.js',
+  './src/screens/chat.js',
   './icons/icon.svg',
   './icons/maskable-192.png',
   './icons/maskable-512.png',

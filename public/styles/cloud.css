@@ -3334,3 +3334,285 @@ body {
 .respond__success .bd-btn {
   width: 100%;
 }
+
+
+/* ═══════════════════════════════════════════════════════════
+   BD-CHAT-01  Chat with driver
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Screen shell ──────────────────────────────────────── */
+.screen--chat {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+/* ── Header ────────────────────────────────────────────── */
+.chat__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--pad);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.chat__back,
+.chat__call {
+  flex-shrink: 0;
+}
+
+.chat__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.chat__driver-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat__driver-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.chat__driver-meta {
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.chat__online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* ── Trip summary bar ──────────────────────────────────── */
+.chat__trip-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px var(--pad);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.chat__trip-left { flex: 1; min-width: 0; }
+
+.chat__trip-route {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.chat__trip-emoji { font-size: 14px; }
+
+.chat__trip-meta {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.chat__trip-price {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── Messages area ─────────────────────────────────────── */
+.chat__messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px var(--pad) 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat__messages::-webkit-scrollbar { display: none; }
+
+.chat__date-sep {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 4px 0 8px;
+  user-select: none;
+}
+
+/* ── Message bubbles ───────────────────────────────────── */
+.chat__msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 78%;
+}
+
+.chat__msg--in  { align-self: flex-start; }
+.chat__msg--out { align-self: flex-end; }
+
+.chat__bubble {
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.chat__msg--in .chat__bubble {
+  background: var(--bg-3);
+  color: var(--text);
+  border-radius: 18px 18px 18px 4px;
+}
+
+.chat__msg--out .chat__bubble {
+  background: var(--accent);
+  color: #1a0a04;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.chat__ts {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 3px;
+  padding: 0 4px;
+}
+
+.chat__msg--in  .chat__ts { align-self: flex-start; }
+.chat__msg--out .chat__ts { align-self: flex-end; }
+
+/* ── Quick replies ─────────────────────────────────────── */
+.chat__quick-replies {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px var(--pad);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
+}
+
+.chat__quick-replies::-webkit-scrollbar { display: none; }
+
+.chat__qr-chip {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  transition: opacity 0.1s;
+}
+
+.chat__qr-chip:active { opacity: 0.6; }
+
+/* ── Composer ──────────────────────────────────────────── */
+.chat__composer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.chat__composer-plus {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat__input-wrap {
+  flex: 1;
+  background: var(--bg-3);
+  border-radius: 22px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+}
+
+.chat__input {
+  display: block;
+  width: 100%;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+}
+
+.chat__input::placeholder { color: var(--text-3); }
+
+.chat__send {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.chat__send--active {
+  background: var(--accent);
+  color: #1a0a04;
+  border-color: transparent;
+}
+
+.chat__send:disabled { cursor: default; }
+
+/* ── Call stub notice ──────────────────────────────────── */
+.chat__notice {
+  position: absolute;
+  bottom: 120px;
+  left: var(--pad);
+  right: var(--pad);
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: center;
+  z-index: 40;
+  pointer-events: none;
+  animation: chat-notice-in 0.2s ease both;
+}
+
+@keyframes chat-notice-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
