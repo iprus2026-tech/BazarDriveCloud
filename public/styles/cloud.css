@@ -3058,6 +3058,7 @@ body {
 ═══════════════════════════════════════════════════════════ */
 
 .screen--respond { overflow: hidden; }
+.screen--respond [hidden] { display: none !important; }
 
 /* ── Topbar ─────────────────────────────────────────────── */
 .respond__topbar {
