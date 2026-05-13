@@ -82,7 +82,7 @@ function checklistItems(u) {
     { label: 'Телефон подтверждён', done: !!u.phone },
     { label: 'Данные автомобиля',   done: !!(u.vehicleMake && u.vehicleModel) },
     { label: 'Госномер',            done: !!u.vehiclePlate },
-    { label: 'Документы и ОСАГО',   done: false },
+    { label: 'Документы и ОСАГО',   done: !!u.documentsReady },
     { label: 'Разрешение такси',    done: false },
   ];
 }
@@ -95,7 +95,10 @@ function canShowReadyStatus(u) {
 // A driver is ready to go online only when basic profile data is complete
 // AND the waybill is open AND the medical check has been passed.
 function isDriverLineReady(u) {
-  return canShowReadyStatus(u) && u.waybillOpen === true && u.medicalCheckPassed === true;
+  return canShowReadyStatus(u)
+    && u.documentsReady === true
+    && u.waybillOpen === true
+    && u.medicalCheckPassed === true;
 }
 
 function getDriverStatusState(u) {
@@ -108,6 +111,7 @@ function getDriverStatusTitle(u) {
 
 function getDriverStatusSubtitle(u) {
   if (!canShowReadyStatus(u)) return 'Заполните телефон, автомобиль и госномер';
+  if (!u.documentsReady) return 'Загрузите документы перед выходом на линию';
   if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
   if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
   if (!u.waybillOpen) return 'Откройте путевой лист перед выходом на линию';
@@ -290,6 +294,7 @@ function driverHeroHtml(u) {
 function statusCardHtml(u) {
   const state   = getDriverStatusState(u);
   const checked = u.driverOnline ? ' checked' : '';
+  const ready   = isDriverLineReady(u);
   return `
     <div class="pf2-status-card" data-state="${state}" id="pf2-status-card">
       <div class="pf2-status-top">
@@ -304,6 +309,9 @@ function statusCardHtml(u) {
         </label>
       </div>
       <button type="button" class="pf2-action-cta" id="pf2-goto-actions">Перейти к действиям</button>
+      <button type="button" class="bd-btn primary pf2-active-shift-cta" id="pf2-active-shift-cta"${ready ? '' : ' disabled'}>
+        На линии — открыть активную смену
+      </button>
     </div>`;
 }
 
@@ -730,16 +738,16 @@ function renderDriver(root, u) {
       <h1 class="pf2-topbar__title">Профиль</h1>
       <button type="button" class="pf2-topbar__gear" id="pf2-gear" aria-label="Настройки">${SVG_GEAR}</button>
     </div>
-    ${tabsHtml('ip')}
+    ${tabsHtml('overview')}
     <div class="bd-scroll">
-      <div class="pf2-pane" id="pf2-pane-overview">
+      <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
         ${driverHeroHtml(u)}
         ${statusCardHtml(u)}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
         ${quickActionsHtml()}
       </div>
-      <div class="pf2-pane pf2-pane--active" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
+      <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
@@ -759,19 +767,71 @@ function renderDriver(root, u) {
     });
   });
 
-  // Overview online toggle — syncs both status cards
+  // Overview online toggle — syncs both status cards.
+  // Guard: do not allow ON unless driver is line-ready.
   const toggleInput = root.querySelector('#pf2-online-toggle');
   toggleInput.addEventListener('change', () => {
     const on = toggleInput.checked;
+    const current = user.get();
+    if (on && !isDriverLineReady(current)) {
+      toggleInput.checked = false;
+      user.set({ driverOnline: false });
+      syncDriverStatusDom(root, current, false);
+      return;
+    }
     user.set({ driverOnline: on });
-    syncDriverStatusDom(root, u, on);
+    syncDriverStatusDom(root, current, on);
   });
 
   root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
     root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
+  // CTA: open active shift / active ride (driver mode).
+  // Enabled only when line-ready.
+  root.querySelector('#pf2-active-shift-cta')?.addEventListener('click', () => {
+    if (!isDriverLineReady(user.get())) return;
+    go('/active-ride?role=driver');
+  });
+
+  // Gear icon: switch to security pane.
+  root.querySelector('#pf2-gear')?.addEventListener('click', () => {
+    root.querySelector('.pf2-tab[data-pane="security"]')?.click();
+  });
+
   root.querySelector('#pf2-edit').addEventListener('click', () => go('/onboarding'));
+
+  // "Скоро здесь" stub for quick-action rows without a dedicated screen yet.
+  function stubActionRow(btn, text) {
+    if (!btn) return;
+    const label = btn.querySelector('.pf2-action-row__label');
+    if (!label || btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const orig = label.textContent;
+    label.textContent = text;
+    setTimeout(() => {
+      label.textContent = orig;
+      delete btn.dataset.busy;
+    }, 1500);
+  }
+
+  // Quick action "Мой автомобиль" → switch to Такси / ИП pane (vehicle / shift area).
+  root.querySelector('#pf2-act-car')?.addEventListener('click', () => {
+    root.querySelector('.pf2-tab[data-pane="ip"]')?.click();
+  });
+
+  // Quick action "Шаблоны договоров" → stub, no dedicated screen yet.
+  const contractsBtn = root.querySelector('#pf2-act-contracts');
+  contractsBtn?.addEventListener('click', () => stubActionRow(contractsBtn, 'Скоро здесь'));
+
+  // Quick action "Уведомления" → toggle notificationsEnabled and show feedback.
+  const notifBtn = root.querySelector('#pf2-act-notif');
+  notifBtn?.addEventListener('click', () => {
+    const current = user.get();
+    const next = !current.notificationsEnabled;
+    user.set({ notificationsEnabled: next });
+    stubActionRow(notifBtn, next ? 'Уведомления включены' : 'Уведомления выключены');
+  });
 
   const logoutBtn = root.querySelector('#pf2-act-logout');
   logoutBtn.addEventListener('click', () => {
@@ -784,13 +844,21 @@ function renderDriver(root, u) {
     }
   });
 
-  // IP pane online toggle — syncs both status cards
+  // IP pane online toggle — syncs both status cards.
+  // Guard: do not allow ON unless driver is line-ready.
   const ipToggle = root.querySelector('#pf2-ip-online-toggle');
   if (ipToggle) {
     ipToggle.addEventListener('change', () => {
       const on = ipToggle.checked;
+      const current = user.get();
+      if (on && !isDriverLineReady(current)) {
+        ipToggle.checked = false;
+        user.set({ driverOnline: false });
+        syncDriverStatusDom(root, current, false);
+        return;
+      }
       user.set({ driverOnline: on });
-      syncDriverStatusDom(root, u, on);
+      syncDriverStatusDom(root, current, on);
     });
   }
 

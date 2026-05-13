@@ -364,8 +364,8 @@ function renderDocs(draft, step, total) {
       <fieldset class="ob-docs-fieldset" id="ob-docs-fieldset">
         <legend class="sr-only">Список документов водителя</legend>
         ${DOCS.map((doc) => `
-          <label class="ob-doc-card" data-id="${doc.id}">
-            <div class="ob-doc-icon">
+          <label class="ob-doc-card${draft.docs.has(doc.id) ? ' ob-doc-card--done' : ''}" data-id="${doc.id}">
+            <div class="ob-doc-icon${draft.docs.has(doc.id) ? ' ob-doc-icon--done' : ''}">
               <span class="ob-doc-icon__upload">${SVG_UPLOAD}</span>
               <span class="ob-doc-icon__check">${SVG_CHECK_SM}</span>
             </div>
@@ -375,8 +375,9 @@ function renderDocs(draft, step, total) {
             </div>
             ${doc.required ? `<span class="ob-req-dot" aria-hidden="true">●</span>` : ''}
             <input type="checkbox" class="ob-doc-check"
+                   data-id="${doc.id}"
                    data-required="${doc.required}"
-                   aria-label="${escapeHtml(doc.label)}">
+                   aria-label="${escapeHtml(doc.label)}"${draft.docs.has(doc.id) ? ' checked' : ''}>
           </label>
         `).join('')}
       </fieldset>
@@ -449,6 +450,7 @@ export default function onboarding() {
     vehiclePlate: '',
     vehicleColor: '',
     vehicleBody: 'Седан',
+    docs: new Set(),
   };
 
   let step = 0;
@@ -491,6 +493,9 @@ export default function onboarding() {
     const displayName = [draft.firstName, draft.lastName].filter(Boolean).join(' ')
       || draft.phone
       || 'Пользователь';
+    const requiredDocIds = DOCS.filter((d) => d.required).map((d) => d.id);
+    const documentsReady = draft.role === 'driver'
+      && requiredDocIds.every((id) => draft.docs.has(id));
     user.set({
       onboarded: true,
       role: draft.role,
@@ -505,6 +510,7 @@ export default function onboarding() {
       vehiclePlate: draft.vehiclePlate,
       vehicleColor: draft.vehicleColor,
       vehicleBody: draft.vehicleBody,
+      documentsReady,
     });
     const pending = consumePendingAction();
     if (pending) {
@@ -694,8 +700,16 @@ export default function onboarding() {
         };
 
         root.querySelectorAll('.ob-doc-check').forEach((cb) => {
-          cb.addEventListener('change', updateDocProgress);
+          cb.addEventListener('change', () => {
+            const id = cb.dataset.id;
+            if (id) {
+              if (cb.checked) draft.docs.add(id);
+              else draft.docs.delete(id);
+            }
+            updateDocProgress();
+          });
         });
+        updateDocProgress();
         if (nextBtn) nextBtn.addEventListener('click', next);
         if (skipBtn) skipBtn.addEventListener('click', next);
         break;

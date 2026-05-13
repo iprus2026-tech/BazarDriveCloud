@@ -5,6 +5,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { user } from '../state.js';
 import {
   getActiveRide,
   updateActiveRideStatus,
@@ -132,9 +133,12 @@ function renderPassengerPlaceholder() {
 
 export default function activeRide() {
   const query = getHashQuery();
-  const role = query.get('role') || 'driver';
+  // When ?role= is absent, derive from current user state.
+  // Only role === 'driver' should render the driver dashboard.
+  const queryRole = query.get('role');
+  const role = queryRole || (user.get().role === 'driver' ? 'driver' : 'passenger');
 
-  if (role === 'passenger') {
+  if (role !== 'driver') {
     return renderPassengerPlaceholder();
   }
 
