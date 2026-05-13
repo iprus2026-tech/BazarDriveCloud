@@ -10,15 +10,17 @@ import onboarding from './screens/onboarding.js';
 import composer   from './screens/composer.js';
 import respond    from './screens/respond.js';
 import chat       from './screens/chat.js';
+import activeRide from './screens/active_ride.js';
 
-register('/welcome',    welcome);
-register('/feed',       feed);
-register('/rules',      rules);
-register('/profile',    profile);
-register('/onboarding', onboarding);
-register('/new',        composer);
-register('/respond',    respond);
-register('/chat',       chat);
+register('/welcome',     welcome);
+register('/feed',        feed);
+register('/rules',       rules);
+register('/profile',     profile);
+register('/onboarding',  onboarding);
+register('/new',         composer);
+register('/respond',     respond);
+register('/chat',        chat);
+register('/active-ride', activeRide);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
