@@ -155,6 +155,12 @@ export function createDemoActiveRide(overrides = {}) {
   return merged;
 }
 
+export function findActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
+  const store = loadActiveRideStore();
+  const existing = store[tripId];
+  return existing && isPlainObject(existing) ? existing : null;
+}
+
 export function getActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
   const store = loadActiveRideStore();
   const existing = store[tripId];
@@ -183,7 +189,7 @@ export function getNextDriverStatus(status) {
 }
 
 export function updateActiveRideStatus(tripId, status, patch = {}) {
-  if (!isValidRideStatus(status)) return getActiveRide(tripId);
+  if (!isValidRideStatus(status)) return findActiveRide(tripId);
   const ride = getActiveRide(tripId);
   const timestampField = STATUS_TIMESTAMP_FIELD[status];
   const timestamps = { ...(ride.timestamps || {}) };
