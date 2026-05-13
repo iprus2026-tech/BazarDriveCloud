@@ -25,6 +25,8 @@ const defaults = {
   waybillOpen: false,
   medicalCheckPassed: false,
   parkMode: 'independent',
+  // v5 — BD-DRIVER-02
+  documentsReady: false,
 };
 
 let cache = null;
