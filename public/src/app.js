@@ -9,6 +9,7 @@ import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';
 import composer   from './screens/composer.js';
 import respond    from './screens/respond.js';
+import chat       from './screens/chat.js';
 
 register('/welcome',    welcome);
 register('/feed',       feed);
@@ -17,6 +18,7 @@ register('/profile',    profile);
 register('/onboarding', onboarding);
 register('/new',        composer);
 register('/respond',    respond);
+register('/chat',       chat);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
