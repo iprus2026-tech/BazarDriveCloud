@@ -243,8 +243,8 @@ export default function respond() {
         <p class="respond__success-body">
           Пассажир увидит ваше предложение и сможет подтвердить поездку.
         </p>
-        <button type="button" class="bd-btn primary" id="respond-success-back">
-          Вернуться в ленту
+        <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-back">
+          Готово
         </button>
       </div>
     </div>
