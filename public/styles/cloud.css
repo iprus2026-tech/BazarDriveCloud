@@ -4402,34 +4402,149 @@ body {
 .active-ride__progress-bar-fill[data-step="9"]  { width: 90%; }
 .active-ride__progress-bar-fill[data-step="10"] { width: 100%; }
 
+.active-ride__completion-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px 14px 14px;
+}
 .active-ride__completion {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 8px 0 4px;
+  text-align: center;
+}
+.active-ride__completion-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.active-ride__completion-route {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.active-ride__earnings-total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0 2px;
   text-align: center;
 }
 .active-ride__completion-price {
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--text);
   line-height: 1.05;
 }
 .active-ride__completion-note {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.active-ride__earnings-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 12px;
+}
+.active-ride__earnings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
   font-size: 14px;
+}
+.active-ride__earnings-row-label {
   color: var(--text-2);
 }
-.active-ride__completion-secondary {
+.active-ride__earnings-row-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.active-ride__earnings-row--net {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+}
+.active-ride__earnings-row--net .active-ride__earnings-row-label {
+  color: var(--text);
+  font-weight: 600;
+}
+.active-ride__earnings-row--net .active-ride__earnings-row-value {
+  color: var(--success);
+  font-weight: 700;
+}
+.active-ride__shift-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.active-ride__shift-summary-title {
   font-size: 12px;
   color: var(--text-3);
-  margin-top: 6px;
-  max-width: 320px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.active-ride__shift-delta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.active-ride__shift-delta--trips {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.active-ride__shift-delta-prev {
+  color: var(--text-2);
+}
+.active-ride__shift-delta-arrow {
+  color: var(--text-3);
+}
+.active-ride__shift-delta-next {
+  color: var(--success);
+  font-weight: 700;
+}
+.active-ride__shift-delta--trips .active-ride__shift-delta-next {
+  color: var(--text);
+  font-weight: 600;
+}
+.active-ride__completion-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
 @media (max-width: 380px) {
   .active-ride__price { font-size: 28px; }
   .active-ride__stat-value { font-size: 14px; }
   .active-ride__completion-price { font-size: 32px; }
+  .active-ride__earnings-row { font-size: 13px; }
+  .active-ride__earnings-row--net { font-size: 14px; }
 }
