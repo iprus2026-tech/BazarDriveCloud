@@ -1,8 +1,10 @@
-// BD-RIDE-D-01 — Driver active ride foundation screen.
-// Mock/foundation only. No Mapbox SDK, no token, no backend, no geolocation,
+// BD-RIDE-D-02 — Driver active ride state transitions
+// (DRIVER_EN_ROUTE → WAITING_PASSENGER → IN_PROGRESS → COMPLETED).
+// Mock/UI only. No Mapbox SDK, no token, no backend, no geolocation,
 // no real calls, no payments, no push, no packages.
 
 import { escapeHtml } from '../util.js';
+import { go } from '../router.js';
 import {
   getActiveRide,
   updateActiveRideStatus,
@@ -26,6 +28,16 @@ const ARROW_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   <polyline points="12 5 19 12 12 19"/>
 </svg>`;
 
+const MESSAGE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/>
+</svg>`;
+
+const PHONE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.56 2.81.69A2 2 0 0 1 22 16.92z"/>
+</svg>`;
+
+const CHAT_STORAGE_KEY = 'bazardrive.chat.v1';
+
 function getHashQuery() {
   const hash = window.location.hash || '';
   const qi = hash.indexOf('?');
@@ -37,13 +49,43 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
   if (statusQuery !== RIDE_STATUS.NEW_ORDER) return ride;
   if (ride.status === RIDE_STATUS.NEW_ORDER) return ride;
-  // Only switch back to NEW_ORDER if no acceptance has happened yet — safe.
   const ts = ride.timestamps || {};
   if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
     return ride;
   }
   const next = { ...ride, status: RIDE_STATUS.NEW_ORDER };
   return saveActiveRide(next);
+}
+
+function pad2(n) { return n < 10 ? `0${n}` : String(n); }
+
+function appendDriverChatMessage(tripId, text) {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    let store = {};
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.chatId && Array.isArray(parsed.messages)) {
+          store = { [parsed.chatId]: parsed.messages };
+        } else {
+          store = parsed;
+        }
+      }
+    }
+    const list = Array.isArray(store[tripId]) ? store[tripId].slice() : [];
+    const now = new Date();
+    list.push({
+      id: Date.now(),
+      dir: 'out',
+      text,
+      time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
+    });
+    store[tripId] = list;
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // storage unavailable — fail soft.
+  }
 }
 
 function renderPassengerPlaceholder() {
@@ -119,8 +161,24 @@ export default function activeRide() {
         <div class="active-ride__stat-label">рейтинг</div>
       </div>
     </div>
+    <div class="active-ride__map-banner" id="ar-map-banner" hidden>
+      <span class="active-ride__map-banner-dot" aria-hidden="true"></span>
+      <span class="active-ride__map-banner-text"></span>
+    </div>
   `;
   root.appendChild(top);
+
+  const mapBanner = top.querySelector('#ar-map-banner');
+  const mapBannerText = mapBanner.querySelector('.active-ride__map-banner-text');
+  function setMapBanner(text) {
+    if (!text) {
+      mapBanner.hidden = true;
+      mapBannerText.textContent = '';
+      return;
+    }
+    mapBannerText.textContent = text;
+    mapBanner.hidden = false;
+  }
 
   // ── Bottom sheet container ────────────────────────────────
   const sheet = document.createElement('div');
@@ -151,10 +209,50 @@ export default function activeRide() {
     showNotice('Безопасность будет добавлена позже');
   });
 
+  // ── Helpers ───────────────────────────────────────────────
+  function passengerRowHtml(passenger) {
+    return `
+      <div class="active-ride__passenger">
+        <div class="active-ride__passenger-main">
+          <div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div>
+          <div class="active-ride__passenger-info">
+            <div class="active-ride__passenger-name">
+              ${escapeHtml(passenger.name || '')}
+              <span class="active-ride__passenger-rating">★ ${escapeHtml(passenger.rating || '')}</span>
+            </div>
+            <div class="active-ride__passenger-meta">
+              ${escapeHtml(passenger.phoneMasked || '')}${passenger.luggage ? ` · ${escapeHtml(passenger.luggage)}` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="active-ride__passenger-actions">
+          <button type="button" class="active-ride__icon-action" id="ar-msg" aria-label="Написать пассажиру">${MESSAGE_SVG}</button>
+          <button type="button" class="active-ride__icon-action" id="ar-call" aria-label="Позвонить пассажиру">${PHONE_SVG}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindPassengerActions() {
+    const msgBtn = sheet.querySelector('#ar-msg');
+    if (msgBtn) {
+      msgBtn.addEventListener('click', () => {
+        go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
+      });
+    }
+    const callBtn = sheet.querySelector('#ar-call');
+    if (callBtn) {
+      callBtn.addEventListener('click', () => {
+        showNotice('Звонок пассажиру пока заглушка');
+      });
+    }
+  }
+
   // ── Sheet renderers ───────────────────────────────────────
   function renderSheet() {
     sheet.replaceChildren();
     sheet.dataset.status = ride.status;
+    setMapBanner('');
 
     if (ride.status === RIDE_STATUS.NEW_ORDER) {
       renderNewOrder();
@@ -162,7 +260,11 @@ export default function activeRide() {
             || ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
       renderEnRoute();
     } else if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
-      renderWaitingStub();
+      renderWaiting();
+    } else if (ride.status === RIDE_STATUS.IN_PROGRESS) {
+      renderInProgress();
+    } else if (ride.status === RIDE_STATUS.COMPLETED) {
+      renderCompleted();
     } else if (ride.status === RIDE_STATUS.CANCELED
             || ride.status === RIDE_STATUS.NO_SHOW) {
       renderCanceledStub();
@@ -239,15 +341,16 @@ export default function activeRide() {
     const passenger = ride.passenger || {};
     sheet.innerHTML = `
       <div class="active-ride__sheet-head">
-        <div class="active-ride__sheet-title">Едете к пассажиру</div>
+        <div class="active-ride__sheet-head-main">
+          <div class="active-ride__sheet-title">Едете к пассажиру</div>
+          <div class="active-ride__sheet-sub">
+            ${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}
+          </div>
+        </div>
         <div class="active-ride__pickup-eta" aria-label="Время до подачи">
           <div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div>
           <div class="active-ride__pickup-eta-label">до подачи</div>
         </div>
-      </div>
-
-      <div class="active-ride__meta active-ride__meta--head">
-        ${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}
       </div>
 
       <div class="active-ride__nav-card">
@@ -256,67 +359,180 @@ export default function activeRide() {
           <div class="active-ride__nav-main">${escapeHtml(ride.route?.currentInstruction || '')}</div>
           <div class="active-ride__nav-sub">${escapeHtml(ride.route?.currentStreet || '')}</div>
         </div>
-        <button type="button" class="active-ride__map-btn" id="ar-map-btn">Навигатор</button>
+        <button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button>
       </div>
 
-      <div class="active-ride__passenger-row">
-        <div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div>
-        <div class="active-ride__passenger-info">
-          <div class="active-ride__passenger-name">
-            ${escapeHtml(passenger.name || '')}
-            <span class="active-ride__passenger-rating">★ ${escapeHtml(passenger.rating || '')}</span>
-          </div>
-          <div class="active-ride__passenger-meta">
-            ${escapeHtml(passenger.phoneMasked || '')} · ${escapeHtml(passenger.luggage || '')}
-          </div>
-        </div>
-      </div>
+      ${passengerRowHtml(passenger)}
 
       <div class="active-ride__actions active-ride__actions--stack">
         <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button>
-        <div class="active-ride__actions-row">
+        <div class="active-ride__secondary-actions">
           <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-write">Написать «подъезжаю»</button>
           <button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button>
         </div>
       </div>
     `;
 
-    sheet.querySelector('#ar-map-btn').addEventListener('click', () => {
-      showNotice('Детальная карта будет доступна после Mapbox integration');
+    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => {
+      showNotice('Навигатор будет доступен после Mapbox integration');
     });
     sheet.querySelector('#ar-arrived').addEventListener('click', () => {
       ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.WAITING_PASSENGER);
       renderSheet();
-      showNotice('Ожидание пассажира будет реализовано следующим PR');
     });
     sheet.querySelector('#ar-write').addEventListener('click', () => {
-      showNotice('Сообщение «подъезжаю» будет реализовано позже');
+      appendDriverChatMessage(ride.tripId, 'Подъезжаю');
+      showNotice('Сообщение «подъезжаю» отправлено');
     });
     sheet.querySelector('#ar-cancel').addEventListener('click', () => {
       showNotice('Отмена поездки будет реализована позже');
     });
+    bindPassengerActions();
   }
 
-  function renderWaitingStub() {
+  function renderWaiting() {
     const passenger = ride.passenger || {};
+    const waiting = ride.waiting || {};
+    const remaining = waiting.remaining || '2:30';
+    const freeLimit = waiting.freeLimit || '3:00';
+    const paidStartsAt = waiting.paidStartsAt || '14:18';
+    const paidRate = waiting.paidRate || '8 ₽ за каждую минуту';
+
+    function toSeconds(mmss) {
+      const m = /^(\d+):(\d+)$/.exec(String(mmss || ''));
+      if (!m) return null;
+      return Number(m[1]) * 60 + Number(m[2]);
+    }
+    const remSec = toSeconds(remaining);
+    const totalSec = toSeconds(freeLimit);
+    let pct = 100;
+    if (remSec != null && totalSec && totalSec > 0) {
+      pct = Math.max(0, Math.min(100, Math.round((remSec / totalSec) * 100)));
+    }
+
+    setMapBanner('Пассажир уведомлён · ждёт у подъезда');
+
     sheet.innerHTML = `
       <div class="active-ride__sheet-head">
-        <div class="active-ride__sheet-title">Ожидание пассажира</div>
-      </div>
-      <div class="active-ride__meta active-ride__meta--head">
-        ${escapeHtml(ride.route?.pickupLabel || '')}
-      </div>
-      <div class="active-ride__passenger-row">
-        <div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div>
-        <div class="active-ride__passenger-info">
-          <div class="active-ride__passenger-name">${escapeHtml(passenger.name || '')}</div>
-          <div class="active-ride__passenger-meta">${escapeHtml(passenger.phoneMasked || '')}</div>
+        <div class="active-ride__sheet-head-main">
+          <div class="active-ride__sheet-title">Ожидание пассажира</div>
+          <div class="active-ride__sheet-sub">
+            Платное ожидание начнётся в ${escapeHtml(paidStartsAt)}
+          </div>
+        </div>
+        <div class="active-ride__waiting-badge" aria-label="Осталось бесплатного ожидания">
+          <div class="active-ride__waiting-badge-value">${escapeHtml(remaining)}</div>
+          <div class="active-ride__waiting-badge-label">осталось</div>
         </div>
       </div>
-      <div class="active-ride__stub">
-        Ожидание пассажира будет реализовано следующим PR
+
+      <div class="active-ride__waiting-card">
+        <div class="active-ride__waiting-card-head">
+          <span class="active-ride__waiting-card-title">Бесплатное ожидание</span>
+          <span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span>
+        </div>
+        <div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+          <div class="active-ride__progress-bar-fill" data-step="${Math.round(pct / 10)}"></div>
+        </div>
+        <div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(paidRate)}</div>
+      </div>
+
+      ${passengerRowHtml(passenger)}
+
+      <div class="active-ride__actions active-ride__actions--stack">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button>
+        <div class="active-ride__secondary-actions">
+          <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button>
+          <button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button>
+        </div>
       </div>
     `;
+
+    sheet.querySelector('#ar-start').addEventListener('click', () => {
+      ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
+      renderSheet();
+    });
+    sheet.querySelector('#ar-call-passenger').addEventListener('click', () => {
+      showNotice('Звонок пассажиру пока заглушка');
+    });
+    sheet.querySelector('#ar-no-show').addEventListener('click', () => {
+      showNotice('Отметка «не приехал» будет реализована позже');
+    });
+    bindPassengerActions();
+  }
+
+  function renderInProgress() {
+    const passenger = ride.passenger || {};
+    const finishPrice = ride.ride?.price || '';
+    sheet.innerHTML = `
+      <div class="active-ride__sheet-head">
+        <div class="active-ride__sheet-head-main">
+          <div class="active-ride__sheet-title">Везёте пассажира</div>
+          <div class="active-ride__sheet-sub">${escapeHtml(ride.route?.dropoffLabel || '')}</div>
+        </div>
+        <div class="active-ride__pickup-eta active-ride__pickup-eta--progress" aria-label="Время до места">
+          <div class="active-ride__pickup-eta-value">${escapeHtml(ride.route?.etaToDestination || '')}</div>
+          <div class="active-ride__pickup-eta-label">до места</div>
+        </div>
+      </div>
+
+      <div class="active-ride__nav-card">
+        <div class="active-ride__nav-icon" aria-hidden="true">${ARROW_SVG}</div>
+        <div class="active-ride__nav-body">
+          <div class="active-ride__nav-main">${escapeHtml(ride.route?.currentInstruction || '')}</div>
+          <div class="active-ride__nav-sub">${escapeHtml(ride.route?.currentStreet || '')}</div>
+        </div>
+        <button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button>
+      </div>
+
+      ${passengerRowHtml(passenger)}
+
+      <div class="active-ride__actions active-ride__actions--stack">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">
+          Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}
+        </button>
+        <div class="active-ride__secondary-actions">
+          <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button>
+          <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button>
+        </div>
+      </div>
+    `;
+
+    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => {
+      showNotice('Навигатор будет доступен после Mapbox integration');
+    });
+    sheet.querySelector('#ar-finish').addEventListener('click', () => {
+      ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.COMPLETED);
+      renderSheet();
+    });
+    sheet.querySelector('#ar-stop').addEventListener('click', () => {
+      showNotice('Добавление остановки будет доступно позже');
+    });
+    sheet.querySelector('#ar-issue').addEventListener('click', () => {
+      showNotice('Раздел помощи будет добавлен позже');
+    });
+    bindPassengerActions();
+  }
+
+  function renderCompleted() {
+    const price = ride.ride?.price || '';
+    sheet.innerHTML = `
+      <div class="active-ride__completion">
+        <div class="active-ride__sheet-title">Поездка завершена</div>
+        <div class="active-ride__completion-price">${escapeHtml(price)}</div>
+        <div class="active-ride__completion-note">Доход добавлен в смену</div>
+        <div class="active-ride__completion-secondary">
+          Подробная статистика поездки будет добавлена в следующем PR.
+        </div>
+      </div>
+      <div class="active-ride__actions active-ride__actions--stack">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button>
+      </div>
+    `;
+
+    sheet.querySelector('#ar-back-feed').addEventListener('click', () => {
+      go('/feed');
+    });
   }
 
   function renderCanceledStub() {
@@ -327,7 +543,13 @@ export default function activeRide() {
       <div class="active-ride__stub">
         Полный flow отмены будет добавлен позже
       </div>
+      <div class="active-ride__actions active-ride__actions--stack">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button>
+      </div>
     `;
+    sheet.querySelector('#ar-back-feed').addEventListener('click', () => {
+      go('/feed');
+    });
   }
 
   function renderGenericStub() {
