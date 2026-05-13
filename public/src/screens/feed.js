@@ -82,10 +82,19 @@ export default async function feed() {
   });
 
   feedList.addEventListener('click', (e) => {
-    const respondBtn = e.target.closest('[data-action="respond"]');
-    if (!respondBtn) return;
-    const postId = respondBtn.dataset.postId;
-    go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+    const actionBtn = e.target.closest('[data-action]');
+    if (!actionBtn) return;
+
+    const postId = actionBtn.dataset.postId;
+
+    if (actionBtn.dataset.action === 'respond') {
+      go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+      return;
+    }
+
+    if (actionBtn.dataset.action === 'chat') {
+      go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
+    }
   });
 
   renderList();
@@ -209,7 +218,7 @@ function renderTripCard(p) {
       <button class="bd-btn primary feed-card-cta" type="button"
               ${p.passenger
                 ? `data-action="respond" data-post-id="${escapeHtml(p.id || '')}" aria-label="Откликнуться на заявку попутчика"`
-                : ''}>
+                : `data-action="chat" data-post-id="${escapeHtml(p.id || '')}" aria-label="Написать водителю"`}>
         ${p.passenger ? 'Откликнуться' : 'Написать водителю'}
       </button>
       ${renderPostActions(p)}
