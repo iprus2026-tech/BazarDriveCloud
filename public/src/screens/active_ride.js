@@ -73,7 +73,8 @@ function appendDriverChatMessage(tripId, text) {
         }
       }
     }
-    const list = Array.isArray(store[tripId]) ? store[tripId].slice() : [];
+    const chatId = `trip-${tripId}`;
+    const list = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
     const now = new Date();
     list.push({
       id: Date.now(),
@@ -81,7 +82,7 @@ function appendDriverChatMessage(tripId, text) {
       text,
       time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
     });
-    store[tripId] = list;
+    store[chatId] = list;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(store));
   } catch {
     // storage unavailable — fail soft.
@@ -381,7 +382,7 @@ export default function activeRide() {
       renderSheet();
     });
     sheet.querySelector('#ar-write').addEventListener('click', () => {
-      appendDriverChatMessage(ride.tripId, 'Подъезжаю');
+      appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи');
       showNotice('Сообщение «подъезжаю» отправлено');
     });
     sheet.querySelector('#ar-cancel').addEventListener('click', () => {
