@@ -38,20 +38,31 @@ function getRouteParam(name) {
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
 }
 
-function loadMessages(chatId) {
+function loadChatStore() {
   try {
     const raw = localStorage.getItem(CHAT_KEY);
-    if (!raw) return null;
+    if (!raw) return {};
     const data = JSON.parse(raw);
-    return data?.chatId === chatId ? data.messages : null;
+    // migrate old storage shape: { chatId, messages }
+    if (data?.chatId && Array.isArray(data.messages)) {
+      return { [data.chatId]: data.messages };
+    }
+    return data && typeof data === 'object' ? data : {};
   } catch {
-    return null;
+    return {};
   }
+}
+
+function loadMessages(chatId) {
+  const store = loadChatStore();
+  return Array.isArray(store[chatId]) ? store[chatId] : null;
 }
 
 function saveMessages(chatId, messages) {
   try {
-    localStorage.setItem(CHAT_KEY, JSON.stringify({ chatId, messages }));
+    const store = loadChatStore();
+    store[chatId] = messages;
+    localStorage.setItem(CHAT_KEY, JSON.stringify(store));
   } catch {}
 }
 
