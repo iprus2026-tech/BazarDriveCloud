@@ -3616,3 +3616,177 @@ body {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* BD-RIDE-F-02 MapShell placeholder ─────────────────────── */
+.bd-map-shell {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: clamp(320px, 56vh, 560px);
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 70% 30%, rgba(255, 107, 53, 0.06), transparent 60%),
+    radial-gradient(100% 70% at 20% 90%, rgba(255, 122, 72, 0.05), transparent 60%),
+    linear-gradient(180deg, #0d0d11 0%, #08080b 100%);
+  color: var(--text-2);
+  isolation: isolate;
+  contain: paint;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
+}
+
+.bd-map-shell--driver  { --bd-map-route: var(--accent); }
+.bd-map-shell--passenger { --bd-map-route: var(--accent-strong); }
+
+.bd-map-shell__grid {
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 56px 56px, 56px 56px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(120% 90% at 50% 40%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 40%, #000 55%, transparent 100%);
+}
+
+.bd-map-shell__road {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(255,255,255,0.045);
+  border-radius: 999px;
+}
+
+.bd-map-shell__road--main {
+  width: 220%;
+  height: 38px;
+  left: -60%;
+  top: 62%;
+  transform: rotate(-18deg);
+}
+
+.bd-map-shell__road--secondary {
+  width: 180%;
+  height: 22px;
+  left: -40%;
+  top: 28%;
+  transform: rotate(14deg);
+  background: rgba(255,255,255,0.03);
+}
+
+.bd-map-shell__route {
+  position: absolute;
+  pointer-events: none;
+  left: 32%;
+  top: 12%;
+  width: 14px;
+  height: 80%;
+  background: linear-gradient(180deg,
+    var(--bd-map-route, var(--accent)) 0%,
+    var(--accent-strong) 45%,
+    var(--bd-map-route, var(--accent)) 100%);
+  border-radius: 999px;
+  transform: rotate(18deg);
+  transform-origin: 50% 100%;
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,0.35),
+    0 0 18px rgba(255, 107, 53, 0.45);
+  filter: saturate(1.1);
+}
+
+.bd-map-shell__marker {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--bg-3);
+  border: 2px solid #0a0a0c;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+}
+
+.bd-map-shell__marker--car {
+  width: 34px;
+  height: 22px;
+  border-radius: 7px;
+  left: 48%;
+  top: 58%;
+  background: linear-gradient(180deg, #6aa7ff 0%, #3a78d8 100%);
+  border: 2px solid #0a0a0c;
+  box-shadow:
+    0 0 0 3px rgba(58, 120, 216, 0.18),
+    0 6px 16px rgba(0,0,0,0.55);
+  transform: translate(-50%, -50%) rotate(18deg);
+}
+
+.bd-map-shell__marker--pickup {
+  width: 18px;
+  height: 18px;
+  left: 36%;
+  top: 78%;
+  background: #ffffff;
+  border-color: #0a0a0c;
+  box-shadow:
+    0 0 0 4px rgba(255,255,255,0.12),
+    0 4px 12px rgba(0,0,0,0.55);
+  transform: translate(-50%, -50%);
+}
+
+.bd-map-shell__marker--dropoff {
+  width: 18px;
+  height: 18px;
+  left: 66%;
+  top: 16%;
+  border-radius: 4px;
+  background: #ffffff;
+  border-color: #0a0a0c;
+  box-shadow:
+    0 0 0 4px rgba(255, 107, 53, 0.18),
+    0 4px 12px rgba(0,0,0,0.55);
+  transform: translate(-50%, -50%);
+}
+
+.bd-map-shell__label {
+  position: absolute;
+  pointer-events: none;
+  max-width: 56%;
+  padding: 6px 10px;
+  background: rgba(10, 10, 12, 0.78);
+  color: var(--text-1, #f1f1f5);
+  font-size: 12px;
+  line-height: 1.25;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bd-map-shell__label--pickup {
+  left: 38%;
+  top: 84%;
+}
+
+.bd-map-shell__label--dropoff {
+  right: 6%;
+  top: 10%;
+}
+
+@media (max-width: 380px) {
+  .bd-map-shell { min-height: 300px; }
+  .bd-map-shell__label { font-size: 11px; max-width: 64%; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bd-map-shell__marker--car {
+    animation: bd-map-shell-car 6s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes bd-map-shell-car {
+  from { transform: translate(-50%, -50%) rotate(18deg) translateY(0); }
+  to   { transform: translate(-50%, -50%) rotate(18deg) translateY(-8px); }
+}

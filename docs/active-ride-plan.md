@@ -398,7 +398,7 @@ public/src/mapbox/map_shell.js
 После D0 ожидается следующий список issues / PR:
 
 - **BD-RIDE-F-01** Active ride contracts and storage — implemented in `public/src/ride_state.js`
-- **BD-RIDE-F-02** MapShell placeholder
+- **BD-RIDE-F-02** MapShell placeholder — implemented in `public/src/mapbox/map_shell.js`
 - **BD-RIDE-D-01** Driver active ride foundation
 - **BD-RIDE-D-02** Driver state transitions
 - **BD-RIDE-D-03** Driver completion sheet
