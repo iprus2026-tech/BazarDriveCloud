@@ -38,6 +38,34 @@ const PHONE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 
 const CHAT_STORAGE_KEY = 'bazardrive.chat.v1';
 
+export function parseMoney(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return 0;
+  const digits = value.replace(/[^\d-]/g, '');
+  if (!digits) return 0;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function formatRub(value) {
+  const n = Math.round(Number(value) || 0);
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n).toString();
+  const withSpaces = abs.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${sign}${withSpaces} ₽`;
+}
+
+export function parsePercent(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1 ? value / 100 : value;
+  }
+  if (typeof value !== 'string') return 0;
+  const cleaned = value.replace(/\s/g, '').replace(',', '.').replace('%', '');
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return 0;
+  return n / 100;
+}
+
 function getHashQuery() {
   const hash = window.location.hash || '';
   const qi = hash.indexOf('?');
@@ -516,23 +544,80 @@ export default function activeRide() {
   }
 
   function renderCompleted() {
-    const price = ride.ride?.price || '';
+    const gross = parseMoney(ride.ride?.price);
+    const commissionRate = parsePercent(ride.order?.commission);
+    const commissionAmount = Math.round(gross * commissionRate);
+    const net = gross - commissionAmount;
+    const previousToday = parseMoney(ride.ride?.todayEarnings);
+    const nextToday = previousToday + net;
+    const previousTrips = Number(ride.ride?.tripsToday || 0);
+    const nextTrips = previousTrips + 1;
+
+    const commissionLabel = ride.order?.commission
+      ? String(ride.order.commission)
+      : `${Math.round(commissionRate * 100)}%`;
+    const dropoffLabel = ride.route?.dropoffLabel || '';
+
     sheet.innerHTML = `
-      <div class="active-ride__completion">
-        <div class="active-ride__sheet-title">Поездка завершена</div>
-        <div class="active-ride__completion-price">${escapeHtml(price)}</div>
-        <div class="active-ride__completion-note">Доход добавлен в смену</div>
-        <div class="active-ride__completion-secondary">
-          Подробная статистика поездки будет добавлена в следующем PR.
+      <div class="active-ride__completion-card">
+        <div class="active-ride__completion">
+          <div class="active-ride__completion-badge" aria-hidden="true">✓</div>
+          <div class="active-ride__sheet-title">Поездка завершена</div>
+          ${dropoffLabel ? `<div class="active-ride__completion-route">${escapeHtml(dropoffLabel)}</div>` : ''}
+        </div>
+
+        <div class="active-ride__earnings-total">
+          <div class="active-ride__completion-price">${escapeHtml(formatRub(gross))}</div>
+          <div class="active-ride__completion-note">стоимость поездки</div>
+        </div>
+
+        <div class="active-ride__earnings-breakdown" role="list">
+          <div class="active-ride__earnings-row" role="listitem">
+            <span class="active-ride__earnings-row-label">Комиссия сервиса</span>
+            <span class="active-ride__earnings-row-value">${escapeHtml(commissionLabel)}</span>
+          </div>
+          <div class="active-ride__earnings-row" role="listitem">
+            <span class="active-ride__earnings-row-label">К удержанию</span>
+            <span class="active-ride__earnings-row-value">${escapeHtml(formatRub(commissionAmount))}</span>
+          </div>
+          <div class="active-ride__earnings-row active-ride__earnings-row--net" role="listitem">
+            <span class="active-ride__earnings-row-label">Ваш доход</span>
+            <span class="active-ride__earnings-row-value">${escapeHtml(formatRub(net))}</span>
+          </div>
+        </div>
+
+        <div class="active-ride__shift-summary">
+          <div class="active-ride__shift-summary-title">Смена сегодня</div>
+          <div class="active-ride__shift-delta">
+            <span class="active-ride__shift-delta-prev">${escapeHtml(formatRub(previousToday))}</span>
+            <span class="active-ride__shift-delta-arrow" aria-hidden="true">→</span>
+            <span class="active-ride__shift-delta-next">${escapeHtml(formatRub(nextToday))}</span>
+          </div>
+          <div class="active-ride__shift-delta active-ride__shift-delta--trips">
+            <span class="active-ride__shift-delta-prev">${escapeHtml(String(previousTrips))} поездок</span>
+            <span class="active-ride__shift-delta-arrow" aria-hidden="true">→</span>
+            <span class="active-ride__shift-delta-next">${escapeHtml(String(nextTrips))} поездок</span>
+          </div>
         </div>
       </div>
-      <div class="active-ride__actions active-ride__actions--stack">
-        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button>
+
+      <div class="active-ride__completion-actions">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-next-order">Следующий заказ</button>
+        <div class="active-ride__secondary-actions">
+          <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-back-feed">Вернуться в ленту</button>
+          <button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat">Открыть чат</button>
+        </div>
       </div>
     `;
 
+    sheet.querySelector('#ar-next-order').addEventListener('click', () => {
+      showNotice('Следующий заказ будет добавлен позже');
+    });
     sheet.querySelector('#ar-back-feed').addEventListener('click', () => {
       go('/feed');
+    });
+    sheet.querySelector('#ar-open-chat').addEventListener('click', () => {
+      go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
     });
   }
 
