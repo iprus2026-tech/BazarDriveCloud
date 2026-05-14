@@ -55,13 +55,28 @@ let cache = null;
 
 // ── Document-derived helpers ────────────────────────────────────────────────
 
-// Count of documents that need user attention (expired + missing + review_required).
+// Hard-blocking attention: documents that prevent the driver from going
+// online. expired / missing / draft block the line; review_required is
+// considered acceptable (see computeDocumentsReady), so it is NOT counted
+// here. Callers that want to surface "ожидает проверки" use
+// documentsReviewCount() for a soft, non-blocking signal.
 export function documentsAttentionCount(docs) {
   if (!docs) return 0;
   let n = 0;
   for (const key of REQUIRED_DOCS) {
     const s = docs[key]?.status;
-    if (s === 'expired' || s === 'missing' || s === 'review_required') n++;
+    if (s === 'expired' || s === 'missing' || s === 'draft') n++;
+  }
+  return n;
+}
+
+// Soft attention: documents whose review_required status keeps documentsReady
+// true. Surfaced as informational, not blocking.
+export function documentsReviewCount(docs) {
+  if (!docs) return 0;
+  let n = 0;
+  for (const key of REQUIRED_DOCS) {
+    if (docs[key]?.status === 'review_required') n++;
   }
   return n;
 }
@@ -136,11 +151,32 @@ function persist() {
   }
 }
 
+// Back-compat shim: legacy callers (e.g. onboarding) flag readiness via
+// user.set({ documentsReady: true }) without touching driverDocuments. Since
+// documentsReady is now derived from driverDocuments, that intent would be
+// silently overwritten by normalize(). When such a patch arrives, lift the
+// required documents into uploaded status so the derived flag stays true.
+function liftRequiredDocsToUploaded(state) {
+  const base = state.driverDocuments || defaultDocuments();
+  const next = { ...base };
+  for (const key of REQUIRED_DOCS) {
+    const prev = next[key];
+    if (!prev || prev.status !== 'uploaded') {
+      next[key] = { ...(prev || {}), status: 'uploaded' };
+    }
+  }
+  return { ...state, driverDocuments: next };
+}
+
 export const user = {
   get() { return { ...load() }; },
   set(patch) {
     load();
-    cache = normalize({ ...cache, ...patch });
+    let merged = { ...cache, ...patch };
+    if (patch && patch.documentsReady === true && !('driverDocuments' in patch)) {
+      merged = liftRequiredDocsToUploaded(merged);
+    }
+    cache = normalize(merged);
     persist();
   },
   reset() {

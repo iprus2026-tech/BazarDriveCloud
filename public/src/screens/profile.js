@@ -1,4 +1,10 @@
-import { user, setDocumentStatus, documentsAttentionCount, REQUIRED_DOCS } from '../state.js';
+import {
+  user,
+  setDocumentStatus,
+  documentsAttentionCount,
+  documentsReviewCount,
+  REQUIRED_DOCS,
+} from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 
@@ -609,15 +615,32 @@ function docCardHtml(key, doc) {
 
 function docsPaneHtml(u) {
   const docs = u.driverDocuments || {};
-  const attention = documentsAttentionCount(docs);
-  const alert = attention > 0 ? `
+  // Blocking docs prevent going online; review-only is soft / informational.
+  // Splitting the two avoids saying "Без них вы не сможете выйти на линию"
+  // when only review_required documents remain — which is actually allowed
+  // by computeDocumentsReady.
+  const blocking = documentsAttentionCount(docs);
+  const review   = documentsReviewCount(docs);
+  let alert = '';
+  if (blocking > 0) {
+    alert = `
     <div class="bd-alert warning pf2-doc-warn" role="alert">
       <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
       <div class="pf2-doc-warn-body">
-        <p class="pf2-doc-warn-title">${attention} ${pluralDoc(attention)} требуют внимания</p>
+        <p class="pf2-doc-warn-title">${blocking} ${pluralDoc(blocking)} требуют внимания</p>
         <p class="pf2-doc-warn-sub">Без них вы не сможете выйти на линию</p>
       </div>
-    </div>` : '';
+    </div>`;
+  } else if (review > 0) {
+    alert = `
+    <div class="bd-alert info pf2-doc-warn pf2-doc-warn--review" role="status">
+      <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
+      <div class="pf2-doc-warn-body">
+        <p class="pf2-doc-warn-title">${review} ${pluralDoc(review)} на проверке</p>
+        <p class="pf2-doc-warn-sub">Можно выходить на линию — проверка не блокирует demo</p>
+      </div>
+    </div>`;
+  }
   const cards = REQUIRED_DOCS
     .map((key) => docCardHtml(key, docs[key] || { status: 'missing' }))
     .join('');

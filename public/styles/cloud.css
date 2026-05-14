@@ -2758,6 +2758,10 @@ body {
   line-height: 1.45;
 }
 
+/* Soft variant: only review_required docs remain → не блокирует выход. */
+.pf2-doc-warn--review .pf2-doc-warn-icon,
+.pf2-doc-warn--review .pf2-doc-warn-title { color: var(--info); }
+
 /* ── Document card ──────────────────────────────────────── */
 .pf2-doc-card {
   background: var(--bg-1);
