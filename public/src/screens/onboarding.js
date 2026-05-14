@@ -526,11 +526,13 @@ export default function onboarding() {
       && requiredDocIds.every((id) => draft.docs.has(id));
 
     // Build a complete driverDocuments patch so state.js doesn't have to
-    // guess the user's intent from a single boolean. Ticking a doc that was
-    // already uploaded / under review / expired preserves the richer status;
-    // ticking a doc that was missing or absent marks it uploaded; un-ticking
-    // marks it missing. This makes the onboarding form authoritative for
-    // exactly the documents it shows, without wiping anything else.
+    // guess the user's intent from a single boolean. Ticking carries over
+    // `uploaded` and `review_required` (the doc already exists in a valid
+    // form). Ticking after `expired` / `missing` / `draft` or with no prior
+    // record marks the doc as freshly uploaded — `expired` deliberately
+    // does NOT carry over, otherwise a fresh driver who ticks every
+    // required checkbox would still get documentsReady=false because the
+    // default seed marks taxiRegistry expired. Un-ticking marks missing.
     const idToKey = DOC_ID_TO_KEY;
     const prevDocs = currentUser.driverDocuments || {};
     const driverDocuments = {};
@@ -540,8 +542,7 @@ export default function onboarding() {
       const prev = prevDocs[key];
       if (checked) {
         const carryOver = prev && (prev.status === 'uploaded'
-          || prev.status === 'review_required'
-          || prev.status === 'expired');
+          || prev.status === 'review_required');
         driverDocuments[key] = carryOver ? prev : { status: 'uploaded' };
       } else {
         driverDocuments[key] = { status: 'missing' };
