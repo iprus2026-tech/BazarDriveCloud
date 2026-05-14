@@ -136,7 +136,7 @@ export default async function feed() {
       const u = user.get();
       if (u.role !== 'driver' || !isDriverLineReady(u)) return;
       const post = posts.find((p) => String(p.id) === String(postId));
-      if (!post) return;
+      if (!post || post.passenger !== true) return;
       const ride = buildRideFromPost(post);
       saveActiveRide(ride);
       go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
@@ -240,7 +240,9 @@ function renderTripCard(p) {
   `;
 
   const u = user.get();
-  const driverCanAccept = u.role === 'driver' && isDriverLineReady(u);
+  const driverCanAccept = u.role === 'driver'
+    && isDriverLineReady(u)
+    && p.passenger === true;
   const postId = escapeHtml(p.id || '');
 
   let ctaAttrs;
