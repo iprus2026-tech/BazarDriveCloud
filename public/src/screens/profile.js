@@ -79,11 +79,11 @@ function roleBadge(role) {
 
 function checklistItems(u) {
   return [
-    { label: 'Телефон подтверждён', done: !!u.phone },
-    { label: 'Данные автомобиля',   done: !!(u.vehicleMake && u.vehicleModel) },
-    { label: 'Госномер',            done: !!u.vehiclePlate },
-    { label: 'Документы и ОСАГО',   done: !!u.documentsReady },
-    { label: 'Разрешение такси',    done: false },
+    { id: 'phone',       label: 'Телефон подтверждён', done: !!u.phone },
+    { id: 'vehicle',     label: 'Данные автомобиля',   done: !!(u.vehicleMake && u.vehicleModel) },
+    { id: 'plate',       label: 'Госномер',            done: !!u.vehiclePlate },
+    { id: 'docs',        label: 'Документы и ОСАГО',   done: !!u.documentsReady },
+    { id: 'taxi-permit', label: 'Разрешение такси',    done: !!u.taxiPermit, action: 'open-permit' },
   ];
 }
 
@@ -335,11 +335,23 @@ function driverStatsHtml() {
 
 function readinessHtml(items) {
   const doneCount = items.filter((it) => it.done).length;
-  const rows = items.map((it) => `
-      <div class="pf2-check-row${it.done ? ' pf2-check-row--done' : ''}">
-        <span class="pf2-check-icon" aria-hidden="true">${it.done ? SVG_CHECK : ''}</span>
-        <span class="pf2-check-label">${escapeHtml(it.label)}</span>
-      </div>`).join('');
+  const rows = items.map((it) => {
+    const baseCls = `pf2-check-row${it.done ? ' pf2-check-row--done' : ''}`;
+    const icon    = `<span class="pf2-check-icon" aria-hidden="true">${it.done ? SVG_CHECK : ''}</span>`;
+    const label   = `<span class="pf2-check-label">${escapeHtml(it.label)}</span>`;
+    if (it.action && !it.done) {
+      const id = it.id === 'taxi-permit' ? ' id="pf2-check-taxi-permit"' : '';
+      return `
+      <button type="button" class="${baseCls} pf2-check-row--action"${id} data-action="${escapeHtml(it.action)}">
+        ${icon}${label}
+        <span class="pf2-check-arrow" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>`;
+    }
+    return `
+      <div class="${baseCls}">
+        ${icon}${label}
+      </div>`;
+  }).join('');
   return `
     <div class="pf2-readiness-card">
       <div class="pf2-readiness-header">
@@ -350,6 +362,52 @@ function readinessHtml(items) {
         <div class="pf2-progress-fill"></div>
       </div>
       <div class="pf2-checklist">${rows}
+      </div>
+    </div>`;
+}
+
+function taxiPermitPanelHtml(u) {
+  const d = u.taxiPermitDraft || {};
+  const num    = escapeHtml(d.number || '');
+  const region = escapeHtml(d.region || '');
+  const issued = escapeHtml(d.issuedAt || '');
+  const expiry = escapeHtml(d.expiresAt || '');
+  return `
+    <div class="pf2-permit-panel" id="pf2-permit-panel" hidden aria-labelledby="pf2-permit-panel-title">
+      <div class="pf2-permit-panel__head">
+        <p class="pf2-permit-panel__title" id="pf2-permit-panel-title">Разрешение такси</p>
+        <button type="button" class="pf2-permit-panel__close" id="pf2-permit-close" aria-label="Закрыть">✕</button>
+      </div>
+      <p class="pf2-permit-panel__hint">Заполните данные разрешения — это пункт готовности к смене.</p>
+      <label class="pf2-permit-field">
+        <span class="pf2-permit-field__label">Номер разрешения</span>
+        <input type="text" class="pf2-permit-input" id="pf2-permit-number" autocomplete="off" inputmode="text" value="${num}">
+      </label>
+      <label class="pf2-permit-field">
+        <span class="pf2-permit-field__label">Регион выдачи</span>
+        <input type="text" class="pf2-permit-input" id="pf2-permit-region" autocomplete="off" value="${region}">
+      </label>
+      <div class="pf2-permit-row2">
+        <label class="pf2-permit-field">
+          <span class="pf2-permit-field__label">Дата выдачи</span>
+          <input type="date" class="pf2-permit-input" id="pf2-permit-issued" value="${issued}">
+        </label>
+        <label class="pf2-permit-field">
+          <span class="pf2-permit-field__label">Действует до</span>
+          <input type="date" class="pf2-permit-input" id="pf2-permit-expiry" value="${expiry}">
+        </label>
+      </div>
+      <div class="pf2-permit-file">
+        <div class="pf2-permit-file__icon" aria-hidden="true">${SVG_DOC_LG}</div>
+        <div class="pf2-permit-file__text">
+          <p class="pf2-permit-file__title">Фото / файл разрешения</p>
+          <p class="pf2-permit-file__sub">Загрузка появится в следующей версии</p>
+        </div>
+      </div>
+      <p class="pf2-permit-status" id="pf2-permit-status" hidden></p>
+      <div class="pf2-permit-actions">
+        <button type="button" class="bd-btn pf2-permit-btn" id="pf2-permit-save-draft">Сохранить черновик</button>
+        <button type="button" class="bd-btn primary pf2-permit-btn" id="pf2-permit-mark-done">Отметить как добавлено для demo</button>
       </div>
     </div>`;
 }
@@ -524,6 +582,13 @@ function ipPaneHtml(u) {
         <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-check-ready">
           ${SVG_CHECK_SM} Проверить готовность
         </button>
+      </div>
+      <div class="bd-alert warning pf2-ip-permit-warn" id="pf2-ip-permit-warn" role="status" hidden>
+        <span class="pf2-ip-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
+        <div class="pf2-ip-warn-text">
+          <p class="pf2-ip-warn-title">Разрешение такси не добавлено</p>
+          <p class="pf2-ip-warn-body">Это пункт готовности к смене. MVP не блокирует выход на линию — но в проде разрешение обязательно.</p>
+        </div>
       </div>
     </div>
 
@@ -745,6 +810,7 @@ function renderDriver(root, u) {
         ${statusCardHtml(u)}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
+        ${taxiPermitPanelHtml(u)}
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
@@ -786,6 +852,71 @@ function renderDriver(root, u) {
   root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
     root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  // ── Taxi permit: open inline panel ──────────────────────────────────────────
+  const permitPanel  = root.querySelector('#pf2-permit-panel');
+  const permitRow    = root.querySelector('#pf2-check-taxi-permit');
+  const permitStatus = root.querySelector('#pf2-permit-status');
+
+  function showPermitStatus(msg) {
+    if (!permitStatus) return;
+    permitStatus.textContent = msg;
+    permitStatus.hidden = false;
+  }
+
+  function openPermitPanel() {
+    if (!permitPanel) return;
+    permitPanel.hidden = false;
+    permitPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    root.querySelector('#pf2-permit-number')?.focus();
+  }
+
+  permitRow?.addEventListener('click', openPermitPanel);
+
+  root.querySelector('#pf2-permit-close')?.addEventListener('click', () => {
+    if (permitPanel) permitPanel.hidden = true;
+  });
+
+  function collectPermitDraft() {
+    return {
+      number:    root.querySelector('#pf2-permit-number')?.value.trim()  || '',
+      region:    root.querySelector('#pf2-permit-region')?.value.trim()  || '',
+      issuedAt:  root.querySelector('#pf2-permit-issued')?.value         || '',
+      expiresAt: root.querySelector('#pf2-permit-expiry')?.value         || '',
+    };
+  }
+
+  root.querySelector('#pf2-permit-save-draft')?.addEventListener('click', () => {
+    user.set({ taxiPermitDraft: collectPermitDraft() });
+    showPermitStatus('Черновик сохранён');
+  });
+
+  root.querySelector('#pf2-permit-mark-done')?.addEventListener('click', () => {
+    user.set({ taxiPermit: true, taxiPermitDraft: collectPermitDraft() });
+    refreshReadinessDom();
+    showPermitStatus('Разрешение отмечено как добавленное (demo)');
+    // Hide IP-pane permit warning if it was shown
+    const warn = root.querySelector('#pf2-ip-permit-warn');
+    if (warn) warn.hidden = true;
+  });
+
+  // Re-render readiness card + checklist row in place, without losing focus
+  // on tab/panels. Keeps the inline permit panel open so the user can see
+  // confirmation, but flips the row to "done" state.
+  function refreshReadinessDom() {
+    const current = user.get();
+    const items   = checklistItems(current);
+    const card    = root.querySelector('.pf2-readiness-card');
+    if (!card) return;
+    // Replace just the inner of the readiness card with fresh markup.
+    const fresh = document.createElement('div');
+    fresh.innerHTML = readinessHtml(items).trim();
+    const newCard = fresh.firstElementChild;
+    if (newCard) card.replaceWith(newCard);
+    // Re-bind the (possibly recreated) taxi-permit row to the same handler.
+    const newRow = root.querySelector('#pf2-check-taxi-permit');
+    newRow?.addEventListener('click', openPermitPanel);
+  }
 
   // CTA: open active shift / active ride (driver mode).
   // Enabled only when line-ready.
@@ -865,6 +996,19 @@ function renderDriver(root, u) {
   root.querySelector('#pf2-ip-goto-actions')?.addEventListener('click', () => {
     root.querySelector('.pf2-ip-warn-alert')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  // Warning-only notice for "open shift" attempts without taxi permit.
+  // Does not block the action — MVP requirement.
+  function maybeShowPermitWarn() {
+    if (user.get().taxiPermit) return;
+    const warn = root.querySelector('#pf2-ip-permit-warn');
+    if (!warn) return;
+    warn.hidden = false;
+    warn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  root.querySelector('#pf2-ip-go-online')?.addEventListener('click', maybeShowPermitWarn);
+  root.querySelector('#pf2-ip-open-shift')?.addEventListener('click', maybeShowPermitWarn);
+  root.querySelector('#pf2-ip-check-ready')?.addEventListener('click', maybeShowPermitWarn);
 
   // ── Payouts tab interactions ──────────────────────────────────────────────
 
