@@ -104,8 +104,14 @@ function syncDerived(state) {
   return state;
 }
 
-// Reconcile loaded state: ensure driverDocuments contains all required keys
-// and migrate legacy users (no driverDocuments yet but taxiPermit was true).
+// Shape normalization only: ensure driverDocuments contains every required
+// key with a valid object, then re-derive taxiPermit and documentsReady.
+// IMPORTANT: legacy migrations (lifting docs based on persisted taxiPermit /
+// documentsReady) are NOT performed here — they are one-shot operations that
+// run in load() against raw localStorage, and in set() against an explicit
+// patch. Running them on every normalize() would revert legitimate
+// downgrades (e.g. setDocumentStatus('taxiRegistry', 'expired')) because
+// the derived flags themselves would still be true from a previous cycle.
 function normalize(state) {
   const base = defaultDocuments();
   const incoming = (state.driverDocuments && typeof state.driverDocuments === 'object')
@@ -119,35 +125,48 @@ function normalize(state) {
     }
   }
   state.driverDocuments = merged;
-  // Legacy migration: a v6 user might have taxiPermit=true and no
-  // taxiRegistry doc state yet. Preserve their progress.
-  if (state.taxiPermit === true && state.driverDocuments.taxiRegistry.status !== 'uploaded') {
-    state.driverDocuments = {
-      ...state.driverDocuments,
-      taxiRegistry: { ...state.driverDocuments.taxiRegistry, status: 'uploaded' },
+  return syncDerived(state);
+}
+
+// One-shot legacy migration applied at load(). Inspects the raw persisted
+// payload (not the merged state) so it only fires for genuinely pre-v7
+// storage that pre-dates driverDocuments. Once migrated and persisted, the
+// payload contains driverDocuments and this function becomes a no-op.
+function migrateLegacy(state, parsed) {
+  if (!parsed || typeof parsed !== 'object') return state;
+  if ('driverDocuments' in parsed) return state;
+  let next = state;
+  if (parsed.taxiPermit === true && next.driverDocuments.taxiRegistry.status !== 'uploaded') {
+    next = {
+      ...next,
+      driverDocuments: {
+        ...next.driverDocuments,
+        taxiRegistry: { ...next.driverDocuments.taxiRegistry, status: 'uploaded' },
+      },
     };
   }
-  // Legacy migration: pre-v7 users persisted documentsReady=true directly
-  // (no driverDocuments). Without this, the derived flag would silently
-  // revoke their readiness after upgrade. Idempotent: once the required
-  // docs are uploaded, computeDocumentsReady returns true and the condition
-  // no longer fires.
-  if (state.documentsReady === true && !computeDocumentsReady(state.driverDocuments)) {
-    state = liftRequiredDocsToUploaded(state);
+  if (parsed.documentsReady === true) {
+    next = liftRequiredDocsToUploaded(next);
   }
-  return syncDerived(state);
+  return next;
 }
 
 function load() {
   if (cache) return cache;
   const defaults = buildDefaults();
+  let parsed = null;
   try {
     const raw = localStorage.getItem(KEY);
-    cache = raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
+    if (raw) parsed = JSON.parse(raw);
   } catch {
-    cache = defaults;
+    parsed = null;
   }
+  cache = parsed ? { ...defaults, ...parsed } : defaults;
+  cache = migrateLegacy(cache, parsed);
   cache = normalize(cache);
+  // Persist migrated payload so the legacy fields don't trigger again on the
+  // next load (and so other tabs / restarts see the upgraded shape).
+  if (parsed && !('driverDocuments' in parsed)) persist();
   return cache;
 }
 
@@ -159,14 +178,9 @@ function persist() {
   }
 }
 
-// Back-compat shim: legacy callers (e.g. onboarding) flag readiness via
-// user.set({ documentsReady: true }) without touching driverDocuments. Since
-// documentsReady is now derived from driverDocuments, that intent would be
-// silently overwritten by normalize(). normalize() itself handles the
-// `true` case so it covers both load() and set(). For the `false` case we
-// reset documents to defaults in set() because syncDerived would otherwise
-// re-derive `true` from previously-lifted doc statuses, breaking the
-// onboarding re-edit downgrade path.
+// Lift every required document into `uploaded` status. Used by
+// migrateLegacy() for pre-v7 storage and by user.set() when a caller
+// explicitly patches documentsReady=true without touching driverDocuments.
 function liftRequiredDocsToUploaded(state) {
   const base = state.driverDocuments || defaultDocuments();
   const next = { ...base };
@@ -184,11 +198,17 @@ export const user = {
   set(patch) {
     load();
     let merged = { ...cache, ...patch };
-    // Explicit legacy downgrade: documentsReady=false from a caller that
-    // does not also send driverDocuments → reset doc statuses to defaults
-    // so the derived flag matches the caller's intent.
-    if (patch && patch.documentsReady === false && !('driverDocuments' in patch)) {
-      merged = { ...merged, driverDocuments: defaultDocuments() };
+    // Explicit legacy shim for documentsReady. Only fires when the caller
+    // (e.g. onboarding finish) sends the flag without also sending
+    // driverDocuments — i.e. they speak v6 semantics. Modern callers that
+    // mutate documents via setDocumentStatus() never hit this path, so doc
+    // downgrades survive the normalize() cycle.
+    if (patch && 'documentsReady' in patch && !('driverDocuments' in patch)) {
+      if (patch.documentsReady === true) {
+        merged = liftRequiredDocsToUploaded(merged);
+      } else if (patch.documentsReady === false) {
+        merged = { ...merged, driverDocuments: defaultDocuments() };
+      }
     }
     cache = normalize(merged);
     persist();
