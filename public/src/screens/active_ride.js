@@ -7,7 +7,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 import {
-  getActiveRide,
+  findActiveRide,
   updateActiveRideStatus,
   saveActiveRide,
   RIDE_STATUS,
@@ -131,6 +131,25 @@ function renderPassengerPlaceholder() {
   return root;
 }
 
+function renderDriverEmpty() {
+  const root = document.createElement('section');
+  root.className = 'screen screen--active-ride';
+  root.innerHTML = `
+    <div class="active-ride__passenger-placeholder" role="status" aria-live="polite">
+      <div class="active-ride__passenger-placeholder-text">
+        Нет активного заказа. Откройте ленту и примите заказ.
+      </div>
+      <div class="active-ride__actions active-ride__actions--stack">
+        <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-empty-feed">Открыть ленту</button>
+      </div>
+    </div>
+  `;
+  root.querySelector('#ar-empty-feed').addEventListener('click', () => {
+    go('/feed');
+  });
+  return root;
+}
+
 export default function activeRide() {
   const query = getHashQuery();
   // When ?role= is absent, derive from current user state.
@@ -145,7 +164,10 @@ export default function activeRide() {
   const tripId = query.get('tripId') || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
 
-  let ride = getActiveRide(tripId);
+  let ride = findActiveRide(tripId);
+  if (!ride) {
+    return renderDriverEmpty();
+  }
   ride = safeApplyStatusFromQuery(ride, statusQuery);
 
   const root = document.createElement('section');

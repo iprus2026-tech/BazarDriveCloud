@@ -1,6 +1,41 @@
 import { listFeedPosts } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { user } from '../state.js';
+import {
+  createDemoActiveRide,
+  saveActiveRide,
+  RIDE_STATUS,
+} from '../ride_state.js';
+
+function isDriverLineReady(u) {
+  return !!(u.phone
+    && u.vehicleMake && u.vehicleModel && u.vehiclePlate
+    && u.documentsReady === true
+    && u.waybillOpen === true
+    && u.medicalCheckPassed === true);
+}
+
+function buildRideFromPost(p) {
+  const tripId = `feed-${p.id || Date.now()}`;
+  const passengerName = p.passenger ? (p.author || 'Пассажир') : 'Пассажир';
+  const overrides = {
+    tripId,
+    status: RIDE_STATUS.NEW_ORDER,
+    passenger: {
+      name: passengerName,
+      initials: initial(passengerName),
+    },
+    order: {
+      offerPrice: p.price || '—',
+    },
+    route: {
+      pickupLabel: p.from || '',
+      dropoffLabel: p.to || '',
+    },
+  };
+  return createDemoActiveRide(overrides);
+}
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -94,6 +129,17 @@ export default async function feed() {
 
     if (actionBtn.dataset.action === 'chat') {
       go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
+      return;
+    }
+
+    if (actionBtn.dataset.action === 'accept-order') {
+      const u = user.get();
+      if (u.role !== 'driver' || !isDriverLineReady(u)) return;
+      const post = posts.find((p) => String(p.id) === String(postId));
+      if (!post) return;
+      const ride = buildRideFromPost(post);
+      saveActiveRide(ride);
+      go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
     }
   });
 
@@ -193,6 +239,23 @@ function renderTripCard(p) {
     </svg>
   `;
 
+  const u = user.get();
+  const driverCanAccept = u.role === 'driver' && isDriverLineReady(u);
+  const postId = escapeHtml(p.id || '');
+
+  let ctaAttrs;
+  let ctaLabel;
+  if (driverCanAccept) {
+    ctaAttrs = `data-action="accept-order" data-post-id="${postId}" aria-label="Принять заказ"`;
+    ctaLabel = 'Принять заказ';
+  } else if (p.passenger) {
+    ctaAttrs = `data-action="respond" data-post-id="${postId}" aria-label="Откликнуться на заявку попутчика"`;
+    ctaLabel = 'Откликнуться';
+  } else {
+    ctaAttrs = `data-action="chat" data-post-id="${postId}" aria-label="Написать водителю"`;
+    ctaLabel = 'Написать водителю';
+  }
+
   return `
     <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}">
       ${renderCardHeader(p)}
@@ -215,11 +278,8 @@ function renderTripCard(p) {
         ${p.price ? `<div class="feed-trip-price">${escapeHtml(p.price)}</div>` : ''}
       </div>
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
-      <button class="bd-btn primary feed-card-cta" type="button"
-              ${p.passenger
-                ? `data-action="respond" data-post-id="${escapeHtml(p.id || '')}" aria-label="Откликнуться на заявку попутчика"`
-                : `data-action="chat" data-post-id="${escapeHtml(p.id || '')}" aria-label="Написать водителю"`}>
-        ${p.passenger ? 'Откликнуться' : 'Написать водителю'}
+      <button class="bd-btn primary feed-card-cta" type="button" ${ctaAttrs}>
+        ${ctaLabel}
       </button>
       ${renderPostActions(p)}
     </article>
