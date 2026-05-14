@@ -4,6 +4,11 @@ const KEY = 'bazardrive.user.v1';
 // Single source of truth for both the Documents tab and readiness checklist.
 export const REQUIRED_DOCS = ['driverLicense', 'taxiOsago', 'taxiRegistry', 'waybill', 'medicalCheck'];
 
+// Allowed statuses for a single document. Used by setDocumentStatus() to
+// reject typos and by normalize() to fall back to defaults if persisted
+// state somehow contains an unknown value.
+export const DOC_STATUSES = ['uploaded', 'review_required', 'expired', 'missing', 'draft'];
+
 // Allowed statuses: uploaded | review_required | expired | missing | draft
 function defaultDocuments() {
   return {
@@ -120,7 +125,8 @@ function normalize(state) {
   const merged = { ...base };
   for (const k of REQUIRED_DOCS) {
     const v = incoming[k];
-    if (v && typeof v === 'object' && typeof v.status === 'string') {
+    if (v && typeof v === 'object' && typeof v.status === 'string'
+        && DOC_STATUSES.includes(v.status)) {
       merged[k] = { ...base[k], ...v };
     }
   }
@@ -220,9 +226,13 @@ export const user = {
 };
 
 // Convenience helper for Profile → Documents tab.
-// Updates a single document's status and re-syncs derived fields.
+// Updates a single document's status and re-syncs derived fields. Unknown
+// keys or statuses outside the supported enum are rejected so callers can't
+// silently corrupt state — typos no longer leave a doc in a status that
+// none of the derived helpers can classify.
 export function setDocumentStatus(key, status) {
   if (!REQUIRED_DOCS.includes(key)) return;
+  if (!DOC_STATUSES.includes(status)) return;
   load();
   const docs = cache.driverDocuments || {};
   const next = { ...docs, [key]: { ...(docs[key] || {}), status } };
