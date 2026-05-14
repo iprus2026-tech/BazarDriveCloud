@@ -124,6 +124,92 @@ function getDriverStatusSubtitle(u) {
   return 'Все требования выполнены';
 }
 
+// ── BD-PROFILE-TAXI-01 readiness state model ─────────────────────────────────
+// Strict 4-state readiness model used by the Taxi / IP pane:
+//   blocked → waybill not open OR medical not passed (hard blockers)
+//   warning → blockers cleared but taxi permit expires soon
+//   ready   → all checks pass, driver not yet on line
+//   online  → ready AND driverOnline = true
+//
+// Mock state quick-reference (for manual testing):
+//   blocked → default state (u.waybillOpen=false, u.medicalCheckPassed=false)
+//   ready   → user.set({ waybillOpen:true, medicalCheckPassed:true })
+//             (also requires documents uploaded — see Documents tab)
+//   online  → ready state + flip the toggle in Taxi/ИП card
+//   warning → ready state + adjust TAXI_PERMIT_EXPIRY_DAYS below to ≤ 60
+
+const TAXI_PERMIT_EXPIRY_DAYS = 47;        // mock: days until permit expiry
+const TAXI_PERMIT_WARNING_THRESHOLD = 60;  // <= N days → warning state
+
+function isPermitExpiringSoon() {
+  return TAXI_PERMIT_EXPIRY_DAYS > 0
+      && TAXI_PERMIT_EXPIRY_DAYS <= TAXI_PERMIT_WARNING_THRESHOLD;
+}
+
+// Structured readiness reasons. Each item has severity = 'blocker' | 'warning'
+// | 'ok' and an optional action id used by the click handler.
+function getTaxiReadinessReasons(u) {
+  return [
+    {
+      id: 'waybill',
+      label: 'Путевой лист',
+      text: u.waybillOpen ? 'Открыт' : 'Не открыт',
+      severity: u.waybillOpen ? 'ok' : 'blocker',
+      action: u.waybillOpen ? null : 'waybill',
+    },
+    {
+      id: 'medical',
+      label: 'Медосмотр',
+      text: u.medicalCheckPassed ? 'Пройден' : 'Не пройден',
+      severity: u.medicalCheckPassed ? 'ok' : 'blocker',
+      action: u.medicalCheckPassed ? null : 'medical',
+    },
+    {
+      id: 'selfemployed',
+      label: 'Самозанятый',
+      text: 'Активен',
+      severity: 'ok',
+      action: null,
+    },
+    {
+      id: 'permit',
+      label: 'Разрешение такси',
+      text: isPermitExpiringSoon()
+        ? `Истекает через ${TAXI_PERMIT_EXPIRY_DAYS} дней`
+        : 'Действует',
+      severity: isPermitExpiringSoon() ? 'warning' : 'ok',
+      action: isPermitExpiringSoon() ? 'permit' : null,
+    },
+  ];
+}
+
+function getTaxiReadinessState(u) {
+  const reasons = getTaxiReadinessReasons(u);
+  if (reasons.some((r) => r.severity === 'blocker')) return 'blocked';
+  if (u.driverOnline) return 'online';
+  if (reasons.some((r) => r.severity === 'warning')) return 'warning';
+  return 'ready';
+}
+
+function getTaxiStatusTitle(state) {
+  if (state === 'blocked') return 'Нужно действие';
+  if (state === 'warning') return 'Готов с оговоркой';
+  if (state === 'online')  return 'На линии';
+  return 'Готов выйти на линию';
+}
+
+function getTaxiStatusSub(u, state) {
+  if (state === 'blocked') {
+    if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
+    if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
+    if (!u.waybillOpen)        return 'Откройте путевой лист перед выходом на линию';
+    return 'Завершите подготовку';
+  }
+  if (state === 'warning') return `Разрешение такси истекает через ${TAXI_PERMIT_EXPIRY_DAYS} дней`;
+  if (state === 'online')  return 'Принимаете заказы';
+  return 'Все обязательные проверки пройдены';
+}
+
 // Syncs both status cards and toggles to the new online value.
 function syncDriverStatusDom(root, u, online) {
   const patched = { ...u, driverOnline: online };
@@ -139,21 +225,22 @@ function syncDriverStatusDom(root, u, online) {
   }
   if (ovTog) ovTog.checked = online;
 
-  const ipCard  = root.querySelector('#pf2-ip-status-card');
-  const ipTitle = root.querySelector('#pf2-ip-scard-title');
-  const ipSub   = root.querySelector('#pf2-ip-scard-sub');
-  const ipTog   = root.querySelector('#pf2-ip-online-toggle');
-  if (ipCard && ipTitle && ipSub) {
-    ipCard.dataset.state = getDriverStatusState(patched);
-    ipTitle.textContent  = getDriverStatusTitle(patched);
-    ipSub.textContent    = getDriverStatusSubtitle(patched);
-  }
-  if (ipTog) ipTog.checked = online;
-
   // Active-shift CTA disabled state tracks isDriverLineReady — so document
   // status changes (which flip documentsReady) also propagate here.
   const cta = root.querySelector('#pf2-active-shift-cta');
   if (cta) cta.disabled = !isDriverLineReady(patched);
+
+  // IP card has its own 4-state readiness model. Re-render the whole pane so
+  // the checklist rows, status card data-state and CTAs stay consistent
+  // (toggle visual, "Выйти на линию" disabled, action CTA visibility).
+  refreshIpPane(root);
+}
+
+// Re-render the Taxi/IP pane in place, preserving the delegated click handler
+// bound to the pane element (see renderDriver below).
+function refreshIpPane(root) {
+  const pane = root.querySelector('#pf2-pane-ip');
+  if (pane) pane.innerHTML = ipPaneHtml(user.get());
 }
 
 // ── Guest view ────────────────────────────────────────────────────────────────
@@ -274,11 +361,13 @@ function tabsHtml(activeId = 'overview') {
     { id: 'payouts',  label: 'Выплаты' },
     { id: 'security', label: 'Безопасность' },
   ];
-  return `<div class="pf2-tabs-row" role="tablist">${
-    TABS.map((t) =>
-      `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${t.id === activeId}">${t.label}</button>`
-    ).join('')
-  }</div>`;
+  return `<div class="pf2-tabs-wrap">
+    <div class="pf2-tabs-row" role="tablist">${
+      TABS.map((t) =>
+        `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${t.id === activeId}">${t.label}</button>`
+      ).join('')
+    }</div>
+  </div>`;
 }
 
 function driverHeroHtml(u) {
@@ -652,38 +741,81 @@ function docsPaneHtml(u) {
     </button>`;
 }
 
-// ── Taxi / IP pane (BD-PROFILE-02) ───────────────────────────────────────────
+// ── Taxi / IP pane (BD-PROFILE-02 + BD-PROFILE-TAXI-01) ──────────────────────
+
+function taxiReadinessListHtml(reasons) {
+  const rows = reasons.map((r) => {
+    const cls = `pf2-ip-check-row pf2-ip-check-row--${r.severity}`;
+    const label = `<span class="pf2-ip-check-label">${escapeHtml(r.label)}</span>`;
+    const text  = `<span class="pf2-ip-check-text">${escapeHtml(r.text)}</span>`;
+    const dot   = `<span class="pf2-ip-check-dot" aria-hidden="true"></span>`;
+    if (r.action) {
+      return `
+      <button type="button" class="${cls} pf2-ip-check-row--action" data-readiness-action="${escapeHtml(r.action)}">
+        ${dot}${label}${text}
+        <span class="pf2-ip-check-chev" aria-hidden="true">${SVG_CHEVRON}</span>
+      </button>`;
+    }
+    return `
+      <div class="${cls}">
+        ${dot}${label}${text}
+      </div>`;
+  }).join('');
+  return `
+    <div class="pf2-ip-checklist">
+      <p class="pf2-ip-checklist-title">Готовность к линии</p>
+      <div class="pf2-ip-checklist-rows">${rows}
+      </div>
+    </div>`;
+}
 
 function ipPaneHtml(u) {
-  const online   = !!u.driverOnline;
-  const showWarn = !u.waybillOpen || !u.medicalCheckPassed;
-  const ipState  = getDriverStatusState(u);
-  const ipTitle  = getDriverStatusTitle(u);
-  const ipSub    = getDriverStatusSubtitle(u);
+  const reasons   = getTaxiReadinessReasons(u);
+  const state     = getTaxiReadinessState(u);
+  const title     = getTaxiStatusTitle(state);
+  const sub       = getTaxiStatusSub(u, state);
+  const isBlocked = state === 'blocked';
+  const isOnline  = state === 'online';
+
+  // Toggle is only visually ON when the driver is actually online (i.e. ready
+  // checks pass AND driverOnline=true). In any other state we render unchecked
+  // so the UI cannot show a stale green ON.
+  const toggleChecked = isOnline ? ' checked' : '';
+  // Mark blocked state via aria-disabled — input stays focusable so a click
+  // can be intercepted and routed to the readiness checklist.
+  const toggleDisabled = isBlocked ? ' aria-disabled="true"' : '';
+
+  // "Выйти на линию" CTA: disabled in blocked, label flips to "Завершить смену"
+  // when online so the action stays meaningful in that state.
+  const goLabel = isBlocked
+    ? 'Недоступно: нужна готовность'
+    : (isOnline ? 'Завершить смену' : 'Выйти на линию');
+  const goDisabled = isBlocked ? ' disabled' : '';
 
   return `
-    <div class="pf2-status-card pf2-ip-scard" data-state="${ipState}" id="pf2-ip-status-card">
+    <div class="pf2-status-card pf2-ip-scard" data-state="${state}" id="pf2-ip-status-card">
       <div class="pf2-ip-scard-top">
         <div class="pf2-ip-scard-lbl-row">
           <span class="pf2-ip-scard-dot" aria-hidden="true"></span>
           <span class="pf2-ip-driver-lbl">СТАТУС ВОДИТЕЛЯ</span>
         </div>
-        <label class="pf2-toggle" aria-label="Статус водителя">
-          <input type="checkbox" id="pf2-ip-online-toggle"${online ? ' checked' : ''}>
+        <label class="pf2-toggle pf2-ip-toggle" aria-label="Статус водителя">
+          <input type="checkbox" id="pf2-ip-online-toggle"${toggleChecked}${toggleDisabled}>
           <span class="pf2-toggle__track"></span>
         </label>
       </div>
       <div class="pf2-ip-scard-body">
-        <p class="pf2-ip-scard-title" id="pf2-ip-scard-title">${ipTitle}</p>
-        <p class="pf2-ip-scard-sub" id="pf2-ip-scard-sub">${ipSub}</p>
+        <p class="pf2-ip-scard-title" id="pf2-ip-scard-title">${escapeHtml(title)}</p>
+        <p class="pf2-ip-scard-sub" id="pf2-ip-scard-sub">${escapeHtml(sub)}</p>
       </div>
-      <button type="button" class="pf2-action-cta" id="pf2-ip-goto-actions">Перейти к действиям</button>
+      ${taxiReadinessListHtml(reasons)}
+      ${isBlocked ? `<button type="button" class="pf2-action-cta pf2-ip-action-cta" id="pf2-ip-goto-actions">Перейти к действиям</button>` : ''}
     </div>
 
     <div class="bd-card pf2-ip-shift-card">
       <p class="pf2-ip-shift-title">Управление сменой</p>
-      <button type="button" class="bd-btn primary pf2-ip-go-btn" id="pf2-ip-go-online">
-        ${SVG_CAR_FRONT} Выйти на линию
+      <button type="button" class="bd-btn primary pf2-ip-go-btn" id="pf2-ip-go-online"${goDisabled}>
+        ${SVG_CAR_FRONT} ${escapeHtml(goLabel)}
       </button>
       <div class="pf2-ip-shift-row">
         <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-open-shift">
@@ -701,15 +833,6 @@ function ipPaneHtml(u) {
         </div>
       </div>
     </div>
-
-    ${showWarn ? `
-    <div class="bd-alert danger pf2-ip-warn-alert" role="alert">
-      <span class="pf2-ip-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
-      <div class="pf2-ip-warn-text">
-        <p class="pf2-ip-warn-title">Не открыт путевой лист</p>
-        <p class="pf2-ip-warn-body">Без путевого листа выход на линию запрещён. Также не пройден медосмотр.</p>
-      </div>
-    </div>` : ''}
 
     <p class="pf2-ip-sect-title">Статус самозанятого</p>
     <div class="bd-card pf2-ip-se-card">
@@ -906,6 +1029,13 @@ function payoutsPaneHtml() {
 }
 
 function renderDriver(root, u) {
+  // Render-time guard: if persisted driverOnline=true but readiness is no
+  // longer satisfied (e.g. docs expired between sessions), demote to offline
+  // before producing any HTML so toggle / status card cannot flash green.
+  if (u.driverOnline && !isDriverLineReady(u)) {
+    user.set({ driverOnline: false });
+    u = user.get();
+  }
   const items = checklistItems(u);
 
   root.innerHTML = `
@@ -1136,40 +1266,114 @@ function renderDriver(root, u) {
     }
   });
 
-  // IP pane online toggle — syncs both status cards.
-  // Guard: do not allow ON unless driver is line-ready.
-  const ipToggle = root.querySelector('#pf2-ip-online-toggle');
-  if (ipToggle) {
-    ipToggle.addEventListener('change', () => {
-      const on = ipToggle.checked;
-      const current = user.get();
-      if (on && !isDriverLineReady(current)) {
-        ipToggle.checked = false;
-        user.set({ driverOnline: false });
-        syncDriverStatusDom(root, current, false);
-        return;
-      }
-      user.set({ driverOnline: on });
-      syncDriverStatusDom(root, current, on);
-    });
+  // IP pane is re-rendered when state changes (see refreshIpPane), so every
+  // interactive control inside #pf2-pane-ip is wired through delegation. This
+  // keeps clicks working after the pane innerHTML is replaced.
+  const ipPane = root.querySelector('#pf2-pane-ip');
+
+  function scrollToChecklist() {
+    ipPane?.querySelector('.pf2-ip-checklist')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  root.querySelector('#pf2-ip-goto-actions')?.addEventListener('click', () => {
-    root.querySelector('.pf2-ip-warn-alert')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  // Warning-only notice for "open shift" attempts without taxi permit.
-  // Does not block the action — MVP requirement.
   function maybeShowPermitWarn() {
     if (user.get().taxiPermit) return;
-    const warn = root.querySelector('#pf2-ip-permit-warn');
+    const warn = ipPane?.querySelector('#pf2-ip-permit-warn');
     if (!warn) return;
     warn.hidden = false;
     warn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-  root.querySelector('#pf2-ip-go-online')?.addEventListener('click', maybeShowPermitWarn);
-  root.querySelector('#pf2-ip-open-shift')?.addEventListener('click', maybeShowPermitWarn);
-  root.querySelector('#pf2-ip-check-ready')?.addEventListener('click', maybeShowPermitWarn);
+
+  // Open the Documents tab and target a specific doc panel (waybill / medical
+  // / taxiRegistry). Used by readiness checklist row actions.
+  function openDocAction(key) {
+    root.querySelector('.pf2-tab[data-pane="docs"]')?.click();
+    const docsPane = root.querySelector('#pf2-pane-docs');
+    const panel = docsPane?.querySelector(`[data-doc-panel="${key}"]`);
+    if (panel) {
+      panel.hidden = false;
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  ipPane?.addEventListener('change', (e) => {
+    const tog = e.target.closest('#pf2-ip-online-toggle');
+    if (!tog) return;
+    const current = user.get();
+    const state = getTaxiReadinessState(current);
+    if (state === 'blocked') {
+      tog.checked = false;
+      if (current.driverOnline) user.set({ driverOnline: false });
+      scrollToChecklist();
+      return;
+    }
+    const on = tog.checked;
+    if (on && !isDriverLineReady(current)) {
+      tog.checked = false;
+      user.set({ driverOnline: false });
+      syncDriverStatusDom(root, current, false);
+      return;
+    }
+    user.set({ driverOnline: on });
+    syncDriverStatusDom(root, current, on);
+  });
+
+  ipPane?.addEventListener('click', (e) => {
+    // Blocked-state toggle: input is aria-disabled, route click to checklist.
+    const togLabel = e.target.closest('.pf2-ip-toggle');
+    if (togLabel && getTaxiReadinessState(user.get()) === 'blocked') {
+      e.preventDefault();
+      scrollToChecklist();
+      return;
+    }
+
+    if (e.target.closest('#pf2-ip-goto-actions')) {
+      scrollToChecklist();
+      return;
+    }
+
+    const readinessBtn = e.target.closest('[data-readiness-action]');
+    if (readinessBtn) {
+      const action = readinessBtn.dataset.readinessAction;
+      if (action === 'waybill') {
+        user.set({ waybillOpen: true });
+        setDocumentStatus('waybill', 'uploaded');
+        syncDriverStatusDom(root, user.get(), user.get().driverOnline);
+        refreshReadinessDom();
+        refreshDocsPane();
+      } else if (action === 'medical') {
+        user.set({ medicalCheckPassed: true });
+        setDocumentStatus('medicalCheck', 'uploaded');
+        syncDriverStatusDom(root, user.get(), user.get().driverOnline);
+        refreshReadinessDom();
+        refreshDocsPane();
+      } else if (action === 'permit') {
+        openDocAction('taxiRegistry');
+      }
+      return;
+    }
+
+    // "Выйти на линию" — blocked button stays disabled, otherwise toggles online.
+    const goBtn = e.target.closest('#pf2-ip-go-online');
+    if (goBtn) {
+      if (goBtn.disabled) return;
+      const current = user.get();
+      const nextOnline = !current.driverOnline;
+      if (nextOnline && !isDriverLineReady(current)) {
+        scrollToChecklist();
+        return;
+      }
+      user.set({ driverOnline: nextOnline });
+      syncDriverStatusDom(root, current, nextOnline);
+      maybeShowPermitWarn();
+      return;
+    }
+
+    if (e.target.closest('#pf2-ip-open-shift') || e.target.closest('#pf2-ip-check-ready')) {
+      maybeShowPermitWarn();
+      return;
+    }
+  });
 
   // ── Payouts tab interactions ──────────────────────────────────────────────
 
