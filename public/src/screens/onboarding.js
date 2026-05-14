@@ -1,4 +1,4 @@
-import { user } from '../state.js';
+import { user, REQUIRED_DOCS } from '../state.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 
@@ -102,8 +102,22 @@ const DOCS = [
   { id: 'permit',  label: 'Разрешение / реестр такси',          required: true  },
   { id: 'waybill', label: 'Путевой лист',                        required: false },
   { id: 'med',     label: 'Медосмотр',                           required: false },
+  // (`tech` is intentionally absent from DOC_ID_TO_KEY — no equivalent in
+  // the canonical driverDocuments model.)
   { id: 'tech',    label: 'Техосмотр / предрейсовый контроль',  required: false },
 ];
+
+// Maps onboarding's checklist ids to canonical driverDocuments keys so
+// finish() can write a complete driverDocuments patch alongside the legacy
+// documentsReady flag. Keys not listed here (e.g. `tech`) have no
+// counterpart in REQUIRED_DOCS and are ignored.
+const DOC_ID_TO_KEY = {
+  dl:      'driverLicense',
+  osago:   'taxiOsago',
+  permit:  'taxiRegistry',
+  waybill: 'waybill',
+  med:     'medicalCheck',
+};
 
 const BODY_TYPES = ['Седан', 'Минивэн', 'Внедорожник', 'Хэтчбек'];
 
@@ -440,8 +454,18 @@ export default function onboarding() {
 
   // Accumulated draft — cleared on finish
   const currentUser = user.get();
-  const prefillDocs = currentUser.role === 'driver' && currentUser.documentsReady === true
-    ? DOCS.filter((d) => d.required).map((d) => d.id)
+  // Pre-fill the docs checklist from the canonical driverDocuments state so
+  // re-edit reflects uploads made via Profile → Documents (not just the
+  // legacy documentsReady flag).
+  const prefillDocs = currentUser.role === 'driver'
+    ? DOCS
+        .filter((d) => {
+          const key = DOC_ID_TO_KEY[d.id];
+          if (!key) return false;
+          const s = currentUser.driverDocuments?.[key]?.status;
+          return s === 'uploaded' || s === 'review_required';
+        })
+        .map((d) => d.id)
     : [];
   const draft = {
     role: currentUser.role ?? null,
@@ -500,6 +524,31 @@ export default function onboarding() {
     const requiredDocIds = DOCS.filter((d) => d.required).map((d) => d.id);
     const documentsReady = draft.role === 'driver'
       && requiredDocIds.every((id) => draft.docs.has(id));
+
+    // Build a complete driverDocuments patch so state.js doesn't have to
+    // guess the user's intent from a single boolean. Ticking carries over
+    // `uploaded` and `review_required` (the doc already exists in a valid
+    // form). Ticking after `expired` / `missing` / `draft` or with no prior
+    // record marks the doc as freshly uploaded — `expired` deliberately
+    // does NOT carry over, otherwise a fresh driver who ticks every
+    // required checkbox would still get documentsReady=false because the
+    // default seed marks taxiRegistry expired. Un-ticking marks missing.
+    const idToKey = DOC_ID_TO_KEY;
+    const prevDocs = currentUser.driverDocuments || {};
+    const driverDocuments = {};
+    for (const key of REQUIRED_DOCS) {
+      const onboardingId = Object.keys(idToKey).find((id) => idToKey[id] === key);
+      const checked = onboardingId ? draft.docs.has(onboardingId) : false;
+      const prev = prevDocs[key];
+      if (checked) {
+        const carryOver = prev && (prev.status === 'uploaded'
+          || prev.status === 'review_required');
+        driverDocuments[key] = carryOver ? prev : { status: 'uploaded' };
+      } else {
+        driverDocuments[key] = { status: 'missing' };
+      }
+    }
+
     user.set({
       onboarded: true,
       role: draft.role,
@@ -515,6 +564,7 @@ export default function onboarding() {
       vehicleColor: draft.vehicleColor,
       vehicleBody: draft.vehicleBody,
       documentsReady,
+      driverDocuments,
     });
     const pending = consumePendingAction();
     if (pending) {

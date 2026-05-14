@@ -1,4 +1,10 @@
-import { user } from '../state.js';
+import {
+  user,
+  setDocumentStatus,
+  documentsAttentionCount,
+  documentsReviewCount,
+  REQUIRED_DOCS,
+} from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 
@@ -143,6 +149,11 @@ function syncDriverStatusDom(root, u, online) {
     ipSub.textContent    = getDriverStatusSubtitle(patched);
   }
   if (ipTog) ipTog.checked = online;
+
+  // Active-shift CTA disabled state tracks isDriverLineReady — so document
+  // status changes (which flip documentsReady) also propagate here.
+  const cta = root.querySelector('#pf2-active-shift-cta');
+  if (cta) cta.disabled = !isDriverLineReady(patched);
 }
 
 // ── Guest view ────────────────────────────────────────────────────────────────
@@ -437,16 +448,18 @@ function placeholderPane(label) {
   return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
 }
 
-// ── Documents pane (BD-PROFILE-02) ───────────────────────────────────────────
+// ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────
+// Documents are rendered from user.get().driverDocuments. taxiPermit and
+// documentsReady are derived in state.js from the same source, so the
+// Overview readiness checklist cannot drift from this tab.
 
-const MOCK_DOCS = [
-  { id: 'license',    iconColor: 'success', title: 'Водительское удостоверение',     sub: '99 12 345678',         status: 'ok',      meta: 'до 2031' },
-  { id: 'osago',      iconColor: 'info',    title: 'ОСАГО для такси',                sub: 'ХХХ 0123456789',        status: 'review',  meta: 'до 14.08.2026' },
-  { id: 'permit',     iconColor: 'danger',  title: 'Разрешение / реестр такси',      sub: '№ 77-456789',           status: 'expired', meta: 'истекло 12.04.2026', action: 'Обновить' },
-  { id: 'waybill',    iconColor: 'warning', title: 'Путевой лист',                   sub: 'Электронный, на смену', status: 'missing', action: 'Загрузить' },
-  { id: 'medical',    iconColor: 'warning', title: 'Медосмотр',                      sub: 'Предрейсовый, 24 ч',    status: 'missing', action: 'Загрузить' },
-  { id: 'inspection', iconColor: 'info',    title: 'Техосмотр / предрейсовый контроль', sub: 'Контроль ТС',        status: 'review',  meta: 'проверка до 18:00' },
-];
+const DOC_META = {
+  driverLicense: { title: 'Водительское удостоверение',     sub: '99 12 345678',          iconColor: 'success' },
+  taxiOsago:     { title: 'ОСАГО для такси',                sub: 'ХХХ 0123456789',        iconColor: 'info'    },
+  taxiRegistry:  { title: 'Разрешение / реестр такси',      sub: '№ 77-456789',           iconColor: 'danger'  },
+  waybill:       { title: 'Путевой лист',                   sub: 'Электронный, на смену', iconColor: 'warning' },
+  medicalCheck:  { title: 'Медосмотр',                      sub: 'Предрейсовый, 24 ч',    iconColor: 'warning' },
+};
 
 // ── Payouts mock data ─────────────────────────────────────────────────────────
 
@@ -500,43 +513,140 @@ function pluralDoc(n) {
 }
 
 function docStatusBadgeHtml(status) {
-  if (status === 'ok')      return `<span class="bd-badge success">${SVG_CHECK_SM} Загружен</span>`;
-  if (status === 'review')  return `<span class="bd-badge info">${SVG_CLOCK_SM} Требует проверки</span>`;
-  if (status === 'expired') return `<span class="bd-badge danger">${SVG_WARN_TRI} Истёк</span>`;
-  if (status === 'missing') return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Не загружен</span>`;
+  if (status === 'uploaded')        return `<span class="bd-badge success">${SVG_CHECK_SM} Загружен</span>`;
+  if (status === 'review_required') return `<span class="bd-badge info">${SVG_CLOCK_SM} Требует проверки</span>`;
+  if (status === 'expired')         return `<span class="bd-badge danger">${SVG_WARN_TRI} Истёк</span>`;
+  if (status === 'missing')         return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Не загружен</span>`;
+  if (status === 'draft')           return `<span class="bd-badge">${SVG_CLOCK_SM} Черновик</span>`;
   return '';
 }
 
-function docCardHtml(doc) {
-  const meta   = doc.meta   ? `<p class="pf2-doc-meta">${escapeHtml(doc.meta)}</p>` : '';
-  const action = doc.action ? `<button type="button" class="bd-btn primary pf2-doc-action">${escapeHtml(doc.action)}</button>` : '';
-  return `
-    <div class="pf2-doc-card">
-      <div class="pf2-doc-header">
-        <div class="pf2-doc-icon pf2-doc-icon--${doc.iconColor}" aria-hidden="true">${SVG_DOC_LG}</div>
-        <div class="pf2-doc-info">
-          <p class="pf2-doc-title">${escapeHtml(doc.title)}</p>
-          <p class="pf2-doc-sub">${escapeHtml(doc.sub)}</p>
-        </div>
-        <div class="pf2-doc-status">${docStatusBadgeHtml(doc.status)}</div>
-      </div>
-      ${meta}${action}
-    </div>`;
+function docMetaText(key, status) {
+  if (key === 'driverLicense' && status === 'uploaded')        return 'до 2031';
+  if (key === 'taxiOsago'     && status === 'review_required') return 'до 14.08.2026';
+  if (key === 'taxiOsago'     && status === 'uploaded')        return 'до 14.08.2026';
+  if (key === 'taxiRegistry'  && status === 'expired')         return 'истекло 12.04.2026';
+  if (key === 'taxiRegistry'  && status === 'uploaded')        return 'разрешение действует';
+  return '';
 }
 
-function docsPaneHtml() {
-  const critical = MOCK_DOCS.filter((d) => d.status === 'expired' || d.status === 'missing').length;
-  const alert = critical > 0 ? `
+function docActionLabel(key, status) {
+  if (status === 'uploaded') return null;
+  if (key === 'taxiRegistry')                          return 'Обновить';
+  if (key === 'waybill' || key === 'medicalCheck')     return 'Загрузить';
+  if (key === 'taxiOsago')                             return 'Подробнее';
+  return null;
+}
+
+function docPanelHtml(key, status) {
+  if (key === 'taxiRegistry' && status !== 'uploaded') {
+    return `
+      <div class="pf2-doc-panel" id="pf2-doc-panel-taxiRegistry" data-doc-panel="taxiRegistry" hidden aria-labelledby="pf2-doc-panel-taxiRegistry-title">
+        <div class="pf2-doc-panel__head">
+          <p class="pf2-doc-panel__title" id="pf2-doc-panel-taxiRegistry-title">Обновить разрешение такси</p>
+          <button type="button" class="pf2-doc-panel__close" data-doc-close="taxiRegistry" aria-label="Закрыть">✕</button>
+        </div>
+        <label class="pf2-doc-field">
+          <span class="pf2-doc-field__label">Номер</span>
+          <input type="text" class="pf2-doc-input" data-doc-input="taxiRegistry-number" autocomplete="off" inputmode="text">
+        </label>
+        <label class="pf2-doc-field">
+          <span class="pf2-doc-field__label">Действует до</span>
+          <input type="date" class="pf2-doc-input" data-doc-input="taxiRegistry-expiry">
+        </label>
+        <p class="pf2-doc-hint">Demo-режим: данные не отправляются на сервер.</p>
+        <button type="button" class="bd-btn primary pf2-doc-panel-cta" data-doc-mark="taxiRegistry">Отметить обновлённым</button>
+      </div>`;
+  }
+  if ((key === 'waybill' || key === 'medicalCheck') && status !== 'uploaded') {
+    const title = key === 'waybill' ? 'Загрузить путевой лист' : 'Загрузить медосмотр';
+    return `
+      <div class="pf2-doc-panel" id="pf2-doc-panel-${escapeHtml(key)}" data-doc-panel="${escapeHtml(key)}" hidden aria-labelledby="pf2-doc-panel-${escapeHtml(key)}-title">
+        <div class="pf2-doc-panel__head">
+          <p class="pf2-doc-panel__title" id="pf2-doc-panel-${escapeHtml(key)}-title">${escapeHtml(title)}</p>
+          <button type="button" class="pf2-doc-panel__close" data-doc-close="${escapeHtml(key)}" aria-label="Закрыть">✕</button>
+        </div>
+        <div class="pf2-doc-upload">
+          <div class="pf2-doc-upload__icon" aria-hidden="true">${SVG_UPLOAD_SM}</div>
+          <div class="pf2-doc-upload__text">
+            <p class="pf2-doc-upload__title">Перетащите файл или нажмите кнопку</p>
+            <p class="pf2-doc-upload__sub">Загрузка файлов появится в следующей версии</p>
+          </div>
+        </div>
+        <button type="button" class="bd-btn primary pf2-doc-panel-cta" data-doc-mark="${escapeHtml(key)}">Отметить загруженным</button>
+      </div>`;
+  }
+  if (key === 'taxiOsago' && status === 'review_required') {
+    return `
+      <div class="pf2-doc-panel pf2-doc-panel--review" id="pf2-doc-panel-taxiOsago" data-doc-panel="taxiOsago" hidden aria-labelledby="pf2-doc-panel-taxiOsago-title">
+        <div class="pf2-doc-panel__head">
+          <p class="pf2-doc-panel__title" id="pf2-doc-panel-taxiOsago-title">ОСАГО для такси — проверка</p>
+          <button type="button" class="pf2-doc-panel__close" data-doc-close="taxiOsago" aria-label="Закрыть">✕</button>
+        </div>
+        <p class="pf2-doc-review">Документ ожидает проверки оператором. Demo-flow не блокирует — после проверки статус обновится автоматически.</p>
+      </div>`;
+  }
+  return '';
+}
+
+function docCardHtml(key, doc) {
+  const meta   = DOC_META[key];
+  const status = doc?.status || 'missing';
+  const metaText = docMetaText(key, status);
+  const action   = docActionLabel(key, status);
+  const metaHtml   = metaText ? `<p class="pf2-doc-meta">${escapeHtml(metaText)}</p>` : '';
+  const actionHtml = action
+    ? `<button type="button" class="bd-btn primary pf2-doc-action" data-doc-action="${escapeHtml(key)}">${escapeHtml(action)}</button>`
+    : '';
+  return `
+    <div class="pf2-doc-card" data-doc-key="${escapeHtml(key)}">
+      <div class="pf2-doc-header">
+        <div class="pf2-doc-icon pf2-doc-icon--${meta.iconColor}" aria-hidden="true">${SVG_DOC_LG}</div>
+        <div class="pf2-doc-info">
+          <p class="pf2-doc-title">${escapeHtml(meta.title)}</p>
+          <p class="pf2-doc-sub">${escapeHtml(meta.sub)}</p>
+        </div>
+        <div class="pf2-doc-status">${docStatusBadgeHtml(status)}</div>
+      </div>
+      ${metaHtml}${actionHtml}
+    </div>
+    ${docPanelHtml(key, status)}`;
+}
+
+function docsPaneHtml(u) {
+  const docs = u.driverDocuments || {};
+  // Blocking docs prevent going online; review-only is soft / informational.
+  // Splitting the two avoids saying "Без них вы не сможете выйти на линию"
+  // when only review_required documents remain — which is actually allowed
+  // by computeDocumentsReady.
+  const blocking = documentsAttentionCount(docs);
+  const review   = documentsReviewCount(docs);
+  let alert = '';
+  if (blocking > 0) {
+    alert = `
     <div class="bd-alert warning pf2-doc-warn" role="alert">
       <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
       <div class="pf2-doc-warn-body">
-        <p class="pf2-doc-warn-title">${critical} ${pluralDoc(critical)} требуют внимания</p>
+        <p class="pf2-doc-warn-title">${blocking} ${pluralDoc(blocking)} требуют внимания</p>
         <p class="pf2-doc-warn-sub">Без них вы не сможете выйти на линию</p>
       </div>
-    </div>` : '';
+    </div>`;
+  } else if (review > 0) {
+    alert = `
+    <div class="bd-alert info pf2-doc-warn pf2-doc-warn--review" role="status">
+      <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
+      <div class="pf2-doc-warn-body">
+        <p class="pf2-doc-warn-title">${review} ${pluralDoc(review)} на проверке</p>
+        <p class="pf2-doc-warn-sub">Можно выходить на линию — проверка не блокирует demo</p>
+      </div>
+    </div>`;
+  }
+  const cards = REQUIRED_DOCS
+    .map((key) => docCardHtml(key, docs[key] || { status: 'missing' }))
+    .join('');
   return `
     ${alert}
-    ${MOCK_DOCS.map(docCardHtml).join('')}
+    ${cards}
     <button type="button" class="pf2-doc-add-btn" id="pf2-doc-add">
       ${SVG_PLUS} Добавить документ
     </button>`;
@@ -814,7 +924,7 @@ function renderDriver(root, u) {
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml()}</div>
+      <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
     </div>`;
@@ -892,12 +1002,63 @@ function renderDriver(root, u) {
   });
 
   root.querySelector('#pf2-permit-mark-done')?.addEventListener('click', () => {
-    user.set({ taxiPermit: true, taxiPermitDraft: collectPermitDraft() });
+    user.set({ taxiPermitDraft: collectPermitDraft() });
+    // taxiPermit and documentsReady are derived from this status — see state.js.
+    setDocumentStatus('taxiRegistry', 'uploaded');
     refreshReadinessDom();
+    refreshDocsPane();
+    const cur = user.get();
+    syncDriverStatusDom(root, cur, cur.driverOnline);
     showPermitStatus('Разрешение отмечено как добавленное (demo)');
     // Hide IP-pane permit warning if it was shown
     const warn = root.querySelector('#pf2-ip-permit-warn');
     if (warn) warn.hidden = true;
+  });
+
+  // Re-render the Documents pane while preserving its delegated click handler
+  // (which lives on the pane element itself, not on inner cards).
+  function refreshDocsPane() {
+    const pane = root.querySelector('#pf2-pane-docs');
+    if (!pane) return;
+    pane.innerHTML = docsPaneHtml(user.get());
+  }
+
+  // Delegated click handler for all documents-pane interactions.
+  // Buttons inside the pane carry data-doc-action / data-doc-close /
+  // data-doc-mark — we route by attribute so refreshing the pane innerHTML
+  // does not require re-binding listeners.
+  const docsPane = root.querySelector('#pf2-pane-docs');
+  docsPane?.addEventListener('click', (e) => {
+    const openBtn = e.target.closest('[data-doc-action]');
+    if (openBtn && docsPane.contains(openBtn)) {
+      const key = openBtn.dataset.docAction;
+      const panel = docsPane.querySelector(`[data-doc-panel="${key}"]`);
+      if (panel) {
+        const willOpen = panel.hidden;
+        panel.hidden = !willOpen;
+        if (willOpen) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      return;
+    }
+    const closeBtn = e.target.closest('[data-doc-close]');
+    if (closeBtn && docsPane.contains(closeBtn)) {
+      const key = closeBtn.dataset.docClose;
+      const panel = docsPane.querySelector(`[data-doc-panel="${key}"]`);
+      if (panel) panel.hidden = true;
+      return;
+    }
+    const markBtn = e.target.closest('[data-doc-mark]');
+    if (markBtn && docsPane.contains(markBtn)) {
+      const key = markBtn.dataset.docMark;
+      setDocumentStatus(key, 'uploaded');
+      refreshDocsPane();
+      refreshReadinessDom();
+      const cur = user.get();
+      syncDriverStatusDom(root, cur, cur.driverOnline);
+      const ipWarn = root.querySelector('#pf2-ip-permit-warn');
+      if (ipWarn && cur.taxiPermit) ipWarn.hidden = true;
+      return;
+    }
   });
 
   // Re-render readiness card + checklist row in place, without losing focus
