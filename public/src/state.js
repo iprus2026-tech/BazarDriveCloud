@@ -127,6 +127,14 @@ function normalize(state) {
       taxiRegistry: { ...state.driverDocuments.taxiRegistry, status: 'uploaded' },
     };
   }
+  // Legacy migration: pre-v7 users persisted documentsReady=true directly
+  // (no driverDocuments). Without this, the derived flag would silently
+  // revoke their readiness after upgrade. Idempotent: once the required
+  // docs are uploaded, computeDocumentsReady returns true and the condition
+  // no longer fires.
+  if (state.documentsReady === true && !computeDocumentsReady(state.driverDocuments)) {
+    state = liftRequiredDocsToUploaded(state);
+  }
   return syncDerived(state);
 }
 
@@ -154,8 +162,11 @@ function persist() {
 // Back-compat shim: legacy callers (e.g. onboarding) flag readiness via
 // user.set({ documentsReady: true }) without touching driverDocuments. Since
 // documentsReady is now derived from driverDocuments, that intent would be
-// silently overwritten by normalize(). When such a patch arrives, lift the
-// required documents into uploaded status so the derived flag stays true.
+// silently overwritten by normalize(). normalize() itself handles the
+// `true` case so it covers both load() and set(). For the `false` case we
+// reset documents to defaults in set() because syncDerived would otherwise
+// re-derive `true` from previously-lifted doc statuses, breaking the
+// onboarding re-edit downgrade path.
 function liftRequiredDocsToUploaded(state) {
   const base = state.driverDocuments || defaultDocuments();
   const next = { ...base };
@@ -173,8 +184,11 @@ export const user = {
   set(patch) {
     load();
     let merged = { ...cache, ...patch };
-    if (patch && patch.documentsReady === true && !('driverDocuments' in patch)) {
-      merged = liftRequiredDocsToUploaded(merged);
+    // Explicit legacy downgrade: documentsReady=false from a caller that
+    // does not also send driverDocuments → reset doc statuses to defaults
+    // so the derived flag matches the caller's intent.
+    if (patch && patch.documentsReady === false && !('driverDocuments' in patch)) {
+      merged = { ...merged, driverDocuments: defaultDocuments() };
     }
     cache = normalize(merged);
     persist();
