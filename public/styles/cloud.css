@@ -2836,6 +2836,123 @@ body {
 }
 .pf2-doc-add-btn:active { opacity: 0.75; }
 
+/* ── Document action button spacing (overrides bd-btn margin) ── */
+.pf2-doc-action { margin-top: 12px; width: 100%; }
+
+/* ── Document inline panels (BD-PROFILE-DOCS-01) ───────────── */
+.pf2-doc-panel {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  margin: -4px 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pf2-doc-panel[hidden] { display: none; }
+.pf2-doc-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pf2-doc-panel__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.3;
+}
+.pf2-doc-panel__close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.pf2-doc-panel__close:active { background: var(--bg-3); }
+.pf2-doc-panel-cta { width: 100%; }
+
+.pf2-doc-field { display: flex; flex-direction: column; gap: 6px; }
+.pf2-doc-field__label {
+  font-size: 12px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.pf2-doc-input {
+  appearance: none;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pf2-doc-input:focus { outline: none; border-color: var(--accent); }
+.pf2-doc-hint { font-size: 12px; color: var(--text-3); margin: 0; line-height: 1.4; }
+
+/* Upload placeholder used by путевой лист and медосмотр panels. */
+.pf2-doc-upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+}
+.pf2-doc-upload__icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.pf2-doc-upload__text { flex: 1; min-width: 0; }
+.pf2-doc-upload__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.3;
+}
+.pf2-doc-upload__sub {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 2px 0 0;
+  line-height: 1.3;
+}
+
+/* Review / info-only variant for ОСАГО (no demo mark action). */
+.pf2-doc-panel--review { background: rgba(96, 165, 250, 0.06); }
+.pf2-doc-review {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Mobile spacing & bottom safe-area for the Documents tab — keeps the
+   "Добавить документ" button and last card above bottom navigation and
+   browser chrome on iOS/Android. */
+#pf2-pane-docs { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); }
+
+@media (max-width: 380px) {
+  .pf2-doc-card { padding: 12px; }
+  .pf2-doc-title { font-size: 14px; }
+  .pf2-doc-sub { font-size: 12px; }
+  .pf2-doc-panel { padding: 12px; }
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROFILE › PAYOUTS TAB (BD-PROFILE-02)
 ═══════════════════════════════════════════════════════════ */
