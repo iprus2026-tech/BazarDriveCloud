@@ -27,6 +27,9 @@ const defaults = {
   parkMode: 'independent',
   // v5 — BD-DRIVER-02
   documentsReady: false,
+  // v6 — BD-PROFILE-READYNESS-01 Taxi permit readiness
+  taxiPermit: false,
+  taxiPermitDraft: null,
 };
 
 let cache = null;
