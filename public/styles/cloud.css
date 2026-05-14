@@ -2729,6 +2729,180 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   BD-PROFILE-TAXI-01 — Readiness states (Taxi/IP pane)
+═══════════════════════════════════════════════════════════ */
+
+/* Tabs wrap: fade indicator on the right hints at horizontal scroll without
+   breaking the touch scroll on the inner row. Keeps the active "Такси / ИП"
+   tab non-jumping by leaving the inner row's overflow untouched. */
+.pf2-tabs-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.pf2-tabs-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 10px;
+  width: 28px;
+  pointer-events: none;
+  background: linear-gradient(to right, rgba(10,10,12,0) 0%, var(--bg-0) 90%);
+}
+
+/* IP status card data-state styles. Mirrors Overview's action/ready but adds
+   strict blocked / warning / online so the toggle, dot, label and bg cannot
+   contradict the readiness verdict. */
+.pf2-status-card[data-state="blocked"] {
+  background: linear-gradient(135deg, rgba(248,113,113,0.12) 0%, var(--bg-2) 60%);
+  border-color: rgba(248,113,113,0.30);
+}
+.pf2-status-card[data-state="warning"] {
+  background: linear-gradient(135deg, rgba(251,191,36,0.10) 0%, var(--bg-2) 60%);
+  border-color: rgba(251,191,36,0.22);
+}
+.pf2-status-card[data-state="online"] {
+  background: linear-gradient(135deg, rgba(74,222,128,0.14) 0%, var(--bg-2) 60%);
+  border-color: rgba(74,222,128,0.28);
+}
+.pf2-status-card[data-state="blocked"] .pf2-action-cta { display: flex; }
+
+/* IP card dot + label colors per state (override the default warning tint). */
+.pf2-ip-scard[data-state="blocked"] .pf2-ip-scard-dot,
+.pf2-ip-scard[data-state="blocked"] .pf2-ip-driver-lbl { color: var(--danger); }
+.pf2-ip-scard[data-state="blocked"] .pf2-ip-scard-dot { background: var(--danger); }
+
+.pf2-ip-scard[data-state="warning"] .pf2-ip-scard-dot,
+.pf2-ip-scard[data-state="warning"] .pf2-ip-driver-lbl { color: var(--warning); }
+.pf2-ip-scard[data-state="warning"] .pf2-ip-scard-dot { background: var(--warning); }
+
+.pf2-ip-scard[data-state="ready"] .pf2-ip-scard-dot,
+.pf2-ip-scard[data-state="ready"] .pf2-ip-driver-lbl,
+.pf2-ip-scard[data-state="online"] .pf2-ip-scard-dot,
+.pf2-ip-scard[data-state="online"] .pf2-ip-driver-lbl { color: var(--success); }
+.pf2-ip-scard[data-state="ready"] .pf2-ip-scard-dot,
+.pf2-ip-scard[data-state="online"] .pf2-ip-scard-dot { background: var(--success); }
+
+/* Online state — pulse the dot so the "on the line" status reads as live. */
+.pf2-ip-scard[data-state="online"] .pf2-ip-scard-dot {
+  box-shadow: 0 0 0 0 rgba(74,222,128,0.6);
+  animation: pf2-ip-pulse 1.6s ease-out infinite;
+}
+@keyframes pf2-ip-pulse {
+  0%   { box-shadow: 0 0 0 0    rgba(74,222,128,0.5); }
+  70%  { box-shadow: 0 0 0 10px rgba(74,222,128,0);   }
+  100% { box-shadow: 0 0 0 0    rgba(74,222,128,0);   }
+}
+
+/* Toggle visual when readiness is blocked: muted + danger ring + no green
+   fill even if a stale ON state slipped through. */
+.pf2-ip-scard[data-state="blocked"] .pf2-toggle__track {
+  background: var(--bg-3);
+  border-color: rgba(248,113,113,0.55);
+  opacity: 0.7;
+}
+.pf2-ip-scard[data-state="blocked"] .pf2-toggle input:checked + .pf2-toggle__track {
+  background: var(--bg-3);
+  border-color: rgba(248,113,113,0.55);
+}
+.pf2-ip-scard[data-state="blocked"] .pf2-toggle input:checked + .pf2-toggle__track::after {
+  transform: none;
+  background: var(--text-3);
+}
+.pf2-ip-scard[data-state="blocked"] .pf2-ip-toggle { cursor: not-allowed; }
+
+/* Action CTA inside the IP card. The Overview variant already has display:flex
+   via pf2-status-card[data-state="action"]; this rule covers the blocked
+   state on the IP card (same pf2-status-card[data-state="blocked"] selector
+   above) and keeps spacing consistent. */
+.pf2-ip-action-cta {
+  margin: 12px 16px 16px;
+  width: calc(100% - 32px);
+}
+
+/* ── Readiness checklist inside IP status card ──────────────────── */
+.pf2-ip-checklist {
+  padding: 4px 16px 14px;
+}
+.pf2-ip-checklist-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 8px 0 8px;
+}
+.pf2-ip-checklist-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf2-ip-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  text-align: left;
+  transition: background 0.1s;
+}
+.pf2-ip-check-row--action { cursor: pointer; }
+.pf2-ip-check-row--action:active { background: var(--bg-3); }
+.pf2-ip-check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-3);
+}
+.pf2-ip-check-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pf2-ip-check-text {
+  font-size: 12px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.pf2-ip-check-chev {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Severity variants — color drives both dot and trailing text. */
+.pf2-ip-check-row--blocker {
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.30);
+}
+.pf2-ip-check-row--blocker .pf2-ip-check-dot { background: var(--danger); }
+.pf2-ip-check-row--blocker .pf2-ip-check-text { color: var(--danger); }
+
+.pf2-ip-check-row--warning {
+  background: rgba(251,191,36,0.08);
+  border-color: rgba(251,191,36,0.28);
+}
+.pf2-ip-check-row--warning .pf2-ip-check-dot { background: var(--warning); }
+.pf2-ip-check-row--warning .pf2-ip-check-text { color: var(--warning); }
+
+.pf2-ip-check-row--ok .pf2-ip-check-dot { background: var(--success); }
+.pf2-ip-check-row--ok .pf2-ip-check-text { color: var(--success); }
+
+/* Bottom padding for IP pane: the "Статус самозанятого" area was hugging the
+   bottom navigation on iOS Safari. Use safe-area + buffer to keep the last
+   card clearly above the tab bar / browser chrome. */
+#pf2-pane-ip {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+/* ═══════════════════════════════════════════════════════════
    BD-PROFILE-02 — Documents pane
 ═══════════════════════════════════════════════════════════ */
 
