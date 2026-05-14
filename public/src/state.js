@@ -204,17 +204,17 @@ export const user = {
   set(patch) {
     load();
     let merged = { ...cache, ...patch };
-    // Explicit legacy shim for documentsReady. Only fires when the caller
-    // (e.g. onboarding finish) sends the flag without also sending
-    // driverDocuments — i.e. they speak v6 semantics. Modern callers that
-    // mutate documents via setDocumentStatus() never hit this path, so doc
-    // downgrades survive the normalize() cycle.
-    if (patch && 'documentsReady' in patch && !('driverDocuments' in patch)) {
-      if (patch.documentsReady === true) {
-        merged = liftRequiredDocsToUploaded(merged);
-      } else if (patch.documentsReady === false) {
-        merged = { ...merged, driverDocuments: defaultDocuments() };
-      }
+    // Explicit legacy shim for documentsReady=true. Only fires when the
+    // caller (e.g. onboarding finish) sends the flag without also sending
+    // driverDocuments — i.e. they speak v6 semantics. We deliberately do
+    // NOT shim the `false` case: wiping driverDocuments would destroy
+    // statuses uploaded via the Documents tab in later sessions (onboarding
+    // re-edit can flip the flag back to false without the user intending
+    // to discard real uploads). Modern callers downgrade per-document via
+    // setDocumentStatus(key, 'expired'|'missing'|...), which survives
+    // normalize() and accurately drives the derived flag.
+    if (patch && patch.documentsReady === true && !('driverDocuments' in patch)) {
+      merged = liftRequiredDocsToUploaded(merged);
     }
     cache = normalize(merged);
     persist();
