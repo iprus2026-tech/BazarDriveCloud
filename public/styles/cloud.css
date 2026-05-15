@@ -4961,3 +4961,507 @@ body {
   .active-ride__earnings-row { font-size: 13px; }
   .active-ride__earnings-row--net { font-size: 14px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   PROFILE V2 — BD-PROFILE-PASSENGER-01 Passenger Dashboard
+═══════════════════════════════════════════════════════════ */
+
+/* ── Topbar ─────────────────────────────────────────────── */
+.pfp-topbar { align-items: center; }
+.pfp-topbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Scroll: extra room above tabbar so footer is reachable */
+.pfp-scroll {
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
+}
+
+/* ── Identity card ──────────────────────────────────────── */
+.pfp-identity-card { padding: 14px; }
+
+.pfp-identity-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pfp-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #34D399 0%, #14B8A6 60%, #0EA5E9 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #062018;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  box-shadow: 0 4px 16px rgba(20, 184, 166, 0.25);
+}
+
+.pfp-identity-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pfp-identity-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.pfp-identity-name__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.pfp-verify-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1a0a04;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pfp-verify-badge svg { width: 11px; height: 11px; }
+
+.pfp-identity-handle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.pfp-meta-badge {
+  align-self: flex-start;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pfp-edit-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.1s, transform 0.08s;
+}
+.pfp-edit-btn:active { transform: scale(0.93); }
+
+/* ── Onboarding / welcome card ──────────────────────────── */
+.pfp-onboard-card {
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(96,165,250,0.10), rgba(96,165,250,0.02)),
+    var(--bg-1);
+  border-color: rgba(96,165,250,0.20);
+}
+
+.pfp-onboard-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  color: var(--info);
+}
+.pfp-onboard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--info);
+}
+
+.pfp-onboard-title {
+  margin: 10px 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.pfp-onboard-text {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.pfp-cta { height: 50px; font-size: 15px; }
+
+/* ── First trip empty card ──────────────────────────────── */
+.pfp-firsttrip-card {
+  padding: 22px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+.pfp-firsttrip-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.pfp-firsttrip-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.pfp-firsttrip-text {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+/* ── Ready status card ──────────────────────────────────── */
+.pfp-status-card {
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(74,222,128,0.10), rgba(74,222,128,0.02)),
+    var(--bg-1);
+  border-color: rgba(74,222,128,0.20);
+}
+.pfp-status-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  color: var(--success);
+}
+.pfp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.pfp-status-title {
+  margin: 10px 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.pfp-status-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* ── Stats grid (3-col, ready state) ────────────────────── */
+.pfp-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pfp-stat {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.pfp-stat__num {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1;
+}
+.pfp-stat__label {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* ── Section titles ─────────────────────────────────────── */
+.pfp-section-title {
+  margin: 14px 2px 8px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* ── Quick actions ──────────────────────────────────────── */
+.pfp-quick-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pfp-quick {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  transition: opacity 0.1s, transform 0.08s;
+}
+.pfp-quick:active { transform: scale(0.97); opacity: 0.85; }
+
+.pfp-quick-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pfp-quick--accent {
+  border-color: rgba(255,107,53,0.30);
+}
+.pfp-quick--accent .pfp-quick-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pfp-quick-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* ── Menu card ──────────────────────────────────────────── */
+.pfp-menu-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pfp-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+}
+.pfp-menu-row:last-child { border-bottom: none; }
+button.pfp-menu-row:active { opacity: 0.7; }
+
+.pfp-menu-row--toggle { cursor: default; }
+.pfp-menu-row--danger .pfp-menu-title { color: var(--danger); }
+
+.pfp-menu-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pfp-menu-icon--danger {
+  background: rgba(248,113,113,0.10);
+  border-color: rgba(248,113,113,0.25);
+  color: var(--danger);
+}
+
+.pfp-menu-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pfp-menu-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pfp-menu-sub {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pfp-menu-chev {
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Safety section ─────────────────────────────────────── */
+.pfp-safety-card { padding: 14px; }
+
+.pfp-safety-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.pfp-safety-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: rgba(74,222,128,0.10);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(74,222,128,0.20);
+  flex-shrink: 0;
+}
+.pfp-safety-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pfp-safety-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pfp-safety-sub {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pfp-safety-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(74,222,128,0.12);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.pfp-safety-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.pfp-safety-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.pfp-safety-tile {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  color: var(--text);
+  transition: opacity 0.1s, transform 0.08s;
+  min-height: 96px;
+}
+.pfp-safety-tile:active { transform: scale(0.97); opacity: 0.85; }
+
+.pfp-safety-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-2);
+}
+.pfp-safety-tile-icon {
+  display: flex;
+  align-items: center;
+}
+.pfp-safety-tile-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.pfp-safety-tile-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.pfp-safety-tile--danger {
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.30);
+}
+.pfp-safety-tile--danger .pfp-safety-tile-head,
+.pfp-safety-tile--danger .pfp-safety-tile-count,
+.pfp-safety-tile--danger .pfp-safety-tile-label {
+  color: var(--danger);
+}
+
+/* ── Support / logout card ──────────────────────────────── */
+.pfp-support-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ── Footer ─────────────────────────────────────────────── */
+.pfp-footer {
+  margin: 14px 0 4px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+@media (max-width: 360px) {
+  .pfp-quick-label { font-size: 10px; }
+  .pfp-stat__num { font-size: 16px; }
+}
