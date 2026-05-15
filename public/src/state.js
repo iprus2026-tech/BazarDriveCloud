@@ -62,6 +62,11 @@ function buildDefaults() {
     trustedContactsCount: 0,
     paymentLast4: null,              // string | null
     promoCount: 0,
+    // v9 — BD-PROFILE-01 phone-verification surface. Default false so the
+    // verify banner + ТРЕБУЕТСЯ ДЕЙСТВИЕ card stay reachable from a fresh
+    // localStorage. Set to true by the mock "Получить код" / "Подтвердить
+    // телефон" handlers (no real SMS provider is wired).
+    phoneVerified: false,
   };
 }
 

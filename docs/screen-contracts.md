@@ -452,6 +452,162 @@ Edit profile flow
 Payments / wallet
 ```
 
+## BD-PROFILE-01 Profile V2 — Passenger
+
+### Identity
+
+```text
+Screen:        BD-PROFILE-01 Profile V2 — Passenger
+Route:         /profile
+File:          public/src/screens/profile.js
+Data source:   localStorage via public/src/state.js
+Design ref:    Cloud Design — Профиль (Пассажир)
+Parent issue:  #19
+Working issue: #84
+Branch:        feature/profile-v2-passenger-audit
+```
+
+### Purpose
+
+Профиль пассажира с верификацией телефона, статистикой, быстрыми
+действиями, меню и центром безопасности. Экран собирает четыре scroll-
+состояния из Cloud Design в один свиток без потери блоков.
+
+### Required states
+
+```text
+Passenger profile  — карточка пользователя, статистика, быстрые действия
+Phone not verified — баннер «Подтвердите номер телефона» + большая
+                     карточка «ТРЕБУЕТСЯ ДЕЙСТВИЕ → Подтвердите телефон»
+Menu section       — История поездок / Сохранённые адреса / Способы
+                     оплаты / Промокоды и бонусы / Уведомления (toggle)
+Safety section     — Центр безопасности, плитки доверенных контактов,
+                     поделиться поездкой, кнопка SOS, помощь, выйти,
+                     футер BazarDrive · v2.4.1
+```
+
+### State contract
+
+Reads from `bazardrive.user.v1` (localStorage):
+
+```text
+profileStatus         'incomplete' | 'ready'
+phoneVerified         boolean   default false   gate for verify banner + TRD card
+phone                 string|null               masked for the banner sub-line
+firstName / lastName  string|null               displayed as "Имя Ф."
+displayName           string|null               fallback when first/last missing
+tripCount             number    default 0       used in identity badge + menu sub
+savedAddressCount     number    default 0       used in menu sub
+trustedContactsCount  number    default 0       used in safety tile count
+promoCount            number    default 0       used in menu sub
+paymentLast4          string|null               drives menu sub
+notificationsEnabled  boolean                   bound to menu toggle
+```
+
+Mock-only constants in `profile.js`:
+
+```text
+MOCK_PROFILE_STATS.savingsRub  6240
+MOCK_PROFILE_STATS.co2Kg       52
+MOCK_PLANNED_TRIP              Дом → Аэропорт Внуково · Завтра · 07:00
+```
+
+### UI structure (top to bottom)
+
+```text
+1.  Topbar         — «Профиль» / «Пассажир» + bell + gear icon buttons
+1b. Verify banner  — only when !phoneVerified
+2.  Identity card  — avatar initials, name, @handle, ★4.92 · N поездок, edit
+2b. TRD action card — only when !phoneVerified
+3.  Onboard card   — only when !ready && phoneVerified
+4.  First-trip CTA — only when !ready && addrs===0 && phoneVerified
+5.  Ready status   — only when ready && phoneVerified
+6.  Stats grid     — Поездок / Сэкономлено / CO₂  (when ready)
+7.  Quick actions  — Куда едем? · Запланировать · Избранные · Промокод
+7b. Trip section   — active / planned / empty (when ready)
+8.  Menu card      — History · Addresses · Payment · Promos · Notifications
+9.  Safety card    — center + 3 tiles (contacts / share / SOS)
+10. Support card   — Помощь и поддержка + Выйти (two-click confirm)
+11. Footer         — BazarDrive · v2.4.1
+```
+
+### Phone-verify behaviour (mock)
+
+```text
+Trigger:  user.phoneVerified === false
+Banner:   warm gradient .pfp-verify-banner, phone icon, masked phone,
+          "Получить код" primary button
+TRD card: .pfp-verify-action-card with yellow eyebrow ТРЕБУЕТСЯ ДЕЙСТВИЕ,
+          22px title, body text, full-width "Подтвердить телефон" CTA
+Action:   both CTAs mock-set user.set({ phoneVerified: true }) and
+          re-render — no real SMS provider, no auth route yet
+Mask:     u.phone is masked to "+7 (XXX) ••• XX-XX"; falls back to
+          "+7 (905) ••• 12-34" when phone is empty (matches Cloud Design)
+```
+
+### CSS additions
+
+```text
+.pfp-verify-banner          warm-yellow gradient card with row layout
+.pfp-verify-banner-icon     square icon chip in --warning soft tint
+.pfp-verify-banner-text     title + sub stack
+.pfp-verify-banner-btn      compact 38px primary CTA
+.pfp-verify-action-card     bigger ТРЕБУЕТСЯ ДЕЙСТВИЕ card
+.pfp-verify-action-eyebrow  uppercase 11px label with warning dot
+.pfp-verify-action-title    22px hero title
+.pfp-verify-action-text     14px secondary description
+.pfp-verify-action-btn      full-width primary CTA
+```
+
+Wraps to a stacked layout at `max-width: 360px` so the banner CTA can
+grow full-width on narrow phones.
+
+### Bottom navigation
+
+```text
+Tabs:           Лента · Правила · Профиль
+Active:         Профиль (driven by router.js syncTabActive on /profile)
+Content shift:  .bd-scroll has bottom padding (shell .has-tabbar) so the
+                footer "BazarDrive · v2.4.1" does not hide under the nav
+```
+
+### Acceptance checklist
+
+- [ ] `/profile` renders passenger view (after onboarding) with topbar
+      «Профиль / Пассажир» and bell + gear icon buttons
+- [ ] When `phoneVerified === false`, the verify banner and TRD card
+      both appear
+- [ ] «Получить код» and «Подтвердить телефон» mock-set
+      `phoneVerified: true` and the verify cards disappear without a
+      page reload
+- [ ] Identity card shows avatar initials, name «Алексей В.», @alex_v,
+      ★4.92 · 38 поездок and edit pencil
+- [ ] Stats grid shows 38 / 6 240 ₽ / 52 кг in ready state
+- [ ] Quick actions: Куда едем? · Запланировать · Избранные · Промокод
+- [ ] Menu shows История поездок (38) · Сохранённые адреса (3) ·
+      Способы оплаты (Не настроено / карта) · Промокоды и бонусы
+      (2 активных) · Уведомления toggle
+- [ ] Safety card has Центр безопасности · Активно + 3 tiles
+      (Доверенные контакты 2, Поделиться поездкой Авто, Кнопка SOS 112)
+- [ ] Footer renders `BazarDrive · v2.4.1`
+- [ ] Bottom navigation highlights «Профиль» on `/profile`
+- [ ] Bottom navigation does not cover the footer / last scroll item
+- [ ] No real SMS provider is wired; verify CTAs are mock-only
+- [ ] No inline `<script>` / `<style>` / `style=""` / `on*=` attributes
+- [ ] No `.style.<property>` assignments in JS
+- [ ] `node scripts/check.mjs` passes
+
+### Out of scope for BD-PROFILE-01 Profile V2 — Passenger
+
+```text
+Real SMS / OTP / auth backend
+Real ride orchestration from quick actions
+Real notifications (push / FCM)
+Real payments / wallet setup
+Mapbox integration (separate screen)
+APK / Android shell packaging
+```
+
 ## BD-PROFILE-02 — Driver Dashboard Profile
 
 ### Identity
