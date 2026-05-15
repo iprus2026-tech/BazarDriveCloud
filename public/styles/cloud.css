@@ -5258,10 +5258,10 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.active-ride-passenger__btn-sec,
-.active-ride-passenger__btn-cancel,
-.active-ride-passenger__btn-sos,
-.active-ride-passenger__btn-share {
+.bd-btn.active-ride-passenger__btn-sec,
+.bd-btn.active-ride-passenger__btn-cancel,
+.bd-btn.active-ride-passenger__btn-sos,
+.bd-btn.active-ride-passenger__btn-share {
   height: 48px;
   background: var(--bg-3);
   color: var(--text);
@@ -5271,12 +5271,12 @@ body {
   justify-content: center;
   gap: 8px;
 }
-.active-ride-passenger__btn-cancel {
+.bd-btn.active-ride-passenger__btn-cancel {
   color: var(--danger);
   background: rgba(239, 68, 68, 0.08);
   border-color: rgba(239, 68, 68, 0.32);
 }
-.active-ride-passenger__btn-sos {
+.bd-btn.active-ride-passenger__btn-sos {
   color: var(--danger);
   background: rgba(239, 68, 68, 0.08);
   border-color: rgba(239, 68, 68, 0.32);

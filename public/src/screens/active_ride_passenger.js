@@ -7,7 +7,6 @@ import { go } from '../router.js';
 import {
   findActiveRide,
   getActiveRide,
-  saveActiveRide,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -60,17 +59,16 @@ const SHARE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 
 const TRIP_NUMBER_FALLBACK = '№48-321';
 
-function ensurePassengerDemoRide(tripId) {
+// View-only: never persists status. The driver flow owns the canonical
+// ride lifecycle; the passenger view derives a display status without
+// touching shared state for DEMO_ACTIVE_RIDE_ID.
+function loadPassengerRideView(tripId) {
   let ride = findActiveRide(tripId);
   if (!ride) {
     ride = getActiveRide(tripId);
   }
-  // Surface the passenger-facing DRIVER_EN_ROUTE state without touching
-  // driver-flow timestamps. We only flip the status when it's still NEW_ORDER,
-  // and never overwrite an in-progress / completed driver ride.
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
-    const next = { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
-    return saveActiveRide(next);
+    return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
   }
   return ride;
 }
@@ -83,8 +81,7 @@ function applyPassengerStatusFromQuery(ride, statusQuery) {
   if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
     return ride;
   }
-  const next = { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
-  return saveActiveRide(next);
+  return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
 }
 
 function formatTripNumber(tripId) {
@@ -134,7 +131,7 @@ export default function activeRidePassenger(options = {}) {
     ? options.showNotice
     : null;
 
-  let ride = ensurePassengerDemoRide(tripId);
+  let ride = loadPassengerRideView(tripId);
   ride = applyPassengerStatusFromQuery(ride, statusQuery);
 
   const root = document.createElement('section');
@@ -199,7 +196,13 @@ export default function activeRidePassenger(options = {}) {
   const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
   const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
   const driverRating = (ride.driver && ride.driver.rating) || '4,92';
-  const unreadCount = Number((ride.chat && ride.chat.unread) || 2);
+  const rawUnread = ride.chat && ride.chat.unread;
+  const unreadCount = Number.isFinite(Number(rawUnread)) && rawUnread != null
+    ? Number(rawUnread)
+    : 2;
+  const chatLabel = unreadCount > 0
+    ? `Написать водителю · ${unreadCount} непрочитанных`
+    : 'Написать водителю';
 
   sheet.innerHTML = `
     <div class="active-ride-passenger__header">
@@ -223,10 +226,10 @@ export default function activeRidePassenger(options = {}) {
         <div class="active-ride-passenger__driver-sub">${escapeHtml(driverSubtitle(ride))}</div>
       </div>
       <div class="active-ride-passenger__driver-actions">
-        <button type="button" class="active-ride-passenger__icon-action" id="arp-chat" aria-label="Написать водителю">
+        <button type="button" class="active-ride-passenger__icon-action" id="arp-chat" aria-label="${escapeHtml(chatLabel)}">
           ${MESSAGE_SVG}
           ${unreadCount > 0
-            ? `<span class="active-ride-passenger__chat-badge" aria-label="${escapeHtml(String(unreadCount))} непрочитанных">${escapeHtml(String(unreadCount))}</span>`
+            ? `<span class="active-ride-passenger__chat-badge" aria-hidden="true">${escapeHtml(String(unreadCount))}</span>`
             : ''}
         </button>
         <button type="button" class="active-ride-passenger__icon-action" id="arp-call" aria-label="Позвонить водителю">
