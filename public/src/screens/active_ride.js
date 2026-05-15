@@ -14,6 +14,7 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import activeRidePassenger from './active_ride_passenger.js';
 
 const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
   <circle cx="12" cy="12" r="3"/>
@@ -118,17 +119,12 @@ function appendDriverChatMessage(tripId, text) {
   }
 }
 
-function renderPassengerPlaceholder() {
-  const root = document.createElement('section');
-  root.className = 'screen screen--active-ride';
-  root.innerHTML = `
-    <div class="active-ride__passenger-placeholder" role="status" aria-live="polite">
-      <div class="active-ride__passenger-placeholder-text">
-        Экран пассажира будет добавлен позже
-      </div>
-    </div>
-  `;
-  return root;
+function renderPassenger() {
+  const query = getHashQuery();
+  return activeRidePassenger({
+    tripId: query.get('tripId') || DEMO_ACTIVE_RIDE_ID,
+    statusQuery: query.get('status'),
+  });
 }
 
 function renderDriverEmpty() {
@@ -158,7 +154,7 @@ export default function activeRide() {
   const role = queryRole || (user.get().role === 'driver' ? 'driver' : 'passenger');
 
   if (role !== 'driver') {
-    return renderPassengerPlaceholder();
+    return renderPassenger();
   }
 
   const tripId = query.get('tripId') || DEMO_ACTIVE_RIDE_ID;
