@@ -361,6 +361,25 @@ function resolveTripsForDemo(activeTrip, plannedTrip) {
   return { active: activeTrip, planned: plannedTrip };
 }
 
+// Mock masked phone string used by the phone-verify banner. Mirrors the
+// Cloud Design reference ("+7 (905) ••• 12-34") when the user has no real
+// phone on file. Accepts the two storage shapes used elsewhere in the app
+// (see onboarding.js#formatPhoneDisplay): 10 digits without the leading
+// country code (the +7 chip is rendered outside the input) or 11 digits
+// with it. Both are normalised to an 11-digit RU form before masking, so
+// the middle three digits get hidden while the country code, area code
+// and last four digits stay visible.
+function maskedPhone(u) {
+  let raw = String(u.phone || '').replace(/\D/g, '');
+  if (raw.length === 10) raw = '7' + raw;
+  if (raw.length !== 11) return '+7 (905) ••• 12-34';
+  const cc   = raw.slice(0, 1);
+  const area = raw.slice(1, 4);
+  const mid  = raw.slice(7, 9);
+  const last = raw.slice(9, 11);
+  return `+${cc} (${area}) ••• ${mid}-${last}`;
+}
+
 function passengerHandle(u) {
   const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
   const first = raw.replace(/[^a-zа-яё0-9]+/gi, '');
@@ -507,14 +526,24 @@ function renderPassenger(root, u) {
   const promos  = Number(u.promoCount) || 0;
   const last4   = u.paymentLast4 ? String(u.paymentLast4) : null;
 
-  const showOnboard = !ready;
-  const showFirstTrip = !ready && addrs === 0;
-  const showStatusCard = ready;
+  const phoneVerified = !!u.phoneVerified;
+  const showPhoneVerify = !phoneVerified;
+  const showOnboard = !ready && phoneVerified;
+  const showFirstTrip = !ready && addrs === 0 && phoneVerified;
+  // The "Готов к поездкам / Телефон подтверждён" card contradicts the
+  // verify state, so suppress it whenever phoneVerified is false — the
+  // ТРЕБУЕТСЯ ДЕЙСТВИЕ card takes its slot in that case.
+  const showStatusCard = ready && phoneVerified;
+  // Stats grid stays visible whenever the user is at the "ready" data
+  // bar (38 поездок etc.) — the verify state is overlaid on top of an
+  // otherwise complete passenger profile (see Cloud Design).
   const showStatsGrid = ready;
 
   const stateBadge = ready
     ? `<span class="pfp-meta-badge">★ 4.92 · ${trips} поездок</span>`
     : `<span class="pfp-meta-badge">Новый пассажир</span>`;
+
+  const phoneMasked = escapeHtml(maskedPhone(u));
 
   root.innerHTML = `
     <div class="bd-topbar pfp-topbar">
@@ -529,6 +558,17 @@ function renderPassenger(root, u) {
     </div>
 
     <div class="bd-scroll pfp-scroll">
+
+      ${showPhoneVerify ? `
+      <!-- 1b. Phone verify banner -->
+      <div class="bd-card pfp-verify-banner" role="status">
+        <span class="pfp-verify-banner-icon" aria-hidden="true">${SVG_PHONE_LG}</span>
+        <span class="pfp-verify-banner-text">
+          <span class="pfp-verify-banner-title">Подтвердите номер телефона</span>
+          <span class="pfp-verify-banner-sub">${phoneMasked} · отправим SMS-код</span>
+        </span>
+        <button type="button" class="bd-btn primary pfp-verify-banner-btn" id="pfp-verify-getcode">Получить код</button>
+      </div>` : ''}
 
       <!-- 2. Identity card -->
       <div class="bd-card pfp-identity-card">
@@ -545,6 +585,18 @@ function renderPassenger(root, u) {
           <button type="button" class="pfp-edit-btn" id="pfp-edit-btn" aria-label="Редактировать профиль">${SVG_PENCIL}</button>
         </div>
       </div>
+
+      ${showPhoneVerify ? `
+      <!-- 2b. Action-required card (phone not verified) -->
+      <div class="bd-card pfp-verify-action-card">
+        <span class="pfp-verify-action-eyebrow">
+          <span class="pfp-verify-action-dot" aria-hidden="true"></span>
+          ТРЕБУЕТСЯ ДЕЙСТВИЕ
+        </span>
+        <p class="pfp-verify-action-title">Подтвердите телефон</p>
+        <p class="pfp-verify-action-text">Без подтверждения вы не сможете заказать поездку</p>
+        <button type="button" class="bd-btn primary pfp-cta pfp-verify-action-btn" id="pfp-verify-confirm">Подтвердить телефон</button>
+      </div>` : ''}
 
       ${showOnboard ? `
       <!-- 3. Onboarding card -->
@@ -753,6 +805,17 @@ function renderPassenger(root, u) {
   root.querySelector('#pfp-notif-cb')?.addEventListener('change', (e) => {
     user.set({ notificationsEnabled: e.target.checked });
   });
+
+  // Phone verification — visual prototype only. No real SMS provider:
+  // both CTAs mark the phone as verified in localStorage and re-render
+  // the screen so the verify banner + ТРЕБУЕТСЯ ДЕЙСТВИЕ card disappear.
+  // A future AuthPhone screen can replace these handlers.
+  const verifyPhoneMock = () => {
+    user.set({ phoneVerified: true });
+    rerender();
+  };
+  root.querySelector('#pfp-verify-getcode')?.addEventListener('click', verifyPhoneMock);
+  root.querySelector('#pfp-verify-confirm')?.addEventListener('click', verifyPhoneMock);
 
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));

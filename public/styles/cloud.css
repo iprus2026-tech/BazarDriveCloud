@@ -5696,7 +5696,95 @@ button.pfp-menu-row:active { opacity: 0.7; }
   color: var(--text-3);
 }
 
+/* ── Phone-verify banner ────────────────────────────────── */
+.pfp-verify-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, rgba(251,191,36,0.10), rgba(251,191,36,0.02)),
+    var(--bg-1);
+  border-color: rgba(251,191,36,0.30);
+}
+.pfp-verify-banner-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: rgba(251,191,36,0.14);
+  color: var(--warning);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pfp-verify-banner-text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pfp-verify-banner-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pfp-verify-banner-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pfp-verify-banner-btn {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* ── Phone-verify action-required card ──────────────────── */
+.pfp-verify-action-card {
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(251,191,36,0.08), rgba(255,107,53,0.04)),
+    var(--bg-1);
+  border-color: rgba(251,191,36,0.22);
+}
+.pfp-verify-action-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  color: var(--warning);
+}
+.pfp-verify-action-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.pfp-verify-action-title {
+  margin: 10px 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.pfp-verify-action-text {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.pfp-verify-action-btn { width: 100%; }
+
 @media (max-width: 360px) {
   .pfp-quick-label { font-size: 10px; }
   .pfp-stat__num { font-size: 16px; }
+  .pfp-verify-banner { flex-wrap: wrap; }
+  .pfp-verify-banner-btn { width: 100%; }
 }
