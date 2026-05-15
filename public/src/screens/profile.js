@@ -268,6 +268,34 @@ const SVG_HEART_FILL = `<svg width="22" height="22" viewBox="0 0 24 24" fill="cu
 
 const SVG_TAG_PROMO = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
 
+const SVG_CHAT_BUBBLE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`;
+
+const SVG_PHONE_LG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
+
+// ── Passenger mock data ───────────────────────────────────────────────────────
+// Stats shown in the ready-state stats grid. Trip count comes from user state.
+const MOCK_PROFILE_STATS = {
+  savingsRub: 6240,
+  co2Kg: 52,
+};
+
+// Active trip card (BD-PROFILE-PASSENGER-ACTIVE-TRIP). Rendered in the ready
+// state below Quick Actions. No backend wired — visual prototype only.
+const MOCK_ACTIVE_TRIP = {
+  state: 'active',
+  etaMin: 4,
+  fromAddress: 'ул. Тверская, 12',
+  toAddress: 'Аэропорт Внуково',
+  driver: {
+    initials: 'РК',
+    name: 'Рустам К.',
+    vehicleMake: 'Hyundai',
+    vehicleModel: 'Solaris',
+    vehicleColor: 'белый',
+    plate: 'A 482 MP 77',
+  },
+};
+
 function passengerHandle(u) {
   const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
   const first = raw.replace(/[^a-zа-яё0-9]+/gi, '');
@@ -287,6 +315,60 @@ function passengerDisplayName(u) {
 
 function isPassengerReady(u) {
   return u.profileStatus === 'ready';
+}
+
+function currentTripHtml(trip) {
+  if (!trip || trip.state !== 'active') return '';
+  const drv  = trip.driver || {};
+  const ini  = escapeHtml(drv.initials || '?');
+  const name = escapeHtml(drv.name || 'Водитель');
+  const car  = [
+    drv.vehicleMake && drv.vehicleModel ? `${drv.vehicleMake} ${drv.vehicleModel}` : null,
+    drv.vehicleColor || null,
+    drv.plate || null,
+  ].filter(Boolean).map(escapeHtml).join(' · ');
+  const from = escapeHtml(trip.fromAddress || '');
+  const to   = escapeHtml(trip.toAddress || '');
+  const eta  = Number.isFinite(trip.etaMin) ? `${trip.etaMin} мин` : '';
+  return `
+      <!-- 7b. Current trip -->
+      <p class="pfp-section-title">Текущая поездка</p>
+      <div class="bd-card pfp-trip-card">
+        <div class="pfp-trip-head">
+          <span class="pfp-trip-badge">
+            <span class="pfp-trip-badge-dot" aria-hidden="true"></span>
+            Активная поездка
+          </span>
+          ${eta ? `<span class="pfp-trip-eta">ETA ${escapeHtml(eta)}</span>` : ''}
+        </div>
+        <div class="pfp-trip-route">
+          <div class="pfp-trip-rail" aria-hidden="true">
+            <span class="pfp-trip-rail-from"></span>
+            <span class="pfp-trip-rail-line"></span>
+            <span class="pfp-trip-rail-to"></span>
+          </div>
+          <div class="pfp-trip-points">
+            <div class="pfp-trip-point">
+              <span class="pfp-trip-point-label">Откуда</span>
+              <span class="pfp-trip-point-addr">${from}</span>
+            </div>
+            <div class="pfp-trip-point">
+              <span class="pfp-trip-point-label">Куда</span>
+              <span class="pfp-trip-point-addr">${to}</span>
+            </div>
+          </div>
+        </div>
+        <div class="pfp-trip-driver">
+          <div class="pfp-trip-driver-avatar" aria-hidden="true">${ini}</div>
+          <div class="pfp-trip-driver-info">
+            <p class="pfp-trip-driver-name">${name}</p>
+            ${car ? `<p class="pfp-trip-driver-car">${car}</p>` : ''}
+          </div>
+          <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-call" aria-label="Позвонить водителю">${SVG_PHONE_LG}</button>
+          <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-chat" aria-label="Чат с водителем">${SVG_CHAT_BUBBLE}</button>
+        </div>
+      </div>
+  `;
 }
 
 function renderPassenger(root, u) {
@@ -381,11 +463,11 @@ function renderPassenger(root, u) {
           <span class="pfp-stat__label">Поездок</span>
         </div>
         <div class="pfp-stat">
-          <span class="pfp-stat__num">6 240 ₽</span>
+          <span class="pfp-stat__num pfp-stat__num--accent">${escapeHtml(fmtRub(MOCK_PROFILE_STATS.savingsRub))}</span>
           <span class="pfp-stat__label">Сэкономлено</span>
         </div>
         <div class="pfp-stat">
-          <span class="pfp-stat__num">52 кг</span>
+          <span class="pfp-stat__num">${MOCK_PROFILE_STATS.co2Kg} кг</span>
           <span class="pfp-stat__label">CO₂</span>
         </div>
       </div>` : ''}
@@ -410,6 +492,8 @@ function renderPassenger(root, u) {
           <span class="pfp-quick-label">Промокод</span>
         </button>
       </div>
+
+      ${ready ? currentTripHtml(MOCK_ACTIVE_TRIP) : ''}
 
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
@@ -547,6 +631,15 @@ function renderPassenger(root, u) {
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
+
+  // Current trip — visual prototype only. No real call/chat API,
+  // no navigation: both buttons just dismiss focus.
+  root.querySelector('#pfp-trip-call')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+  root.querySelector('#pfp-trip-chat')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
 
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
