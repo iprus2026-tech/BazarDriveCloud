@@ -314,6 +314,53 @@ function isTripActive(trip) {
   return !!(trip && ACTIVE_TRIP_STATUSES.includes(trip.status));
 }
 
+// BD-PROFILE-01 follow-up: dev/demo state switch for the trip section.
+// Set localStorage.profileTripDemo to 'active' | 'planned' | 'empty' to
+// preview each of the three states without touching the production mocks.
+// Any other value (or missing key) falls through to the default mocks,
+// preserving the current planned-trip default.
+//
+// Quick reference (paste into the browser console):
+//   localStorage.setItem('profileTripDemo', 'active');   // Активная поездка
+//   localStorage.setItem('profileTripDemo', 'planned');  // Запланированная поездка
+//   localStorage.setItem('profileTripDemo', 'empty');    // CTA "Запланировать поездку"
+//   localStorage.removeItem('profileTripDemo');          // restore default
+function getTripDemoMode() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const v = localStorage.getItem('profileTripDemo');
+    return (v === 'active' || v === 'planned' || v === 'empty') ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// Cleared on logout so a stale demo value can't override the default
+// planned-trip state for the next user after re-onboarding.
+function clearTripDemoMode() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem('profileTripDemo');
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
+function resolveTripsForDemo(activeTrip, plannedTrip) {
+  const mode = getTripDemoMode();
+  if (mode === 'active') {
+    const status = isTripActive(activeTrip) ? activeTrip.status : 'ONTRIP';
+    return { active: { ...activeTrip, status }, planned: plannedTrip };
+  }
+  if (mode === 'planned') {
+    return { active: { ...activeTrip, status: null }, planned: plannedTrip };
+  }
+  if (mode === 'empty') {
+    return { active: null, planned: null };
+  }
+  return { active: activeTrip, planned: plannedTrip };
+}
+
 function passengerHandle(u) {
   const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
   const first = raw.replace(/[^a-zа-яё0-9]+/gi, '');
@@ -569,7 +616,10 @@ function renderPassenger(root, u) {
         </button>
       </div>
 
-      ${ready ? tripSectionHtml(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP) : ''}
+      ${ready ? (() => {
+        const t = resolveTripsForDemo(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP);
+        return tripSectionHtml(t.active, t.planned);
+      })() : ''}
 
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
@@ -744,6 +794,7 @@ function renderPassenger(root, u) {
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
+      clearTripDemoMode();
       user.reset();
       go('/welcome');
     } else {
