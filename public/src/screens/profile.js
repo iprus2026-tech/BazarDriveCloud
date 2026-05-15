@@ -279,10 +279,17 @@ const MOCK_PROFILE_STATS = {
   co2Kg: 52,
 };
 
-// Active trip card (BD-PROFILE-PASSENGER-ACTIVE-TRIP). Rendered in the ready
-// state below Quick Actions. No backend wired — visual prototype only.
+// Statuses that mark a trip as in-flight on the profile screen.
+// When MOCK_ACTIVE_TRIP.status matches one of these, the "Активная поездка"
+// card is rendered; otherwise the planned-trip card takes its place.
+const ACTIVE_TRIP_STATUSES = ['ACCEPTED', 'ARRIVING', 'ONTRIP'];
+
+// Active trip card (BD-PROFILE-PASSENGER-ACTIVE-TRIP). Visual prototype only.
+// Default status is null so the planned-trip card shows in the current demo
+// state. Flip status to 'ACCEPTED', 'ARRIVING' or 'ONTRIP' to preview the
+// active-trip card locally.
 const MOCK_ACTIVE_TRIP = {
-  state: 'active',
+  status: null,
   etaMin: 4,
   fromAddress: 'ул. Тверская, 12',
   toAddress: 'Аэропорт Внуково',
@@ -295,6 +302,17 @@ const MOCK_ACTIVE_TRIP = {
     plate: 'A 482 MP 77',
   },
 };
+
+// Planned trip card (BD-PROFILE-01). Visual prototype only — no backend.
+const MOCK_PLANNED_TRIP = {
+  fromAddress: 'Дом',
+  toAddress: 'Аэропорт Внуково',
+  when: 'Завтра · 07:00',
+};
+
+function isTripActive(trip) {
+  return !!(trip && ACTIVE_TRIP_STATUSES.includes(trip.status));
+}
 
 function passengerHandle(u) {
   const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
@@ -318,7 +336,7 @@ function isPassengerReady(u) {
 }
 
 function currentTripHtml(trip) {
-  if (!trip || trip.state !== 'active') return '';
+  if (!isTripActive(trip)) return '';
   const drv  = trip.driver || {};
   const ini  = escapeHtml(drv.initials || '?');
   const name = escapeHtml(drv.name || 'Водитель');
@@ -332,7 +350,7 @@ function currentTripHtml(trip) {
   const eta  = Number.isFinite(trip.etaMin) ? `${trip.etaMin} мин` : '';
   return `
       <!-- 7b. Current trip -->
-      <p class="pfp-section-title">Текущая поездка</p>
+      <p class="pfp-section-title">Активная поездка</p>
       <div class="bd-card pfp-trip-card">
         <div class="pfp-trip-head">
           <span class="pfp-trip-badge">
@@ -366,6 +384,64 @@ function currentTripHtml(trip) {
           </div>
           <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-call" aria-label="Позвонить водителю">${SVG_PHONE_LG}</button>
           <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-chat" aria-label="Чат с водителем">${SVG_CHAT_BUBBLE}</button>
+        </div>
+      </div>
+  `;
+}
+
+// Trip section: active trip wins; if absent, fall back to the planned trip;
+// if neither exists, surface a "Запланировать поездку" CTA card.
+function tripSectionHtml(activeTrip, plannedTrip) {
+  if (isTripActive(activeTrip)) return currentTripHtml(activeTrip);
+  if (plannedTrip) return plannedTripHtml(plannedTrip);
+  return `
+      <!-- 7b. No trip — schedule CTA -->
+      <p class="pfp-section-title">Поездки</p>
+      <div class="bd-card pfp-plan-empty-card">
+        <div class="pfp-plan-empty-icon" aria-hidden="true">${SVG_CALENDAR_PO}</div>
+        <p class="pfp-plan-empty-title">Нет запланированных поездок</p>
+        <p class="pfp-plan-empty-text">Запланируйте поездку заранее, чтобы выехать вовремя</p>
+        <button type="button" class="bd-btn primary pfp-cta" id="pfp-plan-cta">Запланировать поездку</button>
+      </div>
+  `;
+}
+
+function plannedTripHtml(trip) {
+  if (!trip) return '';
+  const from = escapeHtml(trip.fromAddress || '');
+  const to   = escapeHtml(trip.toAddress || '');
+  const when = escapeHtml(trip.when || '');
+  return `
+      <!-- 7b. Planned trip -->
+      <p class="pfp-section-title">Запланированная поездка</p>
+      <div class="bd-card pfp-plan-card">
+        <div class="pfp-plan-head">
+          <span class="pfp-plan-badge">
+            <span class="pfp-plan-badge-icon" aria-hidden="true">${SVG_CALENDAR_PO}</span>
+            Запланировано
+          </span>
+          ${when ? `<span class="pfp-plan-time">${when}</span>` : ''}
+        </div>
+        <div class="pfp-trip-route">
+          <div class="pfp-trip-rail" aria-hidden="true">
+            <span class="pfp-trip-rail-from"></span>
+            <span class="pfp-trip-rail-line"></span>
+            <span class="pfp-trip-rail-to"></span>
+          </div>
+          <div class="pfp-trip-points">
+            <div class="pfp-trip-point">
+              <span class="pfp-trip-point-label">Откуда</span>
+              <span class="pfp-trip-point-addr">${from}</span>
+            </div>
+            <div class="pfp-trip-point">
+              <span class="pfp-trip-point-label">Куда</span>
+              <span class="pfp-trip-point-addr">${to}</span>
+            </div>
+          </div>
+        </div>
+        <div class="pfp-plan-actions">
+          <button type="button" class="bd-btn pfp-plan-btn" id="pfp-plan-edit">Изменить</button>
+          <button type="button" class="bd-btn danger pfp-plan-btn" id="pfp-plan-cancel">Отменить</button>
         </div>
       </div>
   `;
@@ -493,7 +569,7 @@ function renderPassenger(root, u) {
         </button>
       </div>
 
-      ${ready ? currentTripHtml(MOCK_ACTIVE_TRIP) : ''}
+      ${ready ? tripSectionHtml(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP) : ''}
 
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
@@ -632,12 +708,36 @@ function renderPassenger(root, u) {
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
 
-  // Current trip — visual prototype only. No real call/chat API,
+  // Active trip — visual prototype only. No real call/chat API,
   // no navigation: both buttons just dismiss focus.
   root.querySelector('#pfp-trip-call')?.addEventListener('click', (e) => {
     e.currentTarget.blur();
   });
   root.querySelector('#pfp-trip-chat')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+
+  // Planned trip — visual prototype only. No backend; the action buttons
+  // just dismiss focus until the planning flow is wired up.
+  root.querySelector('#pfp-plan-edit')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+  root.querySelector('#pfp-plan-cancel')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+  root.querySelector('#pfp-plan-cta')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+
+  // Safety tiles — demo placeholders. SOS does NOT initiate a real call
+  // (no tel: link); buttons exist only to anchor the visual prototype.
+  root.querySelector('#pfp-safe-contacts')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+  root.querySelector('#pfp-safe-share')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
+  root.querySelector('#pfp-safe-sos')?.addEventListener('click', (e) => {
     e.currentTarget.blur();
   });
 
