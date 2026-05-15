@@ -5454,42 +5454,51 @@ button.pfp-menu-row:active { opacity: 0.7; }
   overflow: hidden;
 }
 
-/* ── Current trip card (BD-PROFILE-PASSENGER-ACTIVE-TRIP) ── */
-.pfp-trip-card {
+/* ── Planned trip card (BD-PROFILE-01) ─────────────────── */
+.pfp-plan-card {
   padding: 14px;
-  border-color: rgba(255,107,53,0.35);
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
-.pfp-trip-head {
+.pfp-plan-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.pfp-trip-badge {
+.pfp-plan-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: rgba(96,165,250,0.14);
+  color: var(--info);
   font-size: 12px;
   font-weight: 600;
 }
-.pfp-trip-badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
+.pfp-plan-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--info);
 }
-.pfp-trip-eta {
+.pfp-plan-badge-icon svg { width: 14px; height: 14px; }
+.pfp-plan-time {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.pfp-plan-actions {
+  display: flex;
+  gap: 10px;
+}
+.pfp-plan-btn {
+  flex: 1;
+  height: 44px;
+  font-size: 14px;
 }
 
 .pfp-trip-route {
@@ -5552,62 +5561,6 @@ button.pfp-menu-row:active { opacity: 0.7; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.pfp-trip-driver {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.pfp-trip-driver-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #34d399, #10b981);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.pfp-trip-driver-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.pfp-trip-driver-name {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.pfp-trip-driver-car {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-2);
-  line-height: 1.3;
-}
-.pfp-trip-iconbtn {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  color: var(--text-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: opacity 0.1s, transform 0.08s;
-}
-.pfp-trip-iconbtn:active { transform: scale(0.93); opacity: 0.85; }
 
 /* ── Footer ─────────────────────────────────────────────── */
 .pfp-footer {

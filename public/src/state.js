@@ -40,7 +40,9 @@ function buildDefaults() {
     vehicleBody: null,
     // v3 — BD-PROFILE-01
     driverOnline: false,
-    notificationsEnabled: false,
+    // BD-PROFILE-01: passenger Profile V2 defaults notifications to ON
+    // (план + push enabled out of the box).
+    notificationsEnabled: true,
     // v4 — BD-PROFILE-02 Taxi/IP
     shiftOpen: false,
     waybillOpen: false,
