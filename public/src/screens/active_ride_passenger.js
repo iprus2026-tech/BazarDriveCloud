@@ -124,6 +124,35 @@ function etaText(ride) {
   return eta.replace(/\s*мин(уты?|у)?$/i, ' мин');
 }
 
+// BD-RIDE-P-02 only covers DRIVER_EN_ROUTE. Other passenger-side stages
+// (waiting / in-progress / completed / canceled) get a placeholder so we
+// don't show "Водитель едет к вам" with the wrong actions when the ride
+// has already moved on.
+const PASSENGER_SUPPORTED_STATUSES = new Set([
+  RIDE_STATUS.DRIVER_EN_ROUTE,
+  RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+]);
+
+const PASSENGER_STUB_BY_STATUS = {
+  [RIDE_STATUS.WAITING_PASSENGER]: 'Водитель ждёт вас — экран будет добавлен позже',
+  [RIDE_STATUS.IN_PROGRESS]: 'Поездка идёт — экран будет добавлен позже',
+  [RIDE_STATUS.COMPLETED]: 'Поездка завершена — экран будет добавлен позже',
+  [RIDE_STATUS.CANCELED]: 'Поездка отменена — экран будет добавлен позже',
+  [RIDE_STATUS.NO_SHOW]: 'Поездка отменена — экран будет добавлен позже',
+};
+
+function renderPassengerStub(message) {
+  const root = document.createElement('section');
+  root.className = 'screen screen--active-ride';
+  const text = message || 'Этот этап поездки будет добавлен позже';
+  root.innerHTML = `
+    <div class="active-ride__passenger-placeholder" role="status" aria-live="polite">
+      <div class="active-ride__passenger-placeholder-text">${escapeHtml(text)}</div>
+    </div>
+  `;
+  return root;
+}
+
 export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
@@ -133,6 +162,10 @@ export default function activeRidePassenger(options = {}) {
 
   let ride = loadPassengerRideView(tripId);
   ride = applyPassengerStatusFromQuery(ride, statusQuery);
+
+  if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
+    return renderPassengerStub(PASSENGER_STUB_BY_STATUS[ride.status]);
+  }
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride active-ride-passenger';
