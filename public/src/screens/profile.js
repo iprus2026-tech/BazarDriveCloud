@@ -363,13 +363,16 @@ function resolveTripsForDemo(activeTrip, plannedTrip) {
 
 // Mock masked phone string used by the phone-verify banner. Mirrors the
 // Cloud Design reference ("+7 (905) ••• 12-34") when the user has no real
-// phone on file. If a phone is persisted, the middle three digits get
-// masked while the country code, area code and last four digits stay
-// visible — enough to anchor the verify UI without leaking the full
-// number.
+// phone on file. Accepts the two storage shapes used elsewhere in the app
+// (see onboarding.js#formatPhoneDisplay): 10 digits without the leading
+// country code (the +7 chip is rendered outside the input) or 11 digits
+// with it. Both are normalised to an 11-digit RU form before masking, so
+// the middle three digits get hidden while the country code, area code
+// and last four digits stay visible.
 function maskedPhone(u) {
-  const raw = String(u.phone || '').replace(/\D/g, '');
-  if (raw.length < 11) return '+7 (905) ••• 12-34';
+  let raw = String(u.phone || '').replace(/\D/g, '');
+  if (raw.length === 10) raw = '7' + raw;
+  if (raw.length !== 11) return '+7 (905) ••• 12-34';
   const cc   = raw.slice(0, 1);
   const area = raw.slice(1, 4);
   const mid  = raw.slice(7, 9);
