@@ -632,11 +632,14 @@ function renderPassenger(root, u) {
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
 
-  // Current trip — visual prototype only. No real call/chat API.
+  // Current trip — visual prototype only. No real call/chat API,
+  // no navigation: both buttons just dismiss focus.
   root.querySelector('#pfp-trip-call')?.addEventListener('click', (e) => {
     e.currentTarget.blur();
   });
-  root.querySelector('#pfp-trip-chat')?.addEventListener('click', () => go('/chat'));
+  root.querySelector('#pfp-trip-chat')?.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+  });
 
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
