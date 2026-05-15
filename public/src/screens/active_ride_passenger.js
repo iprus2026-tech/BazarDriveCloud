@@ -6,14 +6,18 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import {
   findActiveRide,
-  getActiveRide,
+  createDemoActiveRide,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 
-const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
-  <polyline points="6 9 12 15 18 9"/>
+const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <polyline points="6 15 12 9 18 15"/>
+</svg>`;
+
+const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16">
+  <polyline points="9 6 15 12 9 18"/>
 </svg>`;
 
 const SHIELD_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
@@ -61,11 +65,12 @@ const TRIP_NUMBER_FALLBACK = '№48-321';
 
 // View-only: never persists status. The driver flow owns the canonical
 // ride lifecycle; the passenger view derives a display status without
-// touching shared state for DEMO_ACTIVE_RIDE_ID.
+// touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
+// in-memory demo ride so we don't materialize anything into localStorage.
 function loadPassengerRideView(tripId) {
   let ride = findActiveRide(tripId);
   if (!ride) {
-    ride = getActiveRide(tripId);
+    ride = createDemoActiveRide({ tripId });
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
     return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
@@ -73,9 +78,15 @@ function loadPassengerRideView(tripId) {
   return ride;
 }
 
+// DRIVER_APPROACHING_PICKUP is accepted as an alias to DRIVER_EN_ROUTE
+// for the passenger UI — BD-RIDE-P-02 currently renders the same layout
+// for both phases.
 function applyPassengerStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
-  if (statusQuery !== RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
+  if (statusQuery !== RIDE_STATUS.DRIVER_EN_ROUTE
+    && statusQuery !== RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
+    return ride;
+  }
   if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
   const ts = ride.timestamps || {};
   if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
@@ -187,7 +198,7 @@ export default function activeRidePassenger(options = {}) {
   top.innerHTML = `
     <div class="active-ride-passenger__top-row">
       <button type="button" class="bd-iconbtn active-ride__icon-btn active-ride-passenger__chevron" id="arp-collapse" aria-label="Свернуть">
-        ${CHEVRON_DOWN_SVG}
+        ${CHEVRON_UP_SVG}
       </button>
       <div class="active-ride-passenger__trip-pill" role="status" aria-live="polite">
         <span class="active-ride-passenger__trip-label">Поездка ${escapeHtml(formatTripNumber(ride.tripId))}</span>
@@ -238,6 +249,8 @@ export default function activeRidePassenger(options = {}) {
     : 'Написать водителю';
 
   sheet.innerHTML = `
+    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
+
     <div class="active-ride-passenger__header">
       <div class="active-ride-passenger__header-main">
         <div class="active-ride-passenger__title">Водитель едет к вам</div>
@@ -294,6 +307,7 @@ export default function activeRidePassenger(options = {}) {
         <div class="active-ride-passenger__payment-note">${escapeHtml(pay.note)}</div>
       </div>
       <div class="active-ride-passenger__payment-amount">${escapeHtml(pay.amount)}</div>
+      <div class="active-ride-passenger__payment-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
     </div>
 
     <div class="active-ride-passenger__primary-actions">

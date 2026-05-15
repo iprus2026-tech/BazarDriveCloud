@@ -4996,6 +4996,15 @@ body {
   gap: 14px;
 }
 
+.active-ride-passenger__handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  margin: -6px auto 4px;
+  opacity: 0.7;
+}
+
 .active-ride-passenger__header {
   display: flex;
   align-items: flex-start;
@@ -5023,7 +5032,7 @@ body {
 }
 .active-ride-passenger__eta {
   background: var(--accent);
-  color: #0a0a0c;
+  color: #fff;
   border-radius: var(--radius-md);
   padding: 6px 14px;
   text-align: center;
@@ -5036,14 +5045,15 @@ body {
 .active-ride-passenger__eta-value {
   font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   line-height: 1.05;
+  text-transform: uppercase;
 }
 .active-ride-passenger__eta-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  opacity: 0.85;
+  opacity: 0.9;
   font-weight: 700;
 }
 
@@ -5174,6 +5184,7 @@ body {
 .active-ride-passenger__route-point--dropoff::before {
   background: transparent;
   border: 2px solid var(--text);
+  border-radius: 2px;
   box-shadow: 0 0 0 1px var(--line-strong);
 }
 .active-ride-passenger__route-label {
@@ -5210,13 +5221,21 @@ body {
 
 .active-ride-passenger__payment {
   display: grid;
-  grid-template-columns: 40px 1fr auto;
+  grid-template-columns: 40px 1fr auto auto;
   gap: 12px;
   align-items: center;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 10px 12px;
+}
+.active-ride-passenger__payment-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  margin-left: 2px;
+  flex-shrink: 0;
 }
 .active-ride-passenger__payment-icon {
   width: 40px;
