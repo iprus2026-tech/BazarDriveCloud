@@ -148,14 +148,34 @@ function normalize(state) {
   return syncDerived(state);
 }
 
-// One-shot legacy migration applied at load(). Inspects the raw persisted
-// payload (not the merged state) so it only fires for genuinely pre-v7
-// storage that pre-dates driverDocuments. Once migrated and persisted, the
-// payload contains driverDocuments and this function becomes a no-op.
+// True when the persisted payload pre-dates v9 phoneVerified AND already
+// represents a ready passenger. Back-filling these users to true keeps the
+// new verify banner / ТРЕБУЕТСЯ ДЕЙСТВИЕ card from suddenly appearing for
+// accounts that were considered fully set up before this release. Fresh
+// installs (no parsed payload) keep the false default in buildDefaults().
+function needsPhoneVerifiedBackfill(parsed) {
+  return !!parsed
+      && typeof parsed === 'object'
+      && !('phoneVerified' in parsed)
+      && parsed.profileStatus === 'ready';
+}
+
+// One-shot legacy migrations applied at load(). Inspects the raw persisted
+// payload (not the merged state) so each migration only fires once per
+// upgrade window. After load() persists the migrated payload back, these
+// branches become no-ops on subsequent loads.
 function migrateLegacy(state, parsed) {
   if (!parsed || typeof parsed !== 'object') return state;
-  if ('driverDocuments' in parsed) return state;
   let next = state;
+  // v9 — phoneVerified backfill. Runs independently of driverDocuments
+  // because it must also catch payloads written between v7 and v9 (which
+  // already contain driverDocuments).
+  if (needsPhoneVerifiedBackfill(parsed)) {
+    next = { ...next, phoneVerified: true };
+  }
+  // Pre-v7 driverDocuments migrations — only relevant when the persisted
+  // payload pre-dates driverDocuments entirely.
+  if ('driverDocuments' in parsed) return next;
   if (parsed.taxiPermit === true && next.driverDocuments.taxiRegistry.status !== 'uploaded') {
     next = {
       ...next,
@@ -184,9 +204,11 @@ function load() {
   cache = parsed ? { ...defaults, ...parsed } : defaults;
   cache = migrateLegacy(cache, parsed);
   cache = normalize(cache);
-  // Persist migrated payload so the legacy fields don't trigger again on the
-  // next load (and so other tabs / restarts see the upgraded shape).
-  if (parsed && !('driverDocuments' in parsed)) persist();
+  // Persist migrated payload so the legacy fields don't trigger again on
+  // the next load (and so other tabs / restarts see the upgraded shape).
+  const migrated = parsed
+    && (!('driverDocuments' in parsed) || needsPhoneVerifiedBackfill(parsed));
+  if (migrated) persist();
   return cache;
 }
 
