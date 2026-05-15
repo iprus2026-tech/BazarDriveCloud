@@ -5739,9 +5739,12 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .pfp-verify-banner-btn {
   flex: 0 0 auto;
+  width: auto;
+  min-width: 128px;
   height: 38px;
   padding: 0 14px;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 /* ── Phone-verify action-required card ──────────────────── */
@@ -5782,9 +5785,16 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .pfp-verify-action-btn { width: 100%; }
 
+@media (max-width: 430px) {
+  .pfp-verify-banner { flex-wrap: wrap; }
+  .pfp-verify-banner-text { flex: 1 1 calc(100% - 48px); }
+  .pfp-verify-banner-btn {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 @media (max-width: 360px) {
   .pfp-quick-label { font-size: 10px; }
   .pfp-stat__num { font-size: 16px; }
-  .pfp-verify-banner { flex-wrap: wrap; }
-  .pfp-verify-banner-btn { width: 100%; }
 }

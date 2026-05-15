@@ -577,7 +577,7 @@ function renderPassenger(root, u) {
           <div class="pfp-identity-info">
             <p class="pfp-identity-name">
               <span class="pfp-identity-name__text">${name}</span>
-              <span class="pfp-verify-badge" aria-label="Подтверждённый аккаунт">${SVG_CHECK}</span>
+              ${phoneVerified ? `<span class="pfp-verify-badge" aria-label="Подтверждённый аккаунт">${SVG_CHECK}</span>` : ''}
             </p>
             <p class="pfp-identity-handle">${handle}</p>
             ${stateBadge}
