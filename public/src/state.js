@@ -53,6 +53,13 @@ function buildDefaults() {
     taxiPermitDraft: null,
     // v7 — BD-PROFILE-DOCS-01
     driverDocuments: defaultDocuments(),
+    // v8 — BD-PROFILE-PASSENGER-01 Passenger Profile V2
+    profileStatus: 'incomplete',     // 'incomplete' | 'ready'
+    tripCount: 0,
+    savedAddressCount: 0,
+    trustedContactsCount: 0,
+    paymentLast4: null,              // string | null
+    promoCount: 0,
   };
 }
 

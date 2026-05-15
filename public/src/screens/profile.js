@@ -22,15 +22,7 @@ const SVG_CHEVRON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
 
 const SVG_PERSON_LG = `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.582-7 8-7s8 3 8 7"/></svg>`;
 
-const SVG_POST = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>`;
-
-const SVG_TRIP = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>`;
-
-const SVG_REPLY = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 17-4-4 4-4"/><path d="M20 18v-2a4 4 0 0 0-4-4H5"/></svg>`;
-
 const SVG_BELL = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 6 3 7 3 7H3s3-1 3-7"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>`;
-
-const SVG_RULES = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>`;
 
 const SVG_WARN_TRI = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.29 3.86-8.23 14.27A1 1 0 0 0 2.93 19.7h16.46a1 1 0 0 0 .87-1.57L12.71 3.86a1.34 1.34 0 0 0-2.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 
@@ -68,19 +60,6 @@ function displayName(u) {
 
 function fmtRub(n) {
   return new Intl.NumberFormat('ru-RU').format(n) + ' ₽';
-}
-
-function formatPhone(raw) {
-  const d = String(raw ?? '').replace(/\D/g, '');
-  if (d.length === 11) return `+${d[0]} ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}`;
-  if (d.length === 10) return `+7 ${d.slice(0, 3)} ${d.slice(3, 6)}-${d.slice(6, 8)}-${d.slice(8)}`;
-  return raw;
-}
-
-function roleBadge(role) {
-  const map = { driver: ['Водитель', 'accent'], passenger: ['Пассажир', 'info'], guest: ['Гость', ''] };
-  const [label, mod] = map[role] ?? ['Пользователь', ''];
-  return `<span class="bd-badge${mod ? ` ${mod}` : ''}">${label}</span>`;
 }
 
 function checklistItems(u) {
@@ -267,86 +246,317 @@ function renderGuest(root) {
   root.querySelector('#pf-onboard').addEventListener('click', () => go('/onboarding'));
 }
 
-// ── Passenger view ────────────────────────────────────────────────────────────
+// ── Passenger view (BD-PROFILE-PASSENGER-01 — V2) ─────────────────────────────
+
+const SVG_PIN = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-7-7-12a7 7 0 0 1 14 0c0 5-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>`;
+
+const SVG_HEART = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+
+const SVG_CARD = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>`;
+
+const SVG_SHIELD = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
+
+const SVG_PHONE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
+
+const SVG_PAPERPLANE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+
+const SVG_INFO = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+
+const SVG_LOGOUT = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+
+const SVG_HEART_FILL = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+
+const SVG_TAG_PROMO = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+
+function passengerHandle(u) {
+  const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
+  const first = raw.replace(/[^a-zа-яё0-9]+/gi, '');
+  const last = String(u.lastName || '').trim().toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '').slice(0, 1);
+  if (!first) return 'guest';
+  return last ? `${first}_${last}` : first;
+}
+
+function passengerDisplayName(u) {
+  const first = (u.firstName || '').trim();
+  const last  = (u.lastName  || '').trim();
+  if (first && last) return `${first} ${last[0].toUpperCase()}.`;
+  if (first) return first;
+  if (u.displayName) return u.displayName;
+  return 'Пассажир';
+}
+
+function isPassengerReady(u) {
+  return u.profileStatus === 'ready';
+}
 
 function renderPassenger(root, u) {
-  const ini   = escapeHtml(initials(u));
-  const name  = escapeHtml(displayName(u));
-  const phone = u.phone ? formatPhone(u.phone) : null;
-  const notif = !!u.notificationsEnabled;
+  const ready  = isPassengerReady(u);
+  const ini    = escapeHtml(initials(u));
+  const name   = escapeHtml(passengerDisplayName(u));
+  const handle = escapeHtml('@' + passengerHandle(u));
+  const notif  = !!u.notificationsEnabled;
+
+  const trips   = Number(u.tripCount) || 0;
+  const addrs   = Number(u.savedAddressCount) || 0;
+  const trusted = Number(u.trustedContactsCount) || 0;
+  const promos  = Number(u.promoCount) || 0;
+  const last4   = u.paymentLast4 ? String(u.paymentLast4) : null;
+
+  const showOnboard = !ready;
+  const showFirstTrip = !ready && addrs === 0;
+  const showStatusCard = ready;
+  const showStatsGrid = ready;
+
+  const stateBadge = ready
+    ? `<span class="pfp-meta-badge">★ 4.92 · ${trips} поездок</span>`
+    : `<span class="pfp-meta-badge">Новый пассажир</span>`;
 
   root.innerHTML = `
-    <div class="bd-topbar">
+    <div class="bd-topbar pfp-topbar">
       <div class="bd-topbar__titles">
         <h1 class="bd-topbar__title">Профиль</h1>
+        <p class="bd-topbar__sub">Пассажир</p>
+      </div>
+      <div class="pfp-topbar-actions">
+        <button type="button" class="bd-iconbtn" id="pfp-notif-btn" aria-label="Уведомления">${SVG_BELL}</button>
+        <button type="button" class="bd-iconbtn" id="pfp-settings-btn" aria-label="Настройки">${SVG_GEAR}</button>
       </div>
     </div>
-    <div class="bd-scroll">
-      <div class="pf-hero">
-        <div class="bd-avatar xl" aria-hidden="true">${ini}</div>
-        <div class="pf-hero-info">
-          <p class="pf-name">${name}</p>
-          ${phone ? `<p class="pf-phone">${escapeHtml(phone)}</p>` : ''}
-          ${roleBadge(u.role)}
+
+    <div class="bd-scroll pfp-scroll">
+
+      <!-- 2. Identity card -->
+      <div class="bd-card pfp-identity-card">
+        <div class="pfp-identity-row">
+          <div class="pfp-avatar" aria-hidden="true">${ini}</div>
+          <div class="pfp-identity-info">
+            <p class="pfp-identity-name">
+              <span class="pfp-identity-name__text">${name}</span>
+              <span class="pfp-verify-badge" aria-label="Подтверждённый аккаунт">${SVG_CHECK}</span>
+            </p>
+            <p class="pfp-identity-handle">${handle}</p>
+            ${stateBadge}
+          </div>
+          <button type="button" class="pfp-edit-btn" id="pfp-edit-btn" aria-label="Редактировать профиль">${SVG_PENCIL}</button>
         </div>
       </div>
-      <div class="pf-stats-grid" aria-label="Статистика профиля">
-        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Публикации</span></div>
-        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Поездки</span></div>
-        <div class="pf-stat"><span class="pf-stat__num">0</span><span class="pf-stat__label">Отклики</span></div>
-        <div class="pf-stat"><span class="pf-stat__num">—</span><span class="pf-stat__label">Рейтинг</span></div>
+
+      ${showOnboard ? `
+      <!-- 3. Onboarding card -->
+      <div class="bd-card pfp-onboard-card">
+        <span class="pfp-onboard-eyebrow">
+          <span class="pfp-onboard-dot" aria-hidden="true"></span>
+          ДОБРО ПОЖАЛОВАТЬ
+        </span>
+        <p class="pfp-onboard-title">Завершите профиль</p>
+        <p class="pfp-onboard-text">Добавьте имя, фото и привяжите способ оплаты</p>
+        <button type="button" class="bd-btn primary pfp-cta" id="pfp-onboard-cta">Заполнить профиль</button>
+      </div>` : ''}
+
+      ${showFirstTrip ? `
+      <!-- 4. Empty first trip card -->
+      <div class="bd-card pfp-firsttrip-card">
+        <div class="pfp-firsttrip-icon" aria-hidden="true">${SVG_PIN}</div>
+        <p class="pfp-firsttrip-title">Первая поездка ждёт</p>
+        <p class="pfp-firsttrip-text">Добавьте адрес «Дом» и «Работа», чтобы заказывать одним касанием</p>
+        <button type="button" class="bd-btn primary pfp-cta" id="pfp-addaddr-cta">Добавить адрес</button>
+      </div>` : ''}
+
+      ${showStatusCard ? `
+      <!-- 5. Ready status card -->
+      <div class="bd-card pfp-status-card">
+        <span class="pfp-status-eyebrow">
+          <span class="pfp-status-dot" aria-hidden="true"></span>
+          АККАУНТ ПАССАЖИРА
+        </span>
+        <p class="pfp-status-title">Готов к поездкам</p>
+        <p class="pfp-status-text">Телефон подтверждён, способ оплаты привязан</p>
+      </div>` : ''}
+
+      ${showStatsGrid ? `
+      <!-- 6. Stats grid -->
+      <div class="pfp-stats-grid" aria-label="Статистика поездок">
+        <div class="pfp-stat">
+          <span class="pfp-stat__num">${trips}</span>
+          <span class="pfp-stat__label">Поездок</span>
+        </div>
+        <div class="pfp-stat">
+          <span class="pfp-stat__num">6 240 ₽</span>
+          <span class="pfp-stat__label">Сэкономлено</span>
+        </div>
+        <div class="pfp-stat">
+          <span class="pfp-stat__num">52 кг</span>
+          <span class="pfp-stat__label">CO₂</span>
+        </div>
+      </div>` : ''}
+
+      <!-- 7. Quick actions -->
+      <p class="pfp-section-title">Быстрые действия</p>
+      <div class="pfp-quick-row" role="list">
+        <button type="button" class="pfp-quick pfp-quick--accent" id="pfp-quick-where" role="listitem">
+          <span class="pfp-quick-icon" aria-hidden="true">${SVG_PIN}</span>
+          <span class="pfp-quick-label">Куда едем?</span>
+        </button>
+        <button type="button" class="pfp-quick" id="pfp-quick-plan" role="listitem">
+          <span class="pfp-quick-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
+          <span class="pfp-quick-label">Запланировать</span>
+        </button>
+        <button type="button" class="pfp-quick" id="pfp-quick-fav" role="listitem">
+          <span class="pfp-quick-icon" aria-hidden="true">${SVG_HEART}</span>
+          <span class="pfp-quick-label">Избранные</span>
+        </button>
+        <button type="button" class="pfp-quick" id="pfp-quick-promo" role="listitem">
+          <span class="pfp-quick-icon" aria-hidden="true">${SVG_TAG_PROMO}</span>
+          <span class="pfp-quick-label">Промокод</span>
+        </button>
       </div>
-      <div class="bd-card pf-actions-card">
-        <button type="button" class="pf-action" id="pf-publications">
-          <div class="pf-action-icon">${SVG_POST}</div>
-          <span class="pf-action-label">Мои публикации</span>
-          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+
+      <!-- 8. Menu card -->
+      <p class="pfp-section-title">Меню</p>
+      <div class="bd-card pfp-menu-card">
+        <button type="button" class="pfp-menu-row" id="pfp-menu-history">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">История поездок</span>
+            <span class="pfp-menu-sub">${ready ? `${trips} поездок` : 'Поездок пока нет'}</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
-        <button type="button" class="pf-action" id="pf-trips">
-          <div class="pf-action-icon">${SVG_TRIP}</div>
-          <span class="pf-action-label">Мои поездки</span>
-          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        <button type="button" class="pfp-menu-row" id="pfp-menu-addrs">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_HEART_FILL}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Сохранённые адреса</span>
+            <span class="pfp-menu-sub">${addrs > 0 ? `${addrs} места` : 'Добавьте дом и работу'}</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
-        <button type="button" class="pf-action" id="pf-replies">
-          <div class="pf-action-icon">${SVG_REPLY}</div>
-          <span class="pf-action-label">Мои отклики</span>
-          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        <button type="button" class="pfp-menu-row" id="pfp-menu-pay">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_CARD}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Способы оплаты</span>
+            <span class="pfp-menu-sub">${last4 ? `Карта •• ${escapeHtml(last4)}` : 'Не привязан'}</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
-        <button type="button" class="pf-action" id="pf-rules">
-          <div class="pf-action-icon">${SVG_RULES}</div>
-          <span class="pf-action-label">Правила</span>
-          <span class="pf-action-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        <button type="button" class="pfp-menu-row" id="pfp-menu-promos">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_TAG_PROMO}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Промокоды и бонусы</span>
+            <span class="pfp-menu-sub">${promos > 0 ? `${promos} активных` : 'Нет активных'}</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
-        <div class="pf-action pf-action--toggle">
-          <div class="pf-action-icon">${SVG_BELL}</div>
-          <span class="pf-action-label">Уведомления</span>
+        <div class="pfp-menu-row pfp-menu-row--toggle">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_BELL}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Уведомления</span>
+          </span>
           <label class="pf-toggle" aria-label="Получать уведомления">
-            <input type="checkbox" class="pf-toggle__input" id="pf-notif-cb"${notif ? ' checked' : ''}>
+            <input type="checkbox" class="pf-toggle__input" id="pfp-notif-cb"${notif ? ' checked' : ''}>
             <span class="pf-toggle__track"></span>
           </label>
         </div>
       </div>
-      <div class="pf-danger-zone">
-        <button type="button" class="bd-btn danger" id="pf-reset">Сбросить профиль и выйти</button>
+
+      <!-- 9. Safety section -->
+      <p class="pfp-section-title">Безопасность</p>
+      <div class="bd-card pfp-safety-card">
+        <div class="pfp-safety-head">
+          <span class="pfp-safety-icon" aria-hidden="true">${SVG_SHIELD}</span>
+          <span class="pfp-safety-text">
+            <span class="pfp-safety-title">Центр безопасности</span>
+            <span class="pfp-safety-sub">Контакты, маршрут, SOS</span>
+          </span>
+          <span class="pfp-safety-badge">
+            <span class="pfp-safety-badge-dot" aria-hidden="true"></span>
+            Активно
+          </span>
+        </div>
+        <div class="pfp-safety-actions">
+          <button type="button" class="pfp-safety-tile" id="pfp-safe-contacts">
+            <span class="pfp-safety-tile-head">
+              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_PHONE}</span>
+              <span class="pfp-safety-tile-count">${trusted}</span>
+            </span>
+            <span class="pfp-safety-tile-label">Доверенные контакты</span>
+          </button>
+          <button type="button" class="pfp-safety-tile" id="pfp-safe-share">
+            <span class="pfp-safety-tile-head">
+              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_PAPERPLANE}</span>
+              <span class="pfp-safety-tile-count">Авто</span>
+            </span>
+            <span class="pfp-safety-tile-label">Поделиться поездкой</span>
+          </button>
+          <button type="button" class="pfp-safety-tile pfp-safety-tile--danger" id="pfp-safe-sos">
+            <span class="pfp-safety-tile-head">
+              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
+              <span class="pfp-safety-tile-count">112</span>
+            </span>
+            <span class="pfp-safety-tile-label">Кнопка SOS</span>
+          </button>
+        </div>
       </div>
+
+      <!-- 10. Support / logout -->
+      <div class="bd-card pfp-support-card">
+        <button type="button" class="pfp-menu-row" id="pfp-support">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_INFO}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Помощь и поддержка</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+        <button type="button" class="pfp-menu-row pfp-menu-row--danger" id="pfp-logout">
+          <span class="pfp-menu-icon pfp-menu-icon--danger" aria-hidden="true">${SVG_LOGOUT}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Выйти</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+      </div>
+
+      <!-- 11. Footer -->
+      <p class="pfp-footer">BazarDrive · v2.4.1</p>
     </div>
   `;
 
-  root.querySelector('#pf-publications')?.addEventListener('click', () => go('/feed'));
-  root.querySelector('#pf-trips')?.addEventListener('click', () => go('/feed'));
-  root.querySelector('#pf-rules')?.addEventListener('click', () => go('/rules'));
-  root.querySelector('#pf-notif-cb').addEventListener('change', (e) => {
+  // ── Event wiring ─────────────────────────────────────────────────────────
+  const rerender = () => renderPassenger(root, user.get());
+
+  root.querySelector('#pfp-onboard-cta')?.addEventListener('click', () => {
+    user.set({
+      profileStatus: 'ready',
+      paymentLast4: '4821',
+      promoCount: 2,
+      trustedContactsCount: 2,
+      tripCount: 38,
+      savedAddressCount: 3,
+    });
+    rerender();
+  });
+
+  root.querySelector('#pfp-addaddr-cta')?.addEventListener('click', () => {
+    user.set({ savedAddressCount: 3 });
+    rerender();
+  });
+
+  root.querySelector('#pfp-notif-cb')?.addEventListener('change', (e) => {
     user.set({ notificationsEnabled: e.target.checked });
   });
 
-  const resetBtn = root.querySelector('#pf-reset');
-  resetBtn.addEventListener('click', () => {
-    if (resetBtn.dataset.confirm === 'pending') {
+  root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
+  root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
+  root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
+
+  const logoutBtn = root.querySelector('#pfp-logout');
+  logoutBtn?.addEventListener('click', () => {
+    if (logoutBtn.dataset.confirm === 'pending') {
       user.reset();
       go('/welcome');
     } else {
-      resetBtn.dataset.confirm = 'pending';
-      resetBtn.textContent = 'Нажмите ещё раз для подтверждения';
+      logoutBtn.dataset.confirm = 'pending';
+      const titleEl = logoutBtn.querySelector('.pfp-menu-title');
+      if (titleEl) titleEl.textContent = 'Нажмите ещё раз для подтверждения';
     }
   });
 }
