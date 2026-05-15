@@ -335,6 +335,17 @@ function getTripDemoMode() {
   }
 }
 
+// Cleared on logout so a stale demo value can't override the default
+// planned-trip state for the next user after re-onboarding.
+function clearTripDemoMode() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem('profileTripDemo');
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
 function resolveTripsForDemo(activeTrip, plannedTrip) {
   const mode = getTripDemoMode();
   if (mode === 'active') {
@@ -783,6 +794,7 @@ function renderPassenger(root, u) {
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
+      clearTripDemoMode();
       user.reset();
       go('/welcome');
     } else {
