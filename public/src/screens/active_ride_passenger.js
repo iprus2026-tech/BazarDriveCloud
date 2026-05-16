@@ -75,6 +75,22 @@ const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 
 const TRIP_NUMBER_FALLBACK = '№48-321';
 
+// BD-RIDE-P-04B — In-progress sub-phases. Used as a UI overlay on top
+// of RIDE_STATUS.IN_PROGRESS so the driver flow's canonical lifecycle
+// keeps a single status. ARRIVING_DROPOFF = подъезжаем к точке высадки.
+const PASSENGER_IN_PROGRESS_PHASE = {
+  ARRIVING_DROPOFF: 'ARRIVING_DROPOFF',
+};
+
+function normalizePhase(phaseQuery) {
+  if (!phaseQuery) return null;
+  const key = String(phaseQuery).trim().toUpperCase();
+  if (key === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
+    return PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF;
+  }
+  return null;
+}
+
 // View-only: never persists status by default. The driver flow owns the
 // canonical ride lifecycle; the passenger view derives a display status
 // without touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
@@ -174,6 +190,14 @@ function inProgressInfo(ride) {
   const rawEta = route.etaToDestination || r.etaToDestination || '17 мин';
   const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
   return { arrivalTime, eta };
+}
+
+function arrivingDropoffInfo(ride) {
+  const r = (ride && ride.ride) || {};
+  const route = (ride && ride.route) || {};
+  const rawEta = route.etaToDropoff || r.etaToDropoff || '1 мин';
+  const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
+  return { eta };
 }
 
 function waitingInfo(ride) {
@@ -288,8 +312,9 @@ function routeBlockHtml(ride, options = {}) {
   `;
 }
 
-function paymentBlockHtml(ride) {
+function paymentBlockHtml(ride, options = {}) {
   const pay = paymentInfo(ride);
+  if (options.amountOverride) pay.amount = options.amountOverride;
   return `
     <div class="active-ride-passenger__payment" role="group" aria-label="Способ оплаты">
       <div class="active-ride-passenger__payment-icon" aria-hidden="true">${CARD_SVG}</div>
@@ -435,9 +460,47 @@ function renderInProgressSheet(sheet, ride) {
   `;
 }
 
+function renderArrivingDropoffSheet(sheet, ride) {
+  const info = arrivingDropoffInfo(ride);
+  sheet.innerHTML = `
+    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
+
+    <div class="active-ride-passenger__header">
+      <div class="active-ride-passenger__header-main">
+        <div class="active-ride-passenger__title">Прибываем</div>
+        <div class="active-ride-passenger__sub">Подъезжаем к точке высадки</div>
+      </div>
+      <div class="active-ride-passenger__eta active-ride-passenger__eta--arriving" aria-label="Время до места">
+        <div class="active-ride-passenger__eta-value">${escapeHtml(info.eta)}</div>
+        <div class="active-ride-passenger__eta-label">до места</div>
+      </div>
+    </div>
+
+    ${driverRowHtml(ride)}
+    ${routeBlockHtml(ride, { editable: false })}
+    ${paymentBlockHtml(ride, { amountOverride: '1 540 ₽' })}
+
+    <button type="button" class="bd-btn primary active-ride-passenger__cta-primary" id="arp-finish-rate">
+      Завершить и оценить поездку
+    </button>
+
+    <div class="active-ride-passenger__secondary-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
+        SOS
+      </button>
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-share" id="arp-share">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SHARE_SVG}</span>
+        Поделиться поездкой
+      </button>
+    </div>
+  `;
+}
+
 export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
+  const phaseQuery = normalizePhase((options && options.phaseQuery) || null);
   const showNotice = typeof options.showNotice === 'function'
     ? options.showNotice
     : null;
@@ -563,6 +626,19 @@ export default function activeRidePassenger(options = {}) {
       return;
     }
     if (ride.status === RIDE_STATUS.IN_PROGRESS) {
+      if (phaseQuery === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
+        sheet.dataset.phase = PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF;
+        renderArrivingDropoffSheet(sheet, ride);
+        bindCommonSheetHandlers();
+        const finishRateBtn = sheet.querySelector('#arp-finish-rate');
+        if (finishRateBtn) {
+          finishRateBtn.addEventListener('click', () => {
+            toast('Экран оценки будет добавлен позже');
+          });
+        }
+        return;
+      }
+      delete sheet.dataset.phase;
       renderInProgressSheet(sheet, ride);
       bindCommonSheetHandlers();
       const addStopBtn = sheet.querySelector('#arp-add-stop');

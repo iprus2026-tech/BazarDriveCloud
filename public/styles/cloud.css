@@ -5439,6 +5439,15 @@ body {
   border-radius: 14px;
 }
 
+/* BD-RIDE-P-04B Passenger active ride · ARRIVING_DROPOFF ─── */
+.active-ride-passenger__eta--arriving {
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--success);
+}
+.active-ride-passenger__eta--arriving .active-ride-passenger__eta-label {
+  opacity: 0.85;
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROFILE V2 — BD-PROFILE-PASSENGER-01 Passenger Dashboard
 ═══════════════════════════════════════════════════════════ */
