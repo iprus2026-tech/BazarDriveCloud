@@ -144,6 +144,13 @@ function applyPassengerStatusFromQuery(ride, statusQuery) {
     if (ts.canceledAt) return ride;
     return { ...ride, status: RIDE_STATUS.COMPLETED };
   }
+  // BD-RIDE-SIM-01 — route the audit URL ?status=CANCELED / NO_SHOW
+  // to the existing PASSENGER_STUB_BY_STATUS placeholder so the
+  // canceled/no-show fallback is reachable from the simulation links.
+  if (statusQuery === RIDE_STATUS.CANCELED || statusQuery === RIDE_STATUS.NO_SHOW) {
+    if (ride.status === statusQuery) return ride;
+    return { ...ride, status: statusQuery };
+  }
   return ride;
 }
 

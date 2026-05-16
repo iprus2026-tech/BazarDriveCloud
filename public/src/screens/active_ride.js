@@ -10,6 +10,8 @@ import {
   findActiveRide,
   updateActiveRideStatus,
   saveActiveRide,
+  createDemoActiveRide,
+  isValidRideStatus,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -75,16 +77,48 @@ function getHashQuery() {
   return new URLSearchParams(hash.slice(qi + 1));
 }
 
+// BD-RIDE-SIM-01 — Driver-side ?status= query handling.
+// NEW_ORDER acts as a reset: persists, but only when no lifecycle
+// timestamp has been recorded yet. Every other status is a view-only
+// override for the role-simulation/audit URLs — it does not touch
+// localStorage, so the canonical driver state machine (owned by the
+// buttons in the bottom sheet) stays intact. View-only overrides also
+// refuse to roll back past a later stage that has already happened.
 function safeApplyStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
-  if (statusQuery !== RIDE_STATUS.NEW_ORDER) return ride;
-  if (ride.status === RIDE_STATUS.NEW_ORDER) return ride;
+  if (!isValidRideStatus(statusQuery)) return ride;
+  if (ride.status === statusQuery) return ride;
   const ts = ride.timestamps || {};
-  if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
-    return ride;
+
+  if (statusQuery === RIDE_STATUS.NEW_ORDER) {
+    if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
+      return ride;
+    }
+    const next = { ...ride, status: RIDE_STATUS.NEW_ORDER };
+    return saveActiveRide(next);
   }
-  const next = { ...ride, status: RIDE_STATUS.NEW_ORDER };
-  return saveActiveRide(next);
+
+  if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+    || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
+    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: statusQuery };
+  }
+  if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
+    if (ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.WAITING_PASSENGER };
+  }
+  if (statusQuery === RIDE_STATUS.IN_PROGRESS) {
+    if (ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.IN_PROGRESS };
+  }
+  if (statusQuery === RIDE_STATUS.COMPLETED) {
+    if (ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.COMPLETED };
+  }
+  if (statusQuery === RIDE_STATUS.CANCELED || statusQuery === RIDE_STATUS.NO_SHOW) {
+    return { ...ride, status: statusQuery };
+  }
+  return ride;
 }
 
 function pad2(n) { return n < 10 ? `0${n}` : String(n); }
@@ -164,7 +198,12 @@ export default function activeRide() {
 
   let ride = findActiveRide(tripId);
   if (!ride) {
-    return renderDriverEmpty();
+    // BD-RIDE-SIM-01 — when an audit/simulation URL supplies ?status=
+    // we render the demo ride in-memory so reviewers can inspect every
+    // driver phase without first seeding localStorage. Empty-state UX
+    // is preserved for the regular /active-ride entry.
+    if (!statusQuery) return renderDriverEmpty();
+    ride = createDemoActiveRide({ tripId });
   }
   ride = safeApplyStatusFromQuery(ride, statusQuery);
 
