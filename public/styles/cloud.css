@@ -5411,6 +5411,34 @@ body {
   width: 100%;
 }
 
+/* BD-RIDE-P-04 Passenger active ride · IN_PROGRESS ───────── */
+.active-ride-passenger__route--locked .active-ride-passenger__route-list {
+  padding-right: 18px;
+}
+
+.active-ride-passenger__in-progress-actions {
+  display: grid;
+  grid-template-columns: 1fr 56px;
+  gap: 10px;
+  align-items: stretch;
+}
+.bd-btn.active-ride-passenger__btn-stop {
+  height: 48px;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+.active-ride-passenger__btn-share-square {
+  width: 56px;
+  height: 48px;
+  border-radius: 14px;
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROFILE V2 — BD-PROFILE-PASSENGER-01 Passenger Dashboard
 ═══════════════════════════════════════════════════════════ */
