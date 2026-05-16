@@ -5745,11 +5745,51 @@ body {
   cursor: pointer;
   align-self: flex-start;
 }
+.passenger-complete__comment[hidden] { display: none; }
 .passenger-complete__comment-ic {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--accent);
+}
+
+.passenger-complete__comment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 14px;
+}
+.passenger-complete__comment-field[hidden] { display: none; }
+.passenger-complete__comment-input {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+.passenger-complete__comment-input::placeholder { color: var(--text-3); }
+.passenger-complete__comment-input:focus { outline: 0; }
+.passenger-complete__comment-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.passenger-complete__comment-helper { color: var(--text-3); }
+.passenger-complete__comment-counter {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .bd-btn.passenger-complete__cta {

@@ -740,6 +740,19 @@ function renderPassengerRideComplete(ride, deps) {
           <span class="passenger-complete__comment-ic" aria-hidden="true">${PENCIL_SVG}</span>
           Добавить комментарий
         </button>
+        <div class="passenger-complete__comment-field" id="arp-comment-field" hidden>
+          <textarea
+            class="passenger-complete__comment-input"
+            id="arp-comment-input"
+            maxlength="200"
+            rows="3"
+            aria-label="Комментарий к поездке"
+            placeholder="Расскажите о поездке"></textarea>
+          <div class="passenger-complete__comment-foot">
+            <span class="passenger-complete__comment-helper">Виден только поддержке</span>
+            <span class="passenger-complete__comment-counter" id="arp-comment-counter" aria-live="polite">0/200</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -832,8 +845,26 @@ function renderPassengerRideComplete(ride, deps) {
     });
   });
 
-  content.querySelector('#arp-comment').addEventListener('click', () => {
-    localToast('Поле комментария будет добавлено позже');
+  // ── Comment field (expand on demand) ─────────────────────
+  // Toggling chips or stars must not collapse this — both handlers
+  // above only touch their own elements, so the textarea state is
+  // preserved across rating/tag interactions.
+  const commentBtn = content.querySelector('#arp-comment');
+  const commentField = content.querySelector('#arp-comment-field');
+  const commentInput = content.querySelector('#arp-comment-input');
+  const commentCounter = content.querySelector('#arp-comment-counter');
+  const COMMENT_MAX = 200;
+
+  function openComment() {
+    commentBtn.hidden = true;
+    commentField.hidden = false;
+    commentInput.focus();
+  }
+  commentBtn.addEventListener('click', openComment);
+
+  commentInput.addEventListener('input', () => {
+    // Native maxlength caps input at 200, so length is always safe here.
+    commentCounter.textContent = `${commentInput.value.length}/${COMMENT_MAX}`;
   });
 
   submitBtn.addEventListener('click', () => {
