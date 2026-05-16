@@ -604,6 +604,44 @@ const SPINNER_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
   <path d="M21 12a9 9 0 0 1-9 9"/>
 </svg>`;
 
+const CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <line x1="18" y1="6" x2="6" y2="18"/>
+  <line x1="6" y1="6" x2="18" y2="18"/>
+</svg>`;
+
+const COIN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <circle cx="12" cy="12" r="9"/>
+  <path d="M14 9.5c-.5-1-1.6-1.5-2.6-1.5-1.4 0-2.4.7-2.4 2 0 1 .6 1.5 2 1.8l1 .2c1.4.3 2 1 2 2 0 1.4-1 2-2.6 2-1.2 0-2.2-.5-2.7-1.5"/>
+  <line x1="12" y1="6.5" x2="12" y2="17.5"/>
+</svg>`;
+
+const CAR_REPORT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <path d="M3 12l2-5h14l2 5"/>
+  <path d="M3 12v6h2v2h3v-2h8v2h3v-2h2v-6"/>
+  <line x1="3" y1="12" x2="21" y2="12"/>
+  <circle cx="7" cy="15" r="1.2"/>
+  <circle cx="17" cy="15" r="1.2"/>
+</svg>`;
+
+const HEART_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l8.84 8.84 8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>
+</svg>`;
+
+const INFO_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <circle cx="12" cy="12" r="10"/>
+  <line x1="12" y1="16" x2="12" y2="12"/>
+  <line x1="12" y1="8" x2="12.01" y2="8"/>
+</svg>`;
+
+const REPORT_REASONS = [
+  { id: 'price',    label: 'Неверная стоимость',     icon: COIN_SVG },
+  { id: 'route',    label: 'Странный маршрут',       icon: PIN_SVG },
+  { id: 'driver',   label: 'Поведение водителя',     icon: PHONE_SVG },
+  { id: 'car',      label: 'Состояние автомобиля',   icon: CAR_REPORT_SVG },
+  { id: 'lost',     label: 'Забыл вещи в машине',    icon: HEART_SVG },
+  { id: 'other',    label: 'Другое',                 icon: INFO_SVG },
+];
+
 const PAYMENT_STATES = new Set(['auto', 'pending', 'paid']);
 function normalizePayment(value) {
   if (typeof value !== 'string') return 'auto';
@@ -688,6 +726,10 @@ function renderPassengerRideComplete(ride, deps) {
   // change. Default is `auto` (before charge); `?payment=pending`
   // surfaces the in-flight charge state for QA; submit sets `paid`.
   content.dataset.payment = initialPayment;
+  // Report entry is another independent UI axis: opens an inline
+  // report sheet over the same scroll container without changing
+  // route or rating/payment state.
+  content.dataset.report = 'closed';
   content.innerHTML = `
     <div class="passenger-complete__hero">
       <div class="passenger-complete__check" aria-hidden="true">
@@ -788,7 +830,7 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
     </div>
 
-    <div class="passenger-complete__rating-section">
+    <div class="passenger-complete__rating-section" data-hide-when-report>
       <div class="passenger-complete__section-label" data-default-only>ОЦЕНИТЕ ПОЕЗДКУ</div>
       <div class="passenger-complete__section-label" data-submitted-only>ВАША ОЦЕНКА</div>
       <div class="passenger-complete__card passenger-complete__rating" id="arp-rating-card" data-rating="0" data-default-only>
@@ -835,11 +877,38 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
     </div>
 
-    <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-submit-rating" data-default-only disabled>
+    <div class="passenger-complete__report-sheet" id="arp-report-sheet" data-report-only>
+      <div class="passenger-complete__report-head">
+        <div class="passenger-complete__report-title">Сообщить о проблеме</div>
+        <button type="button" class="passenger-complete__report-close" id="arp-report-close" aria-label="Закрыть">
+          ${CLOSE_SVG}
+        </button>
+      </div>
+      <div class="passenger-complete__report-desc">
+        Выберите, что произошло — поддержка свяжется в течение часа
+      </div>
+      <ul class="passenger-complete__report-list" role="list">
+        ${REPORT_REASONS.map((r) => `
+          <li>
+            <button type="button" class="passenger-complete__report-reason" data-reason="${escapeHtml(r.id)}">
+              <span class="passenger-complete__report-ic" aria-hidden="true">${r.icon}</span>
+              <span class="passenger-complete__report-reason-text">${escapeHtml(r.label)}</span>
+              <span class="passenger-complete__report-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+            </button>
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+
+    <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-submit-rating" data-default-only data-hide-when-report disabled>
       <span class="passenger-complete__cta-ic" aria-hidden="true">${STAR_FULL_SVG}</span>
       Поставить оценку
     </button>
-    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-return-feed" data-submitted-only>
+    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-return-feed" data-submitted-only data-hide-when-report>
+      <span class="passenger-complete__cta-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
+      Вернуться в ленту
+    </button>
+    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-report-return" data-report-only>
       <span class="passenger-complete__cta-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
       Вернуться в ленту
     </button>
@@ -855,8 +924,8 @@ function renderPassengerRideComplete(ride, deps) {
       </button>
     </div>
 
-    <button type="button" class="passenger-complete__report" id="arp-report">
-      <span class="passenger-complete__report-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
+    <button type="button" class="passenger-complete__report" id="arp-report" data-hide-when-report>
+      <span class="passenger-complete__report-trigger-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
       Сообщить о проблеме
     </button>
   `;
@@ -1020,9 +1089,46 @@ function renderPassengerRideComplete(ride, deps) {
   content.querySelector('#arp-to-feed').addEventListener('click', () => {
     navigate('/feed');
   });
+  // ── Report sheet (State 7 — Issue / report entry) ────────
+  // Toggle is driven by `content.dataset.report`; CSS hides the
+  // rating section / main CTAs / bottom report link when open, and
+  // shows the report card + a parallel "Вернуться в ленту" CTA.
+  // No rating / payment state is touched, so closing the sheet
+  // returns the screen to whatever cell of the matrix it was in.
+  const reportSheet = content.querySelector('#arp-report-sheet');
+  const reportClose = content.querySelector('#arp-report-close');
+  const reportReturn = content.querySelector('#arp-report-return');
+  const reportReasons = Array.from(
+    content.querySelectorAll('.passenger-complete__report-reason')
+  );
+
   content.querySelector('#arp-report').addEventListener('click', () => {
-    // No dedicated report flow yet — fall back to a safe stub toast.
-    localToast('Сообщение о проблеме будет доступно позже');
+    content.dataset.report = 'open';
+    if (reportSheet && typeof reportSheet.scrollIntoView === 'function') {
+      reportSheet.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  if (reportClose) {
+    reportClose.addEventListener('click', () => {
+      content.dataset.report = 'closed';
+    });
+  }
+
+  if (reportReturn) {
+    reportReturn.addEventListener('click', () => {
+      navigate('/feed');
+    });
+  }
+
+  reportReasons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const labelEl = btn.querySelector('.passenger-complete__report-reason-text');
+      const label = labelEl ? labelEl.textContent.trim() : '';
+      // Detail flow isn't wired up — show a safe toast so the
+      // selection is acknowledged without throwing.
+      localToast(label ? `Причина выбрана: ${label}` : 'Раздел обращения будет добавлен позже');
+    });
   });
 
   applyRating(0);

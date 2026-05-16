@@ -5853,7 +5853,7 @@ body {
   cursor: pointer;
   align-self: center;
 }
-.passenger-complete__report-ic {
+.passenger-complete__report-trigger-ic {
   color: var(--text-3);
   display: inline-flex;
   align-items: center;
@@ -5899,6 +5899,119 @@ body {
 .passenger-complete__pending-ic svg { width: 14px; height: 14px; }
 @keyframes passenger-complete-spin {
   to { transform: rotate(360deg); }
+}
+
+/* BD-RIDE-P-05 · State 7 — Issue / report entry. Independent axis:
+   data-report="open" hides the rating section, the rating CTAs and
+   the bottom "Сообщить о проблеме" link, and reveals the report
+   sheet plus its parallel "Вернуться в ленту" CTA. Bottom action
+   row stays visible so chat / feed remain reachable. */
+.passenger-complete__scroll[data-report="closed"] [data-report-only],
+.passenger-complete__scroll[data-report="open"]   [data-hide-when-report] {
+  display: none !important;
+}
+
+.passenger-complete__report-sheet {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.passenger-complete__report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.passenger-complete__report-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.passenger-complete__report-close {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.12s ease;
+}
+.passenger-complete__report-close:active { transform: scale(0.95); }
+.passenger-complete__report-desc {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.passenger-complete__report-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.passenger-complete__report-reason {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  min-height: 64px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease,
+    transform 0.08s ease;
+}
+.passenger-complete__report-reason:active { transform: scale(0.99); }
+.passenger-complete__report-ic {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-complete__report-reason-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.passenger-complete__report-chev {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 380px) {
+  .passenger-complete__report-sheet { padding: 16px; }
+  .passenger-complete__report-reason { padding: 10px 12px; gap: 12px; min-height: 60px; }
+  .passenger-complete__report-ic { width: 36px; height: 36px; border-radius: 10px; }
+  .passenger-complete__report-reason-text { font-size: 14px; }
 }
 
 .passenger-complete__paid-badge {
