@@ -5866,6 +5866,41 @@ body {
   display: none !important;
 }
 
+/* BD-RIDE-P-05 · State 5 — Payment lifecycle (auto/pending/paid).
+   Each [data-pay-show] node lists the payment states it appears in
+   (space-separated, matched by ~=). Anything that doesn't list the
+   current state on the scroll container is hidden. */
+.passenger-complete__scroll[data-payment="auto"]    [data-pay-show]:not([data-pay-show~="auto"]),
+.passenger-complete__scroll[data-payment="pending"] [data-pay-show]:not([data-pay-show~="pending"]),
+.passenger-complete__scroll[data-payment="paid"]    [data-pay-show]:not([data-pay-show~="paid"]) {
+  display: none !important;
+}
+
+.passenger-complete__pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.14);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(96, 165, 250, 0.36);
+}
+.passenger-complete__pending-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--info);
+  animation: passenger-complete-spin 1.1s linear infinite;
+}
+.passenger-complete__pending-ic svg { width: 14px; height: 14px; }
+@keyframes passenger-complete-spin {
+  to { transform: rotate(360deg); }
+}
+
 .passenger-complete__paid-badge {
   display: inline-flex;
   align-items: center;

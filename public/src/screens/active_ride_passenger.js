@@ -599,8 +599,21 @@ const ARROW_RIGHT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentCol
   <polyline points="12 5 19 12 12 19"/>
 </svg>`;
 
+const SPINNER_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true" width="14" height="14">
+  <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/>
+  <path d="M21 12a9 9 0 0 1-9 9"/>
+</svg>`;
+
+const PAYMENT_STATES = new Set(['auto', 'pending', 'paid']);
+function normalizePayment(value) {
+  if (typeof value !== 'string') return 'auto';
+  const v = value.trim().toLowerCase();
+  return PAYMENT_STATES.has(v) ? v : 'auto';
+}
+
 function renderPassengerRideComplete(ride, deps) {
-  const { go: navigate, toast } = deps;
+  const { go: navigate, toast, paymentStatus } = deps;
+  const initialPayment = normalizePayment(paymentStatus);
   const stats = completedStats(ride);
   const pay = completedPaymentInfo(ride);
   const route = (ride && ride.route) || {};
@@ -656,6 +669,11 @@ function renderPassengerRideComplete(ride, deps) {
   const content = document.createElement('div');
   content.className = 'passenger-complete__scroll';
   content.dataset.submitted = 'false';
+  // Payment lifecycle is tracked independently of the rating submitted
+  // flag so the pending → paid transition doesn't force a rating
+  // change. Default is `auto` (before charge); `?payment=pending`
+  // surfaces the in-flight charge state for QA; submit sets `paid`.
+  content.dataset.payment = initialPayment;
   content.innerHTML = `
     <div class="passenger-complete__hero">
       <div class="passenger-complete__check" aria-hidden="true">
@@ -674,8 +692,12 @@ function renderPassengerRideComplete(ride, deps) {
     <div class="passenger-complete__card passenger-complete__pay">
       <div class="passenger-complete__pay-head">
         <div class="passenger-complete__pay-label">Итого к оплате</div>
-        <span class="passenger-complete__auto-badge" data-default-only>Авто-оплата</span>
-        <span class="passenger-complete__paid-badge" data-submitted-only>
+        <span class="passenger-complete__auto-badge" data-pay-show="auto">Авто-оплата</span>
+        <span class="passenger-complete__pending-badge" data-pay-show="pending">
+          <span class="passenger-complete__pending-ic" aria-hidden="true">${SPINNER_SVG}</span>
+          Списание...
+        </span>
+        <span class="passenger-complete__paid-badge" data-pay-show="paid">
           <span class="passenger-complete__paid-ic" aria-hidden="true">${CHECK_SVG}</span>
           Оплачено
         </span>
@@ -685,16 +707,17 @@ function renderPassengerRideComplete(ride, deps) {
         <div class="passenger-complete__pay-icon" aria-hidden="true">${CARD_SVG}</div>
         <div class="passenger-complete__pay-method-body">
           <div class="passenger-complete__pay-method-title">•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}</div>
-          <div class="passenger-complete__pay-method-note" data-default-only>Оплата автоматически после поездки</div>
-          <div class="passenger-complete__pay-method-note" data-submitted-only>Списано · сегодня в ${escapeHtml(stats.completedAt)}</div>
+          <div class="passenger-complete__pay-method-note" data-pay-show="auto">Оплата автоматически после поездки</div>
+          <div class="passenger-complete__pay-method-note" data-pay-show="pending">Списываем сумму с карты...</div>
+          <div class="passenger-complete__pay-method-note" data-pay-show="paid">Списано · сегодня в ${escapeHtml(stats.completedAt)}</div>
         </div>
         <div class="passenger-complete__pay-method-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
       </div>
-      <div class="passenger-complete__receipt-note" data-default-only>
+      <div class="passenger-complete__receipt-note" data-pay-show="auto pending">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
         Чек будет доступен после оплаты
       </div>
-      <div class="passenger-complete__receipt-ready" data-submitted-only>
+      <div class="passenger-complete__receipt-ready" data-pay-show="paid">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
         <span class="passenger-complete__receipt-ready-text">Чек готов · можно скачать</span>
         <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-download">Скачать</button>
@@ -772,7 +795,7 @@ function renderPassengerRideComplete(ride, deps) {
             maxlength="200"
             rows="3"
             aria-label="Комментарий к поездке"
-            placeholder="Расскажите о поездке"></textarea>
+            placeholder="Комментарий (необязательно)"></textarea>
           <div class="passenger-complete__comment-foot">
             <span class="passenger-complete__comment-helper">Виден только поддержке</span>
             <span class="passenger-complete__comment-counter" id="arp-comment-counter" aria-live="polite">0/200</span>
@@ -929,6 +952,9 @@ function renderPassengerRideComplete(ride, deps) {
     if (currentRating === 0) return;
     syncSubmittedStars(currentRating);
     content.dataset.submitted = 'true';
+    // Submitting the rating implies the auto-charge has completed
+    // by the time we render the thank-you screen.
+    content.dataset.payment = 'paid';
     submitBtn.disabled = true;
     // Disable underlying editable controls so a hidden tab/keyboard
     // user can't keep editing fields that the UI no longer shows.
@@ -993,6 +1019,7 @@ export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
   const phaseQuery = normalizePhase((options && options.phaseQuery) || null);
+  const paymentQuery = (options && options.paymentQuery) || null;
   const showNotice = typeof options.showNotice === 'function'
     ? options.showNotice
     : null;
@@ -1009,7 +1036,11 @@ export default function activeRidePassenger(options = {}) {
   // map/sheet pipeline used by the en-route, waiting and in-progress
   // phases.
   if (ride.status === RIDE_STATUS.COMPLETED) {
-    return renderPassengerRideComplete(ride, { go, toast: showNotice });
+    return renderPassengerRideComplete(ride, {
+      go,
+      toast: showNotice,
+      paymentStatus: paymentQuery,
+    });
   }
 
   const root = document.createElement('section');
