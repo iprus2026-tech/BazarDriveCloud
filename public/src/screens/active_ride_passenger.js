@@ -978,8 +978,11 @@ function renderPassengerRideComplete(ride, deps) {
   starButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       const star = Number(btn.dataset.star);
-      // Tap the same star again to reset to 0 (matches typical rating UX).
-      applyRating(star === currentRating ? star - 1 : star);
+      // Tap the same star again to clear the rating back to 0 — gives
+      // a one-tap escape hatch when the passenger taps the wrong star
+      // and avoids the surprising "5 → 4 → 3 …" decrement that the
+      // earlier `star - 1` form caused.
+      applyRating(star === currentRating ? 0 : star);
     });
   });
 
