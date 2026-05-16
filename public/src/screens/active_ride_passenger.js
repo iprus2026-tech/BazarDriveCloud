@@ -590,6 +590,15 @@ const RECEIPT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
   <polyline points="14 2 14 8 20 8"/>
 </svg>`;
 
+const SPARKLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+</svg>`;
+
+const ARROW_RIGHT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <line x1="5" y1="12" x2="19" y2="12"/>
+  <polyline points="12 5 19 12 12 19"/>
+</svg>`;
+
 function renderPassengerRideComplete(ride, deps) {
   const { go: navigate, toast } = deps;
   const stats = completedStats(ride);
@@ -646,34 +655,49 @@ function renderPassengerRideComplete(ride, deps) {
 
   const content = document.createElement('div');
   content.className = 'passenger-complete__scroll';
+  content.dataset.submitted = 'false';
   content.innerHTML = `
     <div class="passenger-complete__hero">
       <div class="passenger-complete__check" aria-hidden="true">
         ${CHECK_SVG}
       </div>
-      <div class="passenger-complete__hero-title">Поездка завершена</div>
-      <div class="passenger-complete__hero-sub">
+      <div class="passenger-complete__hero-title" data-default-only>Поездка завершена</div>
+      <div class="passenger-complete__hero-title" data-submitted-only>Спасибо за отзыв</div>
+      <div class="passenger-complete__hero-sub" data-default-only>
         Спасибо за поездку. Оплата будет списана автоматически.
+      </div>
+      <div class="passenger-complete__hero-sub" data-submitted-only>
+        Ваша оценка отправлена водителю. Хорошей дороги!
       </div>
     </div>
 
     <div class="passenger-complete__card passenger-complete__pay">
       <div class="passenger-complete__pay-head">
         <div class="passenger-complete__pay-label">Итого к оплате</div>
-        <span class="passenger-complete__auto-badge">Авто-оплата</span>
+        <span class="passenger-complete__auto-badge" data-default-only>Авто-оплата</span>
+        <span class="passenger-complete__paid-badge" data-submitted-only>
+          <span class="passenger-complete__paid-ic" aria-hidden="true">${CHECK_SVG}</span>
+          Оплачено
+        </span>
       </div>
       <div class="passenger-complete__pay-total">${escapeHtml(pay.total)}</div>
       <div class="passenger-complete__pay-method">
         <div class="passenger-complete__pay-icon" aria-hidden="true">${CARD_SVG}</div>
         <div class="passenger-complete__pay-method-body">
           <div class="passenger-complete__pay-method-title">•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}</div>
-          <div class="passenger-complete__pay-method-note">Оплата автоматически после поездки</div>
+          <div class="passenger-complete__pay-method-note" data-default-only>Оплата автоматически после поездки</div>
+          <div class="passenger-complete__pay-method-note" data-submitted-only>Списано · сегодня в ${escapeHtml(stats.completedAt)}</div>
         </div>
         <div class="passenger-complete__pay-method-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
       </div>
-      <div class="passenger-complete__receipt-note">
+      <div class="passenger-complete__receipt-note" data-default-only>
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
         Чек будет доступен после оплаты
+      </div>
+      <div class="passenger-complete__receipt-ready" data-submitted-only>
+        <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
+        <span class="passenger-complete__receipt-ready-text">Чек готов · можно скачать</span>
+        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-download">Скачать</button>
       </div>
     </div>
 
@@ -728,8 +752,9 @@ function renderPassengerRideComplete(ride, deps) {
     </div>
 
     <div class="passenger-complete__rating-section">
-      <div class="passenger-complete__section-label">ОЦЕНИТЕ ПОЕЗДКУ</div>
-      <div class="passenger-complete__card passenger-complete__rating" id="arp-rating-card" data-rating="0">
+      <div class="passenger-complete__section-label" data-default-only>ОЦЕНИТЕ ПОЕЗДКУ</div>
+      <div class="passenger-complete__section-label" data-submitted-only>ВАША ОЦЕНКА</div>
+      <div class="passenger-complete__card passenger-complete__rating" id="arp-rating-card" data-rating="0" data-default-only>
         <div class="passenger-complete__stars" role="radiogroup" aria-label="Оценка поездки">
           ${starsHtml}
         </div>
@@ -754,11 +779,32 @@ function renderPassengerRideComplete(ride, deps) {
           </div>
         </div>
       </div>
+      <div class="passenger-complete__card passenger-complete__rating-submitted" id="arp-rating-submitted" data-submitted-only>
+        <div class="passenger-complete__submitted-head">
+          <span class="passenger-complete__submitted-ic" aria-hidden="true">${SPARKLE_SVG}</span>
+          <span class="passenger-complete__submitted-title">Ваш отзыв отправлен</span>
+        </div>
+        <div class="passenger-complete__submitted-stars" id="arp-submitted-stars" role="img" aria-label="Вы поставили 5 звёзд">
+          ${[1, 2, 3, 4, 5].map(() => `
+            <span class="passenger-complete__submitted-star" data-filled="true">
+              <span class="passenger-complete__star-full" aria-hidden="true">${STAR_FULL_SVG}</span>
+              <span class="passenger-complete__star-empty" aria-hidden="true">${STAR_EMPTY_SVG}</span>
+            </span>
+          `).join('')}
+        </div>
+        <div class="passenger-complete__submitted-note">
+          Спасибо! Это помогает делать поездки лучше.
+        </div>
+      </div>
     </div>
 
-    <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-submit-rating" disabled>
+    <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-submit-rating" data-default-only disabled>
       <span class="passenger-complete__cta-ic" aria-hidden="true">${STAR_FULL_SVG}</span>
       Поставить оценку
+    </button>
+    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-return-feed" data-submitted-only>
+      <span class="passenger-complete__cta-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
+      Вернуться в ленту
     </button>
 
     <div class="passenger-complete__bottom-actions">
@@ -867,12 +913,48 @@ function renderPassengerRideComplete(ride, deps) {
     commentCounter.textContent = `${commentInput.value.length}/${COMMENT_MAX}`;
   });
 
+  // ── Submitted state (Rating submitted — спасибо) ────────
+  // Toggle is driven by `content.dataset.submitted`; CSS hides
+  // [data-default-only] / [data-submitted-only] accordingly so we
+  // don't need to remove or rebuild any DOM nodes.
+  const submittedStars = Array.from(
+    content.querySelectorAll('#arp-submitted-stars .passenger-complete__submitted-star')
+  );
+  function syncSubmittedStars(value) {
+    submittedStars.forEach((node, idx) => {
+      node.dataset.filled = (idx + 1) <= value ? 'true' : 'false';
+    });
+  }
   submitBtn.addEventListener('click', () => {
     if (currentRating === 0) return;
-    localToast(`Спасибо! Оценка ${currentRating}★ сохранена`);
+    syncSubmittedStars(currentRating);
+    content.dataset.submitted = 'true';
     submitBtn.disabled = true;
-    submitBtn.dataset.submitted = 'true';
+    // Disable underlying editable controls so a hidden tab/keyboard
+    // user can't keep editing fields that the UI no longer shows.
+    starButtons.forEach((b) => { b.disabled = true; });
+    tagButtons.forEach((b) => { b.disabled = true; });
+    if (commentInput) commentInput.disabled = true;
+    if (commentBtn) commentBtn.disabled = true;
+    // Move focus to the new primary CTA for keyboard users.
+    const returnBtn = content.querySelector('#arp-return-feed');
+    if (returnBtn) returnBtn.focus();
   });
+
+  const returnFeedBtn = content.querySelector('#arp-return-feed');
+  if (returnFeedBtn) {
+    returnFeedBtn.addEventListener('click', () => {
+      navigate('/feed');
+    });
+  }
+
+  const receiptDownloadBtn = content.querySelector('#arp-receipt-download');
+  if (receiptDownloadBtn) {
+    receiptDownloadBtn.addEventListener('click', () => {
+      // Receipt download isn't wired to a backend yet — safe stub.
+      localToast('Скачивание чека будет доступно позже');
+    });
+  }
 
   // ── Driver card actions ──────────────────────────────────
   const chatIconBtn = content.querySelector('#arp-chat');
