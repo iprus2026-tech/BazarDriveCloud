@@ -124,6 +124,7 @@ function renderPassenger() {
   return activeRidePassenger({
     tripId: query.get('tripId') || DEMO_ACTIVE_RIDE_ID,
     statusQuery: query.get('status'),
+    phaseQuery: query.get('phase'),
   });
 }
 
