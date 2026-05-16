@@ -1026,10 +1026,19 @@ function renderPassengerRideComplete(ride, deps) {
   const submittedStars = Array.from(
     content.querySelectorAll('#arp-submitted-stars .passenger-complete__submitted-star')
   );
+  const submittedStarsHost = content.querySelector('#arp-submitted-stars');
   function syncSubmittedStars(value) {
     submittedStars.forEach((node, idx) => {
       node.dataset.filled = (idx + 1) <= value ? 'true' : 'false';
     });
+    // Keep the a11y label in sync so screen readers announce the
+    // rating the passenger actually submitted, not a hard-coded 5.
+    if (submittedStarsHost) {
+      submittedStarsHost.setAttribute(
+        'aria-label',
+        `Вы поставили ${value} ${value === 1 ? 'звезду' : value < 5 ? 'звезды' : 'звёзд'}`
+      );
+    }
   }
   submitBtn.addEventListener('click', () => {
     if (currentRating === 0) return;
