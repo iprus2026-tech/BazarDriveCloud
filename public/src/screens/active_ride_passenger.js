@@ -1,7 +1,8 @@
-// BD-RIDE-P-02 / BD-RIDE-P-03 — Passenger active ride.
-// Supports DRIVER_EN_ROUTE (Водитель едет к вам) and WAITING_PASSENGER
-// (Водитель ждёт вас). Mock/UI only. No Mapbox SDK, no token, no backend,
-// no geolocation, no real calls, no real payments, no push.
+// BD-RIDE-P-02 / BD-RIDE-P-03 / BD-RIDE-P-04 — Passenger active ride.
+// Supports DRIVER_EN_ROUTE (Водитель едет к вам), WAITING_PASSENGER
+// (Водитель ждёт вас) and IN_PROGRESS (В пути). Mock/UI only.
+// No Mapbox SDK, no token, no backend, no geolocation, no real calls,
+// no real payments, no push.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
@@ -67,6 +68,11 @@ const CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   <polyline points="20 6 9 17 4 12"/>
 </svg>`;
 
+const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <line x1="12" y1="5" x2="12" y2="19"/>
+  <line x1="5" y1="12" x2="19" y2="12"/>
+</svg>`;
+
 const TRIP_NUMBER_FALLBACK = '№48-321';
 
 // View-only: never persists status by default. The driver flow owns the
@@ -88,8 +94,9 @@ function loadPassengerRideView(tripId) {
 // DRIVER_APPROACHING_PICKUP is accepted as an alias to DRIVER_EN_ROUTE
 // for the passenger UI — BD-RIDE-P-02 currently renders the same layout
 // for both phases. WAITING_PASSENGER is the BD-RIDE-P-03 driver-arrived
-// view. Status overrides are kept in-memory and do not roll back past
-// later lifecycle timestamps already on the ride.
+// view. IN_PROGRESS is the BD-RIDE-P-04 on-ride view. Status overrides
+// are kept in-memory and do not roll back past later lifecycle
+// timestamps already on the ride.
 function applyPassengerStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
   const ts = ride.timestamps || {};
@@ -105,6 +112,11 @@ function applyPassengerStatusFromQuery(ride, statusQuery) {
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) return ride;
     if (ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
     return { ...ride, status: RIDE_STATUS.WAITING_PASSENGER };
+  }
+  if (statusQuery === RIDE_STATUS.IN_PROGRESS) {
+    if (ride.status === RIDE_STATUS.IN_PROGRESS) return ride;
+    if (ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.IN_PROGRESS };
   }
   return ride;
 }
@@ -155,6 +167,15 @@ function toSeconds(mmss) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+function inProgressInfo(ride) {
+  const r = (ride && ride.ride) || {};
+  const route = (ride && ride.route) || {};
+  const arrivalTime = r.arrivalTime || '14:32';
+  const rawEta = route.etaToDestination || r.etaToDestination || '17 мин';
+  const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
+  return { arrivalTime, eta };
+}
+
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
   const remaining = w.remaining || '2:45';
@@ -170,18 +191,18 @@ function waitingInfo(ride) {
   return { remaining, freeLimit, paidStartsAt, paidRate, pct };
 }
 
-// BD-RIDE-P-02 covers DRIVER_EN_ROUTE; BD-RIDE-P-03 covers WAITING_PASSENGER.
-// Other passenger-side stages (in-progress / completed / canceled) keep a
-// placeholder so we don't show the wrong title and actions when the ride
-// has moved on.
+// BD-RIDE-P-02 covers DRIVER_EN_ROUTE; BD-RIDE-P-03 covers WAITING_PASSENGER;
+// BD-RIDE-P-04 covers IN_PROGRESS. Other passenger-side stages
+// (completed / canceled) keep a placeholder so we don't show the wrong
+// title and actions when the ride has moved on.
 const PASSENGER_SUPPORTED_STATUSES = new Set([
   RIDE_STATUS.DRIVER_EN_ROUTE,
   RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
   RIDE_STATUS.WAITING_PASSENGER,
+  RIDE_STATUS.IN_PROGRESS,
 ]);
 
 const PASSENGER_STUB_BY_STATUS = {
-  [RIDE_STATUS.IN_PROGRESS]: 'Поездка идёт — экран будет добавлен позже',
   [RIDE_STATUS.COMPLETED]: 'Поездка завершена — экран будет добавлен позже',
   [RIDE_STATUS.CANCELED]: 'Поездка отменена — экран будет добавлен позже',
   [RIDE_STATUS.NO_SHOW]: 'Поездка отменена — экран будет добавлен позже',
@@ -240,11 +261,18 @@ function driverRowHtml(ride) {
   `;
 }
 
-function routeBlockHtml(ride) {
+function routeBlockHtml(ride, options = {}) {
   const pickup = (ride.route && ride.route.pickupLabel) || 'ул. Малая Бронная, 28';
   const dropoff = (ride.route && ride.route.dropoffLabel) || 'Аэропорт Шереметьево, терминал В';
+  const editable = options.editable !== false;
+  const modifier = editable ? '' : ' active-ride-passenger__route--locked';
+  const editBtn = editable
+    ? `<button type="button" class="active-ride-passenger__route-edit" id="arp-edit-route" aria-label="Изменить маршрут">
+        ${PENCIL_SVG}
+      </button>`
+    : '';
   return `
-    <div class="active-ride-passenger__route">
+    <div class="active-ride-passenger__route${modifier}">
       <ul class="active-ride-passenger__route-list" role="list">
         <li class="active-ride-passenger__route-point active-ride-passenger__route-point--pickup">
           <div class="active-ride-passenger__route-label">ОТКУДА</div>
@@ -255,9 +283,7 @@ function routeBlockHtml(ride) {
           <div class="active-ride-passenger__route-main">${escapeHtml(dropoff)}</div>
         </li>
       </ul>
-      <button type="button" class="active-ride-passenger__route-edit" id="arp-edit-route" aria-label="Изменить маршрут">
-        ${PENCIL_SVG}
-      </button>
+      ${editBtn}
     </div>
   `;
 }
@@ -352,6 +378,49 @@ function renderWaitingSheet(sheet, ride) {
       <span class="active-ride-passenger__btn-ic" aria-hidden="true">${CHECK_SVG}</span>
       Я в машине — поехали
     </button>
+
+    <div class="active-ride-passenger__secondary-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
+        SOS
+      </button>
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-share" id="arp-share">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SHARE_SVG}</span>
+        Поделиться поездкой
+      </button>
+    </div>
+  `;
+}
+
+function renderInProgressSheet(sheet, ride) {
+  const info = inProgressInfo(ride);
+  sheet.innerHTML = `
+    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
+
+    <div class="active-ride-passenger__header">
+      <div class="active-ride-passenger__header-main">
+        <div class="active-ride-passenger__title">В пути</div>
+        <div class="active-ride-passenger__sub">Расчётное время прибытия ${escapeHtml(info.arrivalTime)}</div>
+      </div>
+      <div class="active-ride-passenger__eta" aria-label="Время до места">
+        <div class="active-ride-passenger__eta-value">${escapeHtml(info.eta)}</div>
+        <div class="active-ride-passenger__eta-label">до места</div>
+      </div>
+    </div>
+
+    ${driverRowHtml(ride)}
+    ${routeBlockHtml(ride, { editable: false })}
+    ${paymentBlockHtml(ride)}
+
+    <div class="active-ride-passenger__in-progress-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-stop" id="arp-add-stop">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PLUS_SVG}</span>
+        Добавить остановку
+      </button>
+      <button type="button" class="active-ride-passenger__icon-action active-ride-passenger__btn-share-square" id="arp-share-square" aria-label="Поделиться поездкой">
+        ${SHARE_SVG}
+      </button>
+    </div>
 
     <div class="active-ride-passenger__secondary-actions">
       <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
@@ -489,6 +558,23 @@ export default function activeRidePassenger(options = {}) {
           // and re-route so the URL reflects the new mock state.
           updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
           go(`/active-ride?role=passenger&status=${RIDE_STATUS.IN_PROGRESS}&tripId=${encodeURIComponent(ride.tripId)}`);
+        });
+      }
+      return;
+    }
+    if (ride.status === RIDE_STATUS.IN_PROGRESS) {
+      renderInProgressSheet(sheet, ride);
+      bindCommonSheetHandlers();
+      const addStopBtn = sheet.querySelector('#arp-add-stop');
+      if (addStopBtn) {
+        addStopBtn.addEventListener('click', () => {
+          toast('Добавление остановки будет добавлено позже');
+        });
+      }
+      const shareSquareBtn = sheet.querySelector('#arp-share-square');
+      if (shareSquareBtn) {
+        shareSquareBtn.addEventListener('click', () => {
+          toast('Поделиться поездкой пока заглушка');
         });
       }
       return;
