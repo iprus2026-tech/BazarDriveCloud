@@ -1,12 +1,14 @@
-// BD-RIDE-P-02 — Passenger active ride · DRIVER_EN_ROUTE state.
-// Mock/UI only. No Mapbox SDK, no token, no backend, no geolocation,
-// no real calls, no real payments, no push.
+// BD-RIDE-P-02 / BD-RIDE-P-03 — Passenger active ride.
+// Supports DRIVER_EN_ROUTE (Водитель едет к вам) and WAITING_PASSENGER
+// (Водитель ждёт вас). Mock/UI only. No Mapbox SDK, no token, no backend,
+// no geolocation, no real calls, no real payments, no push.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import {
   findActiveRide,
   createDemoActiveRide,
+  updateActiveRideStatus,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -61,12 +63,17 @@ const SHARE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
 </svg>`;
 
+const CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <polyline points="20 6 9 17 4 12"/>
+</svg>`;
+
 const TRIP_NUMBER_FALLBACK = '№48-321';
 
-// View-only: never persists status. The driver flow owns the canonical
-// ride lifecycle; the passenger view derives a display status without
-// touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
-// in-memory demo ride so we don't materialize anything into localStorage.
+// View-only: never persists status by default. The driver flow owns the
+// canonical ride lifecycle; the passenger view derives a display status
+// without touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
+// in-memory demo ride so we don't materialize anything into localStorage
+// just for rendering.
 function loadPassengerRideView(tripId) {
   let ride = findActiveRide(tripId);
   if (!ride) {
@@ -80,19 +87,26 @@ function loadPassengerRideView(tripId) {
 
 // DRIVER_APPROACHING_PICKUP is accepted as an alias to DRIVER_EN_ROUTE
 // for the passenger UI — BD-RIDE-P-02 currently renders the same layout
-// for both phases.
+// for both phases. WAITING_PASSENGER is the BD-RIDE-P-03 driver-arrived
+// view. Status overrides are kept in-memory and do not roll back past
+// later lifecycle timestamps already on the ride.
 function applyPassengerStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
-  if (statusQuery !== RIDE_STATUS.DRIVER_EN_ROUTE
-    && statusQuery !== RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
-    return ride;
-  }
-  if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
   const ts = ride.timestamps || {};
-  if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
-    return ride;
+  if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+    || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
+    if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
+    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
+      return ride;
+    }
+    return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
   }
-  return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
+  if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
+    if (ride.status === RIDE_STATUS.WAITING_PASSENGER) return ride;
+    if (ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.WAITING_PASSENGER };
+  }
+  return ride;
 }
 
 function formatTripNumber(tripId) {
@@ -135,17 +149,38 @@ function etaText(ride) {
   return eta.replace(/\s*мин(уты?|у)?$/i, ' мин');
 }
 
-// BD-RIDE-P-02 only covers DRIVER_EN_ROUTE. Other passenger-side stages
-// (waiting / in-progress / completed / canceled) get a placeholder so we
-// don't show "Водитель едет к вам" with the wrong actions when the ride
-// has already moved on.
+function toSeconds(mmss) {
+  const m = /^(\d+):(\d+)$/.exec(String(mmss || ''));
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function waitingInfo(ride) {
+  const w = (ride && ride.waiting) || {};
+  const remaining = w.remaining || '2:45';
+  const freeLimit = w.freeLimit || '3:00';
+  const paidStartsAt = w.paidStartsAt || '14:18';
+  const paidRate = w.paidRate || '8 ₽ за каждую минуту';
+  const remSec = toSeconds(remaining);
+  const totalSec = toSeconds(freeLimit);
+  let pct = 100;
+  if (remSec != null && totalSec && totalSec > 0) {
+    pct = Math.max(0, Math.min(100, Math.round((remSec / totalSec) * 100)));
+  }
+  return { remaining, freeLimit, paidStartsAt, paidRate, pct };
+}
+
+// BD-RIDE-P-02 covers DRIVER_EN_ROUTE; BD-RIDE-P-03 covers WAITING_PASSENGER.
+// Other passenger-side stages (in-progress / completed / canceled) keep a
+// placeholder so we don't show the wrong title and actions when the ride
+// has moved on.
 const PASSENGER_SUPPORTED_STATUSES = new Set([
   RIDE_STATUS.DRIVER_EN_ROUTE,
   RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+  RIDE_STATUS.WAITING_PASSENGER,
 ]);
 
 const PASSENGER_STUB_BY_STATUS = {
-  [RIDE_STATUS.WAITING_PASSENGER]: 'Водитель ждёт вас — экран будет добавлен позже',
   [RIDE_STATUS.IN_PROGRESS]: 'Поездка идёт — экран будет добавлен позже',
   [RIDE_STATUS.COMPLETED]: 'Поездка завершена — экран будет добавлен позже',
   [RIDE_STATUS.CANCELED]: 'Поездка отменена — экран будет добавлен позже',
@@ -162,6 +197,173 @@ function renderPassengerStub(message) {
     </div>
   `;
   return root;
+}
+
+function chatLabelFor(ride) {
+  const rawUnread = ride.chat && ride.chat.unread;
+  const unreadCount = Number.isFinite(Number(rawUnread)) && rawUnread != null
+    ? Number(rawUnread)
+    : 2;
+  const label = unreadCount > 0
+    ? `Написать водителю · ${unreadCount} непрочитанных`
+    : 'Написать водителю';
+  return { unreadCount, label };
+}
+
+function driverRowHtml(ride) {
+  const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
+  const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
+  const driverRating = (ride.driver && ride.driver.rating) || '4,92';
+  const { unreadCount, label } = chatLabelFor(ride);
+  return `
+    <div class="active-ride-passenger__driver-row">
+      <div class="active-ride-passenger__avatar" aria-hidden="true">${escapeHtml(driverInitials)}</div>
+      <div class="active-ride-passenger__driver-info">
+        <div class="active-ride-passenger__driver-name">
+          ${escapeHtml(driverName)}
+          <span class="active-ride-passenger__driver-rating">★ ${escapeHtml(driverRating)}</span>
+        </div>
+        <div class="active-ride-passenger__driver-sub">${escapeHtml(driverSubtitle(ride))}</div>
+      </div>
+      <div class="active-ride-passenger__driver-actions">
+        <button type="button" class="active-ride-passenger__icon-action" id="arp-chat" aria-label="${escapeHtml(label)}">
+          ${MESSAGE_SVG}
+          ${unreadCount > 0
+            ? `<span class="active-ride-passenger__chat-badge" aria-hidden="true">${escapeHtml(String(unreadCount))}</span>`
+            : ''}
+        </button>
+        <button type="button" class="active-ride-passenger__icon-action" id="arp-call" aria-label="Позвонить водителю">
+          ${PHONE_SVG}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function routeBlockHtml(ride) {
+  const pickup = (ride.route && ride.route.pickupLabel) || 'ул. Малая Бронная, 28';
+  const dropoff = (ride.route && ride.route.dropoffLabel) || 'Аэропорт Шереметьево, терминал В';
+  return `
+    <div class="active-ride-passenger__route">
+      <ul class="active-ride-passenger__route-list" role="list">
+        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--pickup">
+          <div class="active-ride-passenger__route-label">ОТКУДА</div>
+          <div class="active-ride-passenger__route-main">${escapeHtml(pickup)}</div>
+        </li>
+        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--dropoff">
+          <div class="active-ride-passenger__route-label">КУДА</div>
+          <div class="active-ride-passenger__route-main">${escapeHtml(dropoff)}</div>
+        </li>
+      </ul>
+      <button type="button" class="active-ride-passenger__route-edit" id="arp-edit-route" aria-label="Изменить маршрут">
+        ${PENCIL_SVG}
+      </button>
+    </div>
+  `;
+}
+
+function paymentBlockHtml(ride) {
+  const pay = paymentInfo(ride);
+  return `
+    <div class="active-ride-passenger__payment" role="group" aria-label="Способ оплаты">
+      <div class="active-ride-passenger__payment-icon" aria-hidden="true">${CARD_SVG}</div>
+      <div class="active-ride-passenger__payment-body">
+        <div class="active-ride-passenger__payment-title">•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}</div>
+        <div class="active-ride-passenger__payment-note">${escapeHtml(pay.note)}</div>
+      </div>
+      <div class="active-ride-passenger__payment-amount">${escapeHtml(pay.amount)}</div>
+      <div class="active-ride-passenger__payment-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
+    </div>
+  `;
+}
+
+function renderEnRouteSheet(sheet, ride) {
+  sheet.innerHTML = `
+    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
+
+    <div class="active-ride-passenger__header">
+      <div class="active-ride-passenger__header-main">
+        <div class="active-ride-passenger__title">Водитель едет к вам</div>
+        <div class="active-ride-passenger__car">${escapeHtml(carLine(ride))}</div>
+      </div>
+      <div class="active-ride-passenger__eta" aria-label="Время прибытия">
+        <div class="active-ride-passenger__eta-value">${escapeHtml(etaText(ride))}</div>
+        <div class="active-ride-passenger__eta-label">до места</div>
+      </div>
+    </div>
+
+    ${driverRowHtml(ride)}
+    ${routeBlockHtml(ride)}
+    ${paymentBlockHtml(ride)}
+
+    <div class="active-ride-passenger__primary-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sec" id="arp-refine">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PIN_SVG}</span>
+        Уточнить место
+      </button>
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-cancel" id="arp-cancel">Отменить</button>
+    </div>
+
+    <div class="active-ride-passenger__secondary-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
+        SOS
+      </button>
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-share" id="arp-share">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SHARE_SVG}</span>
+        Поделиться поездкой
+      </button>
+    </div>
+  `;
+}
+
+function renderWaitingSheet(sheet, ride) {
+  const w = waitingInfo(ride);
+  sheet.innerHTML = `
+    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
+
+    <div class="active-ride-passenger__header">
+      <div class="active-ride-passenger__header-main">
+        <div class="active-ride-passenger__title">Водитель ждёт вас</div>
+        <div class="active-ride-passenger__sub">Бесплатное ожидание заканчивается через</div>
+      </div>
+      <div class="active-ride-passenger__waiting-badge" aria-label="Осталось бесплатного ожидания">
+        <div class="active-ride-passenger__waiting-badge-value">${escapeHtml(w.remaining)}</div>
+        <div class="active-ride-passenger__waiting-badge-label">осталось</div>
+      </div>
+    </div>
+
+    <div class="active-ride-passenger__waiting-card">
+      <div class="active-ride-passenger__waiting-card-head">
+        <span class="active-ride-passenger__waiting-card-title">Бесплатное ожидание</span>
+        <span class="active-ride-passenger__waiting-card-value">${escapeHtml(w.remaining)} / ${escapeHtml(w.freeLimit)}</span>
+      </div>
+      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w.pct}">
+        <div class="active-ride-passenger__progress-bar-fill" data-step="${Math.round(w.pct / 10)}"></div>
+      </div>
+      <div class="active-ride-passenger__waiting-card-foot">Дальше — ${escapeHtml(w.paidRate)} · с ${escapeHtml(w.paidStartsAt)}</div>
+    </div>
+
+    ${driverRowHtml(ride)}
+    ${routeBlockHtml(ride)}
+    ${paymentBlockHtml(ride)}
+
+    <button type="button" class="bd-btn primary active-ride-passenger__cta-primary" id="arp-boarded">
+      <span class="active-ride-passenger__btn-ic" aria-hidden="true">${CHECK_SVG}</span>
+      Я в машине — поехали
+    </button>
+
+    <div class="active-ride-passenger__secondary-actions">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
+        SOS
+      </button>
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-share" id="arp-share">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SHARE_SVG}</span>
+        Поделиться поездкой
+      </button>
+    </div>
+  `;
 }
 
 export default function activeRidePassenger(options = {}) {
@@ -233,104 +435,7 @@ export default function activeRidePassenger(options = {}) {
     noticeTimer = setTimeout(() => { notice.hidden = true; }, 3500);
   }
 
-  // ── Sheet content ────────────────────────────────────────
-  const pay = paymentInfo(ride);
-  const pickup = (ride.route && ride.route.pickupLabel) || 'ул. Малая Бронная, 28';
-  const dropoff = (ride.route && ride.route.dropoffLabel) || 'Аэропорт Шереметьево, терминал В';
-  const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
-  const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
-  const driverRating = (ride.driver && ride.driver.rating) || '4,92';
-  const rawUnread = ride.chat && ride.chat.unread;
-  const unreadCount = Number.isFinite(Number(rawUnread)) && rawUnread != null
-    ? Number(rawUnread)
-    : 2;
-  const chatLabel = unreadCount > 0
-    ? `Написать водителю · ${unreadCount} непрочитанных`
-    : 'Написать водителю';
-
-  sheet.innerHTML = `
-    <div class="active-ride-passenger__handle" aria-hidden="true"></div>
-
-    <div class="active-ride-passenger__header">
-      <div class="active-ride-passenger__header-main">
-        <div class="active-ride-passenger__title">Водитель едет к вам</div>
-        <div class="active-ride-passenger__car">${escapeHtml(carLine(ride))}</div>
-      </div>
-      <div class="active-ride-passenger__eta" aria-label="Время прибытия">
-        <div class="active-ride-passenger__eta-value">${escapeHtml(etaText(ride))}</div>
-        <div class="active-ride-passenger__eta-label">до места</div>
-      </div>
-    </div>
-
-    <div class="active-ride-passenger__driver-row">
-      <div class="active-ride-passenger__avatar" aria-hidden="true">${escapeHtml(driverInitials)}</div>
-      <div class="active-ride-passenger__driver-info">
-        <div class="active-ride-passenger__driver-name">
-          ${escapeHtml(driverName)}
-          <span class="active-ride-passenger__driver-rating">★ ${escapeHtml(driverRating)}</span>
-        </div>
-        <div class="active-ride-passenger__driver-sub">${escapeHtml(driverSubtitle(ride))}</div>
-      </div>
-      <div class="active-ride-passenger__driver-actions">
-        <button type="button" class="active-ride-passenger__icon-action" id="arp-chat" aria-label="${escapeHtml(chatLabel)}">
-          ${MESSAGE_SVG}
-          ${unreadCount > 0
-            ? `<span class="active-ride-passenger__chat-badge" aria-hidden="true">${escapeHtml(String(unreadCount))}</span>`
-            : ''}
-        </button>
-        <button type="button" class="active-ride-passenger__icon-action" id="arp-call" aria-label="Позвонить водителю">
-          ${PHONE_SVG}
-        </button>
-      </div>
-    </div>
-
-    <div class="active-ride-passenger__route">
-      <ul class="active-ride-passenger__route-list" role="list">
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--pickup">
-          <div class="active-ride-passenger__route-label">ОТКУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(pickup)}</div>
-        </li>
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--dropoff">
-          <div class="active-ride-passenger__route-label">КУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(dropoff)}</div>
-        </li>
-      </ul>
-      <button type="button" class="active-ride-passenger__route-edit" id="arp-edit-route" aria-label="Изменить маршрут">
-        ${PENCIL_SVG}
-      </button>
-    </div>
-
-    <div class="active-ride-passenger__payment" role="group" aria-label="Способ оплаты">
-      <div class="active-ride-passenger__payment-icon" aria-hidden="true">${CARD_SVG}</div>
-      <div class="active-ride-passenger__payment-body">
-        <div class="active-ride-passenger__payment-title">•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}</div>
-        <div class="active-ride-passenger__payment-note">${escapeHtml(pay.note)}</div>
-      </div>
-      <div class="active-ride-passenger__payment-amount">${escapeHtml(pay.amount)}</div>
-      <div class="active-ride-passenger__payment-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
-    </div>
-
-    <div class="active-ride-passenger__primary-actions">
-      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sec" id="arp-refine">
-        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PIN_SVG}</span>
-        Уточнить место
-      </button>
-      <button type="button" class="bd-btn ghost active-ride-passenger__btn-cancel" id="arp-cancel">Отменить</button>
-    </div>
-
-    <div class="active-ride-passenger__secondary-actions">
-      <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
-        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
-        SOS
-      </button>
-      <button type="button" class="bd-btn ghost active-ride-passenger__btn-share" id="arp-share">
-        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SHARE_SVG}</span>
-        Поделиться поездкой
-      </button>
-    </div>
-  `;
-
-  // ── Handlers ─────────────────────────────────────────────
+  // ── Shared top handlers ──────────────────────────────────
   top.querySelector('#arp-collapse').addEventListener('click', () => {
     toast('Сворачивание панели будет добавлено позже');
   });
@@ -338,27 +443,73 @@ export default function activeRidePassenger(options = {}) {
     toast('Безопасность будет добавлена позже');
   });
 
-  sheet.querySelector('#arp-chat').addEventListener('click', () => {
-    go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
-  });
-  sheet.querySelector('#arp-call').addEventListener('click', () => {
-    toast('Звонок водителю пока заглушка');
-  });
-  sheet.querySelector('#arp-edit-route').addEventListener('click', () => {
-    toast('Редактирование маршрута будет добавлено позже');
-  });
-  sheet.querySelector('#arp-refine').addEventListener('click', () => {
-    toast('Уточнение места подачи будет добавлено позже');
-  });
-  sheet.querySelector('#arp-cancel').addEventListener('click', () => {
-    toast('Отмена поездки будет реализована позже');
-  });
-  sheet.querySelector('#arp-sos').addEventListener('click', () => {
-    toast('Экран SOS будет добавлен позже');
-  });
-  sheet.querySelector('#arp-share').addEventListener('click', () => {
-    toast('Поделиться поездкой пока заглушка');
-  });
+  // ── Per-sheet bindings shared across statuses ────────────
+  function bindCommonSheetHandlers() {
+    const chatBtn = sheet.querySelector('#arp-chat');
+    if (chatBtn) {
+      chatBtn.addEventListener('click', () => {
+        go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
+      });
+    }
+    const callBtn = sheet.querySelector('#arp-call');
+    if (callBtn) {
+      callBtn.addEventListener('click', () => {
+        toast('Звонок водителю пока заглушка');
+      });
+    }
+    const editRouteBtn = sheet.querySelector('#arp-edit-route');
+    if (editRouteBtn) {
+      editRouteBtn.addEventListener('click', () => {
+        toast('Редактирование маршрута будет добавлено позже');
+      });
+    }
+    const sosBtn = sheet.querySelector('#arp-sos');
+    if (sosBtn) {
+      sosBtn.addEventListener('click', () => {
+        toast('Экран SOS будет добавлен позже');
+      });
+    }
+    const shareBtn = sheet.querySelector('#arp-share');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', () => {
+        toast('Поделиться поездкой пока заглушка');
+      });
+    }
+  }
 
+  function renderSheet() {
+    sheet.dataset.status = ride.status;
+    if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
+      renderWaitingSheet(sheet, ride);
+      bindCommonSheetHandlers();
+      const boardedBtn = sheet.querySelector('#arp-boarded');
+      if (boardedBtn) {
+        boardedBtn.addEventListener('click', () => {
+          // Persist transition to IN_PROGRESS so the driver flow sees it
+          // and re-route so the URL reflects the new mock state.
+          updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
+          go(`/active-ride?role=passenger&status=${RIDE_STATUS.IN_PROGRESS}&tripId=${encodeURIComponent(ride.tripId)}`);
+        });
+      }
+      return;
+    }
+    // DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP
+    renderEnRouteSheet(sheet, ride);
+    bindCommonSheetHandlers();
+    const refineBtn = sheet.querySelector('#arp-refine');
+    if (refineBtn) {
+      refineBtn.addEventListener('click', () => {
+        toast('Уточнение места подачи будет добавлено позже');
+      });
+    }
+    const cancelBtn = sheet.querySelector('#arp-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        toast('Отмена поездки будет реализована позже');
+      });
+    }
+  }
+
+  renderSheet();
   return root;
 }

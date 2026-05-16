@@ -5312,6 +5312,105 @@ body {
   .active-ride-passenger__eta-value { font-size: 16px; }
 }
 
+/* BD-RIDE-P-03 Passenger active ride · WAITING_PASSENGER ─── */
+.active-ride-passenger__sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.3;
+  margin-top: 4px;
+}
+
+.active-ride-passenger__waiting-badge {
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  text-align: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 84px;
+  flex-shrink: 0;
+}
+.active-ride-passenger__waiting-badge-value {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+.active-ride-passenger__waiting-badge-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.active-ride-passenger__waiting-card {
+  background: rgba(74, 222, 128, 0.06);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.active-ride-passenger__waiting-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.active-ride-passenger__waiting-card-title {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.active-ride-passenger__waiting-card-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+.active-ride-passenger__waiting-card-foot {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.active-ride-passenger__progress-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.18);
+  overflow: hidden;
+}
+.active-ride-passenger__progress-bar-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 999px;
+  width: 0%;
+  transition: width 200ms ease;
+}
+.active-ride-passenger__progress-bar-fill[data-step="0"]  { width: 0%; }
+.active-ride-passenger__progress-bar-fill[data-step="1"]  { width: 10%; }
+.active-ride-passenger__progress-bar-fill[data-step="2"]  { width: 20%; }
+.active-ride-passenger__progress-bar-fill[data-step="3"]  { width: 30%; }
+.active-ride-passenger__progress-bar-fill[data-step="4"]  { width: 40%; }
+.active-ride-passenger__progress-bar-fill[data-step="5"]  { width: 50%; }
+.active-ride-passenger__progress-bar-fill[data-step="6"]  { width: 60%; }
+.active-ride-passenger__progress-bar-fill[data-step="7"]  { width: 70%; }
+.active-ride-passenger__progress-bar-fill[data-step="8"]  { width: 80%; }
+.active-ride-passenger__progress-bar-fill[data-step="9"]  { width: 90%; }
+.active-ride-passenger__progress-bar-fill[data-step="10"] { width: 100%; }
+
+.bd-btn.active-ride-passenger__cta-primary {
+  height: 52px;
+  font-size: 15px;
+  font-weight: 700;
+  width: 100%;
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROFILE V2 — BD-PROFILE-PASSENGER-01 Passenger Dashboard
 ═══════════════════════════════════════════════════════════ */
