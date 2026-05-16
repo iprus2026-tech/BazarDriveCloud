@@ -613,6 +613,20 @@ function normalizePayment(value) {
 
 function renderPassengerRideComplete(ride, deps) {
   const { go: navigate, toast, paymentStatus } = deps;
+  // The COMPLETED screen tracks two independent UI axes:
+  //   data-submitted = "false" | "true"      — rating thank-you flag
+  //   data-payment   = "auto"  | "pending"   — charge lifecycle
+  //                  | "paid"
+  //
+  // Matrix the design uses:
+  //   submitted=false, payment=auto    — default after ride finish
+  //   submitted=false, payment=pending — list/pulse during charge (State 5)
+  //   submitted=false, payment=paid    — charge settled, rating still
+  //                                      a draft (State 6 — чек готов)
+  //   submitted=true,  payment=paid    — thank-you (State 4)
+  //
+  // Submitting the rating flips both flags; `?payment=` lets QA jump
+  // straight to the pending/paid presentations without a real charge.
   const initialPayment = normalizePayment(paymentStatus);
   const stats = completedStats(ride);
   const pay = completedPaymentInfo(ride);
@@ -720,7 +734,7 @@ function renderPassengerRideComplete(ride, deps) {
       <div class="passenger-complete__receipt-ready" data-pay-show="paid">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
         <span class="passenger-complete__receipt-ready-text">Чек готов · можно скачать</span>
-        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-download">Скачать</button>
+        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-download" aria-label="Скачать чек">Скачать</button>
       </div>
     </div>
 
