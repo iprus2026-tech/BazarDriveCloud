@@ -5448,6 +5448,706 @@ body {
   opacity: 0.85;
 }
 
+/* BD-RIDE-P-05 Passenger active ride · COMPLETED ─────────── */
+.active-ride-passenger--complete {
+  background: var(--bg-0);
+  overflow: hidden;
+}
+.active-ride-passenger--complete .active-ride-passenger__top {
+  background: var(--bg-0);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.passenger-complete__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg-0);
+}
+
+.passenger-complete__hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 14px 12px 4px;
+}
+.passenger-complete__check {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-complete__check svg {
+  width: 30px;
+  height: 30px;
+}
+.passenger-complete__hero-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  margin-top: 4px;
+}
+.passenger-complete__hero-sub {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.4;
+  max-width: 320px;
+}
+
+.passenger-complete__card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.passenger-complete__pay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.passenger-complete__pay-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.passenger-complete__auto-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+}
+.passenger-complete__pay-total {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin: 10px 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+.passenger-complete__pay-method {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.passenger-complete__pay-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #1a0a04;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.passenger-complete__pay-method-body {
+  flex: 1;
+  min-width: 0;
+}
+.passenger-complete__pay-method-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.passenger-complete__pay-method-note {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.passenger-complete__pay-method-chevron {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.passenger-complete__receipt-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  width: 100%;
+}
+.passenger-complete__receipt-ic {
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.passenger-complete__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+.passenger-complete__stat {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.passenger-complete__stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.passenger-complete__stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.passenger-complete__route {
+  padding: 14px 16px;
+}
+
+.passenger-complete__section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-3);
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+
+.passenger-complete__driver {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.passenger-complete__rating {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+.passenger-complete__stars {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.passenger-complete__star {
+  position: relative;
+  height: 56px;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease,
+    transform 0.08s ease, color 0.12s ease;
+}
+.passenger-complete__star:active { transform: scale(0.96); }
+.passenger-complete__star-full,
+.passenger-complete__star-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.passenger-complete__star-full { display: none; color: var(--warning); }
+.passenger-complete__star[data-filled="true"] {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.36);
+}
+.passenger-complete__star[data-filled="true"] .passenger-complete__star-empty {
+  display: none;
+}
+.passenger-complete__star[data-filled="true"] .passenger-complete__star-full {
+  display: inline-flex;
+}
+
+.passenger-complete__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.passenger-complete__tag {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease,
+    transform 0.08s ease;
+}
+.passenger-complete__tag:active { transform: scale(0.97); }
+.passenger-complete__tag[aria-pressed="true"] {
+  background: rgba(255, 107, 53, 0.16);
+  border-color: rgba(255, 107, 53, 0.60);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.passenger-complete__comment {
+  background: transparent;
+  border: 0;
+  padding: 4px 2px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.passenger-complete__comment[hidden] { display: none; }
+.passenger-complete__comment-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.passenger-complete__comment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 14px;
+}
+.passenger-complete__comment-field[hidden] { display: none; }
+.passenger-complete__comment-input {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+.passenger-complete__comment-input::placeholder { color: var(--text-3); }
+.passenger-complete__comment-input:focus { outline: 0; }
+.passenger-complete__comment-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.passenger-complete__comment-helper { color: var(--text-3); }
+.passenger-complete__comment-counter {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-btn.passenger-complete__cta {
+  height: 56px;
+  font-size: 16px;
+  font-weight: 700;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.passenger-complete__cta-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1a0a04;
+}
+.passenger-complete__cta-ic svg {
+  width: 18px;
+  height: 18px;
+}
+.bd-btn.passenger-complete__cta:disabled .passenger-complete__cta-ic {
+  color: var(--text-3);
+}
+
+.passenger-complete__bottom-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.bd-btn.passenger-complete__bottom-btn {
+  height: 52px;
+  background: var(--bg-1);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 600;
+  width: 100%;
+}
+.passenger-complete__bottom-btn-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+
+.passenger-complete__report {
+  background: transparent;
+  border: 0;
+  padding: 8px 12px;
+  margin: 0 auto;
+  color: var(--text-3);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  align-self: center;
+}
+.passenger-complete__report-trigger-ic {
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* BD-RIDE-P-05 · State 4 — Rating submitted ──────────────── */
+.passenger-complete__scroll[data-submitted="false"] [data-submitted-only],
+.passenger-complete__scroll[data-submitted="true"] [data-default-only] {
+  display: none !important;
+}
+
+/* BD-RIDE-P-05 · State 5 — Payment lifecycle (auto/pending/paid).
+   Each [data-pay-show] node lists the payment states it appears in
+   (space-separated, matched by ~=). Anything that doesn't list the
+   current state on the scroll container is hidden. */
+.passenger-complete__scroll[data-payment="auto"]    [data-pay-show]:not([data-pay-show~="auto"]),
+.passenger-complete__scroll[data-payment="pending"] [data-pay-show]:not([data-pay-show~="pending"]),
+.passenger-complete__scroll[data-payment="paid"]    [data-pay-show]:not([data-pay-show~="paid"]) {
+  display: none !important;
+}
+
+.passenger-complete__pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.14);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(96, 165, 250, 0.36);
+}
+.passenger-complete__pending-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--info);
+  animation: passenger-complete-spin 1.1s linear infinite;
+}
+.passenger-complete__pending-ic svg { width: 14px; height: 14px; }
+@keyframes passenger-complete-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* BD-RIDE-P-05 · State 7 — Issue / report entry. Independent axis:
+   data-report="open" hides the rating section, the rating CTAs and
+   the bottom "Сообщить о проблеме" link, and reveals the report
+   sheet plus its parallel "Вернуться в ленту" CTA. Bottom action
+   row stays visible so chat / feed remain reachable. */
+.passenger-complete__scroll[data-report="closed"] [data-report-only],
+.passenger-complete__scroll[data-report="open"]   [data-hide-when-report] {
+  display: none !important;
+}
+
+.passenger-complete__report-sheet {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.passenger-complete__report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.passenger-complete__report-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.passenger-complete__report-close {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.12s ease;
+}
+.passenger-complete__report-close:active { transform: scale(0.95); }
+.passenger-complete__report-desc {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.passenger-complete__report-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.passenger-complete__report-reason {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  min-height: 64px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease,
+    transform 0.08s ease;
+}
+.passenger-complete__report-reason:active { transform: scale(0.99); }
+.passenger-complete__report-ic {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-complete__report-reason-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.passenger-complete__report-chev {
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 380px) {
+  .passenger-complete__report-sheet { padding: 16px; }
+  .passenger-complete__report-reason { padding: 10px 12px; gap: 12px; min-height: 60px; }
+  .passenger-complete__report-ic { width: 36px; height: 36px; border-radius: 10px; }
+  .passenger-complete__report-reason-text { font-size: 14px; }
+}
+
+.passenger-complete__paid-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(74, 222, 128, 0.32);
+}
+.passenger-complete__paid-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+}
+.passenger-complete__paid-ic svg { width: 14px; height: 14px; }
+
+.passenger-complete__receipt-ready {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  background: rgba(74, 222, 128, 0.05);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  width: 100%;
+}
+.passenger-complete__receipt-ready .passenger-complete__receipt-ic {
+  color: var(--success);
+}
+.passenger-complete__receipt-ready-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+}
+.passenger-complete__receipt-action {
+  background: transparent;
+  border: 0;
+  padding: 4px 4px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+}
+.passenger-complete__receipt-action:active { transform: scale(0.97); }
+
+.passenger-complete__rating-submitted {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(74, 222, 128, 0.04);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+}
+.passenger-complete__submitted-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.passenger-complete__submitted-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+}
+.passenger-complete__submitted-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.passenger-complete__submitted-stars {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.passenger-complete__submitted-star {
+  position: relative;
+  height: 56px;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-complete__submitted-star .passenger-complete__star-full,
+.passenger-complete__submitted-star .passenger-complete__star-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.passenger-complete__submitted-star .passenger-complete__star-full {
+  display: none;
+  color: var(--warning);
+}
+.passenger-complete__submitted-star[data-filled="true"] {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.36);
+}
+.passenger-complete__submitted-star[data-filled="true"] .passenger-complete__star-empty {
+  display: none;
+}
+.passenger-complete__submitted-star[data-filled="true"] .passenger-complete__star-full {
+  display: inline-flex;
+}
+.passenger-complete__submitted-note {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.bd-btn.passenger-complete__cta--return .passenger-complete__cta-ic { color: #1a0a04; }
+
+@media (max-width: 380px) {
+  .passenger-complete__pay-total { font-size: 26px; }
+  .passenger-complete__hero-title { font-size: 20px; }
+  .passenger-complete__stat-value { font-size: 16px; }
+  .passenger-complete__star { height: 50px; }
+  .passenger-complete__star svg { width: 26px; height: 26px; }
+  .passenger-complete__submitted-star { height: 50px; }
+  .passenger-complete__submitted-star svg { width: 26px; height: 26px; }
+}
+
 /* ═══════════════════════════════════════════════════════════
    PROFILE V2 — BD-PROFILE-PASSENGER-01 Passenger Dashboard
 ═══════════════════════════════════════════════════════════ */
