@@ -78,6 +78,10 @@ const TRIP_NUMBER_FALLBACK = '№48-321';
 // BD-RIDE-P-04B — In-progress sub-phases. Used as a UI overlay on top
 // of RIDE_STATUS.IN_PROGRESS so the driver flow's canonical lifecycle
 // keeps a single status. ARRIVING_DROPOFF = подъезжаем к точке высадки.
+// TODO: ARRIVING_DROPOFF is currently activated only via ?phase= in the
+// URL. Once live trip progress / route-progress events / backend signals
+// are wired up, the host should derive this phase from real telemetry
+// instead of relying on a manual query param.
 const PASSENGER_IN_PROGRESS_PHASE = {
   ARRIVING_DROPOFF: 'ARRIVING_DROPOFF',
 };
@@ -200,6 +204,22 @@ function arrivingDropoffInfo(ride) {
   return { eta };
 }
 
+// Pick the amount shown in the payment card on the ARRIVING_DROPOFF
+// sheet. Prefers an explicit per-phase override, then the regular
+// payment amount, then the live ride price, then the original offer.
+// Fallback matches the Cloud Design mock so the screen still has a
+// believable number when no ride data is wired up.
+function arrivingDropoffAmount(ride) {
+  const pay = (ride && ride.payment) || {};
+  const r = (ride && ride.ride) || {};
+  const order = (ride && ride.order) || {};
+  return pay.dropoffAmount
+    || pay.amount
+    || r.price
+    || order.offerPrice
+    || '1 540 ₽';
+}
+
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
   const remaining = w.remaining || '2:45';
@@ -312,6 +332,9 @@ function routeBlockHtml(ride, options = {}) {
   `;
 }
 
+// options.amountOverride — optional string used in place of the default
+// payment amount (e.g. a phase-specific tally on the ARRIVING_DROPOFF
+// sheet). Falsy values fall through to `paymentInfo(ride).amount`.
 function paymentBlockHtml(ride, options = {}) {
   const pay = paymentInfo(ride);
   if (options.amountOverride) pay.amount = options.amountOverride;
@@ -478,7 +501,7 @@ function renderArrivingDropoffSheet(sheet, ride) {
 
     ${driverRowHtml(ride)}
     ${routeBlockHtml(ride, { editable: false })}
-    ${paymentBlockHtml(ride, { amountOverride: '1 540 ₽' })}
+    ${paymentBlockHtml(ride, { amountOverride: arrivingDropoffAmount(ride) })}
 
     <button type="button" class="bd-btn primary active-ride-passenger__cta-primary" id="arp-finish-rate">
       Завершить и оценить поездку
@@ -611,6 +634,9 @@ export default function activeRidePassenger(options = {}) {
 
   function renderSheet() {
     sheet.dataset.status = ride.status;
+    // Drop any stale phase from a previous render — only branches that
+    // need it (e.g. ARRIVING_DROPOFF) will re-set sheet.dataset.phase.
+    delete sheet.dataset.phase;
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
       renderWaitingSheet(sheet, ride);
       bindCommonSheetHandlers();
@@ -638,7 +664,6 @@ export default function activeRidePassenger(options = {}) {
         }
         return;
       }
-      delete sheet.dataset.phase;
       renderInProgressSheet(sheet, ride);
       bindCommonSheetHandlers();
       const addStopBtn = sheet.querySelector('#arp-add-stop');
