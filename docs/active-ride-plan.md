@@ -284,6 +284,35 @@ Required manual test URLs (issue #101):
 /active-ride?role=driver&status=CANCELED
 ```
 
+#### Passenger cancel after driver accepted
+
+После того как driver принял заказ и поездка в `DRIVER_EN_ROUTE`, пассажир может
+отменить через кнопку «Отменить» в en-route шторке. Handler делает:
+
+1. `saveActiveRide(ride)` — фиксирует текущий view (в т.ч. SIM-overrides:
+   Алексей, маршрут, цена, заметка), чтобы driver-side canceled sheet потом
+   увидел корректную идентичность пассажира.
+2. `updateActiveRideStatus(tripId, RIDE_STATUS.CANCELED, { cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept' } })`.
+3. Навигация на `?role=passenger&status=CANCELED` — passenger UI переходит в
+   стаб «Поездка отменена».
+
+Driver-side canceled sheet проверяет `ride.cancel?.by === 'passenger'` и
+показывает:
+
+```text
+Пассажир отменил заказ
+Алексей отменил поездку после принятия заказа.
+```
+
+Test URLs:
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+    → tap «Отменить»
+/active-ride?role=passenger&status=CANCELED
+/active-ride?role=driver&status=CANCELED
+```
+
 ---
 
 ## 9. localStorage keys

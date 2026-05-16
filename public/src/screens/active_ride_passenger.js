@@ -11,6 +11,8 @@ import {
   findActiveRide,
   createDemoActiveRide,
   updateActiveRideStatus,
+  saveActiveRide,
+  SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -100,11 +102,17 @@ function normalizePhase(phaseQuery) {
 // canonical ride lifecycle; the passenger view derives a display status
 // without touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
 // in-memory demo ride so we don't materialize anything into localStorage
-// just for rendering.
-function loadPassengerRideView(tripId) {
+// just for rendering. When a simulation/audit URL supplies ?status=,
+// the in-memory demo is seeded with SIM_AUDIT_RIDE_OVERRIDES so the
+// passenger and driver sides agree on the BD-RIDE-SIM-01 scenario data
+// (passenger name, route, price, note) — important for the
+// passenger-cancel → driver-canceled flow that needs the same identity
+// to be persisted later.
+function loadPassengerRideView(tripId, statusQuery) {
   let ride = findActiveRide(tripId);
   if (!ride) {
-    ride = createDemoActiveRide({ tripId });
+    const overrides = statusQuery ? SIM_AUDIT_RIDE_OVERRIDES : {};
+    ride = createDemoActiveRide({ tripId, ...overrides });
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
     return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
@@ -1163,7 +1171,7 @@ export default function activeRidePassenger(options = {}) {
     ? options.showNotice
     : null;
 
-  let ride = loadPassengerRideView(tripId);
+  let ride = loadPassengerRideView(tripId, statusQuery);
   ride = applyPassengerStatusFromQuery(ride, statusQuery);
 
   if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
@@ -1339,7 +1347,21 @@ export default function activeRidePassenger(options = {}) {
     const cancelBtn = sheet.querySelector('#arp-cancel');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', () => {
-        toast('Отмена поездки будет реализована позже');
+        // BD-RIDE-SIM-01 — passenger cancels after the driver has
+        // already accepted. Persist the current view first so the
+        // ride's passenger identity (sim overrides — Алексей, route,
+        // note, price) is written to localStorage before the status
+        // transition; otherwise updateActiveRideStatus would materialize
+        // a bare demo via getActiveRide and the driver-side canceled
+        // sheet would not see the audit scenario.
+        saveActiveRide(ride);
+        updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
+          cancel: {
+            by: 'passenger',
+            reason: 'passenger_cancel_after_accept',
+          },
+        });
+        go(`/active-ride?role=passenger&status=${RIDE_STATUS.CANCELED}&tripId=${encodeURIComponent(ride.tripId)}`);
       });
     }
   }

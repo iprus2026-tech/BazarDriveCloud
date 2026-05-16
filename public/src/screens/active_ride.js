@@ -11,6 +11,7 @@ import {
   updateActiveRideStatus,
   saveActiveRide,
   createDemoActiveRide,
+  SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -98,42 +99,6 @@ const DRIVER_SIMULATION_STATUSES = new Set([
   RIDE_STATUS.CANCELED,
   RIDE_STATUS.NO_SHOW,
 ]);
-
-// Audit scenario from issue #101 / PR #102 comment. Reflected onto the
-// in-memory demo when a driver simulation URL has to materialize a ride
-// from scratch, so reviewers see a believable passenger request rather
-// than the generic placeholder demo.
-const SIM_AUDIT_RIDE_OVERRIDES = {
-  passenger: {
-    name: 'Алексей',
-    initials: 'А',
-    rating: '4,9',
-    phoneMasked: '+7 ... 12-34',
-    luggage: 'маленький чемодан',
-    note: 'Я с маленьким чемоданом. Позвоните, когда подъедете.',
-  },
-  order: {
-    offerPrice: '950 ₽',
-    rate: '12 ₽ / км',
-    commission: '8%',
-    pickupEta: '4 мин',
-    pickupDistance: '1,4 км',
-    destinationEta: '28 мин',
-    destinationDistance: '22 км',
-    destinationNote: 'до терминала B',
-    tags: ['★ 4,9', 'маленький чемодан', 'просит позвонить'],
-  },
-  route: {
-    pickupLabel: 'Подъезд №3, ТЦ Мега',
-    dropoffLabel: 'Аэропорт, терминал B',
-    currentInstruction: 'Через 250 м направо',
-    currentStreet: 'на выезд из ТЦ',
-    etaToDestination: '28 мин',
-  },
-  ride: {
-    price: '950 ₽',
-  },
-};
 
 function safeApplyStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
@@ -747,12 +712,20 @@ export default function activeRide() {
   }
 
   function renderCanceledStub() {
+    const cancel = ride.cancel || {};
+    const byPassenger = cancel.by === 'passenger';
+    const passengerName = (ride.passenger && ride.passenger.name) || 'Пассажир';
+    const title = byPassenger ? 'Пассажир отменил заказ' : 'Заказ отменён';
+    const body = byPassenger
+      ? `${passengerName} отменил поездку после принятия заказа.`
+      : 'Полный flow отмены будет добавлен позже';
+
     sheet.innerHTML = `
       <div class="active-ride__sheet-head">
-        <div class="active-ride__sheet-title">Заказ отменён</div>
+        <div class="active-ride__sheet-title">${escapeHtml(title)}</div>
       </div>
       <div class="active-ride__stub">
-        Полный flow отмены будет добавлен позже
+        ${escapeHtml(body)}
       </div>
       <div class="active-ride__actions active-ride__actions--stack">
         <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button>
