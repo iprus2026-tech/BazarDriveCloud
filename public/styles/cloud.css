@@ -5086,7 +5086,7 @@ body {
   color: var(--text);
   border: 1px solid var(--line-strong);
 }
-.active-ride-passenger__chat-badge--inline {
+.active-ride-passenger__chat-badge.active-ride-passenger__chat-badge--inline {
   position: static;
   margin-left: 6px;
   display: inline-flex;
