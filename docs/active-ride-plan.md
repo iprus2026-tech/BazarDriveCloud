@@ -248,6 +248,71 @@ Fallback (если `tripId` отсутствует — используется 
 
 В D0 ни один из этих маршрутов в `router.js` не регистрируется.
 
+### BD-RIDE-SIM-01 — Role simulation / audit URLs
+
+Для аудита параллельных passenger ↔ driver состояний (issue #101) поддерживается
+явный query-параметр `?status=`, который переопределяет фазу нижней шторки.
+Контракт:
+
+- На стороне пассажира (`role=passenger`) — view-only override, состояние не пишется
+  в `localStorage` (см. `loadPassengerRideView` / `applyPassengerStatusFromQuery`).
+- На стороне водителя (`role=driver`) — `NEW_ORDER` остаётся reset-операцией и
+  персистится; остальные статусы (`DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`,
+  `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`, `CANCELED`, `NO_SHOW`) — это
+  view-only overlay для симуляции. Канонический lifecycle всё так же двигают
+  кнопки нижней шторки через `updateActiveRideStatus`. Override не откатывает
+  состояние назад, если соответствующий timestamp уже зафиксирован.
+- Если у trip-а нет записи в `localStorage`, но в URL передан `?status=`, водительская
+  ветка рендерит демо-объект из `createDemoActiveRide` — это даёт возможность аудита
+  без предварительного seed-а.
+
+Required manual test URLs (issue #101):
+
+```text
+/active-ride?role=passenger
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/active-ride?role=passenger&status=WAITING_PASSENGER
+/active-ride?role=passenger&status=IN_PROGRESS
+/active-ride?role=passenger&status=COMPLETED
+/active-ride?role=passenger&status=CANCELED
+
+/active-ride?role=driver
+/active-ride?role=driver&status=DRIVER_EN_ROUTE
+/active-ride?role=driver&status=WAITING_PASSENGER
+/active-ride?role=driver&status=IN_PROGRESS
+/active-ride?role=driver&status=COMPLETED
+/active-ride?role=driver&status=CANCELED
+```
+
+#### Passenger cancel after driver accepted
+
+После того как driver принял заказ и поездка в `DRIVER_EN_ROUTE`, пассажир может
+отменить через кнопку «Отменить» в en-route шторке. Handler делает:
+
+1. `saveActiveRide(ride)` — фиксирует текущий view (в т.ч. SIM-overrides:
+   Алексей, маршрут, цена, заметка), чтобы driver-side canceled sheet потом
+   увидел корректную идентичность пассажира.
+2. `updateActiveRideStatus(tripId, RIDE_STATUS.CANCELED, { cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept' } })`.
+3. Навигация на `?role=passenger&status=CANCELED` — passenger UI переходит в
+   стаб «Поездка отменена».
+
+Driver-side canceled sheet проверяет `ride.cancel?.by === 'passenger'` и
+показывает:
+
+```text
+Пассажир отменил заказ
+Алексей отменил поездку после принятия заказа.
+```
+
+Test URLs:
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+    → tap «Отменить»
+/active-ride?role=passenger&status=CANCELED
+/active-ride?role=driver&status=CANCELED
+```
+
 ---
 
 ## 9. localStorage keys

@@ -19,6 +19,42 @@ export const RIDE_STATUS = {
 
 export const DEMO_ACTIVE_RIDE_ID = 'trip_moscow_sheremetyevo_demo';
 
+// BD-RIDE-SIM-01 — Audit scenario for issue #101 / PR #102. Used by
+// both the driver and passenger active-ride entries when an audit URL
+// has to materialize an in-memory demo ride, so the two sides agree on
+// the passenger identity, route, price and note.
+export const SIM_AUDIT_RIDE_OVERRIDES = {
+  passenger: {
+    name: 'Алексей',
+    initials: 'А',
+    rating: '4,9',
+    phoneMasked: '+7 ... 12-34',
+    luggage: 'маленький чемодан',
+    note: 'Я с маленьким чемоданом. Позвоните, когда подъедете.',
+  },
+  order: {
+    offerPrice: '950 ₽',
+    rate: '12 ₽ / км',
+    commission: '8%',
+    pickupEta: '4 мин',
+    pickupDistance: '1,4 км',
+    destinationEta: '28 мин',
+    destinationDistance: '22 км',
+    destinationNote: 'до терминала B',
+    tags: ['★ 4,9', 'маленький чемодан', 'просит позвонить'],
+  },
+  route: {
+    pickupLabel: 'Подъезд №3, ТЦ Мега',
+    dropoffLabel: 'Аэропорт, терминал B',
+    currentInstruction: 'Через 250 м направо',
+    currentStreet: 'на выезд из ТЦ',
+    etaToDestination: '28 мин',
+  },
+  ride: {
+    price: '950 ₽',
+  },
+};
+
 const STATUS_TIMESTAMP_FIELD = {
   [RIDE_STATUS.DRIVER_EN_ROUTE]: 'acceptedAt',
   [RIDE_STATUS.WAITING_PASSENGER]: 'arrivedAt',

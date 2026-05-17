@@ -10,6 +10,8 @@ import {
   findActiveRide,
   updateActiveRideStatus,
   saveActiveRide,
+  createDemoActiveRide,
+  SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
@@ -75,16 +77,67 @@ function getHashQuery() {
   return new URLSearchParams(hash.slice(qi + 1));
 }
 
+// BD-RIDE-SIM-01 — Driver-side ?status= query handling.
+// NEW_ORDER acts as a reset: persists, but only when no lifecycle
+// timestamp has been recorded yet. Every other status is a view-only
+// override for the role-simulation/audit URLs — it does not touch
+// localStorage, so the canonical driver state machine (owned by the
+// buttons in the bottom sheet) stays intact. View-only overrides also
+// refuse to roll back past a later stage that has already happened.
+//
+// The supported set is restricted to phases the driver UI knows how
+// to render, so unrelated statuses like CONFIRMATION_PENDING or
+// CHAT_STARTED don't silently fall through to NEW_ORDER when the
+// demo-fallback path materializes a fresh ride.
+const DRIVER_SIMULATION_STATUSES = new Set([
+  RIDE_STATUS.NEW_ORDER,
+  RIDE_STATUS.DRIVER_EN_ROUTE,
+  RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+  RIDE_STATUS.WAITING_PASSENGER,
+  RIDE_STATUS.IN_PROGRESS,
+  RIDE_STATUS.COMPLETED,
+  RIDE_STATUS.CANCELED,
+  RIDE_STATUS.NO_SHOW,
+]);
+
 function safeApplyStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
-  if (statusQuery !== RIDE_STATUS.NEW_ORDER) return ride;
-  if (ride.status === RIDE_STATUS.NEW_ORDER) return ride;
+  if (!DRIVER_SIMULATION_STATUSES.has(statusQuery)) return ride;
+  if (ride.status === statusQuery) return ride;
   const ts = ride.timestamps || {};
-  if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
-    return ride;
+
+  if (statusQuery === RIDE_STATUS.NEW_ORDER) {
+    if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
+      return ride;
+    }
+    const next = { ...ride, status: RIDE_STATUS.NEW_ORDER };
+    return saveActiveRide(next);
   }
-  const next = { ...ride, status: RIDE_STATUS.NEW_ORDER };
-  return saveActiveRide(next);
+
+  if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+    || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
+    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: statusQuery };
+  }
+  if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
+    if (ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.WAITING_PASSENGER };
+  }
+  if (statusQuery === RIDE_STATUS.IN_PROGRESS) {
+    if (ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.IN_PROGRESS };
+  }
+  if (statusQuery === RIDE_STATUS.COMPLETED) {
+    if (ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.COMPLETED };
+  }
+  if (statusQuery === RIDE_STATUS.CANCELED || statusQuery === RIDE_STATUS.NO_SHOW) {
+    // Honour the no-rollback contract: don't rewrite a completed trip
+    // back to canceled from an audit link.
+    if (ts.completedAt) return ride;
+    return { ...ride, status: statusQuery };
+  }
+  return ride;
 }
 
 function pad2(n) { return n < 10 ? `0${n}` : String(n); }
@@ -164,7 +217,18 @@ export default function activeRide() {
 
   let ride = findActiveRide(tripId);
   if (!ride) {
-    return renderDriverEmpty();
+    // BD-RIDE-SIM-01 — when an audit/simulation URL supplies a
+    // simulation-supported ?status= we render an in-memory demo ride
+    // so reviewers can inspect every driver phase without first
+    // seeding localStorage. The overrides reflect the passenger
+    // scenario from issue #101 / PR #102 so the driver UI looks like
+    // it is responding to a real request rather than the bare demo.
+    // Empty-state UX is preserved for the regular /active-ride entry
+    // and for unknown statuses outside the simulation set.
+    if (!statusQuery || !DRIVER_SIMULATION_STATUSES.has(statusQuery)) {
+      return renderDriverEmpty();
+    }
+    ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
   }
   ride = safeApplyStatusFromQuery(ride, statusQuery);
 
@@ -264,6 +328,7 @@ export default function activeRide() {
 
   // ── Helpers ───────────────────────────────────────────────
   function passengerRowHtml(passenger) {
+    const note = passenger.note || passenger.comment || '';
     return `
       <div class="active-ride__passenger">
         <div class="active-ride__passenger-main">
@@ -283,6 +348,7 @@ export default function activeRide() {
           <button type="button" class="active-ride__icon-action" id="ar-call" aria-label="Позвонить пассажиру">${PHONE_SVG}</button>
         </div>
       </div>
+      ${note ? `<div class="active-ride__passenger-note">${escapeHtml(note)}</div>` : ''}
     `;
   }
 
@@ -646,12 +712,20 @@ export default function activeRide() {
   }
 
   function renderCanceledStub() {
+    const cancel = ride.cancel || {};
+    const byPassenger = cancel.by === 'passenger';
+    const passengerName = (ride.passenger && ride.passenger.name) || 'Пассажир';
+    const title = byPassenger ? 'Пассажир отменил заказ' : 'Заказ отменён';
+    const body = byPassenger
+      ? `${passengerName} отменил поездку после принятия заказа.`
+      : 'Полный flow отмены будет добавлен позже';
+
     sheet.innerHTML = `
       <div class="active-ride__sheet-head">
-        <div class="active-ride__sheet-title">Заказ отменён</div>
+        <div class="active-ride__sheet-title">${escapeHtml(title)}</div>
       </div>
       <div class="active-ride__stub">
-        Полный flow отмены будет добавлен позже
+        ${escapeHtml(body)}
       </div>
       <div class="active-ride__actions active-ride__actions--stack">
         <button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button>
