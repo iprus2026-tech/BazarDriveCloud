@@ -1000,7 +1000,7 @@ function renderPassengerRideComplete(ride, deps) {
     localToast('Сворачивание панели будет добавлено позже');
   });
   top.querySelector('#arp-shield').addEventListener('click', () => {
-    localToast('Безопасность будет добавлена позже');
+    openPassengerSafetySheet(root, { toast: localToast });
   });
 
   // ── Rating widget ────────────────────────────────────────
@@ -1419,6 +1419,144 @@ function renderPassengerCanceledFallback(ride) {
   return root;
 }
 
+// BD-RIDE-P-07 — Passenger safety sheet (Безопасность / SOS).
+// Stub bottom-sheet overlay opened from the shield icon in the top
+// overlay and from the SOS button inside the active-ride sheet. All
+// actions are safe placeholders — no real SOS dispatch, no real
+// telephony, no backend call, no push, no Mapbox. Closing the sheet
+// (X button, "Закрыть" CTA, backdrop tap, Escape) only detaches the
+// overlay; the underlying active-ride status (DRIVER_EN_ROUTE,
+// WAITING_PASSENGER, IN_PROGRESS, COMPLETED) is untouched.
+const SAFETY_ACTIONS = [
+  { id: 'share',   label: 'Поделиться поездкой',   icon: SHARE_SVG },
+  { id: 'trusted', label: 'Доверенные контакты',   icon: HEART_SVG },
+  { id: 'support', label: 'Позвонить в поддержку', icon: PHONE_SVG },
+  { id: 'help',    label: 'Справка',               icon: INFO_SVG },
+];
+
+const SAFETY_ACTION_TOASTS = {
+  share:   'Поделиться поездкой пока заглушка',
+  trusted: 'Доверенные контакты будут добавлены позже',
+  support: 'Звонок в поддержку пока заглушка',
+  help:    'Справка будет добавлена позже',
+};
+
+function openPassengerSafetySheet(root, options = {}) {
+  if (!root) return null;
+  const existing = root.querySelector('.passenger-safety-overlay');
+  if (existing) return existing;
+
+  const toast = typeof options.toast === 'function' ? options.toast : null;
+  const safeToast = (msg) => { if (toast) toast(msg); };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'passenger-safety-overlay';
+  overlay.dataset.sosState = 'idle';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'arp-safety-title');
+
+  const actionsHtml = SAFETY_ACTIONS.map((a) => `
+    <li>
+      <button type="button"
+        class="passenger-safety-sheet__row"
+        data-safety-action="${escapeHtml(a.id)}">
+        <span class="passenger-safety-sheet__row-ic" aria-hidden="true">${a.icon}</span>
+        <span class="passenger-safety-sheet__row-text">${escapeHtml(a.label)}</span>
+        <span class="passenger-safety-sheet__row-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+      </button>
+    </li>
+  `).join('');
+
+  overlay.innerHTML = `
+    <div class="passenger-safety-overlay__backdrop" aria-hidden="true"></div>
+
+    <div class="passenger-safety-sheet" role="document">
+      <div class="passenger-safety-sheet__handle" aria-hidden="true"></div>
+      <div class="passenger-safety-sheet__header">
+        <div class="passenger-safety-sheet__pill">
+          <span class="passenger-safety-sheet__pill-dot" aria-hidden="true"></span>
+          Центр безопасности
+        </div>
+        <button type="button" class="passenger-safety-sheet__close" id="arp-safety-close" aria-label="Закрыть">
+          ${CLOSE_SVG}
+        </button>
+      </div>
+
+      <div id="arp-safety-title" class="passenger-safety-sheet__title">Безопасность</div>
+      <div class="passenger-safety-sheet__sub">
+        Если что-то пошло не так, используйте SOS или отправьте маршрут доверенному контакту.
+      </div>
+
+      <button type="button"
+        class="passenger-safety-sheet__sos-tile"
+        id="arp-safety-sos"
+        aria-pressed="false"
+        aria-label="SOS">
+        <span class="passenger-safety-sheet__sos-icon" aria-hidden="true">${ALERT_TRI_SVG}</span>
+        <div class="passenger-safety-sheet__sos-body">
+          <div class="passenger-safety-sheet__sos-title">SOS</div>
+          <div class="passenger-safety-sheet__sos-sub" data-sos-show="idle">
+            Быстрая помощь, пока без реального вызова
+          </div>
+          <div class="passenger-safety-sheet__sos-sub" data-sos-show="pressed">
+            Запрос отправлен · с вами свяжутся
+          </div>
+        </div>
+        <span class="passenger-safety-sheet__sos-badge" data-sos-show="pressed" aria-hidden="true">
+          Идёт обработка…
+        </span>
+      </button>
+
+      <div class="passenger-safety-sheet__list-label">Другие действия</div>
+      <ul class="passenger-safety-sheet__list" role="list">
+        ${actionsHtml}
+      </ul>
+
+      <button type="button" class="passenger-safety-sheet__btn-close" id="arp-safety-close-btn">
+        Закрыть
+      </button>
+    </div>
+  `;
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  }
+
+  function onKey(ev) {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      close();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+
+  const sosTile = overlay.querySelector('#arp-safety-sos');
+  if (sosTile) {
+    sosTile.addEventListener('click', () => {
+      if (overlay.dataset.sosState === 'pressed') return;
+      overlay.dataset.sosState = 'pressed';
+      sosTile.setAttribute('aria-pressed', 'true');
+      safeToast('SOS — пока заглушка, реальный вызов не отправляется');
+    });
+  }
+
+  overlay.querySelectorAll('[data-safety-action]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-safety-action');
+      safeToast(SAFETY_ACTION_TOASTS[id] || 'Раздел будет добавлен позже');
+    });
+  });
+
+  overlay.querySelector('#arp-safety-close').addEventListener('click', close);
+  overlay.querySelector('#arp-safety-close-btn').addEventListener('click', close);
+  overlay.querySelector('.passenger-safety-overlay__backdrop').addEventListener('click', close);
+
+  root.appendChild(overlay);
+  return overlay;
+}
+
 export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
@@ -1525,7 +1663,7 @@ export default function activeRidePassenger(options = {}) {
     toast('Сворачивание панели будет добавлено позже');
   });
   top.querySelector('#arp-shield').addEventListener('click', () => {
-    toast('Безопасность будет добавлена позже');
+    openPassengerSafetySheet(root, { toast });
   });
 
   // ── Top driver card handlers ─────────────────────────────
@@ -1558,7 +1696,7 @@ export default function activeRidePassenger(options = {}) {
     const sosBtn = sheet.querySelector('#arp-sos');
     if (sosBtn) {
       sosBtn.addEventListener('click', () => {
-        toast('Экран SOS будет добавлен позже');
+        openPassengerSafetySheet(root, { toast });
       });
     }
     const shareBtn = sheet.querySelector('#arp-share');
