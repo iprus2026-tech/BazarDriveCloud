@@ -191,7 +191,7 @@ export default function responses() {
   });
 
   root.querySelector('#responses-edit').addEventListener('click', () => {
-    go(`/new?edit=${encodeURIComponent(postId)}`);
+    toast('Редактирование заявки будет добавлено позже');
   });
 
   root.querySelector('#responses-raise').addEventListener('click', () => {
