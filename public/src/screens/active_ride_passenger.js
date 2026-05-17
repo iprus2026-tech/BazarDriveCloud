@@ -76,6 +76,33 @@ const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
   <line x1="5" y1="12" x2="19" y2="12"/>
 </svg>`;
 
+// BD-RIDE-P-06 — Cancel reason icons. Kept inline (no new asset files)
+// to match the existing icon strategy on this screen.
+const CLOCK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <circle cx="12" cy="12" r="9"/>
+  <polyline points="12 7 12 12 15 14"/>
+</svg>`;
+
+const CALENDAR_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <rect x="3" y="5" width="18" height="16" rx="2"/>
+  <line x1="3" y1="10" x2="21" y2="10"/>
+  <line x1="8" y1="3" x2="8" y2="7"/>
+  <line x1="16" y1="3" x2="16" y2="7"/>
+</svg>`;
+
+const ROUTE_SWAP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
+  <polyline points="17 1 21 5 17 9"/>
+  <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+  <polyline points="7 23 3 19 7 15"/>
+  <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+</svg>`;
+
+const X_CIRCLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="24" height="24">
+  <circle cx="12" cy="12" r="10"/>
+  <line x1="15" y1="9" x2="9" y2="15"/>
+  <line x1="9" y1="9" x2="15" y2="15"/>
+</svg>`;
+
 const TRIP_NUMBER_FALLBACK = '№48-321';
 
 // BD-RIDE-P-04B — In-progress sub-phases. Used as a UI overlay on top
@@ -1168,6 +1195,230 @@ function renderPassengerRideComplete(ride, deps) {
   return root;
 }
 
+// BD-RIDE-P-06 — Passenger cancel ride sheet.
+// Ordered list mirrors the Cloud Design render gate exactly; ids are
+// stable so the cancel reason can be persisted into the ride's
+// cancel.reason field without re-checking labels.
+const CANCEL_REASONS = [
+  { id: 'driver_slow',     label: 'Водитель долго едет',           icon: CLOCK_SVG },
+  { id: 'plans_changed',   label: 'Изменились планы',              icon: CALENDAR_SVG },
+  { id: 'other_transport', label: 'Выбрал другой способ доехать',  icon: ROUTE_SWAP_SVG },
+  { id: 'address_error',   label: 'Ошибка в адресе',               icon: PIN_SVG },
+  { id: 'no_contact',      label: 'Не могу связаться с водителем', icon: PHONE_SVG },
+  { id: 'other',           label: 'Другая причина',                icon: INFO_SVG },
+];
+
+function cancelReasonsHtml() {
+  return CANCEL_REASONS.map((r) => `
+    <button type="button"
+            class="passenger-cancel-sheet__reason"
+            role="radio"
+            aria-checked="false"
+            data-reason-id="${escapeHtml(r.id)}">
+      <span class="passenger-cancel-sheet__reason-icon" aria-hidden="true">${r.icon}</span>
+      <span class="passenger-cancel-sheet__reason-text">${escapeHtml(r.label)}</span>
+      <span class="passenger-cancel-sheet__reason-radio" aria-hidden="true"></span>
+    </button>
+  `).join('');
+}
+
+// Build and mount the cancel ride overlay into `root`. The overlay
+// covers the active ride screen via `position: absolute; inset: 0` and
+// dims the underlying map. Two visual stages live inside the same
+// overlay node, swapped via `data-stage`:
+//   "select"  — reason list (state A / B)
+//   "confirm" — "Точно отменить?" card  (state C)
+// State D (canceled fallback) is a separate screen routed via
+// `?status=CANCELED`, so this overlay just navigates there once the
+// user confirms.
+function openPassengerCancelSheet(root, { onConfirm }) {
+  const existing = root.querySelector('.passenger-cancel-overlay');
+  if (existing) return existing;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'passenger-cancel-overlay';
+  overlay.dataset.stage = 'select';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'arp-cancel-title');
+  overlay.innerHTML = `
+    <div class="passenger-cancel-overlay__backdrop" aria-hidden="true"></div>
+
+    <div class="passenger-cancel-sheet" data-stage="select">
+      <div class="passenger-cancel-sheet__handle" aria-hidden="true"></div>
+      <div class="passenger-cancel-sheet__header">
+        <div class="passenger-cancel-sheet__pill">
+          <span class="passenger-cancel-sheet__pill-dot" aria-hidden="true"></span>
+          Отмена поездки
+        </div>
+        <button type="button" class="passenger-cancel-sheet__close" id="arp-cancel-close" aria-label="Закрыть">
+          ${CLOSE_SVG}
+        </button>
+      </div>
+      <div id="arp-cancel-title" class="passenger-cancel-sheet__title">Отменить поездку?</div>
+      <div class="passenger-cancel-sheet__sub">Водитель уже может быть в пути. Выберите причину отмены.</div>
+      <div class="passenger-cancel-sheet__list-label">Причина</div>
+      <div class="passenger-cancel-sheet__reasons" role="radiogroup" aria-label="Причина отмены">
+        ${cancelReasonsHtml()}
+      </div>
+      <div class="passenger-cancel-sheet__hint" role="note">
+        <span class="passenger-cancel-sheet__hint-dot" aria-hidden="true"></span>
+        Мы передадим статус поездки водителю.
+      </div>
+      <div class="passenger-cancel-sheet__actions">
+        <button type="button" class="passenger-cancel-sheet__btn-back" id="arp-cancel-back">
+          Назад к поездке
+        </button>
+        <button type="button" class="passenger-cancel-sheet__btn-confirm" id="arp-cancel-confirm" disabled>
+          Подтвердить отмену
+        </button>
+      </div>
+    </div>
+
+    <div class="passenger-cancel-confirm" role="alertdialog" aria-modal="true" aria-labelledby="arp-cancel-confirm-title">
+      <div class="passenger-cancel-confirm__icon" aria-hidden="true">${ALERT_TRI_SVG}</div>
+      <div id="arp-cancel-confirm-title" class="passenger-cancel-confirm__title">Точно отменить?</div>
+      <div class="passenger-cancel-confirm__text">
+        После отмены поездка будет закрыта. Вы сможете создать новую поездку из ленты или карты.
+      </div>
+      <button type="button" class="passenger-cancel-confirm__btn-primary" id="arp-cancel-confirm-yes">
+        Да, отменить поездку
+      </button>
+      <button type="button" class="passenger-cancel-confirm__btn-secondary" id="arp-cancel-confirm-no">
+        Не отменять
+      </button>
+    </div>
+  `;
+
+  let selectedReason = null;
+  const reasonBtns = Array.from(overlay.querySelectorAll('.passenger-cancel-sheet__reason'));
+  const confirmBtn = overlay.querySelector('#arp-cancel-confirm');
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  }
+
+  function onKey(ev) {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      if (overlay.dataset.stage === 'confirm') {
+        overlay.dataset.stage = 'select';
+        return;
+      }
+      close();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+
+  reasonBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selectedReason = btn.dataset.reasonId || null;
+      reasonBtns.forEach((b) => {
+        b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+      });
+      if (confirmBtn) confirmBtn.disabled = !selectedReason;
+    });
+  });
+
+  overlay.querySelector('#arp-cancel-back').addEventListener('click', close);
+  overlay.querySelector('#arp-cancel-close').addEventListener('click', close);
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', () => {
+      if (!selectedReason) return;
+      overlay.dataset.stage = 'confirm';
+    });
+  }
+
+  overlay.querySelector('#arp-cancel-confirm-no').addEventListener('click', () => {
+    overlay.dataset.stage = 'select';
+  });
+
+  overlay.querySelector('#arp-cancel-confirm-yes').addEventListener('click', () => {
+    document.removeEventListener('keydown', onKey);
+    if (typeof onConfirm === 'function') {
+      onConfirm(selectedReason);
+    }
+  });
+
+  overlay.querySelector('.passenger-cancel-overlay__backdrop').addEventListener('click', () => {
+    if (overlay.dataset.stage === 'confirm') {
+      overlay.dataset.stage = 'select';
+      return;
+    }
+    close();
+  });
+
+  root.appendChild(overlay);
+  return overlay;
+}
+
+function formatCanceledAt(ride) {
+  const ts = ride && ride.timestamps && ride.timestamps.canceledAt;
+  if (ts) {
+    const d = new Date(ts);
+    if (!Number.isNaN(d.getTime())) {
+      const hh = d.getHours() < 10 ? `0${d.getHours()}` : String(d.getHours());
+      const mm = d.getMinutes() < 10 ? `0${d.getMinutes()}` : String(d.getMinutes());
+      return `${hh}:${mm}`;
+    }
+  }
+  return '14:21';
+}
+
+// BD-RIDE-P-06 · State D — Canceled fallback view. Replaces the
+// generic PASSENGER_STUB_BY_STATUS placeholder for CANCELED on the
+// passenger side so the user lands on a navigable confirmation
+// screen instead of a "будет добавлено позже" stub.
+function renderPassengerCanceledFallback(ride) {
+  const root = document.createElement('section');
+  root.className = 'screen screen--active-ride passenger-cancel-fallback';
+  const tripLabel = formatTripNumber(ride && ride.tripId);
+  const canceledAt = formatCanceledAt(ride);
+  root.innerHTML = `
+    <div class="passenger-cancel-fallback__top">
+      <button type="button" class="passenger-cancel-fallback__top-back" id="arp-canceled-top-back" aria-label="Вернуться в ленту">
+        ${CHEVRON_UP_SVG}
+      </button>
+      <div class="passenger-cancel-fallback__trip">Поездка ${escapeHtml(tripLabel)}</div>
+      <div class="passenger-cancel-fallback__badge" aria-label="Поездка отменена">Canceled</div>
+    </div>
+
+    <div class="passenger-cancel-fallback__card" role="status" aria-live="polite">
+      <div class="passenger-cancel-fallback__icon" aria-hidden="true">${X_CIRCLE_SVG}</div>
+      <div class="passenger-cancel-fallback__title">Поездка отменена</div>
+      <div class="passenger-cancel-fallback__text">
+        Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.
+      </div>
+      <div class="passenger-cancel-fallback__meta">
+        ${escapeHtml(tripLabel)} · отменено в ${escapeHtml(canceledAt)}
+      </div>
+    </div>
+
+    <div class="passenger-cancel-fallback__actions">
+      <button type="button" class="passenger-cancel-fallback__btn-primary" id="arp-canceled-new">
+        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PLUS_SVG}</span>
+        Создать новую поездку
+      </button>
+      <button type="button" class="passenger-cancel-fallback__btn-secondary" id="arp-canceled-feed">
+        Вернуться в ленту
+      </button>
+    </div>
+  `;
+
+  const goFeed = () => { go('/feed'); };
+  root.querySelector('#arp-canceled-top-back').addEventListener('click', goFeed);
+  root.querySelector('#arp-canceled-feed').addEventListener('click', goFeed);
+  root.querySelector('#arp-canceled-new').addEventListener('click', () => {
+    // Composer is the canonical "new trip" entry on the passenger
+    // side; no real backend call — same stub story as the rest of the
+    // passenger flow.
+    go('/new');
+  });
+  return root;
+}
+
 export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
@@ -1179,6 +1430,13 @@ export default function activeRidePassenger(options = {}) {
 
   let ride = loadPassengerRideView(tripId, statusQuery);
   ride = applyPassengerStatusFromQuery(ride, statusQuery);
+
+  // BD-RIDE-P-06 · State D — Passenger lands here after confirming a
+  // cancel, or when arriving from an audit URL with ?status=CANCELED.
+  // NO_SHOW keeps the legacy stub for now (separate issue).
+  if (ride.status === RIDE_STATUS.CANCELED) {
+    return renderPassengerCanceledFallback(ride);
+  }
 
   if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
     return renderPassengerStub(PASSENGER_STUB_BY_STATUS[ride.status]);
@@ -1371,21 +1629,29 @@ export default function activeRidePassenger(options = {}) {
     const cancelBtn = sheet.querySelector('#arp-cancel');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', () => {
-        // BD-RIDE-SIM-01 — passenger cancels after the driver has
-        // already accepted. Persist the current view first so the
-        // ride's passenger identity (sim overrides — Алексей, route,
-        // note, price) is written to localStorage before the status
-        // transition; otherwise updateActiveRideStatus would materialize
-        // a bare demo via getActiveRide and the driver-side canceled
-        // sheet would not see the audit scenario.
-        saveActiveRide(ride);
-        updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
-          cancel: {
-            by: 'passenger',
-            reason: 'passenger_cancel_after_accept',
+        // BD-RIDE-P-06 — open the cancel sheet instead of cancelling
+        // immediately. Persistence + navigation only fire after the
+        // user confirms in the "Точно отменить?" state.
+        openPassengerCancelSheet(root, {
+          onConfirm: (reasonId) => {
+            // BD-RIDE-SIM-01 — passenger cancels after the driver has
+            // already accepted. Persist the current view first so the
+            // ride's passenger identity (sim overrides — Алексей,
+            // route, note, price) is written to localStorage before
+            // the status transition; otherwise updateActiveRideStatus
+            // would materialize a bare demo via getActiveRide and the
+            // driver-side canceled sheet would not see the audit
+            // scenario.
+            saveActiveRide(ride);
+            updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
+              cancel: {
+                by: 'passenger',
+                reason: reasonId || 'passenger_cancel_after_accept',
+              },
+            });
+            go(`/active-ride?role=passenger&status=${RIDE_STATUS.CANCELED}&tripId=${encodeURIComponent(ride.tripId)}`);
           },
         });
-        go(`/active-ride?role=passenger&status=${RIDE_STATUS.CANCELED}&tripId=${encodeURIComponent(ride.tripId)}`);
       });
     }
   }
