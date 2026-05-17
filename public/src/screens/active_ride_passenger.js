@@ -326,9 +326,9 @@ function topDriverCardHtml(ride, options = {}) {
           </div>
           <div class="active-ride-passenger__driver-sub">${escapeHtml(carLine(ride))}</div>
         </div>
-        <div class="active-ride-passenger__top-card-eta" aria-label="${escapeHtml(eta.label)}">
-          <div class="active-ride-passenger__top-card-eta-value">${escapeHtml(eta.value)}</div>
-          <div class="active-ride-passenger__top-card-eta-label">${escapeHtml(eta.label)}</div>
+        <div class="active-ride-passenger__top-card-eta" aria-label="${escapeHtml(`${eta.value} ${eta.label}`)}">
+          <div class="active-ride-passenger__top-card-eta-value" aria-hidden="true">${escapeHtml(eta.value)}</div>
+          <div class="active-ride-passenger__top-card-eta-label" aria-hidden="true">${escapeHtml(eta.label)}</div>
         </div>
       </div>
       <div class="active-ride-passenger__top-card-actions">
