@@ -11,6 +11,7 @@ import composer   from './screens/composer.js';
 import respond    from './screens/respond.js';
 import chat       from './screens/chat.js';
 import activeRide from './screens/active_ride.js';
+import responses  from './screens/responses.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -21,6 +22,7 @@ register('/new',         composer);
 register('/respond',     respond);
 register('/chat',        chat);
 register('/active-ride', activeRide);
+register('/responses',   responses);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
