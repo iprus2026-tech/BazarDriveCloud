@@ -199,9 +199,9 @@ function renderEtaBars(active) {
 }
 
 function renderDriverCard(driver, selectedDriverId, allDeclined) {
-  const isSelected = !allDeclined && selectedDriverId && driver.id === selectedDriverId;
-  const isDimmed   = allDeclined || (selectedDriverId && !isSelected);
   const isDeclined = !!allDeclined;
+  const isSelected = !isDeclined && selectedDriverId && driver.id === selectedDriverId;
+  const isDimmed   = !isDeclined && selectedDriverId && !isSelected;
 
   const bestBadge = driver.isBest
     ? `<div class="responses__driver-best">
@@ -220,7 +220,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
   let actionsBlock;
   if (isDeclined) {
     actionsBlock = `
-      <div class="responses__declined-row" role="status">
+      <div class="responses__declined-row">
         <span class="responses__declined-icon" aria-hidden="true">${CLOSE_SVG}</span>
         <span class="responses__declined-text">Вы отклонили этого водителя</span>
         <button type="button" class="responses__declined-restore"
