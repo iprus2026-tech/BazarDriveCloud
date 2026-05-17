@@ -198,9 +198,10 @@ function renderEtaBars(active) {
   return html;
 }
 
-function renderDriverCard(driver, selectedDriverId) {
-  const isSelected = selectedDriverId && driver.id === selectedDriverId;
-  const isDimmed   = selectedDriverId && !isSelected;
+function renderDriverCard(driver, selectedDriverId, allDeclined) {
+  const isDeclined = !!allDeclined;
+  const isSelected = !isDeclined && selectedDriverId && driver.id === selectedDriverId;
+  const isDimmed   = !isDeclined && selectedDriverId && !isSelected;
 
   const bestBadge = driver.isBest
     ? `<div class="responses__driver-best">
@@ -216,38 +217,61 @@ function renderDriverCard(driver, selectedDriverId) {
        </div>`
     : '';
 
-  const actionsBlock = isSelected
-    ? `<div class="responses__selected-panel" role="status" aria-live="polite">
-         <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
-         <span class="responses__selected-text">
-           Водитель выбран · ожидание подтверждения...
-         </span>
-         <button type="button" class="responses__selected-cancel"
-                 data-action="cancel">
-           Отменить
-         </button>
-       </div>`
-    : `<div class="responses__driver-actions">
-         <button type="button" class="bd-btn primary responses__driver-select"
-                 data-action="select">
-           ${CHECK_SVG}
-           <span>Выбрать</span>
-         </button>
-         <button type="button" class="responses__driver-side"
-                 data-action="chat" aria-label="Чат с водителем">
-           ${CHAT_SVG}
-         </button>
-         <button type="button" class="responses__driver-side"
-                 data-action="decline" aria-label="Отклонить">
-           ${CLOSE_SVG}
-         </button>
-       </div>`;
+  let actionsBlock;
+  if (isDeclined) {
+    actionsBlock = `
+      <div class="responses__declined-row">
+        <span class="responses__declined-icon" aria-hidden="true">${CLOSE_SVG}</span>
+        <span class="responses__declined-text">Вы отклонили этого водителя</span>
+        <button type="button" class="responses__declined-restore"
+                data-action="restore">
+          Вернуть
+        </button>
+      </div>`;
+  } else if (isSelected) {
+    actionsBlock = `
+      <div class="responses__selected-panel" role="status" aria-live="polite">
+        <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
+        <span class="responses__selected-text">
+          Водитель выбран · ожидание подтверждения...
+        </span>
+        <button type="button" class="responses__selected-cancel"
+                data-action="cancel">
+          Отменить
+        </button>
+      </div>`;
+  } else {
+    actionsBlock = `
+      <div class="responses__driver-actions">
+        <button type="button" class="bd-btn primary responses__driver-select"
+                data-action="select">
+          ${CHECK_SVG}
+          <span>Выбрать</span>
+        </button>
+        <button type="button" class="responses__driver-side"
+                data-action="chat" aria-label="Чат с водителем">
+          ${CHAT_SVG}
+        </button>
+        <button type="button" class="responses__driver-side"
+                data-action="decline" aria-label="Отклонить">
+          ${CLOSE_SVG}
+        </button>
+      </div>`;
+  }
+
+  const dismissBtn = isDeclined
+    ? ''
+    : `<button type="button" class="responses__driver-dismiss"
+               data-action="decline" aria-label="Скрыть отклик">
+         ${CLOSE_SVG}
+       </button>`;
 
   const classes = [
     'responses__driver',
     driver.isBest ? 'responses__driver--best' : '',
     isSelected ? 'responses__driver--selected' : '',
     isDimmed ? 'responses__driver--dimmed' : '',
+    isDeclined ? 'responses__driver--declined' : '',
   ].filter(Boolean).join(' ');
 
   return `
@@ -274,10 +298,7 @@ function renderDriverCard(driver, selectedDriverId) {
             <span>${escapeHtml(driver.trips)}</span>
           </div>
         </div>
-        <button type="button" class="responses__driver-dismiss"
-                data-action="decline" aria-label="Скрыть отклик">
-          ${CLOSE_SVG}
-        </button>
+        ${dismissBtn}
       </div>
 
       <div class="responses__driver-stats">
@@ -336,7 +357,21 @@ function renderEmptyState() {
   `;
 }
 
-function renderList(drivers, selectedDriverId) {
+function renderAllDeclinedNotice() {
+  return `
+    <div class="responses__notice responses__notice--danger" role="status">
+      <span class="responses__notice-icon" aria-hidden="true">${CLOSE_SVG}</span>
+      <div class="responses__notice-body">
+        <div class="responses__notice-title">Все отклики отклонены</div>
+        <div class="responses__notice-text">
+          Изменить параметры заявки или дождаться новых водителей
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderList(drivers, selectedDriverId, allDeclined) {
   return `
     <div class="responses__toolbar">
       <div class="responses__count">
@@ -354,8 +389,10 @@ function renderList(drivers, selectedDriverId) {
       </button>
     </div>
 
+    ${allDeclined ? renderAllDeclinedNotice() : ''}
+
     <div class="responses__drivers">
-      ${drivers.map((d) => renderDriverCard(d, selectedDriverId)).join('')}
+      ${drivers.map((d) => renderDriverCard(d, selectedDriverId, allDeclined)).join('')}
     </div>
   `;
 }
@@ -365,7 +402,8 @@ export default function responses() {
   const state   = getRouteParam('state') || 'empty';
   const request = MOCK_REQUEST;
 
-  const isList     = state === 'list' || state === 'selected';
+  const isAllDeclined = state === 'all-declined';
+  const isList     = state === 'list' || state === 'selected' || isAllDeclined;
   const drivers    = MOCK_DRIVERS;
   const routeDriverId   = state === 'selected' ? getRouteParam('driverId') : null;
   const selectedDriver  = routeDriverId
@@ -428,7 +466,7 @@ export default function responses() {
         </div>
       </div>
 
-      ${isList ? renderList(drivers, selectedDriverId) : renderEmptyState()}
+      ${isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState()}
 
     </div>
 
@@ -493,6 +531,10 @@ export default function responses() {
         return;
       }
       if (action === 'cancel') {
+        go(`/responses?postId=${encodeURIComponent(postId)}&state=list`);
+        return;
+      }
+      if (action === 'restore') {
         go(`/responses?postId=${encodeURIComponent(postId)}&state=list`);
         return;
       }
