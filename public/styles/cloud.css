@@ -8331,3 +8331,261 @@ button.pfp-menu-row:active { opacity: 0.7; }
   .passenger-cancel-confirm__title { font-size: 18px; }
   .passenger-cancel-fallback__title { font-size: 20px; }
 }
+
+/* ─────────────────────────────────────────────────────────
+   BD-RIDE-P-07 — Passenger safety sheet (Безопасность / SOS)
+   Stub overlay shown over the active-ride screen. Layout
+   mirrors the cancel sheet: backdrop + bottom card. The SOS
+   tile has two visual states driven by
+   .passenger-safety-overlay[data-sos-state] — idle (default
+   helper text) and pressed (request-sent helper + processing
+   badge). All actions are safe placeholders.
+   ───────────────────────────────────────────────────────── */
+.passenger-safety-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  animation: screen-in 0.16s ease both;
+}
+.passenger-safety-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 8, 0.78);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.passenger-safety-sheet {
+  position: relative;
+  margin-top: auto;
+  background: var(--bg-1);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  padding: 14px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 16px);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.passenger-safety-sheet__handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  margin: -4px auto 4px;
+  opacity: 0.7;
+}
+.passenger-safety-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.passenger-safety-sheet__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--success, #34d399);
+}
+.passenger-safety-sheet__pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success, #34d399);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}
+.passenger-safety-sheet__close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.passenger-safety-sheet__close:active { opacity: 0.7; }
+
+.passenger-safety-sheet__title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.15;
+}
+.passenger-safety-sheet__sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.4;
+  margin-top: -4px;
+}
+
+.passenger-safety-sheet__sos-tile {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 16px;
+  background: linear-gradient(180deg, rgba(248, 113, 113, 0.16), rgba(248, 113, 113, 0.08));
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.12s, background 0.12s, border-color 0.12s;
+}
+.passenger-safety-sheet__sos-tile:active { transform: scale(0.99); }
+.passenger-safety-overlay[data-sos-state="pressed"] .passenger-safety-sheet__sos-tile {
+  background: linear-gradient(180deg, rgba(248, 113, 113, 0.24), rgba(248, 113, 113, 0.12));
+  border-color: rgba(248, 113, 113, 0.6);
+  cursor: default;
+}
+.passenger-safety-sheet__sos-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #1a0a0a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.16);
+}
+.passenger-safety-sheet__sos-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.passenger-safety-sheet__sos-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.passenger-safety-sheet__sos-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--danger);
+  letter-spacing: 0.02em;
+}
+.passenger-safety-sheet__sos-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.35;
+}
+.passenger-safety-overlay[data-sos-state="idle"] .passenger-safety-sheet__sos-sub[data-sos-show="pressed"],
+.passenger-safety-overlay[data-sos-state="pressed"] .passenger-safety-sheet__sos-sub[data-sos-show="idle"] {
+  display: none;
+}
+.passenger-safety-sheet__sos-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.passenger-safety-overlay[data-sos-state="idle"] .passenger-safety-sheet__sos-badge {
+  display: none;
+}
+
+.passenger-safety-sheet__list-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+  font-weight: 700;
+  margin-top: 4px;
+}
+.passenger-safety-sheet__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.passenger-safety-sheet__row {
+  display: grid;
+  grid-template-columns: 28px 1fr 22px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.passenger-safety-sheet__row:active { transform: scale(0.99); }
+.passenger-safety-sheet__row[data-safety-action="share"] .passenger-safety-sheet__row-ic { color: var(--accent); }
+.passenger-safety-sheet__row[data-safety-action="trusted"] .passenger-safety-sheet__row-ic { color: var(--danger); }
+.passenger-safety-sheet__row[data-safety-action="support"] .passenger-safety-sheet__row-ic { color: var(--info, #60a5fa); }
+.passenger-safety-sheet__row[data-safety-action="help"] .passenger-safety-sheet__row-ic { color: var(--text-2); }
+.passenger-safety-sheet__row-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-safety-sheet__row-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+}
+.passenger-safety-sheet__row-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--text-3);
+}
+
+.passenger-safety-sheet__btn-close {
+  height: 48px;
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 700;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.passenger-safety-sheet__btn-close:active { transform: scale(0.98); }
+
+@media (max-width: 380px) {
+  .passenger-safety-sheet__title { font-size: 20px; }
+  .passenger-safety-sheet__sos-tile {
+    grid-template-columns: 44px 1fr;
+    grid-template-rows: auto auto;
+    row-gap: 6px;
+  }
+  .passenger-safety-sheet__sos-badge {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
