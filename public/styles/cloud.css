@@ -5002,6 +5002,113 @@ body {
   -webkit-backdrop-filter: blur(8px);
 }
 
+/* BD-RIDE-P-01 — Top driver card overlay (shell parity). Floats
+   above the map, below the status pill. Mirrors the bottom sheet's
+   sheet-card aesthetic so the card reads as a piece of UI surface
+   rather than a free-floating widget. */
+.active-ride-passenger__top-card-wrap {
+  position: relative;
+  z-index: 2;
+  padding: 12px var(--pad) 0;
+  pointer-events: none;
+}
+.active-ride-passenger__top-card-wrap > * { pointer-events: auto; }
+.active-ride-passenger__top-card {
+  background: rgba(20, 20, 26, 0.92);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg, 18px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+.active-ride-passenger__top-card-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.active-ride-passenger__top-card-eta {
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  text-align: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 76px;
+  flex-shrink: 0;
+}
+.active-ride-passenger__top-card[data-tone="wait"] .active-ride-passenger__top-card-eta {
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--success);
+}
+.active-ride-passenger__top-card[data-tone="arriving"] .active-ride-passenger__top-card-eta {
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--success);
+}
+.active-ride-passenger__top-card-eta-value {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.active-ride-passenger__top-card-eta-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.9;
+  font-weight: 700;
+}
+.active-ride-passenger__top-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.bd-btn.active-ride-passenger__top-call,
+.bd-btn.active-ride-passenger__top-message {
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  position: relative;
+}
+.bd-btn.active-ride-passenger__top-message {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+.active-ride-passenger__chat-badge.active-ride-passenger__chat-badge--inline {
+  position: static;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+@media (max-width: 380px) {
+  .bd-btn.active-ride-passenger__top-call,
+  .bd-btn.active-ride-passenger__top-message {
+    font-size: 14px;
+  }
+}
+
 .active-ride-passenger__sheet {
   gap: 14px;
 }

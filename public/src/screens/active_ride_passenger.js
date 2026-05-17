@@ -179,14 +179,6 @@ function carLine(ride) {
   return parts.join(' · ');
 }
 
-function driverSubtitle(ride) {
-  const v = (ride && ride.vehicle) || {};
-  const model = v.model || 'Toyota Camry';
-  const color = v.color || 'серый';
-  const experience = (ride && ride.driver && ride.driver.experience) || '4 года н…';
-  return `${model} · ${color} · ${experience}`;
-}
-
 function paymentInfo(ride) {
   const pay = (ride && ride.payment) || {};
   return {
@@ -296,30 +288,60 @@ function chatLabelFor(ride) {
   return { unreadCount, label };
 }
 
-function driverRowHtml(ride) {
+// BD-RIDE-P-01 — Top driver card overlay shown above the map for the
+// in-ride passenger statuses (DRIVER_EN_ROUTE, WAITING_PASSENGER,
+// IN_PROGRESS incl. ARRIVING_DROPOFF). Contains driver identity, car,
+// rating, status-specific ETA and the two prominent call/message
+// actions. The bottom sheet keeps the status-specific slot below.
+function topDriverCardEta(ride, phase) {
+  if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
+    const w = waitingInfo(ride);
+    return { value: w.remaining, label: 'осталось', tone: 'wait' };
+  }
+  if (ride.status === RIDE_STATUS.IN_PROGRESS) {
+    if (phase === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
+      const info = arrivingDropoffInfo(ride);
+      return { value: info.eta, label: 'до места', tone: 'arriving' };
+    }
+    const info = inProgressInfo(ride);
+    return { value: info.eta, label: 'до места', tone: 'progress' };
+  }
+  return { value: etaText(ride), label: 'до подачи', tone: 'enroute' };
+}
+
+function topDriverCardHtml(ride, options = {}) {
   const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
   const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
   const driverRating = (ride.driver && ride.driver.rating) || '4,92';
   const { unreadCount, label } = chatLabelFor(ride);
+  const eta = topDriverCardEta(ride, options.phase);
   return `
-    <div class="active-ride-passenger__driver-row">
-      <div class="active-ride-passenger__avatar" aria-hidden="true">${escapeHtml(driverInitials)}</div>
-      <div class="active-ride-passenger__driver-info">
-        <div class="active-ride-passenger__driver-name">
-          ${escapeHtml(driverName)}
-          <span class="active-ride-passenger__driver-rating">★ ${escapeHtml(driverRating)}</span>
+    <div class="active-ride-passenger__top-card" data-tone="${escapeHtml(eta.tone)}">
+      <div class="active-ride-passenger__top-card-row">
+        <div class="active-ride-passenger__avatar" aria-hidden="true">${escapeHtml(driverInitials)}</div>
+        <div class="active-ride-passenger__driver-info">
+          <div class="active-ride-passenger__driver-name">
+            ${escapeHtml(driverName)}
+            <span class="active-ride-passenger__driver-rating">★ ${escapeHtml(driverRating)}</span>
+          </div>
+          <div class="active-ride-passenger__driver-sub">${escapeHtml(carLine(ride))}</div>
         </div>
-        <div class="active-ride-passenger__driver-sub">${escapeHtml(driverSubtitle(ride))}</div>
+        <div class="active-ride-passenger__top-card-eta" aria-label="${escapeHtml(`${eta.value} ${eta.label}`)}">
+          <div class="active-ride-passenger__top-card-eta-value" aria-hidden="true">${escapeHtml(eta.value)}</div>
+          <div class="active-ride-passenger__top-card-eta-label" aria-hidden="true">${escapeHtml(eta.label)}</div>
+        </div>
       </div>
-      <div class="active-ride-passenger__driver-actions">
-        <button type="button" class="active-ride-passenger__icon-action" id="arp-chat" aria-label="${escapeHtml(label)}">
-          ${MESSAGE_SVG}
-          ${unreadCount > 0
-            ? `<span class="active-ride-passenger__chat-badge" aria-hidden="true">${escapeHtml(String(unreadCount))}</span>`
-            : ''}
+      <div class="active-ride-passenger__top-card-actions">
+        <button type="button" class="bd-btn primary active-ride-passenger__top-call" id="arp-top-call" aria-label="Позвонить водителю">
+          <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PHONE_SVG}</span>
+          Позвонить
         </button>
-        <button type="button" class="active-ride-passenger__icon-action" id="arp-call" aria-label="Позвонить водителю">
-          ${PHONE_SVG}
+        <button type="button" class="bd-btn active-ride-passenger__top-message" id="arp-top-chat" aria-label="${escapeHtml(label)}">
+          <span class="active-ride-passenger__btn-ic" aria-hidden="true">${MESSAGE_SVG}</span>
+          Написать
+          ${unreadCount > 0
+            ? `<span class="active-ride-passenger__chat-badge active-ride-passenger__chat-badge--inline" aria-hidden="true">${escapeHtml(String(unreadCount))}</span>`
+            : ''}
         </button>
       </div>
     </div>
@@ -381,13 +403,8 @@ function renderEnRouteSheet(sheet, ride) {
         <div class="active-ride-passenger__title">Водитель едет к вам</div>
         <div class="active-ride-passenger__car">${escapeHtml(carLine(ride))}</div>
       </div>
-      <div class="active-ride-passenger__eta" aria-label="Время прибытия">
-        <div class="active-ride-passenger__eta-value">${escapeHtml(etaText(ride))}</div>
-        <div class="active-ride-passenger__eta-label">до места</div>
-      </div>
     </div>
 
-    ${driverRowHtml(ride)}
     ${routeBlockHtml(ride)}
     ${paymentBlockHtml(ride)}
 
@@ -439,7 +456,6 @@ function renderWaitingSheet(sheet, ride) {
       <div class="active-ride-passenger__waiting-card-foot">Дальше — ${escapeHtml(w.paidRate)} · с ${escapeHtml(w.paidStartsAt)}</div>
     </div>
 
-    ${driverRowHtml(ride)}
     ${routeBlockHtml(ride)}
     ${paymentBlockHtml(ride)}
 
@@ -471,13 +487,8 @@ function renderInProgressSheet(sheet, ride) {
         <div class="active-ride-passenger__title">В пути</div>
         <div class="active-ride-passenger__sub">Расчётное время прибытия ${escapeHtml(info.arrivalTime)}</div>
       </div>
-      <div class="active-ride-passenger__eta" aria-label="Время до места">
-        <div class="active-ride-passenger__eta-value">${escapeHtml(info.eta)}</div>
-        <div class="active-ride-passenger__eta-label">до места</div>
-      </div>
     </div>
 
-    ${driverRowHtml(ride)}
     ${routeBlockHtml(ride, { editable: false })}
     ${paymentBlockHtml(ride)}
 
@@ -514,13 +525,8 @@ function renderArrivingDropoffSheet(sheet, ride) {
         <div class="active-ride-passenger__title">Прибываем</div>
         <div class="active-ride-passenger__sub">Подъезжаем к точке высадки</div>
       </div>
-      <div class="active-ride-passenger__eta active-ride-passenger__eta--arriving" aria-label="Время до места">
-        <div class="active-ride-passenger__eta-value">${escapeHtml(info.eta)}</div>
-        <div class="active-ride-passenger__eta-label">до места</div>
-      </div>
     </div>
 
-    ${driverRowHtml(ride)}
     ${routeBlockHtml(ride, { editable: false })}
     ${paymentBlockHtml(ride, { amountOverride: arrivingDropoffAmount(ride) })}
 
@@ -1222,6 +1228,17 @@ export default function activeRidePassenger(options = {}) {
   `;
   root.appendChild(top);
 
+  // ── Top driver card (BD-RIDE-P-01 shell parity) ──────────
+  // Floats above the map, below the trip pill. Contains driver
+  // identity, car, status-specific ETA and the prominent
+  // call/message actions. Bottom sheet keeps the status-specific
+  // slot below.
+  const topCard = document.createElement('div');
+  topCard.className = 'active-ride-passenger__top-card-wrap';
+  topCard.dataset.status = ride.status;
+  topCard.innerHTML = topDriverCardHtml(ride, { phase: phaseQuery });
+  root.appendChild(topCard);
+
   // ── Sheet ────────────────────────────────────────────────
   const sheet = document.createElement('div');
   sheet.className = 'active-ride__sheet active-ride-passenger__sheet';
@@ -1253,20 +1270,27 @@ export default function activeRidePassenger(options = {}) {
     toast('Безопасность будет добавлена позже');
   });
 
+  // ── Top driver card handlers ─────────────────────────────
+  // Call is a safe stub (no real telephony). Message routes into
+  // the existing /chat screen so the unread badge and history
+  // both stay in one place.
+  const topCallBtn = topCard.querySelector('#arp-top-call');
+  if (topCallBtn) {
+    topCallBtn.addEventListener('click', () => {
+      toast('Звонок водителю пока заглушка');
+    });
+  }
+  const topChatBtn = topCard.querySelector('#arp-top-chat');
+  if (topChatBtn) {
+    topChatBtn.addEventListener('click', () => {
+      go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
+    });
+  }
+
   // ── Per-sheet bindings shared across statuses ────────────
+  // Driver chat/call now live on the top card and are bound once
+  // above; the bottom sheet only owns its route/sos/share controls.
   function bindCommonSheetHandlers() {
-    const chatBtn = sheet.querySelector('#arp-chat');
-    if (chatBtn) {
-      chatBtn.addEventListener('click', () => {
-        go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
-      });
-    }
-    const callBtn = sheet.querySelector('#arp-call');
-    if (callBtn) {
-      callBtn.addEventListener('click', () => {
-        toast('Звонок водителю пока заглушка');
-      });
-    }
     const editRouteBtn = sheet.querySelector('#arp-edit-route');
     if (editRouteBtn) {
       editRouteBtn.addEventListener('click', () => {
