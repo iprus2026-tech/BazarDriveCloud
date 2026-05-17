@@ -181,12 +181,12 @@ function markFeedTabActive() {
   }
 }
 
-function pluralResponses(n) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${n} отклик`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} отклика`;
-  return `${n} откликов`;
+function responsesWord(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'отклик';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'отклика';
+  return 'откликов';
 }
 
 function renderEtaBars(active) {
@@ -318,7 +318,7 @@ function renderList(drivers) {
     <div class="responses__toolbar">
       <div class="responses__count">
         <span class="responses__count-badge">${escapeHtml(String(drivers.length))}</span>
-        <span class="responses__count-label">${escapeHtml(pluralResponses(drivers.length).replace(/^\d+\s/, ''))}</span>
+        <span class="responses__count-label">${escapeHtml(responsesWord(drivers.length))}</span>
       </div>
       <div class="responses__status">
         <span class="responses__status-dot" aria-hidden="true"></span>
@@ -351,7 +351,7 @@ export default function responses() {
   root.dataset.state  = state;
 
   const subTitle = isList
-    ? `${drivers.length} ${pluralResponses(drivers.length).replace(/^\d+\s/, '')}`
+    ? `${drivers.length} ${responsesWord(drivers.length)}`
     : 'Ждём предложения';
 
   root.innerHTML = `
