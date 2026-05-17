@@ -198,7 +198,10 @@ function renderEtaBars(active) {
   return html;
 }
 
-function renderDriverCard(driver) {
+function renderDriverCard(driver, selectedDriverId) {
+  const isSelected = selectedDriverId && driver.id === selectedDriverId;
+  const isDimmed   = selectedDriverId && !isSelected;
+
   const bestBadge = driver.isBest
     ? `<div class="responses__driver-best">
          ${SPARK_SVG}
@@ -213,8 +216,42 @@ function renderDriverCard(driver) {
        </div>`
     : '';
 
+  const actionsBlock = isSelected
+    ? `<div class="responses__selected-panel" role="status" aria-live="polite">
+         <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
+         <span class="responses__selected-text">
+           Водитель выбран · ожидание подтверждения...
+         </span>
+         <button type="button" class="responses__selected-cancel"
+                 data-action="cancel">
+           Отменить
+         </button>
+       </div>`
+    : `<div class="responses__driver-actions">
+         <button type="button" class="bd-btn primary responses__driver-select"
+                 data-action="select">
+           ${CHECK_SVG}
+           <span>Выбрать</span>
+         </button>
+         <button type="button" class="responses__driver-side"
+                 data-action="chat" aria-label="Чат с водителем">
+           ${CHAT_SVG}
+         </button>
+         <button type="button" class="responses__driver-side"
+                 data-action="decline" aria-label="Отклонить">
+           ${CLOSE_SVG}
+         </button>
+       </div>`;
+
+  const classes = [
+    'responses__driver',
+    driver.isBest ? 'responses__driver--best' : '',
+    isSelected ? 'responses__driver--selected' : '',
+    isDimmed ? 'responses__driver--dimmed' : '',
+  ].filter(Boolean).join(' ');
+
   return `
-    <article class="responses__driver${driver.isBest ? ' responses__driver--best' : ''}"
+    <article class="${classes}"
              data-driver-id="${escapeHtml(driver.id)}"
              data-response-id="${escapeHtml(driver.responseId)}">
       ${bestBadge}
@@ -264,21 +301,7 @@ function renderDriverCard(driver) {
 
       ${noteBlock}
 
-      <div class="responses__driver-actions">
-        <button type="button" class="bd-btn primary responses__driver-select"
-                data-action="select">
-          ${CHECK_SVG}
-          <span>Выбрать</span>
-        </button>
-        <button type="button" class="responses__driver-side"
-                data-action="chat" aria-label="Чат с водителем">
-          ${CHAT_SVG}
-        </button>
-        <button type="button" class="responses__driver-side"
-                data-action="decline" aria-label="Отклонить">
-          ${CLOSE_SVG}
-        </button>
-      </div>
+      ${actionsBlock}
     </article>
   `;
 }
@@ -313,7 +336,7 @@ function renderEmptyState() {
   `;
 }
 
-function renderList(drivers) {
+function renderList(drivers, selectedDriverId) {
   return `
     <div class="responses__toolbar">
       <div class="responses__count">
@@ -332,7 +355,7 @@ function renderList(drivers) {
     </div>
 
     <div class="responses__drivers">
-      ${drivers.map(renderDriverCard).join('')}
+      ${drivers.map((d) => renderDriverCard(d, selectedDriverId)).join('')}
     </div>
   `;
 }
@@ -344,6 +367,11 @@ export default function responses() {
 
   const isList     = state === 'list' || state === 'selected';
   const drivers    = MOCK_DRIVERS;
+  const routeDriverId   = state === 'selected' ? getRouteParam('driverId') : null;
+  const selectedDriver  = routeDriverId
+    ? drivers.find((d) => d.id === routeDriverId)
+    : null;
+  const selectedDriverId = selectedDriver ? selectedDriver.id : null;
 
   const root = document.createElement('section');
   root.className = 'screen screen--responses';
@@ -400,7 +428,7 @@ export default function responses() {
         </div>
       </div>
 
-      ${isList ? renderList(drivers) : renderEmptyState()}
+      ${isList ? renderList(drivers, selectedDriverId) : renderEmptyState()}
 
     </div>
 
@@ -464,6 +492,10 @@ export default function responses() {
         go(`/responses?postId=${encodeURIComponent(postId)}&state=selected&driverId=${encodeURIComponent(driverId)}`);
         return;
       }
+      if (action === 'cancel') {
+        go(`/responses?postId=${encodeURIComponent(postId)}&state=list`);
+        return;
+      }
       if (action === 'chat') {
         go(`/chat?responseId=${encodeURIComponent(responseId)}`);
         return;
@@ -474,14 +506,8 @@ export default function responses() {
     });
   }
 
-  if (state === 'selected') {
-    const driverId = getRouteParam('driverId');
-    const driver = drivers.find((d) => d.id === driverId);
-    if (driver) {
-      queueMicrotask(() => toast(`Выбран ${driver.name}. Подтверждение появится позже.`));
-    } else {
-      queueMicrotask(() => toast('Этап подтверждения водителя будет добавлен позже'));
-    }
+  if (state === 'selected' && !selectedDriver) {
+    queueMicrotask(() => toast('Этап подтверждения водителя будет добавлен позже'));
   }
 
   queueMicrotask(markFeedTabActive);
