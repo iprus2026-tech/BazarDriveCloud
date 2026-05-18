@@ -347,12 +347,24 @@ Payments
 APK / native Android
 ```
 
-## BD-PROFILE-01 — Profile V2
+## BD-PROFILE-01 — Profile V2 (universal, legacy umbrella)
+
+> **Note.** Это исходный «общий» контракт Profile V2 (guest / passenger /
+> driver вариации в одном файле). Он сохранён ради истории. Более детальные
+> контракты позже разделили роли:
+>
+> - Passenger: см. **BD-PROFILE-01 Profile V2 — Passenger** ниже в этом
+>   файле.
+> - Driver: см. **BD-PROFILE-02 — Driver Dashboard Profile** ниже в этом
+>   файле.
+>
+> Анкоры обеих секций различаются и не конфликтуют. При расхождении
+> приоритет имеют BD-PROFILE-01 Passenger и BD-PROFILE-02 Driver.
 
 ### Identity
 
 ```text
-Screen:       Profile V2
+Screen:       Profile V2 (universal)
 Route:        /profile
 File:         public/src/screens/profile.js
 Data source:  localStorage via public/src/state.js
@@ -882,9 +894,477 @@ Phone call between parties
 Driver / passenger state machine outside this bridge
 ```
 
-## Planned minimum screens
+## BD-RULES-01 — Rules
 
-These screens are tracked by #19 and should receive their own render/frame and contract before implementation:
+### Identity
+
+```text
+Screen:       Rules — community rules list
+Route:        /rules
+File:         public/src/screens/rules.js
+Data source:  in-file `RULES` constant (no localStorage, no network)
+Design ref:   Cloud Design — section "Правила"
+Parent issue: #19
+```
+
+### Purpose
+
+Статический экран правил сообщества. Гость может открыть его без
+onboarding (см. router welcome-gate). Ничего не пишет в `localStorage`,
+ничего не читает из `state.js` — чистый рендер.
+
+### UI states
+
+```text
+list      — нумерованный список из 5 пунктов (накрутки, реальные цены,
+            спам, контактные данные, жалобы 24ч)
+empty     — невозможно (массив hard-coded в файле)
+```
+
+### Actions
+
+```text
+Bottom tabbar → переходы /feed / /rules / /profile
+```
+
+### Acceptance checklist
+
+- [ ] `/rules` открывается через hash-роутер
+- [ ] Bottom navigation подсвечивает «Правила» на `/rules`
+- [ ] Список отрисовывается из `RULES` через `escapeHtml`
+- [ ] Гость может открыть `/rules` без onboarding
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RULES-01
+
+```text
+Per-rule navigation, anchors, deep-linking
+Real moderation / report submission backend
+Editing rules from the client
+```
+
+## BD-RESPOND-01 — Respond
+
+### Identity
+
+```text
+Screen:        Respond — водитель отвечает на passenger-заявку
+Route:         /respond (опционально `?postId=…`)
+File:          public/src/screens/respond.js
+Data source:   `bazardrive.respond.v1` (localStorage) + mock request
+Parent issue:  #19
+```
+
+### Purpose
+
+Форма отклика водителя на passenger-заявку из ленты. Формирует mock
+response с ценой, временем подачи и комментарием. Не отправляет ничего
+в сеть — кладёт объект в `localStorage` и в дальнейшем виден пассажиру
+через `/responses` (mock).
+
+### Route contract
+
+```text
+Path:          /respond
+Query:
+  postId   string  default 'trip_anna_vnukovo_park_pobedy' (mock request id)
+Chrome:        visible
+```
+
+### State / data contract
+
+```text
+Reads:    bazardrive.user.v1 — vehicleMake/vehicleModel/vehiclePlate/...
+Writes:   bazardrive.respond.v1 — последний созданный response
+Mock:     MOCK_REQUEST (in-file)         — карточка пассажирской заявки
+          PRICE_CHIPS [1300, 1500, 1800] — варианты цены
+          TIMING_OPTIONS                  — at_time | earlier | negotiate
+          MAX_MSG = 300                   — лимит длины сообщения
+```
+
+### UI states
+
+```text
+form              — выбор цены / timing / комментария / авто
+no-vehicle hint   — если у пользователя нет vehicleMake/Model/Plate
+                    в `bazardrive.user.v1`, показывается подсказка
+                    «добавьте авто в профиле»
+submitting        — кнопка disabled пока response сохраняется
+sent              — экран успеха с галочкой и CTA «Открыть чат»
+                    (переход на /chat?responseId=<id>)
+```
+
+### Actions
+
+```text
+back            → /feed
+choose price    → выбирается чип, фиксируется значение
+choose timing   → at_time | earlier | negotiate
+type message    → лимит MAX_MSG; ошибка на превышении
+submit          → saveResponse() → переход в sent-состояние
+open chat       → /chat?responseId=<id>
+```
+
+### Acceptance checklist
+
+- [ ] `/respond` открывается через hash-роутер
+- [ ] `?postId=` корректно подменяет id отклика
+- [ ] Цена выбирается из чипов; кнопка submit активна только при валидном выборе
+- [ ] Сообщение по умолчанию подставляется из vehicle (если есть)
+- [ ] При превышении `MAX_MSG` показывается ошибка
+- [ ] Submit сохраняет response в `bazardrive.respond.v1`
+- [ ] После submit виден success-state с CTA «Открыть чат»
+- [ ] CTA «Открыть чат» → `/chat?responseId=<id>`
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RESPOND-01
+
+```text
+Backend / real response submission
+Real route geometry / pickup detection
+Push to passenger
+Payment hold / capture
+```
+
+## BD-RESPONSES-01 — Responses inbox
+
+### Identity
+
+```text
+Screen:        Responses — passenger inbox откликов водителей
+Route:         /responses
+File:          public/src/screens/responses.js
+Data source:   mock-driver list в файле (MOCK_DRIVERS)
+Parent issue:  #19
+```
+
+### Purpose
+
+Экран, на котором пассажир видит, какие водители откликнулись на его
+заявку. Mock-only: список из 3 водителей, отметка best-предложения,
+ETA-индикатор, заметка водителя, цена с дельтой относительно цены
+пассажира. Decline / select водителя переключают визуальное состояние,
+ничего не отправляя в сеть.
+
+### Route contract
+
+```text
+Path:          /responses
+Query:         (нет; экран всегда показывает MOCK_DRIVERS)
+Chrome:        visible
+```
+
+### Mock data shape
+
+```text
+MOCK_REQUEST {
+  id, orderId, passengerId, status, pickupLabel, dropoffLabel,
+  price, note
+}
+MOCK_DRIVERS[] {
+  id, responseId, name, initials, avatarTone, rating,
+  car, plate, trips,
+  price, priceDelta, priceTone (up | down | same),
+  eta, etaBars (1-3), etaTone (good | mid | low),
+  note, isBest
+}
+```
+
+### UI states
+
+```text
+list            — 3 карточки водителей
+best-card       — выделенная карточка с признаком isBest
+selected        — пассажир выбрал водителя; меняется визуальный stage
+declined        — водитель помечен как отклонённый (restore CTA доступен)
+all-declined    — все отклонены; информационная плашка
+empty-waiting   — заглушка ожидания, когда откликов ещё нет (визуальный mock)
+```
+
+### Actions
+
+```text
+back                  → /feed
+open chat for driver  → /chat?responseId=<id>
+accept driver         → переход на /trip-confirmation?role=passenger&...
+decline driver        → визуальный stage; не пишет в localStorage
+restore declined      → возвращает водителя в список
+```
+
+### Acceptance checklist
+
+- [ ] `/responses` открывается через hash-роутер
+- [ ] Рендерятся 3 карточки водителей с avatar, name, rating, car, plate
+- [ ] Best-карточка визуально выделена (isBest === true)
+- [ ] ETA-бары рендерятся 1..3 шт по `etaBars`
+- [ ] Decline переводит карточку в declined-row, без потери данных
+- [ ] Restore возвращает declined водителя в обычный список
+- [ ] Selected state ведёт к `/trip-confirmation?role=passenger`
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RESPONSES-01
+
+```text
+Backend / реальный список откликов
+Push при новом отклике
+Платёж / hold карты
+Mapbox / реальные ETA
+```
+
+## BD-CHAT-01 — Chat
+
+### Identity
+
+```text
+Screen:        Chat — переписка по поездке / отклику
+Route:         /chat (опциональные `?tripId=…` или `?responseId=…`)
+File:          public/src/screens/chat.js
+Data source:   `bazardrive.chat.v1` (общий store, формат `{ [chatId]: messages[] }`)
+Parent issue:  #19
+```
+
+### Purpose
+
+Mock-чат между пассажиром и водителем по конкретной поездке / отклику.
+Хранит сообщения локально, без сервера. Используется и из `respond.js`
+→ success state, и из `active_ride.js` (driver «Написать пассажиру»),
+и автоматически — driver-side вызывает `appendDriverChatMessage` при
+«Подъезжаю».
+
+### Route contract
+
+```text
+Path:          /chat
+Query:
+  tripId       string  → chatId = `trip-${tripId}`
+  responseId   string  → chatId = `response-${responseId}`
+  (если оба отсутствуют, chatId = 'demo')
+Chrome:        visible
+```
+
+### Storage contract
+
+```text
+Key:           bazardrive.chat.v1
+Shape:         { [chatId]: Array<{ id, dir: 'in'|'out', text, time }> }
+Legacy shape:  { chatId: string, messages: Array<…> }
+               — мигрирует в новый формат при первой загрузке
+Writers:       chat.js (handleSend), active_ride.js (appendDriverChatMessage)
+```
+
+### UI states
+
+```text
+mock messages    — если для chatId ничего не сохранено, используется MOCK_MESSAGES
+loaded messages  — для chatId есть сохранённый список
+quick replies    — 4 готовых ответа (QUICK_REPLIES)
+sending          — компоновка input + send-кнопка
+```
+
+### Actions
+
+```text
+back            → history.back() / fallback /feed
+call (mock)     → визуальный stub
+attach (mock)   → визуальный stub (plus svg)
+quick reply     → подставляет текст в input
+send            → push в messages[], persist via saveMessages
+```
+
+### Acceptance checklist
+
+- [ ] `/chat` открывается через hash-роутер
+- [ ] `?tripId=` и `?responseId=` дают разные `chatId` и независимые истории
+- [ ] Сообщения сохраняются в `bazardrive.chat.v1` под текущим chatId
+- [ ] Legacy shape `{ chatId, messages }` корректно мигрирует в `{ [chatId]: ... }`
+- [ ] `active_ride.js` пишет в тот же ключ без конфликта
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-CHAT-01
+
+```text
+Real-time канал (WebSocket / SSE)
+Push при новом сообщении
+Файлы / медиа / голос
+Прочитано / typing indicator от собеседника
+```
+
+## BD-RIDE-D — Active ride driver flow
+
+### Identity
+
+```text
+Screen group:  Active ride · driver — single multi-state screen
+Route:         /active-ride?role=driver[&tripId=…][&status=…]
+File:          public/src/screens/active_ride.js
+Data source:   `bazardrive.active_ride.v1` (через `ride_state.js`)
+               + URL query (?role, ?tripId, ?status)
+Design ref:    Cloud Design — section «Активная поездка · водитель»
+Parent docs:   docs/active-ride-plan.md §6, §7
+```
+
+### Role dispatch contract
+
+```text
+Маршрут /active-ride зарегистрирован в app.js один раз, на `activeRide`
+из active_ride.js. Внутри `active_ride.js`:
+
+  if (role === 'passenger') return activeRidePassenger(options);
+
+Отдельного маршрута `/active-ride-passenger` НЕТ. Файл
+`active_ride_passenger.js` подключается только как импорт из
+`active_ride.js`. Контракт passenger-стороны живёт в BD-RIDE-P ниже.
+```
+
+### Supported driver states (как рендерит `active_ride.js`)
+
+```text
+NEW_ORDER                  — карточка нового заказа, таймер, accept/skip
+DRIVER_EN_ROUTE            — еду к пассажиру, навигатор-card, «Я на месте»
+WAITING_PASSENGER          — ожидание + таймер бесплатных минут
+IN_PROGRESS                — везу пассажира, «Завершить поездку»
+COMPLETED                  — earnings summary, рейтинг пассажира
+CANCELED / NO_SHOW         — fallback / stub state
+```
+
+### Driver simulation overrides (`?status=…`)
+
+`DRIVER_SIMULATION_STATUSES` whitelist в `active_ride.js`. NEW_ORDER —
+полноценный reset (если ни один timestamp ещё не записан). Все
+остальные значения — view-only override без перезаписи storage, чтобы
+back-button / повторное открытие демо-ссылок не ломали реальную
+state machine. Rollback past completedAt / canceledAt запрещён.
+
+### Storage contract
+
+```text
+Reads/writes:  bazardrive.active_ride.v1 (через `ride_state.js`)
+Helpers used:  findActiveRide, getActiveRide, updateActiveRideStatus,
+               saveActiveRide, createDemoActiveRide, SIM_AUDIT_RIDE_OVERRIDES
+Also writes:   bazardrive.chat.v1 — при действии «Написать «подъезжаю»»
+               через `appendDriverChatMessage`
+```
+
+### Known gaps (требуют отдельных issues)
+
+```text
+BD-RIDE-D-07  Driver cancel sheet  — сейчас `#ar-cancel` показывает только toast
+BD-RIDE-D-08  Driver problem sheet — отсутствует
+BD-RIDE-D-09  Driver earnings sheet — отсутствует (есть только stat-row)
+NO_SHOW flow  — `#ar-no-show` показывает только toast
+Navigator     — «Навигатор» / «Карта» → toast «после Mapbox integration»
+```
+
+### Acceptance checklist (driver overall)
+
+- [ ] `/active-ride?role=driver` рендерит driver renderer (не passenger)
+- [ ] `?status=NEW_ORDER` без существующих timestamps делает reset
+- [ ] `?status=DRIVER_EN_ROUTE` view-only override, не переписывает storage
+- [ ] «Принять заказ» переводит state → `DRIVER_EN_ROUTE`
+- [ ] «Я на месте» переводит state → `WAITING_PASSENGER`
+- [ ] «Начать поездку» переводит state → `IN_PROGRESS`
+- [ ] «Завершить поездку» переводит state → `COMPLETED`
+- [ ] Rollback past completedAt / canceledAt невозможен через `?status=`
+- [ ] Driver-side не пишет в storage при view-only override
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RIDE-D
+
+```text
+Backend / реальный диспетчер
+Real-time pickup detection
+Mapbox SDK / реальный навигатор
+Платежи / hold карты
+Push водителю
+```
+
+## BD-RIDE-P — Active ride passenger flow
+
+### Identity
+
+```text
+Screen group:  Active ride · passenger — single multi-state screen
+Route:         /active-ride?role=passenger[&tripId=…][&status=…]
+File:          public/src/screens/active_ride_passenger.js
+Mount via:     active_ride.js → activeRidePassenger(options)
+Data source:   `bazardrive.active_ride.v1` (через `ride_state.js`)
+               + URL query (?role, ?tripId, ?status)
+Design ref:    Cloud Design — section «Активная поездка · пассажир»
+Parent docs:   docs/active-ride-plan.md §6
+```
+
+### Supported passenger states (как рендерит `active_ride_passenger.js`)
+
+```text
+DRIVER_EN_ROUTE          — top driver card, ETA до подачи, sheet
+WAITING_PASSENGER        — «Водитель ждёт», waiting timer
+IN_PROGRESS              — поездка в пути
+ARRIVING_DROPOFF         — подъезд к точке назначения
+COMPLETED                — оплата + рейтинг + отчёт
+CANCELED                 — fallback canceled-screen
+```
+
+### Sheets (sub-contracts to be written separately)
+
+```text
+BD-RIDE-P-06  PassengerCancelRideSheet — `openPassengerCancelSheet`
+BD-RIDE-P-07  PassengerSafetySheet      — `openPassengerSafetySheet`
+              Оба уже реализованы в `active_ride_passenger.js`. Контракты
+              должны быть оформлены отдельными секциями BD-RIDE-P-06-CONTRACT
+              и BD-RIDE-P-07-CONTRACT (см. docs/project-health-audit.md §6).
+```
+
+### Storage contract
+
+```text
+Reads/writes:  bazardrive.active_ride.v1 (через `ride_state.js`)
+View-only:     рендерер уважает `?status=…` как view-only override, не
+               перезаписывая storage без явного действия пользователя
+```
+
+### Acceptance checklist (passenger overall)
+
+- [ ] `/active-ride?role=passenger` рендерит passenger renderer
+- [ ] Все 5 mock-state корректно отрисовываются по `?status=`
+- [ ] Cancel sheet вызывается из passenger UI; close без выбора не пишет в storage
+- [ ] Safety sheet открывается / закрывается без побочных эффектов
+- [ ] State CANCELED не откатывается обратно через `?status=`
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RIDE-P
+
+```text
+Backend / real-time tracking
+Mapbox SDK / реальная карта подачи
+Реальный платёж / списание
+Push пассажиру
+Sub-contracts BD-RIDE-P-06 / BD-RIDE-P-07 — отдельные секции
+```
+
+---
+
+## Planned screens (not yet implemented)
+
+These screens are tracked by #19 and should receive their own
+render/frame and contract before implementation:
 
 ```text
 BD-MAP-01 — MapHome foundation
@@ -892,6 +1372,34 @@ BD-MAP-02 — LocationPermission
 BD-MAP-03 — RoutePicker
 BD-MAP-04 — RoutePreview
 BD-MAP-05 — OrderMapDraft
-BD-DRIVER-01 — DriverMap
-BD-RIDE-01 — ActiveRide
+BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
+BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
+BD-RIDE-D-07 — DriverCancelRideSheet
+BD-RIDE-D-08 — DriverProblemSheet
+BD-RIDE-D-09 — DriverEarningsSheet
+```
+
+> `/active-ride` уже реализован двумя файлами
+> (`active_ride.js`, `active_ride_passenger.js`) и поэтому удалён
+> из этого списка. См. BD-RIDE-D и BD-RIDE-P выше.
+
+---
+
+## Documentation hygiene invariant
+
+Этот раздел применяется ко всем контрактам выше и совпадает с
+проверками `scripts/check.mjs`. Любой новый контракт обязан включать
+их в acceptance checklist.
+
+```text
+- no inline <script>
+- no inline <style>
+- no style="" attributes in HTML
+- no on*= handlers in HTML
+- no `.style.<property>` mutations in JS
+- no `.setAttribute('style', …)` in JS
+- no style="…" в шаблонных строках JS
+- CSP не ослабляется (см. <meta http-equiv="Content-Security-Policy"> в index.html)
+- Service Worker не кеширует public/prototypes/
+- node scripts/check.mjs проходит локально и в CI
 ```
