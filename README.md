@@ -70,7 +70,6 @@ docs/
   screen-contracts.md         Контракты экранов (Cloud Design → route → state → acceptance)
   flow-contracts.md           End-to-end passenger → driver ride flow (BD-FLOW-01)
   active-ride-plan.md         Подробный план Active Ride (BD-RIDE-D-*, BD-RIDE-P-*)
-  project-health-audit.md     Аудит расхождений между документацией и кодом
 
 .github/
   workflows/

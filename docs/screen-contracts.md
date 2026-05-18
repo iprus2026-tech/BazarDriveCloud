@@ -1326,7 +1326,7 @@ BD-RIDE-P-06  PassengerCancelRideSheet — `openPassengerCancelSheet`
 BD-RIDE-P-07  PassengerSafetySheet      — `openPassengerSafetySheet`
               Оба уже реализованы в `active_ride_passenger.js`. Контракты
               должны быть оформлены отдельными секциями BD-RIDE-P-06-CONTRACT
-              и BD-RIDE-P-07-CONTRACT (см. docs/project-health-audit.md §6).
+              и BD-RIDE-P-07-CONTRACT в этом файле.
 ```
 
 ### Storage contract
