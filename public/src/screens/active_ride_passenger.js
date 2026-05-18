@@ -287,10 +287,11 @@ const PASSENGER_SUPPORTED_STATUSES = new Set([
   RIDE_STATUS.COMPLETED,
 ]);
 
-const PASSENGER_STUB_BY_STATUS = {
-  [RIDE_STATUS.CANCELED]: 'Поездка отменена — экран будет добавлен позже',
-  [RIDE_STATUS.NO_SHOW]: 'Поездка отменена — экран будет добавлен позже',
-};
+// Catch-all stub for statuses the passenger UI does not yet render
+// (e.g. NEW_ORDER / CONFIRMATION_PENDING). CANCELED and NO_SHOW are
+// served by `renderPassengerCanceledFallback`, so they don't appear
+// in this table.
+const PASSENGER_STUB_BY_STATUS = {};
 
 function renderPassengerStub(message) {
   const root = document.createElement('section');
@@ -785,8 +786,14 @@ function renderPassengerRideComplete(ride, deps) {
       </div>
       <div class="passenger-complete__hero-title" data-default-only>Поездка завершена</div>
       <div class="passenger-complete__hero-title" data-submitted-only>Спасибо за отзыв</div>
-      <div class="passenger-complete__hero-sub" data-default-only>
-        Спасибо за поездку. Оплата будет списана автоматически.
+      <div class="passenger-complete__hero-sub" data-default-only data-pay-show="auto">
+        Спасибо за поездку. Оплата спишется автоматически.
+      </div>
+      <div class="passenger-complete__hero-sub" data-default-only data-pay-show="pending">
+        Спасибо за поездку. Списываем оплату с карты…
+      </div>
+      <div class="passenger-complete__hero-sub" data-default-only data-pay-show="paid">
+        Спасибо за поездку. Оплата успешно прошла.
       </div>
       <div class="passenger-complete__hero-sub" data-submitted-only>
         Ваша оценка отправлена водителю. Хорошей дороги!
@@ -1368,31 +1375,48 @@ function formatCanceledAt(ride) {
 }
 
 // BD-RIDE-P-06 · State D — Canceled fallback view. Replaces the
-// generic PASSENGER_STUB_BY_STATUS placeholder for CANCELED on the
-// passenger side so the user lands on a navigable confirmation
-// screen instead of a "будет добавлено позже" stub.
-function renderPassengerCanceledFallback(ride) {
+// generic PASSENGER_STUB_BY_STATUS placeholder for CANCELED / NO_SHOW
+// on the passenger side so the user lands on a navigable confirmation
+// screen instead of a "будет добавлено позже" stub. The `variant`
+// argument switches between truthful copy for the two states without
+// touching the ride status itself.
+function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride passenger-cancel-fallback';
+  root.dataset.variant = variant;
   const tripLabel = formatTripNumber(ride && ride.tripId);
   const canceledAt = formatCanceledAt(ride);
+  const isNoShow = variant === 'no_show';
+  const cancel = (ride && ride.cancel) || {};
+  const byDriver = cancel.by === 'driver';
+
+  const title = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
+  const badgeLabel = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
+  const badgeText = isNoShow ? 'No-show' : 'Canceled';
+  const description = isNoShow
+    ? 'Водитель не смог дождаться вас на точке подачи. Закройте экран и закажите новую поездку, когда будете готовы.'
+    : (byDriver
+      ? 'Водитель отменил эту поездку. Вы можете вернуться в ленту или создать новую заявку.'
+      : 'Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.');
+  const metaVerb = isNoShow ? 'закрыто в' : 'отменено в';
+
   root.innerHTML = `
     <div class="passenger-cancel-fallback__top">
       <button type="button" class="passenger-cancel-fallback__top-back" id="arp-canceled-top-back" aria-label="Вернуться в ленту">
         ${CHEVRON_UP_SVG}
       </button>
       <div class="passenger-cancel-fallback__trip">Поездка ${escapeHtml(tripLabel)}</div>
-      <div class="passenger-cancel-fallback__badge" aria-label="Поездка отменена">Canceled</div>
+      <div class="passenger-cancel-fallback__badge" aria-label="${escapeHtml(badgeLabel)}">${escapeHtml(badgeText)}</div>
     </div>
 
     <div class="passenger-cancel-fallback__card" role="status" aria-live="polite">
       <div class="passenger-cancel-fallback__icon" aria-hidden="true">${X_CIRCLE_SVG}</div>
-      <div class="passenger-cancel-fallback__title">Поездка отменена</div>
+      <div class="passenger-cancel-fallback__title">${escapeHtml(title)}</div>
       <div class="passenger-cancel-fallback__text">
-        Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.
+        ${escapeHtml(description)}
       </div>
       <div class="passenger-cancel-fallback__meta">
-        ${escapeHtml(tripLabel)} · отменено в ${escapeHtml(canceledAt)}
+        ${escapeHtml(tripLabel)} · ${escapeHtml(metaVerb)} ${escapeHtml(canceledAt)}
       </div>
     </div>
 
@@ -1570,10 +1594,15 @@ export default function activeRidePassenger(options = {}) {
   ride = applyPassengerStatusFromQuery(ride, statusQuery);
 
   // BD-RIDE-P-06 · State D — Passenger lands here after confirming a
-  // cancel, or when arriving from an audit URL with ?status=CANCELED.
-  // NO_SHOW keeps the legacy stub for now (separate issue).
+  // cancel, or when arriving from an audit URL with
+  // ?status=CANCELED / ?status=NO_SHOW. NO_SHOW reuses the same layout
+  // with truthful "Поездка не состоялась" copy so it doesn't pretend
+  // the user manually canceled.
   if (ride.status === RIDE_STATUS.CANCELED) {
-    return renderPassengerCanceledFallback(ride);
+    return renderPassengerCanceledFallback(ride, 'canceled');
+  }
+  if (ride.status === RIDE_STATUS.NO_SHOW) {
+    return renderPassengerCanceledFallback(ride, 'no_show');
   }
 
   if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
@@ -1734,7 +1763,12 @@ export default function activeRidePassenger(options = {}) {
         const finishRateBtn = sheet.querySelector('#arp-finish-rate');
         if (finishRateBtn) {
           finishRateBtn.addEventListener('click', () => {
-            toast('Экран оценки будет добавлен позже');
+            // Hand the passenger off into the COMPLETED rating flow.
+            // View-only navigation — the canonical ride status is still
+            // owned by the driver lifecycle, so we don't call
+            // updateActiveRideStatus here. payment=auto matches the
+            // default COMPLETED entry the audit URL would land on.
+            go(`/active-ride?role=passenger&status=${RIDE_STATUS.COMPLETED}&payment=auto&tripId=${encodeURIComponent(ride.tripId)}`);
           });
         }
         return;
