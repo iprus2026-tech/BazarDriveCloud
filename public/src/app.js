@@ -4,6 +4,7 @@ import { initSwUpdate } from './sw-update.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
+import map        from './screens/map.js';
 import rules      from './screens/rules.js';
 import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';
@@ -16,6 +17,7 @@ import tripConfirmation from './screens/trip_confirmation.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
+register('/map',         map);
 register('/rules',       rules);
 register('/profile',     profile);
 register('/onboarding',  onboarding);

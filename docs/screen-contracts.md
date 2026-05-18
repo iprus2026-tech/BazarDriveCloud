@@ -2416,13 +2416,152 @@ checklist BD-RIDE-D.
 
 ---
 
+## BD-MAP-01 — MapHome foundation
+
+### Identity
+
+```text
+Screen:        MapHome foundation — standalone /map home screen
+Route:         /map  (опциональный query `?state=…` только для render-gate показа)
+File:          public/src/screens/map.js
+Data source:   localStorage `bazardrive.map_prefs.v1`
+               (managed by `public/src/mapbox/mapbox_state.js`)
+Design ref:    Cloud Design — BD-MAP-01 MapHome foundation — Render Gate
+               (см. issue #140, render-gate verification от 2026-05-18)
+Parent issue:  #19
+Related:       #105 (Mapbox data-boundary), #140 (render gate)
+```
+
+### Purpose
+
+Самостоятельный экран «Карта», открываемый из bottom nav между
+`Лента` и `Правила`. На этом этапе реальный Mapbox SDK не подключён —
+экран отрисовывает 5 render-gate состояний поверх существующего
+`MapShell` placeholder и safe-stub-модулей `public/src/mapbox/*`.
+
+Никаких сетевых вызовов. Никакого нативного prompt на геолокацию при
+монтировании экрана. Token-missing fallback имеет приоритет над
+permission-состоянием.
+
+### Route contract
+
+```text
+Path:          /map
+Query:
+  state    string  default '' (фактический режим вычисляется по stubs).
+                   Разрешённые значения для render-gate показа:
+                   default | permission | denied | nearby | token-missing
+                   (синоним: token_missing). Неизвестные значения
+                   игнорируются.
+Chrome:        visible (tabbar + welcome-gate)
+```
+
+### State / data contract
+
+```text
+Reads:    bazardrive.map_prefs.v1 — { locationAllowed, lastCenter, zoom }
+          mapbox_config.hasMapboxToken()    — стаб, всегда false
+          geolocation_service.getPermissionStatus() — стаб, 'unknown'
+Writes:   bazardrive.map_prefs.v1 — { locationAllowed: true } при клике
+          по «Моё место». Никаких других ключей не трогаем.
+Mock:     route_service.estimateRoute(...)  → Promise<null>
+          price_estimator.estimatePrice(...) → null
+```
+
+### Render-gate states
+
+```text
+1. default       — карта без маршрута, видимы pickup/dropoff/route,
+                   sheet с «Выбрать маршрут / Моё место / Заказы рядом».
+2. permission    — баннер «Включите Моё место», карта приглушена.
+3. denied        — баннер «Геолокация выключена», кнопка «Моё место»
+                   неактивна.
+4. nearby        — заглушки точек заказов поверх карты.
+5. token_missing — Mapbox token отсутствует. Карта серая, кнопка
+                   «Моё место» неактивна. Этот state имеет приоритет
+                   над permission/denied.
+```
+
+### Actions
+
+```text
+«Выбрать маршрут» — placeholder; пока ведёт на /map (BD-MAP-03 RoutePicker
+                    не реализован).
+«Моё место»       — выставляет mapPrefs.locationAllowed=true и
+                    пере-рендерит экран. Реальный
+                    navigator.geolocation НЕ вызывается.
+«Заказы рядом»    — переход в state=nearby (демо-плейсхолдер).
+Bottom tabbar     — `/feed`, `/map`, `/rules`, `/profile` (active state
+                    подсвечивает «Карта»).
+```
+
+### A11y
+
+```text
+- Map placeholder контейнер: role="img" aria-label="Карта-заглушка".
+- Inner MapShell помечен aria-hidden="true" чтобы скринридер не
+  читал декоративные маркеры дважды.
+- Кнопка «Моё место»: aria-label="Моё место".
+- Status banner: role="status" aria-live="polite".
+- Watermark «Mapbox SDK пока не подключён» — pointer-events:none,
+  визуальный.
+```
+
+### Acceptance checklist
+
+- [ ] `/map` зарегистрирован в `public/src/app.js`.
+- [ ] Экран открывается через hash-роутер; chrome (tabbar) виден.
+- [ ] Bottom navigation подсвечивает «Карта» на `/map`
+      (`router.js#syncTabActive`).
+- [ ] По умолчанию (token отсутствует в stubs) рендерится state
+      `token_missing`. Token-missing приоритетнее permission/denied.
+- [ ] При наличии `?state=…` для каждого из пяти значений отрисовывается
+      соответствующий гейт.
+- [ ] Видимый watermark/label `Mapbox SDK пока не подключён` на всех
+      состояниях.
+- [ ] `navigator.geolocation` не вызывается при монтировании.
+- [ ] Стаб-модули из `public/src/mapbox/` не делают сетевых вызовов
+      и не подключают реальный Mapbox SDK.
+- [ ] `public/sw.js` содержит новые JS-файлы в `PRECACHE` и поднят
+      `VERSION`.
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`.
+- [ ] Нет `.style.<property>` присвоений в JS.
+- [ ] CSP не ослаблен (никаких `api.mapbox.com` / `events.mapbox.com`
+      / `tiles.mapbox.com`).
+- [ ] `node scripts/check.mjs` проходит.
+
+### Manual test URLs
+
+```text
+/map                          → token_missing (default boot, token нет в stubs)
+/map?state=default            → default / no route
+/map?state=permission         → location permission needed
+/map?state=denied             → location denied fallback
+/map?state=nearby             → nearby orders placeholder
+/map?state=token-missing      → Mapbox token missing fallback
+/feed                         → проверить, что bottom nav содержит «Карта»
+/rules                        → проверить, что «Правила» по-прежнему активны
+```
+
+### Out of scope for BD-MAP-01
+
+```text
+Реальный Mapbox SDK / token / CSP-расширение под Mapbox
+Реальный navigator.geolocation prompt
+Directions API, маршруты, цены
+Backend / API / driver markers / live navigation
+Подключение стабов к другим экранам
+Любые изменения active ride flow (BD-RIDE-D / BD-RIDE-P)
+```
+
+---
+
 ## Planned screens (not yet implemented)
 
 These screens are tracked by #19 and should receive their own
 render/frame and contract before implementation:
 
 ```text
-BD-MAP-01 — MapHome foundation
 BD-MAP-02 — LocationPermission
 BD-MAP-03 — RoutePicker
 BD-MAP-04 — RoutePreview
@@ -2430,6 +2569,10 @@ BD-MAP-05 — OrderMapDraft
 BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
 BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 ```
+
+> BD-MAP-01 удалён из этого списка — контракт описан выше (см.
+> «BD-MAP-01 — MapHome foundation»). Имплементация — без реального
+> Mapbox SDK, только safe stubs в `public/src/mapbox/*`.
 
 > `/active-ride` уже реализован двумя файлами
 > (`active_ride.js`, `active_ride_passenger.js`) и поэтому удалён

@@ -1,4 +1,4 @@
-const VERSION    = 'v24';
+const VERSION    = 'v25';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -15,6 +15,7 @@ const PRECACHE = [
   './src/sw-update.js',
   './src/screens/welcome.js',
   './src/screens/feed.js',
+  './src/screens/map.js',
   './src/screens/rules.js',
   './src/screens/profile.js',
   './src/screens/onboarding.js',
@@ -27,6 +28,12 @@ const PRECACHE = [
   './src/screens/trip_confirmation.js',
   './src/ride_state.js',
   './src/mapbox/map_shell.js',
+  './src/mapbox/mapbox_config.js',
+  './src/mapbox/mapbox_loader.js',
+  './src/mapbox/mapbox_state.js',
+  './src/mapbox/geolocation_service.js',
+  './src/mapbox/route_service.js',
+  './src/mapbox/price_estimator.js',
   './icons/icon.svg',
   './icons/maskable-192.png',
   './icons/maskable-512.png',
