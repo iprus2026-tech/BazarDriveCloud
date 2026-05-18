@@ -826,7 +826,8 @@ cf-state-<state>        root class hook per state for debugging/audit
 
 ```text
 cf-pill              role="status"
-cf-countdown         aria-live="polite" (only on DRIVER_WAITING, no aggressive updates)
+cf-countdown         aria-live="polite" added only when remaining ≤ 5s
+                     (no announcements during the full 60s window)
 cf-progress          role="progressbar" + aria-valuemin/aria-valuemax
 cf-back / cf-shield  aria-label
 hero icons           aria-hidden="true"

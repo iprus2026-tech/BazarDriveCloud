@@ -64,6 +64,10 @@ const CHECK_SVG = `<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" st
   <polyline points="6 16 13 23 26 9"/>
 </svg>`;
 
+const CHECK_SVG_INLINE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16">
+  <polyline points="5 12 10 17 19 7"/>
+</svg>`;
+
 const PENDING_SVG = `<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="28" height="28">
   <circle cx="16" cy="16" r="11"/>
   <polyline points="16 9 16 16 21 19"/>
@@ -227,7 +231,7 @@ function renderDriverWaiting(tripId) {
         <h1 class="cf-hero-title">Отклик отправлен</h1>
         <p class="cf-hero-sub">
           <span>Ждём подтверждение пассажира</span>
-          <span class="cf-countdown" id="cf-countdown" aria-live="polite">0:60</span>
+          <span class="cf-countdown" id="cf-countdown">0:60</span>
         </p>
       </div>
     `,
@@ -355,10 +359,6 @@ function renderExpired(tripId) {
   };
 }
 
-const CHECK_SVG_INLINE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16">
-  <polyline points="5 12 10 17 19 7"/>
-</svg>`;
-
 const STATE_RENDERERS = {
   [CF_STATE.PASSENGER_PENDING]:   renderPassengerPending,
   [CF_STATE.DRIVER_WAITING]:      renderDriverWaiting,
@@ -400,9 +400,18 @@ function startCountdown(rootEl, controller) {
     if (!rootEl.isConnected) { teardown(); return; }
     if (big)    big.textContent = fmt(remaining);
     if (inline) inline.textContent = fmtInline(remaining);
+    // aria-live is opt-in only inside the urgent window (≤5s). Outside
+    // that window the contract calls for silence — announcing every
+    // second for a full minute is noisy for screen readers.
     if (remaining <= 5) {
-      if (big)    big.classList.add('cf-countdown--urgent');
-      if (inline) inline.classList.add('cf-countdown--urgent');
+      if (big) {
+        big.classList.add('cf-countdown--urgent');
+        big.setAttribute('aria-live', 'polite');
+      }
+      if (inline) {
+        inline.classList.add('cf-countdown--urgent');
+        inline.setAttribute('aria-live', 'polite');
+      }
     }
     remaining -= 1;
     if (remaining < 0) { teardown(); return; }
