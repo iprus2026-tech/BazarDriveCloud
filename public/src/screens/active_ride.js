@@ -299,17 +299,24 @@ function problemNoticeText(type) {
   return 'Проблема отправлена в mock-поддержку';
 }
 
-function openDriverProblemSheet(root, { type = '', onNoShow, onResolve }) {
-  let selected = type;
+function openDriverProblemSheet(root, { type = '', allowedTypes, onNoShow, onResolve }) {
+  const types = Array.isArray(allowedTypes) && allowedTypes.length
+    ? PROBLEM_TYPES.filter(([value]) => allowedTypes.includes(value))
+    : PROBLEM_TYPES;
+  const noShowAvailable = types.some(([value]) => value === 'PASSENGER_NO_SHOW') && typeof onNoShow === 'function';
+  let selected = types.some(([value]) => value === type) ? type : '';
   let confirmPending = false;
+  const lead = noShowAvailable
+    ? 'Только «Пассажир не приехал» переводит поездку в NO_SHOW. Остальное безопасные заглушки.'
+    : 'Все варианты — безопасные заглушки и не меняют статус поездки.';
   const sheet = createDriverSheet(root, {
     kind: 'problem',
     titleId: 'driver-problem-title',
     eyebrow: 'BD-RIDE-D-08',
     title: 'Что случилось?',
     bodyHtml: `
-      <p class="driver-sheet__lead">Только «Пассажир не приехал» переводит поездку в NO_SHOW. Остальное безопасные заглушки.</p>
-      <div class="driver-sheet__options" role="radiogroup" aria-label="Тип проблемы">${renderOptions(PROBLEM_TYPES, selected)}</div>
+      <p class="driver-sheet__lead">${escapeHtml(lead)}</p>
+      <div class="driver-sheet__options" role="radiogroup" aria-label="Тип проблемы">${renderOptions(types, selected)}</div>
       <div class="driver-sheet__confirm" id="driver-problem-confirm" hidden><strong>Отметить no-show?</strong><span>Следующее нажатие переведёт поездку в NO_SHOW.</span></div>
       <div class="driver-sheet__actions"><button type="button" class="bd-btn primary driver-sheet__primary" id="driver-problem-primary" disabled>Сообщить</button><button type="button" class="bd-btn ghost driver-sheet__secondary" data-driver-sheet-close="true">Назад к поездке</button></div>
     `,
@@ -318,7 +325,7 @@ function openDriverProblemSheet(root, { type = '', onNoShow, onResolve }) {
   const confirmBox = sheet.overlay.querySelector('#driver-problem-confirm');
   function syncPrimary(value) {
     primary.disabled = !value;
-    if (value === 'PASSENGER_NO_SHOW') primary.textContent = confirmPending ? 'Отметить no-show' : 'Отметить';
+    if (value === 'PASSENGER_NO_SHOW' && noShowAvailable) primary.textContent = confirmPending ? 'Отметить no-show' : 'Отметить';
     else if (value === 'SAFETY_INCIDENT') primary.textContent = 'Связаться с поддержкой';
     else primary.textContent = 'Сообщить';
   }
@@ -330,7 +337,7 @@ function openDriverProblemSheet(root, { type = '', onNoShow, onResolve }) {
   });
   primary.addEventListener('click', () => {
     if (!selected) return;
-    if (selected === 'PASSENGER_NO_SHOW') {
+    if (selected === 'PASSENGER_NO_SHOW' && noShowAvailable) {
       if (!confirmPending) {
         confirmPending = true;
         confirmBox.hidden = false;
@@ -496,7 +503,7 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="active-ride__waiting-badge"><div class="active-ride__waiting-badge-value">${escapeHtml(remaining)}</div><div class="active-ride__waiting-badge-label">осталось</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressStep(remaining, freeLimit) * 10}"><div class="active-ride__progress-bar-fill" data-step="${progressStep(remaining, freeLimit)}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
-    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverProblemSheet(root, { type: 'PASSENGER_NO_SHOW', onNoShow: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.NO_SHOW); renderSheet(); }, onResolve: showNotice }));
+    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverProblemSheet(root, { type: 'PASSENGER_NO_SHOW', allowedTypes: PROBLEM_TYPES.map(([value]) => value), onNoShow: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.NO_SHOW); renderSheet(); }, onResolve: showNotice }));
     bindPassengerActions();
   }
 
@@ -506,7 +513,7 @@ export default function activeRide() {
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-finish').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.COMPLETED); renderSheet(); });
     sheet.querySelector('#ar-stop').addEventListener('click', () => showNotice('Добавление остановки будет доступно позже'));
-    sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { type: 'OTHER', onNoShow: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.NO_SHOW); renderSheet(); }, onResolve: showNotice }));
+    sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { type: 'OTHER', allowedTypes: PROBLEM_TYPES.filter(([value]) => value !== 'PASSENGER_NO_SHOW').map(([value]) => value), onResolve: showNotice }));
     bindPassengerActions();
   }
 
@@ -521,8 +528,21 @@ export default function activeRide() {
   }
 
   function renderCanceledStub() {
-    const title = ride.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не приехал' : 'Заказ отменён';
-    const body = ride.status === RIDE_STATUS.NO_SHOW ? 'Поездка отмечена как no-show. Реальный штраф и поддержка вне этого PR.' : 'Заказ отменён водителем. Причина хранится только в UI этого PR.';
+    const cancel = ride.cancel || {};
+    const byPassenger = cancel.by === 'passenger';
+    const passengerName = (ride.passenger && ride.passenger.name) || 'Пассажир';
+    let title;
+    let body;
+    if (ride.status === RIDE_STATUS.NO_SHOW) {
+      title = 'Пассажир не приехал';
+      body = 'Поездка отмечена как no-show. Реальный штраф и поддержка вне этого PR.';
+    } else if (byPassenger) {
+      title = 'Пассажир отменил заказ';
+      body = `${passengerName} отменил поездку после принятия заказа.`;
+    } else {
+      title = 'Заказ отменён';
+      body = 'Заказ отменён водителем. Причина хранится только в UI этого PR.';
+    }
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title">${escapeHtml(title)}</div></div><div class="active-ride__stub">${escapeHtml(body)}</div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button></div>`;
     sheet.querySelector('#ar-back-feed').addEventListener('click', () => go('/feed'));
   }
