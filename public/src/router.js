@@ -3,7 +3,7 @@ import { user } from './state.js';
 const routes = new Map();
 let pendingAction = null;
 
-const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride']);
+const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
 const SHOW_FAB    = new Set(['/feed']);
 
 export function register(path, loader) {
