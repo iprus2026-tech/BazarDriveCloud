@@ -729,6 +729,159 @@ Real-time map / active ride
 Non-Обзор tab implementations
 ```
 
+## BD-CONFIRM-01 — TripConfirmationHandoff
+
+### Identity
+
+```text
+Screen:        TripConfirmationHandoff — render gate
+Route:         /trip-confirmation
+File:          public/src/screens/trip_confirmation.js
+Data source:   URL query (?role, ?tripId, ?state) — no localStorage write
+Design ref:    Cloud Design — BD-CONFIRM-01 (5 frames)
+Parent issue:  #19
+Working issue: #123
+Branch:        feature/trip-confirmation-handoff
+```
+
+### Purpose
+
+Временный мост между чатом/откликом и активной поездкой. Закрывает
+зазор в lifecycle между `respond` (отклик отправлен) и `/active-ride`
+(`DRIVER_EN_ROUTE`). Финального дизайна в Cloud Design ещё нет, поэтому
+экран реализован как render gate без backend, без Mapbox, без push,
+без платежей и без real-time таймеров (countdown — pure UI mock).
+
+### Cloud Design render/frame gate
+
+Design section: **BD-CONFIRM-01 · TripConfirmationHandoff**
+
+Frames used as visual reference:
+
+```text
+1 · Passenger confirmation pending  → state=PASSENGER_PENDING
+2 · Driver waiting for passenger    → state=DRIVER_WAITING
+3 · Trip confirmed · passenger      → state=PASSENGER_CONFIRMED
+4 · Trip confirmed · driver         → state=DRIVER_CONFIRMED
+5 · Error / expired confirmation    → state=EXPIRED
+```
+
+### Route contract
+
+```text
+Path:          /trip-confirmation
+Query:
+  role     'passenger' | 'driver'   default: 'passenger'
+  tripId   string                    default: '48-321' (mock demo id)
+  state    PASSENGER_PENDING | DRIVER_WAITING |
+           PASSENGER_CONFIRMED | DRIVER_CONFIRMED | EXPIRED
+           default: role=driver → DRIVER_WAITING,
+                    otherwise   → PASSENGER_PENDING
+Chrome:        hidden (added to HIDE_CHROME in router.js)
+```
+
+### UI states
+
+```text
+PASSENGER_PENDING    — водитель готов выехать, пассажир подтверждает поездку
+DRIVER_WAITING       — отклик отправлен, ждём подтверждение пассажира
+                       (countdown 0:60 → 0:00, прогресс-бар pure CSS animation)
+PASSENGER_CONFIRMED  — поездка подтверждена, CTA «Открыть поездку»
+DRIVER_CONFIRMED     — поездка подтверждена, CTA «Ехать к пассажиру»
+EXPIRED              — ссылка устарела / другая сторона отменила, summary-card
+```
+
+### Actions
+
+```text
+PASSENGER_PENDING    «Подтвердить поездку» →
+                     /trip-confirmation?role=passenger&tripId=<id>&state=PASSENGER_CONFIRMED
+                     «Вернуться в чат»     → /chat
+PASSENGER_CONFIRMED  «Открыть поездку»     →
+                     /active-ride?role=passenger&tripId=<id>&status=DRIVER_EN_ROUTE
+DRIVER_WAITING       «Открыть чат»         → /chat
+                     «Отменить отклик»     → /feed
+DRIVER_CONFIRMED     «Ехать к пассажиру»   →
+                     /active-ride?role=driver&tripId=<id>&status=DRIVER_EN_ROUTE
+                     «Открыть чат»         → /chat
+EXPIRED              «Вернуться в ленту»   → /feed
+                     «Открыть чат»         → /chat
+Back button          → /chat (passenger states) | /feed (driver states)
+```
+
+### CSS additions
+
+All styles added to `public/styles/cloud.css` under section `BD-CONFIRM-01`.
+CSS namespace: `cf-*` and `.screen--trip-confirmation`. No inline styles,
+no `style=` attributes, no `.style.<property>` assignments in JS.
+
+```text
+cf-countdown            font-variant-numeric: tabular-nums (цифры не дёргаются)
+cf-confirmed-ring       чистый CSS animation, pointer-events: none — не блокирует CTA
+cf-progress-fill        @keyframes cf-progress-deplete 60s linear forwards
+cf-state-<state>        root class hook per state for debugging/audit
+```
+
+### A11y / hygiene
+
+```text
+cf-pill              role="status"
+cf-countdown         aria-live="polite" added only when remaining ≤ 5s
+                     (no announcements during the full 60s window)
+cf-progress          role="progressbar" + aria-valuemin/aria-valuemax
+cf-back / cf-shield  aria-label
+hero icons           aria-hidden="true"
+```
+
+### Mock / stub
+
+```text
+Trip id              '48-321' (demo)
+Passenger            Анна М. · @anna_m · ★4,86 · 87 поездок · оплата картой · 4417
+Driver               Рустам К. · ★4,92 · Toyota Camry · серый · A 124 ВВ ·
+                     1 248 поездок · 4 года на платформе
+Route                ул. Малая Бронная, 28 → Аэропорт Шереметьево, терминал B
+Meta                 1 540 ₽ · 4 мин подача · 38 км · 42 мин в пути
+Sent / Expired       14:04 / 14:21 · 7 мин назад
+Countdown            60 → 0, текст обновляется через setTimeout + textContent
+                     (нет real-time auto-cancel, нет setInterval-driven state machine)
+```
+
+### Acceptance checklist
+
+- [ ] `/trip-confirmation` открывается через hash-роутер
+- [ ] Chrome (tabbar) скрыт на этом экране
+- [ ] `?state=PASSENGER_PENDING` рендерит экран 1 (CTA «Подтвердить поездку»)
+- [ ] `?state=DRIVER_WAITING` рендерит экран 2 (countdown + progress bar)
+- [ ] `?state=PASSENGER_CONFIRMED` рендерит экран 3 (зелёная галочка + ring)
+- [ ] `?state=DRIVER_CONFIRMED` рендерит экран 4 (зелёная галочка + ring)
+- [ ] `?state=EXPIRED` рендерит экран 5 (error summary-card)
+- [ ] Без `?state`: passenger → PASSENGER_PENDING, driver → DRIVER_WAITING
+- [ ] CTA passenger confirmed →
+      `/active-ride?role=passenger&tripId=<id>&status=DRIVER_EN_ROUTE`
+- [ ] CTA driver confirmed →
+      `/active-ride?role=driver&tripId=<id>&status=DRIVER_EN_ROUTE`
+- [ ] Countdown в DRIVER_WAITING тикает 60→0 через textContent (без `.style`)
+- [ ] Прогресс-бар DRIVER_WAITING — CSS animation, без inline styles
+- [ ] `cf-confirmed-ring` не блокирует тап по CTA (pointer-events: none)
+- [ ] `public/sw.js` precache содержит `./src/screens/trip_confirmation.js`
+- [ ] Нет inline `<script>` / `<style>` / `on*=` / `style=` атрибутов
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-CONFIRM-01
+
+```text
+Real-time backend (WebSocket / push)
+Real auto-cancel after countdown expiry
+Mapbox / route geometry
+Payment hold / capture
+Push notification of confirmation
+Phone call between parties
+Driver / passenger state machine outside this bridge
+```
+
 ## Planned minimum screens
 
 These screens are tracked by #19 and should receive their own render/frame and contract before implementation:
