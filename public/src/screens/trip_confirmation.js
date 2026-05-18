@@ -112,7 +112,7 @@ function passengerCard() {
         <div class="cf-party-handle">${escapeHtml(MOCK_PASSENGER.handle)}</div>
         <div class="cf-party-meta">${escapeHtml(MOCK_PASSENGER.meta)}</div>
       </div>
-      <button type="button" class="bd-iconbtn cf-party-chat" aria-label="Открыть чат">
+      <button type="button" class="bd-iconbtn cf-party-chat" aria-label="Открыть чат" data-cf-action="open-chat">
         ${CHAT_SVG}
       </button>
     </div>
@@ -133,7 +133,7 @@ function driverCard() {
         <div class="cf-party-car">${escapeHtml(MOCK_DRIVER.car)}</div>
         <div class="cf-party-meta">${escapeHtml(MOCK_DRIVER.meta)}</div>
       </div>
-      <button type="button" class="bd-iconbtn cf-party-chat" aria-label="Открыть чат">
+      <button type="button" class="bd-iconbtn cf-party-chat" aria-label="Открыть чат" data-cf-action="open-chat">
         ${CHAT_SVG}
       </button>
     </div>
@@ -384,8 +384,20 @@ function startCountdown(rootEl, controller) {
     if (s >= 60) return '1 мин';
     return `${s} с`;
   }
+  function teardown() {
+    if (controller.aborted) return;
+    controller.aborted = true;
+    for (const id of controller.timers) clearTimeout(id);
+    controller.timers.length = 0;
+    window.removeEventListener('hashchange', teardown);
+  }
+  // Stop the recursive setTimeout chain as soon as the router swaps
+  // this screen out — either the hash changes (next route) or, as a
+  // safety net, the root element gets detached from the document.
+  window.addEventListener('hashchange', teardown);
   function tick() {
     if (controller.aborted) return;
+    if (!rootEl.isConnected) { teardown(); return; }
     if (big)    big.textContent = fmt(remaining);
     if (inline) inline.textContent = fmtInline(remaining);
     if (remaining <= 5) {
@@ -393,7 +405,7 @@ function startCountdown(rootEl, controller) {
       if (inline) inline.classList.add('cf-countdown--urgent');
     }
     remaining -= 1;
-    if (remaining < 0) return;
+    if (remaining < 0) { teardown(); return; }
     const id = setTimeout(tick, 1000);
     controller.timers.push(id);
   }
