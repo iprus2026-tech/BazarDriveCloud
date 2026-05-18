@@ -1,5 +1,9 @@
 # BazarDriveCloud — Project Health Audit
 
+> **Snapshot taken on 2026-05-18.** Subsequent PRs may invalidate concrete
+> file or line references; this document is an audit record, not the
+> current source of truth.
+
 > **Mode:** оздоровительный аудит. НЕ переписывание, НЕ большой рефакторинг.
 > Документ только фиксирует факт, расхождения и рекомендуемый порядок работ.
 
@@ -405,6 +409,5 @@ exit code: 0
 
 ## §10. Коммиты
 
-Никаких коммитов и пушей не сделано. Файл `docs/project-health-audit.md`
-создан в рабочем дереве, но не staged и не commited. Дальнейшие шаги
-требуют отдельного подтверждения.
+At the time the audit was created, no runtime changes were made without
+confirmation; this PR preserves the audit as a docs-only snapshot.
