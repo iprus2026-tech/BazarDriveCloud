@@ -1359,6 +1359,333 @@ Push пассажиру
 Sub-contracts BD-RIDE-P-06 / BD-RIDE-P-07 — отдельные секции
 ```
 
+## BD-RIDE-P-06-CONTRACT — PassengerCancelRideSheet
+
+### Identity
+
+```text
+Sub-screen:    PassengerCancelRideSheet — bottom sheet поверх /active-ride passenger
+Route:         /active-ride?role=passenger
+File:          public/src/screens/active_ride_passenger.js
+Hook:          openPassengerCancelSheet(root, { onConfirm })
+Parent:        BD-RIDE-P — Active ride passenger flow
+Design ref:    Cloud Design — «Активная поездка · пассажир · отмена»
+Parent docs:   docs/active-ride-plan.md §6
+```
+
+### Purpose
+
+Bottom sheet, которым пассажир может отменить поездку в активном
+state. Контракт фиксирует поведение уже существующей реализации в
+`active_ride_passenger.js` и закрывает gap, упомянутый в BD-RIDE-P.
+
+### Entry points
+
+```text
+DRIVER_EN_ROUTE              — водитель в пути к точке подачи; en-route
+                               sheet рендерит кнопку «Отменить»
+                               (`#arp-cancel`), которая открывает
+                               cancel sheet
+DRIVER_APPROACHING_PICKUP    — alias to DRIVER_EN_ROUTE в passenger
+                               renderer; рендерится тем же
+                               `renderEnRouteSheet`, поэтому кнопка
+                               отмены доступна
+```
+
+Sheet монтируется только поверх en-route листа. Точка входа из UI —
+кнопка «Отменить» в `renderEnRouteSheet`.
+
+### States WITHOUT cancel entry (negative / manual regression)
+
+```text
+WAITING_PASSENGER            — waiting sheet НЕ рендерит `#arp-cancel`;
+                               cancel sheet недоступен в этом state
+                               (manual regression target)
+IN_PROGRESS                  — in-progress sheet НЕ рендерит
+                               `#arp-cancel`; cancel sheet недоступен
+                               в этом state (manual regression target)
+ARRIVING_DROPOFF             — phase IN_PROGRESS; cancel недоступен
+COMPLETED / CANCELED         — терминальные state, cancel недоступен
+```
+
+Эти state указаны как regression-чек: рендерер не должен внезапно
+начать показывать кнопку отмены без отдельного PR. Если в будущем
+понадобится cancel из waiting / in-progress — открыть новое issue и
+расширить контракт.
+
+### Expected implementation hook
+
+```text
+openPassengerCancelSheet(root, { onConfirm })
+  root        — DOM-узел экрана /active-ride (passenger renderer)
+  onConfirm   — callback, вызывается ТОЛЬКО при явном подтверждении
+                отмены пользователем
+```
+
+### Required UI
+
+```text
+title                        «Отменить поездку?»
+reason list                  radiogroup с причинами отмены
+confirm cancellation         primary CTA «Подтвердить отмену»,
+                             disabled пока не выбрана причина
+close / return without cancel
+                             secondary CTA «Назад к поездке»
+                             + close-кнопка в header
+                             + close по backdrop / Escape
+safe canceled fallback       рендерер уважает state=CANCELED и
+                             показывает canceled-screen без побочных
+                             эффектов, если поездка уже отменена
+```
+
+### State contract
+
+```text
+Storage key:                 bazardrive.active_ride.v1 (через ride_state.js)
+Close without reason         НЕ пишет в storage. Закрытие sheet
+                             (backdrop / Escape / «Назад к поездке»)
+                             не меняет state машины.
+Confirm cancellation         может перевести state → CANCELED только
+                             через явное действие пользователя
+                             (выбор причины + Подтвердить отмену +
+                             вторичное подтверждение «Да, отменить»).
+?status= override            остаётся view-only. Открытие sheet через
+                             симуляционный URL не разрешает переход в
+                             CANCELED без явного действия пользователя.
+                             Rollback из CANCELED через ?status= по-
+                             прежнему запрещён (см. BD-RIDE-P).
+```
+
+### Safe stub behavior
+
+```text
+No driver notification       статус «передадим водителю» — текстовая
+                             заглушка, реального push нет
+No backend call              отмена меняет только локальный state
+No refund flow               платёж / возврат не вызываются
+```
+
+### Manual test URLs
+
+Positive (cancel sheet must be reachable):
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/active-ride?role=passenger&status=DRIVER_APPROACHING_PICKUP
+```
+
+Negative regression (cancel sheet/button must NOT appear):
+
+```text
+/active-ride?role=passenger&status=WAITING_PASSENGER
+/active-ride?role=passenger&status=IN_PROGRESS
+/active-ride?role=passenger&status=COMPLETED
+/active-ride?role=passenger&status=CANCELED
+```
+
+Cross-flow regression (driver flow + feed must stay intact):
+
+```text
+/active-ride?role=driver
+/feed
+```
+
+### Acceptance checklist
+
+- [ ] Контракт оформлен отдельной секцией BD-RIDE-P-06-CONTRACT
+- [ ] Entry points ограничены en-route: DRIVER_EN_ROUTE и
+      DRIVER_APPROACHING_PICKUP — перечислены явно
+- [ ] WAITING_PASSENGER, IN_PROGRESS, ARRIVING_DROPOFF, COMPLETED,
+      CANCELED перечислены как negative regression — cancel
+      sheet/button НЕ должен появляться
+- [ ] Реализация повешена на `openPassengerCancelSheet`
+- [ ] Кнопка `#arp-cancel` рендерится только в `renderEnRouteSheet`
+- [ ] Click handler на `#arp-cancel` навешан только в en-route ветке
+      passenger renderer
+- [ ] Required UI: title + reason list + confirm + close/return +
+      safe canceled fallback
+- [ ] Close без выбора причины не пишет в `bazardrive.active_ride.v1`
+- [ ] Confirm переводит state → CANCELED только через явное действие
+- [ ] `?status=` override остаётся view-only
+- [ ] Safe stub behavior зафиксирован: без backend, без real Mapbox,
+      без real support call, без payment refund
+- [ ] Driver flow (BD-RIDE-D) не изменён
+- [ ] Manual test URLs перечислены (positive + negative regression)
+- [ ] Раздел Documentation hygiene invariant ссылается на этот
+      контракт (см. конец файла)
+- [ ] Нет изменений в `public/src/screens/active_ride_passenger.js`
+- [ ] Нет изменений в `public/styles/cloud.css`
+- [ ] Нет изменений в `public/sw.js` / CSP
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RIDE-P-06-CONTRACT
+
+```text
+Backend / real cancel API
+Real Mapbox / геометрия маршрута до отмены
+Real support call / телефонный звонок
+Payment refund / возврат средств
+Push водителю
+Реализация sheet (sheet уже существует — это только контракт)
+Изменение driver active ride flow (BD-RIDE-D)
+```
+
+## BD-RIDE-P-07-CONTRACT — PassengerSafetySheet
+
+### Identity
+
+```text
+Sub-screen:    PassengerSafetySheet — bottom sheet поверх /active-ride passenger
+Route:         /active-ride?role=passenger
+File:          public/src/screens/active_ride_passenger.js
+Hook:          openPassengerSafetySheet(root, { toast })
+Parent:        BD-RIDE-P — Active ride passenger flow
+Design ref:    Cloud Design — «Активная поездка · пассажир · безопасность»
+Parent docs:   docs/active-ride-plan.md §6
+```
+
+### Purpose
+
+Bottom sheet «Центр безопасности» для пассажира в активной поездке.
+Контракт фиксирует поведение уже существующей реализации в
+`active_ride_passenger.js` и закрывает gap, упомянутый в BD-RIDE-P.
+
+### Entry points
+
+```text
+DRIVER_EN_ROUTE        — водитель в пути к точке подачи
+WAITING_PASSENGER      — водитель ждёт пассажира
+IN_PROGRESS            — поездка в пути
+ARRIVING_DROPOFF       — phase IN_PROGRESS; safety sheet остаётся
+                         доступен через те же триггеры
+COMPLETED              — экран завершения / рейтинга; safety sheet
+                         доступен через top-card shield
+```
+
+Sheet монтируется поверх любого из этих passenger-state. Точки входа
+из UI:
+
+```text
+#arp-sos          — кнопка SOS внутри passenger ride sheet
+                    (en-route / waiting / in-progress / arriving-dropoff)
+#arp-shield       — top-card shield-кнопка; также присутствует на
+                    completed rating screen и открывает тот же sheet
+```
+
+### Expected implementation hook
+
+```text
+openPassengerSafetySheet(root, { toast })
+  root        — DOM-узел экрана /active-ride (passenger renderer)
+  toast       — функция-уведомление, используется для безопасных
+                заглушек (SOS / Support / Share / Trusted contacts)
+```
+
+### Required UI
+
+```text
+SOS                  крупная SOS-плитка с явным «пока без реального вызова»
+Share ride           строка «Поделиться поездкой»
+Trusted contacts     строка «Доверенные контакты»
+Support              строка «Связаться с поддержкой»
+Help                 строка «Помощь / FAQ»
+Close                close-кнопка в header + кнопка «Закрыть» внизу
+                     + close по backdrop / Escape
+```
+
+### Safe stub behavior
+
+```text
+SOS                  тайл видим, нажатие переключает aria-pressed и
+                     показывает toast; реального экстренного вызова нет
+Support call         строка видима, нажатие показывает toast;
+                     реального телефонного звонка нет
+Share ride           mock / placeholder через toast, пока не появится
+                     отдельный share flow
+Trusted contacts     mock / placeholder через toast, пока нет
+                     реального CRUD списка контактов
+Help                 placeholder через toast
+Close                возвращает к текущему ride state без записи в
+                     `bazardrive.active_ride.v1` и без других storage
+                     changes
+```
+
+### State contract
+
+```text
+Storage key:                 bazardrive.active_ride.v1 (через ride_state.js)
+Open / close                 НЕ пишет в storage
+Any safety action            НЕ пишет в `bazardrive.active_ride.v1`,
+                             НЕ переводит state машину
+?status= override            остаётся view-only. Sheet поверх симул-
+                             URL не меняет state.
+```
+
+### Manual test URLs
+
+Positive (safety sheet must be reachable):
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/active-ride?role=passenger&status=WAITING_PASSENGER
+/active-ride?role=passenger&status=IN_PROGRESS
+/active-ride?role=passenger&status=IN_PROGRESS&phase=ARRIVING_DROPOFF
+/active-ride?role=passenger&status=COMPLETED
+```
+
+Fallback (no active safety sheet expected):
+
+```text
+/active-ride?role=passenger&status=CANCELED
+```
+
+Cross-flow regression (driver flow + feed must stay intact):
+
+```text
+/active-ride?role=driver
+/feed
+```
+
+### Acceptance checklist
+
+- [ ] Контракт оформлен отдельной секцией BD-RIDE-P-07-CONTRACT
+- [ ] Entry points DRIVER_EN_ROUTE / WAITING_PASSENGER / IN_PROGRESS /
+      ARRIVING_DROPOFF / COMPLETED перечислены явно
+- [ ] Триггеры зафиксированы: `#arp-sos` внутри ride sheets и
+      `#arp-shield` top-card / completed screen
+- [ ] Реализация повешена на `openPassengerSafetySheet`
+- [ ] Required UI: SOS + Share ride + Trusted contacts + Support +
+      Help + Close
+- [ ] Safe stub behavior зафиксирован для каждого пункта
+- [ ] Close возвращает к текущему ride state без storage changes
+- [ ] Open / close / любое действие не пишут в
+      `bazardrive.active_ride.v1`
+- [ ] `?status=` override остаётся view-only
+- [ ] Constraints зафиксированы: без backend, без push, без реальной
+      emergency-интеграции, без реального телефонного звонка, без
+      Mapbox
+- [ ] Driver flow (BD-RIDE-D) не изменён
+- [ ] Manual test URLs перечислены
+- [ ] Раздел Documentation hygiene invariant ссылается на этот
+      контракт (см. конец файла)
+- [ ] Нет изменений в `public/src/screens/active_ride_passenger.js`
+- [ ] Нет изменений в `public/styles/cloud.css`
+- [ ] Нет изменений в `public/sw.js` / CSP
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RIDE-P-07-CONTRACT
+
+```text
+Backend / real safety incidents API
+Push при SOS
+Real emergency integration (112 / экстренные службы)
+Реальный телефонный звонок в поддержку
+Mapbox / share ride с реальной геометрией
+Реальный CRUD доверенных контактов
+Реализация sheet (sheet уже существует — это только контракт)
+Изменение driver active ride flow (BD-RIDE-D)
+```
+
 ---
 
 ## Planned screens (not yet implemented)
