@@ -8326,6 +8326,20 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .passenger-cancel-fallback__btn-secondary:active { transform: scale(0.98); }
 
+/* NO_SHOW reuses the same layout but with a calmer neutral tone —
+   the user didn't manually cancel and the screen should not look
+   like an error. Only the badge and icon swap colour; everything
+   else (typography, spacing, CTAs) stays identical. */
+.passenger-cancel-fallback[data-variant="no_show"] .passenger-cancel-fallback__badge {
+  color: var(--text-2);
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+}
+.passenger-cancel-fallback[data-variant="no_show"] .passenger-cancel-fallback__icon {
+  color: var(--text-2);
+  background: var(--bg-3);
+}
+
 @media (max-width: 380px) {
   .passenger-cancel-sheet__title { font-size: 18px; }
   .passenger-cancel-confirm__title { font-size: 18px; }
