@@ -1686,6 +1686,734 @@ Mapbox / share ride с реальной геометрией
 Изменение driver active ride flow (BD-RIDE-D)
 ```
 
+## BD-RIDE-D-07 — DriverCancelRideSheet
+
+### Identity
+
+```text
+Sub-screen:    DriverCancelRideSheet — bottom sheet поверх /active-ride driver
+Route:         /active-ride?role=driver
+File:          public/src/screens/active_ride.js
+Hook:          openDriverCancelSheet(root, { onConfirm })  (планируется в PR 4)
+Parent:        BD-RIDE-D — Active ride driver flow
+Design ref:    Cloud Design — «Активная поездка · водитель · отмена»
+Parent docs:   docs/active-ride-plan.md §6, §7
+                docs/project-health-audit.md §PR 3
+```
+
+### Purpose
+
+Bottom sheet, которым водитель может отменить уже принятый заказ до
+начала поездки. Контракт фиксирует поведение, которое должно прийти на
+смену текущей toast-заглушке `#ar-cancel` (см. `renderEnRoute` в
+`active_ride.js`, строка 506). Сейчас кнопка «Отменить» показывает
+`showNotice('Отмена поездки будет реализована позже')` — это
+временная заглушка, которая в PR 4 будет заменена на реальный sheet.
+
+### Entry points
+
+```text
+DRIVER_EN_ROUTE              — водитель уже принял заказ и едет к
+                               точке подачи; en-route sheet рендерит
+                               кнопку «Отменить» (`#ar-cancel`),
+                               которая открывает cancel sheet
+DRIVER_APPROACHING_PICKUP    — alias к DRIVER_EN_ROUTE в driver
+                               renderer; рендерится той же веткой
+                               (см. `renderSheet()` switch в
+                               `active_ride.js`)
+```
+
+Sheet монтируется только поверх en-route листа driver renderer. Точка
+входа из UI — кнопка «Отменить» в `renderEnRoute` (id `#ar-cancel`).
+
+### States WITHOUT cancel entry (negative / manual regression)
+
+```text
+NEW_ORDER                    — карточка нового заказа; кнопка
+                               «Отменить» не рендерится (есть только
+                               «Принять» / «Пропустить»)
+WAITING_PASSENGER            — waiting sheet НЕ рендерит `#ar-cancel`;
+                               для этого state работает `#ar-no-show`,
+                               который покрывается BD-RIDE-D-08
+IN_PROGRESS                  — in-progress sheet НЕ рендерит
+                               `#ar-cancel`; после старта поездки
+                               driver-инициированная отмена недоступна
+                               (manual regression target)
+COMPLETED                    — терминальный state, cancel недоступен
+CANCELED / NO_SHOW           — терминальный fallback, cancel недоступен
+```
+
+Эти state указаны как regression-чек: рендерер не должен внезапно
+начать показывать кнопку отмены в WAITING / IN_PROGRESS без отдельного
+PR. Если в будущем понадобится driver-cancel из waiting / in-progress
+— открыть новое issue и расширить контракт.
+
+### UI states
+
+```text
+default                      sheet открыт, причина не выбрана,
+                             «Подтвердить отмену» disabled
+reason selected              выбрана одна причина (radiogroup),
+                             primary CTA становится enabled
+confirm pending              после первого «Подтвердить отмену» —
+                             вторичное подтверждение «Вы уверены?»
+                             (двух-шаговое подтверждение, как у
+                             passenger cancel sheet)
+canceled fallback            sheet закрывается, рендерер уважает
+                             state=CANCELED и показывает
+                             `renderCanceledStub` без побочных эффектов
+```
+
+### Data contract
+
+```text
+Storage key:                 bazardrive.active_ride.v1 (через ride_state.js)
+Reads:                       getActiveRide(tripId) — текущая запись
+                             поездки (passenger, route, order)
+Writes (only on confirm):    updateActiveRideStatus(tripId,
+                             RIDE_STATUS.CANCELED) — переводит
+                             state машину в CANCELED;
+                             `canceledAt` ставится из таблицы
+                             RIDE_STATUS_TIMESTAMP_FIELD в
+                             `ride_state.js`
+Cancel reason storage:       mock-only внутри `active_ride.js` (или
+                             в локальном модуле). НЕ расширяет схему
+                             `ride_state.js` в этом PR
+                             (см. «Storage schema decision» ниже)
+Close without confirm:       НЕ пишет в storage; sheet закрывается
+                             без изменения state машины
+?status= override:           остаётся view-only. Открытие cancel sheet
+                             через симул-URL не разрешает переход в
+                             CANCELED без явного действия пользователя.
+                             Rollback из CANCELED через ?status= по-
+                             прежнему запрещён (см. BD-RIDE-D)
+```
+
+Минимальный список причин (radiogroup, mock-only):
+
+```text
+Пассажир не выходит на связь
+Пассажир далеко / не успеваю
+Адрес недоступен / закрытая территория
+Проблема с автомобилем
+Другое
+```
+
+### Actions
+
+```text
+select reason                radiogroup, single-select; enable primary CTA
+confirm cancellation         primary CTA «Подтвердить отмену» →
+                             вторичное подтверждение «Да, отменить» →
+                             updateActiveRideStatus(…CANCELED) →
+                             renderSheet() рендерит canceled stub
+close / return without cancel
+                             secondary CTA «Назад к поездке»
+                             + close-кнопка в header
+                             + close по backdrop / Escape
+                             → НЕ меняет state машины
+```
+
+### A11y / hygiene
+
+```text
+- role="dialog" + aria-modal="true" + aria-labelledby на title
+- radiogroup имеет aria-label «Причина отмены»
+- focus trap внутри sheet пока он открыт
+- Escape / backdrop закрывают sheet
+- close-кнопка имеет видимый aria-label «Закрыть»
+- primary CTA disabled, пока не выбрана причина
+- Нет inline <script> / <style> / style="" / on*=
+- Нет .style.<property> присвоений в JS
+- Нет .setAttribute('style', …) в JS
+- Нет style="…" в шаблонных строках JS
+- CSP не ослаблен
+- Service Worker не кеширует public/prototypes/
+```
+
+### Acceptance checklist
+
+- [ ] Контракт оформлен отдельной секцией BD-RIDE-D-07
+- [ ] Entry points ограничены en-route: DRIVER_EN_ROUTE и
+      DRIVER_APPROACHING_PICKUP — перечислены явно
+- [ ] NEW_ORDER, WAITING_PASSENGER, IN_PROGRESS, COMPLETED,
+      CANCELED, NO_SHOW перечислены как negative regression —
+      cancel sheet/button НЕ должен появляться
+- [ ] Реализация повешена на `openDriverCancelSheet`
+- [ ] Кнопка `#ar-cancel` рендерится только в `renderEnRoute`
+- [ ] Click handler на `#ar-cancel` навешан только в en-route ветке
+      driver renderer
+- [ ] UI states: default / reason selected / confirm pending /
+      canceled fallback — перечислены
+- [ ] Close без выбора причины не пишет в `bazardrive.active_ride.v1`
+- [ ] Confirm переводит state → CANCELED через
+      `updateActiveRideStatus(tripId, RIDE_STATUS.CANCELED)`
+- [ ] `?status=` override остаётся view-only
+- [ ] Cancel reason mock-only, НЕ расширяет `ride_state.js`
+      (см. Storage schema decision)
+- [ ] Safe stub behavior зафиксирован: без backend, без push
+      пассажиру, без real cancel API, без payment refund
+- [ ] Passenger flow (BD-RIDE-P) не изменён
+- [ ] Manual test URLs перечислены (positive + negative regression)
+- [ ] Раздел Documentation hygiene invariant покрывает этот
+      контракт (см. конец файла)
+- [ ] Нет изменений в `public/src/screens/active_ride_passenger.js`
+      в рамках этого contract PR
+- [ ] Нет изменений в `public/src/ride_state.js` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/styles/cloud.css` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/sw.js` / CSP в рамках этого
+      contract PR
+- [ ] `node scripts/check.mjs` проходит
+
+### Manual test URLs
+
+Positive (cancel sheet must be reachable in PR 4 impl):
+
+```text
+/active-ride?role=driver&status=DRIVER_EN_ROUTE
+```
+
+Negative regression (cancel sheet/button must NOT appear):
+
+```text
+/active-ride?role=driver&status=WAITING_PASSENGER
+/active-ride?role=driver&status=IN_PROGRESS
+/active-ride?role=driver&status=COMPLETED
+/active-ride?role=driver&status=CANCELED
+/active-ride?role=driver&status=NO_SHOW
+```
+
+Cross-flow regression (passenger flow + feed must stay intact):
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/feed
+```
+
+### Out of scope for BD-RIDE-D-07
+
+```text
+Backend / real cancel API
+Real penalty / штраф водителю
+Push пассажиру при отмене
+Real Mapbox / геометрия маршрута до отмены
+Payment refund / возврат пассажиру
+Реализация sheet (это PR 4)
+Расширение схемы `ride_state.js` (см. Storage schema decision)
+Изменение passenger active ride flow (BD-RIDE-P)
+NO_SHOW flow (покрывается BD-RIDE-D-08)
+```
+
+## BD-RIDE-D-08 — DriverProblemSheet
+
+### Identity
+
+```text
+Sub-screen:    DriverProblemSheet — bottom sheet поверх /active-ride driver
+Route:         /active-ride?role=driver
+File:          public/src/screens/active_ride.js
+Hook:          openDriverProblemSheet(root, { type, onResolve })
+               (планируется в PR 4)
+Parent:        BD-RIDE-D — Active ride driver flow
+Design ref:    Cloud Design — «Активная поездка · водитель · проблема»
+Parent docs:   docs/active-ride-plan.md §6, §7
+                docs/project-health-audit.md §PR 3
+```
+
+### Purpose
+
+Bottom sheet, через который водитель сообщает о проблеме в активной
+поездке. Контракт покрывает две существующие toast-заглушки в
+`active_ride.js`:
+
+```text
+#ar-no-show   — `renderWaiting`, строка 577: «Отметка „не приехал“
+                будет реализована позже»
+#ar-issue     — `renderInProgress`, строка 630: «Раздел помощи
+                будет добавлен позже»
+```
+
+В PR 4 обе кнопки должны открывать DriverProblemSheet с разной
+дефолтной категорией проблемы (см. Problem types ниже).
+
+### Entry points
+
+```text
+WAITING_PASSENGER            — waiting sheet рендерит «Не приехал»
+                               (`#ar-no-show`); открывает problem sheet
+                               с дефолтной категорией
+                               «Пассажир не приехал»
+IN_PROGRESS                  — in-progress sheet рендерит «Проблема»
+                               (`#ar-issue`); открывает problem sheet
+                               без преселекта (или с дефолтом «Другое»)
+```
+
+Sheet монтируется поверх waiting / in-progress листа driver renderer.
+Точки входа из UI — кнопки `#ar-no-show` и `#ar-issue`.
+
+### States WITHOUT problem entry (negative / manual regression)
+
+```text
+NEW_ORDER                    — карточка нового заказа; problem sheet
+                               недоступен
+DRIVER_EN_ROUTE              — en-route sheet НЕ рендерит ни
+                               `#ar-no-show`, ни `#ar-issue`; для
+                               отмены до подачи работает BD-RIDE-D-07
+COMPLETED                    — терминальный state, problem sheet
+                               недоступен
+CANCELED / NO_SHOW           — терминальный fallback, problem sheet
+                               недоступен
+```
+
+### Problem types
+
+Список problem-категорий (radiogroup, single-select, mock-only):
+
+```text
+PASSENGER_NO_SHOW            «Пассажир не приехал»
+                             — дефолт при входе через `#ar-no-show`
+                             — после подтверждения переводит state
+                               → NO_SHOW
+PASSENGER_UNREACHABLE        «Не могу связаться с пассажиром»
+                             — state НЕ меняется (показывает toast
+                               «передадим в поддержку», заглушка)
+ROUTE_ISSUE                  «Проблема с маршрутом / адресом»
+                             — state НЕ меняется
+CAR_TROUBLE                  «Проблема с автомобилем»
+                             — state НЕ меняется
+SAFETY_INCIDENT              «Опасная ситуация / конфликт»
+                             — state НЕ меняется (показывает toast
+                               «связались с поддержкой», заглушка;
+                               реального вызова нет)
+OTHER                        «Другое»
+                             — дефолт при входе через `#ar-issue`
+                             — state НЕ меняется
+```
+
+Важно: только `PASSENGER_NO_SHOW` переводит state машину
+(`RIDE_STATUS.NO_SHOW`). Остальные категории — safe stubs через toast
+без записи в storage.
+
+### UI states
+
+```text
+default                      sheet открыт, категория не выбрана,
+                             primary CTA disabled (если вход без
+                             преселекта)
+preselected                  при входе через `#ar-no-show` категория
+                             PASSENGER_NO_SHOW преселектится; primary
+                             CTA enabled
+category selected            выбрана одна категория; primary CTA
+                             enabled, текст CTA зависит от категории
+confirm pending (no-show)    для PASSENGER_NO_SHOW — вторичное
+                             подтверждение «Отметить, что пассажир
+                             не приехал?» (двух-шаговое подтверждение
+                             как у cancel sheet)
+toast resolved (other)       для прочих категорий — toast через
+                             showNotice / `onResolve` без перехода
+                             state машины
+no_show fallback             sheet закрывается, рендерер уважает
+                             state=NO_SHOW и показывает
+                             `renderCanceledStub` без побочных эффектов
+```
+
+### Data contract
+
+```text
+Storage key:                 bazardrive.active_ride.v1 (через ride_state.js)
+Reads:                       getActiveRide(tripId) — текущая запись
+Writes (only on no-show confirm):
+                             updateActiveRideStatus(tripId,
+                             RIDE_STATUS.NO_SHOW) — переводит
+                             state машину; `canceledAt` ставится по
+                             таблице RIDE_STATUS_TIMESTAMP_FIELD
+                             (NO_SHOW использует поле canceledAt)
+All other categories:        НЕ пишут в storage; только toast
+Problem reason / комментарий:
+                             mock-only внутри `active_ride.js`. НЕ
+                             расширяет схему `ride_state.js` в этом
+                             PR (см. «Storage schema decision»)
+Close without confirm:       НЕ пишет в storage; sheet закрывается
+                             без изменения state машины
+?status= override:           остаётся view-only. Открытие problem
+                             sheet через симул-URL не разрешает
+                             переход в NO_SHOW без явного действия.
+                             Rollback из NO_SHOW через ?status=
+                             запрещён (см. BD-RIDE-D)
+```
+
+### Actions
+
+```text
+select category              radiogroup, single-select; enable primary CTA
+confirm no-show              для PASSENGER_NO_SHOW — primary CTA
+                             «Отметить» → вторичное подтверждение →
+                             updateActiveRideStatus(…NO_SHOW) →
+                             renderSheet() рендерит no-show stub
+                             через `renderCanceledStub`
+send other report            для прочих категорий — primary CTA
+                             «Сообщить» / «Связаться с поддержкой» →
+                             showNotice (заглушка) → close sheet
+close / cancel                secondary CTA «Назад к поездке»
+                             + close-кнопка в header
+                             + close по backdrop / Escape
+                             → НЕ меняет state машины
+```
+
+### A11y / hygiene
+
+```text
+- role="dialog" + aria-modal="true" + aria-labelledby на title
+- radiogroup имеет aria-label «Тип проблемы»
+- focus trap внутри sheet пока он открыт
+- Escape / backdrop закрывают sheet
+- close-кнопка имеет видимый aria-label «Закрыть»
+- primary CTA disabled, пока не выбрана категория
+  (кроме случая preselected через `#ar-no-show`)
+- Текст CTA меняется по категории; aria-описание актуально
+- Нет inline <script> / <style> / style="" / on*=
+- Нет .style.<property> присвоений в JS
+- Нет .setAttribute('style', …) в JS
+- Нет style="…" в шаблонных строках JS
+- CSP не ослаблен
+- Service Worker не кеширует public/prototypes/
+```
+
+### Acceptance checklist
+
+- [ ] Контракт оформлен отдельной секцией BD-RIDE-D-08
+- [ ] Entry points ограничены: WAITING_PASSENGER через
+      `#ar-no-show` и IN_PROGRESS через `#ar-issue`
+- [ ] NEW_ORDER, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP,
+      COMPLETED, CANCELED, NO_SHOW перечислены как negative
+      regression — problem sheet/button НЕ должен появляться
+- [ ] Реализация повешена на `openDriverProblemSheet`
+- [ ] Кнопка `#ar-no-show` рендерится только в `renderWaiting`
+- [ ] Кнопка `#ar-issue` (или `#ar-problem` после rename)
+      рендерится только в `renderInProgress`
+- [ ] Click handler `#ar-no-show` навешан только в waiting ветке
+- [ ] Click handler `#ar-issue` навешан только в in-progress ветке
+- [ ] Problem types перечислены явно (6 категорий), включая
+      PASSENGER_NO_SHOW как дефолт для `#ar-no-show`
+- [ ] Только PASSENGER_NO_SHOW переводит state → NO_SHOW
+- [ ] Прочие категории — safe stubs через toast, без записи в
+      `bazardrive.active_ride.v1`
+- [ ] Close без подтверждения не пишет в storage
+- [ ] `?status=` override остаётся view-only
+- [ ] Problem reason mock-only, НЕ расширяет `ride_state.js`
+      (см. Storage schema decision)
+- [ ] Safe stub behavior зафиксирован: без backend, без real
+      support call, без real emergency integration, без push
+- [ ] Passenger flow (BD-RIDE-P) не изменён
+- [ ] Manual test URLs перечислены (positive + negative regression)
+- [ ] Раздел Documentation hygiene invariant покрывает этот
+      контракт (см. конец файла)
+- [ ] Нет изменений в `public/src/screens/active_ride_passenger.js`
+      в рамках этого contract PR
+- [ ] Нет изменений в `public/src/ride_state.js` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/styles/cloud.css` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/sw.js` / CSP в рамках этого
+      contract PR
+- [ ] `node scripts/check.mjs` проходит
+
+### Manual test URLs
+
+Positive (problem sheet must be reachable in PR 4 impl):
+
+```text
+/active-ride?role=driver&status=WAITING_PASSENGER
+/active-ride?role=driver&status=IN_PROGRESS
+```
+
+Negative regression (problem sheet/button must NOT appear):
+
+```text
+/active-ride?role=driver&status=DRIVER_EN_ROUTE
+/active-ride?role=driver&status=COMPLETED
+/active-ride?role=driver&status=CANCELED
+/active-ride?role=driver&status=NO_SHOW
+```
+
+Cross-flow regression (passenger flow + feed must stay intact):
+
+```text
+/active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/feed
+```
+
+### Out of scope for BD-RIDE-D-08
+
+```text
+Backend / real support API
+Real emergency integration (112 / экстренные службы)
+Real phone call / телефонный звонок в поддержку
+Real penalty / штраф для PASSENGER_NO_SHOW
+Push пассажиру / в поддержку
+Real Mapbox / геометрия проблемного участка
+Payment refund при NO_SHOW
+Реализация sheet (это PR 4)
+Расширение схемы `ride_state.js` (см. Storage schema decision)
+Изменение passenger active ride flow (BD-RIDE-P)
+Driver cancel before pickup (покрывается BD-RIDE-D-07)
+```
+
+## BD-RIDE-D-09 — DriverEarningsSheet
+
+### Identity
+
+```text
+Sub-screen:    DriverEarningsSheet — bottom sheet поверх /active-ride driver
+Route:         /active-ride?role=driver
+File:          public/src/screens/active_ride.js
+Hook:          openDriverEarningsSheet(root, { onClose })
+               (планируется в PR 4)
+Parent:        BD-RIDE-D — Active ride driver flow
+Design ref:    Cloud Design — «Активная поездка · водитель · доход»
+Parent docs:   docs/active-ride-plan.md §6, §7
+                docs/project-health-audit.md §PR 3
+```
+
+### Purpose
+
+Bottom sheet с детализацией заработка по завершённой поездке.
+Расширяет существующий earnings-блок внутри `renderCompleted` (см.
+`active_ride.js`, строки 651–700), который сейчас показывает только
+inline-карточку «Поездка завершена» с тремя строками breakdown и
+shift summary. Контракт фиксирует выделение детального просмотра в
+отдельный bottom sheet, который открывается из completion screen
+кнопкой «Подробнее» (или эквивалентным CTA, который добавит PR 4).
+
+### Entry point
+
+```text
+COMPLETED                    — completion sheet рендерит ссылку
+                               «Подробнее о доходе» (`#ar-earnings`,
+                               добавляется в PR 4); открывает earnings
+                               sheet с детальным breakdown за поездку
+                               + смену
+```
+
+Sheet монтируется только поверх completion листа driver renderer.
+Любая другая driver-state НЕ должна давать точку входа.
+
+### States WITHOUT earnings entry (negative / manual regression)
+
+```text
+NEW_ORDER                    — карточка нового заказа; earnings sheet
+                               недоступен
+DRIVER_EN_ROUTE              — en-route sheet; earnings sheet
+                               недоступен
+DRIVER_APPROACHING_PICKUP    — alias к DRIVER_EN_ROUTE; недоступен
+WAITING_PASSENGER            — waiting sheet; earnings sheet
+                               недоступен
+IN_PROGRESS                  — in-progress sheet; earnings sheet
+                               недоступен (поездка ещё не завершена;
+                               итог не зафиксирован)
+CANCELED / NO_SHOW           — терминальный fallback без оплаты;
+                               earnings sheet недоступен
+```
+
+### UI states
+
+```text
+default                      sheet открыт, breakdown по текущей
+                             завершённой поездке + смена сегодня
+breakdown                    блок «Поездка»: gross, commission rate,
+                             commission amount, net (та же формула,
+                             что в `renderCompleted`)
+shift summary                блок «Смена сегодня»: previousToday →
+                             nextToday, previousTrips → nextTrips
+                             (как уже считается в `renderCompleted`)
+closed                       sheet закрыт, completion screen остаётся
+                             видимым без побочных эффектов
+```
+
+### Data contract
+
+```text
+Storage key:                 bazardrive.active_ride.v1 (через ride_state.js)
+Reads:                       getActiveRide(tripId) — поля
+                             ride.ride.price (gross),
+                             ride.order.commission (rate),
+                             ride.ride.todayEarnings (shift baseline),
+                             ride.ride.tripsToday (shift trip count)
+Computations:                gross = parseMoney(ride.ride.price)
+                             commissionRate = parsePercent(
+                               ride.order.commission)
+                             commissionAmount = round(gross *
+                               commissionRate)
+                             net = gross - commissionAmount
+                             nextToday = previousToday + net
+                             nextTrips = previousTrips + 1
+                             (идентично текущему `renderCompleted`)
+Writes:                      sheet НЕ пишет в storage. Открытие /
+                             закрытие / любой просмотр не меняют
+                             state машины и не модифицируют
+                             `bazardrive.active_ride.v1`. Запись
+                             shift summary в постоянный earnings
+                             history — out of scope (см. ниже)
+?status= override:           остаётся view-only. Открытие earnings
+                             sheet через симул-URL `?status=COMPLETED`
+                             использует моковую `SIM_AUDIT_RIDE_OVERRIDES`
+                             demo-ride без записи в storage
+```
+
+### Actions
+
+```text
+open                         клик «Подробнее о доходе» (`#ar-earnings`)
+                             на completion screen → openDriverEarningsSheet
+close                        close-кнопка в header
+                             + close по backdrop / Escape
+                             + secondary CTA «Закрыть» внизу sheet
+                             → возвращает к completion screen без
+                               побочных эффектов
+next order (passthrough)     primary CTA «Следующий заказ» остаётся
+                             на completion screen (`#ar-next-order`);
+                             earnings sheet ничего не делает с этим
+                             потоком (это passthrough, не CTA sheet)
+```
+
+### A11y / hygiene
+
+```text
+- role="dialog" + aria-modal="true" + aria-labelledby на title
+- breakdown оформлен через role="list" / role="listitem"
+  (как в `renderCompleted`)
+- focus trap внутри sheet пока он открыт
+- Escape / backdrop закрывают sheet
+- close-кнопка имеет видимый aria-label «Закрыть»
+- Денежные значения читаются через formatRub; aria-label на total
+  для скринридеров (например «Ваш доход: 312 рублей»)
+- Нет inline <script> / <style> / style="" / on*=
+- Нет .style.<property> присвоений в JS
+- Нет .setAttribute('style', …) в JS
+- Нет style="…" в шаблонных строках JS
+- CSP не ослаблен
+- Service Worker не кеширует public/prototypes/
+```
+
+### Acceptance checklist
+
+- [ ] Контракт оформлен отдельной секцией BD-RIDE-D-09
+- [ ] Entry point ограничен COMPLETED через `#ar-earnings`
+- [ ] NEW_ORDER, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP,
+      WAITING_PASSENGER, IN_PROGRESS, CANCELED, NO_SHOW
+      перечислены как negative regression — earnings sheet/CTA
+      НЕ должен появляться
+- [ ] Реализация повешена на `openDriverEarningsSheet`
+- [ ] Триггер `#ar-earnings` рендерится только в `renderCompleted`
+- [ ] Click handler `#ar-earnings` навешан только в completion ветке
+- [ ] UI states: default / breakdown / shift summary / closed —
+      перечислены
+- [ ] Breakdown использует те же формулы (gross / commission rate /
+      commission amount / net), что и текущий `renderCompleted`
+- [ ] Shift summary использует те же поля (previousToday,
+      tripsToday) и считает delta так же, как `renderCompleted`
+- [ ] Sheet НЕ пишет в `bazardrive.active_ride.v1` ни при открытии,
+      ни при закрытии, ни при просмотре
+- [ ] `?status=` override остаётся view-only; sheet поверх
+      `?status=COMPLETED` использует demo-ride без записи в storage
+- [ ] Earnings history (за сегодня / за неделю / за месяц) — out
+      of scope, в этом sheet только текущая поездка + smена сегодня
+- [ ] Safe stub behavior зафиксирован: без backend, без push,
+      без real payout / withdraw, без real tax / commission API
+- [ ] Passenger flow (BD-RIDE-P) не изменён
+- [ ] Manual test URLs перечислены (positive + negative regression)
+- [ ] Раздел Documentation hygiene invariant покрывает этот
+      контракт (см. конец файла)
+- [ ] Нет изменений в `public/src/screens/active_ride_passenger.js`
+      в рамках этого contract PR
+- [ ] Нет изменений в `public/src/ride_state.js` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/styles/cloud.css` в рамках этого
+      contract PR
+- [ ] Нет изменений в `public/sw.js` / CSP в рамках этого
+      contract PR
+- [ ] `node scripts/check.mjs` проходит
+
+### Manual test URLs
+
+Positive (earnings sheet must be reachable in PR 4 impl):
+
+```text
+/active-ride?role=driver&status=COMPLETED
+```
+
+Negative regression (earnings sheet/CTA must NOT appear):
+
+```text
+/active-ride?role=driver&status=DRIVER_EN_ROUTE
+/active-ride?role=driver&status=WAITING_PASSENGER
+/active-ride?role=driver&status=IN_PROGRESS
+/active-ride?role=driver&status=CANCELED
+/active-ride?role=driver&status=NO_SHOW
+```
+
+Cross-flow regression (passenger flow + feed must stay intact):
+
+```text
+/active-ride?role=passenger&status=COMPLETED
+/feed
+```
+
+### Out of scope for BD-RIDE-D-09
+
+```text
+Backend / real payout API
+Real withdraw / вывод средств
+Real tax / commission backend
+Push при зачислении
+Earnings history за неделю / за месяц / экспорт CSV
+Bonus / промо логика
+Mapbox / геометрия завершённой поездки
+Реализация sheet (это PR 4)
+Расширение схемы `ride_state.js` (см. Storage schema decision)
+Изменение passenger active ride flow (BD-RIDE-P)
+Driver cancel / problem flow (BD-RIDE-D-07 / BD-RIDE-D-08)
+```
+
+## Storage schema decision (BD-RIDE-D-07 / 08 / 09)
+
+Explicit decision, фиксируемый этим PR (docs-only, no code):
+
+```text
+В рамках BD-RIDE-D-07, BD-RIDE-D-08, BD-RIDE-D-09 схема
+`public/src/ride_state.js` НЕ расширяется.
+
+Обоснование:
+- `ride_state.js` уже содержит RIDE_STATUS.CANCELED и
+  RIDE_STATUS.NO_SHOW + поле `canceledAt` через
+  RIDE_STATUS_TIMESTAMP_FIELD. Этого достаточно для перевода
+  driver-state машины через updateActiveRideStatus(...).
+- Поля «причина отмены» (cancel.reason), «тип проблемы»
+  (problem.type), «комментарий водителя» — нужны только UI и
+  считаются mock-only в рамках PR 4. Хранятся локально в
+  `active_ride.js` (или в отдельном sheet-state модуле), без
+  записи в bazardrive.active_ride.v1.
+- Earnings breakdown в BD-RIDE-D-09 — производное от уже
+  имеющихся полей ride.ride.price, ride.order.commission,
+  ride.ride.todayEarnings, ride.ride.tripsToday. Новые поля
+  схемы не требуются.
+
+Условный follow-up: если PR 4 в процессе имплементации
+обнаружит, что без расширения схемы пройти невозможно
+(например, потребуется persist cancel.reason между сессиями
+для дальнейших экранов), он НЕ должен править `ride_state.js`
+напрямую. Вместо этого открывается отдельный issue:
+
+  BD-RIDE-STATE-CONTRACT-01 — расширение схемы ride_state.js
+  для driver sheets (cancel.reason / problem.type / comment).
+
+Issue ведёт к отдельному PR, который меняет схему вместе с
+миграцией существующих записей и обновлением acceptance
+checklist BD-RIDE-D.
+```
+
 ---
 
 ## Planned screens (not yet implemented)
@@ -1701,14 +2429,16 @@ BD-MAP-04 — RoutePreview
 BD-MAP-05 — OrderMapDraft
 BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
 BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
-BD-RIDE-D-07 — DriverCancelRideSheet
-BD-RIDE-D-08 — DriverProblemSheet
-BD-RIDE-D-09 — DriverEarningsSheet
 ```
 
 > `/active-ride` уже реализован двумя файлами
 > (`active_ride.js`, `active_ride_passenger.js`) и поэтому удалён
 > из этого списка. См. BD-RIDE-D и BD-RIDE-P выше.
+>
+> BD-RIDE-D-07 / BD-RIDE-D-08 / BD-RIDE-D-09 удалены из этого
+> списка после оформления контрактов (этот PR — docs-only). Их
+> имплементация трекается отдельно в PR 4 (см.
+> `docs/project-health-audit.md` §PR 4).
 
 ---
 
