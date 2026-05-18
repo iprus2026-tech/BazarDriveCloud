@@ -1,0 +1,246 @@
+/* ═══════════════════════════════════════════════════════════
+   BD-RIDE-D-07 — DriverCancelRideSheet
+═══════════════════════════════════════════════════════════ */
+.driver-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.driver-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(6px);
+}
+.driver-sheet__panel {
+  position: relative;
+  width: 100%;
+  max-height: 86dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: rgba(19, 19, 22, 0.98);
+  border: 1px solid var(--line-strong);
+  border-radius: 28px 28px 0 0;
+  box-shadow: 0 -24px 80px rgba(0, 0, 0, 0.46);
+  padding: 10px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 18px);
+}
+.driver-sheet__handle {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  margin: 0 auto 14px;
+}
+.driver-sheet__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.driver-sheet__eyebrow {
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.driver-sheet__title {
+  font-size: 22px;
+  line-height: 1.1;
+  margin: 0;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+.driver-sheet__close {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 24px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.driver-sheet__lead {
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.driver-sheet__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.driver-sheet__option {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
+  transition: transform 0.08s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.driver-sheet__option:active { transform: scale(0.99); }
+.driver-sheet__option--selected {
+  background: rgba(255, 107, 53, 0.10);
+  border-color: rgba(255, 107, 53, 0.55);
+}
+.driver-sheet__radio-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.driver-sheet__option--selected .driver-sheet__radio-dot {
+  border-color: var(--accent);
+  background: radial-gradient(circle at center, var(--accent) 0 40%, transparent 44%);
+}
+.driver-sheet__option-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.driver-sheet__option-label {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.driver-sheet__option-meta {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.driver-sheet__confirm {
+  margin: 4px 0 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(248, 113, 113, 0.09);
+  border: 1px solid rgba(248, 113, 113, 0.34);
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.driver-sheet__confirm[hidden] { display: none; }
+.driver-sheet__confirm strong { color: var(--danger); }
+.driver-sheet__actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.bd-btn.driver-sheet__primary,
+.bd-btn.driver-sheet__secondary {
+  width: 100%;
+  height: 50px;
+}
+.bd-btn.driver-sheet__primary:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+.bd-btn.driver-sheet__secondary {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BD-RIDE-D-08 — DriverProblemSheet
+═══════════════════════════════════════════════════════════ */
+.driver-sheet--problem .driver-sheet__option--selected {
+  background: rgba(96, 165, 250, 0.10);
+  border-color: rgba(96, 165, 250, 0.50);
+}
+.driver-sheet--problem .driver-sheet__option--selected .driver-sheet__radio-dot {
+  border-color: var(--info);
+  background: radial-gradient(circle at center, var(--info) 0 40%, transparent 44%);
+}
+.driver-sheet--problem .driver-sheet__confirm {
+  background: rgba(251, 191, 36, 0.09);
+  border-color: rgba(251, 191, 36, 0.32);
+}
+.driver-sheet--problem .driver-sheet__confirm strong { color: var(--warning); }
+
+/* ═══════════════════════════════════════════════════════════
+   BD-RIDE-D-09 — DriverEarningsSheet
+═══════════════════════════════════════════════════════════ */
+.driver-sheet__earnings-hero {
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 122, 72, 0.07));
+  border: 1px solid rgba(255, 107, 53, 0.32);
+  border-radius: 22px;
+  padding: 18px;
+  margin-bottom: 12px;
+}
+.driver-sheet__earnings-label {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+.driver-sheet__earnings-total {
+  font-size: 38px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.04em;
+  margin-top: 4px;
+}
+.driver-sheet__earnings-route {
+  color: var(--text-2);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.driver-sheet__breakdown,
+.driver-sheet__shift {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.driver-sheet__row,
+.driver-sheet__shift-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.driver-sheet__row + .driver-sheet__row,
+.driver-sheet__shift-line + .driver-sheet__shift-line {
+  border-top: 1px solid var(--line);
+}
+.driver-sheet__row strong,
+.driver-sheet__shift-line strong {
+  color: var(--text);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.driver-sheet__row--net strong { color: var(--success); }
+.driver-sheet__shift-title {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 800;
+  margin-bottom: 4px;
+}
