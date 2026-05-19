@@ -1052,11 +1052,16 @@ ETA-индикатор, заметка водителя, цена с дельт�
 пассажира. Decline / select водителя переключают визуальное состояние,
 ничего не отправляя в сеть.
 
+Current build note: `state` defaults to `empty` when `/responses` is opened without query params, so bare `/responses` renders the `empty-waiting` mock (`renderEmptyState()`). The `MOCK_DRIVERS` list is only materialized when the route carries `?state=list` (или `selected` / `all-declined`). Все состояния по-прежнему mock-only — backend и реальные отклики не подключены.
+
 ### Route contract
 
 ```text
 Path:          /responses
-Query:         (нет; экран всегда показывает MOCK_DRIVERS)
+Query:         ?state=list | selected | all-declined  → рендер MOCK_DRIVERS;
+               без query (state по умолчанию = empty) → empty-waiting (renderEmptyState)
+               ?postId=<id> прокидывается в dataset, но MOCK_REQUEST один
+               ?driverId=<id> используется только при state=selected
 Chrome:        visible
 ```
 
@@ -1084,7 +1089,7 @@ best-card       — выделенная карточка с признаком 
 selected        — пассажир выбрал водителя; меняется визуальный stage
 declined        — водитель помечен как отклонённый (restore CTA доступен)
 all-declined    — все отклонены; информационная плашка
-empty-waiting   — заглушка ожидания, когда откликов ещё нет (визуальный mock)
+empty-waiting   — заглушка ожидания, когда откликов ещё нет (mock; дефолтное состояние bare /responses, так как state по умолчанию = empty; renderEmptyState)
 ```
 
 ### Actions
