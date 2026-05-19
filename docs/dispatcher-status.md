@@ -46,6 +46,27 @@ no CSP weakening
 no active ride changes
 ```
 
+## BD-MAP-02 status
+
+`BD-MAP-02 — LocationPermission` remains a planned/deferred screen, not the next implementation step.
+
+Reason:
+
+```text
+BD-MAP-01 already covers the current permission UX as MapHome substates:
+- location permission needed
+- location denied fallback
+```
+
+So the dispatcher does not skip active work by moving next to `BD-MAP-03`. A standalone `BD-MAP-02` should only be revived if a future Cloud Design frame requires a separate permission screen outside MapHome.
+
+Current decision:
+
+```text
+BD-MAP-02 — deferred / covered by BD-MAP-01 substates for now
+BD-MAP-03 — next render gate after Cloud Design limit reset
+```
+
 ## Current blocker
 
 The next product screen is blocked by Cloud Design usage limits until May 23.
