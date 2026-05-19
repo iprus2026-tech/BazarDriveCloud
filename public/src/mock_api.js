@@ -1,3 +1,9 @@
+// ── Ownership marker for locally created posts ────────────────
+// Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
+// All mock posts in this file are seed data from other authors; only
+// posts created via createFeedPost() carry the local-user marker.
+export const LOCAL_USER_ID = 'local-user';
+
 // ── Feed V2 mock data ──────────────────────────────────────────
 export const FEED_POSTS_V2 = [
   {
@@ -85,18 +91,73 @@ export const FEED_POSTS_V2 = [
   },
 ];
 
+// ── My publications (BD-PROFILE-MY-POSTS-01) ───────────────────
+// Persists locally-created feed posts so they survive reloads and can be
+// surfaced under «Мои публикации» in Profile. Seed FEED_POSTS_V2 entries
+// are NOT persisted here — only posts created via createFeedPost().
+const MY_POSTS_KEY = 'bazardrive.myposts.v1';
+
+function loadMyPostsRaw() {
+  try {
+    const raw = localStorage.getItem(MY_POSTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistMyPosts(list) {
+  try { localStorage.setItem(MY_POSTS_KEY, JSON.stringify(list)); } catch {}
+}
+
+// Hydrate on module load: re-inject persisted owned posts so they appear
+// on the feed and in «Мои публикации» across reloads. Newest first.
+(function hydrateMyPosts() {
+  const persisted = loadMyPostsRaw();
+  if (!persisted.length) return;
+  const existingIds = new Set(FEED_POSTS_V2.map((p) => p.id));
+  for (const p of persisted) {
+    if (p && p.id && !existingIds.has(p.id)) FEED_POSTS_V2.unshift(p);
+  }
+})();
+
 export async function listFeedPosts() {
   return FEED_POSTS_V2;
 }
 
 export function createFeedPost(post) {
-  FEED_POSTS_V2.unshift({
-    id:       `user-${Date.now()}`,
-    likes:    0,
-    comments: 0,
-    time:     'Только что',
+  const owned = {
+    id:                    `user-${Date.now()}`,
+    likes:                 0,
+    comments:              0,
+    time:                  'Только что',
     ...post,
-  });
+    authorId:              LOCAL_USER_ID,
+    createdByCurrentUser:  true,
+    createdAt:             Date.now(),
+  };
+  FEED_POSTS_V2.unshift(owned);
+  persistMyPosts([owned, ...loadMyPostsRaw()]);
+  return owned;
+}
+
+// Returns posts owned by the current user, newest first. Reads both the
+// persisted store and the in-memory FEED_POSTS_V2 (in case a future caller
+// adds an owned post without going through createFeedPost), deduped by id.
+export function listMyPostsSync() {
+  const persisted = loadMyPostsRaw();
+  const inMemoryOwned = FEED_POSTS_V2.filter((p) => p?.createdByCurrentUser === true);
+  const byId = new Map();
+  for (const p of [...persisted, ...inMemoryOwned]) {
+    if (p && p.id && !byId.has(p.id)) byId.set(p.id, p);
+  }
+  return [...byId.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+export async function listMyPosts() {
+  return listMyPostsSync();
 }
 
 // ── Legacy posts (classic announcements board) ─────────────────

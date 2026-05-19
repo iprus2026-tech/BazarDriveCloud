@@ -7,6 +7,7 @@ import {
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
+import { listMyPostsSync } from '../mock_api.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
@@ -673,6 +674,9 @@ function renderPassenger(root, u) {
         return tripSectionHtml(t.active, t.planned);
       })() : ''}
 
+      <!-- 7c. My publications (BD-PROFILE-MY-POSTS-01) -->
+      ${myPostsSectionHtml()}
+
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
       <div class="bd-card pfp-menu-card">
@@ -784,6 +788,8 @@ function renderPassenger(root, u) {
 
   // ── Event wiring ─────────────────────────────────────────────────────────
   const rerender = () => renderPassenger(root, user.get());
+
+  wireMyPostsSection(root);
 
   root.querySelector('#pfp-onboard-cta')?.addEventListener('click', () => {
     user.set({
@@ -1052,6 +1058,89 @@ function quickActionsHtml() {
 
 function placeholderPane(label) {
   return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
+}
+
+// ── My publications (BD-PROFILE-MY-POSTS-01) ────────────────────────────────
+// Inline Profile section listing the current user's locally created posts.
+// Data source: listMyPostsSync() (localStorage + in-memory FEED_POSTS_V2,
+// filtered by createdByCurrentUser). No new route — entry point lives in
+// Profile only. Empty state CTA navigates to /new (composer).
+
+const POST_TYPE_LABELS = {
+  trip:         'Поездка',
+  announcement: 'Объявление',
+  marketplace:  'Маркет',
+};
+
+function myPostTypeLabel(p) {
+  if (p?.type === 'trip' && p.passenger === true) return 'Попутчик';
+  return POST_TYPE_LABELS[p?.type] || 'Публикация';
+}
+
+function myPostSummary(p) {
+  if (p?.type === 'trip' && (p.from || p.to)) {
+    return `${p.from || '—'} → ${p.to || '—'}`;
+  }
+  if (p?.title) return String(p.title);
+  if (p?.body)  return String(p.body);
+  return '—';
+}
+
+function myPostTime(p) {
+  if (p?.time) return String(p.time);
+  if (p?.createdAt) {
+    try {
+      return new Date(p.createdAt).toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+    } catch { return ''; }
+  }
+  return '';
+}
+
+function myPostCardHtml(p) {
+  const typeLabel = escapeHtml(myPostTypeLabel(p));
+  const summary   = escapeHtml(myPostSummary(p));
+  const time      = escapeHtml(myPostTime(p));
+  const price     = p?.price ? escapeHtml(String(p.price)) : '';
+  return `
+    <article class="bd-card-tight pf-mypost-card">
+      <div class="pf-mypost-row">
+        <span class="bd-badge accent">${typeLabel}</span>
+        ${time ? `<span class="pf-mypost-time">${time}</span>` : ''}
+      </div>
+      <p class="pf-mypost-summary">${summary}</p>
+      ${price ? `<p class="pf-mypost-price">${price}</p>` : ''}
+    </article>
+  `;
+}
+
+function myPostsSectionHtml() {
+  const posts = listMyPostsSync();
+  const count = posts.length;
+  const header = `
+    <div class="pf-mypub-header">
+      <p class="pfp-section-title pf-mypub-title">Мои публикации</p>
+      ${count > 0 ? `<span class="bd-badge pf-mypub-count">${escapeHtml(String(count))}</span>` : ''}
+    </div>`;
+  if (count === 0) {
+    return `
+      ${header}
+      <div class="bd-card pf-mypub-empty" id="pf-mypub-empty">
+        <p class="pf-mypub-empty__title">Пока нет публикаций</p>
+        <p class="pf-mypub-empty__text">Создайте поездку, объявление или услугу — они появятся здесь.</p>
+        <button type="button" class="bd-btn primary pf-mypub-empty__cta" id="pf-mypub-create">Создать публикацию</button>
+      </div>`;
+  }
+  return `
+    ${header}
+    <div class="pf-mypub-list" id="pf-mypub-list">
+      ${posts.map(myPostCardHtml).join('')}
+    </div>`;
+}
+
+function wireMyPostsSection(root) {
+  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go('/new'));
 }
 
 // ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────
@@ -1568,6 +1657,7 @@ function renderDriver(root, u) {
         ${driverStatsHtml()}
         ${readinessHtml(items)}
         ${taxiPermitPanelHtml(u)}
+        ${myPostsSectionHtml()}
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
@@ -1575,6 +1665,8 @@ function renderDriver(root, u) {
       <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml()}</div>
       <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
     </div>`;
+
+  wireMyPostsSection(root);
 
   // Tab switching
   const tabBtns = root.querySelectorAll('.pf2-tab');
