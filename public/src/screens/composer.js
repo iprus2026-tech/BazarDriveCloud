@@ -155,6 +155,9 @@ function buildFeedPost(d) {
   if (d.type === 'marketplace' || d.type === 'service') {
     return {
       type: 'marketplace',
+      // Preserve the original draft kind so «Мои публикации» can label
+      // service posts as «Услуга» — Feed V2 still renders both as marketplace.
+      subtype: d.type,
       author: 'Вы',
       role: null,
       title: d.title,

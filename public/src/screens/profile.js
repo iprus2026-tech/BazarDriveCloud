@@ -1070,10 +1070,14 @@ const POST_TYPE_LABELS = {
   trip:         'Поездка',
   announcement: 'Объявление',
   marketplace:  'Маркет',
+  service:      'Услуга',
 };
 
 function myPostTypeLabel(p) {
   if (p?.type === 'trip' && p.passenger === true) return 'Попутчик';
+  // Composer serializes both marketplace and service drafts as type:'marketplace'
+  // but tags service posts with subtype:'service' so we can re-label them here.
+  if (p?.type === 'marketplace' && p?.subtype === 'service') return 'Услуга';
   return POST_TYPE_LABELS[p?.type] || 'Публикация';
 }
 

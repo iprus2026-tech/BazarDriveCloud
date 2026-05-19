@@ -113,14 +113,15 @@ function persistMyPosts(list) {
 }
 
 // Hydrate on module load: re-inject persisted owned posts so they appear
-// on the feed and in «Мои публикации» across reloads. Newest first.
+// on the feed and in «Мои публикации» across reloads. Persisted store is
+// already newest-first; spread-unshift preserves that order (iterating +
+// per-item unshift would reverse it).
 (function hydrateMyPosts() {
   const persisted = loadMyPostsRaw();
   if (!persisted.length) return;
   const existingIds = new Set(FEED_POSTS_V2.map((p) => p.id));
-  for (const p of persisted) {
-    if (p && p.id && !existingIds.has(p.id)) FEED_POSTS_V2.unshift(p);
-  }
+  const fresh = persisted.filter((p) => p && p.id && !existingIds.has(p.id));
+  if (fresh.length) FEED_POSTS_V2.unshift(...fresh);
 })();
 
 export async function listFeedPosts() {
