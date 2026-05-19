@@ -9532,3 +9532,71 @@ button.pfp-menu-row:active { opacity: 0.7; }
   .map-home__order-meta { font-size: 11px; }
   .map-home__count-num { font-size: 20px; }
 }
+
+/* ── BD-PROFILE-MY-POSTS-01 — My publications inline section ───────────── */
+.pf-mypub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+}
+.pf-mypub-title {
+  margin: 0;
+}
+.pf-mypub-count {
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.pf-mypub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+.pf-mypost-card {
+  margin-bottom: 0;
+}
+.pf-mypost-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pf-mypost-time {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.pf-mypost-summary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  margin: 0;
+}
+.pf-mypost-price {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pf-mypub-empty {
+  text-align: center;
+  padding: 22px 18px;
+}
+.pf-mypub-empty__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.pf-mypub-empty__text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+.pf-mypub-empty__cta {
+  width: 100%;
+}

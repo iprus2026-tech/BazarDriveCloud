@@ -2561,6 +2561,100 @@ Backend / API / driver markers / live navigation
 
 ---
 
+## BD-PROFILE-MY-POSTS-01 — My publications from Profile
+
+### Identity
+
+```text
+Screen:        Profile → inline section «Мои публикации»
+Route:         /profile  (нет отдельного маршрута — секция встроена в Profile)
+File:          public/src/screens/profile.js
+Data source:   listMyPostsSync() из public/src/mock_api.js
+               (localStorage `bazardrive.myposts.v1` + in-memory FEED_POSTS_V2,
+               отфильтрованные по `createdByCurrentUser === true`)
+Parent issue:  #19
+Working issue: #149
+Recommended branch: feature/profile-my-posts
+```
+
+### Purpose
+
+Дать пассажиру / водителю простую точку входа из Profile к своим
+локально созданным публикациям (поездки, попутчик, объявление, маркет,
+услуга), созданным через `/new` (composer). Без backend, без редактора,
+без удаления — только инвентарь.
+
+### Placement
+
+- Inline-секция внутри `/profile`. Отдельного маршрута `/my-posts` нет.
+- Passenger view: секция отрисовывается между блоком поездок и
+  меню (раздел 7c).
+- Driver view: секция отрисовывается в табе «Обзор», после
+  `taxiPermitPanel` и перед `quickActions`.
+- Guest view: секция скрыта — экран guest содержит только CTA
+  «Начать регистрацию» (`/onboarding`).
+
+### Ownership contract
+
+Composer создаёт пост через `createFeedPost(post)`. Функция
+дополняет посту полями `authorId: 'local-user'`,
+`createdByCurrentUser: true`, `createdAt: Date.now()` и сохраняет
+копию в localStorage (`bazardrive.myposts.v1`). При загрузке модуля
+`mock_api.js` персистентные посты прокидываются обратно в
+`FEED_POSTS_V2`, чтобы они оставались видимыми в ленте после
+перезагрузки. Существующие сид-посты не трогаются.
+
+Marketplace и service драфты композер сериализует как
+`type: 'marketplace'` (Feed V2 рендерит их одинаковым marketplace-кардом),
+но добавляет дискриминатор `subtype: 'service' | 'marketplace'`, чтобы
+секция «Мои публикации» подписывала service-посты бейджем `Услуга`.
+
+### Render
+
+```text
+Header:   "Мои публикации" + count badge (если есть посты)
+List:     bd-card-tight × N
+          - type badge (Поездка / Попутчик / Объявление / Маркет / Услуга)
+          - summary (route `from → to` для trip-like, иначе title / body)
+          - price (если есть)
+          - time / createdAt
+Empty:    bd-card с заголовком "Пока нет публикаций"
+          текст "Создайте поездку, объявление или услугу — они появятся здесь."
+          CTA primary "Создать публикацию" → /new
+```
+
+### Acceptance
+
+```text
+- [x] /profile содержит секцию «Мои публикации» (passenger + driver)
+- [x] Пост, созданный через /new, появляется в секции после возврата на /profile
+- [x] Пост помечается ownership-полями authorId / createdByCurrentUser
+- [x] Пустое состояние показывает CTA «Создать публикацию» → /new
+- [x] Feed V2 категории (Всё / Поездки / Попутчики / Объявления / Маркет)
+       не изменены
+- [x] /feed, /new, /profile продолжают работать
+- [x] no inline <script> / <style> / style="" / on*=
+- [x] no `.style.<property>` mutations
+- [x] CSP не ослабляется, новых файлов нет (SW PRECACHE не трогаем)
+- [x] node scripts/check.mjs проходит
+```
+
+### Out of scope for BD-PROFILE-MY-POSTS-01
+
+```text
+Backend / API (нет реального хранилища публикаций)
+Реальная авторизация (authorId захардкожен как 'local-user')
+Детальный экран публикации
+Редактирование публикации
+Архивирование / удаление / снятие с публикации
+Модерация / статус публикации
+Реакции / комментарии в секции «Мои публикации»
+Отдельный маршрут /my-posts
+Изменение чипов Feed V2 (Маркет / Поездки / Попутчики и т.п.)
+```
+
+---
+
 ## Planned screens (not yet implemented)
 
 These screens are tracked by #19 and should receive their own
