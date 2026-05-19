@@ -118,29 +118,37 @@ export default async function feed() {
 
   feedList.addEventListener('click', (e) => {
     const actionBtn = e.target.closest('[data-action]');
-    if (!actionBtn) return;
+    if (actionBtn) {
+      const postId = actionBtn.dataset.postId;
 
-    const postId = actionBtn.dataset.postId;
+      if (actionBtn.dataset.action === 'respond') {
+        go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+        return;
+      }
 
-    if (actionBtn.dataset.action === 'respond') {
-      go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+      if (actionBtn.dataset.action === 'chat') {
+        go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
+        return;
+      }
+
+      if (actionBtn.dataset.action === 'accept-order') {
+        const u = user.get();
+        if (u.role !== 'driver' || !isDriverLineReady(u)) return;
+        const post = posts.find((p) => String(p.id) === String(postId));
+        if (!post || post.passenger !== true) return;
+        const ride = buildRideFromPost(post);
+        saveActiveRide(ride);
+        go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
+      }
       return;
     }
 
-    if (actionBtn.dataset.action === 'chat') {
-      go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
-      return;
-    }
-
-    if (actionBtn.dataset.action === 'accept-order') {
-      const u = user.get();
-      if (u.role !== 'driver' || !isDriverLineReady(u)) return;
-      const post = posts.find((p) => String(p.id) === String(postId));
-      if (!post || post.passenger !== true) return;
-      const ride = buildRideFromPost(post);
-      saveActiveRide(ride);
-      go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
-    }
+    const card = e.target.closest('[data-post-card]');
+    if (!card) return;
+    if (e.target.closest('button, a, [data-action]')) return;
+    const postId = card.dataset.postCard;
+    if (!postId) return;
+    go(`/post?id=${encodeURIComponent(postId)}`);
   });
 
   renderList();
@@ -221,7 +229,7 @@ function renderPostActions(p) {
 function renderSystemCard(p) {
   // Render system posts as pinned announcement cards, matching prototype visual
   return `
-    <article class="bd-card feed-card--pinned">
+    <article class="bd-card feed-card--pinned" data-post-card="${escapeHtml(p.id || '')}">
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -259,7 +267,7 @@ function renderTripCard(p) {
   }
 
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}">
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${postId}">
       ${renderCardHeader(p)}
       <div class="feed-route-row">
         <div class="feed-route-track">
@@ -290,7 +298,7 @@ function renderTripCard(p) {
 
 function renderAnnouncementCard(p) {
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}">
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${escapeHtml(p.id || '')}">
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -304,7 +312,7 @@ function renderMarketplaceCard(p) {
     .map((t) => `<span class="bd-badge">${escapeHtml(t)}</span>`)
     .join('');
   return `
-    <article class="bd-card">
+    <article class="bd-card" data-post-card="${escapeHtml(p.id || '')}">
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-mkt-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.price ? `<div class="feed-card-mkt-price">${escapeHtml(p.price)}</div>` : ''}

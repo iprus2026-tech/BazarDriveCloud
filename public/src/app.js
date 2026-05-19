@@ -14,6 +14,7 @@ import chat       from './screens/chat.js';
 import activeRide from './screens/active_ride.js';
 import responses  from './screens/responses.js';
 import tripConfirmation from './screens/trip_confirmation.js';
+import postDetail from './screens/post_detail.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -27,6 +28,7 @@ register('/chat',        chat);
 register('/active-ride', activeRide);
 register('/responses',   responses);
 register('/trip-confirmation', tripConfirmation);
+register('/post',        postDetail);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
