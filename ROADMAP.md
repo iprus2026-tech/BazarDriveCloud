@@ -44,6 +44,9 @@ Cloud/PWA-репо уже вышел за рамки исходного «дос
 - [x] **Active ride · passenger** (BD-RIDE-P-01..05) — DRIVER_EN_ROUTE → WAITING_PASSENGER → IN_PROGRESS → COMPLETED
 - [x] **Passenger cancel sheet** (BD-RIDE-P-06) — нижняя шторка отмены с выбором причины
 - [x] **Passenger safety sheet** (BD-RIDE-P-07) — нижняя шторка «Безопасность» (stub)
+- [x] **Driver cancel sheet** (BD-RIDE-D-07) — нижняя шторка отмены водителем (PR #136)
+- [x] **Driver problem sheet** (BD-RIDE-D-08) — нижняя шторка «Сообщить о проблеме» (PR #136)
+- [x] **Driver earnings sheet** (BD-RIDE-D-09) — нижняя шторка с детализацией заработка (PR #136, audited PR #137)
 - [x] **Ride state contract** (BD-RIDE-F-01) — `public/src/ride_state.js`, единый storage активной поездки
 - [x] **MapShell placeholder** (BD-RIDE-F-02) — `public/src/mapbox/map_shell.js`, без Mapbox SDK
 - [x] **Service Worker update banner** — `public/src/sw-update.js`, mock `skipWaiting` handshake
@@ -51,11 +54,8 @@ Cloud/PWA-репо уже вышел за рамки исходного «дос
 
 ### Gaps в текущем taxi-flow (требуют отдельных issues)
 
-- [ ] **Driver cancel sheet** (BD-RIDE-D-07) — сейчас кнопка `Отменить` показывает только toast
-- [ ] **Driver problem sheet** (BD-RIDE-D-08) — отсутствует
-- [ ] **Driver earnings sheet** (BD-RIDE-D-09) — отсутствует
 - [ ] **Driver no-show flow** — кнопка «Не приехал» показывает только toast
-- [ ] **Mapbox foundation stubs** — `mapbox_config`, `mapbox_loader`, `mapbox_state`, `geolocation_service`, `route_service`, `price_estimator`, `driver_markers`, `trip_status_layer` ещё не созданы
+- [ ] **Mapbox foundation stubs** — `driver_markers`, `trip_status_layer` ещё не созданы (остальные 7 стабов из §11 уже есть)
 
 ---
 
