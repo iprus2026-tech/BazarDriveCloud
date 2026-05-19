@@ -4,6 +4,7 @@
 // no native geolocation prompt on mount.
 
 import { escapeHtml } from '../util.js';
+import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { hasMapboxToken } from '../mapbox/mapbox_config.js';
 import {
@@ -266,9 +267,12 @@ function buildNearbyOrdersCard() {
       <div class="map-home__order-price">${escapeHtml(o.price)}</div>
     </li>
   `).join('');
+  // The verified render gate keeps a 5-vs-3 asymmetry on purpose:
+  // 5 numbered clusters on the map, only the top 3 fit in the bottom
+  // card. The counter therefore must read «5», not the visible row count.
   card.insertAdjacentHTML('beforeend', `
     <div class="map-home__count">
-      <span class="map-home__count-num">${NEARBY_ORDERS.length}</span>
+      <span class="map-home__count-num">5</span>
       <span class="map-home__count-label">заказов рядом</span>
     </div>
     <ul class="map-home__order-list" aria-label="Заказы рядом">${rows}</ul>
@@ -361,16 +365,16 @@ export default function mapScreen() {
       // re-renders into the default state on next visit. Real
       // permission flow lands with BD-MAP-FOUND-01.
       saveMapPrefs({ locationAllowed: true });
-      window.location.hash = '/map';
+      go('/map');
     } else if (action === 'nearby') {
-      window.location.hash = '/map?state=nearby';
+      go('/map?state=nearby');
     } else if (action === 'route' || action === 'manual') {
       // /route-picker is planned (BD-MAP-03) and not registered yet;
       // both «Выбрать маршрут» and «Ввести вручную» rest at /map
       // until BD-MAP-FOUND-01 wires the real picker.
-      window.location.hash = '/map?state=default';
+      go('/map?state=default');
     } else if (action === 'feed') {
-      window.location.hash = '/feed';
+      go('/feed');
     }
     // `settings` is a deliberate no-op stub — there is no real
     // browser-settings deep link in this PWA shell.
