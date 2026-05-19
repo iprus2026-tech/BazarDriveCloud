@@ -51,6 +51,18 @@ const STATE_COPY = {
   },
 };
 
+const PERMISSION_CONSENT = [
+  'Заказы и водители рядом — без ручного поиска',
+  'Точка подачи определяется автоматически',
+  'Маршрут до точки назначения считается от вас',
+];
+
+const NEARBY_ORDERS = [
+  { name: 'Анна М.',   initials: 'А', rating: '4.9', meta: '1.2 км · сейчас', price: '320 ₽' },
+  { name: 'Сергей Л.', initials: 'С', rating: '4.8', meta: '2.4 км · 5 мин',  price: '480 ₽' },
+  { name: 'Нурлан',    initials: 'Н', rating: '5.0', meta: '3.1 км · 8 мин',  price: '610 ₽' },
+];
+
 function getHashQuery() {
   const hash = window.location.hash || '';
   const qi = hash.indexOf('?');
@@ -83,7 +95,7 @@ function buildMapPlaceholder(state) {
   wrap.setAttribute('aria-label', 'Карта-заглушка');
   wrap.dataset.state = state;
 
-  const showRoute   = state === MAP_STATE.DEFAULT || state === MAP_STATE.NEARBY;
+  const showRoute   = state === MAP_STATE.DEFAULT;
   const showCar     = state !== MAP_STATE.TOKEN_MISSING;
   const showPickup  = state === MAP_STATE.DEFAULT || state === MAP_STATE.NEARBY;
   const showDropoff = state === MAP_STATE.DEFAULT;
@@ -100,15 +112,35 @@ function buildMapPlaceholder(state) {
   wrap.appendChild(shell);
 
   if (state === MAP_STATE.NEARBY) {
-    const dots = document.createElement('div');
-    dots.className = 'map-home__nearby';
-    dots.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 4; i++) {
-      const d = document.createElement('span');
-      d.className = `map-home__nearby-dot map-home__nearby-dot--${i + 1}`;
-      dots.appendChild(d);
+    const overlay = document.createElement('div');
+    overlay.className = 'map-home__nearby';
+    overlay.setAttribute('aria-hidden', 'true');
+
+    const pulse = document.createElement('span');
+    pulse.className = 'map-home__pulse';
+    overlay.appendChild(pulse);
+
+    for (let i = 0; i < 5; i++) {
+      const c = document.createElement('span');
+      c.className = `map-home__cluster map-home__cluster--${i + 1}`;
+      c.textContent = String(i + 1);
+      overlay.appendChild(c);
     }
-    wrap.appendChild(dots);
+    wrap.appendChild(overlay);
+  }
+
+  if (state === MAP_STATE.TOKEN_MISSING) {
+    const lock = document.createElement('div');
+    lock.className = 'map-home__lock';
+    lock.setAttribute('aria-hidden', 'true');
+    lock.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" width="36" height="36">
+        <rect x="4" y="10" width="16" height="11" rx="2"/>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+      </svg>
+    `;
+    wrap.appendChild(lock);
   }
 
   const watermark = document.createElement('div');
@@ -120,7 +152,7 @@ function buildMapPlaceholder(state) {
 }
 
 function buildBanner(state) {
-  if (state === MAP_STATE.DEFAULT) return null;
+  if (state === MAP_STATE.DEFAULT || state === MAP_STATE.NEARBY) return null;
   const banner = document.createElement('div');
   banner.className = `map-home__banner map-home__banner--${state}`;
   banner.setAttribute('role', 'status');
@@ -134,30 +166,161 @@ function buildBanner(state) {
   return banner;
 }
 
-function buildActionCard(state) {
+// ── Per-state action cards ──────────────────────────────────
+
+function makeCardRoot(state) {
   const card = document.createElement('div');
-  card.className = 'map-home__sheet';
+  card.className = `map-home__sheet map-home__sheet--${state}`;
+  card.innerHTML = `<div class="map-home__sheet-grip" aria-hidden="true"></div>`;
+  return card;
+}
 
-  const tokenMissing  = state === MAP_STATE.TOKEN_MISSING;
-  const denied        = state === MAP_STATE.DENIED;
-  const myLocBtnAttrs = tokenMissing || denied ? 'disabled' : '';
-
-  card.innerHTML = `
-    <div class="map-home__sheet-grip" aria-hidden="true"></div>
+function buildDefaultCard() {
+  const card = makeCardRoot(MAP_STATE.DEFAULT);
+  card.insertAdjacentHTML('beforeend', `
     <button class="bd-btn primary map-home__cta" type="button" data-action="route">
       Выбрать маршрут
     </button>
     <div class="map-home__sheet-row">
       <button class="bd-btn map-home__chip" type="button"
-              data-action="my-location" aria-label="Моё место" ${myLocBtnAttrs}>
+              data-action="my-location" aria-label="Моё место">
         Моё место
       </button>
       <button class="bd-btn map-home__chip" type="button" data-action="nearby">
         Заказы рядом
       </button>
     </div>
-  `;
+  `);
   return card;
+}
+
+function buildPermissionCard() {
+  const card = makeCardRoot(MAP_STATE.PERMISSION);
+  const items = PERMISSION_CONSENT.map((t) => `
+    <li class="map-home__consent-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+           width="16" height="16" class="map-home__consent-check">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span>${escapeHtml(t)}</span>
+    </li>
+  `).join('');
+  card.insertAdjacentHTML('beforeend', `
+    <div class="map-home__consent-head">Что даёт доступ к геолокации</div>
+    <ul class="map-home__consent-list">${items}</ul>
+    <button class="bd-btn primary map-home__cta" type="button"
+            data-action="my-location" aria-label="Моё место">
+      Разрешить доступ
+    </button>
+    <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button"
+            data-action="manual">
+      Ввести адрес вручную
+    </button>
+  `);
+  return card;
+}
+
+function buildDeniedCard() {
+  const card = makeCardRoot(MAP_STATE.DENIED);
+  card.insertAdjacentHTML('beforeend', `
+    <div class="map-home__warn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+           width="20" height="20">
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <div class="map-home__warn-body">
+        <div class="map-home__warn-title">Геолокация отключена</div>
+        <p class="map-home__warn-hint">Включите доступ к местоположению в настройках браузера или продолжите ввод вручную.</p>
+      </div>
+    </div>
+    <button class="map-home__manual" type="button" data-action="manual">
+      <span class="map-home__manual-dot" aria-hidden="true"></span>
+      <span class="map-home__manual-text">Введите адрес подачи вручную</span>
+    </button>
+    <div class="map-home__sheet-row">
+      <button class="bd-btn map-home__chip" type="button" data-action="settings">
+        Открыть настройки
+      </button>
+      <button class="bd-btn map-home__chip" type="button" data-action="manual">
+        Ввести вручную
+      </button>
+    </div>
+  `);
+  return card;
+}
+
+function buildNearbyOrdersCard() {
+  const card = makeCardRoot(MAP_STATE.NEARBY);
+  const rows = NEARBY_ORDERS.map((o, i) => `
+    <li class="map-home__order">
+      <div class="map-home__order-num" aria-hidden="true">${i + 1}</div>
+      <div class="map-home__order-avatar" aria-hidden="true">${escapeHtml(o.initials)}</div>
+      <div class="map-home__order-info">
+        <div class="map-home__order-name">${escapeHtml(o.name)}</div>
+        <div class="map-home__order-meta">★ ${escapeHtml(o.rating)} · ${escapeHtml(o.meta)}</div>
+      </div>
+      <div class="map-home__order-price">${escapeHtml(o.price)}</div>
+    </li>
+  `).join('');
+  card.insertAdjacentHTML('beforeend', `
+    <div class="map-home__count">
+      <span class="map-home__count-num">${NEARBY_ORDERS.length}</span>
+      <span class="map-home__count-label">заказов рядом</span>
+    </div>
+    <ul class="map-home__order-list" aria-label="Заказы рядом">${rows}</ul>
+    <div class="map-home__sheet-row">
+      <button class="bd-btn map-home__chip" type="button" data-action="route">
+        Выбрать маршрут
+      </button>
+      <button class="bd-btn map-home__chip" type="button"
+              data-action="my-location" aria-label="Моё место">
+        Моё место
+      </button>
+    </div>
+  `);
+  return card;
+}
+
+function buildTokenMissingCard() {
+  const card = makeCardRoot(MAP_STATE.TOKEN_MISSING);
+  card.insertAdjacentHTML('beforeend', `
+    <div class="map-home__meta-card" role="group" aria-label="Состояние Mapbox foundation">
+      <div class="map-home__meta-row">
+        <span class="map-home__meta-key">Статус</span>
+        <span class="map-home__meta-val map-home__meta-val--danger">token_missing</span>
+      </div>
+      <div class="map-home__meta-row">
+        <span class="map-home__meta-key">Fallback</span>
+        <span class="map-home__meta-val">Лента · ручной ввод</span>
+      </div>
+      <div class="map-home__meta-row">
+        <span class="map-home__meta-key">Issue</span>
+        <span class="map-home__meta-val">#105</span>
+      </div>
+    </div>
+    <button class="bd-btn primary map-home__cta" type="button" data-action="feed">
+      Вернуться в ленту
+    </button>
+    <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button"
+            data-action="manual">
+      Ввести вручную
+    </button>
+  `);
+  return card;
+}
+
+function buildActionCard(state) {
+  switch (state) {
+    case MAP_STATE.PERMISSION:    return buildPermissionCard();
+    case MAP_STATE.DENIED:        return buildDeniedCard();
+    case MAP_STATE.NEARBY:        return buildNearbyOrdersCard();
+    case MAP_STATE.TOKEN_MISSING: return buildTokenMissingCard();
+    default:                      return buildDefaultCard();
+  }
 }
 
 export default function mapScreen() {
@@ -201,11 +364,16 @@ export default function mapScreen() {
       window.location.hash = '/map';
     } else if (action === 'nearby') {
       window.location.hash = '/map?state=nearby';
-    } else if (action === 'route') {
+    } else if (action === 'route' || action === 'manual') {
       // /route-picker is planned (BD-MAP-03) and not registered yet;
-      // the hash router falls back to /feed gracefully.
+      // both «Выбрать маршрут» and «Ввести вручную» rest at /map
+      // until BD-MAP-FOUND-01 wires the real picker.
       window.location.hash = '/map?state=default';
+    } else if (action === 'feed') {
+      window.location.hash = '/feed';
     }
+    // `settings` is a deliberate no-op stub — there is no real
+    // browser-settings deep link in this PWA shell.
   });
 
   return root;

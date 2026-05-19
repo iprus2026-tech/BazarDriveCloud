@@ -9186,20 +9186,70 @@ button.pfp-menu-row:active { opacity: 0.7; }
   inset: 0;
   pointer-events: none;
 }
-.map-home__nearby-dot {
+.map-home__cluster {
   position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1a0a04;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  box-shadow:
+    0 0 0 4px rgba(255, 107, 53, 0.18),
+    0 6px 14px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+}
+.map-home__cluster--1 { left: 28%; top: 36%; }
+.map-home__cluster--2 { left: 58%; top: 28%; }
+.map-home__cluster--3 { left: 42%; top: 64%; }
+.map-home__cluster--4 { left: 72%; top: 58%; }
+.map-home__cluster--5 { left: 22%; top: 72%; }
+
+.map-home__pulse {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #6aa7ff;
   box-shadow:
-    0 0 0 4px rgba(255, 107, 53, 0.18),
-    0 4px 12px rgba(0,0,0,0.55);
+    0 0 0 4px rgba(106, 167, 255, 0.25),
+    0 0 18px rgba(58, 120, 216, 0.45);
+  transform: translate(-50%, -50%);
 }
-.map-home__nearby-dot--1 { left: 28%; top: 36%; }
-.map-home__nearby-dot--2 { left: 58%; top: 28%; }
-.map-home__nearby-dot--3 { left: 42%; top: 64%; }
-.map-home__nearby-dot--4 { left: 72%; top: 58%; }
+@media (prefers-reduced-motion: no-preference) {
+  .map-home__pulse {
+    animation: map-home-pulse 2.4s ease-in-out infinite;
+  }
+}
+@keyframes map-home-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(106, 167, 255, 0.25), 0 0 18px rgba(58, 120, 216, 0.45); }
+  50%      { box-shadow: 0 0 0 10px rgba(106, 167, 255, 0.08), 0 0 22px rgba(58, 120, 216, 0.55); }
+}
+
+.map-home__lock {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  pointer-events: none;
+  z-index: 2;
+}
 
 .map-home__banner {
   position: absolute;
@@ -9269,7 +9319,216 @@ button.pfp-menu-row:active { opacity: 0.7; }
   opacity: 0.5;
 }
 
+.map-home__cta--ghost {
+  height: 42px;
+  color: var(--text-2);
+}
+
+/* Permission card — consent list */
+.map-home__consent-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.map-home__consent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-home__consent-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.map-home__consent-check {
+  flex-shrink: 0;
+  color: var(--success);
+  margin-top: 2px;
+}
+
+/* Denied card — warn + dashed manual input row */
+.map-home__warn {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(248, 113, 113, 0.10);
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  color: var(--text);
+}
+.map-home__warn > svg {
+  color: var(--danger);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.map-home__warn-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+.map-home__warn-hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-2);
+  margin: 0;
+}
+.map-home__manual {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 14px;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s;
+}
+.map-home__manual:active {
+  transform: scale(0.99);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.map-home__manual-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* Nearby orders card — counter + order rows */
+.map-home__count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+.map-home__count-num {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+.map-home__count-label {
+  font-size: 14px;
+  color: var(--text-2);
+}
+.map-home__order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.map-home__order {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.map-home__order:last-child {
+  border-bottom: none;
+}
+.map-home__order-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1a0a04;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.map-home__order-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.map-home__order-info {
+  flex: 1;
+  min-width: 0;
+}
+.map-home__order-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.map-home__order-meta {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.map-home__order-price {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Token-missing card — danger meta card */
+.map-home__meta-card {
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  background: rgba(248, 113, 113, 0.06);
+}
+.map-home__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(248, 113, 113, 0.18);
+}
+.map-home__meta-row:last-child {
+  border-bottom: none;
+}
+.map-home__meta-key {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.map-home__meta-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-feature-settings: 'tnum';
+}
+.map-home__meta-val--danger {
+  color: var(--danger);
+}
+
 @media (max-width: 360px) {
   .map-home__chip { font-size: 12px; }
   .map-home__banner-title { font-size: 14px; }
+  .map-home__order-name { font-size: 13px; }
+  .map-home__order-meta { font-size: 11px; }
+  .map-home__count-num { font-size: 20px; }
 }
