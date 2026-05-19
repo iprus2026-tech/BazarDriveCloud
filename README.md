@@ -199,6 +199,8 @@ PWA может продолжать отдавать старые файлы и�
 | `/trip-confirmation` | `screens/trip_confirmation.js` | hidden |
 | `/active-ride` | `screens/active_ride.js` (диспатчит passenger renderer по `?role`) | hidden |
 
+> `/active-ride?role=passenger` рендерится через `active_ride_passenger.js`, который импортируется и вызывается внутри `active_ride.js`. Отдельного маршрута `/active-ride-passenger` нет. Полный контракт см. в `docs/screen-contracts.md` → BD-RIDE-D · Role dispatch contract.
+
 ---
 
 ## Локальные проверки

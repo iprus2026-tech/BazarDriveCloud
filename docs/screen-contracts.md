@@ -1052,6 +1052,8 @@ ETA-индикатор, заметка водителя, цена с дельт�
 пассажира. Decline / select водителя переключают визуальное состояние,
 ничего не отправляя в сеть.
 
+Current build note: /responses always materializes from the in-file MOCK_DRIVERS array, so empty-waiting is documented as a design-only mock state today and is not reachable through the normal route yet.
+
 ### Route contract
 
 ```text
@@ -1084,7 +1086,7 @@ best-card       — выделенная карточка с признаком 
 selected        — пассажир выбрал водителя; меняется визуальный stage
 declined        — водитель помечен как отклонённый (restore CTA доступен)
 all-declined    — все отклонены; информационная плашка
-empty-waiting   — заглушка ожидания, когда откликов ещё нет (визуальный mock)
+empty-waiting   — заглушка ожидания, когда откликов ещё нет (design-only mock; недостижимо из обычного /responses route в текущей сборке, так как экран всегда показывает MOCK_DRIVERS)
 ```
 
 ### Actions
