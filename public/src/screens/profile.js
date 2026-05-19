@@ -1091,7 +1091,8 @@ function myPostSummary(p) {
 }
 
 function myPostTime(p) {
-  if (p?.time) return String(p.time);
+  // Prefer createdAt: the persisted `time` field is captured at creation
+  // ('Только что') and would stay stale after reload.
   if (p?.createdAt) {
     try {
       return new Date(p.createdAt).toLocaleString('ru-RU', {
@@ -1099,6 +1100,7 @@ function myPostTime(p) {
       });
     } catch { return ''; }
   }
+  if (p?.time) return String(p.time);
   return '';
 }
 
