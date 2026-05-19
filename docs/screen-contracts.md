@@ -899,12 +899,12 @@ Driver / passenger state machine outside this bridge
 ### Identity
 
 ```text
-Screen:       Rules — community rules list
+Screen:       Rules V2 — community rules + safety block
 Route:        /rules
 File:         public/src/screens/rules.js
 Data source:  in-file `RULES` constant (no localStorage, no network)
-Design ref:   Cloud Design — section "Правила"
-Parent issue: #19
+Design ref:   Cloud Design — Rules V2
+Parent issue: #28 (BD-RULES-01 Rules V2 render sync)
 ```
 
 ### Purpose
@@ -913,18 +913,38 @@ Parent issue: #19
 onboarding (см. router welcome-gate). Ничего не пишет в `localStorage`,
 ничего не читает из `state.js` — чистый рендер.
 
+### Layout
+
+```text
+1. bd-topbar         — title «Правила» + subtitle «Сообщество и безопасность»
+2. intro card        — bd-card + badges «Сообщество» / «Безопасность»
+3. section header    — «Правила сообщества» + счётчик
+4. rules list        — карточки с номером, заголовком, описанием, tone-варианты
+5. safety card       — info-блок про уважение, безопасность, мошенничество
+6. CTA               — «Вернуться в ленту» → /feed
+```
+
 ### UI states
 
 ```text
-list      — нумерованный список из 5 пунктов (накрутки, реальные цены,
-            спам, контактные данные, жалобы 24ч)
-empty     — невозможно (массив hard-coded в файле)
+list      — массив RULES (>=1) → intro + список + safety + CTA
+empty     — пустой массив RULES → bd-empty с CTA «Вернуться в ленту»
+```
+
+### Data
+
+```text
+const RULES = [
+  { title, text, tone: 'default' | 'warning' | 'success' | 'danger' },
+  ...
+]
 ```
 
 ### Actions
 
 ```text
-Bottom tabbar → переходы /feed / /rules / /profile
+Bottom tabbar           → переходы /feed / /rules / /profile
+data-go="/feed"         → router.go('/feed')   (safety CTA, empty CTA)
 ```
 
 ### Acceptance checklist
@@ -932,6 +952,8 @@ Bottom tabbar → переходы /feed / /rules / /profile
 - [ ] `/rules` открывается через hash-роутер
 - [ ] Bottom navigation подсвечивает «Правила» на `/rules`
 - [ ] Список отрисовывается из `RULES` через `escapeHtml`
+- [ ] Empty-состояние рендерится, если `RULES` пустой
+- [ ] Кнопка «Вернуться в ленту» уходит на `/feed`
 - [ ] Гость может открыть `/rules` без onboarding
 - [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
 - [ ] Нет `.style.<property>` присвоений в JS
@@ -944,6 +966,7 @@ Bottom tabbar → переходы /feed / /rules / /profile
 Per-rule navigation, anchors, deep-linking
 Real moderation / report submission backend
 Editing rules from the client
+Remote rules feed / CMS
 ```
 
 ## BD-RESPOND-01 — Respond
