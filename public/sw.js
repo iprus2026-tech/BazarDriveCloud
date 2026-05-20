@@ -1,4 +1,4 @@
-const VERSION    = 'v30';
+const VERSION    = 'v31';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -27,6 +27,7 @@ const PRECACHE = [
   './src/screens/responses.js',
   './src/screens/trip_confirmation.js',
   './src/screens/post_detail.js',
+  './src/screens/inbox.js',
   './src/ride_state.js',
   './src/ride_actions.js',
   './src/mapbox/map_shell.js',
