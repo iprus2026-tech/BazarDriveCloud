@@ -135,12 +135,19 @@ function renderItem(item) {
 
   const fallbackHref = item.primary?.href || item.secondary?.href || item.href || '';
 
+  const ariaLabel = [
+    kindLabel,
+    item.actor,
+    INBOX_STATUS_LABEL[item.status],
+  ].filter(Boolean).join(' · ');
+
   return `
     <article class="bd-card inbox-item${item.unread ? ' inbox-item--unread' : ''}"
              data-inbox-id="${escapeHtml(item.id)}"
              data-href="${escapeHtml(fallbackHref)}"
+             role="button"
              tabindex="0"
-             aria-label="${escapeHtml(item.actor || kindLabel)}">
+             aria-label="${escapeHtml(ariaLabel)}">
       <div class="inbox-item__head">
         <div class="inbox-item__avatar" aria-hidden="true">${escapeHtml(glyph)}</div>
         <div class="inbox-item__head-info">
