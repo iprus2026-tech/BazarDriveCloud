@@ -3,10 +3,10 @@ import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { user } from '../state.js';
 import {
-  createDemoActiveRide,
-  saveActiveRide,
-  RIDE_STATUS,
-} from '../ride_state.js';
+  isDriverLineReady,
+  canAcceptPassengerRequest,
+  acceptPassengerRequestFromPost,
+} from '../ride_actions.js';
 
 const TYPE_LABELS = {
   trip:          'Поездка',
@@ -190,34 +190,6 @@ function renderMissing(root) {
   root.querySelector('#pd-to-feed').addEventListener('click', () => go('/feed'));
 }
 
-function isDriverLineReady(u) {
-  return !!(u.phone
-    && u.vehicleMake && u.vehicleModel && u.vehiclePlate
-    && u.documentsReady === true
-    && u.waybillOpen === true
-    && u.medicalCheckPassed === true);
-}
-
-function buildRideFromPost(p) {
-  const tripId = `feed-${p.id || Date.now()}`;
-  const passengerName = p.passenger ? (p.author || 'Пассажир') : 'Пассажир';
-  return createDemoActiveRide({
-    tripId,
-    status: RIDE_STATUS.NEW_ORDER,
-    passenger: {
-      name: passengerName,
-      initials: initial(passengerName),
-    },
-    order: {
-      offerPrice: p.price || '—',
-    },
-    route: {
-      pickupLabel: p.from || '',
-      dropoffLabel: p.to || '',
-    },
-  });
-}
-
 // Decide which footer to render for a post given current user state.
 // Returns { kind: 'none' | 'respond' | 'chat' | 'accept' } where 'none'
 // means the post has no primary interaction (announcement / system).
@@ -275,10 +247,8 @@ function runCtaAction(spec, post, detailsHref) {
     return;
   }
   if (spec.kind === 'accept') {
-    if (fresh.role !== 'driver' || !isDriverLineReady(fresh)) return;
-    if (post.passenger !== true) return;
-    const ride = buildRideFromPost(post);
-    saveActiveRide(ride);
+    if (!canAcceptPassengerRequest(fresh, post)) return;
+    const ride = acceptPassengerRequestFromPost(post);
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
     return;
   }
