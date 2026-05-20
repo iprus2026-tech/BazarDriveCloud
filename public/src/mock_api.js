@@ -177,7 +177,7 @@ const INBOX_ITEMS_V1 = [
     actor:   'Рустам К.',
     time:    '2 мин',
     unread:  true,
-    href:    '/respond',
+    href:    '/respond?postId=trip-2',
   },
   {
     id:      'inbox-message-1',
@@ -210,7 +210,7 @@ const INBOX_ITEMS_V1 = [
     actor:   'Анна М.',
     time:    'сейчас',
     unread:  true,
-    href:    '/active-ride?role=driver&tripId=feed-trip-2',
+    href:    '/active-ride?role=driver&tripId=feed-trip-2&status=IN_PROGRESS',
   },
 ];
 
