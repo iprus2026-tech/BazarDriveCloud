@@ -1055,6 +1055,175 @@ Push to passenger
 Payment hold / capture
 ```
 
+## BD-RESPOND-02 — Context-aware Respond
+
+### Identity
+
+```text
+Screen:        Respond — контекстный экран по типу публикации
+Route:         /respond?postId=<id>
+File:          public/src/screens/respond.js
+Data source:   Feed V2 posts (`listFeedPosts()` из `../mock_api.js`)
+               + `bazardrive.respond.v1` (localStorage)
+Parent issue:  #155
+```
+
+### Purpose
+
+После BD-POST-02 страница деталей публикации (`/post?id=<id>`)
+показывает разные CTA в зависимости от типа поста. До BD-RESPOND-02
+любой клик «Откликнуться / Написать продавцу» приводил на
+исходный ride-oriented экран Анны М. (smoke-bug: `/respond?postId=mkt-1`
+показывал mock пассажирской заявки вместо контекста продавца).
+
+BD-RESPOND-02 разводит экран Respond на 4 ветки по `post.type`
+без изменения роутера и backend:
+
+```text
+trip + passenger=true        → ride-response form (Анна М. → Реальный пассажир)
+marketplace                  → seller message form (Нурлан / товар)
+trip + passenger !== true    → redirect → /chat?tripId=<id>
+announcement | system        → readonly fallback («отклик недоступен»)
+missing / unknown postId     → safe missing state
+```
+
+Источник данных всегда — Feed V2 пост по `postId` из hash query
+(`#/respond?postId=<id>`). `respond()` теперь async, router уже
+умеет `await loader()` (см. `public/src/router.js`).
+
+### Route contract
+
+```text
+Path:          /respond
+Query:
+  postId   string  REQUIRED — id Feed V2 поста
+Chrome:        visible
+Behavior:
+  - postId отсутствует     → missing state
+  - postId не найден       → missing state
+  - trip non-passenger     → redirect → /chat?tripId=<id> (внутри loader)
+  - announcement / system  → readonly fallback
+  - marketplace            → seller message form
+  - trip + passenger=true  → ride-response form
+```
+
+### Variant: passenger request (trip + passenger=true)
+
+```text
+Example:       /respond?postId=trip-2
+Title:         «Ответ на заявку»
+Passenger:     post.author / initial(author) / "Пассажир" [· ★ rating]
+               rating парсится из post.role (например «Пассажир · ★ 4.86»)
+Route:         post.from → post.to (если нет — «—»)
+When:          post.when (или «Время не указано»)
+Initial price: numeric(post.price) || 1500 (DEFAULT_PASSENGER_PRICE)
+Price chips:   [1300, 1500, 1800]
+Price hint:    «Пассажир предлагает <post.price>» (если задано)
+Timing chips:  at_time | earlier | negotiate
+Vehicle card:  как в BD-RESPOND-01 (с fallback «Автомобиль не добавлен»)
+Submit:        «Отправить отклик»
+Stored:        bazardrive.respond.v1 = {
+                 kind: 'passenger_response', requestId: post.id,
+                 driverPrice, pickupTiming, message, vehicleId, status, createdAt
+               }
+```
+
+### Variant: marketplace
+
+```text
+Example:       /respond?postId=mkt-1
+Title:         «Написать продавцу»
+Seller card:   post.author (initials) · «Продавец»
+               post.title, post.price, post.body, post.tags
+Hidden:        Ваша цена, price chips, Когда подать машину,
+               vehicle card / Автомобиль не добавлен,
+               passenger commission copy
+Form:          textarea «Сообщение продавцу»
+               placeholder/default: «Здравствуйте! Товар ещё актуален?»
+Submit:        «Отправить сообщение»
+Stored:        bazardrive.respond.v1 = {
+                 kind: 'marketplace_message', requestId: post.id,
+                 message, status, createdAt
+               }
+Success:       «Сообщение отправлено» → «Готово» → /feed
+```
+
+### Variant: driver trip (trip + passenger !== true)
+
+```text
+Example:       /respond?postId=trip-1
+Behavior:      loader сразу делает go(`/chat?tripId=<post.id>`)
+               без рендера формы отклика; ride-response не показывается.
+```
+
+### Variant: announcement / system
+
+```text
+Examples:      /respond?postId=ann-1, /respond?postId=sys-1
+Title:         «Отклик недоступен»
+Body:          «Для этой публикации отклик недоступен»
+Actions:       «Вернуться к публикации» → /post?id=<id>
+               «Вернуться в ленту»      → /feed
+Form:          не рендерится
+```
+
+### Variant: missing / unknown postId
+
+```text
+Examples:      /respond (без postId), /respond?postId=does-not-exist
+Title:         «Публикация»
+Body:          «Публикация не найдена» + «Возможно, объявление было удалено…»
+Action:        «Вернуться в ленту» → /feed
+```
+
+### Navigation
+
+```text
+back / cancel  → /post?id=<post.id> (если post известен), иначе /feed
+success «Готово» → /feed (как в BD-RESPOND-01)
+```
+
+### Acceptance checklist
+
+- [ ] `/respond?postId=trip-2` рендерит ride-response flow
+      на данных Feed V2 поста (Анна М. подставляется из post.author,
+      route — из post.from/post.to, when — из post.when)
+- [ ] `/respond?postId=mkt-1` показывает seller-context
+      (Нурлан, Camry 70 — зимняя резина, 45 000 ₸), а не Анну М.
+- [ ] `/respond?postId=mkt-1` скрывает ride-only controls
+      (Ваша цена, price chips, Когда подать машину, vehicle card,
+      passenger commission copy)
+- [ ] `/respond?postId=mkt-1` показывает «Сообщение продавцу»
+      и submit «Отправить сообщение»
+- [ ] `/respond?postId=trip-1` НЕ рендерит passenger-response form
+      (loader делает redirect → `/chat?tripId=trip-1`)
+- [ ] `/respond?postId=ann-1` и `/respond?postId=sys-1`
+      показывают readonly fallback с двумя кнопками
+      («Вернуться к публикации», «Вернуться в ленту»)
+- [ ] Missing/unknown postId показывает safe missing state
+- [ ] Back, Cancel и success modal работают в поддерживаемых ветках
+- [ ] Счётчик символов работает; лимит `MAX_MSG = 300`
+- [ ] Футер остаётся mobile-safe (safe-area-inset-bottom)
+- [ ] `public/sw.js` поднят до `VERSION = 'v29'`
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен; router / active-ride state machine не модифицируются
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-RESPOND-02
+
+```text
+Backend / реальная доставка сообщений продавцу или пассажиру
+Mapbox / реальная геометрия маршрута
+Изменения post_detail.js / feed.js (CTA уже выбран в BD-POST-02)
+Изменения active-ride state machine
+APK / CSP / router
+Push / payment hold
+Контракт чата для marketplace
+  (на marketplace success нет CTA «Открыть чат» — оставлен только
+   «Готово» → /feed; чат-флоу для продавца — отдельный тикет)
+```
+
 ## BD-RESPONSES-01 — Responses inbox
 
 ### Identity
