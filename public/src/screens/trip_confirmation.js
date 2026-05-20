@@ -21,6 +21,29 @@ export const CF_STATE = {
 const VALID_STATES = new Set(Object.values(CF_STATE));
 const DEMO_TRIP_ID = '48-321';
 
+const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
+
+function loadHandoff(tripId) {
+  if (!tripId) return null;
+  try {
+    const raw = localStorage.getItem(TRIP_CONFIRM_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+    const h = map[tripId];
+    return h && typeof h === 'object' ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+function isHandoffExpired(handoff) {
+  if (!handoff) return false;
+  const exp = Number(handoff.expiresAt);
+  if (!Number.isFinite(exp)) return false;
+  return Date.now() > exp;
+}
+
 // ── Mock data (matches Cloud Design render) ───────────────────
 const MOCK_PASSENGER = {
   name: 'Анна М.',
@@ -96,7 +119,14 @@ function getHashQuery() {
   return new URLSearchParams(hash.slice(qi + 1));
 }
 
-function resolveState(raw, role) {
+function resolveState(raw, role, handoff) {
+  if (handoff && isHandoffExpired(handoff)) return CF_STATE.EXPIRED;
+  // Accept the cross-screen "CONFIRMED" alias used by the chat → confirmation
+  // handoff. The screen still renders one of the role-specific confirmed
+  // variants — the alias just spares callers from knowing the role mapping.
+  if (raw === 'CONFIRMED') {
+    return role === 'driver' ? CF_STATE.DRIVER_CONFIRMED : CF_STATE.PASSENGER_CONFIRMED;
+  }
   if (raw && VALID_STATES.has(raw)) return raw;
   return role === 'driver' ? CF_STATE.DRIVER_WAITING : CF_STATE.PASSENGER_PENDING;
 }
@@ -425,8 +455,10 @@ function startCountdown(rootEl, controller) {
 export default function tripConfirmation() {
   const query = getHashQuery();
   const role = query.get('role') === 'driver' ? 'driver' : 'passenger';
-  const tripId = query.get('tripId') || DEMO_TRIP_ID;
-  const state = resolveState(query.get('state'), role);
+  const rawTripId = query.get('tripId');
+  const tripId = rawTripId || DEMO_TRIP_ID;
+  const handoff = loadHandoff(rawTripId);
+  const state = resolveState(query.get('state'), role, handoff);
 
   const root = document.createElement('section');
   root.className = `screen screen--trip-confirmation cf-state-${state.toLowerCase()}`;

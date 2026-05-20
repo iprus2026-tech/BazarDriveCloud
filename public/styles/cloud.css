@@ -4041,6 +4041,31 @@ body {
   flex-shrink: 0;
 }
 
+/* ── Trip confirmation CTA (ride context only) ─────────── */
+.chat__confirm-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px var(--pad);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.chat__confirm-bar[hidden] { display: none; }
+
+.chat__confirm-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.chat__confirm-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: center;
+}
+
 /* ── Messages area ─────────────────────────────────────── */
 .chat__messages {
   flex: 1;

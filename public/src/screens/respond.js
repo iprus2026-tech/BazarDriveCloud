@@ -3,8 +3,9 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listFeedPosts } from '../mock_api.js';
 
-const RESPOND_KEY = 'bazardrive.respond.v1';
-const MAX_MSG     = 300;
+const RESPOND_KEY    = 'bazardrive.respond.v1';
+const RESPONSES_KEY  = 'bazardrive.responses.v1';
+const MAX_MSG        = 300;
 
 const PRICE_CHIPS = [1300, 1500, 1800];
 
@@ -18,6 +19,20 @@ const DEFAULT_PASSENGER_PRICE = 1500;
 
 function saveResponse(data) {
   try { localStorage.setItem(RESPOND_KEY, JSON.stringify(data)); } catch {}
+}
+
+// Keyed-by-id store so downstream screens (chat, trip-confirmation) can
+// look up a response by its stable id without depending on the "last
+// response wins" semantics of RESPOND_KEY.
+function saveResponseToMap(data) {
+  if (!data || !data.id) return;
+  try {
+    const raw = localStorage.getItem(RESPONSES_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const next = map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+    next[data.id] = data;
+    localStorage.setItem(RESPONSES_KEY, JSON.stringify(next));
+  } catch {}
 }
 
 function getDefaultMessage(vehicle) {
@@ -297,7 +312,7 @@ function renderMarketplace(root, post) {
     setLoading(true);
 
     const response = {
-      id:        'resp_demo_001',
+      id:        `resp_${post.id}`,
       kind:      'marketplace_message',
       requestId: post.id,
       message,
@@ -305,6 +320,7 @@ function renderMarketplace(root, post) {
       createdAt: new Date().toISOString(),
     };
     saveResponse(response);
+    saveResponseToMap(response);
 
     setTimeout(() => {
       bodyEl.hidden   = true;
@@ -578,9 +594,11 @@ function renderPassengerRide(root, post) {
     setLoading(true);
 
     const responseId = `resp_${post.id}`;
+    const tripId     = String(post.id);
     const response = {
       id:           responseId,
       kind:         'passenger_response',
+      tripId,
       requestId:    post.id,
       driverPrice:  priceNum,
       pickupTiming: selectedTiming,
@@ -591,6 +609,7 @@ function renderPassengerRide(root, post) {
     };
 
     saveResponse(response);
+    saveResponseToMap(response);
 
     const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}`;
     root.querySelector('#respond-success-chat')
