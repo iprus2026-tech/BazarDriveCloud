@@ -2678,6 +2678,134 @@ Backend / API (нет реального хранилища публикаций
 
 ---
 
+## BD-POST-01 — Post details
+
+### Identity
+
+```text
+Screen:        Post details — экран деталей публикации
+Route:         /post (hash-router equivalent of /post/:id)
+File:          public/src/screens/post_detail.js
+Data source:   listFeedPosts() from public/src/mock_api.js
+Parent issue:  #9
+```
+
+### Cloud Design render/frame gate
+
+Status: deferred.
+
+Frontend-only MVP, no new visual language. Использует существующие
+Feed V2 / Cloud Design компоненты (`bd-card`, `feed-card-header`,
+`feed-route-row`, `feed-trip-meta`, `bd-badge`, `bd-btn`, `bd-alert`).
+Полноценный Cloud Design render/frame будет привязан в следующем
+проходе вместе с остальным dispatcher line.
+
+### Route contract
+
+```text
+Path:          /post
+Query:
+  id     string   id поста в FEED_POSTS_V2; обязателен
+Chrome:        visible (tabbar шоу)
+Note:          канонический URL — `#/post?id=<postId>`. Это hash-router
+               equivalent для `/post/:id`; параметризованные сегменты
+               пути в текущем router.js не поддерживаются.
+```
+
+### Data contract
+
+Reads `FEED_POSTS_V2` через `listFeedPosts()`. Используются поля поста:
+
+```text
+id, type, passenger, author, role, time,
+from, to, when, price, seats, body,
+title, tags, city / location, phone (если есть)
+```
+
+`type` мапится в человекочитаемую метку:
+
+```text
+trip (passenger != true)  → «Поездка»
+trip (passenger === true) → «Попутчик»
+announcement              → «Объявление»
+marketplace               → «Маркет»
+system                    → «Системное»
+```
+
+### UI states
+
+```text
+loaded         — карточка с author / type / city / route / when /
+                 price / описанием / контактом
+contact-locked — пользователь не прошёл онбординг; телефон скрыт под
+                 маской и показывается `bd-alert info` с подсказкой
+                 «Контакты автора откроются после онбординга»
+contact-ready  — пользователь онбордирован; `bd-alert success` с
+                 кликабельным телефоном и подписью «Контакт доступен»
+missing        — `?id=` пустой или пост не найден в FEED_POSTS_V2;
+                 показывается `bd-empty` с CTA «Вернуться в ленту»
+```
+
+### Actions
+
+```text
+back / cancel  → /feed
+respond CTA    → если user.onboarded === true:
+                   /respond?postId=<id>
+                 если user.onboarded !== true:
+                   setPendingAction(() => go('/post?id=<id>'))
+                   go('/onboarding')
+                 — после онбординга пользователь возвращается на
+                 этот же экран деталей с раскрытым контактом
+open from feed → клик по `[data-post-card]` карточке в /feed
+                 (но НЕ по вложенным [data-action] / button / a)
+                 → go('/post?id=<id>')
+```
+
+### Onboarding gate
+
+Контакт и реальный submit отклика недоступны до онбординга. Сами
+детали поста (author, route, цена, описание) видны всегда — чтобы
+неонбордированный пользователь мог оценить публикацию перед тем,
+как пройти онбординг.
+
+### Acceptance checklist
+
+- [ ] `/post?id=<id>` открывается через hash-роутер
+- [ ] Клик по карточке в `/feed` ведёт на `/post?id=<id>`
+- [ ] Клики по [data-action]-кнопкам внутри карточки НЕ открывают детали
+- [ ] Показываются author, city (если есть), type, from/to (для trip),
+      price, описание (body), дата (time)
+- [ ] CTA «Откликнуться» для онбордированного пользователя ведёт на
+      `/respond?postId=<id>`
+- [ ] CTA «Откликнуться» для неонбордированного пользователя
+      открывает `/onboarding`, и после его завершения возвращает
+      обратно на `/post?id=<id>`
+- [ ] Контакт автора скрыт под маской до онбординга
+- [ ] Контакт автора раскрывается только после онбординга
+- [ ] При отсутствии поста (`?id=` пустой или не найден) показывается
+      missing-fallback с CTA «Вернуться в ленту»
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `public/sw.js` precache содержит `./src/screens/post_detail.js`
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-POST-01
+
+```text
+Backend / реальный API
+Реальные контакты автора (mock-номер для seed-постов)
+Параметризованные сегменты пути /post/:id (текущий router.js
+  использует exact-match — используется `?id=` query)
+Like / comment / share действия на экране деталей
+Cloud Design render/frame gate (deferred)
+Mapbox / геометрия маршрута
+APK / push
+```
+
+---
+
 ## Planned screens (not yet implemented)
 
 These screens are tracked by #19 and should receive their own

@@ -134,6 +134,7 @@ function buildFeedPost(d) {
       price: d.price ? `${d.price} ₽` : null,
       seats: d.seats ? Number(d.seats) : null,
       body:  d.comment || null,
+      phone: d.phone || null,
     };
   }
   if (d.type === 'passenger') {
@@ -150,6 +151,7 @@ function buildFeedPost(d) {
       price: d.budget ? `${d.budget} ₽` : null,
       seats: null,
       body:  bodyParts.join('. ') || null,
+      phone: d.phone || null,
     };
   }
   if (d.type === 'marketplace' || d.type === 'service') {
