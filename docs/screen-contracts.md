@@ -2806,6 +2806,135 @@ APK / push
 
 ---
 
+## BD-POST-02 — Role-aware Post Details CTA
+
+### Identity
+
+```text
+Screen:        Post details — primary CTA, зависящий от типа поста и роли
+Route:         /post (hash-router equivalent of /post/:id)
+File:          public/src/screens/post_detail.js
+Data source:   listFeedPosts() from public/src/mock_api.js
+Parent issue:  #9
+Working issue: #153
+Recommended branch: feature/post-detail-role-aware-cta
+```
+
+### Cloud Design render/frame gate
+
+Status: deferred (наследуется от BD-POST-01).
+
+Визуально переиспользуются существующие компоненты футера
+(`respond__footer`, `bd-btn primary`, `bd-btn ghost`). Добавляется
+модификатор `.post-detail__footer--single` для случая, когда
+primary-CTA отсутствует (announcement / system) и в футере остаётся
+только полноширинная кнопка «Назад».
+
+### CTA matrix
+
+```text
+post.type === 'trip' && post.passenger !== true
+  → label:  «Написать водителю»
+  → action: /chat?tripId=<post.id>
+
+post.type === 'trip' && post.passenger === true
+  ready driver (user.role === 'driver' && driver-line-ready):
+    → label:  «Принять заказ»
+    → action: build active ride from post,
+              saveActiveRide(ride),
+              go('/active-ride?role=driver&tripId=<ride.tripId>')
+  иначе:
+    → label:  «Откликнуться»
+    → action: /respond?postId=<post.id>
+
+post.type === 'marketplace'
+  → label:  «Написать продавцу»
+  → action: /respond?postId=<post.id>
+             (chat-контракт для маркета ещё не определён)
+
+post.type === 'announcement' || post.type === 'system'
+  → primary CTA отсутствует;
+  → футер содержит только полноширинную кнопку «Назад» → /feed.
+```
+
+«Driver-line-ready» совпадает с проверкой из Feed V2 (`feed.js`):
+`user.phone && vehicleMake && vehicleModel && vehiclePlate
+ && documentsReady === true && waybillOpen === true
+ && medicalCheckPassed === true`.
+
+### Onboarding gate
+
+Поведение онбординга наследуется от BD-POST-01:
+
+```text
+если user.onboarded !== true и CTA требует действия:
+  setPendingAction(() => go('/post?id=<id>'))
+  go('/onboarding')
+после онбординга пользователь возвращается на тот же экран деталей
+контакт автора по-прежнему скрыт под маской до онбординга
+```
+
+Для announcement / system primary-CTA отсутствует, поэтому
+onboarding-gate на этом экране не срабатывает.
+
+### Active ride
+
+При CTA «Принять заказ»:
+
+```text
+ride = createDemoActiveRide({
+  tripId: `feed-${post.id}`,
+  status: RIDE_STATUS.NEW_ORDER,
+  passenger: { name: post.author, initials: <первая буква> },
+  order:     { offerPrice: post.price || '—' },
+  route:     { pickupLabel: post.from, dropoffLabel: post.to },
+});
+saveActiveRide(ride);
+go('/active-ride?role=driver&tripId=' + ride.tripId);
+```
+
+Active-ride state machine как таковая не модифицируется — используется
+существующий `createDemoActiveRide` / `saveActiveRide` из
+`public/src/ride_state.js` (тот же путь, что и в Feed V2).
+
+### Acceptance checklist
+
+- [ ] `/post?id=trip-1` (driver offer trip) показывает CTA
+      «Написать водителю» и ведёт на `/chat?tripId=trip-1`
+- [ ] `/post?id=trip-2` (passenger request) для онбордированного
+      не-водителя показывает «Откликнуться» → `/respond?postId=trip-2`
+- [ ] `/post?id=trip-2` для ready-driver показывает «Принять заказ»;
+      action сохраняет active ride и открывает
+      `/active-ride?role=driver&tripId=feed-trip-2`
+- [ ] `/post?id=mkt-1` (marketplace) показывает «Написать продавцу»
+      → `/respond?postId=mkt-1`
+- [ ] `/post?id=ann-1` (announcement) не показывает CTA
+      «Откликнуться»; футер содержит только «Назад» → `/feed`
+- [ ] `/post?id=sys-1` (system) не показывает CTA «Откликнуться»;
+      футер содержит только «Назад» → `/feed`
+- [ ] Не-онбордированный пользователь при клике по любому
+      интерактивному CTA уходит на `/onboarding` через
+      `setPendingAction(() => go('/post?id=<id>'))`
+- [ ] Контакт автора по-прежнему скрыт под маской до онбординга
+- [ ] Футер остаётся mobile-safe (safe-area-inset-bottom)
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен; router не модифицируется
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-POST-02
+
+```text
+Backend / реальный API
+Реальная отправка сообщений в /chat (mock UI)
+Изменения active-ride state machine
+Контракт чата для marketplace (используется /respond?postId=)
+Mapbox / APK / push / CSP / router
+Like / comment / share действия на экране деталей
+```
+
+---
+
 ## Planned screens (not yet implemented)
 
 These screens are tracked by #19 and should receive their own
