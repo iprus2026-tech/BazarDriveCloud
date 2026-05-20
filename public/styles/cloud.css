@@ -9874,9 +9874,15 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
   border-top: 1px solid var(--line);
+  width: 100%;
+  box-sizing: border-box;
 }
-.post-detail__btn-cancel { flex: 0 0 auto; min-width: 96px; }
-.post-detail__btn-respond { flex: 1; }
+.post-detail__btn-cancel,
+.post-detail__btn-respond {
+  min-width: 0;
+}
+.post-detail__btn-cancel { flex: 0 0 96px; }
+.post-detail__btn-respond { flex: 1 1 auto; }
 
 .post-detail__missing {
   margin-top: 24px;
