@@ -21,8 +21,10 @@ function saveResponse(data) {
 }
 
 function getDefaultMessage(vehicle) {
-  const carName = vehicle ? vehicle.name : 'моё авто';
-  return `Здравствуйте! Готов забрать к указанному времени, авто ${carName}, есть место для чемодана.`;
+  if (!vehicle) {
+    return 'Здравствуйте! Готов забрать к указанному времени, есть место для чемодана.';
+  }
+  return `Здравствуйте! Готов забрать к указанному времени, авто ${vehicle.name}, есть место для чемодана.`;
 }
 
 function getUserVehicle(u) {
@@ -241,7 +243,7 @@ function renderMarketplace(root, post) {
         <div class="respond__success-icon">${CHECK_SVG}</div>
         <h2 class="respond__success-title">Сообщение отправлено</h2>
         <p class="respond__success-body">
-          Продавец увидит ваше сообщение и сможет ответить в чате.
+          Продавец увидит ваше сообщение. Ответ придёт в раздел «Сообщения».
         </p>
         <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-back">
           Готово
@@ -260,6 +262,7 @@ function renderMarketplace(root, post) {
   const bodyEl     = root.querySelector('#respond-body');
   const footerEl   = root.querySelector('#respond-footer');
   const successEl  = root.querySelector('#respond-success');
+  const backBtn    = root.querySelector('#respond-back');
 
   msgArea.addEventListener('input', () => {
     counter.textContent = `${msgArea.value.length} / ${MAX_MSG}`;
@@ -307,10 +310,11 @@ function renderMarketplace(root, post) {
       bodyEl.hidden   = true;
       footerEl.hidden = true;
       successEl.hidden = false;
+      backBtn.hidden  = true;
     }, 600);
   });
 
-  root.querySelector('#respond-back').addEventListener('click', () => go(target));
+  backBtn.addEventListener('click', () => go(target));
   root.querySelector('#respond-cancel').addEventListener('click', () => go(target));
   root.querySelector('#respond-success-back').addEventListener('click', () => go('/feed'));
 }
@@ -463,9 +467,10 @@ function renderPassengerRide(root, post) {
         Отмена
       </button>
       <button type="submit" form="respond-form"
-              class="bd-btn primary respond__btn-submit" id="respond-submit">
+              class="bd-btn primary respond__btn-submit" id="respond-submit"
+              ${hasVehicle ? '' : 'disabled aria-disabled="true"'}>
         ${SEND_SVG}
-        <span class="respond__submit-label">Отправить отклик</span>
+        <span class="respond__submit-label">${hasVehicle ? 'Отправить отклик' : 'Добавьте авто'}</span>
       </button>
     </div>
 
@@ -474,7 +479,7 @@ function renderPassengerRide(root, post) {
         <div class="respond__success-icon">${CHECK_SVG}</div>
         <h2 class="respond__success-title">Отклик отправлен</h2>
         <p class="respond__success-body">
-          Пассажир увидит ваше предложение и сможет подтвердить поездку.
+          Пассажир увидит ваше предложение. Если он подтвердит, поездка появится в активных.
         </p>
         <div class="respond__success-actions">
           <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-chat">
@@ -499,6 +504,7 @@ function renderPassengerRide(root, post) {
   const bodyEl     = root.querySelector('#respond-body');
   const footerEl   = root.querySelector('#respond-footer');
   const successEl  = root.querySelector('#respond-success');
+  const backBtn    = root.querySelector('#respond-back');
 
   let selectedTiming = 'at_time';
 
@@ -544,21 +550,28 @@ function renderPassengerRide(root, post) {
     e.preventDefault();
     clearError();
 
-    const price   = priceInput.value.trim();
-    const message = msgArea.value.trim();
+    if (!hasVehicle) {
+      showError('Добавьте автомобиль в профиле водителя, чтобы отправить отклик');
+      return;
+    }
 
-    if (!price || Number(price) <= 0) {
+    const priceRaw = priceInput.value.trim();
+    const priceNum = Number(priceRaw);
+    const message  = msgArea.value.trim();
+
+    if (!priceRaw) {
       showError('Укажите цену поездки');
+      priceInput.focus();
+      return;
+    }
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      showError('Цена должна быть больше нуля');
       priceInput.focus();
       return;
     }
     if (!message) {
       showError('Напишите сообщение пассажиру');
       msgArea.focus();
-      return;
-    }
-    if (!hasVehicle) {
-      showError('Добавьте автомобиль в профиле водителя, чтобы отправить отклик');
       return;
     }
 
@@ -569,7 +582,7 @@ function renderPassengerRide(root, post) {
       id:           responseId,
       kind:         'passenger_response',
       requestId:    post.id,
-      driverPrice:  Number(price),
+      driverPrice:  priceNum,
       pickupTiming: selectedTiming,
       message,
       vehicleId:    vehicle.id,
@@ -587,10 +600,11 @@ function renderPassengerRide(root, post) {
       bodyEl.hidden   = true;
       footerEl.hidden = true;
       successEl.hidden = false;
+      backBtn.hidden  = true;
     }, 600);
   });
 
-  root.querySelector('#respond-back').addEventListener('click', () => go(target));
+  backBtn.addEventListener('click', () => go(target));
   root.querySelector('#respond-cancel').addEventListener('click', () => go(target));
   root.querySelector('#respond-success-back').addEventListener('click', () => go('/feed'));
 
