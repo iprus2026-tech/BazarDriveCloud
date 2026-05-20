@@ -3,39 +3,10 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 import {
-  createDemoActiveRide,
-  saveActiveRide,
-  RIDE_STATUS,
-} from '../ride_state.js';
-
-function isDriverLineReady(u) {
-  return !!(u.phone
-    && u.vehicleMake && u.vehicleModel && u.vehiclePlate
-    && u.documentsReady === true
-    && u.waybillOpen === true
-    && u.medicalCheckPassed === true);
-}
-
-function buildRideFromPost(p) {
-  const tripId = `feed-${p.id || Date.now()}`;
-  const passengerName = p.passenger ? (p.author || 'Пассажир') : 'Пассажир';
-  const overrides = {
-    tripId,
-    status: RIDE_STATUS.NEW_ORDER,
-    passenger: {
-      name: passengerName,
-      initials: initial(passengerName),
-    },
-    order: {
-      offerPrice: p.price || '—',
-    },
-    route: {
-      pickupLabel: p.from || '',
-      dropoffLabel: p.to || '',
-    },
-  };
-  return createDemoActiveRide(overrides);
-}
+  isDriverLineReady,
+  canAcceptPassengerRequest,
+  acceptPassengerRequestFromPost,
+} from '../ride_actions.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -133,11 +104,9 @@ export default async function feed() {
 
       if (actionBtn.dataset.action === 'accept-order') {
         const u = user.get();
-        if (u.role !== 'driver' || !isDriverLineReady(u)) return;
         const post = posts.find((p) => String(p.id) === String(postId));
-        if (!post || post.passenger !== true) return;
-        const ride = buildRideFromPost(post);
-        saveActiveRide(ride);
+        if (!canAcceptPassengerRequest(u, post)) return;
+        const ride = acceptPassengerRequestFromPost(post);
         go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
       }
       return;
