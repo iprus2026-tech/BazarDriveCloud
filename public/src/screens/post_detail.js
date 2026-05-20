@@ -2,6 +2,11 @@ import { listFeedPosts } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { user } from '../state.js';
+import {
+  createDemoActiveRide,
+  saveActiveRide,
+  RIDE_STATUS,
+} from '../ride_state.js';
 
 const TYPE_LABELS = {
   trip:          'Поездка',
@@ -185,10 +190,106 @@ function renderMissing(root) {
   root.querySelector('#pd-to-feed').addEventListener('click', () => go('/feed'));
 }
 
+function isDriverLineReady(u) {
+  return !!(u.phone
+    && u.vehicleMake && u.vehicleModel && u.vehiclePlate
+    && u.documentsReady === true
+    && u.waybillOpen === true
+    && u.medicalCheckPassed === true);
+}
+
+function buildRideFromPost(p) {
+  const tripId = `feed-${p.id || Date.now()}`;
+  const passengerName = p.passenger ? (p.author || 'Пассажир') : 'Пассажир';
+  return createDemoActiveRide({
+    tripId,
+    status: RIDE_STATUS.NEW_ORDER,
+    passenger: {
+      name: passengerName,
+      initials: initial(passengerName),
+    },
+    order: {
+      offerPrice: p.price || '—',
+    },
+    route: {
+      pickupLabel: p.from || '',
+      dropoffLabel: p.to || '',
+    },
+  });
+}
+
+// Decide which footer to render for a post given current user state.
+// Returns { kind: 'none' | 'respond' | 'chat' | 'accept' } where 'none'
+// means the post has no primary interaction (announcement / system).
+function pickCtaSpec(post, u) {
+  if (post.type === 'announcement' || post.type === 'system') {
+    return { kind: 'none' };
+  }
+  if (post.type === 'trip' && post.passenger === true) {
+    if (u.role === 'driver' && isDriverLineReady(u)) {
+      return { kind: 'accept', label: 'Принять заказ' };
+    }
+    return { kind: 'respond', label: 'Откликнуться' };
+  }
+  if (post.type === 'trip') {
+    return { kind: 'chat', label: 'Написать водителю' };
+  }
+  if (post.type === 'marketplace') {
+    return { kind: 'respond', label: 'Написать продавцу' };
+  }
+  return { kind: 'respond', label: 'Откликнуться' };
+}
+
+function renderFooter(spec) {
+  if (spec.kind === 'none') {
+    return `
+      <div class="respond__footer post-detail__footer post-detail__footer--single">
+        <button type="button" class="bd-btn primary post-detail__btn-back" id="pd-cancel">
+          Назад
+        </button>
+      </div>
+    `;
+  }
+  return `
+    <div class="respond__footer post-detail__footer">
+      <button type="button" class="bd-btn ghost post-detail__btn-cancel" id="pd-cancel">
+        Назад
+      </button>
+      <button type="button" class="bd-btn primary post-detail__btn-respond" id="pd-respond">
+        ${escapeHtml(spec.label)}
+      </button>
+    </div>
+  `;
+}
+
+function runCtaAction(spec, post, detailsHref) {
+  const fresh = user.get();
+  if (!fresh.onboarded) {
+    setPendingAction(() => go(detailsHref));
+    go('/onboarding');
+    return;
+  }
+  const postId = post.id || '';
+  if (spec.kind === 'chat') {
+    go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
+    return;
+  }
+  if (spec.kind === 'accept') {
+    if (fresh.role !== 'driver' || !isDriverLineReady(fresh)) return;
+    if (post.passenger !== true) return;
+    const ride = buildRideFromPost(post);
+    saveActiveRide(ride);
+    go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
+    return;
+  }
+  go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
+}
+
 function renderPost(root, post) {
   const u = user.get();
   const onboarded = !!u.onboarded;
   const detailsHref = `/post?id=${encodeURIComponent(post.id || '')}`;
+  const ctaSpec = pickCtaSpec(post, u);
 
   const metaLine = [
     post.role ? escapeHtml(post.role) : '',
@@ -235,29 +336,18 @@ function renderPost(root, post) {
       </article>
     </div>
 
-    <div class="respond__footer post-detail__footer">
-      <button type="button" class="bd-btn ghost post-detail__btn-cancel" id="pd-cancel">
-        Назад
-      </button>
-      <button type="button" class="bd-btn primary post-detail__btn-respond" id="pd-respond">
-        Откликнуться
-      </button>
-    </div>
+    ${renderFooter(ctaSpec)}
   `;
 
   root.querySelector('#pd-back').addEventListener('click', () => go('/feed'));
   root.querySelector('#pd-cancel').addEventListener('click', () => go('/feed'));
 
-  root.querySelector('#pd-respond').addEventListener('click', () => {
-    const fresh = user.get();
-    if (!fresh.onboarded) {
-      setPendingAction(() => go(detailsHref));
-      go('/onboarding');
-      return;
-    }
-    const postId = post.id || '';
-    go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
-  });
+  const respondBtn = root.querySelector('#pd-respond');
+  if (respondBtn) {
+    respondBtn.addEventListener('click', () => {
+      runCtaAction(ctaSpec, post, detailsHref);
+    });
+  }
 }
 
 export default async function postDetail() {

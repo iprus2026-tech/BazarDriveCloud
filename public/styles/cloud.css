@@ -9884,6 +9884,11 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .post-detail__btn-cancel { flex: 0 0 96px; }
 .post-detail__btn-respond { flex: 1 1 auto; }
 
+.post-detail__footer--single .post-detail__btn-back {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .post-detail__missing {
   margin-top: 24px;
 }
