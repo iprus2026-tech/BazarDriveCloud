@@ -564,8 +564,9 @@ function renderPassengerRide(root, post) {
 
     setLoading(true);
 
+    const responseId = `resp_${post.id}`;
     const response = {
-      id:           'resp_demo_001',
+      id:           responseId,
       kind:         'passenger_response',
       requestId:    post.id,
       driverPrice:  Number(price),
@@ -578,6 +579,10 @@ function renderPassengerRide(root, post) {
 
     saveResponse(response);
 
+    const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}`;
+    root.querySelector('#respond-success-chat')
+      .addEventListener('click', () => go(chatHref));
+
     setTimeout(() => {
       bodyEl.hidden   = true;
       footerEl.hidden = true;
@@ -588,8 +593,6 @@ function renderPassengerRide(root, post) {
   root.querySelector('#respond-back').addEventListener('click', () => go(target));
   root.querySelector('#respond-cancel').addEventListener('click', () => go(target));
   root.querySelector('#respond-success-back').addEventListener('click', () => go('/feed'));
-  root.querySelector('#respond-success-chat')
-    .addEventListener('click', () => go(`/chat?responseId=${encodeURIComponent('resp_demo_001')}`));
 
   if (!hasVehicle) {
     root.querySelector('#respond-goto-profile').addEventListener('click', () => go('/profile'));
