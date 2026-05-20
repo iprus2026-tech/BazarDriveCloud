@@ -98,15 +98,13 @@ function saveTripConfirmation(handoff) {
   } catch {}
 }
 
-// Decide whether this chat surface belongs to a passenger ride response
-// (vs a marketplace seller chat or a generic /chat preview). Marketplace
-// responses are saved with kind='marketplace_message' and never trigger
-// the confirmation CTA. Returns { isRide, tripId } so the caller can wire
-// up the handoff without re-reading storage.
-function resolveRideContext({ tripId, responseId }) {
-  if (tripId) {
-    return { isRide: true, tripId: String(tripId) };
-  }
+// Decide whether this chat surface belongs to a passenger-side ride
+// response. The CTA stamps role='passenger' on the handoff, so we must
+// not show it on driver-facing threads. Bare ?tripId=... URLs are also
+// used by driver inbox and active-ride entry points, so they don't
+// qualify on their own — we only unlock the CTA when a stored response
+// of kind='passenger_response' backs this chat.
+function resolveRideContext({ responseId }) {
   const response = loadResponse(responseId);
   if (response && response.kind === 'passenger_response' && response.tripId) {
     return { isRide: true, tripId: String(response.tripId) };
@@ -166,7 +164,7 @@ export default function chat() {
   const stored  = loadMessages(chatId);
   let messages  = stored ? [...stored] : MOCK_MESSAGES.map((m) => ({ ...m }));
 
-  const rideContext = resolveRideContext({ tripId, responseId });
+  const rideContext = resolveRideContext({ responseId });
 
   const root = document.createElement('section');
   root.className = 'screen screen--chat';

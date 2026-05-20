@@ -121,11 +121,16 @@ function getHashQuery() {
 
 function resolveState(raw, role, handoff) {
   if (handoff && isHandoffExpired(handoff)) return CF_STATE.EXPIRED;
-  // Accept the cross-screen "CONFIRMED" alias used by the chat → confirmation
-  // handoff. The screen still renders one of the role-specific confirmed
-  // variants — the alias just spares callers from knowing the role mapping.
+  // The "CONFIRMED" alias was introduced specifically for the chat → confirmation
+  // handoff. Honor it only when a fresh, role-matching handoff backs the URL —
+  // otherwise a direct link could fabricate a confirmed state without any
+  // chat-originated confirmation event. Fall through to the default role
+  // state when the handoff is missing or mismatched.
   if (raw === 'CONFIRMED') {
-    return role === 'driver' ? CF_STATE.DRIVER_CONFIRMED : CF_STATE.PASSENGER_CONFIRMED;
+    if (handoff && handoff.role === role) {
+      return role === 'driver' ? CF_STATE.DRIVER_CONFIRMED : CF_STATE.PASSENGER_CONFIRMED;
+    }
+    return role === 'driver' ? CF_STATE.DRIVER_WAITING : CF_STATE.PASSENGER_PENDING;
   }
   if (raw && VALID_STATES.has(raw)) return raw;
   return role === 'driver' ? CF_STATE.DRIVER_WAITING : CF_STATE.PASSENGER_PENDING;
