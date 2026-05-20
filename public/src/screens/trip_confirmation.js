@@ -127,7 +127,7 @@ function resolveState(raw, role, handoff) {
   // chat-originated confirmation event. Fall through to the default role
   // state when the handoff is missing or mismatched.
   if (raw === 'CONFIRMED') {
-    if (handoff && handoff.role === role) {
+    if (handoff && handoff.state === 'CONFIRMED' && handoff.role === role) {
       return role === 'driver' ? CF_STATE.DRIVER_CONFIRMED : CF_STATE.PASSENGER_CONFIRMED;
     }
     return role === 'driver' ? CF_STATE.DRIVER_WAITING : CF_STATE.PASSENGER_PENDING;
