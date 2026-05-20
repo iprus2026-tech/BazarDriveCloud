@@ -144,6 +144,8 @@ export default function chat() {
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
           <span>${escapeHtml(MOCK_TRIP.from)} → ${escapeHtml(MOCK_TRIP.to)}</span>
+          <span class="inbox-item__status inbox-item__status--success chat__trip-status"
+                aria-label="Статус поездки">Принят</span>
         </div>
         <div class="chat__trip-meta">${escapeHtml(MOCK_TRIP.when)} · ${MOCK_TRIP.seats} места</div>
       </div>

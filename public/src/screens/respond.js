@@ -476,9 +476,14 @@ function renderPassengerRide(root, post) {
         <p class="respond__success-body">
           Пассажир увидит ваше предложение и сможет подтвердить поездку.
         </p>
-        <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-back">
-          Готово
-        </button>
+        <div class="respond__success-actions">
+          <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-chat">
+            Открыть чат
+          </button>
+          <button type="button" class="bd-btn ghost respond__success-btn" id="respond-success-back">
+            В ленту
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -583,6 +588,8 @@ function renderPassengerRide(root, post) {
   root.querySelector('#respond-back').addEventListener('click', () => go(target));
   root.querySelector('#respond-cancel').addEventListener('click', () => go(target));
   root.querySelector('#respond-success-back').addEventListener('click', () => go('/feed'));
+  root.querySelector('#respond-success-chat')
+    .addEventListener('click', () => go(`/chat?responseId=${encodeURIComponent('resp_demo_001')}`));
 
   if (!hasVehicle) {
     root.querySelector('#respond-goto-profile').addEventListener('click', () => go('/profile'));

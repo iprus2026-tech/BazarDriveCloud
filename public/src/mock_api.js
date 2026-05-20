@@ -161,58 +161,136 @@ export async function listMyPosts() {
   return listMyPostsSync();
 }
 
-// ── Inbox foundation (BD-RIDE-INBOX-01) ────────────────────────
+// ── Inbox foundation (BD-RIDE-INBOX-01 + BD-RIDE-INBOX-02) ─────
 // Lightweight, in-memory mock for the "Входящие" hub.
-//   kind: 'response' | 'message' | 'ride'
-//   tab : virtual grouping key (responses | messages | rides)
-//   href: target hash route the row opens
-//   unread: whether the row should be counted in the unread badge
+//   kind:    'response' | 'message' | 'ride'
+//   tab:     virtual grouping key (responses | messages | rides)
+//   role:    'passenger' | 'driver' — viewer's role in this thread
+//   actor:   counterparty name (driver name for passenger view, etc.)
+//   actorRole: display label («Водитель», «Пассажир»)
+//   route:   { from, to } — ride/order summary
+//   status:  normalized status key — see STATUS_LABEL/STATUS_TONE
+//   summary: last message / response summary (one-liner)
+//   time:    mock recency string
+//   unread:  affects unread badge + visual accent
+//   primary: { label, href }   — primary safe action
+//   secondary: { label, href } — optional helper action (often Chat)
+//   href:    fallback open-target if no primary action
 const INBOX_ITEMS_V1 = [
   {
-    id:      'inbox-response-1',
-    kind:    'response',
-    tab:     'responses',
-    title:   'Новый отклик от Рустам К.',
-    preview: 'Подъеду к подъезду №3, позвоню. Цена 950 ₽, подача 4 мин.',
-    actor:   'Рустам К.',
-    time:    '2 мин',
-    unread:  true,
-    href:    '/respond?postId=trip-2',
+    id:        'inbox-response-1',
+    kind:      'response',
+    tab:       'responses',
+    role:      'passenger',
+    actor:     'Рустам К.',
+    actorRole: 'Водитель · ★ 4,92',
+    route:     { from: 'Внуково', to: 'Парк Победы' },
+    status:    'NEW_RESPONSE',
+    summary:   'Подъеду к подъезду №3, позвоню. Цена 950 ₽, подача 4 мин.',
+    time:      '2 мин',
+    unread:    true,
+    primary:   { label: 'Посмотреть отклик', href: '/responses?postId=trip-2&state=list' },
+    secondary: { label: 'В чат',             href: '/chat?responseId=response_1' },
   },
   {
-    id:      'inbox-message-1',
-    kind:    'message',
-    tab:     'messages',
-    title:   'Сообщение в чате · Анна М.',
-    preview: 'Спасибо! Буду ждать у выхода №2, ориентир — кофейня.',
-    actor:   'Анна М.',
-    time:    '14 мин',
-    unread:  true,
-    href:    '/chat',
+    id:        'inbox-response-2',
+    kind:      'response',
+    tab:       'responses',
+    role:      'driver',
+    actor:     'Анна М.',
+    actorRole: 'Пассажир',
+    route:     { from: 'Аэропорт Внуково', to: 'м. Парк Победы' },
+    status:    'WAITING_REPLY',
+    summary:   'Готова к 07:00, 1 чемодан. Подтвердите подачу, пожалуйста.',
+    time:      '8 мин',
+    unread:    true,
+    primary:   { label: 'Ответить пассажиру', href: '/respond?postId=trip-2' },
+    secondary: { label: 'В чат',              href: '/chat?responseId=response_2' },
   },
   {
-    id:      'inbox-ride-1',
-    kind:    'ride',
-    tab:     'rides',
-    title:   'Принятый заказ · Внуково → Парк Победы',
-    preview: 'Водитель подтвердил поездку. Откройте публикацию для деталей.',
-    actor:   'Анна М.',
-    time:    '1 ч',
-    unread:  false,
-    href:    '/post?id=trip-2',
+    id:        'inbox-message-1',
+    kind:      'message',
+    tab:       'messages',
+    role:      'driver',
+    actor:     'Анна М.',
+    actorRole: 'Пассажир',
+    route:     { from: 'Аэропорт Внуково', to: 'м. Парк Победы' },
+    status:    'ACCEPTED',
+    summary:   'Спасибо! Буду ждать у выхода №2, ориентир — кофейня.',
+    time:      '14 мин',
+    unread:    true,
+    primary:   { label: 'Открыть чат',       href: '/chat?tripId=trip-2' },
+    secondary: { label: 'К активной поездке', href: '/active-ride?role=driver&tripId=trip-2&status=DRIVER_EN_ROUTE' },
   },
   {
-    id:      'inbox-ride-2',
-    kind:    'ride',
-    tab:     'rides',
-    title:   'Активная поездка · в пути',
-    preview: 'Вы в роли водителя. Перейдите к экрану поездки, чтобы продолжить.',
-    actor:   'Анна М.',
-    time:    'сейчас',
-    unread:  true,
-    href:    '/active-ride?role=driver&tripId=feed-trip-2&status=IN_PROGRESS',
+    id:        'inbox-ride-1',
+    kind:      'ride',
+    tab:       'rides',
+    role:      'passenger',
+    actor:     'Рустам К.',
+    actorRole: 'Водитель · Toyota Camry',
+    route:     { from: 'ТЦ Мега', to: 'Аэропорт, терминал B' },
+    status:    'DRIVER_EN_ROUTE',
+    summary:   'Водитель в пути · подача через 4 мин.',
+    time:      '1 мин',
+    unread:    false,
+    primary:   { label: 'К поездке',  href: '/active-ride?role=passenger&status=DRIVER_EN_ROUTE' },
+    secondary: { label: 'Открыть чат', href: '/chat?tripId=trip-mega-vnukovo' },
+  },
+  {
+    id:        'inbox-ride-2',
+    kind:      'ride',
+    tab:       'rides',
+    role:      'driver',
+    actor:     'Анна М.',
+    actorRole: 'Пассажир',
+    route:     { from: 'Внуково', to: 'Парк Победы' },
+    status:    'IN_PROGRESS',
+    summary:   'Везёте пассажира. До места ~28 мин.',
+    time:      'сейчас',
+    unread:    true,
+    primary:   { label: 'Продолжить поездку', href: '/active-ride?role=driver&tripId=feed-trip-2&status=IN_PROGRESS' },
+    secondary: { label: 'В чат',              href: '/chat?tripId=feed-trip-2' },
+  },
+  {
+    id:        'inbox-ride-3',
+    kind:      'ride',
+    tab:       'rides',
+    role:      'passenger',
+    actor:     'Сергей Л.',
+    actorRole: 'Водитель · ★ 4,78',
+    route:     { from: 'Казань', to: 'Москва' },
+    status:    'COMPLETED',
+    summary:   'Поездка завершена. Оставьте оценку, если ещё не делали.',
+    time:      'вчера',
+    unread:    false,
+    primary:   { label: 'Открыть чат',     href: '/chat?tripId=trip-3' },
+    secondary: { label: 'Посмотреть пост', href: '/post?id=trip-3' },
   },
 ];
+
+// Normalized status copy for the ride/order flow. Matches active-ride
+// language so inbox surfaces stay coherent with the live flow screens.
+export const INBOX_STATUS_LABEL = {
+  NEW_RESPONSE:    'Новый отклик',
+  WAITING_REPLY:   'Ждём ответа',
+  ACCEPTED:        'Принят',
+  DRIVER_EN_ROUTE: 'Водитель едет',
+  IN_PROGRESS:     'В пути',
+  COMPLETED:       'Завершено',
+  CANCELED:        'Отменено',
+};
+
+// Visual tone for status badges — maps to existing bd-badge variants.
+export const INBOX_STATUS_TONE = {
+  NEW_RESPONSE:    'accent',
+  WAITING_REPLY:   'warning',
+  ACCEPTED:        'success',
+  DRIVER_EN_ROUTE: 'info',
+  IN_PROGRESS:     'info',
+  COMPLETED:       'muted',
+  CANCELED:        'danger',
+};
 
 export async function listInboxItems() {
   // Return a defensive copy so screens cannot mutate the seed.
