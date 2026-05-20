@@ -1,7 +1,14 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 
-const CHAT_KEY = 'bazardrive.chat.v1';
+const CHAT_KEY          = 'bazardrive.chat.v1';
+const RESPONSES_KEY     = 'bazardrive.responses.v1';
+const TRIP_CONFIRM_KEY  = 'bazardrive.trip_confirmation.v1';
+
+// Handoff TTL: a confirmation handed off from chat to /trip-confirmation
+// is considered "fresh" for this window. Past it, /trip-confirmation will
+// render the EXPIRED variant instead of pretending the link is still live.
+const HANDOFF_TTL_MS = 30 * 60 * 1000;
 
 const MOCK_DRIVER = {
   initials: 'РК',
@@ -66,6 +73,45 @@ function saveMessages(chatId, messages) {
   } catch {}
 }
 
+function loadResponse(responseId) {
+  if (!responseId) return null;
+  try {
+    const raw = localStorage.getItem(RESPONSES_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+    const r = map[responseId];
+    return r && typeof r === 'object' ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTripConfirmation(handoff) {
+  if (!handoff || !handoff.tripId) return;
+  try {
+    const raw = localStorage.getItem(TRIP_CONFIRM_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const map = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    map[handoff.tripId] = handoff;
+    localStorage.setItem(TRIP_CONFIRM_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+// Decide whether this chat surface belongs to a passenger-side ride
+// response. The CTA stamps role='passenger' on the handoff, so we must
+// not show it on driver-facing threads. Bare ?tripId=... URLs are also
+// used by driver inbox and active-ride entry points, so they don't
+// qualify on their own — we only unlock the CTA when a stored response
+// of kind='passenger_response' backs this chat.
+function resolveRideContext({ responseId }) {
+  const response = loadResponse(responseId);
+  if (response && response.kind === 'passenger_response' && response.tripId) {
+    return { isRide: true, tripId: String(response.tripId) };
+  }
+  return { isRide: false, tripId: null };
+}
+
 function createMsgEl(msg) {
   const dir  = msg.dir === 'in' ? 'in' : 'out';
   const wrap = document.createElement('div');
@@ -118,6 +164,8 @@ export default function chat() {
   const stored  = loadMessages(chatId);
   let messages  = stored ? [...stored] : MOCK_MESSAGES.map((m) => ({ ...m }));
 
+  const rideContext = resolveRideContext({ responseId });
+
   const root = document.createElement('section');
   root.className = 'screen screen--chat';
 
@@ -150,6 +198,15 @@ export default function chat() {
         <div class="chat__trip-meta">${escapeHtml(MOCK_TRIP.when)} · ${MOCK_TRIP.seats} места</div>
       </div>
       <div class="chat__trip-price">${escapeHtml(MOCK_TRIP.price)}</div>
+    </div>
+
+    <div class="chat__confirm-bar" id="chat-confirm-bar"${rideContext.isRide ? '' : ' hidden'}>
+      <button type="button" class="bd-btn primary chat__confirm-btn" id="chat-confirm">
+        Подтвердить поездку
+      </button>
+      <p class="chat__confirm-hint">
+        После подтверждения откроется активная поездка.
+      </p>
     </div>
 
     <div class="chat__messages" id="chat-messages"
@@ -273,6 +330,28 @@ export default function chat() {
 
   // ── Back ────────────────────────────────────────────────────────
   root.querySelector('#chat-back').addEventListener('click', () => go('/feed'));
+
+  // ── Trip confirmation CTA (ride context only) ───────────────────
+  if (rideContext.isRide && rideContext.tripId) {
+    const confirmBtn = root.querySelector('#chat-confirm');
+    confirmBtn.addEventListener('click', () => {
+      const now = Date.now();
+      saveTripConfirmation({
+        tripId:     rideContext.tripId,
+        responseId: responseId || null,
+        role:       'passenger',
+        state:      'CONFIRMED',
+        createdAt:  now,
+        expiresAt:  now + HANDOFF_TTL_MS,
+      });
+      const params = new URLSearchParams({
+        tripId: rideContext.tripId,
+        role:   'passenger',
+        state:  'CONFIRMED',
+      });
+      go(`/trip-confirmation?${params.toString()}`);
+    });
+  }
 
   return root;
 }
