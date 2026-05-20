@@ -161,6 +161,64 @@ export async function listMyPosts() {
   return listMyPostsSync();
 }
 
+// ── Inbox foundation (BD-RIDE-INBOX-01) ────────────────────────
+// Lightweight, in-memory mock for the "Входящие" hub.
+//   kind: 'response' | 'message' | 'ride'
+//   tab : virtual grouping key (responses | messages | rides)
+//   href: target hash route the row opens
+//   unread: whether the row should be counted in the unread badge
+const INBOX_ITEMS_V1 = [
+  {
+    id:      'inbox-response-1',
+    kind:    'response',
+    tab:     'responses',
+    title:   'Новый отклик от Рустам К.',
+    preview: 'Подъеду к подъезду №3, позвоню. Цена 950 ₽, подача 4 мин.',
+    actor:   'Рустам К.',
+    time:    '2 мин',
+    unread:  true,
+    href:    '/respond',
+  },
+  {
+    id:      'inbox-message-1',
+    kind:    'message',
+    tab:     'messages',
+    title:   'Сообщение в чате · Анна М.',
+    preview: 'Спасибо! Буду ждать у выхода №2, ориентир — кофейня.',
+    actor:   'Анна М.',
+    time:    '14 мин',
+    unread:  true,
+    href:    '/chat',
+  },
+  {
+    id:      'inbox-ride-1',
+    kind:    'ride',
+    tab:     'rides',
+    title:   'Принятый заказ · Внуково → Парк Победы',
+    preview: 'Водитель подтвердил поездку. Откройте публикацию для деталей.',
+    actor:   'Анна М.',
+    time:    '1 ч',
+    unread:  false,
+    href:    '/post?id=trip-2',
+  },
+  {
+    id:      'inbox-ride-2',
+    kind:    'ride',
+    tab:     'rides',
+    title:   'Активная поездка · в пути',
+    preview: 'Вы в роли водителя. Перейдите к экрану поездки, чтобы продолжить.',
+    actor:   'Анна М.',
+    time:    'сейчас',
+    unread:  true,
+    href:    '/active-ride?role=driver&tripId=feed-trip-2',
+  },
+];
+
+export async function listInboxItems() {
+  // Return a defensive copy so screens cannot mutate the seed.
+  return INBOX_ITEMS_V1.map((item) => ({ ...item }));
+}
+
 // ── Legacy posts (classic announcements board) ─────────────────
 const STORE_KEY = 'bazardrive.posts.v1';
 
