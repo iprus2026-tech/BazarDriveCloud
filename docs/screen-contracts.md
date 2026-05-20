@@ -3133,6 +3133,104 @@ BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 
 ---
 
+## BD-RIDE-INBOX-02 — Inbox polish
+
+### Identity
+
+```text
+Screen:        Inbox — единая лента откликов, сообщений и поездок
+Route:         /inbox (опционально `?tab=responses|messages|rides`)
+File:          public/src/screens/inbox.js
+Data source:   listInboxItems() из public/src/mock_api.js
+               INBOX_STATUS_LABEL / INBOX_STATUS_TONE (нормализованный язык)
+Parent issue:  BD-RIDE-INBOX-02
+```
+
+### Purpose
+
+Полировочный pass поверх существующего inbox-хаба. Не добавляет backend,
+не вводит push, не трогает active-ride state-machine — только приводит
+карточки откликов / сообщений / поездок к одному визуальному контракту
+Cloud Design и нормализует статусы под язык ride-флоу.
+
+### Card hierarchy
+
+```text
+[avatar]  [имя · роль]                 [status badge]
+          [тип · вторичная мета]       [время]
+[маршрут from → to]
+[summary последнего сообщения / отклика]
+[primary CTA]                          [secondary CTA]
+```
+
+Unread-state — карточка получает `.inbox-item--unread` (мягкий оранжевый
+оттенок) и точку рядом с именем.
+
+### Normalized status palette
+
+```text
+NEW_RESPONSE    → «Новый отклик»  (accent)
+WAITING_REPLY   → «Ждём ответа»   (warning)
+ACCEPTED        → «Принят»        (success)
+DRIVER_EN_ROUTE → «Водитель едет» (info)
+IN_PROGRESS     → «В пути»        (info)
+COMPLETED       → «Завершено»     (muted)
+CANCELED        → «Отменено»      (danger)
+```
+
+Тот же язык используется в chat trip-bar (status pill) — чтобы
+переход inbox → chat не разрывал контекст.
+
+### Role-aware actions
+
+```text
+Пассажир:
+  Новый отклик     → primary «Посмотреть отклик» → /responses
+                     secondary «В чат»            → /chat
+  Активная поездка → primary «К поездке»         → /active-ride?role=passenger
+                     secondary «Открыть чат»     → /chat
+
+Водитель:
+  Ожидание ответа  → primary «Ответить пассажиру» → /respond
+                     secondary «В чат»            → /chat
+  Активная поездка → primary «Продолжить поездку» → /active-ride?role=driver
+                     secondary «В чат»            → /chat
+```
+
+### Empty state
+
+Calm Cloud Design card (`.inbox-empty`) с круглым accent-глифом,
+объясняющей подсказкой по активной вкладке и CTA «Перейти в ленту» —
+без тупиков.
+
+### Out of scope for BD-RIDE-INBOX-02
+
+```text
+backend API / real-time канал
+push-уведомления
+изменения active_ride.js / active_ride_passenger.js
+изменения ride_state.js
+Mapbox / payment / auth
+```
+
+### Acceptance checklist
+
+- [ ] `/inbox` рендерит карточки с consistent Cloud Design hierarchy
+      (avatar + name/role + status badge + route + summary + actions)
+- [ ] Status badges используют нормализованный язык ride-флоу
+- [ ] Unread state виден (точка у имени + мягкий accent-фон)
+- [ ] Empty state имеет CTA «Перейти в ленту»
+- [ ] Primary / secondary actions route в /respond, /chat, /active-ride,
+      /responses, /post — без тупиков
+- [ ] Passenger / driver копия чётко разведена
+- [ ] active_ride.js и active_ride_passenger.js не модифицированы
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+---
+
 ## Documentation hygiene invariant
 
 Этот раздел применяется ко всем контрактам выше и совпадает с

@@ -3923,6 +3923,12 @@ body {
 .respond__success .bd-btn {
   width: 100%;
 }
+.respond__success-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 
 /* ═══════════════════════════════════════════════════════════
@@ -4020,6 +4026,7 @@ body {
 }
 
 .chat__trip-emoji { font-size: 14px; }
+.chat__trip-status { margin-left: 4px; }
 
 .chat__trip-meta {
   font-size: 12px;
@@ -9899,3 +9906,200 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .feed-list [data-post-card] {
   cursor: pointer;
 }
+
+/* ── Inbox V2 polish (BD-RIDE-INBOX-02) ─────────────────────
+   Hub for responses, chat messages and ride events. Uses Cloud
+   Design tokens; status palette mirrors active-ride flow. */
+.screen--inbox { display: flex; flex-direction: column; min-height: 0; }
+
+.inbox-list {
+  flex: 1;
+  min-height: 0;
+  padding: 12px var(--pad) 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inbox-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  position: relative;
+  transition: border-color .15s ease, background .15s ease;
+}
+.inbox-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.inbox-item--unread {
+  border-color: rgba(255, 107, 53, 0.35);
+  background: linear-gradient(180deg, rgba(255,107,53,0.05), var(--bg-1) 60%);
+}
+
+.inbox-item__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.inbox-item__avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.inbox-item__head-info {
+  flex: 1;
+  min-width: 0;
+}
+.inbox-item__name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.inbox-item__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-item__unread-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.18);
+}
+.inbox-item__meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-item__head-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.inbox-item__time {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.inbox-item__status {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: var(--bg-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.inbox-item__status--accent  { background: var(--accent-soft);            color: var(--accent); }
+.inbox-item__status--warning { background: rgba(251,191,36,0.14);         color: var(--warning); }
+.inbox-item__status--success { background: rgba(74,222,128,0.12);         color: var(--success); }
+.inbox-item__status--info    { background: rgba(96,165,250,0.14);         color: var(--info); }
+.inbox-item__status--danger  { background: rgba(248,113,113,0.14);        color: var(--danger); }
+.inbox-item__status--muted   { background: var(--bg-2);                   color: var(--text-3); }
+
+.inbox-item__route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.inbox-item__route-from,
+.inbox-item__route-to {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-item__route-from { color: var(--text); font-weight: 500; }
+.inbox-item__route-arrow {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.inbox-item__summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.inbox-item__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+.inbox-item__btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+.inbox-item__btn--secondary { flex: 0 1 auto; }
+
+/* Empty state — calm Cloud Design card with a clear path back. */
+.inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 36px 20px;
+  text-align: center;
+}
+.inbox-empty__glyph {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.inbox-empty__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.inbox-empty__body {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-2);
+  max-width: 280px;
+  line-height: 1.5;
+}
+.inbox-empty__cta { align-self: stretch; max-width: 260px; }

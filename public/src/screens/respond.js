@@ -476,9 +476,14 @@ function renderPassengerRide(root, post) {
         <p class="respond__success-body">
           Пассажир увидит ваше предложение и сможет подтвердить поездку.
         </p>
-        <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-back">
-          Готово
-        </button>
+        <div class="respond__success-actions">
+          <button type="button" class="bd-btn primary respond__success-btn" id="respond-success-chat">
+            Открыть чат
+          </button>
+          <button type="button" class="bd-btn ghost respond__success-btn" id="respond-success-back">
+            В ленту
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -559,8 +564,9 @@ function renderPassengerRide(root, post) {
 
     setLoading(true);
 
+    const responseId = `resp_${post.id}`;
     const response = {
-      id:           'resp_demo_001',
+      id:           responseId,
       kind:         'passenger_response',
       requestId:    post.id,
       driverPrice:  Number(price),
@@ -572,6 +578,10 @@ function renderPassengerRide(root, post) {
     };
 
     saveResponse(response);
+
+    const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}`;
+    root.querySelector('#respond-success-chat')
+      .addEventListener('click', () => go(chatHref));
 
     setTimeout(() => {
       bodyEl.hidden   = true;
