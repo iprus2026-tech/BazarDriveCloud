@@ -112,6 +112,20 @@ function persistMyPosts(list) {
   try { localStorage.setItem(MY_POSTS_KEY, JSON.stringify(list)); } catch {}
 }
 
+// BD-AUTH-BOUNDARY-01 — "Мои публикации" is the user's own authored feed
+// posts (createdByCurrentUser=true). Wiped on logout / local reset so a
+// new local identity does not inherit posts authored by the previous one.
+// Also strips the in-memory hydrated entries so the feed renders cleanly
+// without a reload.
+export function clearMyPostsStore() {
+  try { localStorage.removeItem(MY_POSTS_KEY); } catch {}
+  for (let i = FEED_POSTS_V2.length - 1; i >= 0; i--) {
+    if (FEED_POSTS_V2[i] && FEED_POSTS_V2[i].createdByCurrentUser === true) {
+      FEED_POSTS_V2.splice(i, 1);
+    }
+  }
+}
+
 // Hydrate on module load: re-inject persisted owned posts so they appear
 // on the feed and in «Мои публикации» across reloads. Persisted store is
 // already newest-first; spread-unshift preserves that order (iterating +

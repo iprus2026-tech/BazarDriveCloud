@@ -73,6 +73,24 @@ function saveMessages(chatId, messages) {
   } catch {}
 }
 
+// BD-AUTH-BOUNDARY-01 — chat messages are scoped to the local identity
+// (driver/passenger thread for a specific trip). Wiped on logout / local
+// reset by storage_boundary.clearUserScopedStorage().
+export function clearChatStore() {
+  try { localStorage.removeItem(CHAT_KEY); } catch {}
+}
+
+// Same key is referenced from active_ride.js; we still want to clear the
+// per-id response map and the trip-confirmation handoff that this screen
+// writes, since both are user-trip-specific.
+export function clearChatResponses() {
+  try { localStorage.removeItem(RESPONSES_KEY); } catch {}
+}
+
+export function clearTripConfirmationMap() {
+  try { localStorage.removeItem(TRIP_CONFIRM_KEY); } catch {}
+}
+
 function loadResponse(responseId) {
   if (!responseId) return null;
   try {

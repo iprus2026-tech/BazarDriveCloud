@@ -21,6 +21,16 @@ function saveResponse(data) {
   try { localStorage.setItem(RESPOND_KEY, JSON.stringify(data)); } catch {}
 }
 
+// BD-AUTH-BOUNDARY-01 — respond drafts + the keyed responses map both
+// hold user-specific trip-response data (which post the local user is
+// responding to, with what message/price). Cleared on logout / local
+// reset so a passenger can't see a previous driver's in-flight response
+// after switching identity on the same device.
+export function clearRespondStore() {
+  try { localStorage.removeItem(RESPOND_KEY); } catch {}
+  try { localStorage.removeItem(RESPONSES_KEY); } catch {}
+}
+
 // Keyed-by-id store so downstream screens (chat, trip-confirmation) can
 // look up a response by its stable id without depending on the "last
 // response wins" semantics of RESPOND_KEY.
