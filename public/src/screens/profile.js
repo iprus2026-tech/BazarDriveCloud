@@ -679,7 +679,7 @@ function renderPassenger(root, u) {
       ${myPostsSectionHtml()}
 
       <!-- 7d. Ride history (BD-RIDE-HISTORY-01) -->
-      ${historySectionHtml('passenger')}
+      ${historySectionHtml()}
 
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
@@ -1155,10 +1155,11 @@ function wireMyPostsSection(root) {
 
 // ── Ride history (BD-RIDE-HISTORY-01) ─────────────────────────────────────────
 // Renders the locally-persisted ride history (see ride_history.js) inside the
-// Profile screen. Read-only surface — no backend, no auth. Entries are
-// filtered by the current user's role and sorted newest-first by savedAt /
-// completedAt. Each entry is a card with route, counterparty, fare and a
-// timestamp. Empty state renders an inline empty card.
+// Profile screen. Read-only surface — no backend, no auth. Both passenger and
+// driver entries are surfaced together, sorted newest-first by savedAt /
+// completedAt, so a user who has acted in both roles sees a single mixed
+// list. Each card carries a small role badge and a role-specific body. Empty
+// state renders an inline empty card.
 
 const PROFILE_HISTORY_LIMIT = 20;
 
@@ -1212,6 +1213,13 @@ function historyVehicleText(vehicle) {
   return parts.join(' · ');
 }
 
+function historyRoleBadgeHtml(role) {
+  if (role === 'driver') {
+    return `<span class="bd-badge profile-history__role profile-history__role--driver">Водитель</span>`;
+  }
+  return `<span class="bd-badge profile-history__role profile-history__role--passenger">Пассажир</span>`;
+}
+
 function passengerHistoryEntryHtml(entry) {
   const pickup  = escapeHtml(entry?.route?.pickupLabel  || '—');
   const dropoff = escapeHtml(entry?.route?.dropoffLabel || '—');
@@ -1223,6 +1231,10 @@ function passengerHistoryEntryHtml(entry) {
   const when    = formatHistoryDate(historyEntryTimestamp(entry));
   return `
     <article class="bd-card-tight profile-history__card">
+      <div class="profile-history__head">
+        ${historyRoleBadgeHtml('passenger')}
+        ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
+      </div>
       <p class="profile-history__route">
         <span class="profile-history__route-from">${pickup}</span>
         <span class="profile-history__route-arrow" aria-hidden="true">→</span>
@@ -1237,11 +1249,11 @@ function passengerHistoryEntryHtml(entry) {
         <span class="profile-history__meta-label">Автомобиль</span>
         <span class="profile-history__meta-value">${escapeHtml(vehicle)}</span>
       </div>` : ''}
+      ${(fare || rating !== null) ? `
       <div class="profile-history__footer">
         ${fare ? `<span class="profile-history__fare">${escapeHtml(fare)}</span>` : ''}
         ${rating !== null ? `<span class="profile-history__rating" aria-label="Оценка ${rating}">${SVG_STAR}${rating.toFixed(1)}</span>` : ''}
-        ${when ? `<span class="profile-history__when">${escapeHtml(when)}</span>` : ''}
-      </div>
+      </div>` : ''}
     </article>
   `;
 }
@@ -1256,6 +1268,10 @@ function driverHistoryEntryHtml(entry) {
   const when      = formatHistoryDate(historyEntryTimestamp(entry));
   return `
     <article class="bd-card-tight profile-history__card">
+      <div class="profile-history__head">
+        ${historyRoleBadgeHtml('driver')}
+        ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
+      </div>
       <p class="profile-history__route">
         <span class="profile-history__route-from">${pickup}</span>
         <span class="profile-history__route-arrow" aria-hidden="true">→</span>
@@ -1275,18 +1291,22 @@ function driverHistoryEntryHtml(entry) {
         <span class="profile-history__meta-label">Доход</span>
         <span class="profile-history__meta-value">${escapeHtml(net)}</span>
       </div>` : ''}
-      ${when ? `
-      <div class="profile-history__footer">
-        <span class="profile-history__when">${escapeHtml(when)}</span>
-      </div>` : ''}
     </article>
   `;
 }
 
-function historySectionHtml(role) {
+function historyEntryHtml(entry) {
+  return entry?.role === 'driver'
+    ? driverHistoryEntryHtml(entry)
+    : passengerHistoryEntryHtml(entry);
+}
+
+function historySectionHtml() {
   let entries = [];
   try {
-    entries = loadRideHistory().filter((e) => e && e.role === role);
+    entries = loadRideHistory().filter(
+      (e) => e && (e.role === 'passenger' || e.role === 'driver')
+    );
   } catch {
     entries = [];
   }
@@ -1305,13 +1325,10 @@ function historySectionHtml(role) {
         <p class="profile-history__empty-text">Завершённые поездки будут появляться здесь.</p>
       </div>`;
   }
-  const renderEntry = role === 'driver'
-    ? driverHistoryEntryHtml
-    : passengerHistoryEntryHtml;
   return `
     ${header}
     <div class="profile-history__list">
-      ${sorted.map(renderEntry).join('')}
+      ${sorted.map(historyEntryHtml).join('')}
     </div>`;
 }
 
@@ -1830,7 +1847,7 @@ function renderDriver(root, u) {
         ${readinessHtml(items)}
         ${taxiPermitPanelHtml(u)}
         ${myPostsSectionHtml()}
-        ${historySectionHtml('driver')}
+        ${historySectionHtml()}
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
