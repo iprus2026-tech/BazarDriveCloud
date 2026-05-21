@@ -8,7 +8,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
-import { loadRideHistory } from '../ride_history.js';
+import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { performLocalLogout } from '../mock_auth.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -784,6 +784,7 @@ function renderPassenger(root, u) {
   const rerender = () => renderPassenger(root, user.get());
 
   wireMyPostsSection(root);
+  wireHistorySection(root);
 
   root.querySelector('#pfp-onboard-cta')?.addEventListener('click', () => {
     user.set({
@@ -1291,35 +1292,123 @@ function historyEntryHtml(entry) {
     : passengerHistoryEntryHtml(entry);
 }
 
-function historySectionHtml() {
-  let entries = [];
+// BD-RIDE-HISTORY-03 — defensive per-entry render. A single broken entry
+// inside the list must not poison the whole section: invalid roles are
+// already filtered out upstream, this wrapper additionally swallows any
+// throw from the inner HTML builders so the surviving entries still render.
+function safeHistoryEntryHtml(entry) {
   try {
-    entries = loadRideHistory().filter(
-      (e) => e && (e.role === 'passenger' || e.role === 'driver')
-    );
+    const html = historyEntryHtml(entry);
+    return typeof html === 'string' && html.trim() ? html : '';
   } catch {
-    entries = [];
+    return '';
   }
-  const sorted = sortHistoryEntriesDesc(entries).slice(0, PROFILE_HISTORY_LIMIT);
-  const count  = sorted.length;
-  const header = `
+}
+
+function historyHeaderHtml(count) {
+  return `
     <div class="profile-history__header">
       <p class="pfp-section-title profile-history__title">История поездок</p>
       ${count > 0 ? `<span class="bd-badge profile-history__count">${escapeHtml(String(count))}</span>` : ''}
     </div>`;
-  if (count === 0) {
-    return `
-      ${header}
+}
+
+function historyEmptyBodyHtml() {
+  return `
       <div class="bd-card profile-history__empty">
         <p class="profile-history__empty-title">Истории пока нет</p>
-        <p class="profile-history__empty-text">Завершённые поездки будут появляться здесь.</p>
+        <p class="profile-history__empty-text">Завершённые поездки появятся здесь после первой поездки.</p>
+        <div class="profile-history__empty-actions">
+          <button type="button" class="bd-btn primary profile-history__empty-btn" id="profile-history-empty-new">Создать поездку</button>
+          <button type="button" class="bd-btn profile-history__empty-btn" id="profile-history-empty-feed">В ленту</button>
+        </div>
       </div>`;
-  }
+}
+
+function historyErrorBodyHtml() {
   return `
-    ${header}
+      <div class="bd-card profile-history__error" role="alert">
+        <p class="profile-history__error-title">Историю не удалось прочитать</p>
+        <p class="profile-history__error-text">Можно очистить локальную историю и продолжить пользоваться приложением.</p>
+        <div class="profile-history__error-actions">
+          <button type="button" class="bd-btn danger profile-history__error-btn" id="profile-history-error-clear">Очистить локальную историю</button>
+        </div>
+      </div>`;
+}
+
+function historySectionHtml() {
+  let status = 'empty';
+  let rawEntries = [];
+  try {
+    const result = readRideHistoryStatus();
+    status = result.status;
+    rawEntries = Array.isArray(result.entries) ? result.entries : [];
+  } catch {
+    status = 'malformed';
+    rawEntries = [];
+  }
+
+  // Malformed storage: surface the friendly error card; do not attempt to
+  // render any rows even if some entries happened to slip through.
+  if (status === 'malformed') {
+    return `<section class="profile-history" id="profile-history-section">
+      ${historyHeaderHtml(0)}
+      ${historyErrorBodyHtml()}
+    </section>`;
+  }
+
+  const entries = rawEntries.filter(
+    (e) => e && (e.role === 'passenger' || e.role === 'driver')
+  );
+  const sorted = sortHistoryEntriesDesc(entries).slice(0, PROFILE_HISTORY_LIMIT);
+  const cards  = sorted.map(safeHistoryEntryHtml).filter((html) => html);
+  const count  = cards.length;
+
+  if (count === 0) {
+    return `<section class="profile-history" id="profile-history-section">
+      ${historyHeaderHtml(0)}
+      ${historyEmptyBodyHtml()}
+    </section>`;
+  }
+  return `<section class="profile-history" id="profile-history-section">
+    ${historyHeaderHtml(count)}
     <div class="profile-history__list">
-      ${sorted.map(historyEntryHtml).join('')}
-    </div>`;
+      ${cards.join('')}
+    </div>
+  </section>`;
+}
+
+// BD-RIDE-HISTORY-03 — Wire empty-state CTAs and the malformed-storage
+// recovery action. The "Очистить локальную историю" button uses a two-step
+// confirmation (mirrors the logout pattern) so a single misclick cannot wipe
+// data; first press flips the label, second press calls clearRideHistory()
+// and re-renders the section in place.
+function wireHistorySection(root) {
+  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go('/new'));
+  root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
+
+  const clearBtn = root.querySelector('#profile-history-error-clear');
+  clearBtn?.addEventListener('click', () => {
+    if (clearBtn.dataset.confirm === 'pending') {
+      clearRideHistory();
+      const current = root.querySelector('#profile-history-section');
+      if (current) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = historySectionHtml();
+        const next = wrap.firstElementChild;
+        if (next) {
+          current.replaceWith(next);
+          wireHistorySection(root);
+          return;
+        }
+      }
+      clearBtn.disabled = true;
+      clearBtn.textContent = 'История очищена';
+    } else {
+      clearBtn.dataset.confirm = 'pending';
+      clearBtn.textContent = 'Нажмите ещё раз для подтверждения';
+    }
+  });
 }
 
 // ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────
@@ -1847,6 +1936,7 @@ function renderDriver(root, u) {
     </div>`;
 
   wireMyPostsSection(root);
+  wireHistorySection(root);
 
   // Tab switching
   const tabBtns = root.querySelectorAll('.pf2-tab');
