@@ -10216,3 +10216,136 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .active-ride__completion-history[data-history-saved="false"] {
   display: none;
 }
+
+/* ── BD-RIDE-HISTORY-01 — Profile ride history surface ─────────────────── */
+.profile-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+}
+.profile-history__title {
+  margin: 0;
+}
+.profile-history__count {
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.profile-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+.profile-history__card {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.profile-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.profile-history__role {
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.profile-history__role--driver {
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--success);
+}
+.profile-history__role--passenger {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.profile-history__when--head {
+  margin-left: auto;
+}
+.profile-history__route {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.profile-history__route-from,
+.profile-history__route-to {
+  min-width: 0;
+  word-break: break-word;
+}
+.profile-history__route-arrow {
+  color: var(--text-3);
+  font-weight: 500;
+}
+.profile-history__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+.profile-history__meta-label {
+  color: var(--text-2);
+}
+.profile-history__meta-value {
+  color: var(--text);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+.profile-history__meta--accent .profile-history__meta-value {
+  color: var(--success);
+  font-weight: 600;
+}
+.profile-history__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.profile-history__fare {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.profile-history__rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.profile-history__when {
+  margin-left: auto;
+}
+.profile-history__empty {
+  text-align: center;
+  padding: 22px 18px;
+}
+.profile-history__empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.profile-history__empty-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0;
+}

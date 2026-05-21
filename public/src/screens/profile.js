@@ -8,6 +8,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
+import { loadRideHistory } from '../ride_history.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
@@ -677,6 +678,9 @@ function renderPassenger(root, u) {
       <!-- 7c. My publications (BD-PROFILE-MY-POSTS-01) -->
       ${myPostsSectionHtml()}
 
+      <!-- 7d. Ride history (BD-RIDE-HISTORY-01) -->
+      ${historySectionHtml()}
+
       <!-- 8. Menu card -->
       <p class="pfp-section-title">Меню</p>
       <div class="bd-card pfp-menu-card">
@@ -1147,6 +1151,185 @@ function myPostsSectionHtml() {
 
 function wireMyPostsSection(root) {
   root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go('/new'));
+}
+
+// ── Ride history (BD-RIDE-HISTORY-01) ─────────────────────────────────────────
+// Renders the locally-persisted ride history (see ride_history.js) inside the
+// Profile screen. Read-only surface — no backend, no auth. Both passenger and
+// driver entries are surfaced together, sorted newest-first by savedAt /
+// completedAt, so a user who has acted in both roles sees a single mixed
+// list. Each card carries a small role badge and a role-specific body. Empty
+// state renders an inline empty card.
+
+const PROFILE_HISTORY_LIMIT = 20;
+
+function historyEntryTimestamp(entry) {
+  return entry?.savedAt || entry?.completedAt || '';
+}
+
+function parseHistoryTimestamp(value) {
+  if (!value) return 0;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function sortHistoryEntriesDesc(entries) {
+  return entries.slice().sort((a, b) => {
+    return parseHistoryTimestamp(historyEntryTimestamp(b))
+      - parseHistoryTimestamp(historyEntryTimestamp(a));
+  });
+}
+
+function formatHistoryDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return '';
+  try {
+    return d.toLocaleString('ru-RU', {
+      day: '2-digit', month: '2-digit', year: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function formatHistoryFare(fare) {
+  if (fare == null || fare === '') return '';
+  if (typeof fare === 'number' && Number.isFinite(fare)) return fmtRub(fare);
+  const s = String(fare);
+  // Already formatted (e.g. "350 ₽") — pass through; otherwise try to parse.
+  if (/[₽a-zа-яё]/i.test(s)) return s;
+  const num = Number(s.replace(/\s+/g, '').replace(',', '.'));
+  return Number.isFinite(num) ? fmtRub(num) : s;
+}
+
+function historyVehicleText(vehicle) {
+  const parts = [
+    vehicle?.model,
+    vehicle?.color,
+    vehicle?.plate,
+  ].filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
+  return parts.join(' · ');
+}
+
+function historyRoleBadgeHtml(role) {
+  if (role === 'driver') {
+    return `<span class="bd-badge profile-history__role profile-history__role--driver">Водитель</span>`;
+  }
+  return `<span class="bd-badge profile-history__role profile-history__role--passenger">Пассажир</span>`;
+}
+
+function passengerHistoryEntryHtml(entry) {
+  const pickup  = escapeHtml(entry?.route?.pickupLabel  || '—');
+  const dropoff = escapeHtml(entry?.route?.dropoffLabel || '—');
+  const driver  = escapeHtml(entry?.driver?.name || 'Водитель');
+  const vehicle = historyVehicleText(entry?.vehicle || {});
+  const fare    = formatHistoryFare(entry?.fare);
+  const rating  = (typeof entry?.rating === 'number' && entry.rating > 0)
+    ? entry.rating : null;
+  const when    = formatHistoryDate(historyEntryTimestamp(entry));
+  return `
+    <article class="bd-card-tight profile-history__card">
+      <div class="profile-history__head">
+        ${historyRoleBadgeHtml('passenger')}
+        ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
+      </div>
+      <p class="profile-history__route">
+        <span class="profile-history__route-from">${pickup}</span>
+        <span class="profile-history__route-arrow" aria-hidden="true">→</span>
+        <span class="profile-history__route-to">${dropoff}</span>
+      </p>
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Водитель</span>
+        <span class="profile-history__meta-value">${driver}</span>
+      </div>
+      ${vehicle ? `
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Автомобиль</span>
+        <span class="profile-history__meta-value">${escapeHtml(vehicle)}</span>
+      </div>` : ''}
+      ${(fare || rating !== null) ? `
+      <div class="profile-history__footer">
+        ${fare ? `<span class="profile-history__fare">${escapeHtml(fare)}</span>` : ''}
+        ${rating !== null ? `<span class="profile-history__rating" aria-label="Оценка ${rating}">${SVG_STAR}${rating.toFixed(1)}</span>` : ''}
+      </div>` : ''}
+    </article>
+  `;
+}
+
+function driverHistoryEntryHtml(entry) {
+  const pickup    = escapeHtml(entry?.route?.pickupLabel  || '—');
+  const dropoff   = escapeHtml(entry?.route?.dropoffLabel || '—');
+  const passenger = escapeHtml(entry?.passenger?.name || 'Пассажир');
+  const fare      = formatHistoryFare(entry?.fare);
+  const net       = entry?.earnings && entry.earnings.net != null
+    ? formatHistoryFare(entry.earnings.net) : '';
+  const when      = formatHistoryDate(historyEntryTimestamp(entry));
+  return `
+    <article class="bd-card-tight profile-history__card">
+      <div class="profile-history__head">
+        ${historyRoleBadgeHtml('driver')}
+        ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
+      </div>
+      <p class="profile-history__route">
+        <span class="profile-history__route-from">${pickup}</span>
+        <span class="profile-history__route-arrow" aria-hidden="true">→</span>
+        <span class="profile-history__route-to">${dropoff}</span>
+      </p>
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Пассажир</span>
+        <span class="profile-history__meta-value">${passenger}</span>
+      </div>
+      ${fare ? `
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Стоимость</span>
+        <span class="profile-history__meta-value">${escapeHtml(fare)}</span>
+      </div>` : ''}
+      ${net ? `
+      <div class="profile-history__meta profile-history__meta--accent">
+        <span class="profile-history__meta-label">Доход</span>
+        <span class="profile-history__meta-value">${escapeHtml(net)}</span>
+      </div>` : ''}
+    </article>
+  `;
+}
+
+function historyEntryHtml(entry) {
+  return entry?.role === 'driver'
+    ? driverHistoryEntryHtml(entry)
+    : passengerHistoryEntryHtml(entry);
+}
+
+function historySectionHtml() {
+  let entries = [];
+  try {
+    entries = loadRideHistory().filter(
+      (e) => e && (e.role === 'passenger' || e.role === 'driver')
+    );
+  } catch {
+    entries = [];
+  }
+  const sorted = sortHistoryEntriesDesc(entries).slice(0, PROFILE_HISTORY_LIMIT);
+  const count  = sorted.length;
+  const header = `
+    <div class="profile-history__header">
+      <p class="pfp-section-title profile-history__title">История поездок</p>
+      ${count > 0 ? `<span class="bd-badge profile-history__count">${escapeHtml(String(count))}</span>` : ''}
+    </div>`;
+  if (count === 0) {
+    return `
+      ${header}
+      <div class="bd-card profile-history__empty">
+        <p class="profile-history__empty-title">Истории пока нет</p>
+        <p class="profile-history__empty-text">Завершённые поездки будут появляться здесь.</p>
+      </div>`;
+  }
+  return `
+    ${header}
+    <div class="profile-history__list">
+      ${sorted.map(historyEntryHtml).join('')}
+    </div>`;
 }
 
 // ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────
@@ -1664,6 +1847,7 @@ function renderDriver(root, u) {
         ${readinessHtml(items)}
         ${taxiPermitPanelHtml(u)}
         ${myPostsSectionHtml()}
+        ${historySectionHtml()}
         ${quickActionsHtml()}
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
