@@ -8,7 +8,8 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
-import { loadRideHistory, clearRideHistory } from '../ride_history.js';
+import { loadRideHistory } from '../ride_history.js';
+import { performLocalLogout } from '../mock_auth.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
@@ -334,17 +335,6 @@ function getTripDemoMode() {
     return (v === 'active' || v === 'planned' || v === 'empty') ? v : null;
   } catch {
     return null;
-  }
-}
-
-// Cleared on logout so a stale demo value can't override the default
-// planned-trip state for the next user after re-onboarding.
-function clearTripDemoMode() {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem('profileTripDemo');
-  } catch {
-    // storage unavailable — fail soft.
   }
 }
 
@@ -867,13 +857,9 @@ function renderPassenger(root, u) {
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
-      clearTripDemoMode();
-      // BD-RIDE-HISTORY-02 — clear locally persisted ride history at the mock
-      // auth boundary so the next user on this browser/device does not inherit
-      // the previous profile's mixed passenger + driver entries.
-      clearRideHistory();
-      user.reset();
-      go('/welcome');
+      // BD-AUTH-BOUNDARY-01 — single mock logout boundary owns trip-demo
+      // cleanup, ride-history cleanup, user.reset() and navigation.
+      performLocalLogout();
     } else {
       logoutBtn.dataset.confirm = 'pending';
       const titleEl = logoutBtn.querySelector('.pfp-menu-title');
@@ -2061,12 +2047,10 @@ function renderDriver(root, u) {
   const logoutBtn = root.querySelector('#pf2-act-logout');
   logoutBtn.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
-      // BD-RIDE-HISTORY-02 — clear locally persisted ride history at the mock
-      // auth boundary so the next user on this browser/device does not inherit
-      // the previous profile's mixed passenger + driver entries.
-      clearRideHistory();
-      user.reset();
-      go('/welcome');
+      // BD-AUTH-BOUNDARY-01 — driver logout goes through the same mock
+      // auth boundary as the passenger logout so any future local artefacts
+      // wiped on logout (ride history, demo overrides, …) stay in one place.
+      performLocalLogout();
     } else {
       logoutBtn.dataset.confirm = 'pending';
       logoutBtn.querySelector('.pf2-action-row__label').textContent = 'Подтвердить выход';
