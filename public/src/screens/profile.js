@@ -8,7 +8,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
-import { loadRideHistory } from '../ride_history.js';
+import { loadRideHistory, clearRideHistory } from '../ride_history.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
@@ -868,6 +868,10 @@ function renderPassenger(root, u) {
   logoutBtn?.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
       clearTripDemoMode();
+      // BD-RIDE-HISTORY-02 — clear locally persisted ride history at the mock
+      // auth boundary so the next user on this browser/device does not inherit
+      // the previous profile's mixed passenger + driver entries.
+      clearRideHistory();
       user.reset();
       go('/welcome');
     } else {
@@ -2057,6 +2061,10 @@ function renderDriver(root, u) {
   const logoutBtn = root.querySelector('#pf2-act-logout');
   logoutBtn.addEventListener('click', () => {
     if (logoutBtn.dataset.confirm === 'pending') {
+      // BD-RIDE-HISTORY-02 — clear locally persisted ride history at the mock
+      // auth boundary so the next user on this browser/device does not inherit
+      // the previous profile's mixed passenger + driver entries.
+      clearRideHistory();
       user.reset();
       go('/welcome');
     } else {
