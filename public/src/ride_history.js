@@ -23,8 +23,10 @@ function readStore() {
 function writeStore(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    return true;
   } catch {
     // storage unavailable — fail soft.
+    return false;
   }
 }
 
@@ -34,13 +36,20 @@ export function loadRideHistory() {
 
 export function saveRideHistoryEntry(entry) {
   if (!isPlainObject(entry) || !entry.tripId || !entry.role) return null;
-  const stamped = { ...entry, savedAt: entry.savedAt || new Date().toISOString() };
   const list = readStore();
-  const key = `${stamped.role}:${stamped.tripId}`;
+  const key = `${entry.role}:${entry.tripId}`;
   const idx = list.findIndex((e) => `${e.role}:${e.tripId}` === key);
-  if (idx >= 0) list[idx] = { ...list[idx], ...stamped };
+  // Preserve the original savedAt on upsert so re-rendering a completed
+  // ride doesn't bump it to the top of future history lists. A caller
+  // that explicitly passes savedAt still wins.
+  const previous = idx >= 0 ? list[idx] : null;
+  const savedAt = entry.savedAt
+    || (previous && previous.savedAt)
+    || new Date().toISOString();
+  const stamped = { ...entry, savedAt };
+  if (idx >= 0) list[idx] = { ...previous, ...stamped };
   else list.unshift(stamped);
-  writeStore(list);
+  if (!writeStore(list)) return null;
   return stamped;
 }
 

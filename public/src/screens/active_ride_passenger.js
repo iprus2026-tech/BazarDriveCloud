@@ -1193,8 +1193,10 @@ function renderPassengerRideComplete(ride, deps) {
       tags: Array.from(selectedTags),
       comment: commentInput ? commentInput.value.trim() : '',
     } : {});
-    if (entry) saveRideHistoryEntry(entry);
-    if (historyRow) historyRow.dataset.historySaved = 'true';
+    if (!entry) return false;
+    const saved = saveRideHistoryEntry(entry);
+    if (saved && historyRow) historyRow.dataset.historySaved = 'true';
+    return Boolean(saved);
   }
   persistHistory();
 

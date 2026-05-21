@@ -10136,6 +10136,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   gap: 10px;
   margin-top: 4px;
 }
+.passenger-complete__history-row[data-history-saved="false"] .passenger-complete__history-note {
+  display: none;
+}
 .passenger-complete__history-note {
   display: inline-flex;
   align-items: center;
@@ -10209,4 +10212,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   font-weight: 600;
   text-align: center;
   align-self: center;
+}
+.active-ride__completion-history[data-history-saved="false"] {
+  display: none;
 }
