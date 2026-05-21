@@ -595,6 +595,15 @@ function renderPassengerRide(root, post) {
 
     const responseId = `resp_${post.id}`;
     const tripId     = String(post.id);
+    // We persist both ids on the response because downstream screens key
+    // off different things:
+    //   requestId — the originating passenger publication / заявка
+    //                (used to trace back to the post in the feed).
+    //   tripId    — the handoff key for /trip-confirmation and
+    //                /active-ride (today equal to post.id, but kept as a
+    //                separate field so the contract can evolve without
+    //                conflating "what was published" with "which trip
+    //                this response opens").
     const response = {
       id:           responseId,
       kind:         'passenger_response',

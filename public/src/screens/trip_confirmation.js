@@ -44,6 +44,22 @@ function isHandoffExpired(handoff) {
   return Date.now() > exp;
 }
 
+// Stale handoff entries are useless and, worse, can mislead a later
+// resolveState() if the clock or TTL ever changes — drop them on read
+// so the EXPIRED variant is rendered exactly once.
+function deleteHandoff(tripId) {
+  if (!tripId) return;
+  try {
+    const raw = localStorage.getItem(TRIP_CONFIRM_KEY);
+    if (!raw) return;
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+    if (!(tripId in map)) return;
+    delete map[tripId];
+    localStorage.setItem(TRIP_CONFIRM_KEY, JSON.stringify(map));
+  } catch {}
+}
+
 // ── Mock data (matches Cloud Design render) ───────────────────
 const MOCK_PASSENGER = {
   name: 'Анна М.',
@@ -463,6 +479,9 @@ export default function tripConfirmation() {
   const rawTripId = query.get('tripId');
   const tripId = rawTripId || DEMO_TRIP_ID;
   const handoff = loadHandoff(rawTripId);
+  if (handoff && isHandoffExpired(handoff)) {
+    deleteHandoff(rawTripId);
+  }
   const state = resolveState(query.get('state'), role, handoff);
 
   const root = document.createElement('section');
