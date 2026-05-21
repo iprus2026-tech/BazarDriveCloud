@@ -40,6 +40,14 @@ function clearDraft() {
   try { localStorage.removeItem(DRAFT_KEY); } catch {}
 }
 
+// BD-AUTH-BOUNDARY-01 — composer drafts can contain user-specific trip
+// data (from/to/when/price for a trip post) so they participate in the
+// clear-on-boundary set. Exposed as a named export so storage_boundary.js
+// can wipe it without depending on the default screen factory.
+export function clearComposerDraft() {
+  clearDraft();
+}
+
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : 'В';
 }
