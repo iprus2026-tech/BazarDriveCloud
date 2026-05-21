@@ -20,6 +20,42 @@ function readStore() {
   }
 }
 
+// BD-RIDE-HISTORY-03 — Status-aware reader used by surfaces that need to tell
+// "empty history" (clean state) apart from "history present but unreadable"
+// (malformed JSON, non-array payload). The plain loadRideHistory() still
+// silently coalesces to [] so call sites that only care about the entries do
+// not have to think about the distinction.
+//   status === 'empty'     → no key in localStorage
+//   status === 'ok'        → valid array (entries already filtered to plain
+//                            objects; may still be empty)
+//   status === 'malformed' → raw value exists but is not valid JSON or not an
+//                            array — surface should offer a friendly recovery.
+export function readRideHistoryStatus() {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return { status: 'empty', entries: [] };
+    }
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw == null) return { status: 'empty', entries: [] };
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: 'malformed', entries: [] };
+    }
+    if (!Array.isArray(parsed)) return { status: 'malformed', entries: [] };
+    return { status: 'ok', entries: parsed.filter(isPlainObject) };
+  } catch {
+    // Reaching this outer catch means localStorage access itself threw
+    // (privacy mode, restricted storage, etc.) rather than the stored
+    // payload being corrupt — JSON parse errors are caught above. Treat
+    // this as "no history available" instead of "malformed", because the
+    // recovery action (clearRideHistory) cannot fix storage access and
+    // would leave the user stuck on a permanent error card.
+    return { status: 'empty', entries: [] };
+  }
+}
+
 function writeStore(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));

@@ -10349,3 +10349,38 @@ button.pfp-menu-row:active { opacity: 0.7; }
   line-height: 1.45;
   margin: 0;
 }
+/* BD-RIDE-HISTORY-03 — empty-state CTAs + malformed-storage recovery card */
+.profile-history__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.profile-history__empty-btn {
+  min-width: 140px;
+}
+.profile-history__error {
+  text-align: center;
+  padding: 22px 18px;
+}
+.profile-history__error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.profile-history__error-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0;
+}
+.profile-history__error-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.profile-history__error-btn {
+  min-width: 220px;
+}
