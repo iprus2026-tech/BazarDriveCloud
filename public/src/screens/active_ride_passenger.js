@@ -17,6 +17,10 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import {
+  saveRideHistoryEntry,
+  buildPassengerHistoryEntry,
+} from '../ride_history.js';
 
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
   <polyline points="6 15 12 9 18 15"/>
@@ -979,6 +983,23 @@ function renderPassengerRideComplete(ride, deps) {
       </button>
     </div>
 
+    <div class="passenger-complete__history-row" data-history-saved="false">
+      <div class="passenger-complete__history-note" role="status" aria-live="polite">
+        <span class="passenger-complete__history-note-ic" aria-hidden="true">${CHECK_SVG}</span>
+        <span class="passenger-complete__history-note-text">Поездка сохранена в историю</span>
+      </div>
+      <div class="passenger-complete__history-actions">
+        <button type="button" class="bd-btn passenger-complete__bottom-btn" id="arp-to-history">
+          <span class="passenger-complete__bottom-btn-ic" aria-hidden="true">${RECEIPT_SVG}</span>
+          В историю
+        </button>
+        <button type="button" class="bd-btn passenger-complete__bottom-btn" id="arp-to-home">
+          <span class="passenger-complete__bottom-btn-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
+          На главную
+        </button>
+      </div>
+    </div>
+
     <button type="button" class="passenger-complete__report" id="arp-report" data-hide-when-report>
       <span class="passenger-complete__report-trigger-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
       Сообщить о проблеме
@@ -1112,6 +1133,9 @@ function renderPassengerRideComplete(ride, deps) {
     tagButtons.forEach((b) => { b.disabled = true; });
     if (commentInput) commentInput.disabled = true;
     if (commentBtn) commentBtn.disabled = true;
+    // Merge rating, tags and comment into the persisted history entry
+    // alongside the baseline that was saved when the screen rendered.
+    persistHistory({ withRating: true });
     // Move focus to the new primary CTA for keyboard users.
     const returnBtn = content.querySelector('#arp-return-feed');
     if (returnBtn) returnBtn.focus();
@@ -1156,6 +1180,39 @@ function renderPassengerRideComplete(ride, deps) {
   content.querySelector('#arp-to-feed').addEventListener('click', () => {
     navigate('/feed');
   });
+
+  // ── History save + In-история / На главную ───────────────
+  // Persist a baseline entry as soon as the COMPLETED screen renders so
+  // the trip is recoverable from /profile even if the passenger skips
+  // the rating. Submitting the rating below merges in the rating, tags
+  // and comment via a second save call.
+  const historyRow = content.querySelector('.passenger-complete__history-row');
+  function persistHistory({ withRating = false } = {}) {
+    const entry = buildPassengerHistoryEntry(ride, withRating ? {
+      rating: currentRating,
+      tags: Array.from(selectedTags),
+      comment: commentInput ? commentInput.value.trim() : '',
+    } : {});
+    if (entry) saveRideHistoryEntry(entry);
+    if (historyRow) historyRow.dataset.historySaved = 'true';
+  }
+  persistHistory();
+
+  const toHistoryBtn = content.querySelector('#arp-to-history');
+  if (toHistoryBtn) {
+    toHistoryBtn.addEventListener('click', () => {
+      // Profile hosts the menu where the future "История поездок" entry
+      // will live; navigating there is the safe stub until a dedicated
+      // history screen exists.
+      navigate('/profile');
+    });
+  }
+  const toHomeBtn = content.querySelector('#arp-to-home');
+  if (toHomeBtn) {
+    toHomeBtn.addEventListener('click', () => {
+      navigate('/feed');
+    });
+  }
   // ── Report sheet (State 7 — Issue / report entry) ────────
   // Toggle is driven by `content.dataset.report`; CSS hides the
   // rating section / main CTAs / bottom report link when open, and
