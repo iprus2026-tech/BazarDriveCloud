@@ -10128,3 +10128,91 @@ button.pfp-menu-row:active { opacity: 0.7; }
   line-height: 1.5;
 }
 .inbox-empty__cta { align-self: stretch; max-width: 260px; }
+
+/* BD-RIDE-COMPLETE-01 — Passenger post-ride history actions */
+.passenger-complete__history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.passenger-complete__history-row[data-history-saved="false"] .passenger-complete__history-note {
+  display: none;
+}
+.passenger-complete__history-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+}
+.passenger-complete__history-note-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-complete__history-note-ic svg {
+  width: 14px;
+  height: 14px;
+}
+.passenger-complete__history-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* BD-RIDE-COMPLETE-01 — Driver post-ride additions */
+.active-ride__completion-passenger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  margin-top: 12px;
+}
+.active-ride__completion-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+}
+.active-ride__completion-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.active-ride__completion-summary-label {
+  color: var(--text-2);
+}
+.active-ride__completion-summary-value {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+}
+.active-ride__completion-history {
+  margin-top: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  align-self: center;
+}
+.active-ride__completion-history[data-history-saved="false"] {
+  display: none;
+}
