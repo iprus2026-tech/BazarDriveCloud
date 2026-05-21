@@ -46,7 +46,13 @@ export function readRideHistoryStatus() {
     if (!Array.isArray(parsed)) return { status: 'malformed', entries: [] };
     return { status: 'ok', entries: parsed.filter(isPlainObject) };
   } catch {
-    return { status: 'malformed', entries: [] };
+    // Reaching this outer catch means localStorage access itself threw
+    // (privacy mode, restricted storage, etc.) rather than the stored
+    // payload being corrupt — JSON parse errors are caught above. Treat
+    // this as "no history available" instead of "malformed", because the
+    // recovery action (clearRideHistory) cannot fix storage access and
+    // would leave the user stuck on a permanent error card.
+    return { status: 'empty', entries: [] };
   }
 }
 
