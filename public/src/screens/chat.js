@@ -334,7 +334,15 @@ export default function chat() {
   // ── Trip confirmation CTA (ride context only) ───────────────────
   if (rideContext.isRide && rideContext.tripId) {
     const confirmBtn = root.querySelector('#chat-confirm');
+    // Single-shot guard: a synchronous disabled flip plus a JS-side
+    // latch keep an impatient double-click from writing the handoff
+    // entry twice or stacking two navigations onto the router.
+    let confirming = false;
     confirmBtn.addEventListener('click', () => {
+      if (confirming || confirmBtn.disabled) return;
+      confirming = true;
+      confirmBtn.disabled = true;
+
       const now = Date.now();
       saveTripConfirmation({
         tripId:     rideContext.tripId,
