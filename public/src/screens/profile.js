@@ -1227,7 +1227,7 @@ function passengerHistoryEntryHtml(entry, index) {
     ? entry.rating : null;
   const when    = formatHistoryDate(historyEntryTimestamp(entry));
   return `
-    <button type="button" class="bd-card-tight profile-history__card profile-history__card--clickable" data-history-index="${index}" aria-haspopup="dialog">
+    <article class="bd-card-tight profile-history__card profile-history__card--clickable" role="button" tabindex="0" data-history-index="${index}" aria-haspopup="dialog">
       <div class="profile-history__head">
         ${historyRoleBadgeHtml('passenger')}
         ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
@@ -1251,7 +1251,7 @@ function passengerHistoryEntryHtml(entry, index) {
         ${fare ? `<span class="profile-history__fare">${escapeHtml(fare)}</span>` : ''}
         ${rating !== null ? `<span class="profile-history__rating" aria-label="Оценка ${rating}">${SVG_STAR}${rating.toFixed(1)}</span>` : ''}
       </div>` : ''}
-    </button>
+    </article>
   `;
 }
 
@@ -1264,7 +1264,7 @@ function driverHistoryEntryHtml(entry, index) {
     ? formatHistoryFare(entry.earnings.net) : '';
   const when      = formatHistoryDate(historyEntryTimestamp(entry));
   return `
-    <button type="button" class="bd-card-tight profile-history__card profile-history__card--clickable" data-history-index="${index}" aria-haspopup="dialog">
+    <article class="bd-card-tight profile-history__card profile-history__card--clickable" role="button" tabindex="0" data-history-index="${index}" aria-haspopup="dialog">
       <div class="profile-history__head">
         ${historyRoleBadgeHtml('driver')}
         ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
@@ -1288,7 +1288,7 @@ function driverHistoryEntryHtml(entry, index) {
         <span class="profile-history__meta-label">Доход</span>
         <span class="profile-history__meta-value">${escapeHtml(net)}</span>
       </div>` : ''}
-    </button>
+    </article>
   `;
 }
 
@@ -1398,12 +1398,24 @@ function wireHistorySection(root) {
   // BD-RIDE-HISTORY-04 — open a role-aware detail receipt when a history card
   // is tapped. Delegated on the list so it survives per-entry re-renders.
   const list = root.querySelector('.profile-history__list');
-  list?.addEventListener('click', (e) => {
-    const card = e.target.closest('[data-history-index]');
-    if (!card) return;
+  const openCardDetail = (card) => {
     const index = Number(card.dataset.historyIndex);
     const entry = Number.isInteger(index) ? lastHistoryEntries[index] : null;
     if (entry) openHistoryDetail(root, entry);
+  };
+  list?.addEventListener('click', (e) => {
+    const card = e.target.closest('[data-history-index]');
+    if (card) openCardDetail(card);
+  });
+  // The cards are <article role="button">, so the native button keyboard
+  // contract (Enter / Space) must be reproduced. Space is preventDefault'd so
+  // the page does not scroll on activation.
+  list?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const card = e.target.closest('[data-history-index]');
+    if (!card) return;
+    if (e.key !== 'Enter') e.preventDefault();
+    openCardDetail(card);
   });
 
   const clearBtn = root.querySelector('#profile-history-error-clear');
