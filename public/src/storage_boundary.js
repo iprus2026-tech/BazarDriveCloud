@@ -27,6 +27,8 @@
 //                                     screens/chat.js
 //   bazardrive.draft.v2             → screens/composer.js (may contain
 //                                     trip post draft: from/to/when/price)
+//   bazardrive.repeat_route.v1      → repeat_route.js (one-time prefill of a
+//                                     prior ride's route into the composer)
 //   bazardrive.myposts.v1           → mock_api.js
 //   profileTripDemo                 → passenger Profile demo override
 //
@@ -48,6 +50,7 @@ import {
 } from './screens/chat.js';
 import { clearRespondStore } from './screens/respond.js';
 import { clearComposerDraft } from './screens/composer.js';
+import { clearRepeatRouteDraft } from './repeat_route.js';
 import { clearMyPostsStore } from './mock_api.js';
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
@@ -73,6 +76,7 @@ export function clearUserScopedStorage() {
   clearTripConfirmationMap();
   clearRespondStore();
   clearComposerDraft();
+  clearRepeatRouteDraft();
   clearMyPostsStore();
   clearTripDemoMode();
 }

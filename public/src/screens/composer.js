@@ -2,6 +2,7 @@ import { user } from '../state.js';
 import { go, setPendingAction } from '../router.js';
 import { createFeedPost } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
+import { consumeRepeatRouteDraft } from '../repeat_route.js';
 
 const DRAFT_KEY = 'bazardrive.draft.v2';
 
@@ -50,6 +51,23 @@ export function clearComposerDraft() {
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : 'В';
+}
+
+// BD-RIDE-HISTORY-05 — map a sanitized repeat-route draft (repeat_route.js)
+// onto a composer draft. A driver's completed ride becomes a trip offer
+// (price), a passenger's becomes a passenger request (budget); the previous
+// fare is carried only as a suggested value the user can freely edit.
+// Identity / payment / earnings fields never reach this point.
+function applyRepeatRoute(draft, repeat) {
+  const isDriver = repeat.role === 'driver';
+  draft.type = isDriver ? 'trip' : 'passenger';
+  draft.from = repeat.pickup;
+  draft.to = repeat.dropoff;
+  if (repeat.suggestedFare != null) {
+    const fare = String(repeat.suggestedFare);
+    if (isDriver) draft.price = fare;
+    else draft.budget = fare;
+  }
 }
 
 // ── Preview card renderer (mirrors feed.js visual patterns) ────────
@@ -210,6 +228,29 @@ export default function composer() {
   }
 
   const draft = loadDraft();
+
+  // BD-RIDE-HISTORY-05 — apply a one-time "repeat route" prefill from ride
+  // history if one is waiting. consumeRepeatRouteDraft() is read-and-remove,
+  // so this fires at most once regardless of the branch taken below.
+  //
+  // Draft-collision rule (explicit — never silently destroy user work): the
+  // prefill is applied ONLY when the existing composer draft is empty. If the
+  // user already has unsaved draft data, we keep it untouched and surface a
+  // note explaining the route was not applied. Either way the repeat draft is
+  // consumed so it can't leak into a later, unrelated composer session.
+  const repeat = consumeRepeatRouteDraft();
+  let repeatNotice = null; // 'applied' | 'kept' | null
+  if (repeat) {
+    const existingHasData = Object.entries(draft).some(([k, v]) => k !== 'type' && v);
+    if (existingHasData) {
+      repeatNotice = 'kept';
+    } else {
+      applyRepeatRoute(draft, repeat);
+      saveDraft(draft);
+      repeatNotice = 'applied';
+    }
+  }
+
   let activeType = draft.type || 'trip';
   let isPreview  = false;
 
@@ -243,6 +284,15 @@ export default function composer() {
     </div>
 
     <div class="composer__body bd-scroll" id="composer-edit">
+      <div class="bd-alert composer-prefill__note" id="composer-prefill-note" role="status" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+             width="20" height="20" class="composer-prefill__note-icon">
+          <path d="M3 12a9 9 0 1 0 9-9"/>
+          <polyline points="3 4 3 9 8 9"/>
+        </svg>
+        <p class="composer-prefill__note-text" id="composer-prefill-note-text"></p>
+      </div>
       <form id="composer-form" novalidate>
 
         <fieldset class="composer-fieldset" id="fields-trip-passenger"${isTripLike ? '' : ' hidden'}>
@@ -413,6 +463,8 @@ export default function composer() {
   const priceField         = root.querySelector('#price-field');
   const budgetField        = root.querySelector('#budget-field');
   const listingPriceField  = root.querySelector('#listing-price-field');
+  const prefillNote        = root.querySelector('#composer-prefill-note');
+  const prefillNoteText    = root.querySelector('#composer-prefill-note-text');
 
   // ── Collect current form values into draft object ───────────────
   function collectDraft() {
@@ -556,6 +608,16 @@ export default function composer() {
 
   // ── Init ────────────────────────────────────────────────────────
   applyType(activeType);
+
+  // BD-RIDE-HISTORY-05 — surface the repeat-route prefill outcome. The route
+  // is only ever prefilled into editable fields; nothing is auto-submitted.
+  if (repeatNotice) {
+    prefillNoteText.textContent = repeatNotice === 'applied'
+      ? 'Маршрут заполнен из истории поездки'
+      : 'Сохранён текущий черновик — маршрут из истории не применён';
+    prefillNote.classList.add(repeatNotice === 'applied' ? 'success' : 'warning');
+    prefillNote.hidden = false;
+  }
 
   const hasDraftData = Object.entries(draft).some(([k, v]) => k !== 'type' && v);
   if (hasDraftData) {
