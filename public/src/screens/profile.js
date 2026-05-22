@@ -9,6 +9,7 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
+import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -1524,6 +1525,11 @@ function historyDetailHtml(entry) {
   const dropoff  = escapeHtml(entry?.route?.dropoffLabel || '—');
   const title    = isDriver ? 'Чек водителя' : 'Чек пассажира';
   const rows     = isDriver ? driverDetailRowsHtml(entry) : passengerDetailRowsHtml(entry);
+  // BD-RIDE-HISTORY-05 — only offer "Повторить маршрут" when the entry yields
+  // a usable pickup+dropoff pair. buildRepeatRouteDraft() is the single source
+  // of truth for "usable route", so a malformed/partial route hides the button
+  // instead of dropping the user onto an empty composer.
+  const canRepeat = !!buildRepeatRouteDraft(entry);
   return `
     <div class="profile-history-detail" id="profile-history-detail" role="dialog" aria-modal="true" aria-labelledby="profile-history-detail-title">
       <div class="profile-history-detail__backdrop" data-detail-action="close"></div>
@@ -1544,11 +1550,13 @@ function historyDetailHtml(entry) {
         <div class="profile-history-detail__rows">${rows}
         </div>
         <div class="profile-history-detail__actions">
-          <button type="button" class="bd-btn primary profile-history-detail__action" data-detail-action="repeat">Повторить маршрут</button>
+          ${canRepeat ? `<button type="button" class="bd-btn primary profile-history-detail__action" data-detail-action="repeat">Повторить маршрут</button>` : ''}
           <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="feed">В ленту</button>
           <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="close">Назад к истории</button>
         </div>
-        <p class="profile-history-detail__note">Прототип: маршрут сохранён локально, повтор откроет создание новой поездки.</p>
+        <p class="profile-history-detail__note">${canRepeat
+          ? 'Прототип: повтор перенесёт только маршрут в создание новой заявки — без водителя, оплаты и оценки.'
+          : 'Прототип: маршрут сохранён локально.'}</p>
       </div>
     </div>`;
 }
@@ -1582,8 +1590,15 @@ function openHistoryDetail(root, entry) {
     if (!trigger) return;
     const action = trigger.dataset.detailAction;
     closeHistoryDetail(root);
-    if (action === 'repeat') go('/new');
-    else if (action === 'feed') go('/feed');
+    if (action === 'repeat') {
+      // BD-RIDE-HISTORY-05 — write a sanitized, route-only one-time draft, then
+      // open the composer. This is prefill only: no order is created here, and
+      // the composer reads (and removes) the draft on /new. writeRepeatRoute-
+      // Draft re-validates the entry, so an unusable route is a silent no-op
+      // and /new simply opens empty.
+      writeRepeatRouteDraft(entry);
+      go('/new');
+    } else if (action === 'feed') go('/feed');
   });
 
   activeHistoryDetailEsc = (e) => {

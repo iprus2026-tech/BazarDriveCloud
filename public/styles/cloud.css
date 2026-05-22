@@ -1109,6 +1109,26 @@ body {
   margin: 0;
 }
 
+/* ── Repeat-route prefill note (BD-RIDE-HISTORY-05) ──────── */
+.composer-prefill__note {
+  margin-top: 4px;
+  margin-bottom: 10px;
+  align-items: center;
+}
+.composer-prefill__note-icon {
+  flex-shrink: 0;
+  color: var(--success);
+}
+.composer-prefill__note.warning .composer-prefill__note-icon {
+  color: var(--warning);
+}
+.composer-prefill__note-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0;
+}
+
 /* ── Validation error strip ──────────────────────────────── */
 .composer__error {
   display: flex;
