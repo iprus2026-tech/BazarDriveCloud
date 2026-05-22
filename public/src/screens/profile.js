@@ -1154,6 +1154,12 @@ function wireMyPostsSection(root) {
 
 const PROFILE_HISTORY_LIMIT = 20;
 
+// BD-RIDE-HISTORY-04 — the latest-first, sliced entries from the most recent
+// historySectionHtml() render. Each card carries a data-history-index that
+// maps back into this array so the detail-receipt handler can resolve the
+// clicked entry without re-reading or re-sorting storage.
+let lastHistoryEntries = [];
+
 function historyEntryTimestamp(entry) {
   return entry?.savedAt || entry?.completedAt || '';
 }
@@ -1211,7 +1217,7 @@ function historyRoleBadgeHtml(role) {
   return `<span class="bd-badge profile-history__role profile-history__role--passenger">Пассажир</span>`;
 }
 
-function passengerHistoryEntryHtml(entry) {
+function passengerHistoryEntryHtml(entry, index) {
   const pickup  = escapeHtml(entry?.route?.pickupLabel  || '—');
   const dropoff = escapeHtml(entry?.route?.dropoffLabel || '—');
   const driver  = escapeHtml(entry?.driver?.name || 'Водитель');
@@ -1221,7 +1227,7 @@ function passengerHistoryEntryHtml(entry) {
     ? entry.rating : null;
   const when    = formatHistoryDate(historyEntryTimestamp(entry));
   return `
-    <article class="bd-card-tight profile-history__card">
+    <button type="button" class="bd-card-tight profile-history__card profile-history__card--clickable" data-history-index="${index}" aria-haspopup="dialog">
       <div class="profile-history__head">
         ${historyRoleBadgeHtml('passenger')}
         ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
@@ -1245,11 +1251,11 @@ function passengerHistoryEntryHtml(entry) {
         ${fare ? `<span class="profile-history__fare">${escapeHtml(fare)}</span>` : ''}
         ${rating !== null ? `<span class="profile-history__rating" aria-label="Оценка ${rating}">${SVG_STAR}${rating.toFixed(1)}</span>` : ''}
       </div>` : ''}
-    </article>
+    </button>
   `;
 }
 
-function driverHistoryEntryHtml(entry) {
+function driverHistoryEntryHtml(entry, index) {
   const pickup    = escapeHtml(entry?.route?.pickupLabel  || '—');
   const dropoff   = escapeHtml(entry?.route?.dropoffLabel || '—');
   const passenger = escapeHtml(entry?.passenger?.name || 'Пассажир');
@@ -1258,7 +1264,7 @@ function driverHistoryEntryHtml(entry) {
     ? formatHistoryFare(entry.earnings.net) : '';
   const when      = formatHistoryDate(historyEntryTimestamp(entry));
   return `
-    <article class="bd-card-tight profile-history__card">
+    <button type="button" class="bd-card-tight profile-history__card profile-history__card--clickable" data-history-index="${index}" aria-haspopup="dialog">
       <div class="profile-history__head">
         ${historyRoleBadgeHtml('driver')}
         ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
@@ -1282,23 +1288,23 @@ function driverHistoryEntryHtml(entry) {
         <span class="profile-history__meta-label">Доход</span>
         <span class="profile-history__meta-value">${escapeHtml(net)}</span>
       </div>` : ''}
-    </article>
+    </button>
   `;
 }
 
-function historyEntryHtml(entry) {
+function historyEntryHtml(entry, index) {
   return entry?.role === 'driver'
-    ? driverHistoryEntryHtml(entry)
-    : passengerHistoryEntryHtml(entry);
+    ? driverHistoryEntryHtml(entry, index)
+    : passengerHistoryEntryHtml(entry, index);
 }
 
 // BD-RIDE-HISTORY-03 — defensive per-entry render. A single broken entry
 // inside the list must not poison the whole section: invalid roles are
 // already filtered out upstream, this wrapper additionally swallows any
 // throw from the inner HTML builders so the surviving entries still render.
-function safeHistoryEntryHtml(entry) {
+function safeHistoryEntryHtml(entry, index) {
   try {
-    const html = historyEntryHtml(entry);
+    const html = historyEntryHtml(entry, index);
     return typeof html === 'string' && html.trim() ? html : '';
   } catch {
     return '';
@@ -1351,6 +1357,7 @@ function historySectionHtml() {
   // Malformed storage: surface the friendly error card; do not attempt to
   // render any rows even if some entries happened to slip through.
   if (status === 'malformed') {
+    lastHistoryEntries = [];
     return `<section class="profile-history" id="profile-history-section">
       ${historyHeaderHtml(0)}
       ${historyErrorBodyHtml()}
@@ -1361,7 +1368,8 @@ function historySectionHtml() {
     (e) => e && (e.role === 'passenger' || e.role === 'driver')
   );
   const sorted = sortHistoryEntriesDesc(entries).slice(0, PROFILE_HISTORY_LIMIT);
-  const cards  = sorted.map(safeHistoryEntryHtml).filter((html) => html);
+  lastHistoryEntries = sorted;
+  const cards  = sorted.map((e, i) => safeHistoryEntryHtml(e, i)).filter((html) => html);
   const count  = cards.length;
 
   if (count === 0) {
@@ -1387,6 +1395,17 @@ function wireHistorySection(root) {
   root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go('/new'));
   root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
 
+  // BD-RIDE-HISTORY-04 — open a role-aware detail receipt when a history card
+  // is tapped. Delegated on the list so it survives per-entry re-renders.
+  const list = root.querySelector('.profile-history__list');
+  list?.addEventListener('click', (e) => {
+    const card = e.target.closest('[data-history-index]');
+    if (!card) return;
+    const index = Number(card.dataset.historyIndex);
+    const entry = Number.isInteger(index) ? lastHistoryEntries[index] : null;
+    if (entry) openHistoryDetail(root, entry);
+  });
+
   const clearBtn = root.querySelector('#profile-history-error-clear');
   clearBtn?.addEventListener('click', () => {
     if (clearBtn.dataset.confirm === 'pending') {
@@ -1409,6 +1428,158 @@ function wireHistorySection(root) {
       clearBtn.textContent = 'Нажмите ещё раз для подтверждения';
     }
   });
+}
+
+// ── Ride history detail receipt (BD-RIDE-HISTORY-04) ──────────────────────────
+// A read-only, role-aware receipt for a single saved ride, surfaced as a
+// bottom-sheet overlay inside the Profile screen (no new route). Mock-only —
+// it renders whatever the stored entry carries and silently omits any missing
+// or malformed field, so a partial record can never break the profile.
+
+function formatHistoryDistance(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) return `${value} км`;
+  return String(value);
+}
+
+function formatHistoryDuration(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) return `${value} мин`;
+  return String(value);
+}
+
+// Builds one label/value row, returning '' when the value is empty so the
+// caller can simply join the list without sprinkling conditionals.
+function detailRowHtml(label, value, accent = false) {
+  const text = (value == null) ? '' : String(value).trim();
+  if (!text) return '';
+  const cls = accent
+    ? 'profile-history-detail__row profile-history-detail__row--accent'
+    : 'profile-history-detail__row';
+  return `
+      <div class="${cls}">
+        <span class="profile-history-detail__row-label">${escapeHtml(label)}</span>
+        <span class="profile-history-detail__row-value">${escapeHtml(text)}</span>
+      </div>`;
+}
+
+function passengerDetailRowsHtml(entry) {
+  const driver   = entry?.driver?.name || 'Водитель';
+  const vehicle  = historyVehicleText(entry?.vehicle || {});
+  const fare     = formatHistoryFare(entry?.fare);
+  const rating   = (typeof entry?.rating === 'number' && entry.rating > 0)
+    ? entry.rating.toFixed(1) : '';
+  const comment  = (typeof entry?.comment === 'string') ? entry.comment.trim() : '';
+  const distance = formatHistoryDistance(entry?.distance);
+  const duration = formatHistoryDuration(entry?.duration);
+  const when     = formatHistoryDate(historyEntryTimestamp(entry));
+  return [
+    detailRowHtml('Водитель', driver),
+    detailRowHtml('Автомобиль', vehicle),
+    detailRowHtml('Стоимость', fare, true),
+    detailRowHtml('Оценка', rating),
+    detailRowHtml('Расстояние', distance),
+    detailRowHtml('Время в пути', duration),
+    detailRowHtml('Завершено', when),
+  ].join('') + (comment ? `
+      <div class="profile-history-detail__comment">
+        <span class="profile-history-detail__row-label">Комментарий</span>
+        <p class="profile-history-detail__comment-text">${escapeHtml(comment)}</p>
+      </div>` : '');
+}
+
+function driverDetailRowsHtml(entry) {
+  const passenger = entry?.passenger?.name || 'Пассажир';
+  const fare      = formatHistoryFare(entry?.fare);
+  const net       = (entry?.earnings && entry.earnings.net != null)
+    ? formatHistoryFare(entry.earnings.net) : '';
+  const distance  = formatHistoryDistance(entry?.distance);
+  const duration  = formatHistoryDuration(entry?.duration);
+  const when      = formatHistoryDate(historyEntryTimestamp(entry));
+  return [
+    detailRowHtml('Пассажир', passenger),
+    detailRowHtml('Стоимость', fare),
+    detailRowHtml('Доход', net, true),
+    detailRowHtml('Расстояние', distance),
+    detailRowHtml('Время в пути', duration),
+    detailRowHtml('Завершено', when),
+  ].join('');
+}
+
+function historyDetailHtml(entry) {
+  const isDriver = entry?.role === 'driver';
+  const pickup   = escapeHtml(entry?.route?.pickupLabel  || '—');
+  const dropoff  = escapeHtml(entry?.route?.dropoffLabel || '—');
+  const title    = isDriver ? 'Чек водителя' : 'Чек пассажира';
+  const rows     = isDriver ? driverDetailRowsHtml(entry) : passengerDetailRowsHtml(entry);
+  return `
+    <div class="profile-history-detail" id="profile-history-detail" role="dialog" aria-modal="true" aria-labelledby="profile-history-detail-title">
+      <div class="profile-history-detail__backdrop" data-detail-action="close"></div>
+      <div class="profile-history-detail__sheet" role="document">
+        <span class="profile-history-detail__handle" aria-hidden="true"></span>
+        <div class="profile-history-detail__header">
+          <div class="profile-history-detail__heading">
+            ${historyRoleBadgeHtml(isDriver ? 'driver' : 'passenger')}
+            <p class="profile-history-detail__title" id="profile-history-detail-title">${title}</p>
+          </div>
+          <button type="button" class="profile-history-detail__close" data-detail-action="close" aria-label="Закрыть">✕</button>
+        </div>
+        <p class="profile-history-detail__route">
+          <span class="profile-history-detail__route-from">${pickup}</span>
+          <span class="profile-history-detail__route-arrow" aria-hidden="true">→</span>
+          <span class="profile-history-detail__route-to">${dropoff}</span>
+        </p>
+        <div class="profile-history-detail__rows">${rows}
+        </div>
+        <div class="profile-history-detail__actions">
+          <button type="button" class="bd-btn primary profile-history-detail__action" data-detail-action="repeat">Повторить маршрут</button>
+          <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="feed">В ленту</button>
+          <button type="button" class="bd-btn profile-history-detail__action" data-detail-action="close">Назад к истории</button>
+        </div>
+        <p class="profile-history-detail__note">Прототип: маршрут сохранён локально, повтор откроет создание новой поездки.</p>
+      </div>
+    </div>`;
+}
+
+let activeHistoryDetailEsc = null;
+
+function closeHistoryDetail(root) {
+  if (activeHistoryDetailEsc) {
+    document.removeEventListener('keydown', activeHistoryDetailEsc);
+    activeHistoryDetailEsc = null;
+  }
+  root.querySelector('#profile-history-detail')?.remove();
+}
+
+function openHistoryDetail(root, entry) {
+  closeHistoryDetail(root);
+  let markup = '';
+  try {
+    markup = historyDetailHtml(entry);
+  } catch {
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.innerHTML = markup;
+  const overlay = wrap.firstElementChild;
+  if (!overlay) return;
+  root.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[data-detail-action]');
+    if (!trigger) return;
+    const action = trigger.dataset.detailAction;
+    closeHistoryDetail(root);
+    if (action === 'repeat') go('/new');
+    else if (action === 'feed') go('/feed');
+  });
+
+  activeHistoryDetailEsc = (e) => {
+    if (e.key === 'Escape') closeHistoryDetail(root);
+  };
+  document.addEventListener('keydown', activeHistoryDetailEsc);
+
+  overlay.querySelector('.profile-history-detail__close')?.focus();
 }
 
 // ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────
