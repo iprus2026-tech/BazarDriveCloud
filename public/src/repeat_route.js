@@ -27,12 +27,41 @@ function cleanString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-// History fares/distances/durations are stored as either finite numbers or
-// pre-formatted strings (see ride_history.js). For the suggested price we
-// only carry a clean numeric value; anything else is dropped rather than
-// guessed at, so we never inject "350 ₽" into a numeric price input.
+// History fares can be stored as finite numbers or pre-formatted strings
+// such as "350 ₽" / "1 480 ₽". For the suggested price we carry only a
+// parsed finite non-negative number; free-form text is dropped rather than
+// injected into a numeric composer input.
 function cleanNumber(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('-')) return null;
+
+    const numeric = trimmed.replace(/\s+/g, '').replace(/[^\d.,]/g, '');
+    if (!numeric || !/\d/.test(numeric)) return null;
+
+    const commaIndex = numeric.lastIndexOf(',');
+    const dotIndex = numeric.lastIndexOf('.');
+    const separatorIndex = Math.max(commaIndex, dotIndex);
+    const fractionLength = separatorIndex >= 0 ? numeric.length - separatorIndex - 1 : 0;
+    let normalized;
+
+    if (separatorIndex >= 0 && fractionLength > 0 && fractionLength <= 2) {
+      const integerPart = numeric.slice(0, separatorIndex).replace(/\D/g, '');
+      const fractionPart = numeric.slice(separatorIndex + 1).replace(/\D/g, '');
+      normalized = `${integerPart || '0'}.${fractionPart}`;
+    } else {
+      normalized = numeric.replace(/\D/g, '');
+    }
+
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+
   return null;
 }
 
