@@ -15,6 +15,9 @@ const FAVORITE_ROUTES_KEY = 'bazardrive.favorite_routes.v1';
 const FAVORITE_NOTICE_KEY = 'bazardrive.favorite_route_notice.v1';
 const PROFILE_HISTORY_LIMIT = 20;
 
+const REPEAT_NOTICE_APPLIED = 'Маршрут заполнен из истории поездки';
+const REPEAT_NOTICE_COLLISION = 'Сохранён текущий черновик — маршрут из истории не применён';
+
 let currentHistoryEntry = null;
 let observerStarted = false;
 let enhanceTimer = null;
@@ -381,8 +384,11 @@ function enhanceComposerNotice() {
   const note = document.querySelector('#composer-prefill-note');
   const text = document.querySelector('#composer-prefill-note-text');
   if (!note || !text || note.hidden) return;
-  if (text.textContent.includes('истории')) {
+  const current = text.textContent.trim();
+  if (current === REPEAT_NOTICE_APPLIED) {
     text.textContent = 'Маршрут заполнен из избранного';
+  } else if (current === REPEAT_NOTICE_COLLISION) {
+    text.textContent = 'Сохранён текущий черновик — маршрут из избранного не применён';
   }
 }
 
