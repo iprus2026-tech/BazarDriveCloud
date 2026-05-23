@@ -26,6 +26,11 @@
 //   bazardrive.respond.v1           → screens/respond.js
 //   bazardrive.trip_confirmation.v1 → screens/trip_confirmation.js,
 //                                     screens/chat.js
+//   bazardrive.driver_handoff_snapshot.v1
+//                                   → screens/driver_handoff_snapshot.js
+//                                     (driver-side confirmed handoff
+//                                     pin written by trip_confirmation
+//                                     before /active-ride?role=driver)
 //   bazardrive.draft.v2             → screens/composer.js (may contain
 //                                     trip post draft: from/to/when/price)
 //   bazardrive.repeat_route.v1      → repeat_route.js (one-time prefill of a
@@ -51,6 +56,7 @@ import {
   clearTripConfirmationMap,
 } from './screens/chat.js';
 import { clearRespondStore } from './screens/respond.js';
+import { clearDriverHandoffSnapshotStore } from './screens/driver_handoff_snapshot.js';
 import { clearComposerDraft } from './screens/composer.js';
 import { clearRepeatRouteDraft } from './repeat_route.js';
 import { clearMyPostsStore } from './mock_api.js';
@@ -78,6 +84,7 @@ export function clearUserScopedStorage() {
   clearChatResponses();
   clearTripConfirmationMap();
   clearRespondStore();
+  clearDriverHandoffSnapshotStore();
   clearComposerDraft();
   clearRepeatRouteDraft();
   clearMyPostsStore();

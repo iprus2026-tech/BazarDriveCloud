@@ -15,6 +15,10 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
+import {
+  loadDriverHandoffSnapshot,
+  applyDriverHandoffSnapshotToRide,
+} from './driver_handoff_snapshot.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
@@ -400,11 +404,27 @@ export default function activeRide() {
     // driver, vehicle, route and fare /trip-confirmation just showed.
     ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
   }
+  // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
+  // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
+  // agreed price, arrival ETA) when one was pinned right before the
+  // /trip-confirmation → /active-ride?role=driver hop. A snapshot is
+  // sufficient on its own to materialize the driver sheet: when no
+  // ?status= is supplied we fall back to the snapshot's own status
+  // (DRIVER_EN_ROUTE by default) instead of the empty placeholder.
+  let effectiveStatusQuery = statusQuery;
   if (!ride) {
-    if (!statusQuery || !DRIVER_SIMULATION_STATUSES.has(statusQuery)) return renderDriverEmpty();
+    const driverSnapshot = loadDriverHandoffSnapshot(tripId);
+    const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
+    if (!hasValidStatusQuery && !driverSnapshot) return renderDriverEmpty();
     ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
+    if (driverSnapshot) {
+      ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
+      if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
+        effectiveStatusQuery = driverSnapshot.status;
+      }
+    }
   }
-  ride = safeApplyStatusFromQuery(ride, statusQuery);
+  ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride';

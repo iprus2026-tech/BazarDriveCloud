@@ -14,6 +14,7 @@ import {
   MOCK_ROUTE,
   seedActiveRideFromConfirmedHandoff,
 } from './trip_confirmation_handoff.js';
+import { saveDriverHandoffSnapshot } from './driver_handoff_snapshot.js';
 
 // ── State enum ────────────────────────────────────────────────
 export const CF_STATE = {
@@ -510,6 +511,22 @@ export default function tripConfirmation() {
   }
   function goActiveRideDriver() {
     seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
+    // BD-HANDOFF-05 — pin the seven confirmed fields just before
+    // crossing into /active-ride?role=driver so the driver sheet can
+    // hydrate from them even when no active-ride record has been
+    // seeded for this tripId (chat→confirmation handoff is stored
+    // role='passenger', so the driver-side seed is a no-op and the
+    // demo/SIM override would otherwise win).
+    saveDriverHandoffSnapshot({
+      tripId,
+      orderId:       tripId,
+      passengerName: MOCK_PASSENGER.name,
+      pickupLabel:   MOCK_ROUTE.from,
+      dropoffLabel:  MOCK_ROUTE.to,
+      agreedPrice:   MOCK_ROUTE.priceRub,
+      etaText:       `${MOCK_ROUTE.etaMin} мин`,
+      status:        'DRIVER_EN_ROUTE',
+    });
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }
 
