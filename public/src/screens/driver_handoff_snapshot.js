@@ -14,6 +14,7 @@
 // task requires.
 
 const STORAGE_KEY = 'bazardrive.driver_handoff_snapshot.v1';
+const DRIVER_HANDOFF_SNAPSHOT_TTL_MS = 30 * 60 * 1000;
 
 export const DRIVER_HANDOFF_SNAPSHOT_FALLBACK = Object.freeze({
   passengerName: 'Пассажир',
@@ -58,6 +59,19 @@ function writeStore(store) {
   }
 }
 
+function removeFromStore(store, key) {
+  if (!isPlainObject(store) || !key) return;
+  delete store[key];
+  writeStore(store);
+}
+
+function isSnapshotStale(entry) {
+  if (!isPlainObject(entry)) return true;
+  const savedAt = Number(entry.savedAt);
+  if (!Number.isFinite(savedAt) || savedAt <= 0) return true;
+  return Date.now() - savedAt > DRIVER_HANDOFF_SNAPSHOT_TTL_MS;
+}
+
 // Persist the snapshot keyed by tripId. Accepts loose input (missing
 // fields, arrivalEstimate alias for etaText, orderId fallback to
 // tripId) and coerces everything through safeText so the stored record
@@ -90,6 +104,10 @@ export function loadDriverHandoffSnapshot(tripId) {
   const store = loadStore();
   const entry = store[key];
   if (!isPlainObject(entry)) return null;
+  if (isSnapshotStale(entry)) {
+    removeFromStore(store, key);
+    return null;
+  }
   return {
     tripId:        safeText(entry.tripId, key),
     orderId:       safeText(entry.orderId || entry.tripId, key),
