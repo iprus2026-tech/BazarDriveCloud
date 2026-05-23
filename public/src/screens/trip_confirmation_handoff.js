@@ -11,7 +11,7 @@
 // passenger and driver active-ride entries render the same passenger,
 // driver, vehicle, route, fare and ETA the user just confirmed.
 
-import { RIDE_STATUS, saveActiveRide } from '../ride_state.js';
+import { RIDE_STATUS, findActiveRide, saveActiveRide } from '../ride_state.js';
 
 const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
 
@@ -187,7 +187,15 @@ export function buildActiveRideSeed({ tripId, role, handoff }) {
 // null when there is nothing to seed (missing/expired/role-mismatched
 // handoff, or malformed storage). Safe to call from any render path —
 // all storage errors are swallowed by the underlying helpers.
+//
+// Idempotent: if an active ride is already persisted for `tripId`, the
+// existing record is returned unchanged. The seeder never clobbers
+// lifecycle state — a re-tap of the /trip-confirmation CTA after the
+// driver has accepted (acceptedAt) or arrived (arrivedAt) cannot reset
+// timestamps or rewind status.
 export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
+  const existing = findActiveRide(tripId);
+  if (existing) return existing;
   const handoff = loadConfirmedHandoff(tripId, role);
   if (!handoff) return null;
   const seed = buildActiveRideSeed({ tripId, role, handoff });
