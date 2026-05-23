@@ -16,6 +16,7 @@ import {
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
+import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import {
   saveRideHistoryEntry,
@@ -141,6 +142,15 @@ function normalizePhase(phaseQuery) {
 // to be persisted later.
 function loadPassengerRideView(tripId, statusQuery) {
   let ride = findActiveRide(tripId);
+  if (!ride) {
+    // BD-HANDOFF-04 — Prefer a confirmed-handoff seed over the
+    // SIM_AUDIT demo so the passenger view matches the identity,
+    // route and fare from /trip-confirmation. Seeder gates on
+    // role='passenger' + fresh + state==CONFIRMED, so a missing,
+    // expired, malformed or role-mismatched handoff returns null
+    // and we fall through to the existing audit/demo behavior.
+    ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'passenger' });
+  }
   if (!ride) {
     const overrides = statusQuery ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
