@@ -287,10 +287,17 @@ after the fresh flow (§4), there are two viable paths:
 Either way, the driver lands on the en-route sheet with identity that
 matches what `/trip-confirmation` rendered.
 
-If the user typed
-`/active-ride?role=driver&tripId=missing-demo` (no status, no record,
-no snapshot): `renderDriverEmpty()` ("Нет активного заказа. Откройте
-ленту и примите заказ.") with a single CTA back to `/feed`. Safe.
+If the user typed `/active-ride?role=driver` (no tripId, no status,
+no record, no snapshot) — or the same URL with
+`tripId=missing-demo` — the driver-fallback chain at
+`active_ride.js:399-418` short-circuits at the
+`if (!hasValidStatusQuery && !driverSnapshot) return renderDriverEmpty();`
+guard. The screen renders the empty state ("Нет активного заказа.
+Откройте ленту и примите заказ.") with a single CTA back to `/feed`.
+The SIM_AUDIT demo is **not** materialised on this path — the
+demo only appears when a valid `?status=` value (one of
+`DRIVER_SIMULATION_STATUSES`, e.g. `DRIVER_EN_ROUTE`) is present,
+or when a `driver_handoff_snapshot.v1[tripId]` entry exists.
 
 Result: PASS.
 
@@ -446,7 +453,7 @@ All cases observed in the browser with the dev server serving
 | 9 | Hand-edit `driver_handoff_snapshot.v1['trip-X'].savedAt = "garbage"`; load `/active-ride?role=driver&tripId=trip-X&status=DRIVER_EN_ROUTE` | malformed snapshot | snapshot dropped only for trip-X; SIM_AUDIT demo renders; other snapshot entries survive | PASS | §5.2-3 |
 | 10 | Same with `driver_handoff_snapshot.v1 = "not an object"` (root malformed) | malformed root | `loadDriverHandoffSnapshot` returns null; driver view falls back to SIM_AUDIT (or empty when no `?status`); no throw | PASS | §5.4 |
 | 11 | `/active-ride?role=passenger` (no tripId, no status) | empty | passenger en-route view backed by SIM_AUDIT demo on `DEMO_ACTIVE_RIDE_ID` | PASS | §8 row 1 |
-| 12 | `/active-ride?role=driver` (no tripId, no status) | empty | driver en-route view backed by SIM_AUDIT demo on `DEMO_ACTIVE_RIDE_ID` | PASS | §8 row 2 |
+| 12 | `/active-ride?role=driver` (no tripId, no status) | empty | `renderDriverEmpty()` empty state — "Нет активного заказа. Откройте ленту и примите заказ." `findActiveRide` is null, seeder is null, no snapshot, no valid `?status=` → the early-return at `active_ride.js:418` fires. **Not** SIM_AUDIT. | PASS | §7 |
 | 13 | `/active-ride?role=passenger&tripId=missing-demo&status=DRIVER_EN_ROUTE` | empty | passenger view, SIM_AUDIT | PASS | §8 row 3 |
 | 14 | `/active-ride?role=driver&tripId=missing-demo&status=DRIVER_EN_ROUTE` | empty | driver view, SIM_AUDIT | PASS | §8 row 4 |
 | 15 | `/active-ride?role=driver&tripId=missing-demo` (no `?status=`) | empty | `renderDriverEmpty()` empty state with `Открыть ленту` | PASS | §7 |
