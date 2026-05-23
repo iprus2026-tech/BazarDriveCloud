@@ -206,7 +206,14 @@ export function saveFavoriteRouteFromHistory(entry) {
   const key = routeKey(favorite.pickup, favorite.dropoff);
   const idx = list.findIndex((item) => routeKey(item.pickup, item.dropoff) === key);
   if (idx >= 0) {
-    list[idx] = { ...list[idx], ...favorite, id: list[idx].id, savedAt: list[idx].savedAt };
+    list[idx] = {
+      ...list[idx],
+      ...favorite,
+      id: list[idx].id,
+      savedAt: list[idx].savedAt,
+      customLabel: list[idx].customLabel || favorite.customLabel || '',
+      label: favorite.label || list[idx].label,
+    };
   } else {
     list.unshift(favorite);
   }
