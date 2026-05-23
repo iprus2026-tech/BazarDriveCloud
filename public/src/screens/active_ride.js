@@ -14,6 +14,7 @@ import {
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
+import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
@@ -392,6 +393,13 @@ export default function activeRide() {
   const tripId = query.get('tripId') || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
   let ride = findActiveRide(tripId);
+  if (!ride) {
+    // BD-HANDOFF-04 — Bridge for direct deep-links: if a fresh
+    // role-matched handoff exists for this tripId, seed the active
+    // ride store from it so the screen renders the same passenger,
+    // driver, vehicle, route and fare /trip-confirmation just showed.
+    ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
+  }
   if (!ride) {
     if (!statusQuery || !DRIVER_SIMULATION_STATUSES.has(statusQuery)) return renderDriverEmpty();
     ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });

@@ -8,6 +8,12 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import {
+  MOCK_PASSENGER,
+  MOCK_DRIVER,
+  MOCK_ROUTE,
+  seedActiveRideFromConfirmedHandoff,
+} from './trip_confirmation_handoff.js';
 
 // ── State enum ────────────────────────────────────────────────
 export const CF_STATE = {
@@ -60,35 +66,9 @@ function deleteHandoff(tripId) {
   } catch {}
 }
 
-// ── Mock data (matches Cloud Design render) ───────────────────
-const MOCK_PASSENGER = {
-  name: 'Анна М.',
-  handle: '@anna_m',
-  initials: 'АМ',
-  rating: '4,86',
-  meta: '87 поездок · оплата картой · 4417',
-  comment: 'Маленький чемодан',
-};
-
-const MOCK_DRIVER = {
-  name: 'Рустам К.',
-  initials: 'РК',
-  rating: '4,92',
-  car: 'Toyota Camry · серый · A 124 ВВ',
-  meta: '1 248 поездок · 4 года на платформе',
-};
-
-const MOCK_ROUTE = {
-  from: 'ул. Малая Бронная, 28',
-  to:   'Аэропорт Шереметьево, терминал B',
-  etaMin: 42,
-  pickupMin: 4,
-  distanceKm: 38,
-  priceRub: '1 540 ₽',
-  sentAt: '14:04',
-  expiredAt: '14:21',
-  expiredAgo: '7 мин назад',
-};
+// MOCK_PASSENGER / MOCK_DRIVER / MOCK_ROUTE are now owned by
+// trip_confirmation_handoff.js so the active-ride seeder cannot drift
+// from what this screen renders.
 
 // ── SVGs ──────────────────────────────────────────────────────
 const BACK_SVG = `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="14" height="14">
@@ -519,10 +499,17 @@ export default function tripConfirmation() {
   // ── Wire actions ────────────────────────────────────────────
   const controller = { aborted: false, timers: [] };
 
+  // BD-HANDOFF-04 — Seed bazardrive.active_ride.v1 before crossing the
+  // route boundary so /active-ride finds a matching record via
+  // findActiveRide(tripId) instead of falling back to SIM_AUDIT_*.
+  // The seeder is a no-op when the handoff is missing, expired or
+  // role-mismatched, so the audit / deep-link fallbacks stay reachable.
   function goActiveRidePassenger() {
+    seedActiveRideFromConfirmedHandoff({ tripId, role: 'passenger' });
     go(`/active-ride?role=passenger&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }
   function goActiveRideDriver() {
+    seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }
 
