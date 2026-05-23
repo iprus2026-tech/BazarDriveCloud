@@ -18,6 +18,7 @@
 // storage layout):
 //
 //   bazardrive.ride_history.v1      → ride_history.js
+//   bazardrive.favorite_routes.v1   → favorite_routes.js
 //   bazardrive.active_ride.v1       → ride_state.js
 //   bazardrive.chat.v1              → screens/chat.js (also written by
 //                                     screens/active_ride.js)
@@ -42,6 +43,7 @@
 //                             agnostic.
 
 import { clearRideHistory } from './ride_history.js';
+import { clearFavoriteRoutes } from './favorite_routes.js';
 import { clearActiveRideStore } from './ride_state.js';
 import {
   clearChatStore,
@@ -70,6 +72,7 @@ function clearTripDemoMode() {
 // boundary half-applied.
 export function clearUserScopedStorage() {
   clearRideHistory();
+  clearFavoriteRoutes();
   clearActiveRideStore();
   clearChatStore();
   clearChatResponses();

@@ -1,6 +1,7 @@
 import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
+import { initFavoriteRoutes } from './favorite_routes.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -52,3 +53,4 @@ document.getElementById('fab').addEventListener('click', () => {
 
 start();
 initSwUpdate();
+initFavoriteRoutes();
