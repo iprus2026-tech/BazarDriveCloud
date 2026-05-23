@@ -15,6 +15,10 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
+import {
+  loadDriverHandoffSnapshot,
+  applyDriverHandoffSnapshotToRide,
+} from './driver_handoff_snapshot.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
@@ -403,6 +407,12 @@ export default function activeRide() {
   if (!ride) {
     if (!statusQuery || !DRIVER_SIMULATION_STATUSES.has(statusQuery)) return renderDriverEmpty();
     ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
+    // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
+    // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
+    // agreed price, arrival ETA) when one was pinned right before the
+    // /trip-confirmation → /active-ride?role=driver hop.
+    const driverSnapshot = loadDriverHandoffSnapshot(tripId);
+    if (driverSnapshot) ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
   }
   ride = safeApplyStatusFromQuery(ride, statusQuery);
 
