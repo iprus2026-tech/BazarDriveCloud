@@ -1,9 +1,12 @@
 # /trip-confirmation → /active-ride handoff audit (BD-HANDOFF-03)
 
-Status: snapshot taken on the `claude/funny-einstein-Kve4I` branch after
-BD-HANDOFF-02 (double-click guard + stale handoff cleanup on
-`/trip-confirmation`). Audit-only — no code changes to runtime modules.
-No backend, no Mapbox SDK, no payment / auth / push wiring is in place.
+Status: snapshot re-verified on the `claude/vibrant-darwin-zqBZp`
+branch after BD-HANDOFF-02 (double-click guard + stale handoff cleanup
+on `/trip-confirmation`). Audit-only — no code changes to runtime
+modules. No backend, no Mapbox SDK, no payment / auth / push wiring is
+in place. All line references below were verified against the current
+`main` tip; behavior is unchanged since the original audit landed in
+PR #181.
 
 The goal is to make the *contract* between `/trip-confirmation` and
 `/active-ride` explicit, so we can decide whether BD-HANDOFF-04 (seed
