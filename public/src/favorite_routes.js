@@ -273,13 +273,14 @@ function favoriteRoutesSectionHtml(routes) {
     </section>`;
 }
 
-function renderFavoriteRoutesSection(root) {
+function renderFavoriteRoutesSection(root, force = false) {
   const routes = loadFavoriteRoutes();
   const current = root.querySelector('#profile-favorite-routes-section');
   if (!routes.length) {
     current?.remove();
     return;
   }
+  if (current && !force) return;
   const wrap = document.createElement('div');
   wrap.innerHTML = favoriteRoutesSectionHtml(routes).trim();
   const next = wrap.firstElementChild;
@@ -336,7 +337,7 @@ function wireProfileEnhancer(root) {
       const saved = saveFavoriteRouteFromHistory(currentHistoryEntry);
       if (saved) {
         favoriteBtn.textContent = '★ В избранном';
-        renderFavoriteRoutesSection(root);
+        renderFavoriteRoutesSection(root, true);
       }
       return;
     }
@@ -348,7 +349,7 @@ function wireProfileEnhancer(root) {
 
     if (action === 'remove') {
       removeFavoriteRoute(id);
-      renderFavoriteRoutesSection(root);
+      renderFavoriteRoutesSection(root, true);
       return;
     }
 
