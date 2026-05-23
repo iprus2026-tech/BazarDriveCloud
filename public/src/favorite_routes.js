@@ -120,12 +120,15 @@ function sanitizeFavorite(raw) {
   const pickup = cleanString(raw.pickup);
   const dropoff = cleanString(raw.dropoff);
   if (!pickup || !dropoff) return null;
+  const label = cleanString(raw.label);
+  const customLabel = cleanString(raw.customLabel);
   const favorite = {
     id: cleanString(raw.id) || `fav_route_${Date.now()}`,
     source: raw.source === 'ride_history' ? 'ride_history' : 'manual',
     sourceRideId: cleanString(raw.sourceRideId),
     role: raw.role === 'driver' ? 'driver' : 'passenger',
-    label: cleanString(raw.label) || `${pickup} → ${dropoff}`,
+    label: label || `${pickup} → ${dropoff}`,
+    customLabel: customLabel || '',
     pickup,
     dropoff,
     savedAt: cleanString(raw.savedAt) || new Date().toISOString(),
@@ -138,6 +141,32 @@ function sanitizeFavorite(raw) {
   if (duration != null) favorite.durationMin = duration;
   if (fare != null) favorite.suggestedFare = fare;
   return favorite;
+}
+
+function routeBaseLabel(route) {
+  const pickup = cleanString(route?.pickup);
+  const dropoff = cleanString(route?.dropoff);
+  return pickup && dropoff ? `${pickup} → ${dropoff}` : '';
+}
+
+function routeDisplayLabel(route) {
+  return cleanString(route?.customLabel) || cleanString(route?.label) || routeBaseLabel(route);
+}
+
+function saveFavoriteRouteLabel(id, rawLabel) {
+  const routeId = cleanString(id);
+  if (!routeId) return false;
+  const customLabel = cleanString(rawLabel);
+  const list = loadFavoriteRoutes();
+  const idx = list.findIndex((item) => item.id === routeId);
+  if (idx < 0) return false;
+  const baseLabel = routeBaseLabel(list[idx]);
+  list[idx] = {
+    ...list[idx],
+    label: baseLabel || list[idx].label,
+    customLabel,
+  };
+  return writeFavoriteStore(list);
 }
 
 export function loadFavoriteRoutes() {
@@ -177,7 +206,14 @@ export function saveFavoriteRouteFromHistory(entry) {
   const key = routeKey(favorite.pickup, favorite.dropoff);
   const idx = list.findIndex((item) => routeKey(item.pickup, item.dropoff) === key);
   if (idx >= 0) {
-    list[idx] = { ...list[idx], ...favorite, id: list[idx].id, savedAt: list[idx].savedAt };
+    list[idx] = {
+      ...list[idx],
+      ...favorite,
+      id: list[idx].id,
+      savedAt: list[idx].savedAt,
+      customLabel: list[idx].customLabel || favorite.customLabel || '',
+      label: favorite.label || list[idx].label,
+    };
   } else {
     list.unshift(favorite);
   }
@@ -200,10 +236,14 @@ function markFavoriteUsed(id) {
   writeFavoriteStore(list);
 }
 
-function writeFavoriteNotice() {
+function writeFavoriteNotice(favorite) {
   try {
     if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(FAVORITE_NOTICE_KEY, '1');
+    const payload = {
+      source: 'favorite',
+      label: routeDisplayLabel(favorite),
+    };
+    localStorage.setItem(FAVORITE_NOTICE_KEY, JSON.stringify(payload));
   } catch {
     // storage unavailable — fail soft.
   }
@@ -211,12 +251,18 @@ function writeFavoriteNotice() {
 
 function consumeFavoriteNotice() {
   try {
-    if (typeof localStorage === 'undefined') return false;
+    if (typeof localStorage === 'undefined') return null;
     const raw = localStorage.getItem(FAVORITE_NOTICE_KEY);
     localStorage.removeItem(FAVORITE_NOTICE_KEY);
-    return raw === '1';
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return null;
+    return {
+      source: parsed.source === 'favorite' ? 'favorite' : '',
+      label: cleanString(parsed.label),
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -231,11 +277,13 @@ function writeFavoriteRepeatDraft(favorite) {
     fare: favorite.suggestedFare,
   };
   const ok = writeRepeatRouteDraft(entry);
-  if (ok) writeFavoriteNotice();
+  if (ok) writeFavoriteNotice(favorite);
   return ok;
 }
 
 function favoriteRouteCardHtml(route) {
+  const displayLabel = routeDisplayLabel(route);
+  const hasCustomLabel = Boolean(cleanString(route.customLabel));
   const meta = [
     route.distanceKm != null ? `${route.distanceKm} км` : '',
     route.durationMin != null ? `${route.durationMin} мин` : '',
@@ -246,6 +294,7 @@ function favoriteRouteCardHtml(route) {
       <div class="profile-history__head">
         <span class="bd-badge profile-history__role profile-history__role--passenger">Избранное</span>
       </div>
+      <p class="favorite-routes__label">${escapeHtml(displayLabel)}</p>
       <p class="profile-history__route">
         <span class="profile-history__route-from">${escapeHtml(route.pickup)}</span>
         <span class="profile-history__route-arrow" aria-hidden="true">→</span>
@@ -254,8 +303,18 @@ function favoriteRouteCardHtml(route) {
       ${meta ? `<p class="profile-history__when favorite-routes__meta">${escapeHtml(meta)}</p>` : ''}
       <div class="profile-history-detail__actions favorite-routes__actions">
         <button type="button" class="bd-btn primary profile-history-detail__action" data-favorite-action="repeat">Повторить</button>
+        <button type="button" class="bd-btn profile-history-detail__action" data-favorite-action="edit-label">Изменить название</button>
+        ${hasCustomLabel ? '<button type="button" class="bd-btn ghost profile-history-detail__action" data-favorite-action="reset-label">Сбросить название</button>' : ''}
         <button type="button" class="bd-btn profile-history-detail__action" data-favorite-action="remove">Удалить</button>
       </div>
+      <form class="favorite-routes__label-editor" data-favorite-label-editor hidden>
+        <label class="favorite-routes__label-caption" for="fav-label-${escapeHtml(route.id)}">Название маршрута</label>
+        <input id="fav-label-${escapeHtml(route.id)}" class="bd-input favorite-routes__label-input" type="text" maxlength="80" value="${escapeHtml(cleanString(route.customLabel))}" placeholder="Например: Дом → Работа">
+        <div class="favorite-routes__label-actions">
+          <button type="submit" class="bd-btn primary">Сохранить</button>
+          <button type="button" class="bd-btn" data-favorite-action="cancel-label">Отмена</button>
+        </div>
+      </form>
     </article>`;
 }
 
@@ -353,6 +412,21 @@ function wireProfileEnhancer(root) {
       return;
     }
 
+    if (action === 'edit-label') {
+      const form = card.querySelector('[data-favorite-label-editor]');
+      form?.removeAttribute('hidden');
+      form?.querySelector('input')?.focus();
+      return;
+    }
+    if (action === 'cancel-label') {
+      card.querySelector('[data-favorite-label-editor]')?.setAttribute('hidden', 'hidden');
+      return;
+    }
+    if (action === 'reset-label') {
+      if (saveFavoriteRouteLabel(id, '')) renderFavoriteRoutesSection(root, true);
+      return;
+    }
+
     if (action === 'repeat' && route && writeFavoriteRepeatDraft(route)) {
       markFavoriteUsed(id);
       go('/new');
@@ -363,6 +437,17 @@ function wireProfileEnhancer(root) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     const historyCard = e.target.closest('[data-history-index]');
     if (historyCard) currentHistoryEntry = resolveHistoryEntryFromCard(historyCard);
+  });
+
+  root.addEventListener('submit', (e) => {
+    const form = e.target.closest('[data-favorite-label-editor]');
+    if (!form) return;
+    e.preventDefault();
+    const card = form.closest('[data-favorite-route-id]');
+    const id = card?.dataset?.favoriteRouteId;
+    const input = form.querySelector('input');
+    if (!id || !input) return;
+    if (saveFavoriteRouteLabel(id, input.value)) renderFavoriteRoutesSection(root, true);
   });
 
   root.querySelector('#pfp-quick-fav')?.addEventListener('click', () => {
@@ -381,13 +466,14 @@ function enhanceProfile() {
 
 function enhanceComposerNotice() {
   if ((location.hash || '').split('?')[0] !== '#/new') return;
-  if (!consumeFavoriteNotice()) return;
+  const noticeData = consumeFavoriteNotice();
+  if (!noticeData || noticeData.source !== 'favorite') return;
   const note = document.querySelector('#composer-prefill-note');
   const text = document.querySelector('#composer-prefill-note-text');
   if (!note || !text || note.hidden) return;
   const current = text.textContent.trim();
   if (current === REPEAT_NOTICE_APPLIED) {
-    text.textContent = 'Маршрут заполнен из избранного';
+    text.textContent = noticeData.label ? `Маршрут «${noticeData.label}» заполнен из избранного` : 'Маршрут заполнен из избранного';
   } else if (current === REPEAT_NOTICE_COLLISION) {
     text.textContent = 'Сохранён текущий черновик — маршрут из избранного не применён';
   }
