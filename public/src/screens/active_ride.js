@@ -404,17 +404,27 @@ export default function activeRide() {
     // driver, vehicle, route and fare /trip-confirmation just showed.
     ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
   }
+  // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
+  // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
+  // agreed price, arrival ETA) when one was pinned right before the
+  // /trip-confirmation → /active-ride?role=driver hop. A snapshot is
+  // sufficient on its own to materialize the driver sheet: when no
+  // ?status= is supplied we fall back to the snapshot's own status
+  // (DRIVER_EN_ROUTE by default) instead of the empty placeholder.
+  let effectiveStatusQuery = statusQuery;
   if (!ride) {
-    if (!statusQuery || !DRIVER_SIMULATION_STATUSES.has(statusQuery)) return renderDriverEmpty();
-    ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
-    // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
-    // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
-    // agreed price, arrival ETA) when one was pinned right before the
-    // /trip-confirmation → /active-ride?role=driver hop.
     const driverSnapshot = loadDriverHandoffSnapshot(tripId);
-    if (driverSnapshot) ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
+    const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
+    if (!hasValidStatusQuery && !driverSnapshot) return renderDriverEmpty();
+    ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
+    if (driverSnapshot) {
+      ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
+      if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
+        effectiveStatusQuery = driverSnapshot.status;
+      }
+    }
   }
-  ride = safeApplyStatusFromQuery(ride, statusQuery);
+  ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride';
