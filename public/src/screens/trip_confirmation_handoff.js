@@ -202,3 +202,36 @@ export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
   if (!seed) return null;
   return saveActiveRide(seed);
 }
+
+// BD-RIDE-D-10 — Cross-role canonical active-ride loader.
+// Both /active-ride?role=driver and /active-ride?role=passenger should
+// read the same canonical record for a given tripId. This helper
+// centralizes the lookup so the two screens cannot diverge:
+//   1. Persisted record under bazardrive.active_ride.v1 wins — once one
+//      role materializes the trip, the other sees the same data.
+//   2. Otherwise seed from a confirmed handoff for the requested role.
+//   3. Otherwise seed from the other role's confirmed handoff: the
+//      visible identity (passenger, driver, vehicle, route, fare) comes
+//      from the same MOCK_* literals, so a handoff written by one side
+//      still describes the same trip for the other side. The seeder
+//      persists, so subsequent reads converge on a single canonical
+//      record regardless of which role opened first.
+// Returns the canonical ride or null when nothing can be derived for
+// this tripId.
+const OTHER_ROLE = { driver: 'passenger', passenger: 'driver' };
+
+export function loadCanonicalActiveRide({ tripId, role } = {}) {
+  if (!tripId || typeof tripId !== 'string') return null;
+  const existing = findActiveRide(tripId);
+  if (existing) return existing;
+  if (role && VALID_ROLES.has(role)) {
+    const seeded = seedActiveRideFromConfirmedHandoff({ tripId, role });
+    if (seeded) return seeded;
+  }
+  const otherRole = role && OTHER_ROLE[role];
+  if (otherRole) {
+    const crossSeeded = seedActiveRideFromConfirmedHandoff({ tripId, role: otherRole });
+    if (crossSeeded) return crossSeeded;
+  }
+  return null;
+}

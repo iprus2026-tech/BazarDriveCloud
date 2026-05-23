@@ -6,15 +6,13 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 import {
-  findActiveRide,
   updateActiveRideStatus,
-  saveActiveRide,
   createDemoActiveRide,
   SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
-import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
+import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
@@ -100,7 +98,10 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   const ts = ride.timestamps || {};
   if (statusQuery === RIDE_STATUS.NEW_ORDER) {
     if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
-    return saveActiveRide({ ...ride, status: RIDE_STATUS.NEW_ORDER });
+    // BD-RIDE-D-10 — In-memory override only. ?status= must not
+    // permanently rewrite the stored canonical record; later user
+    // actions (accept / cancel / etc.) persist via updateActiveRideStatus.
+    return { ...ride, status: RIDE_STATUS.NEW_ORDER };
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
@@ -396,14 +397,11 @@ export default function activeRide() {
 
   const tripId = query.get('tripId') || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
-  let ride = findActiveRide(tripId);
-  if (!ride) {
-    // BD-HANDOFF-04 — Bridge for direct deep-links: if a fresh
-    // role-matched handoff exists for this tripId, seed the active
-    // ride store from it so the screen renders the same passenger,
-    // driver, vehicle, route and fare /trip-confirmation just showed.
-    ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'driver' });
-  }
+  // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
+  // active-ride record first, then tries to seed from a confirmed
+  // handoff for either role so driver and passenger converge on one
+  // canonical trip identity (passenger, driver, vehicle, route, fare).
+  let ride = loadCanonicalActiveRide({ tripId, role: 'driver' });
   // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
   // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
   // agreed price, arrival ETA) when one was pinned right before the

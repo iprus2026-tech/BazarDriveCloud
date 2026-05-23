@@ -8,7 +8,6 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import {
-  findActiveRide,
   createDemoActiveRide,
   updateActiveRideStatus,
   saveActiveRide,
@@ -16,7 +15,11 @@ import {
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
-import { seedActiveRideFromConfirmedHandoff } from './trip_confirmation_handoff.js';
+import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
+import {
+  loadDriverHandoffSnapshot,
+  applyDriverHandoffSnapshotToRide,
+} from './driver_handoff_snapshot.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import {
   saveRideHistoryEntry,
@@ -141,19 +144,25 @@ function normalizePhase(phaseQuery) {
 // passenger-cancel → driver-canceled flow that needs the same identity
 // to be persisted later.
 function loadPassengerRideView(tripId, statusQuery) {
-  let ride = findActiveRide(tripId);
+  // BD-RIDE-D-10 — Cross-role canonical lookup. Driver and passenger
+  // converge on the same persisted record or confirmed-handoff seed
+  // for a given tripId. Driver's lifecycle ownership is unchanged —
+  // this only ensures the passenger view does not fork the trip
+  // identity when only the other role has materialized data.
+  let ride = loadCanonicalActiveRide({ tripId, role: 'passenger' });
   if (!ride) {
-    // BD-HANDOFF-04 — Prefer a confirmed-handoff seed over the
-    // SIM_AUDIT demo so the passenger view matches the identity,
-    // route and fare from /trip-confirmation. Seeder gates on
-    // role='passenger' + fresh + state==CONFIRMED, so a missing,
-    // expired, malformed or role-mismatched handoff returns null
-    // and we fall through to the existing audit/demo behavior.
-    ride = seedActiveRideFromConfirmedHandoff({ tripId, role: 'passenger' });
-  }
-  if (!ride) {
-    const overrides = statusQuery ? SIM_AUDIT_RIDE_OVERRIDES : {};
+    // BD-RIDE-D-10 — Mirror the driver fallback: when no canonical
+    // record exists, use the same SIM_AUDIT demo + driver handoff
+    // snapshot enrichment so both roles agree on passenger name,
+    // pickup/dropoff, fare and ETA. View-only: not persisted, so
+    // the audit URL cannot poison the canonical record.
+    const snapshot = loadDriverHandoffSnapshot(tripId);
+    const useSimOverrides = Boolean(statusQuery) || Boolean(snapshot);
+    const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
+    if (snapshot) {
+      ride = applyDriverHandoffSnapshotToRide(ride, snapshot);
+    }
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
     return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
