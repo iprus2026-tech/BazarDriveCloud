@@ -395,7 +395,8 @@ export default function activeRide() {
   if (role !== 'driver') return renderPassenger();
   ensureDriverSheetsCss();
 
-  const tripId = query.get('tripId') || DEMO_ACTIVE_RIDE_ID;
+  const rawTripId = query.get('tripId');
+  const tripId = rawTripId || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
@@ -413,8 +414,16 @@ export default function activeRide() {
   if (!ride) {
     const driverSnapshot = loadDriverHandoffSnapshot(tripId);
     const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
-    if (!hasValidStatusQuery && !driverSnapshot) return renderDriverEmpty();
-    ride = createDemoActiveRide({ tripId, ...SIM_AUDIT_RIDE_OVERRIDES });
+    // BD-RIDE-D-10 — When an explicit tripId is in the URL, mirror the
+    // passenger fallback and materialize the same non-persisted demo
+    // record so both roles agree on the trip identity. The
+    // "no active order" empty placeholder is reserved for the default
+    // /active-ride?role=driver URL (no tripId in query).
+    const hasExplicitTripId = Boolean(rawTripId);
+    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId) return renderDriverEmpty();
+    const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
+    const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
+    ride = createDemoActiveRide({ tripId, ...overrides });
     if (driverSnapshot) {
       ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
       if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
