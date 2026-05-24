@@ -79,7 +79,7 @@ function readRouteDraft() {
   }
 }
 
-function hydrateForm(draft) {
+function hydrateForm() {
   if (formHydrated) return;
   formHydrated = true;
   try {
@@ -99,15 +99,19 @@ function hydrateForm(draft) {
   } catch {
     // ignore — fall back to defaults.
   }
-  if (draft) {
-    const fp = `${draft.pickup.label}→${draft.dropoff.label}`;
-    if (routeFingerprint && routeFingerprint !== fp) {
-      // Route changed since the user last edited the form — reset price
-      // so the new estimate is used by default.
-      form.price = null;
-    }
-    routeFingerprint = fp;
+}
+
+// Always runs on entry: if the underlying routeDraft changed since the
+// user last touched the form, reset price so the new estimate is used by
+// default. Other fields (mode/date/time/comment) carry over because they
+// are independent of the route.
+function syncRouteFingerprint(draft) {
+  if (!draft) return;
+  const fp = `${draft.pickup.label}→${draft.dropoff.label}`;
+  if (routeFingerprint && routeFingerprint !== fp) {
+    form.price = null;
   }
+  routeFingerprint = fp;
 }
 
 function persistForm() {
@@ -768,7 +772,8 @@ function handleModeClick(root, target, draft) {
 
 export default function orderMapDraftScreen() {
   const draft = readRouteDraft();
-  hydrateForm(draft);
+  hydrateForm();
+  syncRouteFingerprint(draft);
   // Reset transient state on fresh entry.
   form.publishing = false;
   form.errors = [];
