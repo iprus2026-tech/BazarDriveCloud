@@ -1,10 +1,16 @@
 // BD-MAP-03 — RoutePicker implementation (mock-only, no real Mapbox SDK).
-// Keeps routeDraft in module memory for the passenger session. No
-// localStorage writes, no network calls, no native geolocation prompt.
+// Keeps routeDraft persisted under bazardrive.route_draft.v1 so the
+// passenger can refresh /route-picker without losing pickup/dropoff.
+// Malformed payloads are dropped silently and the screen resets to the
+// EMPTY state. No network calls, no native geolocation prompt.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+
+const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
+const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
+const ALLOWED_FOCUS = new Set(['pickup', 'dropoff']);
 
 const ROUTE_STATUS = {
   EMPTY: 'empty',
@@ -49,6 +55,7 @@ const routeDraft = {
 };
 
 let notice = '';
+let hydrated = false;
 
 function makePoint(id, label, hint, source) {
   return {
@@ -65,7 +72,104 @@ function clonePoint(point) {
   return { ...point };
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sanitizePoint(raw) {
+  if (!isPlainObject(raw)) return null;
+  const id = typeof raw.id === 'string' ? raw.id : '';
+  const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+  if (!id || !label) return null;
+  const hint = typeof raw.hint === 'string' ? raw.hint : '';
+  const source = ALLOWED_SOURCES.has(raw.source) ? raw.source : 'manual';
+  return { id, label, hint, source, coords: null };
+}
+
+function readPersistedDraft() {
+  let raw;
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    raw = localStorage.getItem(ROUTE_DRAFT_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    clearPersistedDraft();
+    return null;
+  }
+  if (!isPlainObject(parsed)) {
+    clearPersistedDraft();
+    return null;
+  }
+  return parsed;
+}
+
+function hydrateFromStorage() {
+  if (hydrated) return;
+  hydrated = true;
+  const parsed = readPersistedDraft();
+  if (!parsed) return;
+  const pickup = sanitizePoint(parsed.pickup);
+  const dropoff = sanitizePoint(parsed.dropoff);
+  if (!pickup && !dropoff) {
+    if (parsed.pickup != null || parsed.dropoff != null) clearPersistedDraft();
+    return;
+  }
+  routeDraft.pickup = pickup;
+  routeDraft.dropoff = dropoff;
+  routeDraft.focus = ALLOWED_FOCUS.has(parsed.focus)
+    ? parsed.focus
+    : (pickup ? 'dropoff' : 'pickup');
+  routeDraft.source = pickup?.source ?? dropoff?.source ?? null;
+}
+
+function persistDraft() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (!routeDraft.pickup && !routeDraft.dropoff) {
+      localStorage.removeItem(ROUTE_DRAFT_KEY);
+      return;
+    }
+    const payload = {
+      pickup: routeDraft.pickup,
+      dropoff: routeDraft.dropoff,
+      focus: routeDraft.focus,
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(ROUTE_DRAFT_KEY, JSON.stringify(payload));
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
+function clearPersistedDraft() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(ROUTE_DRAFT_KEY);
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
+export function clearRouteDraftStore() {
+  routeDraft.pickup = null;
+  routeDraft.dropoff = null;
+  routeDraft.focus = 'pickup';
+  routeDraft.source = null;
+  routeDraft.query = '';
+  routeDraft.results = [];
+  routeDraft.status = ROUTE_STATUS.EMPTY;
+  notice = '';
+  clearPersistedDraft();
+}
+
 export function getRouteDraft() {
+  hydrateFromStorage();
   syncDraft();
   return {
     ...routeDraft,
@@ -118,6 +222,7 @@ function setPoint(kind, point) {
   clearQuery();
   notice = '';
   syncDraft();
+  persistDraft();
 }
 
 function clearPoint(kind) {
@@ -127,6 +232,7 @@ function clearPoint(kind) {
   clearQuery();
   notice = '';
   syncDraft();
+  persistDraft();
 }
 
 function clearAll() {
@@ -137,6 +243,7 @@ function clearAll() {
   clearQuery();
   notice = '';
   syncDraft();
+  persistDraft();
 }
 
 function makeManualPoint() {
@@ -448,6 +555,7 @@ function handleClick(root, target) {
 }
 
 export default function routePickerScreen() {
+  hydrateFromStorage();
   syncDraft();
   const root = document.createElement('section');
   root.className = 'screen screen--route-picker';
