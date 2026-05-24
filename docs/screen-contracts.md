@@ -3342,10 +3342,14 @@ render/frame and contract before implementation:
 ```text
 BD-MAP-02 — LocationPermission
 BD-MAP-04 — RoutePreview
-BD-MAP-05 — OrderMapDraft
 BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
 BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 ```
+
+> BD-MAP-05 удалён из этого списка — контракт описан ниже (см.
+> «BD-MAP-05 — OrderMapDraft»). Имплементация — без backend, без
+> реального Mapbox SDK, без push и без driver-assignment, только
+> локальный mock-заказ через `createRideOrder()` в `mock_api.js`.
 
 > BD-MAP-01 удалён из этого списка — контракт описан выше (см.
 > «BD-MAP-01 — MapHome foundation»). Имплементация — без реального
@@ -3482,4 +3486,239 @@ Mapbox / payment / auth
 - CSP не ослабляется (см. <meta http-equiv="Content-Security-Policy"> в index.html)
 - Service Worker не кеширует public/prototypes/
 - node scripts/check.mjs проходит локально и в CI
+```
+
+## BD-MAP-05 — OrderMapDraft
+
+### Identity
+
+```text
+Screen:        BD-MAP-05 OrderMapDraft
+Route:         /order-map-draft
+File:          public/src/screens/order_map_draft.js
+Styles:        public/styles/order_map_draft.css
+Data source:   routeDraft из localStorage (`bazardrive.route_draft.v1`)
+               + createRideOrder() из public/src/mock_api.js
+Draft key:     bazardrive.order_form.v1 (форма «Сохранить черновик»)
+Orders key:    bazardrive.ride_orders.v1 (опубликованные mock-заказы)
+Design ref:    Cloud Design — BD-MAP-05 OrderMapDraft — Render Gate
+Parent issue:  #19
+Working issue: #215
+Branch:        feature/order-map-draft
+```
+
+### Purpose
+
+Следующий шаг после BD-MAP-04 RoutePreview. Берёт подтверждённый
+routeDraft (pickup, dropoff, distanceKm, durationMin, estimatedPrice) и
+превращает его в локальный mock пассажирский заказ. Никакого backend,
+реального Mapbox SDK, geocoding, payments, auth или driver-assignment
+здесь нет — `createRideOrder()` пишет объект в `localStorage` и
+success-стейт визуально подтверждает публикацию.
+
+### Cloud Design render/frame gate
+
+Design section: **BD-MAP-05 · OrderMapDraft**
+
+Frames used as visual reference:
+
+```text
+1 · Default — готов к публикации       → routeDraft валиден, mode=now
+2 · Schedule later — на завтра          → mode=later + date/time fields
+3 · Validation error                    → ошибки order.schedule / order.price
+4 · Publishing loading                  → CTA «Публикуем…» + spinner
+5 · Success — заказ опубликован         → success card + сводка заказа
+6 · Missing routeDraft (отсутствует)    → empty-state + diag-card
+```
+
+### Route contract
+
+```text
+Path:          /order-map-draft
+Query:         нет
+Chrome:        visible (tabbar не скрыт)
+Entry points:
+  - /route-preview → CTA «Создать заказ» (BD-MAP-04)
+  - прямой переход (анализируется как missing routeDraft)
+```
+
+### Data contract — routeDraft (in)
+
+```text
+Reads:   bazardrive.route_draft.v1 (см. BD-MAP-03 RoutePicker)
+Shape:   {
+  pickup:  { id, label, hint, source, coords }
+  dropoff: { id, label, hint, source, coords }
+  route:   { distanceKm:number, durationMin:number, estimatedPrice:number }
+}
+Validation (defensive):
+  - JSON.parse failure         → state=missing
+  - !isPlainObject              → state=missing
+  - pickup/dropoff invalid     → state=missing
+  - route.distanceKm == null    → state=missing
+  - route.durationMin == null   → state=missing
+  - route.estimatedPrice == null → state=missing
+```
+
+### Data contract — order (out)
+
+`createRideOrder()` (in `public/src/mock_api.js`) пишет в
+`bazardrive.ride_orders.v1` (newest-first):
+
+```text
+{
+  id:             `order-<timestamp>`
+  type:           'passenger_request' | 'ride_order'
+  pickup:         { id, label }
+  dropoff:        { id, label }
+  distanceKm:     number
+  durationMin:    number
+  estimatedPrice: number
+  scheduledMode:  'now' | 'later'
+  scheduledAt:    ISO string (now() для 'now', `${date}T${time}:00` для 'later')
+  comment:        string
+  status:         'CREATED'
+  createdAt:      ISO string
+}
+```
+
+`listNearbyOrders()` — helper, который вернёт до 20 опубликованных
+заказов со `status === 'CREATED'` (для будущего BD-DRIVER-01 DriverMap,
+сейчас не используется UI).
+
+### UI states
+
+```text
+1 · default        — routeDraft валиден; форма Сейчас/Позже + цена + комментарий
+2 · schedule-later — mode='later'; раскрыты поля date / time
+3 · validation     — после клика «Опубликовать» с ошибками; список
+                     {order.schedule, order.price} остаётся видимым,
+                     mode остаётся прежним
+4 · publishing     — form.publishing = true; CTA disabled + spinner
+5 · success        — после createRideOrder(); success-card + сводка
+6 · missing        — routeDraft отсутствует / malformed; empty + diag
+```
+
+### Form fields
+
+```text
+mode:     'now' | 'later'         tabs «Сейчас» / «Позже»
+date:     <input type="date">     виден только в mode='later'
+time:     <input type="time">     виден только в mode='later'
+price:    number ≥ 0              stepper −50 / input / +50, fallback = estimatedPrice
+comment:  string, 0..200          textarea + counter
+phone:    маска из user.phone     read-only, CTA «Изменить» → /profile
+```
+
+Поле «Сохранить черновик» пишет текущее состояние формы в
+`bazardrive.order_form.v1` (mode/date/time/price/comment/fingerprint).
+Fingerprint = `pickup.label→dropoff.label`. Если маршрут изменился —
+поле price сбрасывается к estimatedPrice, остальные поля сохраняются.
+
+### Validation
+
+```text
+mode='later' и !date || !time   → { copy: 'Укажите время поездки',  path: 'order.schedule' }
+currentPrice(draft) <= 0         → { copy: 'Проверьте цену или контакт', path: 'order.price' }
+```
+
+Ошибки рендерятся в `.omd-errors` (role="alert") между phone-row и
+lock-hint. Mode не сбрасывается, поля не очищаются.
+
+### Actions
+
+```text
+back              → /route-preview
+close (×)         → /feed
+edit-route        → /route-picker
+pick-route        → /route-picker (missing state)
+edit-phone        → /profile
+price-down / -up  → ±50 ₽ (clamp 0..100000)
+save-draft        → persist form in bazardrive.order_form.v1
+publish           → validate → form.publishing=true → setTimeout 700ms
+                    → createRideOrder() → clearFormDraft() → success state
+responses         → /responses (success CTA)
+```
+
+### Success state copy
+
+```text
+Badge:    «ЗАКАЗ № <last6 chars> · ОПУБЛИКОВАН»
+Title:    «Заказ опубликован»
+Hint:     «Водители рядом смогут увидеть его в списке заказов.
+           Мы пришлём push, как только появится отклик.» (push — mock)
+Summary:  Маршрут (pickup → dropoff)
+          Время (Сейчас · подача 4–8 мин | DD.MM.YYYY · HH:MM)
+          Цена (estimatedPrice ₽)
+          Статус («Ждём отклики», success-pill)
+Actions:  «→ Посмотреть отклики» → /responses
+          «В ленту»               → /feed
+```
+
+### Missing state copy
+
+```text
+Title:    «Маршрут не выбран»
+Hint:     «Сначала выберите точки поездки, затем создайте заказ.»
+Diag:     Источник = localStorage · пусто
+          Ключ     = bazardrive.route_draft.v1
+          Шаг назад = /route-picker
+Actions:  «Выбрать маршрут» → /route-picker
+          «В ленту»          → /feed
+```
+
+### CSS
+
+All styles added to `public/styles/order_map_draft.css` under section
+`BD-MAP-05`. CSS prefix: `omd-*`. No inline styles, no `style=`
+attributes. Tab/mode state driven by `.is-active` class and
+`data-mode="now|later"` selectors. Publishing state driven by
+`data-publishing="0|1"` selector + `.is-loading` class. Spinner is
+pure CSS `@keyframes omd-spin`.
+
+### Acceptance checklist
+
+- [ ] `/order-map-draft` открывается через hash-роутер
+- [ ] Без routeDraft (или повреждённый) → missing-стейт с diag-карточкой
+- [ ] С валидным routeDraft → default-стейт со сводкой маршрута
+- [ ] Метрики (мин / км / ₽) рендерятся из `route.distanceKm` /
+      `durationMin` / `estimatedPrice`
+- [ ] Tabs «Сейчас» / «Позже» переключают форму без перезагрузки
+- [ ] В режиме «Позже» появляются поля date + time
+- [ ] Stepper цены ±50 ₽ работает, ручной ввод сохраняется
+- [ ] Комментарий ограничен 200 символами; counter обновляется
+- [ ] Телефон из профиля показывается как `+7 (XXX) ··· XX-XX`,
+      CTA «Изменить» уходит на `/profile`
+- [ ] Validation: «Опубликовать» с `mode='later'` без даты/времени
+      показывает `order.schedule` ошибку
+- [ ] Validation: `price ≤ 0` показывает `order.price` ошибку
+- [ ] Publishing-стейт: CTA disabled + spinner «Публикуем…»
+- [ ] Success-стейт показывает badge с id, сводку заказа и CTA
+      «→ Посмотреть отклики» / «В ленту»
+- [ ] `createRideOrder()` пишет в `bazardrive.ride_orders.v1`
+      объект с id, type, pickup, dropoff, distanceKm, durationMin,
+      estimatedPrice, scheduledMode, scheduledAt, comment,
+      status='CREATED', createdAt
+- [ ] `listNearbyOrders()` возвращает опубликованные CREATED-заказы
+- [ ] Save-draft пишет форму в `bazardrive.order_form.v1` и
+      переживает rerender
+- [ ] BD-MAP-04 RoutePreview не модифицирован
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-MAP-05
+
+```text
+Реальный Mapbox SDK (route geometry / tiles)
+Geocoding / reverse geocoding
+Backend / реальная публикация заказа
+Driver assignment / matching
+Push-уведомления (push в success-копии — mock)
+Платёж / hold карты
+Auth / реальная верификация телефона
+DriverMap (BD-DRIVER-01) — listNearbyOrders() заведён здесь,
+  но потребитель появится позже
+APK / Android shell
 ```

@@ -37,6 +37,11 @@
 //                                     prior ride's route into the composer)
 //   bazardrive.route_draft.v1       → screens/route_picker.js (passenger
 //                                     pickup/dropoff draft for /route-picker)
+//   bazardrive.order_form.v1        → screens/order_map_draft.js (BD-MAP-05
+//                                     pending OrderMapDraft form: mode,
+//                                     date, time, price, comment, fingerprint)
+//   bazardrive.ride_orders.v1       → mock_api.js (BD-MAP-05 locally
+//                                     published mock passenger orders)
 //   bazardrive.myposts.v1           → mock_api.js
 //   profileTripDemo                 → passenger Profile demo override
 //
@@ -62,7 +67,8 @@ import { clearDriverHandoffSnapshotStore } from './screens/driver_handoff_snapsh
 import { clearComposerDraft } from './screens/composer.js';
 import { clearRepeatRouteDraft } from './repeat_route.js';
 import { clearRouteDraftStore } from './screens/route_picker.js';
-import { clearMyPostsStore } from './mock_api.js';
+import { clearOrderFormDraftStore } from './screens/order_map_draft.js';
+import { clearMyPostsStore, clearRideOrdersStore } from './mock_api.js';
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
 
@@ -91,6 +97,8 @@ export function clearUserScopedStorage() {
   clearComposerDraft();
   clearRepeatRouteDraft();
   clearRouteDraftStore();
+  clearOrderFormDraftStore();
+  clearRideOrdersStore();
   clearMyPostsStore();
   clearTripDemoMode();
 }
