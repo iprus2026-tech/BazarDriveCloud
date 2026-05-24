@@ -12,7 +12,7 @@ import { createRideOrder } from '../mock_api.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const FORM_DRAFT_KEY = 'bazardrive.order_form.v1';
-const STORAGE_LABEL = 'sessionStorage · пусто';
+const STORAGE_LABEL = 'localStorage';
 
 const STATE = {
   VALID: 'valid',
@@ -519,11 +519,11 @@ function renderMissingBody() {
     <dl class="omd-diag" aria-label="Диагностика">
       <div class="omd-diag__row">
         <dt>Источник</dt>
-        <dd>${escapeHtml(STORAGE_LABEL)}</dd>
+        <dd>${escapeHtml(STORAGE_LABEL)} · пусто</dd>
       </div>
       <div class="omd-diag__row">
         <dt>Ключ</dt>
-        <dd><code>bd:routeDraft</code></dd>
+        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
       </div>
       <div class="omd-diag__row">
         <dt>Шаг назад</dt>

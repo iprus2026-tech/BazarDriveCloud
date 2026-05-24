@@ -3660,8 +3660,8 @@ Actions:  «→ Посмотреть отклики» → /responses
 ```text
 Title:    «Маршрут не выбран»
 Hint:     «Сначала выберите точки поездки, затем создайте заказ.»
-Diag:     Источник = sessionStorage · пусто
-          Ключ     = bd:routeDraft
+Diag:     Источник = localStorage · пусто
+          Ключ     = bazardrive.route_draft.v1
           Шаг назад = /route-picker
 Actions:  «Выбрать маршрут» → /route-picker
           «В ленту»          → /feed
