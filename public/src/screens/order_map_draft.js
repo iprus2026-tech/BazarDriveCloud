@@ -146,6 +146,14 @@ function clearFormDraft() {
   formHydrated = false;
 }
 
+// BD-AUTH-BOUNDARY-01 — wiped on local logout / reset so the next
+// identity does not inherit the previous user's pending order draft
+// or its route-change fingerprint.
+export function clearOrderFormDraftStore() {
+  clearFormDraft();
+  routeFingerprint = null;
+}
+
 function clampPrice(value) {
   const n = Math.round(Number(value) || 0);
   if (n < PRICE_MIN) return PRICE_MIN;
