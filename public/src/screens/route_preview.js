@@ -20,9 +20,9 @@ const STATE = {
 const FIELD_LABELS = {
   pickup: { copy: 'Не указано место подачи', path: 'routeDraft.pickup' },
   dropoff: { copy: 'Не указано место назначения', path: 'routeDraft.dropoff' },
-  distanceKm: { copy: 'Расстояние не рассчитано', path: 'routeDraft.distanceKm' },
-  durationMin: { copy: 'Время поездки не рассчитано', path: 'routeDraft.durationMin' },
-  estimatePriceFrom: { copy: 'Стоимость не оценена', path: 'routeDraft.estimatePriceFrom' },
+  distanceKm: { copy: 'Расстояние не рассчитано', path: 'routeDraft.route.distanceKm' },
+  durationMin: { copy: 'Время поездки не рассчитано', path: 'routeDraft.route.durationMin' },
+  estimatePriceFrom: { copy: 'Стоимость не оценена', path: 'routeDraft.route.estimatedPrice' },
 };
 
 function isPlainObject(value) {
@@ -239,7 +239,7 @@ function renderMissingCard() {
       </div>
       <div class="rpv-diag__row">
         <dt>Ключ</dt>
-        <dd><code>bd:routeDraft</code></dd>
+        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
       </div>
       <div class="rpv-diag__row">
         <dt>Шаг назад</dt>
@@ -309,15 +309,6 @@ function renderMalformedCard(missing) {
       </svg>
       <span>Выбрать маршрут</span>
     </button>
-    <button class="bd-btn rpv-secondary" type="button" data-action="details">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="9"/>
-        <line x1="12" y1="8" x2="12" y2="12"/>
-        <line x1="12" y1="16" x2="12.01" y2="16"/>
-      </svg>
-      <span>Подробнее</span>
-    </button>
   `;
   return card;
 }
@@ -343,13 +334,7 @@ function buildBody() {
   return { fragment, state: result.state };
 }
 
-function toggleDetails(root) {
-  const issues = root.querySelector('.rpv-issues');
-  if (!issues) return;
-  issues.classList.toggle('rpv-issues--expanded');
-}
-
-function handleAction(root, action) {
+function handleAction(action) {
   if (action === 'create-order') {
     go('/order-map-draft');
     return;
@@ -366,10 +351,6 @@ function handleAction(root, action) {
     go('/map');
     return;
   }
-  if (action === 'details') {
-    toggleDetails(root);
-    return;
-  }
 }
 
 export default function routePreviewScreen() {
@@ -382,7 +363,7 @@ export default function routePreviewScreen() {
   root.addEventListener('click', (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
-    handleAction(root, target.dataset.action);
+    handleAction(target.dataset.action);
   });
 
   return root;
