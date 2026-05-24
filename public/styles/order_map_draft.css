@@ -1,0 +1,75 @@
+/* BD-MAP-04 placeholder — /order-map-draft */
+.screen--order-map-draft {
+  position: relative;
+  overflow: hidden;
+}
+
+.omd-topbar {
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.omd-topbar__back {
+  margin-top: 2px;
+}
+
+.omd-scroll {
+  padding-top: 0;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+.omd-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 20px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.omd-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.omd-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.omd-title {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-1, #fff);
+}
+
+.omd-hint {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--text-3);
+  line-height: 1.5;
+  max-width: 340px;
+}
+
+.omd-cta,
+.omd-secondary {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.omd-secondary {
+  font-weight: 500;
+}

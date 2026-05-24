@@ -601,7 +601,7 @@ function handleClick(root, target) {
   if (action === 'continue') {
     if (routeDraft.status !== ROUTE_STATUS.ROUTE_DRAFT_READY) return;
     persistDraft();
-    go('/new');
+    go('/route-preview');
     return;
   }
 
