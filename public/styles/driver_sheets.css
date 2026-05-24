@@ -20,12 +20,14 @@
   width: 100%;
   max-height: 86dvh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   background: rgba(19, 19, 22, 0.98);
   border: 1px solid var(--line-strong);
   border-radius: 28px 28px 0 0;
   box-shadow: 0 -24px 80px rgba(0, 0, 0, 0.46);
-  padding: 10px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 18px);
+  padding: 10px var(--pad) max(env(safe-area-inset-bottom, 0px) + 24px, 32px);
+  scroll-padding-bottom: max(env(safe-area-inset-bottom, 0px) + 24px, 32px);
 }
 .driver-sheet__handle {
   width: 42px;
@@ -147,6 +149,7 @@
   grid-template-columns: 1fr;
   gap: 10px;
   margin-top: 10px;
+  padding-bottom: 4px;
 }
 .bd-btn.driver-sheet__primary,
 .bd-btn.driver-sheet__secondary {
