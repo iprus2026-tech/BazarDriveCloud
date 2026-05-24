@@ -274,20 +274,36 @@
   color: var(--text-3);
 }
 
-.rp-debug {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  color: var(--text-3);
-  font-size: 11px;
-  padding: 0 4px 16px;
-}
-
-.rp-debug span {
-  padding: 4px 7px;
-  border-radius: 999px;
+.rp-bottom-card__estimate {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
   background: var(--bg-2);
   border: 1px solid var(--line);
+}
+
+.rp-bottom-card__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.rp-bottom-card__metric dt {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.rp-bottom-card__metric dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
 }
 
 .rp-bottom-card {

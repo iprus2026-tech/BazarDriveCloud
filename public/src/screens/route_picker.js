@@ -52,6 +52,8 @@ const routeDraft = {
   results: [],
   source: null,
   status: ROUTE_STATUS.EMPTY,
+  stage: 'pickup',
+  route: null,
 };
 
 let notice = '';
@@ -70,6 +72,38 @@ function makePoint(id, label, hint, source) {
 function clonePoint(point) {
   if (!point) return null;
   return { ...point };
+}
+
+function cloneRoute(route) {
+  if (!route) return null;
+  return { ...route };
+}
+
+// Local, deterministic estimate so /route-picker can show distance/duration/
+// price without a Mapbox Directions request. Same pickup/dropoff pair always
+// yields the same numbers across reloads, so the persisted route survives
+// refresh without drifting.
+function hashLabel(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    h = ((h << 5) - h + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function estimateRoute(pickup, dropoff) {
+  if (!pickup || !dropoff) return null;
+  const seed = hashLabel(`${pickup.label}→${dropoff.label}`);
+  const distanceKm = Math.round((3 + (seed % 220) / 10) * 10) / 10;
+  const durationMin = Math.max(5, Math.round(8 + distanceKm * 2.4));
+  const estimatedPrice = Math.round(80 + distanceKm * 35);
+  return { distanceKm, durationMin, estimatedPrice };
+}
+
+function computeStage() {
+  if (routeDraft.pickup && routeDraft.dropoff) return 'ready';
+  if (routeDraft.pickup) return 'dropoff';
+  return 'pickup';
 }
 
 function isPlainObject(value) {
@@ -126,6 +160,8 @@ function hydrateFromStorage() {
     ? parsed.focus
     : (pickup ? 'dropoff' : 'pickup');
   routeDraft.source = pickup?.source ?? dropoff?.source ?? null;
+  syncDraft();
+  persistDraft();
 }
 
 function persistDraft() {
@@ -139,6 +175,8 @@ function persistDraft() {
       pickup: routeDraft.pickup,
       dropoff: routeDraft.dropoff,
       focus: routeDraft.focus,
+      stage: routeDraft.stage,
+      route: routeDraft.route,
       updatedAt: new Date().toISOString(),
     };
     localStorage.setItem(ROUTE_DRAFT_KEY, JSON.stringify(payload));
@@ -164,6 +202,8 @@ export function clearRouteDraftStore() {
   routeDraft.query = '';
   routeDraft.results = [];
   routeDraft.status = ROUTE_STATUS.EMPTY;
+  routeDraft.stage = 'pickup';
+  routeDraft.route = null;
   notice = '';
   clearPersistedDraft();
 }
@@ -176,6 +216,7 @@ export function getRouteDraft() {
     pickup: clonePoint(routeDraft.pickup),
     dropoff: clonePoint(routeDraft.dropoff),
     results: routeDraft.results.map(clonePoint),
+    route: cloneRoute(routeDraft.route),
   };
 }
 
@@ -207,6 +248,8 @@ function inferStatus() {
 function syncDraft() {
   routeDraft.results = getMockResults(routeDraft.query);
   routeDraft.status = inferStatus();
+  routeDraft.route = estimateRoute(routeDraft.pickup, routeDraft.dropoff);
+  routeDraft.stage = computeStage();
 }
 
 function clearQuery() {
@@ -395,10 +438,31 @@ function renderSuggestions() {
   `;
 }
 
+function renderEstimate() {
+  if (!routeDraft.route) return '';
+  const { distanceKm, durationMin, estimatedPrice } = routeDraft.route;
+  return `
+    <dl class="rp-bottom-card__estimate" aria-label="Оценка маршрута">
+      <div class="rp-bottom-card__metric">
+        <dt>Расстояние</dt>
+        <dd>${escapeHtml(distanceKm.toFixed(1))} км</dd>
+      </div>
+      <div class="rp-bottom-card__metric">
+        <dt>В пути</dt>
+        <dd>~${escapeHtml(String(durationMin))} мин</dd>
+      </div>
+      <div class="rp-bottom-card__metric">
+        <dt>Ориентир. цена</dt>
+        <dd>${escapeHtml(String(estimatedPrice))} ₽</dd>
+      </div>
+    </dl>
+  `;
+}
+
 function renderStatusCard() {
   const ready = routeDraft.status === ROUTE_STATUS.ROUTE_DRAFT_READY;
   const statusCopy = ready
-    ? 'Маршрут готов. Предпросмотр подключит BD-MAP-04.'
+    ? 'Маршрут готов. Продолжите, чтобы перейти к созданию заявки.'
     : 'Заполните точку подачи и назначения, чтобы продолжить.';
 
   return `
@@ -408,9 +472,10 @@ function renderStatusCard() {
         <span class="rp-bottom-card__status rp-bottom-card__status--${ready ? 'ready' : 'draft'}">
           ${ready ? 'Готово' : 'Черновик'}
         </span>
-        <span class="rp-bottom-card__code">${escapeHtml(routeDraft.status)}</span>
+        <span class="rp-bottom-card__code">${escapeHtml(routeDraft.stage)}</span>
       </div>
       <p class="rp-bottom-card__hint">${escapeHtml(statusCopy)}</p>
+      ${ready ? renderEstimate() : ''}
       ${notice ? `<p class="rp-bottom-card__notice" role="status">${escapeHtml(notice)}</p>` : ''}
       <button class="bd-btn primary rp-bottom-card__cta" type="button" data-action="continue"
               ${ready ? '' : 'disabled'} aria-disabled="${ready ? 'false' : 'true'}">
@@ -459,10 +524,6 @@ function buildBody() {
       ${renderPointField('dropoff')}
     </div>
     ${renderSuggestions()}
-    <div class="rp-debug" aria-live="polite">
-      <span>focus: ${escapeHtml(routeDraft.focus)}</span>
-      <span>source: ${escapeHtml(routeDraft.source ?? 'none')}</span>
-    </div>
   `);
   fragment.appendChild(scroll);
 
@@ -539,8 +600,8 @@ function handleClick(root, target) {
   }
   if (action === 'continue') {
     if (routeDraft.status !== ROUTE_STATUS.ROUTE_DRAFT_READY) return;
-    notice = 'routeDraft готов. Следующий экран: BD-MAP-04 RoutePreview.';
-    rerender(root);
+    persistDraft();
+    go('/new');
     return;
   }
 
