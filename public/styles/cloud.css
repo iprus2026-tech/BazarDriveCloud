@@ -24,6 +24,11 @@
   --tabbar-h: 88px;
   /* scroll bottom-padding controlled by shell state classes */
   --scroll-pb: 180px;
+  /* BD-RIDE-FIX-01 — bottom inset for Android system nav bar
+     so full-screen active-ride layouts can reserve room below
+     their scrollable content and reachable actions. */
+  --system-nav-safe-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  --active-ride-bottom-safe: calc(32px + var(--system-nav-safe-bottom));
 }
 
 /* ── Reset ───────────────────────────────────────────────── */
@@ -4558,11 +4563,20 @@ body {
   border-top-right-radius: var(--radius-xl);
   border: 1px solid var(--line);
   border-bottom: 0;
-  padding: 18px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 16px);
+  padding: 18px var(--pad) var(--active-ride-bottom-safe);
   box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* BD-RIDE-FIX-01 — let the sheet scroll its own content
+     instead of overflowing the screen behind the Android nav bar
+     when the completion summary is taller than the viewport. */
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: var(--active-ride-bottom-safe);
 }
 
 .active-ride__sheet-head {
@@ -4852,7 +4866,7 @@ body {
   position: absolute;
   left: var(--pad);
   right: var(--pad);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  bottom: calc(var(--system-nav-safe-bottom) + 12px);
   background: rgba(20, 20, 26, 0.92);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
@@ -5809,7 +5823,11 @@ body {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 16px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 24px);
+  /* BD-RIDE-FIX-01 — reserve room below the Android system nav bar
+     so the rating, payment and report cards stay reachable. */
+  padding: 16px var(--pad) var(--active-ride-bottom-safe);
+  scroll-padding-bottom: var(--active-ride-bottom-safe);
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 14px;
