@@ -207,7 +207,7 @@ function renderValidCard(draft) {
 
     <div class="rpv-status rpv-status--ready" role="status">
       <span class="rpv-status__check" aria-hidden="true">✓</span>
-      <span>Готово · перенаправление в композер</span>
+      <span>Готово · можно создать заказ</span>
     </div>
   `;
   return card;
