@@ -2753,6 +2753,236 @@ Backend / API / driver markers / live navigation
 
 ---
 
+## BD-MAP-03 — RoutePicker
+
+### Identity
+
+```text
+Screen ID:           BD-MAP-03
+Name:                RoutePicker
+Route:               /route-picker
+Future file:         public/src/screens/route_picker.js
+Data source:         in-memory `routeDraft` (passenger session draft);
+                     no localStorage write in this contract pass
+Design ref:          Cloud Design — BD-MAP-03 RoutePicker — Render Gate
+Cloud Design render: https://claude.ai/design/p/5906cb18-3016-4c57-879c-d1f89a532a34?file=BazarDrive+Prototype.html&via=share
+Parent issue:        #19
+Render gate issue:   #144
+Status:              docs-only contract (implementation not yet started)
+```
+
+### Purpose
+
+Экран, на котором пассажир задаёт пару адресов (точка подачи и точка
+назначения) перед оформлением заказа. RoutePicker — следующий шаг
+после `/map` (BD-MAP-01): пользователь нажимает «Выбрать маршрут» на
+MapHome и попадает в этот экран. Здесь он выбирает pickup / dropoff
+из подсказок поиска или вручную, может задействовать «Моё место» как
+pickup, и формирует объект `routeDraft`, который затем передаётся в
+BD-MAP-04 RoutePreview.
+
+Этот контракт — render-gate sync с Cloud Design. Реальный поиск
+адресов, Mapbox SDK / Geocoding API, сетевые вызовы и сохранение в
+localStorage сюда **не входят** — экран описывается через mock
+suggestions и in-memory draft.
+
+### User role
+
+```text
+passenger    основной пользователь экрана
+guest        может видеть экран; «Продолжить» уведёт на /onboarding
+             через существующий welcome-gate (поведение наследуется
+             от router.js — без изменений роутера в этом контракте)
+driver       вне scope; для водительского флоу есть отдельный
+             BD-DRIVER-01
+```
+
+### Route contract
+
+```text
+Path:          /route-picker
+Query:         (нет; route-state живёт в in-memory `routeDraft`)
+Chrome:        visible (tabbar + welcome-gate, как у /map)
+Boot:          экран открывается с пустым routeDraft, если в session
+               нет ранее заданных pickup / dropoff
+```
+
+### State / data contract
+
+In-memory `routeDraft` (живёт в модуле `route_picker.js`, не пишется
+в localStorage в рамках этого контракта):
+
+```text
+routeDraft {
+  pickup:   RoutePoint | null    выбранная точка подачи
+  dropoff:  RoutePoint | null    выбранная точка назначения
+  focus:    'pickup' | 'dropoff' какое поле сейчас активно
+  query:    string                текст поиска в активном поле
+  results:  RoutePoint[]          mock-suggestions для текущего query
+  source:   'search' | 'manual' | 'current' | null
+                                   как был задан последний point
+  status:   'empty'
+          | 'pickup-selected'
+          | 'dropoff-selected'
+          | 'search-results'
+          | 'manual-fallback'
+          | 'route-draft-ready'
+}
+
+RoutePoint {
+  id:       string                 mock id, стабильный в течение сессии
+  label:    string                 человеко-читаемый адрес
+  hint:     string | null          вторичная строка (район / город)
+  source:   'search' | 'manual' | 'current'
+  coords:   null                   не используется в этом контракте
+                                   (нет реальной карты)
+}
+```
+
+Reads / writes:
+
+```text
+Reads:    Cloud Design mock suggestions (in-file MOCK_SUGGESTIONS).
+          Никаких чтений `bazardrive.map_prefs.v1` / геолокации в
+          этом контракте.
+Writes:   только in-memory `routeDraft`. Никаких ключей в
+          localStorage не создаётся и не обновляется.
+Mock:     route_service.estimateRoute / price_estimator не вызываются
+          здесь — оценка маршрута живёт в BD-MAP-04 RoutePreview.
+```
+
+### Required states
+
+```text
+1. Empty pickup/dropoff   — оба поля пусты, список suggestions пуст,
+                            CTA «Продолжить» неактивен.
+2. Pickup selected        — pickup задан, dropoff пуст, фокус
+                            автоматически переходит на dropoff.
+3. Dropoff selected       — dropoff задан, pickup пуст; пользователь
+                            может вернуться к pickup тапом по полю.
+4. Search results         — пользователь печатает в активном поле,
+                            под полем рендерится список mock
+                            suggestions (Cloud Design — search list).
+5. Manual address fallback — пользователь вводит адрес, которого нет
+                            в suggestions; показывается строка
+                            «Использовать как адрес» с иконкой.
+6. Route draft ready      — pickup и dropoff заданы; CTA
+                            «Продолжить» активен, snippet маршрута
+                            (from → to) отрисован поверх карты-
+                            заглушки.
+```
+
+### Actions
+
+```text
+back to /map               — стрелка назад в topbar → router.go('/map').
+                              Текущий routeDraft теряется (или
+                              сохраняется в module-scope, см.
+                              «Out of scope» ниже).
+select pickup              — тап по pickup-полю или по suggestion в
+                              режиме focus=pickup. Обновляет
+                              routeDraft.pickup и переводит status в
+                              `pickup-selected`. Если dropoff уже
+                              задан → `route-draft-ready`.
+select dropoff             — тап по dropoff-полю или по suggestion в
+                              режиме focus=dropoff. Обновляет
+                              routeDraft.dropoff. Если pickup уже
+                              задан → `route-draft-ready`.
+use current location       — кнопка «Моё место» в pickup-поле.
+                              Mock: подставляет MOCK_CURRENT_LOCATION
+                              как pickup с source='current'. Реальный
+                              `navigator.geolocation` НЕ вызывается.
+clear route                — кнопка / иконка крестика рядом с
+                              заполненным полем. Сбрасывает только
+                              соответствующий point. Двойной clear
+                              возвращает экран в `empty`.
+continue to route preview  — основной CTA «Продолжить». Активен
+                              только в `route-draft-ready`. В этом
+                              контракте действие описано как «уведёт
+                              на /route-preview», но сам переход и
+                              регистрация маршрута — out of scope
+                              (см. BD-MAP-04).
+```
+
+### A11y
+
+```text
+- Поля pickup / dropoff: <input> с aria-label, focus-state виден.
+- Suggestion-список: role="listbox", элементы role="option".
+- Manual fallback row: role="option" с явной подписью
+  «Использовать как адрес».
+- Кнопка «Моё место»: aria-label="Использовать моё место" + иконка.
+- Кнопка очистки поля: aria-label="Очистить точку".
+- CTA «Продолжить»: aria-disabled="true" в неготовых state.
+- Map snippet поверх заглушки: aria-hidden="true" (декоративно).
+```
+
+### Acceptance checklist
+
+- [ ] Cloud Design render для BD-MAP-03 RoutePicker зафиксирован
+      (см. ссылку выше) и сверен с шестью required-state выше.
+- [ ] Контракт BD-MAP-03 присутствует в `docs/screen-contracts.md`
+      и содержит все требуемые поля (Screen ID, Name, Route, Future
+      file, Parent, Render gate issue, Cloud Design render link,
+      Purpose, User role, Data/state contract, Required states,
+      Actions, Acceptance checklist, Out of scope).
+- [ ] BD-MAP-03 удалён из «Planned screens» и больше не значится
+      как «not yet implemented» в этом файле.
+- [ ] Никакой реальной реализации `/route-picker` в этом PR нет
+      (файл `public/src/screens/route_picker.js` не создаётся).
+- [ ] `public/src/app.js` не модифицируется — маршрут
+      `/route-picker` не регистрируется.
+- [ ] `public/src/router.js` не модифицируется (нет HIDE_CHROME,
+      нет welcome-gate изменений).
+- [ ] `public/sw.js` PRECACHE и VERSION не трогаются.
+- [ ] CSP (`<meta http-equiv="Content-Security-Policy">`) не
+      ослабляется.
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+      изменений в HTML (этот PR docs-only).
+- [ ] Нет `.style.<property>` присвоений в JS (этот PR docs-only).
+- [ ] Active-ride flow (BD-RIDE-D / BD-RIDE-P) не затрагивается.
+- [ ] `node scripts/check.mjs` проходит на этом PR.
+
+### Out of scope for BD-MAP-03
+
+```text
+no /route-picker implementation
+  (контракт описывает экран, но `public/src/screens/route_picker.js`
+   в этом PR не создаётся)
+no app.js route registration
+  (route `/route-picker` пока НЕ зарегистрирован в router-таблице
+   `public/src/app.js`)
+no router.js changes
+  (HIDE_CHROME, welcome-gate, syncTabActive — без изменений)
+no real Mapbox SDK
+  (никаких подключений к `api.mapbox.com` / `events.mapbox.com` /
+   `tiles.mapbox.com`; safe-stubs `public/src/mapbox/*` не трогаются)
+no backend / API
+  (нет реального Geocoding / Search / Directions; suggestions —
+   mock-массив в будущем файле экрана)
+no CSP changes
+  (`<meta http-equiv="Content-Security-Policy">` в
+   `public/index.html` не редактируется)
+no Service Worker changes
+  (`public/sw.js` PRECACHE и VERSION не обновляются — implementation
+   PR поднимет VERSION и добавит файл в PRECACHE отдельно)
+no active ride changes
+  (active_ride.js / active_ride_passenger.js / ride_state.js не
+   модифицируются; routeDraft не перетекает в active-ride state
+   machine в рамках BD-MAP-03)
+no localStorage persistence
+  (routeDraft живёт только в module-scope; персистентность маршрута —
+   отдельный вопрос для BD-MAP-04 / BD-MAP-05)
+no real navigator.geolocation prompt
+  («Моё место» подставляет MOCK_CURRENT_LOCATION; реальный prompt —
+   отдельный гейт, см. BD-MAP-02 LocationPermission)
+no /route-preview implementation
+  (CTA «Продолжить» — placeholder в этом контракте; экран
+   назначения описывается отдельно в BD-MAP-04)
+```
+
+---
+
 ## BD-PROFILE-MY-POSTS-01 — My publications from Profile
 
 ### Identity
@@ -3111,7 +3341,6 @@ render/frame and contract before implementation:
 
 ```text
 BD-MAP-02 — LocationPermission
-BD-MAP-03 — RoutePicker
 BD-MAP-04 — RoutePreview
 BD-MAP-05 — OrderMapDraft
 BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
@@ -3121,6 +3350,11 @@ BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 > BD-MAP-01 удалён из этого списка — контракт описан выше (см.
 > «BD-MAP-01 — MapHome foundation»). Имплементация — без реального
 > Mapbox SDK, только safe stubs в `public/src/mapbox/*`.
+
+> BD-MAP-03 удалён из этого списка — контракт описан выше (см.
+> «BD-MAP-03 — RoutePicker»). Сам экран `/route-picker` пока не
+> реализован: контракт зафиксирован как docs-only render gate
+> (см. issue #144).
 
 > `/active-ride` уже реализован двумя файлами
 > (`active_ride.js`, `active_ride_passenger.js`) и поэтому удалён
