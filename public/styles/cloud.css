@@ -27,7 +27,7 @@
   /* BD-RIDE-FIX-01 — bottom inset for Android system nav bar
      so full-screen active-ride layouts can reserve room below
      their scrollable content and reachable actions. */
-  --system-nav-safe-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  --system-nav-safe-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   --active-ride-bottom-safe: calc(32px + var(--system-nav-safe-bottom));
 }
 
@@ -4572,7 +4572,7 @@ body {
      instead of overflowing the screen behind the Android nav bar
      when the completion summary is taller than the viewport. */
   min-height: 0;
-  max-height: 100%;
+  max-height: calc(100% - 60px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -5203,7 +5203,6 @@ body {
   flex-direction: column;
   gap: 10px;
   margin-top: 4px;
-  padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
 @media (max-width: 380px) {
