@@ -414,3 +414,65 @@ export function _resetForTests() {
   cache = null;
   try { localStorage.removeItem(STORE_KEY); } catch {}
 }
+
+// ── Ride orders (BD-MAP-05 OrderMapDraft) ──────────────────────
+// Local mock passenger orders created from the routeDraft. No backend,
+// no driver assignment, no push — just a localStorage list newest-first
+// so DriverMap / nearby-orders surfaces can list them later.
+const RIDE_ORDERS_KEY = 'bazardrive.ride_orders.v1';
+
+function loadRideOrdersRaw() {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(RIDE_ORDERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistRideOrders(list) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(RIDE_ORDERS_KEY, JSON.stringify(list));
+  } catch {
+    // fail soft
+  }
+}
+
+export function createRideOrder(input = {}) {
+  const order = {
+    id: `order-${Date.now()}`,
+    type: input.type === 'ride_order' ? 'ride_order' : 'passenger_request',
+    pickup: input.pickup ?? null,
+    dropoff: input.dropoff ?? null,
+    distanceKm: Number(input.distanceKm) || 0,
+    durationMin: Number(input.durationMin) || 0,
+    estimatedPrice: Number(input.estimatedPrice) || 0,
+    scheduledMode: input.scheduledMode === 'later' ? 'later' : 'now',
+    scheduledAt: input.scheduledAt ?? new Date().toISOString(),
+    comment: typeof input.comment === 'string' ? input.comment : '',
+    status: 'CREATED',
+    createdAt: new Date().toISOString(),
+  };
+  const list = [order, ...loadRideOrdersRaw()];
+  persistRideOrders(list);
+  return order;
+}
+
+export function listNearbyOrders() {
+  return loadRideOrdersRaw()
+    .filter((o) => o && o.status === 'CREATED')
+    .slice(0, 20);
+}
+
+export function clearRideOrdersStore() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(RIDE_ORDERS_KEY);
+  } catch {
+    // fail soft
+  }
+}
