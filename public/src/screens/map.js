@@ -369,10 +369,7 @@ export default function mapScreen() {
     } else if (action === 'nearby') {
       go('/map?state=nearby');
     } else if (action === 'route' || action === 'manual') {
-      // /route-picker is planned (BD-MAP-03) and not registered yet;
-      // both «Выбрать маршрут» and «Ввести вручную» rest at /map
-      // until BD-MAP-FOUND-01 wires the real picker.
-      go('/map?state=default');
+      go('/route-picker');
     } else if (action === 'feed') {
       go('/feed');
     }
