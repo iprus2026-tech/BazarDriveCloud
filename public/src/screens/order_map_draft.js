@@ -708,6 +708,10 @@ function rerender(root, ctx) {
   root.replaceChildren(buildSection(ctx));
 }
 
+const DRAFT_REQUIRED_ACTIONS = new Set([
+  'publish', 'price-down', 'price-up', 'save-draft',
+]);
+
 function handleAction(root, action, draft, state) {
   if (action === 'back') {
     go('/route-preview');
@@ -735,7 +739,14 @@ function handleAction(root, action, draft, state) {
     go('/driver-map');
     return;
   }
-  if (state !== STATE.VALID || !draft) return;
+  // BD-MAP-07 — actions below require a route draft. If the draft is
+  // unavailable at the moment of click, surface a visible missing state
+  // instead of silently no-opping.
+  if (!DRAFT_REQUIRED_ACTIONS.has(action)) return;
+  if (state !== STATE.VALID || !draft) {
+    rerender(root, { state: STATE.MISSING, draft: null });
+    return;
+  }
   if (action === 'save-draft') {
     persistForm();
     return;
@@ -792,6 +803,10 @@ function handleModeClick(root, target, draft) {
   form.mode = mode;
   form.errors = [];
   persistForm();
+  if (!draft) {
+    rerender(root, { state: STATE.MISSING, draft: null });
+    return true;
+  }
   rerender(root, { state: STATE.VALID, draft });
   return true;
 }
@@ -805,6 +820,12 @@ export default function orderMapDraftScreen() {
   form.errors = [];
   lastOrder = null;
 
+  // BD-MAP-07 — screen-local last-known-valid route draft. Survives
+  // transient localStorage gaps (eviction, cross-tab clears) so that
+  // "Опубликовать заказ" never silently no-ops while the user is still
+  // looking at a populated form.
+  let renderedDraft = draft;
+
   const state = draft ? STATE.VALID : STATE.MISSING;
 
   const root = document.createElement('section');
@@ -813,21 +834,23 @@ export default function orderMapDraftScreen() {
   root.replaceChildren(buildSection({ state, draft }));
 
   root.addEventListener('click', (event) => {
-    const currentDraft = readRouteDraft();
-    const currentState = currentDraft ? STATE.VALID : STATE.MISSING;
-    if (handleModeClick(root, event.target, currentDraft)) return;
+    const liveDraft = readRouteDraft();
+    const effectiveDraft = liveDraft || renderedDraft;
+    if (effectiveDraft) renderedDraft = effectiveDraft;
+    const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;
+    if (handleModeClick(root, event.target, effectiveDraft)) return;
     const target = event.target.closest('[data-action]');
     if (!target) return;
-    handleAction(root, target.dataset.action, currentDraft, currentState);
+    handleAction(root, target.dataset.action, effectiveDraft, effectiveState);
   });
 
   root.addEventListener('input', (event) => {
-    handleInput(root, event.target, draft);
+    handleInput(root, event.target, renderedDraft);
   });
 
   root.addEventListener('change', (event) => {
     // For date / time pickers that fire change instead of input.
-    handleInput(root, event.target, draft);
+    handleInput(root, event.target, renderedDraft);
   });
 
   return root;
