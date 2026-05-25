@@ -468,6 +468,32 @@ export function listNearbyOrders() {
     .slice(0, 20);
 }
 
+// BD-DRIVER-01 — driver accepts a published mock order. Mutates the
+// stored order in place: status flips from CREATED → ACCEPTED so it
+// drops out of listNearbyOrders() and a driver-side surface can pick
+// it up later (active-ride mock). No backend, no driver assignment
+// state machine, no push. Returns the updated order, or null if the
+// id was not found / order was already non-CREATED.
+export function acceptNearbyOrder(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const list = loadRideOrdersRaw();
+  let updated = null;
+  const next = list.map((o) => {
+    if (o && o.id === id && o.status === 'CREATED') {
+      updated = {
+        ...o,
+        status: 'ACCEPTED',
+        acceptedAt: new Date().toISOString(),
+      };
+      return updated;
+    }
+    return o;
+  });
+  if (!updated) return null;
+  persistRideOrders(next);
+  return updated;
+}
+
 export function clearRideOrdersStore() {
   try {
     if (typeof localStorage === 'undefined') return;

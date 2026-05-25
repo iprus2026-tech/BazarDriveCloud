@@ -20,10 +20,12 @@ import responses  from './screens/responses.js';
 import tripConfirmation from './screens/trip_confirmation.js';
 import postDetail from './screens/post_detail.js';
 import inbox      from './screens/inbox.js';
+import driverMap  from './screens/driver_map.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
 register('/map',         map);
+register('/driver-map',  driverMap);
 register('/route-picker', routePicker);
 register('/route-preview', routePreview);
 register('/order-map-draft', orderMapDraft);
