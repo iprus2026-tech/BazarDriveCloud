@@ -3722,3 +3722,121 @@ DriverMap (BD-DRIVER-01) — listNearbyOrders() заведён здесь,
   но потребитель появится позже
 APK / Android shell
 ```
+
+## BD-DRIVER-01 — DriverMap
+
+### Identity
+
+```text
+Screen:        BD-DRIVER-01 DriverMap — driver-side nearby orders
+Route:         /driver-map
+File:          public/src/screens/driver_map.js
+Data source:   listNearbyOrders() + acceptNearbyOrder() из
+               public/src/mock_api.js (store ride_orders.v1)
+Design ref:    Cloud Design — BD-DRIVER-01 DriverMap (render gate)
+Parent issue:  #19
+Working issue: #217
+Branch:        feature/driver-map
+```
+
+### Purpose
+
+Первый безопасный driver-side экран карты. Показывает водителю
+mock-заказы рядом, опубликованные через BD-MAP-05 OrderMapDraft, и
+даёт принять заказ локально (мок status flip без backend / push /
+driver assignment service). Реальный Mapbox SDK, токен и нативная
+геолокация в этот контракт не входят — экран наследует визуальный
+язык BD-MAP-01 MapHome (`createMapShell({ variant: 'driver' })`).
+
+### Route contract
+
+```text
+Path:          /driver-map
+Query:         (нет в этой ревизии — внутренние состояния живут в DOM)
+Chrome:        tabbar visible, FAB hidden (SHOW_FAB ограничен '/feed')
+Boot:          listNearbyOrders() читается на каждом рендере;
+               если store пустой — показываются DEMO_ORDERS (visual fallback)
+```
+
+### Data contract
+
+```text
+Reads:    bazardrive.ride_orders.v1 через listNearbyOrders()
+          (status === 'CREATED', верхние 20 записей)
+Writes:   bazardrive.ride_orders.v1 через acceptNearbyOrder(id)
+          (status CREATED → ACCEPTED, добавляется acceptedAt ISO string)
+Mock:     DEMO_ORDERS in-file — три read-only карточки, отображаются
+          когда live-список пуст; «Принять» на demo-строке уводит
+          на /order-map-draft (driver не может «принять» несуществующий
+          заказ).
+```
+
+### UI states
+
+```text
+1 · list     — listNearbyOrders().length > 0 → карточка с count + список +
+               ряд chip-кнопок «Открыть карту» / «В ленту»
+2 · empty    — live-список пуст; показываются DEMO_ORDERS поверх карты,
+               но карточка снизу — empty с CTA «Создать тестовый заказ»
+3 · accepted — после успешного acceptNearbyOrder(): success-badge,
+               сводка маршрута, CTA «К поездке» → /active-ride?role=driver
+```
+
+### Actions
+
+```text
+accept (live order)  → acceptNearbyOrder(id) → accepted state
+accept (demo order)  → /order-map-draft (нечего принимать локально)
+create-order         → /order-map-draft
+map                  → /map (BD-MAP-01 MapHome)
+feed                 → /feed
+active-ride          → /active-ride?role=driver&status=DRIVER_EN_ROUTE
+driver-map (back)    → перерисовка списка in-place
+```
+
+### CSS
+
+Новые правила добавлены в `public/styles/cloud.css` под секцией
+`BD-DRIVER-01 DriverMap`. CSS prefix: `driver-map__*`. Карта и
+карточки переиспользуют существующие классы `bd-map-shell`,
+`map-home__map`, `map-home__sheet`, `map-home__order-*`, `bd-btn`,
+`bd-badge`, `bd-empty`. Нет inline styles, нет `style=` атрибутов,
+нет `.style.<property>` мутаций.
+
+### Acceptance checklist
+
+- [ ] `/driver-map` открывается через hash-роутер
+- [ ] Tabbar виден, FAB скрыт (SHOW_FAB ограничен '/feed')
+- [ ] При непустом `listNearbyOrders()` рендерится list-стейт со
+      счётчиком и кнопкой «Принять» на каждой строке
+- [ ] При пустом store показываются DEMO_ORDERS на карте + empty-card
+      с CTA «Создать тестовый заказ» → /order-map-draft
+- [ ] «Принять» на live-заказе вызывает `acceptNearbyOrder(id)`,
+      экран переходит в accepted-стейт, заказ исчезает из
+      `listNearbyOrders()`
+- [ ] «Принять» на demo-строке уводит на /order-map-draft без падений
+- [ ] CTA «К поездке» в accepted-стейте →
+      `/active-ride?role=driver&status=DRIVER_EN_ROUTE`
+- [ ] Карта-заглушка использует `createMapShell({ variant: 'driver' })`
+      без реального Mapbox SDK и без токена
+- [ ] `public/sw.js` precache содержит `./src/screens/driver_map.js`
+- [ ] `/active-ride?role=driver` и `/active-ride?role=passenger`
+      продолжают работать (active_ride.js не модифицирован)
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
+- [ ] Нет `.style.<property>` присвоений в JS
+- [ ] CSP не ослаблен
+- [ ] `node scripts/check.mjs` проходит
+
+### Out of scope for BD-DRIVER-01
+
+```text
+Реальный Mapbox SDK (tiles / route geometry / clustering)
+Mapbox token / CSP relaxation
+Native Geolocation API запрос на маунте
+Backend API / driver assignment service
+Push-уведомления (новый заказ / отмена пассажиром)
+Платёж / hold карты
+Переписывание active_ride.js / ride_state.js
+APK / Android shell
+```
+
