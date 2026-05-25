@@ -277,11 +277,12 @@ export default function driverMapScreen() {
 
   function renderList() {
     const live = listNearbyOrders();
-    const orders = live.length > 0 ? live : DEMO_ORDERS;
+    const hasLive = live.length > 0;
+    const orders = hasLive ? live : DEMO_ORDERS;
 
     stage.replaceChildren(buildMapPlaceholder(orders.length));
-    sheetSlot.replaceChildren(orders.length > 0 ? buildListCard(orders) : buildEmptyCard());
-    root.dataset.state = orders.length > 0 ? STATE.LIST : STATE.EMPTY;
+    sheetSlot.replaceChildren(hasLive ? buildListCard(live) : buildEmptyCard());
+    root.dataset.state = hasLive ? STATE.LIST : STATE.EMPTY;
   }
 
   function renderAccepted(order) {
