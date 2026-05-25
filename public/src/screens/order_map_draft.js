@@ -611,10 +611,23 @@ function renderSuccessBody(order) {
       </div>
     </dl>
 
-    <button class="bd-btn primary omd-publish" type="button" data-action="responses">
-      <span>→ Посмотреть отклики</span>
+    <button class="bd-btn primary omd-publish" type="button" data-action="driver-map">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/>
+        <line x1="8" y1="3" x2="8" y2="18"/>
+        <line x1="16" y1="6" x2="16" y2="21"/>
+      </svg>
+      <span>К карте водителя</span>
     </button>
-    <button class="bd-btn omd-secondary" type="button" data-action="close">
+    <button class="bd-btn omd-secondary" type="button" data-action="responses">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>
+      </svg>
+      <span>Посмотреть отклики</span>
+    </button>
+    <button class="bd-btn ghost omd-draft" type="button" data-action="close">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3" y="3" width="7" height="7" rx="1.5"/>
@@ -715,6 +728,11 @@ function handleAction(root, action, draft, state) {
   }
   if (action === 'responses') {
     go('/responses');
+    return;
+  }
+  if (action === 'driver-map') {
+    lastOrder = null;
+    go('/driver-map');
     return;
   }
   if (state !== STATE.VALID || !draft) return;

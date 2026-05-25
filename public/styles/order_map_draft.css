@@ -604,6 +604,13 @@
   opacity: 0.85;
 }
 
+.omd-publish:not(:disabled):active,
+.omd-secondary:not(:disabled):active,
+.omd-draft:not(:disabled):active {
+  transform: scale(0.98);
+  transition: transform 80ms ease-out;
+}
+
 .omd-spinner {
   width: 16px;
   height: 16px;
