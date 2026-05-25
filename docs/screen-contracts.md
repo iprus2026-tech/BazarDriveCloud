@@ -3765,10 +3765,15 @@ Reads:    bazardrive.ride_orders.v1 через listNearbyOrders()
           (status === 'CREATED', верхние 20 записей)
 Writes:   bazardrive.ride_orders.v1 через acceptNearbyOrder(id)
           (status CREATED → ACCEPTED, добавляется acceptedAt ISO string)
+          bazardrive.active_ride.v1 — на accept seedим запись через
+          createDemoActiveRide() + saveActiveRide() из ride_state.js,
+          tripId = `trip_<order.id>`, status = DRIVER_EN_ROUTE,
+          route.pickupLabel / route.dropoffLabel / route.etaToDestination,
+          order.destinationDistance / order.destinationEta /
+          order.offerPrice, ride.price, timestamps.acceptedAt
 Mock:     DEMO_ORDERS in-file — три read-only карточки, отображаются
-          когда live-список пуст; «Принять» на demo-строке уводит
-          на /order-map-draft (driver не может «принять» несуществующий
-          заказ).
+          только в empty-стейте поверх карты (визуальный fallback,
+          не попадают в sheet-список и не имеют accept-кнопок).
 ```
 
 ### UI states
@@ -3785,12 +3790,14 @@ Mock:     DEMO_ORDERS in-file — три read-only карточки, отобр�
 ### Actions
 
 ```text
-accept (live order)  → acceptNearbyOrder(id) → accepted state
-accept (demo order)  → /order-map-draft (нечего принимать локально)
+accept (live order)  → acceptNearbyOrder(id) → seedActiveRideFromAcceptedOrder()
+                       → accepted state (CTA carries tripId)
 create-order         → /order-map-draft
 map                  → /map (BD-MAP-01 MapHome)
 feed                 → /feed
-active-ride          → /active-ride?role=driver&status=DRIVER_EN_ROUTE
+active-ride          → /active-ride?role=driver&tripId=<trip_<id>>&status=DRIVER_EN_ROUTE
+                       (loadCanonicalActiveRide материализует именно
+                       принятый заказ, а не generic DEMO_ACTIVE_RIDE_ID)
 driver-map (back)    → перерисовка списка in-place
 ```
 
@@ -3812,11 +3819,13 @@ driver-map (back)    → перерисовка списка in-place
 - [ ] При пустом store показываются DEMO_ORDERS на карте + empty-card
       с CTA «Создать тестовый заказ» → /order-map-draft
 - [ ] «Принять» на live-заказе вызывает `acceptNearbyOrder(id)`,
-      экран переходит в accepted-стейт, заказ исчезает из
-      `listNearbyOrders()`
-- [ ] «Принять» на demo-строке уводит на /order-map-draft без падений
+      сидит запись в `bazardrive.active_ride.v1` с маршрутом и
+      ценой заказа, экран переходит в accepted-стейт, заказ
+      исчезает из `listNearbyOrders()`
 - [ ] CTA «К поездке» в accepted-стейте →
-      `/active-ride?role=driver&status=DRIVER_EN_ROUTE`
+      `/active-ride?role=driver&tripId=trip_<order.id>&status=DRIVER_EN_ROUTE`,
+      `loadCanonicalActiveRide` находит сидeд-запись и рендерит
+      именно принятый заказ (а не generic DEMO_ACTIVE_RIDE_ID)
 - [ ] Карта-заглушка использует `createMapShell({ variant: 'driver' })`
       без реального Mapbox SDK и без токена
 - [ ] `public/sw.js` precache содержит `./src/screens/driver_map.js`
