@@ -33,7 +33,19 @@ const form = {
   comment: '',
   publishing: false,
   errors: [],            // [{ key, copy, path }]
+  // BD-MAP-08 — screen-local diagnostic notice surfaced near publish
+  // actions so a tap on "Опубликовать заказ" never feels silent.
+  // Shape: { tone: 'info' | 'warn' | 'error', text: string } | null.
+  notice: null,
 };
+
+function setNotice(tone, text) {
+  form.notice = { tone, text };
+}
+
+function clearNotice() {
+  form.notice = null;
+}
 
 let formHydrated = false;
 let routeFingerprint = null;
@@ -143,6 +155,7 @@ function clearFormDraft() {
   form.price = null;
   form.comment = '';
   form.errors = [];
+  form.notice = null;
   formHydrated = false;
 }
 
@@ -434,6 +447,19 @@ function renderErrors() {
   return `<ul class="omd-errors" role="alert" aria-label="Проверьте поля">${items}</ul>`;
 }
 
+function renderNotice() {
+  if (!form.notice) return '';
+  const tone = form.notice.tone === 'error' || form.notice.tone === 'warn' || form.notice.tone === 'info'
+    ? form.notice.tone
+    : 'info';
+  return `
+    <div class="omd-notice omd-notice--${tone}" role="status" aria-live="polite" data-notice="1">
+      <span class="omd-notice__dot" aria-hidden="true"></span>
+      <span class="omd-notice__text">${escapeHtml(form.notice.text)}</span>
+    </div>
+  `;
+}
+
 function renderLockHint() {
   return `
     <div class="omd-lock" role="note">
@@ -502,6 +528,7 @@ function renderValidBody(draft) {
       ${renderErrors()}
       ${renderLockHint()}
       <div class="omd-actions">
+        ${renderNotice()}
         ${renderPublishActions()}
       </div>
     </div>
@@ -543,6 +570,7 @@ function renderMissingBody() {
       </div>
     </dl>
 
+    ${renderNotice()}
     <button class="bd-btn primary omd-publish" type="button" data-action="pick-route">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -685,19 +713,48 @@ function publishOrder(draft) {
 }
 
 function handlePublish(root, draft) {
+  // BD-MAP-08 — duplicate tap while a publish is already in flight.
+  // The form is pointer-events:none in this state, but accessibility
+  // tooling or rapid taps can still trigger another click. Surface a
+  // visible reason instead of silently no-opping.
+  if (form.publishing) {
+    setNotice('info', 'Заказ уже публикуется…');
+    rerender(root, { state: STATE.VALID, draft });
+    return;
+  }
   const errors = validate(draft);
   form.errors = errors;
   if (errors.length) {
+    const hasPriceError = errors.some((e) => e.key === 'price');
+    setNotice('warn', hasPriceError
+      ? 'Проверьте цену заказа.'
+      : 'Проверьте поля заказа.');
     rerender(root, { state: STATE.VALID, draft });
     return;
   }
   form.publishing = true;
+  setNotice('info', 'Публикуем заказ…');
   rerender(root, { state: STATE.VALID, draft });
 
   setTimeout(() => {
-    const order = publishOrder(draft);
+    let order = null;
+    try {
+      order = publishOrder(draft);
+    } catch {
+      form.publishing = false;
+      setNotice('error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.');
+      rerender(root, { state: STATE.VALID, draft });
+      return;
+    }
+    if (!order || typeof order !== 'object' || !order.id) {
+      form.publishing = false;
+      setNotice('error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.');
+      rerender(root, { state: STATE.VALID, draft });
+      return;
+    }
     lastOrder = order;
     form.publishing = false;
+    clearNotice();
     clearFormDraft();
     rerender(root, { state: STATE.VALID, draft, order });
   }, 700);
@@ -744,6 +801,11 @@ function handleAction(root, action, draft, state) {
   // instead of silently no-opping.
   if (!DRAFT_REQUIRED_ACTIONS.has(action)) return;
   if (state !== STATE.VALID || !draft) {
+    // BD-MAP-08 — also raise a notice so the missing state explicitly
+    // explains why the tap on "Опубликовать заказ" did not publish.
+    if (action === 'publish') {
+      setNotice('warn', 'Маршрут потерян. Выберите маршрут заново.');
+    }
     rerender(root, { state: STATE.MISSING, draft: null });
     return;
   }
@@ -818,6 +880,7 @@ export default function orderMapDraftScreen() {
   // Reset transient state on fresh entry.
   form.publishing = false;
   form.errors = [];
+  form.notice = null;
   lastOrder = null;
 
   // BD-MAP-07 — screen-local last-known-valid route draft. Survives
