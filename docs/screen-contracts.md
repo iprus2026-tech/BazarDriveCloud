@@ -3787,6 +3787,9 @@ Mock:     нет встроенных DEMO_ORDERS — empty-стейт держ�
                карточка снизу — empty с CTA «Создать тестовый заказ»
 3 · accepted — после успешного acceptNearbyOrder(): success-badge,
                сводка маршрута, CTA «К поездке» → /active-ride?role=driver
+               (карта-заглушка идёт в variant=accepted: без cluster-пинов,
+               aria-label «Карта-заглушка водителя · заказ принят»,
+               watermark «Карта водителя · Mapbox SDK пока не подключён»)
 ```
 
 ### Actions

@@ -108,15 +108,36 @@ function buildTopbar() {
   return topbar;
 }
 
-function buildMapPlaceholder(orderCount) {
-  const hasOrders = orderCount > 0;
+const MAP_VARIANT = {
+  NEARBY:   'nearby',
+  EMPTY:    'empty',
+  ACCEPTED: 'accepted',
+};
+
+const MAP_VARIANT_COPY = {
+  [MAP_VARIANT.NEARBY]: {
+    ariaLabel: 'Карта-заглушка водителя',
+    watermark: 'Mapbox SDK пока не подключён',
+  },
+  [MAP_VARIANT.EMPTY]: {
+    ariaLabel: 'Карта-заглушка водителя · заказов рядом нет',
+    watermark: 'Демо-фон · Mapbox SDK пока не подключён',
+  },
+  [MAP_VARIANT.ACCEPTED]: {
+    ariaLabel: 'Карта-заглушка водителя · заказ принят',
+    watermark: 'Карта водителя · Mapbox SDK пока не подключён',
+  },
+};
+
+function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY } = {}) {
+  const copy = MAP_VARIANT_COPY[variant] || MAP_VARIANT_COPY[MAP_VARIANT.NEARBY];
+  const showClusters = variant === MAP_VARIANT.NEARBY && orderCount > 0;
+
   const wrap = document.createElement('div');
   wrap.className = 'map-home__map map-home__map--nearby driver-map__map';
   wrap.setAttribute('role', 'img');
-  wrap.setAttribute('aria-label', hasOrders
-    ? 'Карта-заглушка водителя'
-    : 'Карта-заглушка водителя · заказов рядом нет');
-  wrap.dataset.state = hasOrders ? 'nearby' : 'empty';
+  wrap.setAttribute('aria-label', copy.ariaLabel);
+  wrap.dataset.state = variant;
 
   const shell = createMapShell({
     variant:    'driver',
@@ -129,7 +150,7 @@ function buildMapPlaceholder(orderCount) {
   shell.setAttribute('aria-hidden', 'true');
   wrap.appendChild(shell);
 
-  if (hasOrders) {
+  if (showClusters) {
     const overlay = document.createElement('div');
     overlay.className = 'map-home__nearby';
     overlay.setAttribute('aria-hidden', 'true');
@@ -150,9 +171,7 @@ function buildMapPlaceholder(orderCount) {
 
   const watermark = document.createElement('div');
   watermark.className = 'map-home__watermark';
-  watermark.textContent = hasOrders
-    ? 'Mapbox SDK пока не подключён'
-    : 'Демо-фон · Mapbox SDK пока не подключён';
+  watermark.textContent = copy.watermark;
   wrap.appendChild(watermark);
 
   return wrap;
@@ -296,13 +315,15 @@ export default function driverMapScreen() {
     const live = listNearbyOrders();
     const hasLive = live.length > 0;
 
-    stage.replaceChildren(buildMapPlaceholder(live.length));
+    stage.replaceChildren(buildMapPlaceholder(live.length, {
+      variant: hasLive ? MAP_VARIANT.NEARBY : MAP_VARIANT.EMPTY,
+    }));
     sheetSlot.replaceChildren(hasLive ? buildListCard(live) : buildEmptyCard());
     root.dataset.state = hasLive ? STATE.LIST : STATE.EMPTY;
   }
 
   function renderAccepted(order, tripId) {
-    stage.replaceChildren(buildMapPlaceholder(0));
+    stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.ACCEPTED }));
     sheetSlot.replaceChildren(buildAcceptedCard(order, tripId));
     root.dataset.state = STATE.ACCEPTED;
   }
