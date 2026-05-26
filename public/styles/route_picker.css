@@ -388,23 +388,25 @@
   font-size: 13px;
 }
 
-@media (max-width: 360px) {
-  .screen--route-picker {
-    /* Narrow phones: hint wraps to 3 lines and .rp-bottom-card__row stacks
-       (secondary buttons get their own row), so the card grows ~60px. */
-    --rp-bottom-card-h: 380px;
-  }
-
-  .rp-bottom-card__row {
-    flex-direction: column;
-  }
-}
-
 @media (max-height: 720px) {
   .screen--route-picker {
     /* Short viewports (Android Chrome with URL bar visible): keep enough
        scroll runway that pickup/dropoff fields can be brought above the
        ready card. */
     --rp-bottom-card-h: 340px;
+  }
+}
+
+@media (max-width: 360px) {
+  .screen--route-picker {
+    /* Narrow phones: hint wraps to 3 lines and .rp-bottom-card__row stacks
+       (secondary buttons get their own row), so the card grows ~60px.
+       Declared after the max-height rule so narrow+short viewports still
+       get the larger reserve. */
+    --rp-bottom-card-h: 380px;
+  }
+
+  .rp-bottom-card__row {
+    flex-direction: column;
   }
 }
