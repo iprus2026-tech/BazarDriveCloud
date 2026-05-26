@@ -50,9 +50,19 @@ export function requireOnboarding(after) {
   go('/onboarding');
 }
 
+function getMapEntryRoute() {
+  const profile = user.get();
+  return profile.role === 'driver' ? '/driver-map' : '/map';
+}
+
 document.getElementById('tabbar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-route]');
-  if (btn?.dataset.route) go(btn.dataset.route);
+  if (!btn?.dataset.route) return;
+  if (btn.dataset.route === '/map') {
+    go(getMapEntryRoute());
+    return;
+  }
+  go(btn.dataset.route);
 });
 
 document.getElementById('fab').addEventListener('click', () => {
