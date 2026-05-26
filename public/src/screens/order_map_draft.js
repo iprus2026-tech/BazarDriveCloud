@@ -221,9 +221,10 @@ function validate(draft) {
 }
 
 // ── Render: topbar ────────────────────────────────────────────
-function renderTopbar(stateLabel) {
+function renderTopbar(stateLabel, tone = 'draft') {
   const topbar = document.createElement('div');
   topbar.className = 'bd-topbar omd-topbar';
+  topbar.dataset.pill = tone;
   topbar.innerHTML = `
     <button class="bd-iconbtn omd-topbar__back" type="button" data-action="back"
             aria-label="Назад к предпросмотру">
@@ -672,10 +673,15 @@ function renderSuccessBody(order) {
 // ── Build and event wiring ────────────────────────────────────
 function buildSection({ state, draft, order }) {
   const fragment = document.createDocumentFragment();
-  const label = state === STATE.MISSING
-    ? 'ROUTEDRAFT ОТСУТСТВУЕТ'
-    : (order ? 'ОПУБЛИКОВАН' : (form.errors.length ? 'CREATED · ПРОВЕРКА' : 'ЧЕРНОВИК МАРШРУТА'));
-  fragment.appendChild(renderTopbar(label));
+  // BD-MAP-09 — pill copy mirrors Cloud Design BD-MAP-05 render gate:
+  //   state=success → CREATED (green)
+  //   state=missing → ROUTEDRAFT ОТСУТСТВУЕТ
+  //   otherwise     → ЧЕРНОВИК МАРШРУТА (validation reuses the same pill)
+  const label = order
+    ? 'CREATED'
+    : (state === STATE.MISSING ? 'ROUTEDRAFT ОТСУТСТВУЕТ' : 'ЧЕРНОВИК МАРШРУТА');
+  const tone = order ? 'success' : (state === STATE.MISSING ? 'missing' : 'draft');
+  fragment.appendChild(renderTopbar(label, tone));
 
   const scroll = document.createElement('div');
   scroll.className = 'bd-scroll omd-scroll';

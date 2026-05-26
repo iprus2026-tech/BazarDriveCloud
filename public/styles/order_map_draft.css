@@ -22,6 +22,16 @@
   font-weight: 600;
 }
 
+/* BD-MAP-09 — tone variants for the topbar pill, matching Cloud Design
+   BD-MAP-05 render gate (CREATED green, missing-route red, draft accent). */
+.omd-topbar[data-pill="success"] .omd-topbar__sub {
+  color: #34c759;
+}
+
+.omd-topbar[data-pill="missing"] .omd-topbar__sub {
+  color: #ff453a;
+}
+
 .omd-scroll {
   padding-top: 0;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
