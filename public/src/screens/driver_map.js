@@ -22,45 +22,6 @@ const STATE = {
   ACCEPTED: 'accepted',
 };
 
-// Fallback demo orders shown when the local ride-orders store is
-// empty (e.g. fresh session, no passenger has published yet). These
-// are display-only — they cannot be accepted because they do not
-// exist in the persisted store. Accept buttons on demo rows redirect
-// to the order draft flow so the driver can produce a real local
-// order to accept.
-const DEMO_ORDERS = [
-  {
-    id:             'demo-1',
-    pickup:         { label: 'ул. Малая Бронная, 28' },
-    dropoff:        { label: 'Шереметьево, терминал B' },
-    distanceKm:     38,
-    durationMin:    42,
-    estimatedPrice: 1540,
-    scheduledMode:  'now',
-    demo:           true,
-  },
-  {
-    id:             'demo-2',
-    pickup:         { label: 'ТЦ Мега' },
-    dropoff:        { label: 'Аэропорт Внуково, терминал A' },
-    distanceKm:     22,
-    durationMin:    28,
-    estimatedPrice: 980,
-    scheduledMode:  'now',
-    demo:           true,
-  },
-  {
-    id:             'demo-3',
-    pickup:         { label: 'Казань, ж/д вокзал' },
-    dropoff:        { label: 'Москва, Курский вокзал' },
-    distanceKm:     820,
-    durationMin:    540,
-    estimatedPrice: 4500,
-    scheduledMode:  'later',
-    demo:           true,
-  },
-];
-
 function pointLabel(point, fallback) {
   if (point && typeof point === 'object' && typeof point.label === 'string' && point.label.trim()) {
     return point.label.trim();
@@ -148,11 +109,14 @@ function buildTopbar() {
 }
 
 function buildMapPlaceholder(orderCount) {
+  const hasOrders = orderCount > 0;
   const wrap = document.createElement('div');
   wrap.className = 'map-home__map map-home__map--nearby driver-map__map';
   wrap.setAttribute('role', 'img');
-  wrap.setAttribute('aria-label', 'Карта-заглушка водителя');
-  wrap.dataset.state = 'nearby';
+  wrap.setAttribute('aria-label', hasOrders
+    ? 'Карта-заглушка водителя'
+    : 'Карта-заглушка водителя · заказов рядом нет');
+  wrap.dataset.state = hasOrders ? 'nearby' : 'empty';
 
   const shell = createMapShell({
     variant:    'driver',
@@ -165,7 +129,7 @@ function buildMapPlaceholder(orderCount) {
   shell.setAttribute('aria-hidden', 'true');
   wrap.appendChild(shell);
 
-  if (orderCount > 0) {
+  if (hasOrders) {
     const overlay = document.createElement('div');
     overlay.className = 'map-home__nearby';
     overlay.setAttribute('aria-hidden', 'true');
@@ -186,7 +150,9 @@ function buildMapPlaceholder(orderCount) {
 
   const watermark = document.createElement('div');
   watermark.className = 'map-home__watermark';
-  watermark.textContent = 'Mapbox SDK пока не подключён';
+  watermark.textContent = hasOrders
+    ? 'Mapbox SDK пока не подключён'
+    : 'Демо-фон · Mapbox SDK пока не подключён';
   wrap.appendChild(watermark);
 
   return wrap;
@@ -200,7 +166,6 @@ function buildOrderRow(order, index) {
   const row = document.createElement('li');
   row.className = 'driver-map__order';
   row.dataset.orderId = order.id;
-  if (order.demo) row.dataset.demo = '1';
 
   row.innerHTML = `
     <div class="driver-map__order-head">
@@ -330,9 +295,8 @@ export default function driverMapScreen() {
   function renderList() {
     const live = listNearbyOrders();
     const hasLive = live.length > 0;
-    const orders = hasLive ? live : DEMO_ORDERS;
 
-    stage.replaceChildren(buildMapPlaceholder(orders.length));
+    stage.replaceChildren(buildMapPlaceholder(live.length));
     sheetSlot.replaceChildren(hasLive ? buildListCard(live) : buildEmptyCard());
     root.dataset.state = hasLive ? STATE.LIST : STATE.EMPTY;
   }
@@ -355,8 +319,9 @@ export default function driverMapScreen() {
         const tripId = seedActiveRideFromAcceptedOrder(accepted);
         renderAccepted(accepted, tripId);
       } else {
-        // Demo / stale row — route to the order draft flow so the
-        // driver can publish a real local order to accept.
+        // Stale row (e.g. already accepted in another tab) — route
+        // to the order draft flow so the driver can publish a fresh
+        // local order to accept.
         go('/order-map-draft');
       }
     } else if (action === 'create-order') {
