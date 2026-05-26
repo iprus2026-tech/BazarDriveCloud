@@ -72,16 +72,28 @@ function publishFeedback(root, tone, text, draft, opts = {}) {
     ? { state: STATE.MISSING, draft: null }
     : { state: STATE.VALID, draft };
   rerender(root, ctx);
-  scrollNoticeIntoView(root);
+  scrollFeedbackIntoView(root);
   debugPublish('feedback', { tone, text, publishing: form.publishing });
 }
 
-function scrollNoticeIntoView(root) {
+function scrollFeedbackIntoView(root) {
   // BD-MAP-08 — rerender replaces the entire scroll container, so the
-  // visible feedback (notice + CTA) can end up below the fold on tall
-  // forms. Bring it back into view so the user can actually read it.
-  const notice = root.querySelector('[data-notice="1"]');
-  const target = notice || root.querySelector('.omd-actions') || root.querySelector('[data-action="publish"]');
+  // visible feedback (notice, success card, or CTA) can end up below
+  // the fold on tall forms. Walk a priority list that covers every
+  // publish-flow surface and bring the first match into view.
+  const selectors = [
+    '[data-notice="1"]',
+    '.omd-card--success',
+    '.omd-success',
+    '.omd-actions',
+    '[data-action="publish"]',
+    '[data-action="driver-map"]',
+  ];
+  let target = null;
+  for (const sel of selectors) {
+    target = root.querySelector(sel);
+    if (target) break;
+  }
   if (!target) return;
   try {
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -810,7 +822,7 @@ function handlePublish(root, draft) {
     clearFormDraft();
     debugPublish('publishOrder:ok', order.id);
     rerender(root, { state: STATE.VALID, draft, order });
-    scrollNoticeIntoView(root);
+    scrollFeedbackIntoView(root);
   }, 700);
 }
 
