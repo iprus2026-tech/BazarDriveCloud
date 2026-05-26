@@ -61,8 +61,11 @@ async function render() {
 }
 
 function syncTabActive(path) {
+  // /driver-map is the driver entry behind the Карта tab (which carries
+  // data-route="/map"), so treat both paths as the same tab for activation.
+  const tabPath = path === '/driver-map' ? '/map' : path;
   for (const btn of document.querySelectorAll('#tabbar [data-route]')) {
-    btn.classList.toggle('active', btn.dataset.route === path);
+    btn.classList.toggle('active', btn.dataset.route === tabPath);
   }
 }
 
