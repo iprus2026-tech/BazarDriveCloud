@@ -2,6 +2,11 @@
 .screen--route-picker {
   position: relative;
   overflow: hidden;
+  /* Reserve for the floating ready card: grip + status row + hint + estimate grid
+     + primary CTA + secondary row. The card is position:absolute and floats above
+     the tabbar, so .rp-scroll has to add this much padding-bottom to keep the
+     pickup/dropoff fields scrollable above the card on real mobile viewports. */
+  --rp-bottom-card-h: 320px;
 }
 
 .rp-topbar {
@@ -15,7 +20,12 @@
 
 .rp-scroll {
   padding-top: 0;
-  padding-bottom: 260px;
+  padding-bottom: calc(
+    var(--rp-bottom-card-h)
+    + var(--tabbar-h)
+    + env(safe-area-inset-bottom, 0px)
+    + 24px
+  );
 }
 
 .rp-map {
@@ -379,11 +389,22 @@
 }
 
 @media (max-width: 360px) {
-  .rp-scroll {
-    padding-bottom: 284px;
+  .screen--route-picker {
+    /* Narrow phones: hint wraps to 3 lines and .rp-bottom-card__row stacks
+       (secondary buttons get their own row), so the card grows ~60px. */
+    --rp-bottom-card-h: 380px;
   }
 
   .rp-bottom-card__row {
     flex-direction: column;
+  }
+}
+
+@media (max-height: 720px) {
+  .screen--route-picker {
+    /* Short viewports (Android Chrome with URL bar visible): keep enough
+       scroll runway that pickup/dropoff fields can be brought above the
+       ready card. */
+    --rp-bottom-card-h: 340px;
   }
 }
