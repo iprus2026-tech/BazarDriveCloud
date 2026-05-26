@@ -3755,7 +3755,8 @@ Path:          /driver-map
 Query:         (нет в этой ревизии — внутренние состояния живут в DOM)
 Chrome:        tabbar visible, FAB hidden (SHOW_FAB ограничен '/feed')
 Boot:          listNearbyOrders() читается на каждом рендере;
-               если store пустой — показываются DEMO_ORDERS (visual fallback)
+               если store пустой — карта-заглушка рисуется без cluster-пинов,
+               снизу — empty-card (см. BD-DRIVER-03 polish)
 ```
 
 ### Data contract
@@ -3771,9 +3772,9 @@ Writes:   bazardrive.ride_orders.v1 через acceptNearbyOrder(id)
           route.pickupLabel / route.dropoffLabel / route.etaToDestination,
           order.destinationDistance / order.destinationEta /
           order.offerPrice, ride.price, timestamps.acceptedAt
-Mock:     DEMO_ORDERS in-file — три read-only карточки, отображаются
-          только в empty-стейте поверх карты (визуальный fallback,
-          не попадают в sheet-список и не имеют accept-кнопок).
+Mock:     нет встроенных DEMO_ORDERS — empty-стейт держит карту
+          без cluster-пинов, чтобы placeholder и empty-sheet
+          сообщали одно и то же (см. BD-DRIVER-03 polish).
 ```
 
 ### UI states
@@ -3781,10 +3782,14 @@ Mock:     DEMO_ORDERS in-file — три read-only карточки, отобр�
 ```text
 1 · list     — listNearbyOrders().length > 0 → карточка с count + список +
                ряд chip-кнопок «Открыть карту» / «В ленту»
-2 · empty    — live-список пуст; показываются DEMO_ORDERS поверх карты,
-               но карточка снизу — empty с CTA «Создать тестовый заказ»
+2 · empty    — live-список пуст; карта-заглушка без cluster-пинов
+               (watermark «Демо-фон · Mapbox SDK пока не подключён»),
+               карточка снизу — empty с CTA «Создать тестовый заказ»
 3 · accepted — после успешного acceptNearbyOrder(): success-badge,
                сводка маршрута, CTA «К поездке» → /active-ride?role=driver
+               (карта-заглушка идёт в variant=accepted: без cluster-пинов,
+               aria-label «Карта-заглушка водителя · заказ принят»,
+               watermark «Карта водителя · Mapbox SDK пока не подключён»)
 ```
 
 ### Actions
@@ -3816,8 +3821,8 @@ driver-map (back)    → перерисовка списка in-place
 - [ ] Tabbar виден, FAB скрыт (SHOW_FAB ограничен '/feed')
 - [ ] При непустом `listNearbyOrders()` рендерится list-стейт со
       счётчиком и кнопкой «Принять» на каждой строке
-- [ ] При пустом store показываются DEMO_ORDERS на карте + empty-card
-      с CTA «Создать тестовый заказ» → /order-map-draft
+- [ ] При пустом store карта-заглушка не содержит cluster-пинов и
+      empty-card снизу — с CTA «Создать тестовый заказ» → /order-map-draft
 - [ ] «Принять» на live-заказе вызывает `acceptNearbyOrder(id)`,
       сидит запись в `bazardrive.active_ride.v1` с маршрутом и
       ценой заказа, экран переходит в accepted-стейт, заказ

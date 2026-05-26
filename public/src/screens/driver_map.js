@@ -22,45 +22,6 @@ const STATE = {
   ACCEPTED: 'accepted',
 };
 
-// Fallback demo orders shown when the local ride-orders store is
-// empty (e.g. fresh session, no passenger has published yet). These
-// are display-only — they cannot be accepted because they do not
-// exist in the persisted store. Accept buttons on demo rows redirect
-// to the order draft flow so the driver can produce a real local
-// order to accept.
-const DEMO_ORDERS = [
-  {
-    id:             'demo-1',
-    pickup:         { label: 'ул. Малая Бронная, 28' },
-    dropoff:        { label: 'Шереметьево, терминал B' },
-    distanceKm:     38,
-    durationMin:    42,
-    estimatedPrice: 1540,
-    scheduledMode:  'now',
-    demo:           true,
-  },
-  {
-    id:             'demo-2',
-    pickup:         { label: 'ТЦ Мега' },
-    dropoff:        { label: 'Аэропорт Внуково, терминал A' },
-    distanceKm:     22,
-    durationMin:    28,
-    estimatedPrice: 980,
-    scheduledMode:  'now',
-    demo:           true,
-  },
-  {
-    id:             'demo-3',
-    pickup:         { label: 'Казань, ж/д вокзал' },
-    dropoff:        { label: 'Москва, Курский вокзал' },
-    distanceKm:     820,
-    durationMin:    540,
-    estimatedPrice: 4500,
-    scheduledMode:  'later',
-    demo:           true,
-  },
-];
-
 function pointLabel(point, fallback) {
   if (point && typeof point === 'object' && typeof point.label === 'string' && point.label.trim()) {
     return point.label.trim();
@@ -147,12 +108,36 @@ function buildTopbar() {
   return topbar;
 }
 
-function buildMapPlaceholder(orderCount) {
+const MAP_VARIANT = {
+  NEARBY:   'nearby',
+  EMPTY:    'empty',
+  ACCEPTED: 'accepted',
+};
+
+const MAP_VARIANT_COPY = {
+  [MAP_VARIANT.NEARBY]: {
+    ariaLabel: 'Карта-заглушка водителя',
+    watermark: 'Mapbox SDK пока не подключён',
+  },
+  [MAP_VARIANT.EMPTY]: {
+    ariaLabel: 'Карта-заглушка водителя · заказов рядом нет',
+    watermark: 'Демо-фон · Mapbox SDK пока не подключён',
+  },
+  [MAP_VARIANT.ACCEPTED]: {
+    ariaLabel: 'Карта-заглушка водителя · заказ принят',
+    watermark: 'Карта водителя · Mapbox SDK пока не подключён',
+  },
+};
+
+function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY } = {}) {
+  const copy = MAP_VARIANT_COPY[variant] || MAP_VARIANT_COPY[MAP_VARIANT.NEARBY];
+  const showClusters = variant === MAP_VARIANT.NEARBY && orderCount > 0;
+
   const wrap = document.createElement('div');
   wrap.className = 'map-home__map map-home__map--nearby driver-map__map';
   wrap.setAttribute('role', 'img');
-  wrap.setAttribute('aria-label', 'Карта-заглушка водителя');
-  wrap.dataset.state = 'nearby';
+  wrap.setAttribute('aria-label', copy.ariaLabel);
+  wrap.dataset.state = variant;
 
   const shell = createMapShell({
     variant:    'driver',
@@ -165,7 +150,7 @@ function buildMapPlaceholder(orderCount) {
   shell.setAttribute('aria-hidden', 'true');
   wrap.appendChild(shell);
 
-  if (orderCount > 0) {
+  if (showClusters) {
     const overlay = document.createElement('div');
     overlay.className = 'map-home__nearby';
     overlay.setAttribute('aria-hidden', 'true');
@@ -186,7 +171,7 @@ function buildMapPlaceholder(orderCount) {
 
   const watermark = document.createElement('div');
   watermark.className = 'map-home__watermark';
-  watermark.textContent = 'Mapbox SDK пока не подключён';
+  watermark.textContent = copy.watermark;
   wrap.appendChild(watermark);
 
   return wrap;
@@ -200,7 +185,6 @@ function buildOrderRow(order, index) {
   const row = document.createElement('li');
   row.className = 'driver-map__order';
   row.dataset.orderId = order.id;
-  if (order.demo) row.dataset.demo = '1';
 
   row.innerHTML = `
     <div class="driver-map__order-head">
@@ -330,15 +314,16 @@ export default function driverMapScreen() {
   function renderList() {
     const live = listNearbyOrders();
     const hasLive = live.length > 0;
-    const orders = hasLive ? live : DEMO_ORDERS;
 
-    stage.replaceChildren(buildMapPlaceholder(orders.length));
+    stage.replaceChildren(buildMapPlaceholder(live.length, {
+      variant: hasLive ? MAP_VARIANT.NEARBY : MAP_VARIANT.EMPTY,
+    }));
     sheetSlot.replaceChildren(hasLive ? buildListCard(live) : buildEmptyCard());
     root.dataset.state = hasLive ? STATE.LIST : STATE.EMPTY;
   }
 
   function renderAccepted(order, tripId) {
-    stage.replaceChildren(buildMapPlaceholder(0));
+    stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.ACCEPTED }));
     sheetSlot.replaceChildren(buildAcceptedCard(order, tripId));
     root.dataset.state = STATE.ACCEPTED;
   }
@@ -355,8 +340,9 @@ export default function driverMapScreen() {
         const tripId = seedActiveRideFromAcceptedOrder(accepted);
         renderAccepted(accepted, tripId);
       } else {
-        // Demo / stale row — route to the order draft flow so the
-        // driver can publish a real local order to accept.
+        // Stale row (e.g. already accepted in another tab) — route
+        // to the order draft flow so the driver can publish a fresh
+        // local order to accept.
         go('/order-map-draft');
       }
     } else if (action === 'create-order') {
