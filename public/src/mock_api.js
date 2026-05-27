@@ -452,8 +452,14 @@ export function createRideOrder(input = {}) {
     distanceKm: Number(input.distanceKm) || 0,
     durationMin: Number(input.durationMin) || 0,
     estimatedPrice: Number(input.estimatedPrice) || 0,
+    estimatedPriceLabel: typeof input.estimatedPriceLabel === 'string'
+      ? input.estimatedPriceLabel.trim()
+      : '',
     scheduledMode: input.scheduledMode === 'later' ? 'later' : 'now',
     scheduledAt: input.scheduledAt ?? new Date().toISOString(),
+    scheduledLabel: typeof input.scheduledLabel === 'string'
+      ? input.scheduledLabel.trim()
+      : '',
     comment: typeof input.comment === 'string' ? input.comment : '',
     status: 'CREATED',
     createdAt: new Date().toISOString(),
@@ -540,17 +546,37 @@ function formatRideOrderTime(order) {
   return `${pad2(when.getDate())}.${pad2(when.getMonth() + 1)}, ${hhmm}`;
 }
 
+// Preserves user-typed budget labels (`1 500`, `1 500 ₽`) when projecting
+// ride orders into Feed, instead of falling back to numeric estimatedPrice
+// which strips spaces and other formatting.
+function formatMoneyLabel(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return /₽\s*$/.test(text) ? text : `${text} ₽`;
+}
+
+function formatRideOrderPrice(order) {
+  const label = formatMoneyLabel(order && order.estimatedPriceLabel);
+  if (label) return label;
+
+  const estimatedPrice = Number(order && order.estimatedPrice);
+  return Number.isFinite(estimatedPrice) && estimatedPrice > 0
+    ? `${estimatedPrice} ₽`
+    : null;
+}
+
+function formatRideOrderWhen(order) {
+  const label = String((order && order.scheduledLabel) || '').trim();
+  if (label) return label;
+  return formatRideOrderTime(order);
+}
+
 export function rideOrderToFeedPost(order) {
   if (!order || typeof order !== 'object') return null;
   if (order.status !== 'CREATED') return null;
 
   const id = String(order.id || '');
   if (!id) return null;
-
-  const estimatedPrice = Number(order.estimatedPrice);
-  const price = Number.isFinite(estimatedPrice) && estimatedPrice > 0
-    ? `${estimatedPrice} ₽`
-    : null;
 
   const comment = typeof order.comment === 'string' ? order.comment.trim() : '';
 
@@ -566,8 +592,8 @@ export function rideOrderToFeedPost(order) {
     time: 'Только что',
     from: pointLabel(order.pickup, 'Точка подачи'),
     to: pointLabel(order.dropoff, 'Точка назначения'),
-    when: formatRideOrderTime(order),
-    price,
+    when: formatRideOrderWhen(order),
+    price: formatRideOrderPrice(order),
     seats: null,
     body: comment || null,
     rideOrderStatus: order.status,

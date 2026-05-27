@@ -190,7 +190,21 @@ function buildFeedPost(d) {
 // BD-RIDE-ORDER-UNIFY-01 PR2 — Composer passenger requests write
 // canonical ride orders, so Feed (PR1 projection) and DriverMap
 // (listNearbyOrders) surface the same entity.
+//
+// Composer budget is free text (placeholder `1 500`), so `Number('1 500')`
+// is NaN. parseMoneyLike strips non-digits before parsing so the numeric
+// estimate stays usable for DriverMap; the raw typed string is preserved
+// separately in estimatedPriceLabel so Feed renders what the user actually
+// typed instead of `0 ₽`. Same idea for `when`: free text is kept in
+// scheduledLabel and the projection prefers it over parsing scheduledAt.
+function parseMoneyLike(value) {
+  const normalized = String(value || '').replace(/[^\d]/g, '');
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function buildRideOrderFromComposerDraft(d) {
+  const whenLabel = String(d.when || '').trim();
   return {
     type: 'passenger_request',
     source: 'feed',
@@ -198,9 +212,11 @@ function buildRideOrderFromComposerDraft(d) {
     dropoff: { id: null, label: d.to },
     distanceKm: 0,
     durationMin: 0,
-    estimatedPrice: Number(d.budget) || 0,
+    estimatedPrice: parseMoneyLike(d.budget),
+    estimatedPriceLabel: String(d.budget || '').trim(),
     scheduledMode: 'later',
-    scheduledAt: d.when || new Date().toISOString(),
+    scheduledAt: whenLabel || new Date().toISOString(),
+    scheduledLabel: whenLabel,
     comment: d.comment,
   };
 }
