@@ -47,6 +47,63 @@ function clearNotice() {
   form.notice = null;
 }
 
+// BD-MAP-08 — debug channel, off by default. Flip on with
+//   localStorage['bazardrive.debug.publish'] = '1'
+// to trace each tap on "Опубликовать заказ" without spamming the
+// normal console.
+function debugPublish(...args) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (localStorage.getItem('bazardrive.debug.publish') !== '1') return;
+    console.debug('[publish]', ...args);
+  } catch {
+    // fail soft
+  }
+}
+
+// BD-MAP-08 — single entry point for "the publish CTA must never feel
+// silent". Sets a notice, optionally toggles publishing state, rerenders
+// while preserving scroll, and scrolls the notice into view so the user
+// sees feedback without having to chase the form.
+function publishFeedback(root, tone, text, draft, opts = {}) {
+  setNotice(tone, text);
+  if (typeof opts.publishing === 'boolean') form.publishing = opts.publishing;
+  const ctx = opts.missing
+    ? { state: STATE.MISSING, draft: null }
+    : { state: STATE.VALID, draft };
+  rerender(root, ctx);
+  scrollFeedbackIntoView(root);
+  debugPublish('feedback', { tone, text, publishing: form.publishing });
+}
+
+function scrollFeedbackIntoView(root) {
+  // BD-MAP-08 — rerender replaces the entire scroll container, so the
+  // visible feedback (notice, success card, or CTA) can end up below
+  // the fold on tall forms. Walk a priority list that covers every
+  // publish-flow surface and bring the first match into view.
+  const selectors = [
+    '[data-notice="1"]',
+    '.omd-card--success',
+    '.omd-success',
+    '.omd-actions',
+    '[data-action="publish"]',
+    '[data-action="driver-map"]',
+  ];
+  let target = null;
+  for (const sel of selectors) {
+    target = root.querySelector(sel);
+    if (target) break;
+  }
+  if (!target) return;
+  try {
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  } catch {
+    try { target.scrollIntoView(); } catch {
+      // fail soft
+    }
+  }
+}
+
 let formHydrated = false;
 let routeFingerprint = null;
 
@@ -719,56 +776,69 @@ function publishOrder(draft) {
 }
 
 function handlePublish(root, draft) {
+  debugPublish('handlePublish:start', { hasDraft: Boolean(draft), publishing: form.publishing });
   // BD-MAP-08 — duplicate tap while a publish is already in flight.
   // The form is pointer-events:none in this state, but accessibility
   // tooling or rapid taps can still trigger another click. Surface a
   // visible reason instead of silently no-opping.
   if (form.publishing) {
-    setNotice('info', 'Заказ уже публикуется…');
-    rerender(root, { state: STATE.VALID, draft });
+    publishFeedback(root, 'info', 'Заказ уже публикуется…', draft);
+    return;
+  }
+  if (!draft) {
+    // Defence in depth — caller already routes missing-draft taps, but
+    // never trust that. A publish path without a draft must shout.
+    publishFeedback(root, 'warn', 'Маршрут потерян. Выберите маршрут заново.', null, { missing: true });
     return;
   }
   const errors = validate(draft);
   form.errors = errors;
   if (errors.length) {
     const hasPriceError = errors.some((e) => e.key === 'price');
-    setNotice('warn', hasPriceError
+    publishFeedback(root, 'warn', hasPriceError
       ? 'Проверьте цену заказа.'
-      : 'Проверьте поля заказа.');
-    rerender(root, { state: STATE.VALID, draft });
+      : 'Проверьте поля заказа.', draft);
     return;
   }
-  form.publishing = true;
-  setNotice('info', 'Публикуем заказ…');
-  rerender(root, { state: STATE.VALID, draft });
+  publishFeedback(root, 'info', 'Публикуем заказ…', draft, { publishing: true });
 
   setTimeout(() => {
     let order = null;
     try {
       order = publishOrder(draft);
-    } catch {
-      form.publishing = false;
-      setNotice('error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.');
-      rerender(root, { state: STATE.VALID, draft });
+    } catch (err) {
+      debugPublish('publishOrder:threw', err);
+      publishFeedback(root, 'error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
     if (!order || typeof order !== 'object' || !order.id) {
-      form.publishing = false;
-      setNotice('error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.');
-      rerender(root, { state: STATE.VALID, draft });
+      debugPublish('publishOrder:invalid', order);
+      publishFeedback(root, 'error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
     lastOrder = order;
     form.publishing = false;
     clearNotice();
     clearFormDraft();
+    debugPublish('publishOrder:ok', order.id);
     rerender(root, { state: STATE.VALID, draft, order });
+    scrollFeedbackIntoView(root);
   }, 700);
 }
 
 function rerender(root, ctx) {
+  // BD-MAP-08 — preserve scroll position so a tap on "Опубликовать
+  // заказ" does not visually reset the form to its map header and make
+  // the new notice / spinner appear "below the fold" on mobile.
+  const prevScroll = root.querySelector('.bd-scroll');
+  const prevTop = prevScroll ? prevScroll.scrollTop : 0;
   root.dataset.state = ctx.order ? 'success' : ctx.state;
+  root.dataset.publishing = form.publishing ? '1' : '0';
   root.replaceChildren(buildSection(ctx));
+  const nextScroll = root.querySelector('.bd-scroll');
+  if (nextScroll && prevTop > 0 && !ctx.order) {
+    nextScroll.scrollTop = prevTop;
+  }
 }
 
 const DRAFT_REQUIRED_ACTIONS = new Set([
@@ -810,7 +880,8 @@ function handleAction(root, action, draft, state) {
     // BD-MAP-08 — also raise a notice so the missing state explicitly
     // explains why the tap on "Опубликовать заказ" did not publish.
     if (action === 'publish') {
-      setNotice('warn', 'Маршрут потерян. Выберите маршрут заново.');
+      publishFeedback(root, 'warn', 'Маршрут потерян. Выберите маршрут заново.', null, { missing: true });
+      return;
     }
     rerender(root, { state: STATE.MISSING, draft: null });
     return;
@@ -903,14 +974,40 @@ export default function orderMapDraftScreen() {
   root.replaceChildren(buildSection({ state, draft }));
 
   root.addEventListener('click', (event) => {
-    const liveDraft = readRouteDraft();
-    const effectiveDraft = liveDraft || renderedDraft;
-    if (effectiveDraft) renderedDraft = effectiveDraft;
-    const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;
-    if (handleModeClick(root, event.target, effectiveDraft)) return;
-    const target = event.target.closest('[data-action]');
-    if (!target) return;
-    handleAction(root, target.dataset.action, effectiveDraft, effectiveState);
+    try {
+      const liveDraft = readRouteDraft();
+      const effectiveDraft = liveDraft || renderedDraft;
+      if (effectiveDraft) renderedDraft = effectiveDraft;
+      const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;
+      if (handleModeClick(root, event.target, effectiveDraft)) return;
+      const actionTarget = event.target && typeof event.target.closest === 'function'
+        ? event.target.closest('[data-action]')
+        : null;
+      if (!actionTarget) return;
+      const action = actionTarget.dataset.action;
+      debugPublish('click', { action, state: effectiveState, hasDraft: Boolean(effectiveDraft) });
+      // BD-MAP-08 — last-line safety net: a tap on "Опубликовать заказ"
+      // must never be a silent no-op, even if handleAction throws before
+      // it raises its own notice.
+      if (action === 'publish') {
+        try {
+          handleAction(root, action, effectiveDraft, effectiveState);
+        } catch (err) {
+          debugPublish('handleAction:threw', err);
+          publishFeedback(
+            root,
+            'error',
+            'Не удалось обработать публикацию. Попробуйте ещё раз.',
+            effectiveDraft,
+            { publishing: false },
+          );
+        }
+        return;
+      }
+      handleAction(root, action, effectiveDraft, effectiveState);
+    } catch (err) {
+      debugPublish('click:threw', err);
+    }
   });
 
   root.addEventListener('input', (event) => {
