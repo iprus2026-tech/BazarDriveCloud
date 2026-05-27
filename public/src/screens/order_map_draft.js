@@ -1120,11 +1120,66 @@ export default function orderMapDraftScreen() {
   // after a small scroll, viewport zoom changes, etc.). All other
   // actions stay on the existing click flow. Dedup is enforced by the
   // 700ms guard inside handlePublishActivation.
-  root.addEventListener('pointerup', (event) => {
+  //
+  // BD-MAP-PUBLISH-02 review feedback: raw `pointerup` on a button can
+  // also fire when a touch that started on the CTA turns into a
+  // scroll/drag gesture. Track pointerdown/move/cancel so we only treat
+  // `pointerup` as a publish tap when the gesture stayed within tap
+  // tolerance.
+  const TAP_MOVE_THRESHOLD = 12;
+  let publishPointer = null;
+
+  function isPublishPointerTarget(event) {
     const target = event.target;
-    if (!target || typeof target.closest !== 'function') return;
-    const actionTarget = target.closest('[data-action="publish"]');
+    if (!target || typeof target.closest !== 'function') return null;
+    return target.closest('[data-action="publish"]');
+  }
+
+  root.addEventListener('pointerdown', (event) => {
+    if (!isPublishPointerTarget(event)) {
+      publishPointer = null;
+      return;
+    }
+    publishPointer = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      cancelled: false,
+    };
+    pushDebugTrail('pointerdown', 'publish');
+  });
+
+  root.addEventListener('pointermove', (event) => {
+    if (!publishPointer || event.pointerId !== publishPointer.pointerId) return;
+    if (publishPointer.cancelled) return;
+    const dx = Math.abs(event.clientX - publishPointer.startX);
+    const dy = Math.abs(event.clientY - publishPointer.startY);
+    if (dx > TAP_MOVE_THRESHOLD || dy > TAP_MOVE_THRESHOLD) {
+      publishPointer.cancelled = true;
+      pushDebugTrail('pointermove:cancel', `${Math.round(dx)},${Math.round(dy)}`);
+    }
+  });
+
+  root.addEventListener('pointercancel', (event) => {
+    if (!publishPointer || event.pointerId !== publishPointer.pointerId) return;
+    publishPointer.cancelled = true;
+    pushDebugTrail('pointercancel', 'publish');
+  });
+
+  root.addEventListener('pointerup', (event) => {
+    const actionTarget = isPublishPointerTarget(event);
+    const pointer = publishPointer;
+    if (pointer && pointer.pointerId === event.pointerId) {
+      publishPointer = null;
+    }
     if (!actionTarget) return;
+    if (!pointer || pointer.pointerId !== event.pointerId || pointer.cancelled) {
+      debugPublish('pointerup:ignored', {
+        reason: !pointer ? 'no-down' : pointer.cancelled ? 'moved' : 'pointer-mismatch',
+      });
+      pushDebugTrail('pointerup:ignored', !pointer ? 'no-down' : pointer.cancelled ? 'moved' : 'mismatch');
+      return;
+    }
     handlePublishActivation(event, 'pointerup');
   });
 
