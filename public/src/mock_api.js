@@ -139,7 +139,7 @@ export function clearMyPostsStore() {
 })();
 
 export async function listFeedPosts() {
-  return FEED_POSTS_V2;
+  return mergeFeedAndRideOrderPosts(FEED_POSTS_V2, listRideOrdersAsFeedPosts());
 }
 
 export function createFeedPost(post) {
@@ -501,4 +501,108 @@ export function clearRideOrdersStore() {
   } catch {
     // fail soft
   }
+}
+
+// ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
+// Read-side adapter: surfaces map-created CREATED ride orders as
+// passenger ride cards in Feed without duplicating them into
+// FEED_POSTS_V2 / MY_POSTS_KEY. bazardrive.ride_orders.v1 remains the
+// single source of truth for ride orders.
+function pointLabel(point, fallback) {
+  if (point && typeof point.label === 'string' && point.label.trim()) {
+    return point.label.trim();
+  }
+  return fallback;
+}
+
+function pad2(n) {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+function formatRideOrderTime(order) {
+  if (!order || typeof order !== 'object') return 'Сейчас';
+  if (order.scheduledMode !== 'later') return 'Сейчас';
+  const ts = Date.parse(order.scheduledAt);
+  if (!Number.isFinite(ts)) return 'Сейчас';
+  const when = new Date(ts);
+  const now  = new Date();
+  const hhmm = `${pad2(when.getHours())}:${pad2(when.getMinutes())}`;
+  const sameDay = when.getFullYear() === now.getFullYear()
+    && when.getMonth() === now.getMonth()
+    && when.getDate() === now.getDate();
+  if (sameDay) return `Сегодня, ${hhmm}`;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const isTomorrow = when.getFullYear() === tomorrow.getFullYear()
+    && when.getMonth() === tomorrow.getMonth()
+    && when.getDate() === tomorrow.getDate();
+  if (isTomorrow) return `Завтра, ${hhmm}`;
+  return `${pad2(when.getDate())}.${pad2(when.getMonth() + 1)}, ${hhmm}`;
+}
+
+export function rideOrderToFeedPost(order) {
+  if (!order || typeof order !== 'object') return null;
+  if (order.status !== 'CREATED') return null;
+
+  const id = String(order.id || '');
+  if (!id) return null;
+
+  const estimatedPrice = Number(order.estimatedPrice);
+  const price = Number.isFinite(estimatedPrice) && estimatedPrice > 0
+    ? `${estimatedPrice} ₽`
+    : null;
+
+  const comment = typeof order.comment === 'string' ? order.comment.trim() : '';
+
+  return {
+    id,
+    orderId: id,
+    source: order.source || 'map',
+    canonical: 'ride_order',
+    type: 'trip',
+    passenger: true,
+    author: 'Вы',
+    role: 'Пассажир',
+    time: 'Только что',
+    from: pointLabel(order.pickup, 'Точка подачи'),
+    to: pointLabel(order.dropoff, 'Точка назначения'),
+    when: formatRideOrderTime(order),
+    price,
+    seats: null,
+    body: comment || null,
+    rideOrderStatus: order.status,
+    createdAt: Date.parse(order.createdAt) || Date.now(),
+    createdByCurrentUser: true,
+  };
+}
+
+export function listRideOrdersAsFeedPosts() {
+  const raw = loadRideOrdersRaw();
+  if (!Array.isArray(raw) || !raw.length) return [];
+  const out = [];
+  for (const order of raw) {
+    const projected = rideOrderToFeedPost(order);
+    if (projected) out.push(projected);
+  }
+  out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return out;
+}
+
+export function mergeFeedAndRideOrderPosts(feedPosts, rideOrderPosts) {
+  const feed = Array.isArray(feedPosts) ? feedPosts : [];
+  const rides = Array.isArray(rideOrderPosts) ? rideOrderPosts : [];
+  if (!rides.length) return feed.slice();
+  const seen = new Set();
+  for (const p of feed) {
+    if (p && p.id) seen.add(String(p.id));
+    if (p && p.orderId) seen.add(String(p.orderId));
+  }
+  const projected = [];
+  for (const p of rides) {
+    if (!p || !p.id) continue;
+    const idKey = String(p.id);
+    if (seen.has(idKey)) continue;
+    seen.add(idKey);
+    projected.push(p);
+  }
+  return [...projected, ...feed];
 }
