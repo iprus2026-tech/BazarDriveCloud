@@ -9,12 +9,8 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { listNearbyOrders, acceptNearbyOrder } from '../mock_api.js';
-import {
-  RIDE_STATUS,
-  createDemoActiveRide,
-  saveActiveRide,
-} from '../ride_state.js';
+import { listNearbyOrders } from '../mock_api.js';
+import { acceptCanonicalRideOrder } from '../ride_actions.js';
 
 const STATE = {
   LIST:     'list',
@@ -49,51 +45,6 @@ function formatMeta(order) {
   }
   parts.push(order.scheduledMode === 'later' ? 'позже' : 'сейчас');
   return parts.join(' · ');
-}
-
-// BD-DRIVER-01 — Hand off the accepted local order into the
-// active-ride store so /active-ride?role=driver lands in the right
-// trip instead of the generic DEMO_ACTIVE_RIDE_ID fallback. Returns
-// the stable tripId used in the CTA URL. Reuses the ride_state.js
-// foundation (createDemoActiveRide + saveActiveRide); no changes to
-// active_ride.js itself.
-function seedActiveRideFromAcceptedOrder(order) {
-  const tripId = `trip_${order.id}`;
-  const pickupLabel  = pointLabel(order.pickup,  'Точка подачи');
-  const dropoffLabel = pointLabel(order.dropoff, 'Точка назначения');
-  const distanceKm   = Number(order.distanceKm)  || 0;
-  const durationMin  = Number(order.durationMin) || 0;
-  const priceRub     = Number(order.estimatedPrice) || 0;
-  const priceLabel   = `${priceRub.toLocaleString('ru-RU')} ₽`;
-  const distanceLabel = distanceKm > 0 ? `${distanceKm} км` : '—';
-  const etaLabel      = durationMin > 0 ? `${durationMin} мин` : '—';
-  const acceptedAt    = typeof order.acceptedAt === 'string'
-    ? order.acceptedAt
-    : new Date().toISOString();
-
-  const ride = createDemoActiveRide({
-    tripId,
-    role: 'driver',
-    status: RIDE_STATUS.DRIVER_EN_ROUTE,
-    order: {
-      offerPrice: priceLabel,
-      destinationDistance: distanceLabel,
-      destinationEta: etaLabel,
-    },
-    route: {
-      pickupLabel,
-      dropoffLabel,
-      etaToDestination: etaLabel,
-    },
-    ride: {
-      price: priceLabel,
-    },
-    timestamps: {
-      acceptedAt,
-    },
-  });
-  saveActiveRide(ride);
-  return tripId;
 }
 
 function buildTopbar() {
@@ -335,10 +286,9 @@ export default function driverMapScreen() {
 
     if (action === 'accept') {
       const id = btn.dataset.orderId;
-      const accepted = acceptNearbyOrder(id);
-      if (accepted) {
-        const tripId = seedActiveRideFromAcceptedOrder(accepted);
-        renderAccepted(accepted, tripId);
+      const result = acceptCanonicalRideOrder(id);
+      if (result) {
+        renderAccepted(result.order, result.tripId);
       } else {
         // Stale row (e.g. already accepted in another tab) — route
         // to the order draft flow so the driver can publish a fresh
