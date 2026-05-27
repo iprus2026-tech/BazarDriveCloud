@@ -1,6 +1,6 @@
 import { user } from '../state.js';
 import { go, setPendingAction } from '../router.js';
-import { createFeedPost } from '../mock_api.js';
+import { createFeedPost, createRideOrder } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 
@@ -163,23 +163,6 @@ function buildFeedPost(d) {
       phone: d.phone || null,
     };
   }
-  if (d.type === 'passenger') {
-    const bodyParts = [];
-    if (d.comment) bodyParts.push(d.comment);
-    return {
-      type: 'trip',
-      passenger: true,
-      author: 'Вы',
-      role: 'Пассажир',
-      from:  d.from,
-      to:    d.to,
-      when:  d.when,
-      price: d.budget ? `${d.budget} ₽` : null,
-      seats: null,
-      body:  bodyParts.join('. ') || null,
-      phone: d.phone || null,
-    };
-  }
   if (d.type === 'marketplace' || d.type === 'service') {
     return {
       type: 'marketplace',
@@ -200,6 +183,25 @@ function buildFeedPost(d) {
     role: null,
     title: d.title,
     body:  d.description || null,
+  };
+}
+
+// ── Build ride-order input from passenger draft ────────────────────
+// BD-RIDE-ORDER-UNIFY-01 PR2 — Composer passenger requests write
+// canonical ride orders, so Feed (PR1 projection) and DriverMap
+// (listNearbyOrders) surface the same entity.
+function buildRideOrderFromComposerDraft(d) {
+  return {
+    type: 'passenger_request',
+    source: 'feed',
+    pickup: { id: null, label: d.from },
+    dropoff: { id: null, label: d.to },
+    distanceKm: 0,
+    durationMin: 0,
+    estimatedPrice: Number(d.budget) || 0,
+    scheduledMode: 'later',
+    scheduledAt: d.when || new Date().toISOString(),
+    comment: d.comment,
   };
 }
 
@@ -594,7 +596,11 @@ export default function composer() {
 
     setLoading(true);
     try {
-      createFeedPost(buildFeedPost(d));
+      if (d.type === 'passenger') {
+        createRideOrder(buildRideOrderFromComposerDraft(d));
+      } else {
+        createFeedPost(buildFeedPost(d));
+      }
       clearDraft();
       go('/feed');
     } catch {

@@ -446,6 +446,7 @@ export function createRideOrder(input = {}) {
   const order = {
     id: `order-${Date.now()}`,
     type: input.type === 'ride_order' ? 'ride_order' : 'passenger_request',
+    source: input.source === 'feed' ? 'feed' : 'map',
     pickup: input.pickup ?? null,
     dropoff: input.dropoff ?? null,
     distanceKm: Number(input.distanceKm) || 0,
