@@ -34,7 +34,11 @@
 
 .omd-scroll {
   padding-top: 0;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  /* BD-MAP-08 — keep tabbar-aware bottom padding from .bd-scroll so the
+     publish CTA is never tucked under the bottom tabbar on Android
+     Chrome; otherwise a visible-looking button captures no tap because
+     the tabbar overlay sits on top. */
+  padding-bottom: calc(var(--tabbar-h, 88px) + env(safe-area-inset-bottom, 0px) + 32px);
 }
 
 .omd-map {
@@ -636,6 +640,49 @@
   box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.20);
 }
 
+/* BD-MAP-08 — publish-flow debug trail (toggled by
+   localStorage['bazardrive.debug.publish'] === '1'). Rendered inside the
+   actions block so it stays close to the visible CTA on mobile. */
+.omd-debug {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px dashed var(--line-strong);
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.35;
+}
+
+.omd-debug__row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.omd-debug__time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.omd-debug__label {
+  font-weight: 600;
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.omd-debug__detail {
+  grid-column: 2;
+  color: var(--text-3);
+  word-break: break-all;
+}
+
 .omd-publish,
 .omd-secondary,
 .omd-draft {
@@ -657,8 +704,11 @@
 }
 
 .omd-publish {
+  position: relative;
+  z-index: 1;
   font-size: 15px;
   font-weight: 600;
+  touch-action: manipulation;
 }
 
 .omd-secondary,
