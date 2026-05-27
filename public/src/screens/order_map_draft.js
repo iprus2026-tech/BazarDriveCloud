@@ -51,14 +51,37 @@ function clearNotice() {
 //   localStorage['bazardrive.debug.publish'] = '1'
 // to trace each tap on "Опубликовать заказ" without spamming the
 // normal console.
-function debugPublish(...args) {
+function isPublishDebug() {
   try {
-    if (typeof localStorage === 'undefined') return;
-    if (localStorage.getItem('bazardrive.debug.publish') !== '1') return;
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem('bazardrive.debug.publish') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function debugPublish(...args) {
+  if (!isPublishDebug()) return;
+  try {
     console.debug('[publish]', ...args);
   } catch {
     // fail soft
   }
+}
+
+// BD-MAP-08 — surfaces an in-DOM trail of the most recent publish-flow
+// events when debug mode is on, so we can diagnose silent-tap reports
+// on Android Chrome (where opening DevTools is not always possible).
+const debugTrail = [];
+function pushDebugTrail(label, detail) {
+  if (!isPublishDebug()) return;
+  const stamp = new Date();
+  const hh = String(stamp.getHours()).padStart(2, '0');
+  const mm = String(stamp.getMinutes()).padStart(2, '0');
+  const ss = String(stamp.getSeconds()).padStart(2, '0');
+  const ms = String(stamp.getMilliseconds()).padStart(3, '0');
+  debugTrail.push({ t: `${hh}:${mm}:${ss}.${ms}`, label, detail: detail || '' });
+  while (debugTrail.length > 8) debugTrail.shift();
 }
 
 // BD-MAP-08 — single entry point for "the publish CTA must never feel
@@ -518,6 +541,25 @@ function renderNotice() {
   `;
 }
 
+// BD-MAP-08 — visible debug trail rendered next to the notice when
+// localStorage['bazardrive.debug.publish'] === '1'. Lets us confirm on
+// Android Chrome whether the publish tap reached the JS handler at all.
+function renderDebugTrail() {
+  if (!isPublishDebug() || !debugTrail.length) return '';
+  const items = debugTrail.map((entry) => `
+    <li class="omd-debug__row">
+      <code class="omd-debug__time">${escapeHtml(entry.t)}</code>
+      <span class="omd-debug__label">${escapeHtml(entry.label)}</span>
+      <span class="omd-debug__detail">${escapeHtml(String(entry.detail))}</span>
+    </li>
+  `).join('');
+  return `
+    <ol class="omd-debug" role="note" aria-label="Publish debug trail" data-debug="publish">
+      ${items}
+    </ol>
+  `;
+}
+
 function renderLockHint() {
   return `
     <div class="omd-lock" role="note">
@@ -587,6 +629,7 @@ function renderValidBody(draft) {
       ${renderLockHint()}
       <div class="omd-actions">
         ${renderNotice()}
+        ${renderDebugTrail()}
         ${renderPublishActions()}
       </div>
     </div>
@@ -629,6 +672,7 @@ function renderMissingBody() {
     </dl>
 
     ${renderNotice()}
+    ${renderDebugTrail()}
     <button class="bd-btn primary omd-publish" type="button" data-action="pick-route">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -777,6 +821,7 @@ function publishOrder(draft) {
 
 function handlePublish(root, draft) {
   debugPublish('handlePublish:start', { hasDraft: Boolean(draft), publishing: form.publishing });
+  pushDebugTrail('handlePublish', `draft=${draft ? '1' : '0'} publishing=${form.publishing ? '1' : '0'}`);
   // BD-MAP-08 — duplicate tap while a publish is already in flight.
   // The form is pointer-events:none in this state, but accessibility
   // tooling or rapid taps can still trigger another click. Surface a
@@ -821,6 +866,7 @@ function handlePublish(root, draft) {
     clearNotice();
     clearFormDraft();
     debugPublish('publishOrder:ok', order.id);
+    pushDebugTrail('publishOrder:ok', order.id);
     rerender(root, { state: STATE.VALID, draft, order });
     scrollFeedbackIntoView(root);
   }, 700);
@@ -973,6 +1019,78 @@ export default function orderMapDraftScreen() {
   root.dataset.state = state;
   root.replaceChildren(buildSection({ state, draft }));
 
+  // BD-MAP-08 — dedup guard so a single tap that fires both `pointerup`
+  // and `click` does not create two orders. Stamped on the first publish
+  // activation that reaches handleAction; ignored on follow-ups within
+  // 700ms regardless of source (pointerup vs click).
+  let lastPublishActivationAt = 0;
+
+  function describeTarget(node) {
+    if (!node || typeof node !== 'object') return '';
+    const tag = (node.tagName || '').toLowerCase();
+    const cls = typeof node.className === 'string' ? node.className : '';
+    return `${tag}${cls ? '.' + cls.trim().split(/\s+/).slice(0, 2).join('.') : ''}`;
+  }
+
+  function handlePublishActivation(event, source) {
+    let actionTarget = null;
+    try {
+      const target = event.target;
+      actionTarget = target && typeof target.closest === 'function'
+        ? target.closest('[data-action]')
+        : null;
+      const action = actionTarget ? actionTarget.dataset.action : null;
+      const liveDraft = readRouteDraft();
+      const effectiveDraft = liveDraft || renderedDraft;
+      if (effectiveDraft) renderedDraft = effectiveDraft;
+      const effectiveState = effectiveDraft ? STATE.VALID : STATE.MISSING;
+
+      debugPublish(source, {
+        type: event.type,
+        target: describeTarget(target),
+        actionTarget: describeTarget(actionTarget),
+        action,
+        hasLiveDraft: Boolean(liveDraft),
+        hasRenderedDraft: Boolean(renderedDraft),
+        effectiveState,
+      });
+      pushDebugTrail(`${source}:${event.type}`, action || describeTarget(target));
+
+      // Non-publish actions go through the normal click flow only — we
+      // do not want pointerup to drive back-button / mode tabs / inputs.
+      if (action !== 'publish') return { handled: false, source };
+
+      const now = Date.now();
+      if (now - lastPublishActivationAt < 700) {
+        debugPublish('publish:dedup', { source, sinceMs: now - lastPublishActivationAt });
+        pushDebugTrail('publish:dedup', source);
+        return { handled: true, source, dedup: true };
+      }
+      lastPublishActivationAt = now;
+
+      pushDebugTrail('handleAction', `publish/${effectiveState}`);
+      debugPublish('handleAction:call', { source, effectiveState });
+      try {
+        handleAction(root, 'publish', effectiveDraft, effectiveState);
+      } catch (err) {
+        debugPublish('handleAction:threw', err);
+        pushDebugTrail('handleAction:threw', String(err && err.message || err));
+        publishFeedback(
+          root,
+          'error',
+          'Не удалось обработать публикацию. Попробуйте ещё раз.',
+          effectiveDraft,
+          { publishing: false },
+        );
+      }
+      return { handled: true, source };
+    } catch (err) {
+      debugPublish(`${source}:threw`, err);
+      pushDebugTrail(`${source}:threw`, String(err && err.message || err));
+      return { handled: false, source, error: err };
+    }
+  }
+
   root.addEventListener('click', (event) => {
     try {
       const liveDraft = readRouteDraft();
@@ -985,29 +1103,29 @@ export default function orderMapDraftScreen() {
         : null;
       if (!actionTarget) return;
       const action = actionTarget.dataset.action;
-      debugPublish('click', { action, state: effectiveState, hasDraft: Boolean(effectiveDraft) });
-      // BD-MAP-08 — last-line safety net: a tap on "Опубликовать заказ"
-      // must never be a silent no-op, even if handleAction throws before
-      // it raises its own notice.
       if (action === 'publish') {
-        try {
-          handleAction(root, action, effectiveDraft, effectiveState);
-        } catch (err) {
-          debugPublish('handleAction:threw', err);
-          publishFeedback(
-            root,
-            'error',
-            'Не удалось обработать публикацию. Попробуйте ещё раз.',
-            effectiveDraft,
-            { publishing: false },
-          );
-        }
+        handlePublishActivation(event, 'click');
         return;
       }
+      debugPublish('click', { action, state: effectiveState, hasDraft: Boolean(effectiveDraft) });
       handleAction(root, action, effectiveDraft, effectiveState);
     } catch (err) {
       debugPublish('click:threw', err);
+      pushDebugTrail('click:threw', String(err && err.message || err));
     }
+  });
+
+  // BD-MAP-08 — pointerup fallback specifically for the publish CTA on
+  // Android Chrome, where `click` is occasionally swallowed (touch slop
+  // after a small scroll, viewport zoom changes, etc.). All other
+  // actions stay on the existing click flow. Dedup is enforced by the
+  // 700ms guard inside handlePublishActivation.
+  root.addEventListener('pointerup', (event) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const actionTarget = target.closest('[data-action="publish"]');
+    if (!actionTarget) return;
+    handlePublishActivation(event, 'pointerup');
   });
 
   root.addEventListener('input', (event) => {
