@@ -1,6 +1,6 @@
 import { user } from '../state.js';
 import { go, setPendingAction } from '../router.js';
-import { createFeedPost } from '../mock_api.js';
+import { createFeedPost, createRideOrder } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 
@@ -163,23 +163,6 @@ function buildFeedPost(d) {
       phone: d.phone || null,
     };
   }
-  if (d.type === 'passenger') {
-    const bodyParts = [];
-    if (d.comment) bodyParts.push(d.comment);
-    return {
-      type: 'trip',
-      passenger: true,
-      author: 'Вы',
-      role: 'Пассажир',
-      from:  d.from,
-      to:    d.to,
-      when:  d.when,
-      price: d.budget ? `${d.budget} ₽` : null,
-      seats: null,
-      body:  bodyParts.join('. ') || null,
-      phone: d.phone || null,
-    };
-  }
   if (d.type === 'marketplace' || d.type === 'service') {
     return {
       type: 'marketplace',
@@ -200,6 +183,41 @@ function buildFeedPost(d) {
     role: null,
     title: d.title,
     body:  d.description || null,
+  };
+}
+
+// ── Build ride-order input from passenger draft ────────────────────
+// BD-RIDE-ORDER-UNIFY-01 PR2 — Composer passenger requests write
+// canonical ride orders, so Feed (PR1 projection) and DriverMap
+// (listNearbyOrders) surface the same entity.
+//
+// Composer budget is free text (placeholder `1 500`), so `Number('1 500')`
+// is NaN. parseMoneyLike strips non-digits before parsing so the numeric
+// estimate stays usable for DriverMap; the raw typed string is preserved
+// separately in estimatedPriceLabel so Feed renders what the user actually
+// typed instead of `0 ₽`. Same idea for `when`: free text is kept in
+// scheduledLabel and the projection prefers it over parsing scheduledAt.
+function parseMoneyLike(value) {
+  const normalized = String(value || '').replace(/[^\d]/g, '');
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildRideOrderFromComposerDraft(d) {
+  const whenLabel = String(d.when || '').trim();
+  return {
+    type: 'passenger_request',
+    source: 'feed',
+    pickup: { id: null, label: d.from },
+    dropoff: { id: null, label: d.to },
+    distanceKm: 0,
+    durationMin: 0,
+    estimatedPrice: parseMoneyLike(d.budget),
+    estimatedPriceLabel: String(d.budget || '').trim(),
+    scheduledMode: 'later',
+    scheduledAt: whenLabel || new Date().toISOString(),
+    scheduledLabel: whenLabel,
+    comment: d.comment,
   };
 }
 
@@ -594,7 +612,11 @@ export default function composer() {
 
     setLoading(true);
     try {
-      createFeedPost(buildFeedPost(d));
+      if (d.type === 'passenger') {
+        createRideOrder(buildRideOrderFromComposerDraft(d));
+      } else {
+        createFeedPost(buildFeedPost(d));
+      }
       clearDraft();
       go('/feed');
     } catch {
