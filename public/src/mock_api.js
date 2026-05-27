@@ -590,19 +590,25 @@ export function listRideOrdersAsFeedPosts() {
 export function mergeFeedAndRideOrderPosts(feedPosts, rideOrderPosts) {
   const feed = Array.isArray(feedPosts) ? feedPosts : [];
   const rides = Array.isArray(rideOrderPosts) ? rideOrderPosts : [];
-  if (!rides.length) return feed.slice();
-  const seen = new Set();
-  for (const p of feed) {
-    if (p && p.id) seen.add(String(p.id));
-    if (p && p.orderId) seen.add(String(p.orderId));
-  }
-  const projected = [];
+
+  const canonicalIds = new Set();
+  const dedupedRides = [];
   for (const p of rides) {
     if (!p || !p.id) continue;
     const idKey = String(p.id);
-    if (seen.has(idKey)) continue;
-    seen.add(idKey);
-    projected.push(p);
+    if (canonicalIds.has(idKey)) continue;
+    canonicalIds.add(idKey);
+    dedupedRides.push(p);
   }
-  return [...projected, ...feed];
+
+  if (!canonicalIds.size) return feed.slice();
+
+  const filteredFeed = feed.filter((p) => {
+    if (!p) return false;
+    if (p.id && canonicalIds.has(String(p.id))) return false;
+    if (p.orderId && canonicalIds.has(String(p.orderId))) return false;
+    return true;
+  });
+
+  return [...dedupedRides, ...filteredFeed];
 }
