@@ -6,6 +6,7 @@ import {
   isDriverLineReady,
   canAcceptPassengerRequest,
   acceptPassengerRequestFromPost,
+  acceptCanonicalRideOrder,
 } from '../ride_actions.js';
 
 const CATS = [
@@ -106,6 +107,22 @@ export default async function feed() {
         const u = user.get();
         const post = posts.find((p) => String(p.id) === String(postId));
         if (!canAcceptPassengerRequest(u, post)) return;
+
+        // BD-RIDE-ORDER-UNIFY-01 PR3 — Canonical ride-order projections
+        // accept through the shared store so the underlying order flips
+        // CREATED → ACCEPTED and drops out of Feed + DriverMap.
+        if (post.canonical === 'ride_order' && post.orderId) {
+          const accepted = acceptCanonicalRideOrder(post.orderId);
+          if (!accepted) {
+            // Stale / already accepted in another surface — re-render
+            // so the now-gone projection card disappears.
+            renderList();
+            return;
+          }
+          go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=DRIVER_EN_ROUTE`);
+          return;
+        }
+
         const ride = acceptPassengerRequestFromPost(post);
         go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
       }
