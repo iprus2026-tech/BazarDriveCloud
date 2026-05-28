@@ -1306,7 +1306,7 @@ function buildDaySummary(rides) {
     const total = passengerRides.reduce((s, r) => s + parseFareNumber(r?.fare), 0);
     const count = passengerRides.length;
     const word  = pluralRu(count, 'поездка', 'поездки', 'поездок');
-    parts.push(`${count} ${word} · ${fmtRub(total)}`);
+    parts.push(`${count} ${word} · ${fmtRub(total)} потрачено`);
   }
   return parts.join(' · ');
 }
@@ -1635,7 +1635,14 @@ function historySectionHtml() {
 
   // Latest entry as a single summary card. Index 0 maps into
   // lastHistoryEntries so the existing detail-receipt wiring keeps working.
+  // If the newest entry is broken enough that safeHistoryEntryHtml swallows
+  // it, hide the "Последняя поездка" block entirely instead of rendering an
+  // empty title — the calendar below still surfaces every dated record.
   const latestCard = safeHistoryEntryHtml(sorted[0], 0);
+  const latestBlock = latestCard
+    ? `<p class="pfp-section-title profile-history__latest-title">Последняя поездка</p>
+    <div class="profile-history__latest">${latestCard}</div>`
+    : '';
 
   // Calendar is built from entries that resolve to a local date; records
   // without a parseable completedAt are silently skipped so they cannot
@@ -1648,8 +1655,7 @@ function historySectionHtml() {
   const selectedHtml = renderSelectedDayRides(state, byDate, sorted);
 
   return `<section class="profile-history" id="profile-history-section">
-    <p class="pfp-section-title profile-history__latest-title">Последняя поездка</p>
-    <div class="profile-history__latest">${latestCard}</div>
+    ${latestBlock}
     ${historyHeaderHtml(sorted.length)}
     ${calendarHtml}
     ${selectedHtml}
