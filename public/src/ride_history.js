@@ -3,6 +3,11 @@
 // network. Each entry is keyed by `${role}:${tripId}` so the passenger
 // and driver views of the same ride live as two independent records.
 
+import {
+  getActiveRideRouteSnapshot,
+  ROUTE_SNAPSHOT_DEFAULTS,
+} from './ride_state.js';
+
 const HISTORY_KEY = 'bazardrive.ride_history.v1';
 
 function isPlainObject(value) {
@@ -93,30 +98,50 @@ export function clearRideHistory() {
   try { localStorage.removeItem(HISTORY_KEY); } catch {}
 }
 
+// BD-MAPBOX-DATA-02 — History snapshot derivation. All four pickers go
+// through `getActiveRideRouteSnapshot` so a missing `ride.route`, a
+// non-string label, or a null fare cannot crash history serialization.
+// `null` is preserved as the "no value" sentinel — em-dash placeholders
+// from the snapshot defaults are filtered out so completed entries
+// don't list "—" as the saved label.
+function nullIfPlaceholder(value, placeholder) {
+  if (typeof value !== 'string' || !value) return null;
+  if (value === placeholder) return null;
+  return value;
+}
+
 function pickFare(ride) {
   const pay = (ride && ride.payment) || {};
-  const r = (ride && ride.ride) || {};
-  const order = (ride && ride.order) || {};
-  return pay.amount || r.price || order.offerPrice || null;
+  if (typeof pay.amount === 'string' && pay.amount.trim()) return pay.amount.trim();
+  const snapshot = getActiveRideRouteSnapshot(ride);
+  return nullIfPlaceholder(snapshot.priceLabel, ROUTE_SNAPSHOT_DEFAULTS.priceLabel);
 }
 
 function pickDistance(ride) {
-  const r = (ride && ride.ride) || {};
-  const order = (ride && ride.order) || {};
-  return r.distance || order.destinationDistance || null;
+  const snapshot = getActiveRideRouteSnapshot(ride);
+  return nullIfPlaceholder(snapshot.distanceLabel, ROUTE_SNAPSHOT_DEFAULTS.distanceLabel);
 }
 
 function pickDuration(ride) {
+  // History stores the *elapsed* trip duration, not the "remaining ETA
+  // to destination" that the live screen shows mid-trip. Keep the
+  // original precedence (`ride.duration` first, then the order's
+  // destination ETA) so completed entries don't downgrade to a live
+  // countdown value.
   const r = (ride && ride.ride) || {};
   const order = (ride && ride.order) || {};
-  return r.duration || order.destinationEta || null;
+  if (typeof r.duration === 'string' && r.duration.trim()) return r.duration.trim();
+  if (typeof order.destinationEta === 'string' && order.destinationEta.trim()) {
+    return order.destinationEta.trim();
+  }
+  return null;
 }
 
 function pickRoute(ride) {
-  const route = (ride && ride.route) || {};
+  const snapshot = getActiveRideRouteSnapshot(ride);
   return {
-    pickupLabel: route.pickupLabel || null,
-    dropoffLabel: route.dropoffLabel || null,
+    pickupLabel: nullIfPlaceholder(snapshot.pickupLabel, ROUTE_SNAPSHOT_DEFAULTS.pickupLabel),
+    dropoffLabel: nullIfPlaceholder(snapshot.dropoffLabel, ROUTE_SNAPSHOT_DEFAULTS.dropoffLabel),
   };
 }
 

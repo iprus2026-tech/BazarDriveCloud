@@ -69,7 +69,12 @@ function pointLabel(point, fallback) {
   return fallback;
 }
 
-export function seedActiveRideFromAcceptedOrder(order) {
+// BD-MAPBOX-DATA-02 — Canonical projection from a CREATED→ACCEPTED ride
+// order into the route snapshot contract carried on the active ride.
+// Pure: no storage, no DOM, no router. Returns null for orders that
+// lack an `id` so the seeder can short-circuit safely (and orphan
+// records cannot land in `bazardrive.active_ride.v1`).
+export function buildRouteSnapshotFromOrder(order) {
   if (!order || typeof order !== 'object' || !order.id) return null;
   const tripId       = `trip_${order.id}`;
   const pickupLabel  = pointLabel(order.pickup,  'Точка подачи');
@@ -83,30 +88,43 @@ export function seedActiveRideFromAcceptedOrder(order) {
   const acceptedAt    = typeof order.acceptedAt === 'string'
     ? order.acceptedAt
     : new Date().toISOString();
-
-  const ride = createDemoActiveRide({
+  return {
     tripId,
+    pickupLabel,
+    dropoffLabel,
+    priceLabel,
+    distanceLabel,
+    etaLabel,
+    acceptedAt,
+  };
+}
+
+export function seedActiveRideFromAcceptedOrder(order) {
+  const snapshot = buildRouteSnapshotFromOrder(order);
+  if (!snapshot) return null;
+  const ride = createDemoActiveRide({
+    tripId: snapshot.tripId,
     role: 'driver',
     status: RIDE_STATUS.DRIVER_EN_ROUTE,
     order: {
-      offerPrice: priceLabel,
-      destinationDistance: distanceLabel,
-      destinationEta: etaLabel,
+      offerPrice: snapshot.priceLabel,
+      destinationDistance: snapshot.distanceLabel,
+      destinationEta: snapshot.etaLabel,
     },
     route: {
-      pickupLabel,
-      dropoffLabel,
-      etaToDestination: etaLabel,
+      pickupLabel: snapshot.pickupLabel,
+      dropoffLabel: snapshot.dropoffLabel,
+      etaToDestination: snapshot.etaLabel,
     },
     ride: {
-      price: priceLabel,
+      price: snapshot.priceLabel,
     },
     timestamps: {
-      acceptedAt,
+      acceptedAt: snapshot.acceptedAt,
     },
   });
   saveActiveRide(ride);
-  return { tripId, ride };
+  return { tripId: snapshot.tripId, ride };
 }
 
 // BD-RIDE-ORDER-UNIFY-01 PR3 — Canonical ride-order accept path used by
