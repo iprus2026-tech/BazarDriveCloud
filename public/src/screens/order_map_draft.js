@@ -8,7 +8,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
-import { createRideOrder } from '../mock_api.js';
+import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const FORM_DRAFT_KEY = 'bazardrive.order_form.v1';
@@ -802,7 +802,35 @@ function buildSection({ state, draft, order }) {
 
 let lastOrder = null;
 
+// BD-ACTIVE-07 — Capture the order author's identity at publish time so
+// the driver-side accept handoff renders this passenger (not the demo
+// "Анна М." that leaked through createDemoActiveRide). Falls back to
+// "Вы" for current-user orders without a saved displayName so the
+// ActiveRide passenger row never blanks out.
+function buildPassengerSnapshotFromUser(u, commentText) {
+  const first = typeof u.firstName === 'string' ? u.firstName.trim() : '';
+  const last = typeof u.lastName === 'string' ? u.lastName.trim() : '';
+  const composed = [first, last].filter(Boolean).join(' ');
+  const displayName = typeof u.displayName === 'string' ? u.displayName.trim() : '';
+  const name = composed || displayName || 'Вы';
+  const initials = name === 'Вы'
+    ? 'В'
+    : (composed
+        ? `${first ? first.charAt(0).toUpperCase() : ''}${last ? last.charAt(0).toUpperCase() : ''}` || name.charAt(0).toUpperCase()
+        : name.charAt(0).toUpperCase());
+  return {
+    name,
+    initials,
+    phoneMasked: maskedPhone(u.phone),
+    comment: commentText,
+    authorId: LOCAL_USER_ID,
+    isCurrentUser: true,
+  };
+}
+
 function publishOrder(draft) {
+  const u = user.get();
+  const commentText = form.comment.trim();
   const order = createRideOrder({
     type: 'passenger_request',
     pickup: { id: draft.pickup.id ?? null, label: draft.pickup.label },
@@ -814,7 +842,8 @@ function publishOrder(draft) {
     scheduledAt: form.mode === 'later'
       ? `${form.date}T${form.time}:00`
       : new Date().toISOString(),
-    comment: form.comment.trim(),
+    comment: commentText,
+    passenger: buildPassengerSnapshotFromUser(u, commentText),
   });
   return order;
 }

@@ -99,6 +99,43 @@ export function buildRouteSnapshotFromOrder(order) {
   };
 }
 
+// BD-ACTIVE-07 — Build the active-ride passenger row strictly from the
+// snapshot pinned on the accepted order. We replace (not merge) the
+// passenger object so demo defaults from buildDemoRide() ("Анна М.",
+// rating 4,86, "+7 ... 23-45", "1 чемодан") cannot leak into a fresh
+// order. Orders created before this contract was added fall through to
+// a neutral "Пассажир" placeholder instead of the demo identity.
+function buildAcceptedOrderPassenger(order) {
+  const snap = order && typeof order.passenger === 'object' && order.passenger
+    ? order.passenger
+    : null;
+  if (snap && typeof snap.name === 'string' && snap.name.trim()) {
+    const name = snap.name.trim();
+    return {
+      name,
+      initials: typeof snap.initials === 'string' && snap.initials.trim()
+        ? snap.initials.trim()
+        : name.charAt(0).toUpperCase(),
+      phoneMasked: typeof snap.phoneMasked === 'string' ? snap.phoneMasked : '',
+      note: typeof snap.comment === 'string' ? snap.comment : '',
+      rating: '',
+      luggage: '',
+      authorId: typeof snap.authorId === 'string' ? snap.authorId : null,
+      isCurrentUser: snap.isCurrentUser === true,
+    };
+  }
+  return {
+    name: 'Пассажир',
+    initials: 'П',
+    phoneMasked: '',
+    note: typeof order?.comment === 'string' ? order.comment : '',
+    rating: '',
+    luggage: '',
+    authorId: null,
+    isCurrentUser: false,
+  };
+}
+
 export function seedActiveRideFromAcceptedOrder(order) {
   const snapshot = buildRouteSnapshotFromOrder(order);
   if (!snapshot) return null;
@@ -123,6 +160,11 @@ export function seedActiveRideFromAcceptedOrder(order) {
       acceptedAt: snapshot.acceptedAt,
     },
   });
+  // BD-ACTIVE-07 — Replace the demo passenger entirely. deepMerge in
+  // createDemoActiveRide would otherwise keep stray demo fields
+  // (rating, luggage, phoneMasked) from buildDemoRide().
+  ride.passenger = buildAcceptedOrderPassenger(order);
+  ride.orderId = order && typeof order.id === 'string' ? order.id : null;
   saveActiveRide(ride);
   return { tripId: snapshot.tripId, ride };
 }
