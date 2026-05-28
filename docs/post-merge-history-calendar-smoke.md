@@ -99,6 +99,54 @@ Decision:
 - close #261 as completed / keep open pending fixes
 ```
 
+## Static + CI result
+
+Date: 2026-05-28  
+Device/browser: not executed in real mobile browser from this environment  
+Build/source: `main` after #262 merge, commit `f11c2d2a1d45a075869355e5b29988dba2a291fa`
+
+### Passed by static audit
+
+- `docs/post-merge-history-calendar-smoke.md` is present on `main` and clearly marks that real mobile smoke still needs to be recorded before closing #261.
+- Profile history rendering is compact-calendar based: `historySectionHtml()` renders latest summary + calendar + selected-day list instead of mapping the full history inline.
+- Calendar rows are date-keyed through `getRideCompletedAt()` / `getLocalDateKey()` / `groupRidesByDate()`.
+- Bad or missing `completedAt` / `savedAt` values are skipped for calendar grouping instead of crashing Profile.
+- Malformed history storage is handled through the friendly recovery card instead of poisoning the whole Profile render.
+- Driver completed ActiveRide still builds and saves a driver history entry with earnings payload.
+- Passenger completed ActiveRide still saves a baseline history entry on render and merges rating/tags/comment on submit without overwriting a previous rating during refresh.
+- `/feed` was not changed by #260 or #262.
+
+### CI evidence
+
+- PR #262 CI completed successfully before merge.
+- No runtime code changed in #262.
+- Direct local clone/check was not possible from this environment because the container could not resolve `github.com`.
+
+### Not verified here
+
+The following checks still require real manual browser/device smoke, preferably Android Chrome + GitHub Pages:
+
+- `/profile?role=driver` visual open/no-crash.
+- `/profile?role=passenger` visual open/no-crash.
+- Calendar day selection with real seeded history data.
+- Bottom safe-area/tabbar behavior on mobile Chrome.
+- Completed ActiveRide screens visible behavior on device.
+- Return navigation between Profile and Feed.
+
+### Regressions found
+
+- None found by static audit.
+- No real-device smoke was executed here, so visual/mobile regressions remain possible.
+
+### Follow-up issues opened
+
+- None.
+
+### Decision
+
+- Keep #261 open until real mobile/GitHub Pages smoke results are appended.
+- Do not close #261 based only on this static audit.
+
 ## Agent handoff prompt
 
 ```text
