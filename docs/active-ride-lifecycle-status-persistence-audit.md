@@ -336,18 +336,19 @@ Passenger side, `applyPassengerStatusFromQuery`
 | `WAITING_PASSENGER`                              | `startedAt`, `completedAt`, `canceledAt` |
 | `IN_PROGRESS`                                    | `completedAt`, `canceledAt`              |
 | `COMPLETED`                                      | `canceledAt`                              |
-| `CANCELED` / `NO_SHOW`                           | (no completed-guard — see "Concern")     |
+| `CANCELED` / `NO_SHOW`                           | (no completed-guard — defect, see §9)    |
 
-**Concern (not a defect; documented).** The passenger
-`?status=CANCELED|NO_SHOW` branch
+**Defect (see §9, follow-up [#249](https://github.com/iprus2026-tech/BazarDriveCloud/issues/249)).**
+The passenger `?status=CANCELED|NO_SHOW` branch
 (`active_ride_passenger.js:208-211`) does not gate on
-`ts.completedAt`. In isolation it just flips an in-memory copy
-(harmless), but it is asymmetric with the driver-side gate. Because
-the passenger surface does not persist on render, there is no risk of
-the canonical record being rewound — the canonical record is the
-source of truth on the next render. The asymmetry is therefore
-benign, but worth noting if a future change ever has the passenger
-surface persist on this branch.
+`ts.completedAt`. The canonical persisted record is not rewritten on
+render, but the rendered screen visually rolls a `COMPLETED` ride
+back to the `CANCELED` / `NO_SHOW` fallback whenever a crafted URL
+or stale deep-link supplies that override. This breaks the
+"terminal states are immune to `?status=` rollback" guarantee from
+the user-visible perspective and is asymmetric with the driver-side
+gate at `active_ride.js:118-124`, which refuses
+`CANCELED` / `NO_SHOW` when `completedAt` is present.
 
 ---
 
@@ -465,26 +466,58 @@ render copy. Safe under any number of refreshes.
 
 ## 9. Defects found
 
-One defect, documented in §8.2:
+Two defects, both deferred to follow-up
+[#249](https://github.com/iprus2026-tech/BazarDriveCloud/issues/249)
+per the docs-only scope of this PR.
 
-- **Passenger rating regresses to zero on refresh of `/active-ride?role=passenger&status=COMPLETED`.**
-  `active_ride_passenger.js:1220` calls `persistHistory()` on every
-  COMPLETED mount with `withRating: false`. `saveRideHistoryEntry`
-  upsert merges `{ ...previous, ...stamped }`
-  (`ride_history.js:86`), and the baseline `stamped` carries
-  `rating: 0, tags: [], comment: ''` from
-  `buildPassengerHistoryEntry(ride, {})`. The passenger's submitted
-  rating, tags and comment are therefore overwritten in
-  `bazardrive.ride_history.v1` whenever the COMPLETED screen
-  re-renders.
+### Defect 1 — Passenger rating regresses to zero on refresh of `/active-ride?role=passenger&status=COMPLETED`
 
-  Per the audit's "Не менять runtime code, если нет явного дефекта"
-  rule and the docs-only scope of this PR, the fix is **not** applied
-  here. Filing a follow-up is recommended (suggested approaches in
-  §8.2).
+`active_ride_passenger.js:1220` calls `persistHistory()` on every
+COMPLETED mount with `withRating: false`. `saveRideHistoryEntry`
+upsert merges `{ ...previous, ...stamped }`
+(`ride_history.js:86`), and the baseline `stamped` carries
+`rating: 0, tags: [], comment: ''` from
+`buildPassengerHistoryEntry(ride, {})`. The passenger's submitted
+rating, tags and comment are therefore overwritten in
+`bazardrive.ride_history.v1` whenever the COMPLETED screen
+re-renders. Detailed walkthrough in §8.2; suggested fix approaches
+also in §8.2. Tracked in follow-up
+[#249](https://github.com/iprus2026-tech/BazarDriveCloud/issues/249).
 
-No other defects found. The lifecycle status persistence and refresh
-behavior are correct end-to-end across the
+### Defect 2 — Passenger terminal query override can visually roll back persisted COMPLETED to CANCELED / NO_SHOW
+
+`applyPassengerStatusFromQuery`
+(`active_ride_passenger.js:208-211`) accepts
+`?status=CANCELED` and `?status=NO_SHOW` without checking
+`ts.completedAt`. When a persisted ride already carries
+`completedAt` (terminal `COMPLETED`), a crafted URL such as
+
+```
+/#/active-ride?role=passenger&status=CANCELED&tripId=<persisted_completed_trip>
+```
+
+renders the canceled / no-show fallback
+(`renderPassengerCanceledFallback`,
+`active_ride_passenger.js:1679-1684`) instead of the COMPLETED
+screen, visually rolling back a terminal state. The canonical
+record under `bazardrive.active_ride.v1` is not rewritten on
+render, but the UX guarantee in §6 ("`?status=` cannot roll back
+terminal states") is violated from the user-visible perspective.
+
+The defect is asymmetric with the driver side, where
+`safeApplyStatusFromQuery` (`active_ride.js:122-124`) explicitly
+refuses `CANCELED` / `NO_SHOW` when `completedAt` is present.
+
+Suggested fix: mirror the driver guard in
+`applyPassengerStatusFromQuery` so that the
+`CANCELED|NO_SHOW` branch returns the unmodified ride when
+`ts.completedAt` is truthy. Tracked in follow-up
+[#249](https://github.com/iprus2026-tech/BazarDriveCloud/issues/249).
+
+---
+
+Other than the two defects above, the lifecycle status persistence
+and refresh behavior are correct end-to-end across the
 `CREATED → ACCEPTED → DRIVER_EN_ROUTE → WAITING_PASSENGER → IN_PROGRESS → COMPLETED`
 sequence and the `CANCELED` / `NO_SHOW` terminal branches.
 
