@@ -7,8 +7,8 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { peekRepeatRouteDraft } from '../repeat_route.js';
-import { peekFavoriteNotice } from '../favorite_routes.js';
+import { peekRepeatRouteDraft, clearRepeatRouteDraft } from '../repeat_route.js';
+import { peekFavoriteNotice, clearFavoriteNotice } from '../favorite_routes.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
@@ -230,6 +230,13 @@ function hydrateFromStorage() {
   routeDraft.prefillLabel = prefill.prefillLabel;
   syncDraft();
   persistDraft();
+  // BD-ROUTE-REPEAT-02 (PR-258 review) — the repeat-route / favorite
+  // notice handoff is one-time by contract. Now that the pickup &
+  // dropoff have been lifted into route_draft.v1, drop both keys so the
+  // composer (/new) cannot later reapply the same route on top of a
+  // freshly cleared or already-handled state.
+  clearRepeatRouteDraft();
+  clearFavoriteNotice();
 }
 
 function persistDraft() {

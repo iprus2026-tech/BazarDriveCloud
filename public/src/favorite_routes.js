@@ -270,6 +270,20 @@ export function peekFavoriteNotice() {
   }
 }
 
+// Removes only the favorite-route notice. Exposed so callers that adopt
+// the paired repeat_route handoff (e.g. /route-picker lifting pickup &
+// dropoff into route_draft.v1) can also drop the notice in the same
+// step, preventing a stale "из избранного" banner from re-appearing in
+// the composer for a route that has already been taken.
+export function clearFavoriteNotice() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(FAVORITE_NOTICE_KEY);
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
 function consumeFavoriteNotice() {
   try {
     if (typeof localStorage === 'undefined') return null;
