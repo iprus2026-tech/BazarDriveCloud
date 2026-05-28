@@ -249,6 +249,27 @@ function writeFavoriteNotice(favorite) {
   }
 }
 
+// Non-destructive peek used by callers that need to know whether the
+// pending repeat-route prefill originated from a favorite (and to surface
+// its display label) without consuming the one-time notice the composer
+// relies on. Malformed payloads return null and are left in place — the
+// next consumeFavoriteNotice() will remove them.
+export function peekFavoriteNotice() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(FAVORITE_NOTICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return null;
+    return {
+      source: parsed.source === 'favorite' ? 'favorite' : '',
+      label: cleanString(parsed.label),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function consumeFavoriteNotice() {
   try {
     if (typeof localStorage === 'undefined') return null;

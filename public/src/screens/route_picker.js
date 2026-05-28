@@ -7,10 +7,18 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import { peekRepeatRouteDraft } from '../repeat_route.js';
+import { peekFavoriteNotice } from '../favorite_routes.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
 const ALLOWED_FOCUS = new Set(['pickup', 'dropoff']);
+const ALLOWED_PREFILL_SOURCES = new Set(['repeat', 'favorite']);
+
+const PREFILL_COPY = {
+  repeat: 'Маршрут заполнен из истории',
+  favorite: 'Маршрут заполнен из избранного',
+};
 
 const ROUTE_STATUS = {
   EMPTY: 'empty',
@@ -54,6 +62,11 @@ const routeDraft = {
   status: ROUTE_STATUS.EMPTY,
   stage: 'pickup',
   route: null,
+  // BD-ROUTE-REPEAT-02 — non-blocking provenance marker for a prefilled
+  // route. Surfaces a soft helper banner ("Маршрут заполнен из истории" /
+  // "Маршрут заполнен из избранного") and is cleared by every clear path.
+  prefillSource: null,
+  prefillLabel: '',
 };
 
 let notice = '';
@@ -143,23 +156,78 @@ function readPersistedDraft() {
   return parsed;
 }
 
+function sanitizePrefillSource(raw) {
+  return ALLOWED_PREFILL_SOURCES.has(raw) ? raw : null;
+}
+
+function sanitizePrefillLabel(raw) {
+  return typeof raw === 'string' ? raw.trim().slice(0, 120) : '';
+}
+
+// BD-ROUTE-REPEAT-02 — when no persisted route_draft exists, peek at the
+// repeat-route / favorite-notice handoff keys to soft-prefill pickup &
+// dropoff. Peek is non-destructive on purpose: composer (/new) still owns
+// consumption of repeat_route.v1, so a stray prefill cannot leak into the
+// composer if the user later navigates there. Malformed payloads return
+// null from the peek helpers and are silently ignored here.
+function buildPrefillFromHandoff() {
+  const repeat = peekRepeatRouteDraft();
+  if (!repeat) return null;
+  const favoriteNotice = peekFavoriteNotice();
+  const isFavorite = favoriteNotice && favoriteNotice.source === 'favorite';
+  return {
+    pickup: makePoint(
+      `prefill-pickup-${Date.now()}`,
+      repeat.pickup,
+      isFavorite ? 'Из избранного' : 'Из истории поездки',
+      'manual',
+    ),
+    dropoff: makePoint(
+      `prefill-dropoff-${Date.now()}`,
+      repeat.dropoff,
+      isFavorite ? 'Из избранного' : 'Из истории поездки',
+      'manual',
+    ),
+    prefillSource: isFavorite ? 'favorite' : 'repeat',
+    prefillLabel: isFavorite ? favoriteNotice.label : '',
+  };
+}
+
 function hydrateFromStorage() {
   if (hydrated) return;
   hydrated = true;
   const parsed = readPersistedDraft();
-  if (!parsed) return;
-  const pickup = sanitizePoint(parsed.pickup);
-  const dropoff = sanitizePoint(parsed.dropoff);
-  if (!pickup && !dropoff) {
-    if (parsed.pickup != null || parsed.dropoff != null) clearPersistedDraft();
-    return;
+  if (parsed) {
+    const pickup = sanitizePoint(parsed.pickup);
+    const dropoff = sanitizePoint(parsed.dropoff);
+    if (!pickup && !dropoff) {
+      if (parsed.pickup != null || parsed.dropoff != null) clearPersistedDraft();
+    } else {
+      routeDraft.pickup = pickup;
+      routeDraft.dropoff = dropoff;
+      routeDraft.focus = ALLOWED_FOCUS.has(parsed.focus)
+        ? parsed.focus
+        : (pickup ? 'dropoff' : 'pickup');
+      routeDraft.source = pickup?.source ?? dropoff?.source ?? null;
+      routeDraft.prefillSource = sanitizePrefillSource(parsed.prefillSource);
+      routeDraft.prefillLabel = routeDraft.prefillSource
+        ? sanitizePrefillLabel(parsed.prefillLabel)
+        : '';
+      syncDraft();
+      persistDraft();
+      return;
+    }
   }
-  routeDraft.pickup = pickup;
-  routeDraft.dropoff = dropoff;
-  routeDraft.focus = ALLOWED_FOCUS.has(parsed.focus)
-    ? parsed.focus
-    : (pickup ? 'dropoff' : 'pickup');
-  routeDraft.source = pickup?.source ?? dropoff?.source ?? null;
+
+  // No usable persisted route — look for a pending repeat / favorite handoff.
+  const prefill = buildPrefillFromHandoff();
+  if (!prefill) return;
+  routeDraft.pickup = prefill.pickup;
+  routeDraft.dropoff = prefill.dropoff;
+  routeDraft.focus = 'pickup';
+  routeDraft.source = 'manual';
+  routeDraft.prefillSource = prefill.prefillSource;
+  routeDraft.prefillLabel = prefill.prefillLabel;
   syncDraft();
   persistDraft();
 }
@@ -177,6 +245,8 @@ function persistDraft() {
       focus: routeDraft.focus,
       stage: routeDraft.stage,
       route: routeDraft.route,
+      prefillSource: routeDraft.prefillSource,
+      prefillLabel: routeDraft.prefillLabel,
       updatedAt: new Date().toISOString(),
     };
     localStorage.setItem(ROUTE_DRAFT_KEY, JSON.stringify(payload));
@@ -204,6 +274,8 @@ export function clearRouteDraftStore() {
   routeDraft.status = ROUTE_STATUS.EMPTY;
   routeDraft.stage = 'pickup';
   routeDraft.route = null;
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
   notice = '';
   clearPersistedDraft();
 }
@@ -262,6 +334,11 @@ function setPoint(kind, point) {
   routeDraft.source = point?.source ?? null;
   if (kind === 'pickup' && !routeDraft.dropoff) routeDraft.focus = 'dropoff';
   if (kind === 'dropoff' && !routeDraft.pickup) routeDraft.focus = 'pickup';
+  // BD-ROUTE-REPEAT-02 — any manual edit invalidates the "filled from
+  // history/favorite" provenance so the helper banner does not linger
+  // over a route the user has since reshaped.
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
   clearQuery();
   notice = '';
   syncDraft();
@@ -272,6 +349,8 @@ function clearPoint(kind) {
   routeDraft[kind] = null;
   routeDraft.focus = kind;
   routeDraft.source = null;
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
   clearQuery();
   notice = '';
   syncDraft();
@@ -283,6 +362,8 @@ function clearAll() {
   routeDraft.dropoff = null;
   routeDraft.focus = 'pickup';
   routeDraft.source = null;
+  routeDraft.prefillSource = null;
+  routeDraft.prefillLabel = '';
   clearQuery();
   notice = '';
   syncDraft();
@@ -464,6 +545,10 @@ function renderStatusCard() {
   const statusCopy = ready
     ? 'Маршрут готов. Продолжите, чтобы перейти к созданию заявки.'
     : 'Заполните точку подачи и назначения, чтобы продолжить.';
+  const hasPrefill = Boolean(routeDraft.prefillSource);
+  const clearCaption = hasPrefill
+    ? 'Очистит только поля маршрута. Черновик публикации сохранится.'
+    : 'Очистит только поля маршрута.';
 
   return `
     <div class="rp-bottom-card">
@@ -482,13 +567,42 @@ function renderStatusCard() {
         Продолжить
       </button>
       <div class="rp-bottom-card__row">
-        <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="clear-all">
-          Очистить
+        <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="clear-all"
+                aria-label="Очистить маршрут. Только поля подачи и назначения.">
+          Очистить маршрут
         </button>
         <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="back">
           Назад к карте
         </button>
       </div>
+      <p class="rp-bottom-card__caption">${escapeHtml(clearCaption)}</p>
+    </div>
+  `;
+}
+
+function renderPrefillBanner() {
+  const source = routeDraft.prefillSource;
+  if (!source) return '';
+  const headline = PREFILL_COPY[source] || PREFILL_COPY.repeat;
+  const label = routeDraft.prefillLabel
+    ? `«${escapeHtml(routeDraft.prefillLabel)}»`
+    : '';
+  return `
+    <div class="rp-prefill-banner rp-prefill-banner--${escapeHtml(source)}"
+         role="status" data-prefill-source="${escapeHtml(source)}">
+      <span class="rp-prefill-banner__icon" aria-hidden="true">↺</span>
+      <div class="rp-prefill-banner__body">
+        <p class="rp-prefill-banner__title">${escapeHtml(headline)}${label ? ` ${label}` : ''}</p>
+        <p class="rp-prefill-banner__hint">
+          Проверьте точки подачи и назначения — поля можно отредактировать
+          или очистить, не затрагивая черновик публикации.
+        </p>
+      </div>
+      <button class="bd-btn ghost rp-prefill-banner__clear" type="button"
+              data-action="clear-all"
+              aria-label="Очистить маршрут. Только поля подачи и назначения.">
+        Очистить
+      </button>
     </div>
   `;
 }
@@ -518,6 +632,7 @@ function buildBody() {
   scroll.className = 'bd-scroll rp-scroll';
   scroll.appendChild(renderMapSnippet());
   scroll.insertAdjacentHTML('beforeend', `
+    ${renderPrefillBanner()}
     <div class="rp-card">
       ${renderPointField('pickup')}
       <div class="rp-card__divider" aria-hidden="true"></div>
