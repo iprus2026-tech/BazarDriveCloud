@@ -24,6 +24,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import {
   saveRideHistoryEntry,
   buildPassengerHistoryEntry,
+  loadRideHistory,
 } from '../ride_history.js';
 
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
@@ -1207,11 +1208,29 @@ function renderPassengerRideComplete(ride, deps) {
   // and comment via a second save call.
   const historyRow = content.querySelector('.passenger-complete__history-row');
   function persistHistory({ withRating = false } = {}) {
-    const entry = buildPassengerHistoryEntry(ride, withRating ? {
-      rating: currentRating,
-      tags: Array.from(selectedTags),
-      comment: commentInput ? commentInput.value.trim() : '',
-    } : {});
+    // When persisting the baseline (e.g. on initial render or refresh of
+    // the COMPLETED screen) the in-memory rating/tags/comment are still
+    // at their defaults. Without this lookup the empty defaults would
+    // overwrite feedback that the passenger already submitted in a
+    // previous session for the same tripId. BD-ACTIVE-04.
+    let ratingPayload;
+    if (withRating) {
+      ratingPayload = {
+        rating: currentRating,
+        tags: Array.from(selectedTags),
+        comment: commentInput ? commentInput.value.trim() : '',
+      };
+    } else {
+      const previous = loadRideHistory().find(
+        (e) => e && e.role === 'passenger' && e.tripId === ride.tripId,
+      );
+      ratingPayload = previous ? {
+        rating: typeof previous.rating === 'number' ? previous.rating : 0,
+        tags: Array.isArray(previous.tags) ? previous.tags.slice() : [],
+        comment: typeof previous.comment === 'string' ? previous.comment : '',
+      } : {};
+    }
+    const entry = buildPassengerHistoryEntry(ride, ratingPayload);
     if (!entry) return false;
     const saved = saveRideHistoryEntry(entry);
     if (saved && historyRow) historyRow.dataset.historySaved = 'true';
