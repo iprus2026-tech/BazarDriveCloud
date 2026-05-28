@@ -258,3 +258,60 @@ export function clearActiveRideStore() {
     // fail soft.
   }
 }
+
+// BD-MAPBOX-DATA-02 — Accepted route snapshot contract.
+// Canonical, role-agnostic view of the route data that survives from
+// `seedActiveRideFromAcceptedOrder` through the driver / passenger
+// ActiveRide screens into completed ride history. Driver and passenger
+// screens read these same fields off the ride object directly today;
+// this helper centralizes the fallback chain so:
+//   • broken / missing route fields never throw (every value is
+//     resolved through `pickString` and falls back to an em-dash);
+//   • completed ride history can serialize the snapshot without
+//     re-implementing the field precedence in two places;
+//   • future Mapbox-derived ride records (with richer route data) can
+//     be projected onto the same surface without changing call sites.
+export const ROUTE_SNAPSHOT_DEFAULTS = Object.freeze({
+  tripId:        null,
+  pickupLabel:   '—',
+  dropoffLabel:  '—',
+  priceLabel:    '—',
+  distanceLabel: '—',
+  etaLabel:      '—',
+  acceptedAt:    null,
+});
+
+function pickString(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+export function getActiveRideRouteSnapshot(ride) {
+  const safe = isPlainObject(ride) ? ride : {};
+  const route = isPlainObject(safe.route) ? safe.route : {};
+  const order = isPlainObject(safe.order) ? safe.order : {};
+  const rideStats = isPlainObject(safe.ride) ? safe.ride : {};
+  const timestamps = isPlainObject(safe.timestamps) ? safe.timestamps : {};
+  const tripId = pickString(safe.tripId);
+  const pickupLabel = pickString(route.pickupLabel);
+  const dropoffLabel = pickString(route.dropoffLabel);
+  const priceLabel = pickString(rideStats.price) || pickString(order.offerPrice);
+  const distanceLabel = pickString(rideStats.distance) || pickString(order.destinationDistance);
+  const etaLabel = pickString(route.etaToDestination)
+    || pickString(rideStats.duration)
+    || pickString(order.destinationEta);
+  const acceptedAt = pickString(timestamps.acceptedAt);
+  return {
+    tripId:        tripId || ROUTE_SNAPSHOT_DEFAULTS.tripId,
+    pickupLabel:   pickupLabel   || ROUTE_SNAPSHOT_DEFAULTS.pickupLabel,
+    dropoffLabel:  dropoffLabel  || ROUTE_SNAPSHOT_DEFAULTS.dropoffLabel,
+    priceLabel:    priceLabel    || ROUTE_SNAPSHOT_DEFAULTS.priceLabel,
+    distanceLabel: distanceLabel || ROUTE_SNAPSHOT_DEFAULTS.distanceLabel,
+    etaLabel:      etaLabel      || ROUTE_SNAPSHOT_DEFAULTS.etaLabel,
+    acceptedAt:    acceptedAt    || ROUTE_SNAPSHOT_DEFAULTS.acceptedAt,
+  };
+}
