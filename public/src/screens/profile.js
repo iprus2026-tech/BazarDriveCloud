@@ -1145,21 +1145,276 @@ function wireMyPostsSection(root) {
   root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go('/new'));
 }
 
-// ── Ride history (BD-RIDE-HISTORY-01) ─────────────────────────────────────────
+// ── Ride history (BD-RIDE-HISTORY-01 / BD-RIDE-HISTORY-08) ────────────────────
 // Renders the locally-persisted ride history (see ride_history.js) inside the
 // Profile screen. Read-only surface — no backend, no auth. Both passenger and
 // driver entries are surfaced together, sorted newest-first by savedAt /
-// completedAt, so a user who has acted in both roles sees a single mixed
-// list. Each card carries a small role badge and a role-specific body. Empty
-// state renders an inline empty card.
+// completedAt. Layout (BD-RIDE-HISTORY-08):
+//   1. "Последняя поездка" — single summary card for the freshest entry.
+//   2. "История поездок" — compact monthly calendar that marks days with
+//      rides (dot for one, badge for several) and renders the selected day's
+//      rides (max 3, with a "Все поездки за день" expander) plus a daily
+//      total split by role (доход for driver, стоимость for passenger).
+// Empty state renders an inline empty card. Malformed storage renders the
+// recovery card.
 
-const PROFILE_HISTORY_LIMIT = 20;
-
-// BD-RIDE-HISTORY-04 — the latest-first, sliced entries from the most recent
+// BD-RIDE-HISTORY-04 — the latest-first entries from the most recent
 // historySectionHtml() render. Each card carries a data-history-index that
 // maps back into this array so the detail-receipt handler can resolve the
 // clicked entry without re-reading or re-sorting storage.
 let lastHistoryEntries = [];
+
+// BD-RIDE-HISTORY-08 — calendar view state. Persists across re-renders so
+// month navigation and day selection survive ride detail open/close. Reset
+// to today on first use; ride storage changes do not nuke it on purpose so
+// the user keeps their place when a new ride arrives.
+let historyCalendarState = null;
+
+function ensureHistoryCalendarState() {
+  if (!historyCalendarState) {
+    const now = new Date();
+    historyCalendarState = {
+      year: now.getFullYear(),
+      month: now.getMonth(),
+      selectedKey: getLocalDateKey(now),
+      showAll: false,
+    };
+  }
+  return historyCalendarState;
+}
+
+function pluralRu(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
+// BD-RIDE-HISTORY-08 — defensive completedAt reader. Falls back to savedAt so
+// older records keep showing up; returns null when neither field is parseable
+// so a single bad record can't crash the calendar. Callers must null-check.
+function getRideCompletedAt(ride) {
+  const value = ride?.completedAt || ride?.savedAt;
+  if (!value) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+
+function getLocalDateKey(date) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Groups sorted entries into a Map<dateKey, {ride, index}[]>. Each item also
+// carries its index in the original sorted array so the click handler can
+// resolve back to lastHistoryEntries without a second lookup.
+function groupRidesByDate(sortedRides) {
+  const map = new Map();
+  sortedRides.forEach((ride, index) => {
+    const d = getRideCompletedAt(ride);
+    if (!d) return;
+    const key = getLocalDateKey(d);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ ride, index });
+  });
+  for (const arr of map.values()) {
+    arr.sort((a, b) => {
+      const ta = getRideCompletedAt(a.ride)?.getTime() ?? 0;
+      const tb = getRideCompletedAt(b.ride)?.getTime() ?? 0;
+      return tb - ta;
+    });
+  }
+  return map;
+}
+
+// 6 weeks × 7 days = 42 cells, Monday-first. Cells outside the view month
+// keep `inMonth: false` so the renderer can dim them.
+function getMonthCalendarDays(year, month) {
+  const firstOfMonth = new Date(year, month, 1);
+  const firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+  const start = new Date(year, month, 1 - firstWeekday);
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    days.push({
+      date: d,
+      key: getLocalDateKey(d),
+      inMonth: d.getMonth() === month,
+    });
+  }
+  return days;
+}
+
+function parseFareNumber(fare) {
+  if (fare == null) return 0;
+  if (typeof fare === 'number') return Number.isFinite(fare) ? fare : 0;
+  const s = String(fare).replace(/\s/g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+function formatMonthLabel(year, month) {
+  try {
+    const label = new Date(year, month, 1).toLocaleDateString('ru-RU', {
+      month: 'long', year: 'numeric',
+    });
+    return capitalize(label);
+  } catch {
+    return `${month + 1}/${year}`;
+  }
+}
+
+function formatSelectedDayLabel(date) {
+  try {
+    return date.toLocaleDateString('ru-RU', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+  } catch {
+    return getLocalDateKey(date);
+  }
+}
+
+function formatHistoryTime(date) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return '';
+  try {
+    return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
+function buildDaySummary(rides) {
+  const driverRides    = rides.filter((r) => r.role === 'driver');
+  const passengerRides = rides.filter((r) => r.role === 'passenger');
+  const parts = [];
+  if (driverRides.length) {
+    const income = driverRides.reduce(
+      (s, r) => s + parseFareNumber(r?.earnings?.net ?? r?.fare), 0
+    );
+    const count = driverRides.length;
+    const word  = pluralRu(count, 'поездка', 'поездки', 'поездок');
+    parts.push(`${count} ${word} · ${fmtRub(income)} доход`);
+  }
+  if (passengerRides.length) {
+    const total = passengerRides.reduce((s, r) => s + parseFareNumber(r?.fare), 0);
+    const count = passengerRides.length;
+    const word  = pluralRu(count, 'поездка', 'поездки', 'поездок');
+    parts.push(`${count} ${word} · ${fmtRub(total)}`);
+  }
+  return parts.join(' · ');
+}
+
+const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+function renderRideHistoryCalendar(state, byDate) {
+  const { year, month, selectedKey } = state;
+  const todayKey = getLocalDateKey(new Date());
+  const days = getMonthCalendarDays(year, month);
+  const cells = days.map((cell) => {
+    const items = byDate.get(cell.key) || [];
+    const count = items.length;
+    const dayNum = cell.date.getDate();
+    const isSelected = cell.key === selectedKey;
+    const isToday    = cell.key === todayKey;
+    const classes = ['profile-history-calendar__day'];
+    if (!cell.inMonth) classes.push('profile-history-calendar__day--other');
+    if (isToday) classes.push('profile-history-calendar__day--today');
+    if (count > 0) classes.push('profile-history-calendar__day--has-rides');
+    if (count > 1) classes.push('profile-history-calendar__day--multi');
+    if (isSelected) classes.push('profile-history-calendar__day--selected');
+    const ariaLabel = count > 0
+      ? `${formatSelectedDayLabel(cell.date)}, ${count} ${pluralRu(count, 'поездка', 'поездки', 'поездок')}`
+      : formatSelectedDayLabel(cell.date);
+    const marker = count > 1
+      ? `<span class="profile-history-calendar__badge">${count}</span>`
+      : (count === 1 ? `<span class="profile-history-calendar__dot" aria-hidden="true"></span>` : '');
+    return `<button type="button" class="${classes.join(' ')}" data-cal-day="${escapeHtml(cell.key)}" aria-pressed="${isSelected ? 'true' : 'false'}" aria-label="${escapeHtml(ariaLabel)}">
+      <span class="profile-history-calendar__day-num">${dayNum}</span>
+      ${marker}
+    </button>`;
+  }).join('');
+  const weekdays = WEEKDAY_LABELS
+    .map((w) => `<span class="profile-history-calendar__wd">${w}</span>`)
+    .join('');
+  return `
+    <div class="profile-history-calendar" role="group" aria-label="Календарь поездок">
+      <div class="profile-history-calendar__nav">
+        <button type="button" class="profile-history-calendar__nav-btn" data-cal-action="prev-month" aria-label="Предыдущий месяц">‹</button>
+        <span class="profile-history-calendar__title">${escapeHtml(formatMonthLabel(year, month))}</span>
+        <button type="button" class="profile-history-calendar__nav-btn" data-cal-action="next-month" aria-label="Следующий месяц">›</button>
+      </div>
+      <div class="profile-history-calendar__weekdays" aria-hidden="true">${weekdays}</div>
+      <div class="profile-history-calendar__grid" role="grid">${cells}</div>
+    </div>`;
+}
+
+function renderSelectedDayRides(state, byDate, sortedEntries) {
+  const { selectedKey, showAll } = state;
+  const items = byDate.get(selectedKey) || [];
+  const parsed = selectedKey ? new Date(`${selectedKey}T00:00:00`) : null;
+  const dateLabel = parsed && Number.isFinite(parsed.getTime())
+    ? capitalize(formatSelectedDayLabel(parsed))
+    : '';
+  if (items.length === 0) {
+    return `
+      <div class="profile-history-selected">
+        <div class="profile-history-selected__head">
+          <p class="profile-history-selected__date">${escapeHtml(dateLabel)}</p>
+          <p class="profile-history-selected__summary profile-history-selected__summary--muted">Нет поездок за этот день</p>
+        </div>
+      </div>`;
+  }
+  const visible = showAll ? items : items.slice(0, 3);
+  const rideRows = visible.map(({ ride, index }) =>
+    selectedDayRideRowHtml(ride, index)
+  ).filter((html) => html).join('');
+  const more = items.length > 3 && !showAll
+    ? `<button type="button" class="profile-history-selected__more" data-cal-action="show-all">Все поездки за день (${items.length})</button>`
+    : '';
+  const rides = items.map((it) => it.ride);
+  const summary = buildDaySummary(rides);
+  return `
+    <div class="profile-history-selected">
+      <div class="profile-history-selected__head">
+        <p class="profile-history-selected__date">${escapeHtml(dateLabel)}</p>
+        ${summary ? `<p class="profile-history-selected__summary">${escapeHtml(summary)}</p>` : ''}
+      </div>
+      <div class="profile-history-selected__list">${rideRows}</div>
+      ${more}
+    </div>`;
+}
+
+function selectedDayRideRowHtml(ride, index) {
+  try {
+    const pickup  = escapeHtml(ride?.route?.pickupLabel  || '—');
+    const dropoff = escapeHtml(ride?.route?.dropoffLabel || '—');
+    const when    = formatHistoryTime(getRideCompletedAt(ride));
+    const isDriver = ride?.role === 'driver';
+    const amountRaw = isDriver
+      ? (ride?.earnings?.net ?? ride?.fare)
+      : ride?.fare;
+    const amount = formatHistoryFare(amountRaw);
+    return `
+      <article class="profile-history-day__row profile-history-day__row--clickable" role="button" tabindex="0" data-history-index="${index}" aria-haspopup="dialog">
+        <span class="profile-history-day__time">${escapeHtml(when || '')}</span>
+        <span class="profile-history-day__route">
+          <span class="profile-history-day__route-from">${pickup}</span>
+          <span class="profile-history-day__route-arrow" aria-hidden="true">→</span>
+          <span class="profile-history-day__route-to">${dropoff}</span>
+        </span>
+        ${amount ? `<span class="profile-history-day__amount${isDriver ? ' profile-history-day__amount--income' : ''}">${escapeHtml(amount)}</span>` : ''}
+      </article>`;
+  } catch {
+    return '';
+  }
+}
 
 function historyEntryTimestamp(entry) {
   return entry?.savedAt || entry?.completedAt || '';
@@ -1368,22 +1623,36 @@ function historySectionHtml() {
   const entries = rawEntries.filter(
     (e) => e && (e.role === 'passenger' || e.role === 'driver')
   );
-  const sorted = sortHistoryEntriesDesc(entries).slice(0, PROFILE_HISTORY_LIMIT);
+  const sorted = sortHistoryEntriesDesc(entries);
   lastHistoryEntries = sorted;
-  const cards  = sorted.map((e, i) => safeHistoryEntryHtml(e, i)).filter((html) => html);
-  const count  = cards.length;
 
-  if (count === 0) {
+  if (sorted.length === 0) {
     return `<section class="profile-history" id="profile-history-section">
       ${historyHeaderHtml(0)}
       ${historyEmptyBodyHtml()}
     </section>`;
   }
+
+  // Latest entry as a single summary card. Index 0 maps into
+  // lastHistoryEntries so the existing detail-receipt wiring keeps working.
+  const latestCard = safeHistoryEntryHtml(sorted[0], 0);
+
+  // Calendar is built from entries that resolve to a local date; records
+  // without a parseable completedAt are silently skipped so they cannot
+  // crash the profile, but they still live in lastHistoryEntries (so the
+  // latest-card slot above can surface them when they happen to be newest
+  // by savedAt).
+  const state = ensureHistoryCalendarState();
+  const byDate = groupRidesByDate(sorted);
+  const calendarHtml = renderRideHistoryCalendar(state, byDate);
+  const selectedHtml = renderSelectedDayRides(state, byDate, sorted);
+
   return `<section class="profile-history" id="profile-history-section">
-    ${historyHeaderHtml(count)}
-    <div class="profile-history__list">
-      ${cards.join('')}
-    </div>
+    <p class="pfp-section-title profile-history__latest-title">Последняя поездка</p>
+    <div class="profile-history__latest">${latestCard}</div>
+    ${historyHeaderHtml(sorted.length)}
+    ${calendarHtml}
+    ${selectedHtml}
   </section>`;
 }
 
@@ -1392,29 +1661,77 @@ function historySectionHtml() {
 // confirmation (mirrors the logout pattern) so a single misclick cannot wipe
 // data; first press flips the label, second press calls clearRideHistory()
 // and re-renders the section in place.
+function replaceHistorySection(root) {
+  const current = root.querySelector('#profile-history-section');
+  if (!current) return false;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = historySectionHtml();
+  const next = wrap.firstElementChild;
+  if (!next) return false;
+  current.replaceWith(next);
+  wireHistorySection(root);
+  return true;
+}
+
 function wireHistorySection(root) {
   root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go('/new'));
   root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
 
-  // BD-RIDE-HISTORY-04 — open a role-aware detail receipt when a history card
-  // is tapped. Delegated on the list so it survives per-entry re-renders.
-  const list = root.querySelector('.profile-history__list');
+  // BD-RIDE-HISTORY-04/08 — section-level delegation handles three concerns:
+  // (1) clicking a history card opens its detail receipt; (2) calendar day
+  // and month nav buttons mutate historyCalendarState and re-render in place;
+  // (3) "Все поездки за день" expands the selected-day list. Cards are <article
+  // role="button"> so the native Enter/Space contract is reproduced too.
+  const section = root.querySelector('#profile-history-section');
+  if (!section) return;
+
   const openCardDetail = (card) => {
     const index = Number(card.dataset.historyIndex);
     const entry = Number.isInteger(index) ? lastHistoryEntries[index] : null;
     if (entry) openHistoryDetail(root, entry);
   };
-  list?.addEventListener('click', (e) => {
+
+  section.addEventListener('click', (e) => {
+    const dayBtn = e.target.closest('[data-cal-day]');
+    if (dayBtn) {
+      const state = ensureHistoryCalendarState();
+      state.selectedKey = dayBtn.dataset.calDay;
+      state.showAll = false;
+      replaceHistorySection(root);
+      return;
+    }
+    const actionBtn = e.target.closest('[data-cal-action]');
+    if (actionBtn) {
+      const action = actionBtn.dataset.calAction;
+      const state = ensureHistoryCalendarState();
+      if (action === 'prev-month' || action === 'next-month') {
+        let y = state.year;
+        let m = state.month + (action === 'next-month' ? 1 : -1);
+        if (m < 0)  { m = 11; y -= 1; }
+        if (m > 11) { m = 0;  y += 1; }
+        state.year  = y;
+        state.month = m;
+        state.selectedKey = getLocalDateKey(new Date(y, m, 1));
+        state.showAll = false;
+        replaceHistorySection(root);
+        return;
+      }
+      if (action === 'show-all') {
+        state.showAll = true;
+        replaceHistorySection(root);
+        return;
+      }
+    }
     const card = e.target.closest('[data-history-index]');
     if (card) openCardDetail(card);
   });
-  // The cards are <article role="button">, so the native button keyboard
-  // contract (Enter / Space) must be reproduced. Space is preventDefault'd so
-  // the page does not scroll on activation.
-  list?.addEventListener('keydown', (e) => {
+
+  section.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     const card = e.target.closest('[data-history-index]');
     if (!card) return;
+    // Only intercept space when the focus is actually on a history card —
+    // calendar day buttons handle their own activation natively.
     if (e.key !== 'Enter') e.preventDefault();
     openCardDetail(card);
   });
@@ -1423,17 +1740,7 @@ function wireHistorySection(root) {
   clearBtn?.addEventListener('click', () => {
     if (clearBtn.dataset.confirm === 'pending') {
       clearRideHistory();
-      const current = root.querySelector('#profile-history-section');
-      if (current) {
-        const wrap = document.createElement('div');
-        wrap.innerHTML = historySectionHtml();
-        const next = wrap.firstElementChild;
-        if (next) {
-          current.replaceWith(next);
-          wireHistorySection(root);
-          return;
-        }
-      }
+      if (replaceHistorySection(root)) return;
       clearBtn.disabled = true;
       clearBtn.textContent = 'История очищена';
     } else {
