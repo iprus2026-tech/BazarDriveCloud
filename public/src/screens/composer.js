@@ -1,6 +1,6 @@
 import { user } from '../state.js';
 import { go, setPendingAction } from '../router.js';
-import { createFeedPost, createRideOrder } from '../mock_api.js';
+import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 
@@ -203,8 +203,45 @@ function parseMoneyLike(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function buildRideOrderFromComposerDraft(d) {
+// BD-ACTIVE-07 — Mirror order_map_draft.js phone masking so a composer
+// passenger request carries the same phoneMasked shape that the
+// driver-side ActiveRide row already expects. Tiny duplicate kept local
+// on purpose: no shared util module touched in this PR.
+function maskedPhoneForSnapshot(phone) {
+  const digits = String(phone || '').replace(/\D+/g, '');
+  if (digits.length < 11) return '';
+  const last4 = digits.slice(-4);
+  return `+7 (${digits.slice(-10, -7)}) ··· ${last4.slice(0, 2)}-${last4.slice(2)}`;
+}
+
+// BD-ACTIVE-07 — Capture the order author's identity at publish time so
+// composer-created passenger requests hand the right passenger to the
+// driver-side accept path (instead of the generic "Пассажир" fallback).
+// Same shape as the order_map_draft snapshot.
+function buildPassengerSnapshotFromUser(u, commentText) {
+  const first = typeof u.firstName === 'string' ? u.firstName.trim() : '';
+  const last = typeof u.lastName === 'string' ? u.lastName.trim() : '';
+  const composed = [first, last].filter(Boolean).join(' ');
+  const displayName = typeof u.displayName === 'string' ? u.displayName.trim() : '';
+  const name = composed || displayName || 'Вы';
+  const initials = name === 'Вы'
+    ? 'В'
+    : (composed
+        ? `${first ? first.charAt(0).toUpperCase() : ''}${last ? last.charAt(0).toUpperCase() : ''}` || name.charAt(0).toUpperCase()
+        : name.charAt(0).toUpperCase());
+  return {
+    name,
+    initials,
+    phoneMasked: maskedPhoneForSnapshot(u.phone),
+    comment: commentText,
+    authorId: LOCAL_USER_ID,
+    isCurrentUser: true,
+  };
+}
+
+function buildRideOrderFromComposerDraft(d, u) {
   const whenLabel = String(d.when || '').trim();
+  const commentText = typeof d.comment === 'string' ? d.comment.trim() : '';
   return {
     type: 'passenger_request',
     source: 'feed',
@@ -218,6 +255,7 @@ function buildRideOrderFromComposerDraft(d) {
     scheduledAt: whenLabel || new Date().toISOString(),
     scheduledLabel: whenLabel,
     comment: d.comment,
+    passenger: u ? buildPassengerSnapshotFromUser(u, commentText) : null,
   };
 }
 
@@ -613,7 +651,7 @@ export default function composer() {
     setLoading(true);
     try {
       if (d.type === 'passenger') {
-        createRideOrder(buildRideOrderFromComposerDraft(d));
+        createRideOrder(buildRideOrderFromComposerDraft(d, user.get()));
       } else {
         createFeedPost(buildFeedPost(d));
       }

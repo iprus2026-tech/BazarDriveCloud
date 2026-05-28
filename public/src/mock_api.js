@@ -442,6 +442,33 @@ function persistRideOrders(list) {
   }
 }
 
+// BD-ACTIVE-07 — Sanitize the passenger snapshot pinned at order
+// creation. Stored as-is on the canonical ride order so later
+// driver-side accept / active-ride / chat / history surfaces never have
+// to fall back to a seed/mock passenger ("Анна М.") that belongs to a
+// different orderId.
+function sanitizePassengerSnapshot(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  if (!name) return null;
+  const initials = typeof input.initials === 'string' && input.initials.trim()
+    ? input.initials.trim()
+    : name.charAt(0).toUpperCase();
+  const phoneMasked = typeof input.phoneMasked === 'string' ? input.phoneMasked.trim() : '';
+  const comment = typeof input.comment === 'string' ? input.comment.trim() : '';
+  const authorId = typeof input.authorId === 'string' && input.authorId.trim()
+    ? input.authorId.trim()
+    : null;
+  return {
+    name,
+    initials,
+    phoneMasked,
+    comment,
+    authorId,
+    isCurrentUser: input.isCurrentUser === true,
+  };
+}
+
 export function createRideOrder(input = {}) {
   const order = {
     id: `order-${Date.now()}`,
@@ -461,6 +488,11 @@ export function createRideOrder(input = {}) {
       ? input.scheduledLabel.trim()
       : '',
     comment: typeof input.comment === 'string' ? input.comment : '',
+    // BD-ACTIVE-07 — Per-order passenger snapshot captured at creation.
+    // Carries the order author's identity so driver-side accept can hand
+    // off the right passenger to /active-ride without falling back to
+    // the demo "Анна М." seed.
+    passenger: sanitizePassengerSnapshot(input.passenger),
     status: 'CREATED',
     createdAt: new Date().toISOString(),
   };
