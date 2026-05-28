@@ -249,6 +249,41 @@ function writeFavoriteNotice(favorite) {
   }
 }
 
+// Non-destructive peek used by callers that need to know whether the
+// pending repeat-route prefill originated from a favorite (and to surface
+// its display label) without consuming the one-time notice the composer
+// relies on. Malformed payloads return null and are left in place — the
+// next consumeFavoriteNotice() will remove them.
+export function peekFavoriteNotice() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(FAVORITE_NOTICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return null;
+    return {
+      source: parsed.source === 'favorite' ? 'favorite' : '',
+      label: cleanString(parsed.label),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Removes only the favorite-route notice. Exposed so callers that adopt
+// the paired repeat_route handoff (e.g. /route-picker lifting pickup &
+// dropoff into route_draft.v1) can also drop the notice in the same
+// step, preventing a stale "из избранного" banner from re-appearing in
+// the composer for a route that has already been taken.
+export function clearFavoriteNotice() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(FAVORITE_NOTICE_KEY);
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
 function consumeFavoriteNotice() {
   try {
     if (typeof localStorage === 'undefined') return null;

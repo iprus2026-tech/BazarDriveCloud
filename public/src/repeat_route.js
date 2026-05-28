@@ -99,6 +99,36 @@ export function writeRepeatRouteDraft(entry) {
   }
 }
 
+// Non-destructive peek used by callers that want to *detect* a pending
+// repeat-route prefill (e.g. /route-picker showing a "Маршрут заполнен из
+// истории" helper banner) without stealing the one-time prefill from the
+// composer. Malformed payloads return null and are left in place — the
+// next consumeRepeatRouteDraft() will remove them.
+export function peekRepeatRouteDraft() {
+  let raw = null;
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    raw = localStorage.getItem(REPEAT_ROUTE_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const pickup = cleanString(parsed.pickup);
+  const dropoff = cleanString(parsed.dropoff);
+  if (!pickup || !dropoff) return null;
+  const draft = { role: normalizeRole(parsed.role), pickup, dropoff };
+  const suggestedFare = cleanNumber(parsed.suggestedFare);
+  if (suggestedFare != null) draft.suggestedFare = suggestedFare;
+  return draft;
+}
+
 // Read-and-remove. Returns a sanitized draft or null. The key is removed
 // even when its payload is malformed, guaranteeing one-time consumption so
 // a corrupt value can never wedge /new on every visit.
