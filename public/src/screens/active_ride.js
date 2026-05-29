@@ -328,7 +328,14 @@ function bindCancelOptions(overlay, selected, onChange) {
 // the selected reason code; the caller decides the resulting status so the
 // shared sheet never hard-codes a ride_state transition. `outcomeLabel` is
 // display-only copy ("CANCELED" / "NO_SHOW") for the confirmation strip.
+// BD-RIDE-D-07 — Driver cancel sheet. Two-step confirm. `onConfirm` receives
+// the selected reason code; the caller decides the resulting status so the
+// shared sheet never hard-codes a ride_state transition. `outcomeLabel` is
+// display-only copy and may be a static string or a function of the selected
+// reason — so the confirmation strip stays accurate when the reason changes
+// (e.g. the "не приехал" entry: passenger_no_show → NO_SHOW, else CANCELED).
 function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', onConfirm }) {
+  const resolveOutcome = typeof outcomeLabel === 'function' ? outcomeLabel : () => outcomeLabel;
   let selected = CANCEL_REASONS.some(([value]) => value === reason) ? reason : '';
   let confirmPending = false;
   const sheet = createDriverActionSheet(root, {
@@ -339,23 +346,29 @@ function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', o
     bodyHtml: `
       <p class="driver-cancel-sheet__lead">Выберите причину. Она остаётся mock-only и не меняет схему ride_state.js.</p>
       <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${renderCancelOptions(selected)}</div>
-      <div class="driver-cancel-sheet__confirm" id="driver-cancel-confirm" hidden><strong>Подтверждение</strong><span>Следующее нажатие переведёт поездку в ${escapeHtml(outcomeLabel)}.</span></div>
+      <div class="driver-cancel-sheet__confirm" id="driver-cancel-confirm" hidden><strong>Подтверждение</strong><span id="driver-cancel-confirm-text"></span></div>
       <div class="active-ride-driver__actions"><button type="button" class="bd-btn primary active-ride-driver__primary" id="driver-cancel-primary" disabled>Подтвердить отмену</button><button type="button" class="bd-btn ghost active-ride-driver__secondary" data-driver-sheet-close="true">Назад к поездке</button></div>
     `,
   });
   const primary = sheet.overlay.querySelector('#driver-cancel-primary');
   const confirmBox = sheet.overlay.querySelector('#driver-cancel-confirm');
+  const confirmText = sheet.overlay.querySelector('#driver-cancel-confirm-text');
+  function syncConfirmText() {
+    confirmText.textContent = `Следующее нажатие переведёт поездку в ${resolveOutcome(selected)}.`;
+  }
   bindCancelOptions(sheet.overlay, selected, (next) => {
     selected = next;
     confirmPending = false;
     confirmBox.hidden = true;
     primary.textContent = 'Подтвердить отмену';
     primary.disabled = !selected;
+    syncConfirmText();
   });
   primary.addEventListener('click', () => {
     if (!selected) return;
     if (!confirmPending) {
       confirmPending = true;
+      syncConfirmText();
       confirmBox.hidden = false;
       primary.textContent = 'Да, отменить';
       return;
@@ -594,7 +607,7 @@ export default function activeRide() {
     // keeping the NO_SHOW transition out of the now placeholder-only problem sheet.
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverCancelSheet(root, {
       reason: 'passenger_no_show',
-      outcomeLabel: 'NO_SHOW',
+      outcomeLabel: (code) => (code === 'passenger_no_show' ? 'NO_SHOW' : 'CANCELED'),
       onConfirm: (code) => {
         ride = updateActiveRideStatus(ride.tripId, code === 'passenger_no_show' ? RIDE_STATUS.NO_SHOW : RIDE_STATUS.CANCELED);
         renderSheet();
