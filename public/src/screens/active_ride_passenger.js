@@ -1493,7 +1493,7 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
 
   const title = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
   const badgeLabel = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
-  const badgeText = isNoShow ? 'No-show' : 'Canceled';
+  const badgeText = isNoShow ? 'Не состоялась' : 'Отменена';
   const description = isNoShow
     ? 'Водитель не смог дождаться вас на точке подачи. Закройте экран и закажите новую поездку, когда будете готовы.'
     : (byPassenger
