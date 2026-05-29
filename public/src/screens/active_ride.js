@@ -42,12 +42,12 @@ const DRIVER_SIMULATION_STATUSES = new Set([
 // issue #265 contract; the second/third columns are Russian UI copy. Mock
 // only — selecting a reason never extends or mutates the ride_state schema.
 const CANCEL_REASONS = [
-  ['passenger_no_show', 'Пассажир не вышел', 'Пассажир не появился у точки подачи'],
-  ['wrong_pickup', 'Неверная точка подачи', 'Адрес подачи указан неправильно'],
-  ['car_problem', 'Проблема с автомобилем', 'Нужно остановить заказ до подачи'],
-  ['unsafe_situation', 'Небезопасная ситуация', 'Чувствую угрозу безопасности'],
-  ['cannot_reach_passenger', 'Не могу связаться с пассажиром', 'Звонил и писал — ответа нет'],
-  ['other', 'Другое', 'Причина mock-only, без расширения ride_state.js'],
+  ['passenger_no_show', 'Пассажир не вышел', 'Пассажира нет у точки подачи'],
+  ['wrong_pickup', 'Неверная точка подачи', 'Адрес или подъезд указаны неправильно'],
+  ['car_problem', 'Проблема с автомобилем', 'Не могу безопасно продолжить подачу'],
+  ['unsafe_situation', 'Небезопасная ситуация', 'Есть риск для водителя или пассажира'],
+  ['cannot_reach_passenger', 'Не могу связаться с пассажиром', 'Нет ответа в звонке или чате'],
+  ['other', 'Другое', 'Укажу причину позже через поддержку'],
 ];
 
 // BD-RIDE-D-08 — Driver problem actions are pure UI placeholders. None of
@@ -338,9 +338,9 @@ function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', o
     kind: 'cancel',
     titleId: 'driver-cancel-title',
     eyebrow: 'BD-RIDE-D-07',
-    title: 'Отменить поездку?',
+    title: 'Почему отменяем заказ?',
     bodyHtml: `
-      <p class="driver-cancel-sheet__lead">Выберите причину. Она остаётся mock-only и не меняет схему ride_state.js.</p>
+      <p class="driver-cancel-sheet__lead">Выберите причину отмены. Подтверждение потребуется на следующем шаге.</p>
       <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${renderCancelOptions(selected)}</div>
       <div class="driver-cancel-sheet__confirm" id="driver-cancel-confirm" hidden><strong>Подтверждение</strong><span id="driver-cancel-confirm-text"></span></div>
       <div class="active-ride-driver__actions"><button type="button" class="bd-btn primary active-ride-driver__primary" id="driver-cancel-primary" disabled>Подтвердить отмену</button><button type="button" class="bd-btn ghost active-ride-driver__secondary" data-driver-sheet-close="true">Назад к поездке</button></div>
@@ -350,7 +350,9 @@ function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', o
   const confirmBox = sheet.overlay.querySelector('#driver-cancel-confirm');
   const confirmText = sheet.overlay.querySelector('#driver-cancel-confirm-text');
   function syncConfirmText() {
-    confirmText.textContent = `Следующее нажатие переведёт поездку в ${resolveOutcome(selected)}.`;
+    confirmText.textContent = resolveOutcome(selected) === 'NO_SHOW'
+      ? 'После подтверждения отметим, что пассажир не вышел.'
+      : 'После подтверждения заказ будет отменён.';
   }
   bindCancelOptions(sheet.overlay, selected, (next) => {
     selected = next;
@@ -366,7 +368,7 @@ function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', o
       confirmPending = true;
       syncConfirmText();
       confirmBox.hidden = false;
-      primary.textContent = 'Да, отменить';
+      primary.textContent = 'Да, отменить заказ';
       return;
     }
     sheet.close();
@@ -659,14 +661,14 @@ export default function activeRide() {
     let title;
     let body;
     if (ride.status === RIDE_STATUS.NO_SHOW) {
-      title = 'Пассажир не приехал';
-      body = 'Поездка отмечена как no-show. Реальный штраф и поддержка вне этого PR.';
+      title = 'Пассажир не вышел';
+      body = 'Пассажир не появился у точки подачи. Заказ завершён.';
     } else if (byPassenger) {
       title = 'Пассажир отменил заказ';
       body = `${passengerName} отменил поездку после принятия заказа.`;
     } else {
       title = 'Заказ отменён';
-      body = 'Заказ отменён водителем. Причина хранится только в UI этого PR.';
+      body = 'Вы отменили заказ.';
     }
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title">${escapeHtml(title)}</div></div><div class="active-ride__stub">${escapeHtml(body)}</div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться в ленту</button></div>`;
     sheet.querySelector('#ar-back-feed').addEventListener('click', () => go('/feed'));
