@@ -350,7 +350,7 @@ function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', o
   const confirmBox = sheet.overlay.querySelector('#driver-cancel-confirm');
   const confirmText = sheet.overlay.querySelector('#driver-cancel-confirm-text');
   function syncConfirmText() {
-    confirmText.textContent = selected === 'passenger_no_show'
+    confirmText.textContent = resolveOutcome(selected) === 'NO_SHOW'
       ? 'После подтверждения отметим, что пассажир не вышел.'
       : 'После подтверждения заказ будет отменён.';
   }
