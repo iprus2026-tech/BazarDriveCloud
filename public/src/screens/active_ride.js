@@ -327,10 +327,6 @@ function bindCancelOptions(overlay, selected, onChange) {
 // BD-RIDE-D-07 — Driver cancel sheet. Two-step confirm. `onConfirm` receives
 // the selected reason code; the caller decides the resulting status so the
 // shared sheet never hard-codes a ride_state transition. `outcomeLabel` is
-// display-only copy ("CANCELED" / "NO_SHOW") for the confirmation strip.
-// BD-RIDE-D-07 — Driver cancel sheet. Two-step confirm. `onConfirm` receives
-// the selected reason code; the caller decides the resulting status so the
-// shared sheet never hard-codes a ride_state transition. `outcomeLabel` is
 // display-only copy and may be a static string or a function of the selected
 // reason — so the confirmation strip stays accurate when the reason changes
 // (e.g. the "не приехал" entry: passenger_no_show → NO_SHOW, else CANCELED).
