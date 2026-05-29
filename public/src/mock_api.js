@@ -542,6 +542,49 @@ export function clearRideOrdersStore() {
   }
 }
 
+// ── Canonical ride-order spine API (BD-RIDE-ORDER-UNIFY-01) ────
+// Thin spine helpers over the same `bazardrive.ride_orders.v1` store so
+// callers reach for one canonical surface regardless of entry point
+// (Composer /new, OrderMapDraft, DriverMap, ActiveRide handoff).
+// Names mirror the spec on issue #238:
+//   getOrderById, acceptOrder, updateTripStatus.
+
+export function getOrderById(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const list = loadRideOrdersRaw();
+  const found = list.find((o) => o && o.id === id);
+  return found ? { ...found } : null;
+}
+
+// Spine alias for acceptNearbyOrder — keeps the legacy export stable
+// while exposing the name listed in the unified mock API contract.
+export function acceptOrder(id) {
+  return acceptNearbyOrder(id);
+}
+
+// Allowed lifecycle transitions for a canonical ride order. Kept
+// permissive enough for the mock flow (no backend rollback path), but
+// unknown statuses are rejected so callers can't silently corrupt the
+// store.
+const RIDE_ORDER_STATUSES = new Set(['CREATED', 'ACCEPTED', 'IN_PROGRESS', 'COMPLETED', 'CANCELED']);
+
+export function updateTripStatus(id, status) {
+  if (typeof id !== 'string' || !id) return null;
+  if (typeof status !== 'string' || !RIDE_ORDER_STATUSES.has(status)) return null;
+  const list = loadRideOrdersRaw();
+  let updated = null;
+  const next = list.map((o) => {
+    if (o && o.id === id) {
+      updated = { ...o, status, statusUpdatedAt: new Date().toISOString() };
+      return updated;
+    }
+    return o;
+  });
+  if (!updated) return null;
+  persistRideOrders(next);
+  return updated;
+}
+
 // ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
 // Read-side adapter: surfaces map-created CREATED ride orders as
 // passenger ride cards in Feed without duplicating them into
