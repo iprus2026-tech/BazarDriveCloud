@@ -1489,15 +1489,18 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   const isNoShow = variant === 'no_show';
   const cancel = (ride && ride.cancel) || {};
   const byDriver = cancel.by === 'driver';
+  const byPassenger = cancel.by === 'passenger';
 
   const title = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
   const badgeLabel = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
   const badgeText = isNoShow ? 'No-show' : 'Canceled';
   const description = isNoShow
     ? 'Водитель не смог дождаться вас на точке подачи. Закройте экран и закажите новую поездку, когда будете готовы.'
-    : (byDriver
-      ? 'Водитель отменил эту поездку. Вы можете вернуться в ленту или создать новую заявку.'
-      : 'Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.');
+    : (byPassenger
+      ? 'Вы отменили эту поездку. Вернитесь в ленту или создайте новую заявку.'
+      : (byDriver
+        ? 'Водитель отменил эту поездку. Вы можете вернуться в ленту или создать новую заявку.'
+        : 'Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.'));
   const metaVerb = isNoShow ? 'закрыто в' : 'отменено в';
 
   root.innerHTML = `
