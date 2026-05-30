@@ -9,7 +9,7 @@ import map        from './screens/map.js';
 import locationPermission from './screens/location_permission.js';
 import routePicker from './screens/route_picker.js';
 import routePreview from './screens/route_preview.js';
-import orderMapDraft from './screens/order_map_draft.js';
+import orderMapDraft from './screens/order_map_draft_handoff.js';
 import rules      from './screens/rules.js';
 import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';
@@ -57,31 +57,6 @@ function getMapEntryRoute() {
   return profile.role === 'driver' ? '/driver-map' : '/map';
 }
 
-function initOrderMapDraftUiPolish() {
-  const appRoot = document.getElementById('app');
-  if (!appRoot) return;
-
-  const apply = () => {
-    const screen = appRoot.querySelector('.screen--order-map-draft[data-state="success"]');
-    if (!screen) return;
-    const statusPill = screen.querySelector('.omd-topbar__sub');
-    if (statusPill && statusPill.textContent.trim() === 'CREATED') {
-      statusPill.textContent = 'Опубликован';
-    }
-  };
-
-  const scheduleApply = () => {
-    requestAnimationFrame(apply);
-  };
-
-  new MutationObserver(scheduleApply).observe(appRoot, {
-    childList: true,
-    subtree: true,
-  });
-  window.addEventListener('hashchange', scheduleApply);
-  scheduleApply();
-}
-
 document.getElementById('tabbar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-route]');
   if (!btn?.dataset.route) return;
@@ -99,4 +74,3 @@ document.getElementById('fab').addEventListener('click', () => {
 start();
 initSwUpdate();
 initFavoriteRoutes();
-initOrderMapDraftUiPolish();
