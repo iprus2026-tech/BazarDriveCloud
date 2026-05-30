@@ -18,6 +18,7 @@ import {
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import { findLatestHandedOffOrderTripId } from '../mock_api.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
   saveRideHistoryEntry,
@@ -156,8 +157,16 @@ function appendDriverChatMessage(tripId, text) {
 
 function renderPassenger() {
   const query = getHashQuery();
+  // BD-MAP-06 — Passenger order → DriverMap handoff. With no explicit
+  // tripId in the URL, resolve the passenger's most recent driver-taken
+  // order so the screen shows their real handed-off trip (shared
+  // active_ride.v1 record, orderId-linked) instead of the demo ride.
+  // Falls back to the demo trip when no live order has been accepted.
+  const tripId = query.get('tripId')
+    || findLatestHandedOffOrderTripId()
+    || DEMO_ACTIVE_RIDE_ID;
   return activeRidePassenger({
-    tripId: query.get('tripId') || DEMO_ACTIVE_RIDE_ID,
+    tripId,
     statusQuery: query.get('status'),
     phaseQuery: query.get('phase'),
     paymentQuery: query.get('payment'),
