@@ -562,6 +562,28 @@ export function acceptOrder(id) {
   return acceptNearbyOrder(id);
 }
 
+// BD-MAP-06 — Passenger order → DriverMap handoff link. Resolves the
+// canonical active-ride tripId (`trip_<orderId>`) for the passenger's
+// most recent order that a driver has already taken (ACCEPTED or
+// IN_PROGRESS). Used so /active-ride?role=passenger (with no explicit
+// tripId in the URL) lands on the passenger's real handed-off trip
+// instead of the demo ride — the shared `active_ride.v1` record seeded
+// by acceptCanonicalRideOrder already carries this tripId and the
+// linked orderId. Returns null when no live handed-off order exists, so
+// callers keep their demo fallback for the "no real ride yet" case.
+const HANDED_OFF_ORDER_STATUSES = new Set(['ACCEPTED', 'IN_PROGRESS']);
+
+export function findLatestHandedOffOrderTripId() {
+  // loadRideOrdersRaw() is newest-first (createRideOrder unshifts), so
+  // the first match is the most recently handed-off order.
+  for (const o of loadRideOrdersRaw()) {
+    if (o && typeof o.id === 'string' && HANDED_OFF_ORDER_STATUSES.has(o.status)) {
+      return `trip_${o.id}`;
+    }
+  }
+  return null;
+}
+
 // Allowed lifecycle transitions for a canonical ride order. CREATED is
 // creation-only: createRideOrder() publishes a new order, while
 // updateTripStatus() may only move an existing order forward through the
