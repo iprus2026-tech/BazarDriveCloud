@@ -1,0 +1,20 @@
+/* BD-MAP-03 RoutePicker bottom card layout fix. */
+.screen--route-picker .rp-scroll {
+  padding-bottom: 16px;
+}
+
+.screen--route-picker .rp-bottom-card {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  flex-shrink: 0;
+  z-index: 1;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-height: 720px) {
+  .screen--route-picker .rp-scroll {
+    padding-bottom: 12px;
+  }
+}
