@@ -293,7 +293,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
     actionsBlock = `
       <div class="responses__selected-panel" role="status" aria-live="polite">
         <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
-        <span class="responses__selected-text">Водитель выбран · ожидание подтверждения...</span>
+        <span class="responses__selected-text">Водитель выбран · ждём подтверждения</span>
         <button type="button" class="responses__selected-cancel" data-action="cancel">Отменить</button>
       </div>`;
   } else {
@@ -402,7 +402,7 @@ function renderAllDeclinedNotice() {
       <span class="responses__notice-icon" aria-hidden="true">${CLOSE_SVG}</span>
       <div class="responses__notice-body">
         <div class="responses__notice-title">Все отклики отклонены</div>
-        <div class="responses__notice-text">Изменить параметры заявки или дождаться новых водителей</div>
+        <div class="responses__notice-text">Поднимите цену или дождитесь новых откликов — заказ остаётся опубликованным.</div>
       </div>
     </div>
   `;
@@ -428,6 +428,46 @@ function renderList(drivers, selectedDriverId, allDeclined) {
     ${allDeclined ? renderAllDeclinedNotice() : ''}
     <div class="responses__drivers">
       ${drivers.map((d) => renderDriverCard(d, selectedDriverId, allDeclined)).join('')}
+    </div>
+  `;
+}
+
+// BD-MAP-05 — passenger-facing status copy keyed off the UI-only response
+// state. None of this mutates the canonical order; the order stays CREATED
+// while the passenger watches replies arrive. Each entry feeds both the
+// topbar subtitle and the compact status chip in the request card.
+const RESPONSE_STATUS = {
+  empty: {
+    subtitle: 'Ищем водителей',
+    chip: 'Ищем водителей',
+    tone: 'searching',
+  },
+  list: {
+    subtitle: 'Есть отклики',
+    chip: 'Есть отклики',
+    tone: 'active',
+  },
+  selected: {
+    subtitle: 'Водитель выбран',
+    chip: 'Водитель выбран',
+    tone: 'selected',
+  },
+  'all-declined': {
+    subtitle: 'Отклики отклонены',
+    chip: 'Отклики отклонены',
+    tone: 'declined',
+  },
+};
+
+function responseStatus(state) {
+  return RESPONSE_STATUS[state] || RESPONSE_STATUS.empty;
+}
+
+function renderStatusChip(status) {
+  return `
+    <div class="responses__status-chip responses__status-chip--${escapeHtml(status.tone)}" role="status">
+      <span class="responses__status-chip-dot" aria-hidden="true"></span>
+      <span class="responses__status-chip-text">${escapeHtml(status.chip)}</span>
     </div>
   `;
 }
@@ -460,7 +500,8 @@ export default function responses() {
   root.dataset.state = state;
   root.dataset.source = canonicalOrder ? 'ride-order' : 'mock';
 
-  const subTitle = isList ? `${drivers.length} ${responsesWord(drivers.length)}` : 'Ждём предложения';
+  const status = responseStatus(state);
+  const subTitle = status.subtitle;
   const footer = isList ? '' : `
     <div class="responses__footer responses__footer--in-scroll">
       <button type="button" class="bd-btn responses__cta" id="responses-raise">
@@ -480,7 +521,8 @@ export default function responses() {
     </div>
 
     <div class="bd-scroll responses__scroll">
-      <div class="bd-card responses__request" aria-label="Опубликованная заявка">
+      <div class="bd-card responses__request" aria-label="Ваш опубликованный заказ">
+        ${renderStatusChip(status)}
         <div class="responses__request-main">
           <div class="responses__route">
             <div class="responses__stop">

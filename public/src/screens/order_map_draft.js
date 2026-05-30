@@ -716,9 +716,10 @@ function renderSuccessBody(order) {
         <span class="omd-success__badge">ЗАКАЗ № ${escapeHtml(shortId)} · ОПУБЛИКОВАН</span>
       </div>
       <h2 class="omd-success__title">Заказ опубликован</h2>
+      <p class="omd-success__status">Ищем водителей</p>
       <p class="omd-success__hint">
-        Водители рядом смогут увидеть его в списке заказов. Мы пришлём
-        push, как только появится отклик.
+        Отклики появятся здесь. Можно изменить цену или открыть чат после
+        выбора водителя.
       </p>
     </div>
 
@@ -737,7 +738,7 @@ function renderSuccessBody(order) {
       </div>
       <div class="omd-summary__row">
         <dt>Статус</dt>
-        <dd><span class="omd-summary__pill">Ждём отклики</span></dd>
+        <dd><span class="omd-summary__pill">Ищем водителей</span></dd>
       </div>
     </dl>
 
@@ -935,8 +936,16 @@ function handleAction(root, action, draft, state) {
     // primary "К моему заказу" and the legacy "responses" hook land on
     // /responses where the passenger sees their order and driver
     // replies.
+    // BD-MAP-05 — carry the just-created order id so /responses can
+    // resolve the canonical published order and open in its empty
+    // ("Ищем водителей") state instead of a generic mock request.
+    const orderId = lastOrder && lastOrder.id ? String(lastOrder.id) : null;
     lastOrder = null;
-    go('/responses');
+    if (orderId) {
+      go(`/responses?orderId=${encodeURIComponent(orderId)}&state=empty`);
+    } else {
+      go('/responses');
+    }
     return;
   }
   // BD-MAP-07 — actions below require a route draft. If the draft is
