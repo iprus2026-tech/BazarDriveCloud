@@ -680,7 +680,20 @@ function handleInput(root, target) {
   routeDraft.focus = kind;
   routeDraft.query = target.value;
   notice = '';
+  // BD-MAP-03 (hardening) — typing into a field is the start of a manual
+  // edit, so drop the repeat/favorite provenance immediately rather than
+  // waiting for the edit to be committed. Persist once on the transition so
+  // a refresh cannot resurrect a stale banner over a route the user is
+  // already reshaping. Subsequent keystrokes leave prefillSource null and
+  // therefore keep the existing "no write per keystroke" behaviour.
+  let prefillDropped = false;
+  if (routeDraft.prefillSource) {
+    routeDraft.prefillSource = null;
+    routeDraft.prefillLabel = '';
+    prefillDropped = true;
+  }
   syncDraft();
+  if (prefillDropped) persistDraft();
   rerender(root, kind);
 }
 
