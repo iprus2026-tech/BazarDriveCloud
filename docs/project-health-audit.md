@@ -83,7 +83,7 @@
 | BD-MAP-01 | MapHome foundation | `screen-contracts.md` Planned | — | planned |
 | BD-MAP-02 | LocationPermission | `screen-contracts.md` Planned | — | planned |
 | BD-MAP-03 | RoutePicker | `screen-contracts.md` Planned + `flow-contracts.md` §8 | — | planned |
-| BD-MAP-04 | RoutePreview | `screen-contracts.md` Planned + `flow-contracts.md` §8 | — | planned |
+| BD-MAP-04 | RoutePreview | `public/src/screens/route_preview.js` + `screen-contracts.md` | #214 | done |
 | BD-MAP-05 | OrderMapDraft | `screen-contracts.md` Planned + `flow-contracts.md` §9 | — | planned |
 | BD-DRIVER-01 | DriverMap | `screen-contracts.md` Planned | — | planned |
 | BD-MAP-FOUND-01 | Mapbox integration foundation | `active-ride-plan.md` §11 / §13 | — (только `map_shell.js`) | planned |

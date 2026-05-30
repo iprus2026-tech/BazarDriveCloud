@@ -90,7 +90,7 @@ Cloud/PWA-репо уже вышел за рамки исходного «дос
 
 - [ ] **BD-MAP-FOUND-STUB-01** — JS-стабы по структуре из `docs/active-ride-plan.md` §11 (config, loader, state, geolocation, route, price, markers, status layer). Без SDK, без сетевых запросов.
 - [ ] **BD-MAP-FOUND-01** — реальный Mapbox GL JS, токен, CSP-обновление, SW-обновление
-- [ ] **BD-MAP-01..05** — MapHome / LocationPermission / RoutePicker / RoutePreview / OrderMapDraft
+- [ ] **BD-MAP-01..05** — MapHome / LocationPermission / RoutePicker / RoutePreview ✅ / OrderMapDraft
 - [ ] **BD-DRIVER-01** — DriverMap (полноценная карта в driver-режиме)
 
 ---
