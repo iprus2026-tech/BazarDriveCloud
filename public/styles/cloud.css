@@ -10682,6 +10682,27 @@ button.pfp-menu-row:active { opacity: 0.7; }
   min-width: 0;
 }
 
+/* ── BD-ROLE-01 — /driver-map passenger guard ───────────────────────────── */
+.screen--driver-map--guard .driver-map__stage--guard {
+  pointer-events: none;
+  opacity: 0.6;
+}
+.driver-map__guard .driver-map__guard-empty {
+  padding: 24px 12px 12px;
+}
+.driver-map__guard .driver-map__guard-empty p {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.driver-map__guard-back {
+  margin-right: 6px;
+}
+.screen--driver-map--guard .driver-map__sheet-slot {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+}
+
 /* ── BD-RIDE-HISTORY-08 — Compact calendar history in Profile ───────────── */
 .profile-history {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);

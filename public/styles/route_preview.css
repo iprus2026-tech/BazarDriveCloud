@@ -15,7 +15,10 @@
 
 .rpv-scroll {
   padding-top: 0;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  /* BD-ROLE-01 — leave room for the fixed tabbar so the "Создать заказ"
+     CTA at the bottom of the card is never tucked under it on real
+     mobile viewports. */
+  padding-bottom: calc(var(--tabbar-h, 88px) + env(safe-area-inset-bottom, 0px) + 24px);
 }
 
 .rpv-map {
