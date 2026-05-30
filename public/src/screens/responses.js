@@ -208,9 +208,12 @@ function moneyLabelFromOrder(order) {
 }
 
 function resolveCanonicalOrder() {
-  const orderId = getRouteParam('orderId') || getRouteParam('postId');
-  const byId = getOrderById(orderId);
-  if (byId) return byId;
+  const explicitOrderId = getRouteParam('orderId');
+  if (explicitOrderId) return getOrderById(explicitOrderId);
+
+  const legacyPostId = getRouteParam('postId');
+  if (legacyPostId) return null;
+
   const openOrders = listNearbyOrders();
   return openOrders.length ? openOrders[0] : null;
 }
@@ -522,7 +525,7 @@ export default function responses() {
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2800);
   }
 
-  root.querySelector('#responses-back').addEventListener('click', () => go('/order-map-draft'));
+  root.querySelector('#responses-back').addEventListener('click', () => go('/feed'));
 
   root.querySelector('#responses-shield').addEventListener('click', () => {
     toast('Безопасность будет добавлена позже');
