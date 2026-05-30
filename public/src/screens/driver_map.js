@@ -11,6 +11,7 @@ import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders } from '../mock_api.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
+import { user } from '../state.js';
 
 const STATE = {
   LIST:     'list',
@@ -248,10 +249,127 @@ function buildStage(orderCount) {
   return stage;
 }
 
+// BD-ROLE-01 — /driver-map is a driver-only working surface. Reads role
+// from the persisted user state, with an optional ?role= override on the
+// hash query so the manual test URLs (?role=passenger / ?role=driver)
+// can probe both branches without rewriting localStorage.
+function resolveRoleFromHash() {
+  try {
+    const hash = (typeof window !== 'undefined' && window.location)
+      ? window.location.hash || ''
+      : '';
+    const qi = hash.indexOf('?');
+    if (qi === -1) return null;
+    const params = new URLSearchParams(hash.slice(qi + 1));
+    const raw = params.get('role');
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim().toLowerCase();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveEffectiveRole() {
+  const override = resolveRoleFromHash();
+  if (override) return override;
+  try {
+    const u = user.get();
+    return typeof u.role === 'string' ? u.role : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildPassengerGuardTopbar() {
+  const topbar = document.createElement('div');
+  topbar.className = 'bd-topbar driver-map__topbar';
+  topbar.innerHTML = `
+    <button class="bd-iconbtn driver-map__guard-back" type="button"
+            data-action="my-order" aria-label="К моему заказу">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 18l-6-6 6-6"/>
+      </svg>
+    </button>
+    <div class="bd-topbar__titles">
+      <h1 class="bd-topbar__title">Это экран водителя</h1>
+      <p class="bd-topbar__sub">demo · доступ ограничен ролью</p>
+    </div>
+  `;
+  return topbar;
+}
+
+function buildPassengerGuardCard() {
+  const card = document.createElement('div');
+  card.className = 'map-home__sheet driver-map__sheet driver-map__guard';
+  card.dataset.state = 'guard';
+  card.innerHTML = `
+    <div class="map-home__sheet-grip" aria-hidden="true"></div>
+    <div class="bd-empty driver-map__guard-empty">
+      <div class="bd-empty__title">Это экран водителя</div>
+      <p>Пассажир видит статус своего заказа и отклики.</p>
+    </div>
+    <button class="bd-btn primary map-home__cta" type="button" data-action="my-order">
+      К моему заказу
+    </button>
+    <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button"
+            data-action="feed">
+      В ленту
+    </button>
+  `;
+  return card;
+}
+
+function renderPassengerGuard() {
+  const root = document.createElement('section');
+  root.className = 'screen screen--map screen--driver-map screen--driver-map--guard';
+  root.dataset.state = 'guard';
+  root.dataset.role = 'passenger';
+
+  root.appendChild(buildPassengerGuardTopbar());
+
+  const stage = document.createElement('div');
+  stage.className = 'map-home__stage driver-map__stage driver-map__stage--guard';
+  // Reuse the empty-variant placeholder so the screen still looks like
+  // part of the map flow but never renders driver-only clusters or
+  // "заказов рядом" copy.
+  stage.appendChild(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY }));
+  root.appendChild(stage);
+
+  const sheetSlot = document.createElement('div');
+  sheetSlot.className = 'driver-map__sheet-slot';
+  sheetSlot.appendChild(buildPassengerGuardCard());
+  root.appendChild(sheetSlot);
+
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn || btn.disabled) return;
+    const action = btn.dataset.action;
+    if (action === 'my-order') {
+      go('/responses');
+    } else if (action === 'feed') {
+      go('/feed');
+    }
+  });
+
+  return root;
+}
+
 export default function driverMapScreen() {
+  // BD-ROLE-01 — only role=driver sees the working DriverMap. Any other
+  // role (passenger, guest, null) gets a safe Cloud fallback so the
+  // passenger flow can never leak into driver-side actions like
+  // "Принять" or the "заказов рядом" working feed.
+  const role = resolveEffectiveRole();
+  if (role !== 'driver') {
+    return renderPassengerGuard();
+  }
+
   const root = document.createElement('section');
   root.className = 'screen screen--map screen--driver-map';
   root.dataset.state = STATE.LIST;
+  root.dataset.role = 'driver';
 
   root.appendChild(buildTopbar());
 
