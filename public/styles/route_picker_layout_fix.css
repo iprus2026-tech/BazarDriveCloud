@@ -1,5 +1,19 @@
 /* BD-MAP-03 RoutePicker bottom card layout fix. */
+.screen--route-picker {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.screen--route-picker::-webkit-scrollbar {
+  display: none;
+}
+
 .screen--route-picker .rp-scroll {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
   padding-bottom: 16px;
 }
 
@@ -10,6 +24,7 @@
   bottom: auto;
   flex-shrink: 0;
   z-index: 1;
+  margin-top: 0;
   padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
 }
 
