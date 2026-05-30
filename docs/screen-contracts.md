@@ -3341,7 +3341,6 @@ render/frame and contract before implementation:
 
 ```text
 BD-MAP-02 — LocationPermission
-BD-MAP-04 — RoutePreview
 BD-DRIVER-01 — DriverMap (полноценная карта в driver-режиме)
 BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 ```
@@ -3359,6 +3358,9 @@ BD-MAP-FOUND-01 — Mapbox integration foundation (SDK + CSP + SW)
 > «BD-MAP-03 — RoutePicker»). Сам экран `/route-picker` пока не
 > реализован: контракт зафиксирован как docs-only render gate
 > (см. issue #144).
+
+> BD-MAP-04 удалён из этого списка — экран `/route-preview`
+> реализован и смёржен через PR #214. Closeout отслеживается в #213.
 
 > `/active-ride` уже реализован двумя файлами
 > (`active_ride.js`, `active_ride_passenger.js`) и поэтому удалён

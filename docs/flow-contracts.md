@@ -61,7 +61,7 @@ spine performs real geolocation, network requests, or payments.
 | 5 | `/feed` → FAB "+" → `/new`                             | Tap FAB                                             | Goes through `requireOnboarding()` then `/new`.                                                   |
 | 6 | `/new` (composer)                                      | Pick type `passenger`, fill from/to/when/budget     | Draft persisted to `bazardrive.draft.v2` (localStorage).                                          |
 | 7 | `/new` → publish                                       | Submit publication                                  | `createFeedPost()` prepends a new post to in-memory feed.                                         |
-| 8 | **planned** `/route-picker` → `/route-preview`         | Pick pickup & dropoff on map                        | Writes `routeDraft` to localStorage (see §10).                                                    |
+| 8 | `/route-picker` → `/route-preview`                     | Pick pickup & dropoff on map                        | Writes `routeDraft`; RoutePreview reads it and shows summary / ETA / estimated price.              |
 | 9 | **planned** `/order-map-draft`                         | Confirm order                                       | Persists `rideOrder` (status `CREATED`) — see §10.                                                |
 | 10| `/feed` (filter `Попутчики`)                           | Wait for a driver                                   | Passenger waits for someone to "Принять заказ".                                                   |
 | 11| `/chat?tripId=…`                                       | Talk to driver                                      | Messages persisted per `tripId` in `bazardrive.chat.v1`.                                          |
@@ -123,9 +123,7 @@ spine performs real geolocation, network requests, or payments.
                                                              /feed  or  /profile
 ```
 
-`(planned)` = route not yet registered in `router.js` (`app.js`).
-Currently maps to `/feed` via the unknown-route fallback in
-`router.js#render`. See §11 for the implemented/stub/planned matrix.
+`/route-picker` and `/route-preview` are now registered route-flow screens. Remaining planned map routes still fall back through `router.js#render`. See §11 for the implemented/stub/planned matrix.
 
 ---
 
@@ -147,8 +145,8 @@ Currently maps to `/feed` via the unknown-route fallback in
 | `/active-ride?role=driver`                | Status CTA                                                | same route (status param updates)                    | `updateActiveRideStatus(...)`. UI re-renders from store.                               |
 | `/active-ride?role=driver&status=COMPLETED`| "Закрыть" / "На главный"                                 | `/feed`                                              | Driver returns to the spine. Optional path to `/profile`.                              |
 | `/active-ride?role=passenger&status=COMPLETED`| "Готово" / "Новая поездка"                            | `/feed` or `/new`                                    | Passenger returns to feed or composes another request.                                 |
-| **planned** `/route-picker`               | Confirm route                                             | `/route-preview`                                     | Will write `routeDraft`.                                                               |
-| **planned** `/route-preview`              | "Заказать"                                                | `/order-map-draft`                                   | Will write `rideOrder` (status `CREATED`).                                             |
+| `/route-picker`                           | Confirm route                                             | `/route-preview`                                     | Writes `routeDraft` to `bazardrive.route_draft.v1`.                                    |
+| `/route-preview`                          | "Создать заказ"                                           | `/order-map-draft`                                   | Reads `routeDraft`; shows route summary, ETA and estimated price.                      |
 | **planned** `/order-map-draft`            | "Опубликовать"                                            | `/feed`                                              | Order then appears in the feed for drivers.                                            |
 | **planned** `/driver-map`                 | "Принять"                                                 | `/active-ride?role=driver&tripId=…`                  | Map-based equivalent of the feed accept CTA.                                           |
 
@@ -330,7 +328,7 @@ driver UI does not render.)
 | `public/src/ride_state.js`                       | Single source of truth for ride status enum (`RIDE_STATUS`), demo ride factory (`createDemoActiveRide`), persistence helpers (`loadActiveRideStore`, `saveActiveRide`, `updateActiveRideStatus`), and the driver transition map (`getNextDriverStatus`). Key: `bazardrive.active_ride.v1`.                                                  |
 | `public/src/mock_api.js`                         | Mock data sources. `listFeedPosts()` returns `FEED_POSTS_V2` (in-memory). `createFeedPost()` prepends user-authored posts. Legacy announcements board persists at `bazardrive.posts.v1`. **Do not change existing keys or shapes** — spine relies on them.                                                                                  |
 | `public/src/state.js`                            | User profile store (`bazardrive.user.v1`). Drives onboarding gating, driver readiness (`documentsReady`, `taxiPermit`), passenger profile V2, phone verification. Migrations are one-shot on `load()`. **Do not rewrite** — spine only reads via `user.get()` / `user.set(patch)`.                                                          |
-| `public/src/router.js`                           | Hash router. Hides chrome (`tabbar` / `fab`) on `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation`. Unknown routes fall through to `/feed`. The fallback is what currently keeps the planned `/route-picker`, `/route-preview`, `/order-map-draft`, `/driver-map`, `/map` URLs from breaking the app — they show `/feed`.    |
+| `public/src/router.js`                           | Hash router. Hides chrome (`tabbar` / `fab`) on `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation`. Unknown routes fall through to `/feed`. The fallback still protects not-yet-registered planned map routes such as `/driver-map` and `/map`.    |
 | `public/src/mapbox/map_shell.js`                 | Pure-DOM map placeholder used by `/active-ride`. No SDK, no token, no network. Future map screens reuse `createMapShell()` so the placeholder stays the only "map" surface in the spine.                                                                                                                                                     |
 | `public/src/screens/trip_confirmation.js`        | `/trip-confirmation`. Bridge between `/chat` and `/active-ride` for the confirmation handshake (uses the reserved `CONFIRMATION_PENDING` / `CONFIRMED` statuses).                                                                                                                                                                            |
 | `public/src/screens/responses.js`                | `/responses`. Driver-side inbox of responses (not on the strict spine, reachable from profile).                                                                                                                                                                                                                                              |
@@ -356,7 +354,7 @@ Registered in `public/src/app.js`:
 | `/responses`                | **implemented**                 | `responses.js`. Off-spine but reachable.                                                                                    |
 | `/map`                      | **planned (stub via fallback)** | No registered loader. Router falls back to `/feed`. Reserved for a top-level map surface that reuses `createMapShell()`.    |
 | `/route-picker`             | **planned (stub via fallback)** | Will write `routeDraft` to `bazardrive.route_draft.v1`. Until implemented, returns `/feed`.                                 |
-| `/route-preview`            | **planned (stub via fallback)** | Will read `routeDraft`, show ETA + estimated price. Returns `/feed` today.                                                  |
+| `/route-preview`            | **implemented**                 | `route_preview.js`. Reads `routeDraft`, handles valid / missing / malformed drafts, shows ETA + estimated price.             |
 | `/order-map-draft`          | **planned (stub via fallback)** | Will persist `rideOrder` (status `NEW_ORDER` ≡ `CREATED`). Returns `/feed` today.                                           |
 | `/driver-map`               | **planned (stub via fallback)** | Map-based equivalent of "Принять заказ". Returns `/feed` today.                                                             |
 
@@ -407,7 +405,7 @@ through:
 #/feed
 #/new
 #/route-picker          ← planned, falls back to /feed today
-#/route-preview         ← planned, falls back to /feed today
+#/route-preview         ← implemented; shows route summary / safe empty state
 #/order-map-draft       ← planned, falls back to /feed today
 #/driver-map            ← planned, falls back to /feed today
 #/respond
@@ -430,7 +428,7 @@ Expected:
 - `/respond` and `/chat` survive `tripId` round-trips.
 - `/active-ride?role=driver` advances through the state machine without
   touching `/active-ride?role=passenger`.
-- Planned routes do not throw — router falls back to `/feed`.
+- Implemented route-flow screens open directly; remaining planned routes do not throw and fall back safely.
 - `node scripts/check.mjs` exits with `All checks passed.`
 
 ---
@@ -450,9 +448,8 @@ The BD-FLOW-01 spine = these moving parts:
 - **Screens already wired in `app.js`:** `/welcome`, `/onboarding`,
   `/profile`, `/feed`, `/rules`, `/new`, `/respond`, `/chat`,
   `/active-ride`, `/responses`, `/trip-confirmation`.
-- **Reserved (planned) routes:** `/map`, `/route-picker`,
-  `/route-preview`, `/order-map-draft`, `/driver-map` — safe under the
-  router fallback today, planned for the route-picker / order-map work.
+- **Implemented route-flow routes:** `/route-picker`, `/route-preview`.
+- **Reserved planned routes:** `/map`, `/order-map-draft`, `/driver-map` — safe under the router fallback until their follow-up work lands.
 
 Future work plugs into this spine by:
 
