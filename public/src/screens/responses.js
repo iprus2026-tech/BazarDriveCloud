@@ -1,5 +1,6 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
+import { getOrderById, listNearbyOrders } from '../mock_api.js';
 
 const MOCK_REQUEST = {
   id:          'post_1001',
@@ -9,6 +10,7 @@ const MOCK_REQUEST = {
   pickupLabel: 'ТЦ Мега',
   dropoffLabel:'Аэропорт, терминал B',
   price:       '950 ₽',
+  numericPrice: 950,
   note:        'Маленький чемодан',
 };
 
@@ -23,7 +25,6 @@ const MOCK_DRIVERS = [
     car:           'Toyota Camry · серый',
     plate:         'A 124 BB 77',
     trips:         '1248 поездок',
-    price:         '950 ₽',
     priceDelta:    'как у вас',
     priceTone:     'same',
     eta:           '4 мин',
@@ -42,7 +43,6 @@ const MOCK_DRIVERS = [
     car:           'Hyundai Solaris · белый',
     plate:         'B 902 AO 77',
     trips:         '612 поездок',
-    price:         '1 100 ₽',
     priceDelta:    '+150 ₽',
     priceTone:     'up',
     eta:           '7 мин',
@@ -61,7 +61,6 @@ const MOCK_DRIVERS = [
     car:           'Kia Rio · чёрный',
     plate:         'K 581 XK 77',
     trips:         '304 поездок',
-    price:         '900 ₽',
     priceDelta:    '-50 ₽',
     priceTone:     'down',
     eta:           '12 мин',
@@ -189,6 +188,71 @@ function responsesWord(count) {
   return 'откликов';
 }
 
+function pointLabel(point, fallback) {
+  if (point && typeof point === 'object' && typeof point.label === 'string' && point.label.trim()) {
+    return point.label.trim();
+  }
+  return fallback;
+}
+
+function formatRub(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return `${Math.round(n).toLocaleString('ru-RU')} ₽`;
+}
+
+function moneyLabelFromOrder(order) {
+  const savedLabel = typeof order?.estimatedPriceLabel === 'string' ? order.estimatedPriceLabel.trim() : '';
+  if (savedLabel) return /₽\s*$/.test(savedLabel) ? savedLabel : `${savedLabel} ₽`;
+  return formatRub(order?.estimatedPrice);
+}
+
+function resolveCanonicalOrder() {
+  const explicitOrderId = getRouteParam('orderId');
+  if (explicitOrderId) return getOrderById(explicitOrderId);
+
+  const legacyPostId = getRouteParam('postId');
+  if (legacyPostId) return null;
+
+  const openOrders = listNearbyOrders();
+  return openOrders.length ? openOrders[0] : null;
+}
+
+function requestFromOrder(order) {
+  if (!order) return MOCK_REQUEST;
+  const price = moneyLabelFromOrder(order) || MOCK_REQUEST.price;
+  const numericPrice = Number(order.estimatedPrice) || MOCK_REQUEST.numericPrice;
+  const note = String(order.comment || order.passenger?.comment || '').trim();
+  return {
+    id: String(order.id || MOCK_REQUEST.id),
+    orderId: String(order.id || MOCK_REQUEST.orderId),
+    passengerId: String(order.passenger?.authorId || MOCK_REQUEST.passengerId),
+    status: 'PUBLISHED',
+    pickupLabel: pointLabel(order.pickup, 'Точка подачи'),
+    dropoffLabel: pointLabel(order.dropoff, 'Точка назначения'),
+    price,
+    numericPrice,
+    note: note || 'Комментарий не указан',
+  };
+}
+
+function driverPrice(base, offset) {
+  if (!Number.isFinite(base) || base <= 0) return null;
+  return Math.max(0, Math.round(base + offset));
+}
+
+function buildDrivers(request) {
+  const base = Number(request.numericPrice);
+  const offsets = [0, 150, -50];
+  return MOCK_DRIVERS.map((driver, index) => {
+    const value = driverPrice(base, offsets[index]);
+    return {
+      ...driver,
+      price: value ? formatRub(value) : (index === 0 ? request.price : MOCK_REQUEST.price),
+    };
+  });
+}
+
 function renderEtaBars(active) {
   let html = '';
   for (let i = 1; i <= 3; i++) {
@@ -223,37 +287,26 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
       <div class="responses__declined-row">
         <span class="responses__declined-icon" aria-hidden="true">${CLOSE_SVG}</span>
         <span class="responses__declined-text">Вы отклонили этого водителя</span>
-        <button type="button" class="responses__declined-restore"
-                data-action="restore">
-          Вернуть
-        </button>
+        <button type="button" class="responses__declined-restore" data-action="restore">Вернуть</button>
       </div>`;
   } else if (isSelected) {
     actionsBlock = `
       <div class="responses__selected-panel" role="status" aria-live="polite">
         <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
-        <span class="responses__selected-text">
-          Водитель выбран · ожидание подтверждения...
-        </span>
-        <button type="button" class="responses__selected-cancel"
-                data-action="cancel">
-          Отменить
-        </button>
+        <span class="responses__selected-text">Водитель выбран · ожидание подтверждения...</span>
+        <button type="button" class="responses__selected-cancel" data-action="cancel">Отменить</button>
       </div>`;
   } else {
     actionsBlock = `
       <div class="responses__driver-actions">
-        <button type="button" class="bd-btn primary responses__driver-select"
-                data-action="select">
+        <button type="button" class="bd-btn primary responses__driver-select" data-action="select">
           ${CHECK_SVG}
           <span>Выбрать</span>
         </button>
-        <button type="button" class="responses__driver-side"
-                data-action="chat" aria-label="Чат с водителем">
+        <button type="button" class="responses__driver-side" data-action="chat" aria-label="Чат с водителем">
           ${CHAT_SVG}
         </button>
-        <button type="button" class="responses__driver-side"
-                data-action="decline" aria-label="Отклонить">
+        <button type="button" class="responses__driver-side" data-action="decline" aria-label="Отклонить">
           ${CLOSE_SVG}
         </button>
       </div>`;
@@ -261,8 +314,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
 
   const dismissBtn = isDeclined
     ? ''
-    : `<button type="button" class="responses__driver-dismiss"
-               data-action="decline" aria-label="Скрыть отклик">
+    : `<button type="button" class="responses__driver-dismiss" data-action="decline" aria-label="Скрыть отклик">
          ${CLOSE_SVG}
        </button>`;
 
@@ -279,17 +331,12 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
              data-driver-id="${escapeHtml(driver.id)}"
              data-response-id="${escapeHtml(driver.responseId)}">
       ${bestBadge}
-
       <div class="responses__driver-head">
-        <div class="responses__avatar responses__avatar--${escapeHtml(driver.avatarTone)}"
-             aria-hidden="true">${escapeHtml(driver.initials)}</div>
+        <div class="responses__avatar responses__avatar--${escapeHtml(driver.avatarTone)}" aria-hidden="true">${escapeHtml(driver.initials)}</div>
         <div class="responses__driver-info">
           <div class="responses__driver-line">
             <span class="responses__driver-name">${escapeHtml(driver.name)}</span>
-            <span class="responses__driver-rating">
-              ${STAR_SVG}
-              <span>${escapeHtml(driver.rating)}</span>
-            </span>
+            <span class="responses__driver-rating">${STAR_SVG}<span>${escapeHtml(driver.rating)}</span></span>
           </div>
           <div class="responses__driver-car">${escapeHtml(driver.car)}</div>
           <div class="responses__driver-meta">
@@ -300,7 +347,6 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
         </div>
         ${dismissBtn}
       </div>
-
       <div class="responses__driver-stats">
         <div class="responses__stat">
           <div class="responses__stat-label">Цена</div>
@@ -319,9 +365,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
           </div>
         </div>
       </div>
-
       ${noteBlock}
-
       ${actionsBlock}
     </article>
   `;
@@ -339,19 +383,14 @@ function renderEmptyState() {
         Заявка опубликована. Обычно первый отклик приходит за 1–3 минуты.
       </p>
     </div>
-
     <div class="responses__hints">
       <div class="responses__hint">
         <span class="responses__hint-icon" aria-hidden="true">${SPARK_SVG}</span>
-        <span class="responses__hint-text">
-          Повысьте цену на 100–200 ₽ — откликов будет в 2 раза больше
-        </span>
+        <span class="responses__hint-text">Повысьте цену на 100–200 ₽, откликов будет в 2 раза больше</span>
       </div>
       <div class="responses__hint">
         <span class="responses__hint-icon responses__hint-icon--info" aria-hidden="true">${INFO_SVG}</span>
-        <span class="responses__hint-text">
-          Можно подождать — вы получите push, как только водитель откликнется
-        </span>
+        <span class="responses__hint-text">Можно подождать, вы получите push, как только водитель откликнется</span>
       </div>
     </div>
   `;
@@ -363,9 +402,7 @@ function renderAllDeclinedNotice() {
       <span class="responses__notice-icon" aria-hidden="true">${CLOSE_SVG}</span>
       <div class="responses__notice-body">
         <div class="responses__notice-title">Все отклики отклонены</div>
-        <div class="responses__notice-text">
-          Изменить параметры заявки или дождаться новых водителей
-        </div>
+        <div class="responses__notice-text">Изменить параметры заявки или дождаться новых водителей</div>
       </div>
     </div>
   `;
@@ -388,54 +425,61 @@ function renderList(drivers, selectedDriverId, allDeclined) {
         ${CHEVRON_SVG}
       </button>
     </div>
-
     ${allDeclined ? renderAllDeclinedNotice() : ''}
-
     <div class="responses__drivers">
       ${drivers.map((d) => renderDriverCard(d, selectedDriverId, allDeclined)).join('')}
     </div>
   `;
 }
 
+function responseUrl(request, state, driverId = '') {
+  const params = new URLSearchParams();
+  params.set('orderId', request.orderId);
+  params.set('state', state);
+  if (driverId) params.set('driverId', driverId);
+  return `/responses?${params.toString()}`;
+}
+
 export default function responses() {
-  const postId  = getRouteParam('postId') || MOCK_REQUEST.id;
-  const state   = getRouteParam('state') || 'empty';
-  const request = MOCK_REQUEST;
+  const canonicalOrder = resolveCanonicalOrder();
+  const request = requestFromOrder(canonicalOrder);
+  const postId = request.orderId;
+  const state = getRouteParam('state') || 'empty';
+  const drivers = buildDrivers(request);
 
   const isAllDeclined = state === 'all-declined';
-  const isList     = state === 'list' || state === 'selected' || isAllDeclined;
-  const drivers    = MOCK_DRIVERS;
-  const routeDriverId   = state === 'selected' ? getRouteParam('driverId') : null;
-  const selectedDriver  = routeDriverId
-    ? drivers.find((d) => d.id === routeDriverId)
-    : null;
+  const isList = state === 'list' || state === 'selected' || isAllDeclined;
+  const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
+  const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
   const selectedDriverId = selectedDriver ? selectedDriver.id : null;
 
   const root = document.createElement('section');
   root.className = 'screen screen--responses';
   root.dataset.postId = postId;
-  root.dataset.state  = state;
+  root.dataset.orderId = request.orderId;
+  root.dataset.state = state;
+  root.dataset.source = canonicalOrder ? 'ride-order' : 'mock';
 
-  const subTitle = isList
-    ? `${drivers.length} ${responsesWord(drivers.length)}`
-    : 'Ждём предложения';
+  const subTitle = isList ? `${drivers.length} ${responsesWord(drivers.length)}` : 'Ждём предложения';
+  const footer = isList ? '' : `
+    <div class="responses__footer responses__footer--in-scroll">
+      <button type="button" class="bd-btn responses__cta" id="responses-raise">
+        ${PENCIL_SVG}
+        <span>Поднять цену</span>
+      </button>
+    </div>`;
 
   root.innerHTML = `
     <div class="responses__topbar">
-      <button type="button" class="responses__icon-btn" id="responses-back" aria-label="Назад">
-        ${BACK_SVG}
-      </button>
+      <button type="button" class="responses__icon-btn" id="responses-back" aria-label="Назад">${BACK_SVG}</button>
       <div class="responses__titles">
         <div class="responses__title">Отклики водителей</div>
         <div class="responses__sub">${escapeHtml(subTitle)}</div>
       </div>
-      <button type="button" class="responses__icon-btn" id="responses-shield" aria-label="Безопасность">
-        ${SHIELD_SVG}
-      </button>
+      <button type="button" class="responses__icon-btn" id="responses-shield" aria-label="Безопасность">${SHIELD_SVG}</button>
     </div>
 
     <div class="bd-scroll responses__scroll">
-
       <div class="bd-card responses__request" aria-label="Опубликованная заявка">
         <div class="responses__request-main">
           <div class="responses__route">
@@ -465,19 +509,9 @@ export default function responses() {
           </button>
         </div>
       </div>
-
       ${isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState()}
-
+      ${footer}
     </div>
-
-    ${isList ? '' : `
-      <div class="responses__footer">
-        <button type="button" class="bd-btn responses__cta" id="responses-raise">
-          ${PENCIL_SVG}
-          <span>Поднять цену</span>
-        </button>
-      </div>
-    `}
 
     <div class="responses__toast" id="responses-toast" role="status" aria-live="polite" hidden></div>
   `;
@@ -498,7 +532,7 @@ export default function responses() {
   });
 
   root.querySelector('#responses-edit').addEventListener('click', () => {
-    toast('Редактирование заявки будет добавлено позже');
+    go('/order-map-draft');
   });
 
   const raiseBtn = root.querySelector('#responses-raise');
@@ -522,24 +556,24 @@ export default function responses() {
       if (!btn) return;
       const card = btn.closest('.responses__driver');
       if (!card) return;
-      const driverId   = card.dataset.driverId;
+      const driverId = card.dataset.driverId;
       const responseId = card.dataset.responseId;
-      const action     = btn.dataset.action;
+      const action = btn.dataset.action;
 
       if (action === 'select') {
-        go(`/responses?postId=${encodeURIComponent(postId)}&state=selected&driverId=${encodeURIComponent(driverId)}`);
+        go(responseUrl(request, 'selected', driverId));
         return;
       }
       if (action === 'cancel') {
-        go(`/responses?postId=${encodeURIComponent(postId)}&state=list`);
+        go(responseUrl(request, 'list'));
         return;
       }
       if (action === 'restore') {
-        go(`/responses?postId=${encodeURIComponent(postId)}&state=list`);
+        go(responseUrl(request, 'list'));
         return;
       }
       if (action === 'chat') {
-        go(`/chat?responseId=${encodeURIComponent(responseId)}`);
+        go(`/chat?responseId=${encodeURIComponent(responseId)}&orderId=${encodeURIComponent(request.orderId)}`);
         return;
       }
       if (action === 'decline') {
