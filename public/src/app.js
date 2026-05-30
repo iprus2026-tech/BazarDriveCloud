@@ -57,6 +57,31 @@ function getMapEntryRoute() {
   return profile.role === 'driver' ? '/driver-map' : '/map';
 }
 
+function initOrderMapDraftUiPolish() {
+  const appRoot = document.getElementById('app');
+  if (!appRoot) return;
+
+  const apply = () => {
+    const screen = appRoot.querySelector('.screen--order-map-draft[data-state="success"]');
+    if (!screen) return;
+    const statusPill = screen.querySelector('.omd-topbar__sub');
+    if (statusPill && statusPill.textContent.trim() === 'CREATED') {
+      statusPill.textContent = 'Опубликован';
+    }
+  };
+
+  const scheduleApply = () => {
+    requestAnimationFrame(apply);
+  };
+
+  new MutationObserver(scheduleApply).observe(appRoot, {
+    childList: true,
+    subtree: true,
+  });
+  window.addEventListener('hashchange', scheduleApply);
+  scheduleApply();
+}
+
 document.getElementById('tabbar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-route]');
   if (!btn?.dataset.route) return;
@@ -74,3 +99,4 @@ document.getElementById('fab').addEventListener('click', () => {
 start();
 initSwUpdate();
 initFavoriteRoutes();
+initOrderMapDraftUiPolish();
