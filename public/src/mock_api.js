@@ -562,24 +562,44 @@ export function acceptOrder(id) {
   return acceptNearbyOrder(id);
 }
 
-// Allowed lifecycle transitions for a canonical ride order. Kept
-// permissive enough for the mock flow (no backend rollback path), but
-// unknown statuses are rejected so callers can't silently corrupt the
-// store.
-const RIDE_ORDER_STATUSES = new Set(['CREATED', 'ACCEPTED', 'IN_PROGRESS', 'COMPLETED', 'CANCELED']);
+// Allowed lifecycle transitions for a canonical ride order. CREATED is
+// creation-only: createRideOrder() publishes a new order, while
+// updateTripStatus() may only move an existing order forward through the
+// mock lifecycle. Terminal statuses cannot be reopened into Feed/DriverMap.
+const RIDE_ORDER_TRANSITIONS = {
+  CREATED:     new Set(['ACCEPTED', 'CANCELED']),
+  ACCEPTED:    new Set(['IN_PROGRESS', 'COMPLETED', 'CANCELED']),
+  IN_PROGRESS: new Set(['COMPLETED', 'CANCELED']),
+  COMPLETED:   new Set([]),
+  CANCELED:    new Set([]),
+};
 
 export function updateTripStatus(id, status) {
   if (typeof id !== 'string' || !id) return null;
-  if (typeof status !== 'string' || !RIDE_ORDER_STATUSES.has(status)) return null;
+  if (typeof status !== 'string' || status === 'CREATED') return null;
+
   const list = loadRideOrdersRaw();
   let updated = null;
+
   const next = list.map((o) => {
-    if (o && o.id === id) {
-      updated = { ...o, status, statusUpdatedAt: new Date().toISOString() };
-      return updated;
+    if (!o || o.id !== id) return o;
+
+    const currentStatus = typeof o.status === 'string' ? o.status : 'CREATED';
+    const allowedNext = RIDE_ORDER_TRANSITIONS[currentStatus];
+
+    if (!allowedNext || !allowedNext.has(status)) {
+      return o;
     }
-    return o;
+
+    updated = {
+      ...o,
+      status,
+      statusUpdatedAt: new Date().toISOString(),
+    };
+
+    return updated;
   });
+
   if (!updated) return null;
   persistRideOrders(next);
   return updated;
