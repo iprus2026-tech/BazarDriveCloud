@@ -11174,3 +11174,262 @@ button.pfp-menu-row:active { opacity: 0.7; }
   color: var(--text-2);
   line-height: 1.35;
 }
+
+/* BD-MAP-02 LocationPermission */
+
+.screen--location-permission {
+  min-height: 100%;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background:
+    radial-gradient(circle at 50% 8%, rgba(255, 107, 53, 0.18), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 34%);
+}
+
+.loc-perm__topbar {
+  gap: 12px;
+  align-items: center;
+}
+
+.loc-perm__back {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loc-perm__back svg {
+  width: 20px;
+  height: 20px;
+}
+
+.loc-perm__sub {
+  color: var(--muted);
+}
+
+.loc-perm__hero {
+  position: relative;
+  min-height: 245px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: var(--shadow);
+}
+
+.loc-perm__map-shell {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.loc-perm__hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(10, 10, 12, 0.12), rgba(10, 10, 12, 0.52)),
+    radial-gradient(circle at 50% 48%, rgba(255, 107, 53, 0.20), transparent 30%);
+  pointer-events: none;
+}
+
+.loc-perm__floating-card {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  background: rgba(18, 18, 22, 0.86);
+  backdrop-filter: blur(18px);
+}
+
+.loc-perm__floating-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(255, 107, 53, 0.16);
+}
+
+.loc-perm__floating-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.loc-perm__floating-title {
+  font-weight: 800;
+  color: var(--text);
+}
+
+.loc-perm__floating-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.loc-perm__watermark {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  right: 14px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.loc-perm__sheet {
+  position: relative;
+  padding: 12px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(31, 31, 36, 0.96), rgba(17, 17, 21, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.loc-perm__sheet-grip {
+  width: 42px;
+  height: 4px;
+  margin: 0 auto 16px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.loc-perm__intro {
+  display: grid;
+  gap: 8px;
+}
+
+.loc-perm__eyebrow {
+  width: max-content;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(255, 107, 53, 0.12);
+  border: 1px solid rgba(255, 107, 53, 0.24);
+}
+
+.loc-perm__intro h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.loc-perm__intro p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.loc-perm__benefits {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.loc-perm__benefit {
+  display: flex;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.loc-perm__benefit-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--accent);
+  background: rgba(255, 107, 53, 0.14);
+}
+
+.loc-perm__benefit-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.loc-perm__benefit-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.loc-perm__benefit-copy strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.loc-perm__benefit-copy span {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.loc-perm__notice {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+.loc-perm__notice strong {
+  color: var(--text);
+}
+
+.loc-perm__actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.loc-perm__primary,
+.loc-perm__secondary {
+  width: 100%;
+}
+
+.loc-perm__secondary {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.loc-perm__plain {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  padding: 9px;
+  font-weight: 700;
+}
