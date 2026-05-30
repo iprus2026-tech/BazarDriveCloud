@@ -361,11 +361,15 @@ export default function mapScreen() {
     if (!btn || btn.disabled) return;
     const action = btn.dataset.action;
     if (action === 'my-location') {
+      if (state === MAP_STATE.PERMISSION) {
+        go('/location-permission');
+        return;
+      }
       // No native geolocation prompt — stub flips local pref and
       // re-renders into the default state on next visit. Real
-      // permission flow lands with BD-MAP-FOUND-01.
+      // permission explanation is handled by BD-MAP-02 before any real prompt.
       saveMapPrefs({ locationAllowed: true });
-      go('/map');
+      go('/map?state=default');
     } else if (action === 'nearby') {
       go('/map?state=nearby');
     } else if (action === 'route' || action === 'manual') {
