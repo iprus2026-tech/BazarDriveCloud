@@ -249,30 +249,12 @@ function buildStage(orderCount) {
   return stage;
 }
 
-// BD-ROLE-01 — /driver-map is a driver-only working surface. Reads role
-// from the persisted user state, with an optional ?role= override on the
-// hash query so the manual test URLs (?role=passenger / ?role=driver)
-// can probe both branches without rewriting localStorage.
-function resolveRoleFromHash() {
-  try {
-    const hash = (typeof window !== 'undefined' && window.location)
-      ? window.location.hash || ''
-      : '';
-    const qi = hash.indexOf('?');
-    if (qi === -1) return null;
-    const params = new URLSearchParams(hash.slice(qi + 1));
-    const raw = params.get('role');
-    if (typeof raw !== 'string') return null;
-    const trimmed = raw.trim().toLowerCase();
-    return trimmed || null;
-  } catch {
-    return null;
-  }
-}
-
+// BD-ROLE-01 — /driver-map is a driver-only working surface. Access is
+// determined exclusively by the persisted user state (user.get().role).
+// The URL hash is intentionally NOT consulted: a ?role= override would
+// re-open the leak this guard exists to close (a passenger or guest
+// could simply load #/driver-map?role=driver to bypass it).
 function resolveEffectiveRole() {
-  const override = resolveRoleFromHash();
-  if (override) return override;
   try {
     const u = user.get();
     return typeof u.role === 'string' ? u.role : null;
