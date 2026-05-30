@@ -7408,6 +7408,67 @@ button.pfp-menu-row:active { opacity: 0.7; }
   flex-direction: column;
   gap: 14px;
 }
+
+/* BD-MAP-05 — compact passenger status chip inside the request card.
+   UI-only: reflects the response state without touching order.status. */
+.responses__status-chip {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+.responses__status-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.responses__status-chip--searching {
+  background: rgba(255, 107, 53, 0.12);
+  border-color: rgba(255, 107, 53, 0.28);
+  color: var(--accent);
+}
+.responses__status-chip--searching .responses__status-chip-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.18);
+}
+.responses__status-chip--active {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.28);
+  color: var(--success);
+}
+.responses__status-chip--active .responses__status-chip-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+}
+.responses__status-chip--selected {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.28);
+  color: var(--success);
+}
+.responses__status-chip--selected .responses__status-chip-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+}
+.responses__status-chip--declined {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.28);
+  color: var(--danger, #f87171);
+}
+.responses__status-chip--declined .responses__status-chip-dot {
+  background: var(--danger, #f87171);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.18);
+}
 .responses__request-main {
   display: flex;
   gap: 16px;

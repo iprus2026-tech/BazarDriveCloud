@@ -884,8 +884,16 @@
   color: var(--text-1, #fff);
 }
 
+.omd-success__status {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #34c759;
+  letter-spacing: -0.01em;
+}
+
 .omd-success__hint {
-  margin: 0;
+  margin: 6px 0 0;
   font-size: 13px;
   color: var(--text-3);
   line-height: 1.45;
