@@ -55,7 +55,7 @@ Minimal, additive, defensive — no screen rewrites:
 
 | File | Change |
 |------|--------|
-| `public/src/mock_api.js` | New `findLatestHandedOffOrderTripId()` spine helper: returns `trip_<orderId>` for the most recent order in `ACCEPTED` / `IN_PROGRESS`, else `null`. Pure read over `bazardrive.ride_orders.v1`. |
+| `public/src/mock_api.js` | New `findLatestHandedOffOrderTripId()` spine helper: returns `trip_<orderId>` for the most recent order in `ACCEPTED` / `IN_PROGRESS` **whose canonical `active_ride.v1` record is still live**, else `null`. The order status alone is insufficient — a ride order can sit at `ACCEPTED` while its active-ride record has moved to a terminal status; the helper cross-checks `findActiveRide(tripId)` and skips missing or terminal (`COMPLETED` / `CANCELED` / `NO_SHOW`) records so the passenger entry can never reopen a stale, finished trip. |
 | `public/src/screens/active_ride.js` | `renderPassenger()` now uses `query.get('tripId') || findLatestHandedOffOrderTripId() || DEMO_ACTIVE_RIDE_ID`, so a tripless passenger entry lands on the real handed-off trip when one exists, demo otherwise. |
 
 Behavior preserved:

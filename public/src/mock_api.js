@@ -1,3 +1,9 @@
+// BD-MAP-06 — cross-check handed-off orders against the canonical
+// active-ride record so the passenger entry never reopens a terminal
+// trip. ride_state.js is the foundation layer (no imports back into
+// mock_api.js), so this introduces no circular dependency.
+import { findActiveRide } from './ride_state.js';
+
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
 // All mock posts in this file are seed data from other authors; only
@@ -565,21 +571,32 @@ export function acceptOrder(id) {
 // BD-MAP-06 — Passenger order → DriverMap handoff link. Resolves the
 // canonical active-ride tripId (`trip_<orderId>`) for the passenger's
 // most recent order that a driver has already taken (ACCEPTED or
-// IN_PROGRESS). Used so /active-ride?role=passenger (with no explicit
-// tripId in the URL) lands on the passenger's real handed-off trip
-// instead of the demo ride — the shared `active_ride.v1` record seeded
-// by acceptCanonicalRideOrder already carries this tripId and the
-// linked orderId. Returns null when no live handed-off order exists, so
-// callers keep their demo fallback for the "no real ride yet" case.
+// IN_PROGRESS) AND whose shared active-ride record is still live. Used so
+// /active-ride?role=passenger (with no explicit tripId in the URL) lands
+// on the passenger's real handed-off trip instead of the demo ride.
+//
+// The ride-order status alone is not enough: a ride order can sit at
+// ACCEPTED while its `active_ride.v1` record has already moved to a
+// terminal status (COMPLETED / CANCELED / NO_SHOW). Returning that
+// tripId would let the passenger entry reopen a stale, finished trip.
+// So each candidate is cross-checked against the canonical active-ride
+// record: skip when there is no record, or when it is terminal. Returns
+// null when nothing live is found, so callers keep their demo fallback.
 const HANDED_OFF_ORDER_STATUSES = new Set(['ACCEPTED', 'IN_PROGRESS']);
+const TERMINAL_ACTIVE_RIDE_STATUSES = new Set(['COMPLETED', 'CANCELED', 'NO_SHOW']);
 
 export function findLatestHandedOffOrderTripId() {
   // loadRideOrdersRaw() is newest-first (createRideOrder unshifts), so
-  // the first match is the most recently handed-off order.
+  // the first live match is the most recently handed-off active trip.
   for (const o of loadRideOrdersRaw()) {
-    if (o && typeof o.id === 'string' && HANDED_OFF_ORDER_STATUSES.has(o.status)) {
-      return `trip_${o.id}`;
-    }
+    if (!o || typeof o.id !== 'string' || !HANDED_OFF_ORDER_STATUSES.has(o.status)) continue;
+    const tripId = `trip_${o.id}`;
+    const ride = findActiveRide(tripId);
+    // No seeded active-ride record → nothing to show; skip safely.
+    if (!ride) continue;
+    // Active ride already finished → do not reopen a terminal trip.
+    if (TERMINAL_ACTIVE_RIDE_STATUSES.has(ride.status)) continue;
+    return tripId;
   }
   return null;
 }
