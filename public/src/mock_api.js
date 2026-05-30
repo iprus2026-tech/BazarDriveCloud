@@ -542,6 +542,69 @@ export function clearRideOrdersStore() {
   }
 }
 
+// ── Canonical ride-order spine API (BD-RIDE-ORDER-UNIFY-01) ────
+// Thin spine helpers over the same `bazardrive.ride_orders.v1` store so
+// callers reach for one canonical surface regardless of entry point
+// (Composer /new, OrderMapDraft, DriverMap, ActiveRide handoff).
+// Names mirror the spec on issue #238:
+//   getOrderById, acceptOrder, updateTripStatus.
+
+export function getOrderById(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const list = loadRideOrdersRaw();
+  const found = list.find((o) => o && o.id === id);
+  return found ? { ...found } : null;
+}
+
+// Spine alias for acceptNearbyOrder — keeps the legacy export stable
+// while exposing the name listed in the unified mock API contract.
+export function acceptOrder(id) {
+  return acceptNearbyOrder(id);
+}
+
+// Allowed lifecycle transitions for a canonical ride order. CREATED is
+// creation-only: createRideOrder() publishes a new order, while
+// updateTripStatus() may only move an existing order forward through the
+// mock lifecycle. Terminal statuses cannot be reopened into Feed/DriverMap.
+const RIDE_ORDER_TRANSITIONS = {
+  CREATED:     new Set(['ACCEPTED', 'CANCELED']),
+  ACCEPTED:    new Set(['IN_PROGRESS', 'COMPLETED', 'CANCELED']),
+  IN_PROGRESS: new Set(['COMPLETED', 'CANCELED']),
+  COMPLETED:   new Set([]),
+  CANCELED:    new Set([]),
+};
+
+export function updateTripStatus(id, status) {
+  if (typeof id !== 'string' || !id) return null;
+  if (typeof status !== 'string' || status === 'CREATED') return null;
+
+  const list = loadRideOrdersRaw();
+  let updated = null;
+
+  const next = list.map((o) => {
+    if (!o || o.id !== id) return o;
+
+    const currentStatus = typeof o.status === 'string' ? o.status : 'CREATED';
+    const allowedNext = RIDE_ORDER_TRANSITIONS[currentStatus];
+
+    if (!allowedNext || !allowedNext.has(status)) {
+      return o;
+    }
+
+    updated = {
+      ...o,
+      status,
+      statusUpdatedAt: new Date().toISOString(),
+    };
+
+    return updated;
+  });
+
+  if (!updated) return null;
+  persistRideOrders(next);
+  return updated;
+}
+
 // ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
 // Read-side adapter: surfaces map-created CREATED ride orders as
 // passenger ride cards in Feed without duplicating them into
