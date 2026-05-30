@@ -119,7 +119,7 @@ no new route-picker code
 
 ```text
 1. BD-MAP-03 RoutePicker render gate
-2. BD-MAP-04 RoutePreview render gate
+2. BD-MAP-04 RoutePreview render gate — done via #214; closeout tracked in #213
 3. BD-MAP-05 OrderMapDraft render gate
 4. BD-MAP-FOUND-01 real Mapbox integration foundation, later only after contracts
 ```

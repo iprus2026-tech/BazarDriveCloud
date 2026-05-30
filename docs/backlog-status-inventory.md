@@ -27,7 +27,7 @@ deferred    — covered by another screen or postponed without owner
 | Dispatcher status | Dispatcher status after BD-MAP-01 | `docs/dispatcher-status.md` | completed | PR #145 |
 | BD-MAP-02 | LocationPermission standalone screen | n/a | deferred | Covered by BD-MAP-01 `permission` + `denied` substates |
 | BD-MAP-03 | RoutePicker render gate | `/route-picker` | blocked | Blocked by Cloud Design limit reset on 2026-05-23 (issue #144) |
-| BD-MAP-04 | RoutePreview render gate | `/route-preview` | planned | After BD-MAP-03 |
+| BD-MAP-04 | RoutePreview render gate | `/route-preview` | done | Merged in #214; closeout for #213 |
 | BD-MAP-05 | OrderMapDraft render gate | `/order-map-draft` | planned | After BD-MAP-04 |
 | BD-MAP-FOUND-01 | Real Mapbox SDK foundation | CSP + SW + SDK | planned | Only after BD-MAP-03..05 contracts |
 | BD-FEED-01 | Feed V2 | `/feed` | completed | Mock-only, awaiting Cloud Design render confirm |
