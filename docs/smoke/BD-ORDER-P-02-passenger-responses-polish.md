@@ -15,10 +15,14 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 
 ```text
 #/responses?state=empty
-#/responses?orderId=demo-order&state=empty
-#/responses?orderId=demo-order&state=list
-#/responses?orderId=demo-order&state=selected&driverId=driver_1
+#/responses?state=list
+#/responses?postId=trip-2&state=list
 #/responses?orderId=unknown&state=empty
+#/responses?orderId=unknown&state=list
+#/responses?orderId=unknown&state=selected&driverId=driver_1
+#/responses?orderId=<realOrderId>&state=empty
+#/responses?orderId=<realOrderId>&state=list
+#/responses?orderId=<realOrderId>&state=selected&driverId=driver_1
 #/order-map-draft
 #/driver-map
 #/active-ride?role=passenger&status=DRIVER_EN_ROUTE
@@ -32,6 +36,7 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 - Shows title/subtitle language around «Ищем водителей».
 - Shows copy: «Заказ опубликован. Водители увидят маршрут и смогут откликнуться.»
 - Shows a safe order summary card even with no resolvable order.
+- `#/responses?postId=trip-2&state=list` keeps the legacy mock route/price/comment context instead of showing «Заказ пока не выбран».
 - Primary CTA: «Проверить отклики».
 - Secondary CTA: «Изменить заказ» / «На карту» through the existing order draft flow.
 - No visible technical labels such as `empty`, `state`, `mock`, `response object`, `CREATED`.
@@ -40,6 +45,7 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 
 - If `<id>` exists in `bazardrive.ride_orders.v1`, the summary shows pickup → dropoff, budget, time and passenger comment.
 - If `<id>` is unknown, the screen still renders a safe fallback card instead of an error stack.
+- Unknown/missing order states are display-only: select/continue shows a safe toast and never writes `bazardrive.active_ride.v1`.
 - CTA preserves `orderId` when moving to `state=list`; missing IDs stay on a safe `#/responses?state=list` fallback route.
 
 ### `#/responses?orderId=<id>&state=list`
@@ -63,12 +69,14 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 ### `#/responses?orderId=<id>&state=selected&driverId=driver_1`
 
 - Highlights the selected driver snapshot.
-- «К поездке» reuses or creates only `bazardrive.active_ride.v1[trip_<orderId>]`.
+- With no resolved canonical order, «К поездке» only shows the safe toast «Сначала откройте опубликованный заказ».
+- With a resolved canonical order, «К поездке» reuses or creates only `bazardrive.active_ride.v1[trip_<orderId>]`.
 - «Отменить» returns to `#/responses?orderId=<id>&state=list`.
 
 ### Choose-driver handoff
 
-- Choosing a driver seeds `bazardrive.active_ride.v1` locally when `trip_<orderId>` does not exist yet.
+- Choosing a driver from a missing/unknown order or legacy `postId` link never seeds active ride storage.
+- Choosing a driver from a real order seeds `bazardrive.active_ride.v1` locally when `trip_<orderId>` does not exist yet.
 - Reopening `#/responses?orderId=<acceptedOrderId>&state=list` after handoff must reuse the existing `bazardrive.active_ride.v1[trip_<orderId>]` record and must not overwrite its driver, route, passenger or progressed status snapshots.
 - The active ride record preserves:
   - `orderId` / route / price snapshot;

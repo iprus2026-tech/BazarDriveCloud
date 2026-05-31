@@ -239,6 +239,19 @@ function formatOrderTime(order) {
   return 'Сейчас';
 }
 
+function requestFromLegacyPost(postId = '') {
+  const legacyPostId = String(postId || '').trim();
+  return {
+    ...MOCK_REQUEST,
+    id: legacyPostId || MOCK_REQUEST.id,
+    orderId: '',
+    legacyPostId,
+    time: 'Сейчас',
+    isFallback: false,
+    isLegacyMock: true,
+  };
+}
+
 function requestFromOrder(order, explicitOrderId = '') {
   if (!order) {
     const orderId = String(explicitOrderId || '').trim();
@@ -629,10 +642,9 @@ function passengerSnapshot(order) {
 }
 
 function buildPassengerActiveRide(order, request, driver) {
-  const sourceOrderId = order && order.id ? String(order.id) : '';
-  const requestOrderId = request && request.orderId ? String(request.orderId) : '';
-  const orderId = sourceOrderId || requestOrderId;
-  const tripId = orderId ? `trip_${orderId}` : 'trip_responses_fallback';
+  if (!order || !order.id) return null;
+  const orderId = String(order.id);
+  const tripId = `trip_${orderId}`;
   const existingRide = findActiveRide(tripId);
   if (existingRide) {
     return { tripId, ride: existingRide, reused: true };
@@ -702,6 +714,7 @@ function buildPassengerActiveRide(order, request, driver) {
 function responseUrl(request, state, driverId = '') {
   const params = new URLSearchParams();
   if (request.orderId) params.set('orderId', request.orderId);
+  else if (request.legacyPostId) params.set('postId', request.legacyPostId);
   params.set('state', state);
   if (driverId) params.set('driverId', driverId);
   return `/responses?${params.toString()}`;
@@ -709,9 +722,12 @@ function responseUrl(request, state, driverId = '') {
 
 export default function responses() {
   const explicitOrderId = getRouteParam('orderId') || '';
+  const legacyPostId = explicitOrderId ? '' : (getRouteParam('postId') || '');
   const canonicalOrder = resolveCanonicalOrder();
-  const request = requestFromOrder(canonicalOrder, explicitOrderId);
-  const postId = request.orderId;
+  const request = canonicalOrder
+    ? requestFromOrder(canonicalOrder, explicitOrderId)
+    : (legacyPostId ? requestFromLegacyPost(legacyPostId) : requestFromOrder(null, explicitOrderId));
+  const postId = request.legacyPostId || request.orderId || request.id;
   const state = getRouteParam('state') || 'empty';
   const drivers = buildDrivers(request);
 
@@ -727,7 +743,7 @@ export default function responses() {
   root.dataset.postId = postId;
   root.dataset.orderId = request.orderId;
   root.dataset.state = state;
-  root.dataset.source = canonicalOrder ? 'ride-order' : 'mock';
+  root.dataset.source = canonicalOrder ? 'ride-order' : (request.isLegacyMock ? 'legacy-post' : 'mock');
 
   const status = responseStatus(state);
   const subTitle = status.subtitle;
@@ -843,8 +859,16 @@ export default function responses() {
       const action = btn.dataset.action;
 
       if (action === 'select' || action === 'continue') {
+        if (!canonicalOrder) {
+          toast('Сначала откройте опубликованный заказ');
+          return;
+        }
         const driver = drivers.find((d) => d.id === driverId) || selectedDriver || drivers[0];
         const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
+        if (!handoff) {
+          toast('Сначала откройте опубликованный заказ');
+          return;
+        }
         go(activeRideUrl(handoff.tripId));
         return;
       }
