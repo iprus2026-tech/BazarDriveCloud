@@ -1,6 +1,7 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { getOrderById, listNearbyOrders } from '../mock_api.js';
+import { acceptOrder, getOrderById, listNearbyOrders } from '../mock_api.js';
+import { createDemoActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 
 const MOCK_REQUEST = {
   id:          'post_1001',
@@ -23,6 +24,8 @@ const MOCK_DRIVERS = [
     avatarTone:    'mint',
     rating:        '4,92',
     car:           'Toyota Camry · серый',
+    carModel:      'Toyota Camry',
+    carColor:      'серый',
     plate:         'A 124 BB 77',
     trips:         '1248 поездок',
     priceDelta:    'как у вас',
@@ -41,6 +44,8 @@ const MOCK_DRIVERS = [
     avatarTone:    'amber',
     rating:        '4,78',
     car:           'Hyundai Solaris · белый',
+    carModel:      'Hyundai Solaris',
+    carColor:      'белый',
     plate:         'B 902 AO 77',
     trips:         '612 поездок',
     priceDelta:    '+150 ₽',
@@ -59,6 +64,8 @@ const MOCK_DRIVERS = [
     avatarTone:    'violet',
     rating:        '4,88',
     car:           'Kia Rio · чёрный',
+    carModel:      'Kia Rio',
+    carColor:      'чёрный',
     plate:         'K 581 XK 77',
     trips:         '304 поездок',
     priceDelta:    '-50 ₽',
@@ -135,6 +142,13 @@ const CHECK_SVG = `
        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
        width="16" height="16">
     <polyline points="5 12 10 17 19 7"/>
+  </svg>`;
+
+const PHONE_SVG = `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+       width="18" height="18">
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.56 2.81.69A2 2 0 0 1 22 16.92z"/>
   </svg>`;
 
 const CHAT_SVG = `
@@ -218,8 +232,32 @@ function resolveCanonicalOrder() {
   return openOrders.length ? openOrders[0] : null;
 }
 
-function requestFromOrder(order) {
-  if (!order) return MOCK_REQUEST;
+function formatOrderTime(order) {
+  const label = typeof order?.scheduledLabel === 'string' ? order.scheduledLabel.trim() : '';
+  if (label) return label;
+  if (order?.scheduledMode === 'later' && order?.scheduledAt) {
+    const date = new Date(order.scheduledAt);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+  }
+  return 'Сейчас';
+}
+
+function requestFromOrder(order, explicitOrderId = '') {
+  if (!order) {
+    const orderId = explicitOrderId || MOCK_REQUEST.orderId;
+    return {
+      ...MOCK_REQUEST,
+      id: orderId,
+      orderId,
+      pickupLabel: explicitOrderId ? 'Маршрут заказа' : MOCK_REQUEST.pickupLabel,
+      dropoffLabel: explicitOrderId ? 'Уточняется после открытия заказа' : MOCK_REQUEST.dropoffLabel,
+      note: explicitOrderId ? 'Детали заказа пока недоступны. Можно безопасно проверить отклики или вернуться на карту.' : MOCK_REQUEST.note,
+      time: 'Сейчас',
+      isFallback: true,
+    };
+  }
   const price = moneyLabelFromOrder(order) || MOCK_REQUEST.price;
   const numericPrice = Number(order.estimatedPrice) || MOCK_REQUEST.numericPrice;
   const note = String(order.comment || order.passenger?.comment || '').trim();
@@ -233,6 +271,8 @@ function requestFromOrder(order) {
     price,
     numericPrice,
     note: note || 'Комментарий не указан',
+    time: formatOrderTime(order),
+    isFallback: false,
   };
 }
 
@@ -270,7 +310,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
   const bestBadge = driver.isBest
     ? `<div class="responses__driver-best">
          ${SPARK_SVG}
-         <span>ЛУЧШИЙ ВАРИАНТ</span>
+         <span>Лучший вариант</span>
        </div>`
     : '';
 
@@ -301,7 +341,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
       <div class="responses__driver-actions">
         <button type="button" class="bd-btn primary responses__driver-select" data-action="select">
           ${CHECK_SVG}
-          <span>Выбрать</span>
+          <span>Выбрать водителя</span>
         </button>
         <button type="button" class="responses__driver-side" data-action="chat" aria-label="Чат с водителем">
           ${CHAT_SVG}
@@ -371,6 +411,20 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
   `;
 }
 
+function renderOrderMeta(request) {
+  return `
+    <div class="responses__request-meta" aria-label="Детали заказа">
+      <div class="responses__request-meta-item">
+        <span class="responses__request-meta-label">Время</span>
+        <span class="responses__request-meta-value">${escapeHtml(request.time || 'Сейчас')}</span>
+      </div>
+      <div class="responses__request-meta-item">
+        <span class="responses__request-meta-label">Бюджет</span>
+        <span class="responses__request-meta-value">${escapeHtml(request.price)}</span>
+      </div>
+    </div>`;
+}
+
 function renderEmptyState() {
   return `
     <div class="responses__empty">
@@ -378,20 +432,20 @@ function renderEmptyState() {
         <span class="responses__empty-glow"></span>
         <span class="responses__empty-icon-inner">${CAR_SVG}</span>
       </div>
-      <h2 class="responses__empty-title">Ищем водителей...</h2>
+      <h2 class="responses__empty-title">Ищем водителей</h2>
       <p class="responses__empty-body">
-        Заказ опубликован. Водители увидят маршрут и смогут откликнуться —
-        обычно первый отклик приходит за 1–3 минуты.
+        Заказ опубликован. Водители увидят маршрут и смогут откликнуться.
+        Обычно первый отклик приходит за 1–3 минуты.
       </p>
     </div>
     <div class="responses__hints">
       <div class="responses__hint">
         <span class="responses__hint-icon" aria-hidden="true">${SPARK_SVG}</span>
-        <span class="responses__hint-text">Повысьте цену на 100–200 ₽, откликов будет в 2 раза больше</span>
+        <span class="responses__hint-text">Проверьте отклики через минуту или подождите уведомление</span>
       </div>
       <div class="responses__hint">
         <span class="responses__hint-icon responses__hint-icon--info" aria-hidden="true">${INFO_SVG}</span>
-        <span class="responses__hint-text">Можно подождать, вы получите push, как только водитель откликнется</span>
+        <span class="responses__hint-text">Маршрут и комментарий уже видны водителям рядом</span>
       </div>
     </div>
   `;
@@ -418,7 +472,7 @@ function renderList(drivers, selectedDriverId, allDeclined) {
       </div>
       <div class="responses__status">
         <span class="responses__status-dot" aria-hidden="true"></span>
-        <span>ПРИНИМАЕМ ОТКЛИКИ</span>
+        <span>Принимаем отклики</span>
       </div>
       <button type="button" class="responses__sort" id="responses-sort">
         ${SPARK_SVG}
@@ -433,15 +487,88 @@ function renderList(drivers, selectedDriverId, allDeclined) {
   `;
 }
 
+
+function renderOffer(driver) {
+  return `
+    <div class="responses__offer-intro">
+      <span class="responses__offer-chip">Отклик водителя</span>
+      <h2 class="responses__offer-title">Водитель готов поехать</h2>
+      <p class="responses__offer-copy">Сравните цену, подачу и автомобиль. После выбора откроется маршрут поездки.</p>
+    </div>
+    <div class="responses__drivers responses__drivers--single">
+      <article class="responses__driver responses__driver--best responses__driver--offer"
+               data-driver-id="${escapeHtml(driver.id)}"
+               data-response-id="${escapeHtml(driver.responseId)}">
+        <div class="responses__driver-head">
+          <div class="responses__avatar responses__avatar--${escapeHtml(driver.avatarTone)}" aria-hidden="true">${escapeHtml(driver.initials)}</div>
+          <div class="responses__driver-info">
+            <div class="responses__driver-line">
+              <span class="responses__driver-name">${escapeHtml(driver.name)}</span>
+              <span class="responses__driver-rating">${STAR_SVG}<span>${escapeHtml(driver.rating)}</span></span>
+            </div>
+            <div class="responses__driver-car">${escapeHtml(driver.car)}</div>
+            <div class="responses__driver-meta">
+              <span>${escapeHtml(driver.plate)}</span>
+              <span class="responses__driver-dot" aria-hidden="true">·</span>
+              <span>${escapeHtml(driver.trips)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="responses__driver-stats">
+          <div class="responses__stat">
+            <div class="responses__stat-label">Предложение</div>
+            <div class="responses__stat-row">
+              <span class="responses__stat-value">${escapeHtml(driver.price)}</span>
+              <span class="responses__delta responses__delta--${escapeHtml(driver.priceTone)}">${escapeHtml(driver.priceDelta)}</span>
+            </div>
+          </div>
+          <div class="responses__stat">
+            <div class="responses__stat-label">Подача</div>
+            <div class="responses__stat-row">
+              <span class="responses__stat-value">${escapeHtml(driver.eta)}</span>
+              <span class="responses__eta responses__eta--${escapeHtml(driver.etaTone)}" aria-hidden="true">
+                ${renderEtaBars(driver.etaBars)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="responses__driver-note">
+          <span class="responses__driver-note-icon" aria-hidden="true">${QUOTE_SVG}</span>
+          <span class="responses__driver-note-text">${escapeHtml(driver.note || 'Готов подъехать к точке подачи.')}</span>
+        </div>
+        <div class="responses__offer-actions">
+          <button type="button" class="bd-btn primary responses__offer-select" data-action="select">
+            ${CHECK_SVG}
+            <span>Выбрать водителя</span>
+          </button>
+          <button type="button" class="bd-btn responses__offer-secondary" data-action="chat">
+            ${CHAT_SVG}
+            <span>Написать</span>
+          </button>
+          <button type="button" class="bd-btn responses__offer-secondary" data-action="call">
+            ${PHONE_SVG}
+            <span>Позвонить</span>
+          </button>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
 // BD-MAP-05 — passenger-facing status copy keyed off the UI-only response
-// state. None of this mutates the canonical order; the order stays CREATED
-// while the passenger watches replies arrive. Each entry feeds both the
-// topbar subtitle and the compact status chip in the request card.
+// state. Watching replies is view-only; choosing a driver performs the
+// same local handoff into active ride that the passenger can safely review.
+// Each entry feeds both the topbar subtitle and the compact status chip.
 const RESPONSE_STATUS = {
   empty: {
     subtitle: 'Ищем водителей',
     chip: 'Ищем водителей',
     tone: 'searching',
+  },
+  offer: {
+    subtitle: 'Отклик водителя',
+    chip: 'Отклик водителя',
+    tone: 'active',
   },
   list: {
     subtitle: 'Есть отклики',
@@ -473,6 +600,96 @@ function renderStatusChip(status) {
   `;
 }
 
+function activeRideUrl(tripId) {
+  const params = new URLSearchParams();
+  params.set('role', 'passenger');
+  params.set('tripId', tripId);
+  params.set('status', RIDE_STATUS.DRIVER_EN_ROUTE);
+  return `/active-ride?${params.toString()}`;
+}
+
+function driverInitials(driver) {
+  return driver.initials || String(driver.name || 'В').trim().charAt(0).toUpperCase() || 'В';
+}
+
+function passengerSnapshot(order) {
+  const snap = order && typeof order.passenger === 'object' && order.passenger ? order.passenger : null;
+  if (snap && typeof snap.name === 'string' && snap.name.trim()) {
+    return { ...snap, name: snap.name.trim() };
+  }
+  return {
+    name: 'Вы',
+    initials: 'В',
+    phoneMasked: '',
+    note: typeof order?.comment === 'string' ? order.comment : '',
+    isCurrentUser: true,
+  };
+}
+
+function buildPassengerActiveRide(order, request, driver) {
+  const accepted = order && order.status === 'CREATED' ? acceptOrder(order.id) : order;
+  const sourceOrder = accepted || order;
+  const orderId = sourceOrder?.id || request.orderId;
+  const tripId = `trip_${orderId}`;
+  const now = new Date().toISOString();
+  const ride = createDemoActiveRide({
+    tripId,
+    role: 'passenger',
+    status: RIDE_STATUS.DRIVER_EN_ROUTE,
+    driver: {
+      id: driver.id,
+      name: driver.name,
+      initials: driverInitials(driver),
+      rating: driver.rating,
+      phoneMasked: '+7 ... 45-67',
+    },
+    vehicle: {
+      model: driver.carModel || driver.car,
+      color: driver.carColor || '',
+      plate: driver.plate,
+    },
+    passenger: passengerSnapshot(sourceOrder),
+    order: {
+      offerPrice: driver.price || request.price,
+      pickupEta: driver.eta,
+      destinationEta: sourceOrder?.durationMin ? `${sourceOrder.durationMin} мин` : '28 мин',
+      destinationDistance: sourceOrder?.distanceKm ? `${sourceOrder.distanceKm} км` : '—',
+      passengerComment: request.note,
+    },
+    route: {
+      pickupLabel: request.pickupLabel,
+      dropoffLabel: request.dropoffLabel,
+      etaToPickup: driver.eta,
+      etaToDestination: sourceOrder?.durationMin ? `${sourceOrder.durationMin} мин` : '28 мин',
+      pickup: sourceOrder?.pickup || null,
+      dropoff: sourceOrder?.dropoff || null,
+    },
+    ride: {
+      price: driver.price || request.price,
+    },
+    timestamps: {
+      acceptedAt: sourceOrder?.acceptedAt || now,
+    },
+  });
+  // Replace the demo passenger entirely so the active ride preserves the
+  // order passenger snapshot without inherited seed fields.
+  ride.passenger = passengerSnapshot(sourceOrder);
+  ride.orderId = orderId;
+  ride.selectedDriver = {
+    id: driver.id,
+    responseId: driver.responseId,
+    name: driver.name,
+    rating: driver.rating,
+    car: driver.car,
+    plate: driver.plate,
+    eta: driver.eta,
+    price: driver.price,
+    note: driver.note,
+  };
+  saveActiveRide(ride);
+  return { tripId, ride };
+}
+
 function responseUrl(request, state, driverId = '') {
   const params = new URLSearchParams();
   params.set('orderId', request.orderId);
@@ -482,13 +699,15 @@ function responseUrl(request, state, driverId = '') {
 }
 
 export default function responses() {
+  const explicitOrderId = getRouteParam('orderId') || '';
   const canonicalOrder = resolveCanonicalOrder();
-  const request = requestFromOrder(canonicalOrder);
+  const request = requestFromOrder(canonicalOrder, explicitOrderId);
   const postId = request.orderId;
   const state = getRouteParam('state') || 'empty';
   const drivers = buildDrivers(request);
 
   const isAllDeclined = state === 'all-declined';
+  const isOffer = state === 'offer';
   const isList = state === 'list' || state === 'selected' || isAllDeclined;
   const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
   const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
@@ -503,11 +722,14 @@ export default function responses() {
 
   const status = responseStatus(state);
   const subTitle = status.subtitle;
-  const footer = isList ? '' : `
+  const footer = (isList || isOffer) ? '' : `
     <div class="responses__footer responses__footer--in-scroll">
-      <button type="button" class="bd-btn responses__cta" id="responses-raise">
+      <button type="button" class="bd-btn primary responses__cta" id="responses-check">
+        <span>Проверить отклики</span>
+      </button>
+      <button type="button" class="bd-btn responses__cta responses__cta--secondary" id="responses-map">
         ${PENCIL_SVG}
-        <span>Поднять цену</span>
+        <span>Изменить заказ</span>
       </button>
     </div>`;
 
@@ -541,6 +763,7 @@ export default function responses() {
             <div class="responses__price-value">${escapeHtml(request.price)}</div>
           </div>
         </div>
+        ${renderOrderMeta(request)}
         <div class="responses__request-foot">
           <div class="responses__note">
             ${INFO_SVG}
@@ -548,11 +771,11 @@ export default function responses() {
           </div>
           <button type="button" class="responses__edit" id="responses-edit">
             ${PENCIL_SVG}
-            <span>Изменить</span>
+            <span>На карту</span>
           </button>
         </div>
       </div>
-      ${isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState()}
+      ${isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState())}
       ${footer}
     </div>
 
@@ -578,10 +801,17 @@ export default function responses() {
     go('/order-map-draft');
   });
 
-  const raiseBtn = root.querySelector('#responses-raise');
-  if (raiseBtn) {
-    raiseBtn.addEventListener('click', () => {
-      toast('Изменение цены будет добавлено позже');
+  const checkBtn = root.querySelector('#responses-check');
+  if (checkBtn) {
+    checkBtn.addEventListener('click', () => {
+      go(responseUrl(request, 'offer'));
+    });
+  }
+
+  const mapBtn = root.querySelector('#responses-map');
+  if (mapBtn) {
+    mapBtn.addEventListener('click', () => {
+      go('/order-map-draft');
     });
   }
 
@@ -604,7 +834,9 @@ export default function responses() {
       const action = btn.dataset.action;
 
       if (action === 'select') {
-        go(responseUrl(request, 'selected', driverId));
+        const driver = drivers.find((d) => d.id === driverId) || drivers[0];
+        const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
+        go(activeRideUrl(handoff.tripId));
         return;
       }
       if (action === 'cancel') {
@@ -617,6 +849,10 @@ export default function responses() {
       }
       if (action === 'chat') {
         go(`/chat?responseId=${encodeURIComponent(responseId)}&orderId=${encodeURIComponent(request.orderId)}`);
+        return;
+      }
+      if (action === 'call') {
+        toast('Звонок будет доступен после подтверждения поездки');
         return;
       }
       if (action === 'decline') {
