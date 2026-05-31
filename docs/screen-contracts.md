@@ -1229,44 +1229,51 @@ Push / payment hold
 ### Identity
 
 ```text
-Screen:        Responses — passenger inbox откликов водителей
+Screen:        Responses — passenger dispatch board for driver offers
 Route:         /responses
 File:          public/src/screens/responses.js
-Data source:   mock-driver list в файле (MOCK_DRIVERS)
-Parent issue:  #19
+Data source:   canonical ride order when ?orderId resolves; safe local fallback otherwise; MOCK_DRIVERS for offer cards
+Parent issues: #19, #305 / BD-ORDER-P-02
 ```
 
 ### Purpose
 
-Экран, на котором пассажир видит, какие водители откликнулись на его
-заявку. Mock-only: список из 3 водителей, отметка best-предложения,
-ETA-индикатор, заметка водителя, цена с дельтой относительно цены
-пассажира. Decline / select водителя переключают визуальное состояние,
-ничего не отправляя в сеть.
-
-Current build note: `state` defaults to `empty` when `/responses` is opened without query params, so bare `/responses` renders the `empty-waiting` mock (`renderEmptyState()`). The `MOCK_DRIVERS` list is only materialized when the route carries `?state=list` (или `selected` / `all-declined`). Все состояния по-прежнему mock-only — backend и реальные отклики не подключены.
+Экран после публикации пассажирского заказа. Он закрывает локальный
+mock-флоу «Заказ опубликован → Ищем водителей → Отклик водителя →
+пассажир выбирает водителя → безопасный handoff в active ride». Backend,
+real-time sockets, реальные звонки и Mapbox не подключаются.
 
 ### Route contract
 
 ```text
 Path:          /responses
-Query:         ?state=list | selected | all-declined  → рендер MOCK_DRIVERS;
-               без query (state по умолчанию = empty) → empty-waiting (renderEmptyState)
-               ?postId=<id> прокидывается в dataset, но MOCK_REQUEST один
-               ?driverId=<id> используется только при state=selected
+Query:         ?state=empty          → ожидание откликов, default для bare /responses
+               ?state=offer          → один реалистичный отклик водителя
+               ?state=list           → 2–3 mock-отклика для сравнения
+               ?state=selected       → legacy visual state, сохраняется для старых ссылок
+               ?state=all-declined   → legacy declined notice
+               ?orderId=<id>         → подтянуть published ride order summary, если есть
+               ?driverId=<id>        → legacy selected visual marker
 Chrome:        visible
 ```
+
+### Order summary
+
+Если `?orderId=<id>` находится в `bazardrive.ride_orders.v1`, карточка
+показывает pickup → dropoff, цену/бюджет, время и комментарий пассажира.
+Если `orderId` отсутствует или неизвестен, экран не падает: рендерится
+безопасная fallback-карточка с пассажирским текстом и теми же действиями.
 
 ### Mock data shape
 
 ```text
 MOCK_REQUEST {
   id, orderId, passengerId, status, pickupLabel, dropoffLabel,
-  price, note
+  price, numericPrice, note, time, isFallback
 }
 MOCK_DRIVERS[] {
   id, responseId, name, initials, avatarTone, rating,
-  car, plate, trips,
+  car, carModel, carColor, plate, trips,
   price, priceDelta, priceTone (up | down | same),
   eta, etaBars (1-3), etaTone (good | mid | low),
   note, isBest
@@ -1276,45 +1283,51 @@ MOCK_DRIVERS[] {
 ### UI states
 
 ```text
-list            — 3 карточки водителей
-best-card       — выделенная карточка с признаком isBest
-selected        — пассажир выбрал водителя; меняется визуальный stage
-declined        — водитель помечен как отклонённый (restore CTA доступен)
-all-declined    — все отклонены; информационная плашка
-empty-waiting   — заглушка ожидания, когда откликов ещё нет (mock; дефолтное состояние bare /responses, так как state по умолчанию = empty; renderEmptyState)
+empty           — «Ищем водителей», published-order copy, order summary, CTA «Проверить отклики»
+offer           — one driver offer card: name/rating/car/ETA/price/message + «Выбрать водителя», «Написать», «Позвонить»
+list            — three mock offers for comparison; best offer is highlighted
+selected        — legacy visual selected marker for old links
+all-declined    — legacy declined notice
 ```
 
 ### Actions
 
 ```text
 back                  → /feed
-open chat for driver  → /chat?responseId=<id>
-accept driver         → переход на /trip-confirmation?role=passenger&...
-decline driver        → визуальный stage; не пишет в localStorage
-restore declined      → возвращает водителя в список
+На карту / Изменить   → /order-map-draft
+Проверить отклики     → /responses?orderId=<id>&state=offer
+Написать              → /chat?responseId=<id>&orderId=<id>
+Позвонить             → safe toast; no real phone call
+Выбрать водителя      → seeds bazardrive.active_ride.v1 with order, passenger, selected driver and vehicle snapshots;
+                         navigates to /active-ride?role=passenger&tripId=trip_<orderId>&status=DRIVER_EN_ROUTE
 ```
 
 ### Acceptance checklist
 
-- [ ] `/responses` открывается через hash-роутер
-- [ ] Рендерятся 3 карточки водителей с avatar, name, rating, car, plate
-- [ ] Best-карточка визуально выделена (isBest === true)
-- [ ] ETA-бары рендерятся 1..3 шт по `etaBars`
-- [ ] Decline переводит карточку в declined-row, без потери данных
-- [ ] Restore возвращает declined водителя в обычный список
-- [ ] Selected state ведёт к `/trip-confirmation?role=passenger`
-- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
-- [ ] Нет `.style.<property>` присвоений в JS
-- [ ] CSP не ослаблен
-- [ ] `node scripts/check.mjs` проходит
+- [ ] `/responses?state=empty` renders safe waiting state.
+- [ ] `/responses?orderId=<id>&state=empty` preserves and displays order context when resolvable.
+- [ ] Missing/unknown `orderId` renders fallback content, not an error stack.
+- [ ] Empty state copy uses passenger-facing language: «Заказ опубликован», «Ищем водителей».
+- [ ] `/responses?state=offer` shows a realistic driver offer card.
+- [ ] `/responses?state=list` shows multiple mock offers and a highlighted best offer.
+- [ ] Choosing a driver preserves selected driver/order/passenger snapshots in active ride handoff.
+- [ ] Driver map and driver active ride flows remain unchanged.
+- [ ] No visible technical state labels leak into UI.
+- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`.
+- [ ] Нет `.style.<property>` присвоений в JS.
+- [ ] CSP не ослаблен.
+- [ ] `node scripts/check.mjs` проходит.
 
-### Out of scope for BD-RESPONSES-01
+### Out of scope for BD-RESPONSES-01 / BD-ORDER-P-02
 
 ```text
 Backend / реальный список откликов
-Push при новом отклике
-Платёж / hold карты
+Real-time sockets / push при новом отклике
+Реальные звонки и платежи
 Mapbox / реальные ETA
+Driver-map accept-flow rewrite
+Active ride driver-flow rewrite
+Canonical order-status redesign beyond the existing local accept helper
 ```
 
 ## BD-CHAT-01 — Chat
