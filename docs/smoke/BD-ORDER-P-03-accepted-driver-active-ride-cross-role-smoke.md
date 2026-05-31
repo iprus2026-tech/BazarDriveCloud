@@ -140,38 +140,38 @@ Passenger source path:
    localStorage.removeItem('bazardrive.active_ride.v1');
    ```
 
-2. Open `/order-map-draft`.
+2. Open `#/order-map-draft`.
 3. Publish passenger order.
-4. Open `/driver-map`.
+4. Open `#/driver-map`.
 5. Confirm order is visible.
 6. Click `Принять`.
 7. Capture `tripId` from the accepted sheet / active-ride CTA. It must be `trip_<order.id>`.
 8. Open:
 
    ```text
-   /active-ride?role=driver&tripId=<tripId>&status=DRIVER_EN_ROUTE
+   #/active-ride?role=driver&tripId=<tripId>&status=DRIVER_EN_ROUTE
    ```
 
 9. Confirm route, price, status, distance and ETA match the accepted order.
 10. Open:
 
     ```text
-    /active-ride?role=passenger&tripId=<tripId>
+    #/active-ride?role=passenger&tripId=<tripId>
     ```
 
 11. Confirm the same route, price, status, distance and ETA are shown.
 12. Refresh passenger URL.
 13. Confirm the same persisted data remains and no demo passenger/route replaces it.
-14. Return to `/driver-map` and `/feed`.
+14. Return to `#/driver-map` and `#/feed`.
 15. Confirm the accepted order is not listed as an open order.
 
 ## Useful URLs
 
-- `/order-map-draft`
-- `/driver-map`
-- `/feed`
-- `/active-ride?role=driver&tripId=<tripId>&status=DRIVER_EN_ROUTE`
-- `/active-ride?role=passenger&tripId=<tripId>`
+- `#/order-map-draft`
+- `#/driver-map`
+- `#/feed`
+- `#/active-ride?role=driver&tripId=<tripId>&status=DRIVER_EN_ROUTE`
+- `#/active-ride?role=passenger&tripId=<tripId>`
 
 ## Result
 
