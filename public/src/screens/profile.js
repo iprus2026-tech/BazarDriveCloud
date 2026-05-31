@@ -2603,7 +2603,7 @@ function renderDriver(root, u) {
   // Enabled only when line-ready.
   root.querySelector('#pf2-active-shift-cta')?.addEventListener('click', () => {
     if (!isDriverLineReady(user.get())) return;
-    go('/active-ride?role=driver');
+    go('/driver-map');
   });
 
   // Gear icon: switch to security pane.

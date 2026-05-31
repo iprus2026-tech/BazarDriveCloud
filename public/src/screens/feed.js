@@ -3,8 +3,9 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 import {
-  isDriverLineReady,
+  canAcceptOrder,
   canAcceptPassengerRequest,
+  canManageOwnOrder,
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
@@ -90,7 +91,8 @@ export default async function feed() {
   });
 
   root.querySelector('.feed-btn-new').addEventListener('click', () => {
-    go('/new');
+    const u = user.get();
+    go(u.role === 'driver' ? '/driver-map' : '/new');
   });
 
   feedList.addEventListener('click', (e) => {
@@ -105,6 +107,16 @@ export default async function feed() {
 
       if (actionBtn.dataset.action === 'chat') {
         go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
+        return;
+      }
+
+      if (actionBtn.dataset.action === 'own-order') {
+        const post = posts.find((p) => String(p.id) === String(postId));
+        if (post?.canonical === 'ride_order' && post.orderId) {
+          go(`/responses?orderId=${encodeURIComponent(post.orderId)}`);
+        } else {
+          go(postId ? `/post?id=${encodeURIComponent(postId)}` : '/feed');
+        }
         return;
       }
 
@@ -240,14 +252,16 @@ function renderTripCard(p) {
   `;
 
   const u = user.get();
-  const driverCanAccept = u.role === 'driver'
-    && isDriverLineReady(u)
-    && p.passenger === true;
+  const ownPassengerOrder = p.passenger === true && canManageOwnOrder(p, u);
+  const driverCanAccept = canAcceptOrder(p, u);
   const postId = escapeHtml(p.id || '');
 
   let ctaAttrs;
   let ctaLabel;
-  if (driverCanAccept) {
+  if (ownPassengerOrder) {
+    ctaAttrs = `data-action="own-order" data-post-id="${postId}" aria-label="К моему заказу"`;
+    ctaLabel = 'К моему заказу';
+  } else if (driverCanAccept) {
     ctaAttrs = `data-action="accept-order" data-post-id="${postId}" aria-label="Принять заказ"`;
     ctaLabel = 'Принять заказ';
   } else if (p.passenger) {
