@@ -3,6 +3,7 @@ import { go, setPendingAction } from '../router.js';
 import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
+import { isDriverMode, isPassengerMode } from '../ride_actions.js';
 
 const DRAFT_KEY = 'bazardrive.draft.v2';
 
@@ -13,6 +14,38 @@ const POST_TYPES = [
   { key: 'marketplace',  label: 'Маркет' },
   { key: 'service',      label: 'Услуга' },
 ];
+
+// BD-ROLE-01 — Composer intent vocabulary. External `?type=` values (used by
+// role-aware create links such as /new?type=driver_offer) map onto the
+// internal chip keys above so the create-flow stays role-aware without
+// leaking chip naming into URLs.
+const INTENT_TO_TYPE = {
+  passenger_request: 'passenger',
+  driver_offer:      'trip',
+  marketplace:       'marketplace',
+  service:           'service',
+};
+
+// Read a recognised `?type=` intent from the current hash, mapped to an
+// internal chip key. Returns null when the param is missing or unknown so
+// callers fall back to the role default.
+function readIntentTypeFromHash() {
+  const hash = window.location.hash || '';
+  const qi = hash.indexOf('?');
+  if (qi === -1) return null;
+  const raw = new URLSearchParams(hash.slice(qi + 1)).get('type');
+  if (!raw) return null;
+  return INTENT_TO_TYPE[raw] || null;
+}
+
+// Safe default composer intent by current role. Driver mode defaults to a
+// driver offer (never silently a passenger request); passenger mode to a
+// passenger request; guest / unknown role keeps the neutral trip default.
+function defaultTypeForRole(u) {
+  if (isDriverMode(u)) return 'trip';
+  if (isPassengerMode(u)) return 'passenger';
+  return 'trip';
+}
 
 function emptyDraft() {
   return {
@@ -307,7 +340,23 @@ export default function composer() {
     }
   }
 
-  let activeType = draft.type || 'trip';
+  // BD-ROLE-01 — Resolve the initial intent. Precedence:
+  //   1. explicit ?type= intent (role-aware create links) always wins and
+  //      overrides any persisted draft type;
+  //   2. otherwise keep an in-progress draft's type (never silently discard
+  //      the user's unsaved work just to honor a role default);
+  //   3. otherwise fall back to the safe default for the current role.
+  const intentType = readIntentTypeFromHash();
+  const hasExistingDraftData = Object.entries(draft).some(([k, v]) => k !== 'type' && v);
+  let activeType;
+  if (intentType) {
+    activeType = intentType;
+  } else if (hasExistingDraftData) {
+    activeType = draft.type || defaultTypeForRole(user.get());
+  } else {
+    activeType = defaultTypeForRole(user.get());
+  }
+  draft.type = activeType;
   let isPreview  = false;
 
   const root = document.createElement('section');
@@ -348,6 +397,17 @@ export default function composer() {
           <polyline points="3 4 3 9 8 9"/>
         </svg>
         <p class="composer-prefill__note-text" id="composer-prefill-note-text"></p>
+      </div>
+      <div class="bd-alert warning composer-role__note" id="composer-role-note" role="status" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+             width="20" height="20" class="composer-role__note-icon">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <p class="composer-role__note-text" id="composer-role-note-text"></p>
+        <button type="button" class="bd-btn ghost sm composer-role__note-btn" id="composer-role-switch">Создать как водитель</button>
       </div>
       <form id="composer-form" novalidate>
 
@@ -521,6 +581,25 @@ export default function composer() {
   const listingPriceField  = root.querySelector('#listing-price-field');
   const prefillNote        = root.querySelector('#composer-prefill-note');
   const prefillNoteText    = root.querySelector('#composer-prefill-note-text');
+  const roleNote           = root.querySelector('#composer-role-note');
+  const roleNoteText       = root.querySelector('#composer-role-note-text');
+  const roleSwitchBtn      = root.querySelector('#composer-role-switch');
+
+  // BD-ROLE-01 — Driver-mode guard. When a driver lands on the passenger
+  // request chip (e.g. via the explicit "Перейти в режим пассажира" intent),
+  // surface a visible notice so the cross-role publication is never silent,
+  // plus a one-tap switch back to the driver-native offer.
+  const driverMode = isDriverMode(user.get());
+  function updateRoleNote() {
+    if (!roleNote) return;
+    if (driverMode && activeType === 'passenger') {
+      roleNoteText.textContent =
+        'Вы в режиме водителя. Эта публикация будет создана как пассажирский запрос.';
+      roleNote.hidden = false;
+    } else {
+      roleNote.hidden = true;
+    }
+  }
 
   // ── Collect current form values into draft object ───────────────
   function collectDraft() {
@@ -555,6 +634,7 @@ export default function composer() {
     priceField.hidden        = passenger;
     budgetField.hidden       = !passenger;
     listingPriceField.hidden = announce;
+    updateRoleNote();
   }
 
   // ── Validation error helpers ────────────────────────────────────
@@ -635,6 +715,12 @@ export default function composer() {
 
   // ── Event: photo placeholder (no-op, scope-defined stub) ────────
   root.querySelector('#c-photo-btn').addEventListener('click', () => {});
+
+  // ── Event: driver role-guard switch → back to driver offer chip ──
+  roleSwitchBtn?.addEventListener('click', () => {
+    const chip = typeRow.querySelector('[data-type="trip"]');
+    if (chip) chip.click();
+  });
 
   // ── Event: submit ───────────────────────────────────────────────
   form.addEventListener('submit', async (e) => {

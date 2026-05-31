@@ -8,6 +8,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
+import { isDriverMode } from '../ride_actions.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -1056,6 +1057,28 @@ function placeholderPane(label) {
   return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
 }
 
+// BD-ROLE-01 — Explicit driver-facing create/order actions. Drivers default
+// to driver intents (nearby orders on DriverMap, a driver offer in Composer)
+// and only reach the passenger request flow through the clearly-labelled
+// "Перейти в режим пассажира" entry — never silently.
+function driverCreateActionsHtml() {
+  return `
+    <div class="pf2-actions-section">
+      <p class="pf2-actions-title">Заказы и публикации</p>
+      <div class="pf2-action-list">
+        <button type="button" class="pf2-action-row" id="pf2-act-nearby">
+          <span class="pf2-action-row__label">Заказы рядом</span>${SVG_CHEVRON}
+        </button>
+        <button type="button" class="pf2-action-row" id="pf2-act-offer">
+          <span class="pf2-action-row__label">Предложить поездку</span>${SVG_CHEVRON}
+        </button>
+        <button type="button" class="pf2-action-row" id="pf2-act-passenger-mode">
+          <span class="pf2-action-row__label">Перейти в режим пассажира</span>${SVG_CHEVRON}
+        </button>
+      </div>
+    </div>`;
+}
+
 // ── My publications (BD-PROFILE-MY-POSTS-01) ────────────────────────────────
 // Inline Profile section listing the current user's locally created posts.
 // Data source: listMyPostsSync() (localStorage + in-memory FEED_POSTS_V2,
@@ -1142,7 +1165,7 @@ function myPostsSectionHtml() {
 }
 
 function wireMyPostsSection(root) {
-  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go('/new'));
+  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go(createIntentRoute(user.get())));
 }
 
 // ── Ride history (BD-RIDE-HISTORY-01 / BD-RIDE-HISTORY-08) ────────────────────
@@ -1680,7 +1703,7 @@ function replaceHistorySection(root) {
 }
 
 function wireHistorySection(root) {
-  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go('/new'));
+  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go(createIntentRoute(user.get())));
   root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
 
   // BD-RIDE-HISTORY-04/08 — section-level delegation handles three concerns:
@@ -2433,6 +2456,7 @@ function renderDriver(root, u) {
       <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
         ${driverHeroHtml(u)}
         ${statusCardHtml(u)}
+        ${driverCreateActionsHtml()}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
         ${taxiPermitPanelHtml(u)}
@@ -2482,6 +2506,14 @@ function renderDriver(root, u) {
   root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
     root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  // BD-ROLE-01 — Driver create/order CTAs. Nearby orders + going online live
+  // on DriverMap; "Предложить поездку" opens the composer pre-set to a driver
+  // offer; "Перейти в режим пассажира" is the explicit, opt-in passenger
+  // request entry (composer surfaces a role-mismatch notice there).
+  root.querySelector('#pf2-act-nearby')?.addEventListener('click', () => go('/driver-map'));
+  root.querySelector('#pf2-act-offer')?.addEventListener('click', () => go('/new?type=driver_offer'));
+  root.querySelector('#pf2-act-passenger-mode')?.addEventListener('click', () => go('/new?type=passenger_request'));
 
   // ── Taxi permit: open inline panel ──────────────────────────────────────────
   const permitPanel  = root.querySelector('#pf2-permit-panel');
