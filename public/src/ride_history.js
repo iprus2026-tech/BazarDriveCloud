@@ -36,7 +36,7 @@ function readStore() {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? scopeEntriesToCurrentRole(parsed.filter(isPlainObject)) : [];
+    return Array.isArray(parsed) ? parsed.filter(isPlainObject) : [];
   } catch {
     return [];
   }
@@ -45,8 +45,8 @@ function readStore() {
 // BD-RIDE-HISTORY-03 — Status-aware reader used by surfaces that need to tell
 // "empty history" (clean state) apart from "history present but unreadable"
 // (malformed JSON, non-array payload). The plain loadRideHistory() still
-// silently coalesces to [] so call sites that only care about the entries do
-// not have to think about the distinction.
+// returns the full local history so writes cannot accidentally drop the other
+// role's records.
 //   status === 'empty'     → no key in localStorage
 //   status === 'ok'        → valid array (entries already filtered to plain
 //                            objects and the current profile role; may still
