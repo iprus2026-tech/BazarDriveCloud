@@ -1,7 +1,8 @@
 # BD-ORDER-P-07 — Real browser passenger-driver lifecycle rerun
 
 Date: 2026-05-31
-Branch: `audit/bd-order-p-07-real-browser-rerun`
+Working branch requested: `audit/bd-order-p-07-real-browser-rerun`
+PR head branch: `codex/rerun-real-browser-passenger-driver-lifecycle`
 Base commit: `ce0d480a9e260d8aadc67aa2b4236e0a6d39bd2a`
 Result: **BLOCKED**
 
@@ -51,6 +52,61 @@ await caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(k
 - service worker status: **not observed** because no browser context was available.
 - Service worker interference: **not assessed**; no SW registration could be inspected or removed.
 
+### Required setup before role-specific URLs
+
+A future real-browser rerun must not clear `localStorage` and then immediately open role-specific URLs such as `/profile?role=passenger` or `/profile?role=driver` without first establishing onboarding/user state.
+
+Reason:
+
+- The hash router redirects any non-`/welcome` route back to `/welcome` when the persisted user has `welcomeSeen === false`.
+- The profile screen chooses passenger/driver rendering from persisted `user.role`; the `?role=` query parameter by itself does not switch the profile role.
+
+Acceptable setup options for the next runnable real-browser environment:
+
+1. Complete onboarding through the UI before opening role-specific URLs.
+2. For audit automation, explicitly seed `bazardrive.user.v1` after cleanup and before opening role-specific URLs.
+
+Passenger seed example for option 2:
+
+```js
+localStorage.setItem('bazardrive.user.v1', JSON.stringify({
+  welcomeSeen: true,
+  onboarded: true,
+  role: 'passenger',
+  displayName: 'Мария Смирнова',
+  firstName: 'Мария',
+  lastName: 'Смирнова',
+  city: 'Москва',
+  phone: '+79990000001',
+  phoneVerified: true,
+  profileStatus: 'ready',
+  notificationsEnabled: true
+}));
+location.reload();
+```
+
+Before the driver leg, intentionally switch only the persisted user/role snapshot while keeping the same browser storage so the localStorage/mock PWA can still expose the passenger-created order to the driver:
+
+```js
+localStorage.setItem('bazardrive.user.v1', JSON.stringify({
+  welcomeSeen: true,
+  onboarded: true,
+  role: 'driver',
+  displayName: 'Илья Водитель',
+  firstName: 'Илья',
+  lastName: 'Водитель',
+  city: 'Москва',
+  phone: '+79990000002',
+  phoneVerified: true,
+  profileStatus: 'ready',
+  notificationsEnabled: true,
+  driverOnline: true,
+  documentsReady: true,
+  taxiPermit: true
+}));
+location.reload();
+```
+
 ## 3. Scenario transcript
 
 ### Passenger steps
@@ -59,26 +115,29 @@ await caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(k
 | --- | --- | --- |
 | 1 | Open app in a clean browser context | Blocked — no browser runtime. |
 | 2 | Clear `localStorage`, caches, service workers | Blocked — no browser runtime. |
-| 3 | Open `/profile?role=passenger` | Not executed. |
-| 4 | Verify passenger-specific actions and no driver leakage | Not executed. |
-| 5 | Open `/map?role=passenger` | Not executed. |
-| 6 | Create a passenger order through `/route-picker`, `/route-preview` if used, and `/order-map-draft?role=passenger` | Not executed. |
-| 7 | Publish the order | Not executed. |
-| 8 | Capture `orderId`/`tripId` from UI, URL, or localStorage | Not available. |
-| 9 | Verify `/active-ride?role=passenger` and `/active-ride?role=passenger&tripId=<id>` | Not executed. |
+| 3 | Complete onboarding through UI or seed `bazardrive.user.v1` with `welcomeSeen: true`, `onboarded: true`, and `role: 'passenger'` | Not executed. |
+| 4 | Open `/profile?role=passenger` after passenger state exists | Not executed. |
+| 5 | Verify passenger-specific actions and no driver leakage | Not executed. |
+| 6 | Open `/map?role=passenger` | Not executed. |
+| 7 | Create a passenger order through `/route-picker`, `/route-preview` if used, and `/order-map-draft?role=passenger` | Not executed. |
+| 8 | Publish the order | Not executed. |
+| 9 | Capture `order.id` / `orderId` from UI, URL, or `bazardrive.ride_orders.v1`; do **not** require a `tripId` before driver acceptance | Not available. |
+| 10 | Verify the pre-accept passenger state through `/responses?orderId=<orderId>` or the relevant post-publish responses route | Not executed. |
 
 ### Driver steps
 
 | Step | Target | Browser result |
 | --- | --- | --- |
-| 10 | Open `/profile?role=driver` | Not executed. |
-| 11 | Verify driver profile does not create a passenger order by default | Not executed. |
-| 12 | Open `/driver-map?role=driver` | Not executed. |
-| 13 | Verify the passenger order is visible to the driver | Not executed. |
-| 14 | Accept the order | Not executed. |
-| 15 | Verify transition to `/active-ride?role=driver&tripId=<id>` | Not executed. |
-| 16 | Verify passenger snapshot/order data persist | Not executed. |
-| 17 | Verify passenger side `/active-ride?role=passenger&tripId=<id>` shows accepted/driver en route state | Not executed. |
+| 11 | Switch the persisted user/role snapshot intentionally to driver while preserving the same browser storage/order data | Not executed. |
+| 12 | Open `/profile?role=driver` after driver state exists | Not executed. |
+| 13 | Verify driver profile does not create a passenger order by default | Not executed. |
+| 14 | Open `/driver-map?role=driver` | Not executed. |
+| 15 | Verify the passenger order is visible to the driver | Not executed. |
+| 16 | Accept the order | Not executed. |
+| 17 | Capture the canonical active ride trip id after acceptance, expected as `trip_<orderId>` or the `tripId` from the redirected URL | Not available. |
+| 18 | Verify transition to `/active-ride?role=driver&tripId=<tripId>` | Not executed. |
+| 19 | Verify passenger snapshot/order data persist | Not executed. |
+| 20 | Verify passenger side `/active-ride?role=passenger&tripId=<tripId>` shows accepted/driver en route state | Not executed. |
 
 ### Lifecycle/status steps
 
@@ -108,11 +167,11 @@ Intended browser URLs for the rerun:
 - `http://127.0.0.1:8000/#/route-picker?role=passenger`
 - `http://127.0.0.1:8000/#/route-preview?role=passenger`
 - `http://127.0.0.1:8000/#/order-map-draft?role=passenger`
-- `http://127.0.0.1:8000/#/active-ride?role=passenger`
-- `http://127.0.0.1:8000/#/active-ride?role=passenger&tripId=<id>`
+- `http://127.0.0.1:8000/#/responses?orderId=<orderId>`
+- `http://127.0.0.1:8000/#/active-ride?role=passenger&tripId=<tripId>`
 - `http://127.0.0.1:8000/#/profile?role=driver`
 - `http://127.0.0.1:8000/#/driver-map?role=driver`
-- `http://127.0.0.1:8000/#/active-ride?role=driver&tripId=<id>`
+- `http://127.0.0.1:8000/#/active-ride?role=driver&tripId=<tripId>`
 
 ### Console error summary
 
@@ -154,7 +213,7 @@ Expected snippets to capture in the next runnable browser environment:
 
 ```json
 {
-  "bazardrive.user.v1": "passenger or driver role snapshot",
+  "bazardrive.user.v1": "seeded passenger snapshot before passenger leg; intentionally switched to driver snapshot before driver leg",
   "bazardrive.route_draft.v1": "route draft used to publish the passenger order",
   "bazardrive.ride_orders.v1": "created passenger order and terminal guard state",
   "bazardrive.active_ride.v1": "accepted trip snapshot with preserved passenger identity"
@@ -183,6 +242,7 @@ This is not a PASS and not an application lifecycle FAIL. The requested browser-
 
 ```bash
 git checkout -B audit/bd-order-p-07-real-browser-rerun
+# Requested working branch for the smoke attempt; PR metadata later used codex/rerun-real-browser-passenger-driver-lifecycle as the head branch.
 ```
 
 ```bash
