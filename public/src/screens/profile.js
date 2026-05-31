@@ -53,6 +53,10 @@ const SVG_CALENDAR_PO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="n
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function createIntentRoute(u) {
+  return isDriverMode(u) ? '/new?type=driver_offer' : '/new?type=passenger_request';
+}
+
 function initials(u) {
   const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.displayName || '';
   if (!name.trim()) return '?';
