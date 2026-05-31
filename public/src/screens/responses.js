@@ -1,7 +1,7 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { acceptOrder, getOrderById, listNearbyOrders } from '../mock_api.js';
-import { createDemoActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
+import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 
 const MOCK_REQUEST = {
   id:          'post_1001',
@@ -627,10 +627,17 @@ function passengerSnapshot(order) {
 }
 
 function buildPassengerActiveRide(order, request, driver) {
+  const sourceOrderId = order && order.id ? String(order.id) : '';
+  const requestOrderId = request && request.orderId ? String(request.orderId) : '';
+  const orderId = sourceOrderId || requestOrderId;
+  const tripId = `trip_${orderId}`;
+  const existingRide = findActiveRide(tripId);
+  if (existingRide) {
+    return { tripId, ride: existingRide, reused: true };
+  }
+
   const accepted = order && order.status === 'CREATED' ? acceptOrder(order.id) : order;
   const sourceOrder = accepted || order;
-  const orderId = sourceOrder?.id || request.orderId;
-  const tripId = `trip_${orderId}`;
   const now = new Date().toISOString();
   const ride = createDemoActiveRide({
     tripId,

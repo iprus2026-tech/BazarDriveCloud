@@ -65,7 +65,8 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 
 ### Choose-driver handoff
 
-- Choosing a driver seeds `bazardrive.active_ride.v1` locally.
+- Choosing a driver seeds `bazardrive.active_ride.v1` locally when `trip_<orderId>` does not exist yet.
+- Reopening `#/responses?orderId=<acceptedOrderId>&state=offer` after handoff must reuse the existing `bazardrive.active_ride.v1[trip_<orderId>]` record and must not overwrite its driver, route, passenger or progressed status snapshots.
 - The active ride record preserves:
   - `orderId` / route / price snapshot;
   - passenger snapshot from the canonical order when available;
