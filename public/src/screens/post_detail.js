@@ -3,9 +3,11 @@ import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { user } from '../state.js';
 import {
-  isDriverLineReady,
+  canAcceptOrder,
   canAcceptPassengerRequest,
+  canManageOwnOrder,
   acceptPassengerRequestFromPost,
+  acceptCanonicalRideOrder,
 } from '../ride_actions.js';
 
 const TYPE_LABELS = {
@@ -191,14 +193,17 @@ function renderMissing(root) {
 }
 
 // Decide which footer to render for a post given current user state.
-// Returns { kind: 'none' | 'respond' | 'chat' | 'accept' } where 'none'
+// Returns { kind: 'none' | 'own' | 'respond' | 'chat' | 'accept' } where 'none'
 // means the post has no primary interaction (announcement / system).
 function pickCtaSpec(post, u) {
   if (post.type === 'announcement' || post.type === 'system') {
     return { kind: 'none' };
   }
   if (post.type === 'trip' && post.passenger === true) {
-    if (u.role === 'driver' && isDriverLineReady(u)) {
+    if (canManageOwnOrder(post, u)) {
+      return { kind: 'own', label: 'К моему заказу' };
+    }
+    if (canAcceptOrder(post, u)) {
       return { kind: 'accept', label: 'Принять заказ' };
     }
     return { kind: 'respond', label: 'Откликнуться' };
@@ -242,12 +247,26 @@ function runCtaAction(spec, post, detailsHref) {
     return;
   }
   const postId = post.id || '';
+  if (spec.kind === 'own') {
+    if (post.canonical === 'ride_order' && post.orderId) {
+      go(`/responses?orderId=${encodeURIComponent(post.orderId)}`);
+    } else {
+      go(postId ? `/post?id=${encodeURIComponent(postId)}` : '/feed');
+    }
+    return;
+  }
   if (spec.kind === 'chat') {
     go(postId ? `/chat?tripId=${encodeURIComponent(postId)}` : '/chat');
     return;
   }
   if (spec.kind === 'accept') {
     if (!canAcceptPassengerRequest(fresh, post)) return;
+    if (post.canonical === 'ride_order' && post.orderId) {
+      const accepted = acceptCanonicalRideOrder(post.orderId);
+      if (!accepted) return;
+      go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=DRIVER_EN_ROUTE`);
+      return;
+    }
     const ride = acceptPassengerRequestFromPost(post);
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(ride.tripId)}`);
     return;

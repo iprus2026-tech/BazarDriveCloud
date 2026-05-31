@@ -8,10 +8,18 @@ import {
   saveActiveRide,
   RIDE_STATUS,
 } from './ride_state.js';
-import { acceptNearbyOrder } from './mock_api.js';
+import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
+}
+
+export function isPassengerMode(u) {
+  return !!u && u.role === 'passenger';
+}
+
+export function isDriverMode(u) {
+  return !!u && u.role === 'driver';
 }
 
 export function isDriverLineReady(u) {
@@ -21,6 +29,37 @@ export function isDriverLineReady(u) {
     && u.documentsReady === true
     && u.waybillOpen === true
     && u.medicalCheckPassed === true);
+}
+
+export function canManageOwnOrder(order, _user) {
+  if (!order || typeof order !== 'object') return false;
+  if (order.createdByCurrentUser === true) return true;
+  if (order.isCurrentUser === true) return true;
+  if (order.authorId === LOCAL_USER_ID) return true;
+
+  const passenger = order.passenger;
+  if (passenger && typeof passenger === 'object') {
+    if (passenger.isCurrentUser === true) return true;
+    if (passenger.authorId === LOCAL_USER_ID) return true;
+  }
+
+  return false;
+}
+
+export function canAcceptOrder(order, u) {
+  if (!order || !isDriverMode(u)) return false;
+  if (!isDriverLineReady(u)) return false;
+  if (canManageOwnOrder(order, u)) return false;
+
+  if (order.canonical === 'ride_order' && order.orderId) {
+    return order.type === 'trip' && order.passenger === true;
+  }
+
+  if (order.type === 'trip') {
+    return order.passenger === true;
+  }
+
+  return order.type === 'ride_order' || order.type === 'passenger_request';
 }
 
 export function buildRideFromPost(post) {
@@ -45,10 +84,7 @@ export function buildRideFromPost(post) {
 }
 
 export function canAcceptPassengerRequest(u, post) {
-  if (!u || !post) return false;
-  if (u.role !== 'driver') return false;
-  if (!isDriverLineReady(u)) return false;
-  return post.type === 'trip' && post.passenger === true;
+  return canAcceptOrder(post, u);
 }
 
 export function acceptPassengerRequestFromPost(post) {

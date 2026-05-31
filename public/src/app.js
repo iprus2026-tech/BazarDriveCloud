@@ -2,6 +2,7 @@ import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
+import { isDriverMode } from './ride_actions.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -57,6 +58,11 @@ function getMapEntryRoute() {
   return profile.role === 'driver' ? '/driver-map' : '/map';
 }
 
+function getCreateEntryRoute() {
+  const profile = user.get();
+  return isDriverMode(profile) ? '/driver-map' : '/new';
+}
+
 document.getElementById('tabbar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-route]');
   if (!btn?.dataset.route) return;
@@ -68,7 +74,7 @@ document.getElementById('tabbar').addEventListener('click', (e) => {
 });
 
 document.getElementById('fab').addEventListener('click', () => {
-  requireOnboarding(() => go('/new'));
+  requireOnboarding(() => go(getCreateEntryRoute()));
 });
 
 start();
