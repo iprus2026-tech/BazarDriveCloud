@@ -30,6 +30,7 @@ const DRIVER_SHEETS_CSS_ID = 'driver-sheets-css';
 
 const DRIVER_SIMULATION_STATUSES = new Set([
   RIDE_STATUS.NEW_ORDER,
+  RIDE_STATUS.ACCEPTED,
   RIDE_STATUS.DRIVER_EN_ROUTE,
   RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
   RIDE_STATUS.WAITING_PASSENGER,
@@ -108,6 +109,10 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
     // permanently rewrite the stored canonical record; later user
     // actions (accept / cancel / etc.) persist via updateActiveRideStatus.
     return { ...ride, status: RIDE_STATUS.NEW_ORDER };
+  }
+  if (statusQuery === RIDE_STATUS.ACCEPTED) {
+    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.ACCEPTED };
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
@@ -560,6 +565,7 @@ export default function activeRide() {
     sheet.dataset.status = ride.status;
     setMapBanner('');
     if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
+    else if (ride.status === RIDE_STATUS.ACCEPTED) renderAccepted();
     else if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE || ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) renderEnRoute();
     else if (ride.status === RIDE_STATUS.WAITING_PASSENGER) renderWaiting();
     else if (ride.status === RIDE_STATUS.IN_PROGRESS) renderInProgress();
@@ -582,6 +588,15 @@ export default function activeRide() {
 
   function navCard() {
     return `<div class="active-ride__nav-card"><div class="active-ride__nav-icon" aria-hidden="true">➜</div><div class="active-ride__nav-body"><div class="active-ride__nav-main">${escapeHtml(ride.route?.currentInstruction || '')}</div><div class="active-ride__nav-sub">${escapeHtml(ride.route?.currentStreet || '')}</div></div><button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button></div>`;
+  }
+
+
+  function renderAccepted() {
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.pickupLabel || 'Точка подачи')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
+    sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
+    sheet.querySelector('#ar-open-chat-accepted').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
+    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED); renderSheet(); } }));
+    bindPassengerActions();
   }
 
   function renderEnRoute() {
