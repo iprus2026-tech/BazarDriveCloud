@@ -1,242 +1,125 @@
-# BD-ORDER-P-08 — Real device/browser passenger-driver lifecycle smoke
+# BD-ORDER-P-08 / BD-ORDER-P-09 — Active ride handoff and terminal cleanup smoke notes
 
 Date: 2026-05-31
-Requested repo: `iprus2026-tech/BazarDriveCloud`
-Requested working branch: `audit/bd-order-p-08-real-device-lifecycle-smoke`
-Actual local branch: `audit/bd-order-p-08-real-device-lifecycle-smoke`
-Base/local commit under test: `2428eccf71582f14659e656497f33e95ba4f7f45`
-Task type: QA smoke / runtime audit, no feature implementation
-Final verdict: **FAIL: lifecycle not executed because the environment has no real browser/device runtime available**
+Repo: `iprus2026-tech/BazarDriveCloud`
+Branch: `audit/bd-order-p-08-real-device-lifecycle-smoke`
+Current PR scope: runtime fix + audit notes, **not docs-only**
+Current local head: `26cbc8f active_ride: sync canonical order status and prefer latest handed-off tripId; add audit and checks`
+Current verdict: **FIX READY — code updated; manual deploy smoke still required after merge/deploy**
 
-This audit does **not** claim a product lifecycle failure. It records that the requested real browser / Android Chrome smoke could not be executed in this container because no Chrome/Chromium/Firefox executable is installed, Playwright/Puppeteer are not installed, and both npm and apt acquisition paths are blocked by `403 Forbidden` responses from configured proxies. The local static server and repository preflight check were executed successfully.
+## 1. What changed since the original blocked audit
 
-## 1. Environment
+The first version of this document recorded a container-only smoke attempt that could not open a real browser. That note is now superseded by the reviewer-provided Real Chrome findings and the runtime fix included in this PR.
 
-- Device: container only; no attached Android phone/tablet and no local desktop browser executable available.
-- OS: Ubuntu 24.04.4 LTS on Linux kernel `6.12.47`.
-- Browser/version: **not available**.
-  - `google-chrome --version`: command not found.
-  - `google-chrome-stable --version`: command not found.
-  - `chromium --version`: command not found.
-  - `chromium-browser --version`: command not found.
-  - `firefox --version`: command not found.
-  - Browser binary scan under `/usr`, `/opt`, and `/root`: no `chrome`, `chromium`, `chromium-browser`, `firefox`, `chrome-headless-shell`, or `msedge` executable found.
-- Automation/runtime packages: **not available**.
-  - `require.resolve('playwright')`: not installed.
-  - `require.resolve('puppeteer')`: not installed.
-  - `require.resolve('@playwright/test')`: not installed.
-- Package acquisition attempts:
-  - `npm view playwright version` failed with `403 Forbidden - GET https://registry.npmjs.org/playwright`.
-  - `apt-get update` failed with `403 Forbidden` for Ubuntu and auxiliary apt repositories through proxy `172.30.0.115:8080`.
-- URL under test: `http://127.0.0.1:4173/` / `http://localhost:4173/`.
-- Branch: `audit/bd-order-p-08-real-device-lifecycle-smoke`.
-- Commit SHA: `2428eccf71582f14659e656497f33e95ba4f7f45`.
-- Service worker version from source: `v68` (`CACHE_NAME = bazardrive-v68`). Runtime registration could not be inspected without a browser context.
-- Local server command: `python3 -m http.server 4173 -d public`.
-- Static server HTTP result: `curl -I http://127.0.0.1:4173/` returned `HTTP/1.0 200 OK` with `Content-type: text/html`.
+This PR now changes application runtime code in addition to keeping this audit note:
 
-## 2. Preflight
+- `public/src/screens/active_ride.js` resolves driver `/active-ride?role=driver` without `tripId` through the latest live handed-off order before falling back to the demo ride.
+- `public/src/screens/active_ride.js` synchronizes driver active ride lifecycle changes from `bazardrive.active_ride.v1` into canonical `bazardrive.ride_orders.v1`.
+- `scripts/check.mjs` contains static regression guards for the driver fallback and canonical order status synchronization.
 
-- Requested `git checkout main`: **failed** because the local repository has no `main` branch.
-- Requested `git pull origin main`: **failed** because no `origin` remote is configured in this checkout.
-- Working branch created locally from the only available branch/commit: `audit/bd-order-p-08-real-device-lifecycle-smoke`.
-- `node scripts/check.mjs`: **PASS**, output: `All checks passed.`
-- Local static server: **PASS**, `python3 -m http.server 4173 -d public` served `public/index.html` successfully.
-- Console errors: **not available**; no browser session could be opened.
-- Screenshots/video: **not attached**; no browser/device runtime was available.
-- Application source code changes before/during smoke: **none**.
+The old statement "no application implementation code was changed" is no longer true and must not be used for this PR.
 
-## 3. Scenario results
+## 2. Real Chrome smoke findings reported for BD-ORDER-P-08
 
-| Step | URL | Expected | Actual | Pass/Fail | Notes |
-| --- | --- | --- | --- | --- | --- |
-| A. Preflight `/feed` | `http://localhost:4173/#/feed` or routed equivalent | App opens, no white screen, no uncaught console errors, bottom nav visible, hard reload survives. | Not executed in a browser; only static server root was reachable via `curl`. | FAIL | Environment blocked by missing browser/runtime. |
-| A. FAB guard on active ride | `http://localhost:4173/#/active-ride?role=driver` and passenger equivalent | FAB is hidden on active ride. | Not executed. | FAIL | Requires browser rendering and DOM inspection. |
-| B. Passenger order creation | Passenger create-order flow, including `pickup=Лобня`, `dropoff=Катуар`, `comment=smoke BD-ORDER-P-08` | Order is saved to mock/localStorage and visible as `CREATED` / new order. | Not executed. | FAIL | No localStorage context available. |
-| B. localStorage changed keys | Browser storage after passenger publish | Changed keys captured. | Not executed. | FAIL | Expected keys likely include `bazardrive.ride_orders.v1`, route draft, and active ride/order handoff keys, but runtime state was not created. |
-| C. Driver open order | `http://localhost:4173/#/driver-map` | Driver sees passenger-created order, route, pickup/dropoff, price/meta/status. | Not executed. | FAIL | Requires shared browser storage between passenger and driver role legs. |
-| C. Accept order | Driver open-order card/action | First accept succeeds; duplicate accept is blocked or harmless; order becomes accepted active trip. | Not executed. | FAIL | No click/runtime path available. |
-| D. Passenger accepted-driver state | `http://localhost:4173/#/active-ride?role=passenger` and `...&status=DRIVER_EN_ROUTE` | Passenger sees accepted driver and no driver-only copy. | Not executed. | FAIL | Requires accepted trip state. |
-| E. Driver lifecycle | `http://localhost:4173/#/active-ride?role=driver` | Statuses advance through `DRIVER_EN_ROUTE`, `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`; primary actions match state; reload does not reset unexpectedly. | Not executed. | FAIL | Requires browser state and UI action handling. |
-| F. Passenger mirrored lifecycle | `http://localhost:4173/#/active-ride?role=passenger&status=DRIVER_EN_ROUTE`, `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`, `CANCELED`, `NO_SHOW` | Passenger copy mirrors driver status; write/call/safety/cancel controls do not white-screen. | Not executed. | FAIL | Requires browser rendering and navigation/button checks. |
-| G. Cross-role reload | Passenger and driver active ride URLs after driver acceptance | Reload on each role preserves accepted/current state; state does not revert to `CREATED`; terminal trips do not reappear as active feed/driver-map orders. | Not executed. | FAIL | Requires accepted/terminal persisted storage. |
-| H. Navigation smoke | `/feed`, `/chat`, `/respond`, `/driver-map`, `/active-ride?role=driver`, `/active-ride?role=passenger` | No white screen, no uncaught errors, back/navigation keeps shell stable, active ride hides chrome/tabbar where expected. | Not executed. | FAIL | Requires browser navigation. |
-| I. Browser/device checks | Android Chrome portrait; desktop Chrome responsive 390–430 px; reload; offline/online; site data clear | Real-device/runtime checks complete. | Not executed. | FAIL | No real browser/device present in the environment. |
+A Real Chrome smoke run confirmed the explicit-tripId passenger-driver lifecycle works through completion:
 
-## 4. Bugs found
+| Area | Result |
+| --- | --- |
+| `/responses?orderId=<orderId>&state=list` | PASS — shows driver offers. |
+| Select driver | PASS — opens `/active-ride?role=passenger&tripId=trip_<orderId>&status=DRIVER_EN_ROUTE`. |
+| Driver explicit active ride | PASS — `/active-ride?role=driver&tripId=trip_<orderId>&status=ACCEPTED` opens the same trip. |
+| Driver lifecycle | PASS — actions progress through `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`. |
+| Passenger mirror | PASS — passenger sees `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`. |
+| Route/price consistency | PASS — route and price stay consistent across passenger/driver views. |
 
-No application bugs were confirmed because the smoke did not reach application interaction in a browser. The only blockers recorded are environment/setup blockers.
+## 3. Bugs found in Real Chrome smoke
 
-### Environment blocker 1 — No real browser executable available
+### Bug 1 — Completed passenger order still appeared active in Feed
 
-- Severity: blocker for this QA task.
-- Reproduction steps:
-  1. Run `google-chrome --version`, `google-chrome-stable --version`, `chromium --version`, `chromium-browser --version`, and `firefox --version`.
-  2. Search expected browser install locations with `find /usr /opt /root -maxdepth 5 -type f \( -name chrome -o -name chromium -o -name chromium-browser -o -name firefox -o -name chrome-headless-shell -o -name msedge \)`.
-- Expected: at least one Chrome/Chromium/Firefox executable is available for the requested real browser smoke.
-- Actual: all version commands returned `command not found`; the filesystem scan returned no browser executable.
-- Console error: not available; no browser console exists.
-- localStorage keys/state: not available; no browser context exists.
-- Screenshot/video: not attached.
+- Severity: high.
+- Reproduction:
+  1. Create passenger order.
+  2. Select driver from responses.
+  3. Open driver active ride with explicit `tripId`.
+  4. Progress driver lifecycle to `COMPLETED`.
+  5. Open `/feed`.
+- Expected: completed order no longer appears as active/current passenger order.
+- Actual before fix: `/feed` still showed the completed passenger order card as active with `К моему заказу`.
+- Root cause: driver active ride status was persisted in `bazardrive.active_ride.v1`, but canonical `bazardrive.ride_orders.v1` was not advanced to terminal status.
+- Fix in this PR: driver active ride status actions now call a wrapper that persists `active_ride.v1` and syncs canonical `ride_orders.v1` through `updateTripStatus()`.
 
-### Environment blocker 2 — Browser automation packages unavailable and cannot be fetched
+### Bug 2 — Bare driver active ride did not resolve current non-terminal handoff
 
-- Severity: blocker for this QA task in the current container.
-- Reproduction steps:
-  1. Run `node -e "for (const p of ['playwright','puppeteer','@playwright/test']) { try { console.log(p, require.resolve(p)); } catch(e) { console.log('no '+p); } }"`.
-  2. Run `npm view playwright version`.
-- Expected: Playwright/Puppeteer is installed or can be acquired temporarily outside the repo.
-- Actual: none of the packages are installed; npm registry access for Playwright returns `403 Forbidden`.
-- Console error: not available.
-- localStorage keys/state: not available.
-- Screenshot/video: not attached.
+- Severity: high.
+- Reproduction:
+  1. Create passenger order.
+  2. Select/accept driver so `trip_<orderId>` exists.
+  3. While the trip is non-terminal, open `/active-ride?role=driver` without `tripId`.
+- Expected: driver screen resolves the latest live handed-off trip.
+- Actual before fix: driver screen could show `Нет активного заказа`.
+- Root cause: passenger active ride already used `findLatestHandedOffOrderTripId()` when `tripId` was missing, but the driver branch only resolved canonical rides when explicit `tripId`, valid status query, or driver handoff snapshot existed.
+- Fix in this PR: driver branch now resolves `findLatestHandedOffOrderTripId()` before the demo fallback when the URL has no explicit `tripId`.
 
-### Environment blocker 3 — System package installation path blocked
+## 4. Runtime fix summary
 
-- Severity: blocker for installing a browser in the current container.
-- Reproduction steps:
-  1. Run `apt-get update`.
-- Expected: apt indices update so Chromium/Firefox can be installed if absent.
-- Actual: Ubuntu archive/security repositories and auxiliary apt repositories return `403 Forbidden` through proxy `172.30.0.115:8080`; apt exits with code `100`.
-- Console error: not available.
-- localStorage keys/state: not available.
-- Screenshot/video: not attached.
+### Driver default active ride fallback
 
-### Environment blocker 4 — Requested main/origin preflight unavailable in checkout
+Behavior after fix:
 
-- Severity: medium for reproducing the exact requested branch setup.
-- Reproduction steps:
-  1. Run `git checkout main`.
-  2. Run `git pull origin main`.
-- Expected: local `main` exists and `origin` remote points to `iprus2026-tech/BazarDriveCloud`.
-- Actual: `main` pathspec is unknown and no `origin` remote is configured.
-- Console error: not applicable.
-- localStorage keys/state: not applicable.
-- Screenshot/video: not applicable.
+1. If URL has `tripId`, use it.
+2. Else call `findLatestHandedOffOrderTripId()`.
+3. Else fall back to `DEMO_ACTIVE_RIDE_ID`.
+4. Show the driver empty state only when all are absent/invalid:
+   - no explicit `tripId`,
+   - no latest handed-off trip,
+   - no valid status query,
+   - no driver handoff snapshot,
+   - no canonical active ride.
 
-## 5. Final verdict
+`findLatestHandedOffOrderTripId()` already skips terminal active rides, so `/active-ride?role=driver` should be empty after `COMPLETED`, `CANCELED`, or `NO_SHOW` instead of reopening the terminal trip.
 
-**FAIL: lifecycle broken by environment blockers, not by a confirmed application defect.**
+### Canonical ride order terminal cleanup
 
-The passenger → driver → active ride lifecycle remains **unverified** for BD-ORDER-P-08. A valid rerun needs either:
+Driver active ride actions now keep `bazardrive.ride_orders.v1` aligned with `bazardrive.active_ride.v1`:
 
-1. a real desktop Chrome/Chromium/Firefox browser attached to this environment,
-2. an Android device reachable from the local server URL, or
-3. preinstalled Playwright/Puppeteer plus a browser binary/cache.
+| Active ride status | Canonical ride order status |
+| --- | --- |
+| `IN_PROGRESS` | `IN_PROGRESS` |
+| `COMPLETED` | `COMPLETED` |
+| `CANCELED` | `CANCELED` |
+| `NO_SHOW` | `CANCELED` |
 
-## 6. Requested no-code-change state
+The sync uses `ride.orderId` when present and defensively derives `orderId` from `trip_order-*` for older handoffs. A defensive bridge moves stale canonical orders through allowed transitions (`CREATED → ACCEPTED → IN_PROGRESS → COMPLETED`) when needed.
 
-- Implementation code changed: **no**.
-- Audit report created: `docs/audits/bd-order-p-08-real-device-lifecycle-smoke.md`.
-- Expected git state after report creation: only this docs audit file should be modified/added.
+## 5. Regression checks run in this branch
 
-## 7. Evidence and command log
+| Check | Result | Notes |
+| --- | --- | --- |
+| `node scripts/check.mjs` | PASS | Repository preflight and active-ride static regression guards passed. |
+| Mocked Node lifecycle regression | PASS | Created/accepted a passenger order with mocked `localStorage`, verified latest active handoff resolution, synced `IN_PROGRESS`/`COMPLETED`, verified Feed/DriverMap projections exclude non-`CREATED`/terminal orders, and verified terminal trips are not returned by `findLatestHandedOffOrderTripId()`. |
+| Static server smoke | PASS | `python3 -m http.server 4173 -d public` served `public/index.html`; `curl -I http://127.0.0.1:4173/` returned HTTP 200. |
+| Real Chrome rerun after fix in this container | NOT RUN | This container still has no installed browser/device runtime. The fix needs a deploy/browser rerun. |
 
-```bash
-git status --short --branch
-# Initial: ## work
-```
+## 6. Required manual deploy smoke after merge/deploy
 
-```bash
-git checkout main
-# error: pathspec 'main' did not match any file(s) known to git
-```
+Run on GitHub Pages or another real browser deployment:
 
-```bash
-git pull origin main
-# fatal: 'origin' does not appear to be a git repository
-# fatal: Could not read from remote repository.
-```
+1. Create a passenger order.
+2. Open `/responses?orderId=<orderId>&state=list`.
+3. Select a driver.
+4. While the ride is active, open `/active-ride?role=driver` without `tripId`; it should resolve the current `trip_<orderId>`.
+5. Open `/active-ride?role=driver&tripId=trip_<orderId>&status=ACCEPTED`.
+6. Progress driver lifecycle:
+   - `Я на месте`,
+   - `Начать поездку`,
+   - `Завершить`.
+7. Verify `/active-ride?role=passenger&tripId=trip_<orderId>` shows completed.
+8. Verify `/feed` no longer shows the completed order as active/current.
+9. Verify `/driver-map` does not show the completed order as nearby.
+10. Verify `/active-ride?role=driver` without `tripId` is empty after terminal status.
 
-```bash
-git checkout -B audit/bd-order-p-08-real-device-lifecycle-smoke
-# Switched to a new branch 'audit/bd-order-p-08-real-device-lifecycle-smoke'
-```
+## 7. Final verdict
 
-```bash
-node scripts/check.mjs
-# All checks passed.
-```
+**Code: APPROVE after manual deploy smoke.**
 
-```bash
-python3 -m http.server 4173 -d public
-# Started successfully and served http://127.0.0.1:4173/
-```
-
-```bash
-curl -I http://127.0.0.1:4173/
-# HTTP/1.0 200 OK
-# Content-type: text/html
-# Content-Length: 3918
-```
-
-```bash
-for c in google-chrome google-chrome-stable chromium chromium-browser firefox playwright npx node npm python3; do printf '%-24s' "$c"; command -v "$c" || true; done
-# Only npx, node, npm, and python3 were found.
-```
-
-```bash
-(google-chrome --version || google-chrome-stable --version || chromium --version || chromium-browser --version || firefox --version) 2>&1 | head -20
-# All browser version commands returned command not found.
-```
-
-```bash
-node -e "for (const p of ['playwright','puppeteer','@playwright/test']) { try { console.log(p, require.resolve(p)); } catch(e) { console.log('no '+p); } }"
-# no playwright
-# no puppeteer
-# no @playwright/test
-```
-
-```bash
-npm view playwright version
-# npm error 403 403 Forbidden - GET https://registry.npmjs.org/playwright
-```
-
-```bash
-apt-get update
-# Failed with 403 Forbidden for Ubuntu repositories through proxy 172.30.0.115:8080.
-```
-
-```bash
-find /usr /opt /root -maxdepth 5 -type f \( -name chrome -o -name chromium -o -name chromium-browser -o -name firefox -o -name chrome-headless-shell -o -name msedge \) 2>/dev/null | head -100
-# No browser executable found.
-```
-
-## 8. URLs checked or targeted
-
-Actually checked without a browser:
-
-- `http://127.0.0.1:4173/` — `curl -I` returned `HTTP/1.0 200 OK`.
-
-Targeted but not browser-opened because no browser/device runtime exists:
-
-- `http://localhost:4173/#/feed`
-- `http://localhost:4173/#/chat`
-- `http://localhost:4173/#/respond`
-- `http://localhost:4173/#/driver-map`
-- `http://localhost:4173/#/active-ride?role=driver`
-- `http://localhost:4173/#/active-ride?role=passenger`
-- `http://localhost:4173/#/active-ride?role=passenger&status=DRIVER_EN_ROUTE`
-- `http://localhost:4173/#/active-ride?role=passenger&status=WAITING_PASSENGER`
-- `http://localhost:4173/#/active-ride?role=passenger&status=IN_PROGRESS`
-- `http://localhost:4173/#/active-ride?role=passenger&status=COMPLETED`
-- `http://localhost:4173/#/active-ride?role=passenger&status=CANCELED`
-- `http://localhost:4173/#/active-ride?role=passenger&status=NO_SHOW`
-
-## 9. End-of-audit commands
-
-To be run immediately before commit/PR:
-
-```bash
-git status --short --branch
-```
-
-```bash
-git diff --stat
-```
-
-```bash
-node scripts/check.mjs
-```
-
-Final verdict repeated: **FAIL: lifecycle not executed because no real browser/device runtime is available in this environment.**
+**PR metadata/docs: updated.** This document no longer marks the PR as docs-only or blocked-only. It records the Real Chrome findings, the runtime fixes in `active_ride.js`, the regression checks, and the remaining required browser rerun after deployment.
