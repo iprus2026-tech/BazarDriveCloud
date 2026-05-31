@@ -476,7 +476,13 @@ export default function activeRide() {
   ensureDriverSheetsCss();
 
   const rawTripId = query.get('tripId');
-  const tripId = rawTripId || DEMO_ACTIVE_RIDE_ID;
+  // BD-ORDER-P-08 — DriverMap accept → ActiveRide handoff. Driver
+  // mirrors the passenger resolver: when the URL omits tripId, look up
+  // the latest live handed-off order before falling back to the demo id.
+  // findLatestHandedOffOrderTripId() skips terminal canonical rides, so
+  // completed/canceled/no-show trips do not reopen from the bare driver URL.
+  const latestHandedOffTripId = rawTripId ? null : findLatestHandedOffOrderTripId();
+  const tripId = rawTripId || latestHandedOffTripId || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
@@ -494,13 +500,13 @@ export default function activeRide() {
   if (!ride) {
     const driverSnapshot = loadDriverHandoffSnapshot(tripId);
     const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
-    // BD-RIDE-D-10 — When an explicit tripId is in the URL, mirror the
-    // passenger fallback and materialize the same non-persisted demo
-    // record so both roles agree on the trip identity. The
-    // "no active order" empty placeholder is reserved for the default
-    // /active-ride?role=driver URL (no tripId in query).
+    // BD-RIDE-D-10 / BD-ORDER-P-08 — Only show the driver empty
+    // placeholder when nothing can identify a real/simulated ride: no
+    // explicit tripId, no latest live DriverMap handoff, no valid status
+    // simulation, no driver handoff snapshot, and no canonical ride.
     const hasExplicitTripId = Boolean(rawTripId);
-    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId) return renderDriverEmpty();
+    const hasLatestHandedOffTripId = Boolean(latestHandedOffTripId);
+    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty();
     const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
