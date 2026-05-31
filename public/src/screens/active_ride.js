@@ -111,7 +111,14 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
     return { ...ride, status: RIDE_STATUS.NEW_ORDER };
   }
   if (statusQuery === RIDE_STATUS.ACCEPTED) {
-    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE
+      || ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP
+      || ts.arrivedAt
+      || ts.startedAt
+      || ts.completedAt
+      || ts.canceledAt) {
+      return ride;
+    }
     return { ...ride, status: RIDE_STATUS.ACCEPTED };
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {

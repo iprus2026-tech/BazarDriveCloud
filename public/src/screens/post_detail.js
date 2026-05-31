@@ -264,7 +264,7 @@ function runCtaAction(spec, post, detailsHref) {
     if (post.canonical === 'ride_order' && post.orderId) {
       const accepted = acceptCanonicalRideOrder(post.orderId);
       if (!accepted) return;
-      go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=DRIVER_EN_ROUTE`);
+      go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=ACCEPTED`);
       return;
     }
     const ride = acceptPassengerRequestFromPost(post);
