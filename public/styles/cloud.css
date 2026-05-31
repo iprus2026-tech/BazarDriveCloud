@@ -8224,6 +8224,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   letter-spacing: -0.01em;
   color: var(--success);
 }
+.responses__selected-open,
 .responses__selected-cancel {
   flex-shrink: 0;
   background: transparent;
@@ -8236,6 +8237,11 @@ button.pfp-menu-row:active { opacity: 0.7; }
   text-underline-offset: 3px;
   transition: opacity 0.1s;
 }
+.responses__selected-open {
+  color: var(--text);
+  text-decoration: none;
+}
+.responses__selected-open:active,
 .responses__selected-cancel:active { opacity: 0.7; }
 
 /* ── All declined notice ────────────────────────────────── */
