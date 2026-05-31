@@ -3,15 +3,32 @@
 // network. Each entry is keyed by `${role}:${tripId}` so the passenger
 // and driver views of the same ride live as two independent records.
 
+import { user } from './state.js';
 import {
   getActiveRideRouteSnapshot,
   ROUTE_SNAPSHOT_DEFAULTS,
 } from './ride_state.js';
 
 const HISTORY_KEY = 'bazardrive.ride_history.v1';
+const ROLE_SCOPED_HISTORY = new Set(['passenger', 'driver']);
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function currentHistoryRole() {
+  try {
+    const role = user.get()?.role;
+    return ROLE_SCOPED_HISTORY.has(role) ? role : null;
+  } catch {
+    return null;
+  }
+}
+
+function scopeEntriesToCurrentRole(entries) {
+  const role = currentHistoryRole();
+  if (!role) return entries;
+  return entries.filter((entry) => entry?.role === role);
 }
 
 function readStore() {
@@ -28,11 +45,12 @@ function readStore() {
 // BD-RIDE-HISTORY-03 — Status-aware reader used by surfaces that need to tell
 // "empty history" (clean state) apart from "history present but unreadable"
 // (malformed JSON, non-array payload). The plain loadRideHistory() still
-// silently coalesces to [] so call sites that only care about the entries do
-// not have to think about the distinction.
+// returns the full local history so writes cannot accidentally drop the other
+// role's records.
 //   status === 'empty'     → no key in localStorage
 //   status === 'ok'        → valid array (entries already filtered to plain
-//                            objects; may still be empty)
+//                            objects and the current profile role; may still
+//                            be empty)
 //   status === 'malformed' → raw value exists but is not valid JSON or not an
 //                            array — surface should offer a friendly recovery.
 export function readRideHistoryStatus() {
@@ -49,7 +67,8 @@ export function readRideHistoryStatus() {
       return { status: 'malformed', entries: [] };
     }
     if (!Array.isArray(parsed)) return { status: 'malformed', entries: [] };
-    return { status: 'ok', entries: parsed.filter(isPlainObject) };
+    const entries = scopeEntriesToCurrentRole(parsed.filter(isPlainObject));
+    return { status: 'ok', entries };
   } catch {
     // Reaching this outer catch means localStorage access itself threw
     // (privacy mode, restricted storage, etc.) rather than the stored
