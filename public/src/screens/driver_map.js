@@ -404,8 +404,8 @@ export default function driverMapScreen() {
     } else if (action === 'active-ride') {
       const tripId = btn.dataset.tripId;
       const query = tripId
-        ? `tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`
-        : 'status=DRIVER_EN_ROUTE';
+        ? `tripId=${encodeURIComponent(tripId)}&status=ACCEPTED`
+        : 'status=ACCEPTED';
       go(`/active-ride?role=driver&${query}`);
     } else if (action === 'driver-map') {
       renderList();

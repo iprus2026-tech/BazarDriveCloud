@@ -137,7 +137,7 @@ export default async function feed() {
             refreshList();
             return;
           }
-          go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=DRIVER_EN_ROUTE`);
+          go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=ACCEPTED`);
           return;
         }
 

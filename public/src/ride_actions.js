@@ -178,7 +178,7 @@ export function seedActiveRideFromAcceptedOrder(order) {
   const ride = createDemoActiveRide({
     tripId: snapshot.tripId,
     role: 'driver',
-    status: RIDE_STATUS.DRIVER_EN_ROUTE,
+    status: RIDE_STATUS.ACCEPTED,
     order: {
       offerPrice: snapshot.priceLabel,
       destinationDistance: snapshot.distanceLabel,

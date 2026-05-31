@@ -1,5 +1,5 @@
 // BD-RIDE-P-02 / BD-RIDE-P-03 / BD-RIDE-P-04 / BD-RIDE-P-05 — Passenger
-// active ride. Supports DRIVER_EN_ROUTE (Водитель едет к вам),
+// active ride. Supports ACCEPTED (Водитель назначен), DRIVER_EN_ROUTE (Водитель едет к вам),
 // WAITING_PASSENGER (Водитель ждёт вас), IN_PROGRESS (В пути) and
 // COMPLETED (Поездка завершена + оценка). Mock/UI only. No Mapbox SDK,
 // no token, no backend, no geolocation, no real calls, no real
@@ -166,7 +166,7 @@ function loadPassengerRideView(tripId, statusQuery) {
     }
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
-    return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
+    return { ...ride, status: RIDE_STATUS.ACCEPTED };
   }
   return ride;
 }
@@ -180,6 +180,11 @@ function loadPassengerRideView(tripId, statusQuery) {
 function applyPassengerStatusFromQuery(ride, statusQuery) {
   if (!statusQuery) return ride;
   const ts = ride.timestamps || {};
+  if (statusQuery === RIDE_STATUS.ACCEPTED) {
+    if (ride.status === RIDE_STATUS.ACCEPTED) return ride;
+    if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    return { ...ride, status: RIDE_STATUS.ACCEPTED };
+  }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
     || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
@@ -307,6 +312,7 @@ function waitingInfo(ride) {
 // passenger-side stages keep a placeholder so we don't show the wrong
 // title and actions when the ride has moved on.
 const PASSENGER_SUPPORTED_STATUSES = new Set([
+  RIDE_STATUS.ACCEPTED,
   RIDE_STATUS.DRIVER_EN_ROUTE,
   RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
   RIDE_STATUS.WAITING_PASSENGER,
@@ -455,7 +461,7 @@ function renderEnRouteSheet(sheet, ride) {
 
     <div class="active-ride-passenger__header">
       <div class="active-ride-passenger__header-main">
-        <div class="active-ride-passenger__title">Водитель едет к вам</div>
+        <div class="active-ride-passenger__title">${escapeHtml(ride.status === RIDE_STATUS.ACCEPTED ? 'Водитель назначен' : 'Водитель едет к вам')}</div>
         <div class="active-ride-passenger__car">${escapeHtml(carLine(ride))}</div>
       </div>
     </div>
@@ -1892,7 +1898,7 @@ export default function activeRidePassenger(options = {}) {
       }
       return;
     }
-    // DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP
+    // ACCEPTED / DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP
     renderEnRouteSheet(sheet, ride);
     bindCommonSheetHandlers();
     const refineBtn = sheet.querySelector('#arp-refine');
