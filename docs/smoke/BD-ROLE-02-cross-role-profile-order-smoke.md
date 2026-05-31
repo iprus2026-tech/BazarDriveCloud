@@ -154,26 +154,26 @@ localStorage.removeItem('bazardrive.ride_history.v1');
 
 ### Passenger flow
 
-1. Onboard as passenger (or set `role: 'passenger'`). Open `/profile` —
+1. Onboard as passenger (or set `role: 'passenger'`). Open `#/profile` —
    confirm passenger actions (Где вы?, План, Избранное) are visible.
-2. Open `/map` → `Выбрать маршрут` → complete `/route-picker` →
+2. Open `#/map` → `Выбрать маршрут` → complete `/route-picker` →
    `/route-preview` → `/order-map-draft` and publish.
 3. Confirm the success pill reads `CREATED`.
 4. Switch role to driver (re-onboard or set `role: 'driver'`), open
-   `/driver-map`, confirm the order is listed, tap `Принять`.
+   `#/driver-map`, confirm the order is listed, tap `Принять`.
 5. Tap `К поездке` → confirm the URL carries `role=driver` and
    `tripId=trip_<order.id>`, and the passenger row shows the publisher's
    identity (not "Анна М.").
-6. Open `/active-ride?role=passenger` — confirm the passenger sheet renders.
+6. Open `#/active-ride?role=passenger` — confirm the passenger sheet renders.
 
 ### Driver flow
 
-1. Open `/profile` as a driver — confirm driver actions (смена / документы)
+1. Open `#/profile` as a driver — confirm driver actions (смена / документы)
    are visible; confirm no passenger order CTA creates an order.
 2. From the Карта tab and the FAB, confirm you land on `/driver-map`,
    never `/order-map-draft`.
 3. Go online, view nearby orders, accept one.
-4. Open `/profile` history — confirm only driver-side rides appear.
+4. Open `#/profile` history — confirm only driver-side rides appear.
 
 ### Role-leak probes (must all stay safe)
 
