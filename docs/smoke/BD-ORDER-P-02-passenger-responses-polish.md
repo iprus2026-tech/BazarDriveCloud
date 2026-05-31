@@ -2,7 +2,7 @@
 
 ## Scope
 
-Local/mock PWA flow only. `/responses` now behaves as a passenger dispatch board after BD-ORDER-P-01 publishes an order:
+Local/mock PWA flow only. `#/responses` now behaves as a passenger dispatch board after BD-ORDER-P-01 publishes an order:
 
 1. «Заказ опубликован» / «Ищем водителей» waiting state.
 2. One driver offer state.
@@ -16,9 +16,9 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 ```text
 #/responses?state=empty
 #/responses?orderId=demo-order&state=empty
-#/responses?state=offer
-#/responses?orderId=demo-order&state=offer
-#/responses?state=list
+#/responses?orderId=demo-order&state=list
+#/responses?orderId=demo-order&state=selected&driverId=driver_1
+#/responses?orderId=unknown&state=empty
 #/order-map-draft
 #/driver-map
 #/active-ride?role=passenger&status=DRIVER_EN_ROUTE
@@ -40,33 +40,36 @@ No backend, sockets, real Mapbox, real calls, payment, APK or auth work is inclu
 
 - If `<id>` exists in `bazardrive.ride_orders.v1`, the summary shows pickup → dropoff, budget, time and passenger comment.
 - If `<id>` is unknown, the screen still renders a safe fallback card instead of an error stack.
-- CTA preserves `orderId` when moving to `state=offer`.
+- CTA preserves `orderId` when moving to `state=list`; missing IDs stay on a safe `#/responses?state=list` fallback route.
 
-### `#/responses?state=offer`
+### `#/responses?orderId=<id>&state=list`
 
-- Shows a driver card with:
+- Shows realistic driver cards with:
   - driver name;
   - rating;
   - car/model and plate;
   - arrival ETA;
   - offered price;
   - driver message;
-  - status chip «Отклик водителя».
+  - status chip «Есть отклики».
 - Actions are passenger-facing and mobile-friendly:
   - «Выбрать водителя»;
   - «Написать»;
   - «Позвонить» (safe local toast, no real call).
-
-### `#/responses?state=list`
-
 - Shows three local mock offers.
 - The best offer is visually highlighted.
 - Actions remain thumb-friendly.
 
+### `#/responses?orderId=<id>&state=selected&driverId=driver_1`
+
+- Highlights the selected driver snapshot.
+- «К поездке» reuses or creates only `bazardrive.active_ride.v1[trip_<orderId>]`.
+- «Отменить» returns to `#/responses?orderId=<id>&state=list`.
+
 ### Choose-driver handoff
 
 - Choosing a driver seeds `bazardrive.active_ride.v1` locally when `trip_<orderId>` does not exist yet.
-- Reopening `#/responses?orderId=<acceptedOrderId>&state=offer` after handoff must reuse the existing `bazardrive.active_ride.v1[trip_<orderId>]` record and must not overwrite its driver, route, passenger or progressed status snapshots.
+- Reopening `#/responses?orderId=<acceptedOrderId>&state=list` after handoff must reuse the existing `bazardrive.active_ride.v1[trip_<orderId>]` record and must not overwrite its driver, route, passenger or progressed status snapshots.
 - The active ride record preserves:
   - `orderId` / route / price snapshot;
   - passenger snapshot from the canonical order when available;

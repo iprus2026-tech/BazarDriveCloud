@@ -1,6 +1,6 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { acceptOrder, getOrderById, listNearbyOrders } from '../mock_api.js';
+import { acceptOrder, getOrderById } from '../mock_api.js';
 import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 
 const MOCK_REQUEST = {
@@ -223,13 +223,8 @@ function moneyLabelFromOrder(order) {
 
 function resolveCanonicalOrder() {
   const explicitOrderId = getRouteParam('orderId');
-  if (explicitOrderId) return getOrderById(explicitOrderId);
-
-  const legacyPostId = getRouteParam('postId');
-  if (legacyPostId) return null;
-
-  const openOrders = listNearbyOrders();
-  return openOrders.length ? openOrders[0] : null;
+  if (!explicitOrderId) return null;
+  return getOrderById(explicitOrderId);
 }
 
 function formatOrderTime(order) {
@@ -246,15 +241,20 @@ function formatOrderTime(order) {
 
 function requestFromOrder(order, explicitOrderId = '') {
   if (!order) {
-    const orderId = explicitOrderId || MOCK_REQUEST.orderId;
+    const orderId = String(explicitOrderId || '').trim();
+    const hasOrderId = !!orderId;
     return {
       ...MOCK_REQUEST,
-      id: orderId,
+      id: orderId || 'responses-fallback',
       orderId,
-      pickupLabel: explicitOrderId ? 'Маршрут заказа' : MOCK_REQUEST.pickupLabel,
-      dropoffLabel: explicitOrderId ? 'Уточняется после открытия заказа' : MOCK_REQUEST.dropoffLabel,
-      note: explicitOrderId ? 'Детали заказа пока недоступны. Можно безопасно проверить отклики или вернуться на карту.' : MOCK_REQUEST.note,
-      time: 'Сейчас',
+      pickupLabel: hasOrderId ? 'Заказ не найден' : 'Заказ пока не выбран',
+      dropoffLabel: hasOrderId ? 'Откройте опубликованный заказ с карты' : 'Опубликуйте заказ или вернитесь на карту',
+      price: '—',
+      numericPrice: 0,
+      note: hasOrderId
+        ? 'Детали заказа недоступны. Можно безопасно проверить отклики или вернуться на карту.'
+        : 'Когда заказ будет опубликован, здесь появятся маршрут, бюджет, время и комментарий.',
+      time: '—',
       isFallback: true,
     };
   }
@@ -286,9 +286,10 @@ function buildDrivers(request) {
   const offsets = [0, 150, -50];
   return MOCK_DRIVERS.map((driver, index) => {
     const value = driverPrice(base, offsets[index]);
+    const fallbackPrice = request.isFallback ? 'По договорённости' : (index === 0 ? request.price : MOCK_REQUEST.price);
     return {
       ...driver,
-      price: value ? formatRub(value) : (index === 0 ? request.price : MOCK_REQUEST.price),
+      price: value ? formatRub(value) : fallbackPrice,
     };
   });
 }
@@ -333,7 +334,8 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
     actionsBlock = `
       <div class="responses__selected-panel" role="status" aria-live="polite">
         <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
-        <span class="responses__selected-text">Водитель выбран · ждём подтверждения</span>
+        <span class="responses__selected-text">Водитель выбран · маршрут готов к открытию</span>
+        <button type="button" class="responses__selected-open" data-action="continue">К поездке</button>
         <button type="button" class="responses__selected-cancel" data-action="cancel">Отменить</button>
       </div>`;
   } else {
@@ -630,7 +632,7 @@ function buildPassengerActiveRide(order, request, driver) {
   const sourceOrderId = order && order.id ? String(order.id) : '';
   const requestOrderId = request && request.orderId ? String(request.orderId) : '';
   const orderId = sourceOrderId || requestOrderId;
-  const tripId = `trip_${orderId}`;
+  const tripId = orderId ? `trip_${orderId}` : 'trip_responses_fallback';
   const existingRide = findActiveRide(tripId);
   if (existingRide) {
     return { tripId, ride: existingRide, reused: true };
@@ -699,7 +701,7 @@ function buildPassengerActiveRide(order, request, driver) {
 
 function responseUrl(request, state, driverId = '') {
   const params = new URLSearchParams();
-  params.set('orderId', request.orderId);
+  if (request.orderId) params.set('orderId', request.orderId);
   params.set('state', state);
   if (driverId) params.set('driverId', driverId);
   return `/responses?${params.toString()}`;
@@ -811,7 +813,7 @@ export default function responses() {
   const checkBtn = root.querySelector('#responses-check');
   if (checkBtn) {
     checkBtn.addEventListener('click', () => {
-      go(responseUrl(request, 'offer'));
+      go(responseUrl(request, 'list'));
     });
   }
 
@@ -840,8 +842,8 @@ export default function responses() {
       const responseId = card.dataset.responseId;
       const action = btn.dataset.action;
 
-      if (action === 'select') {
-        const driver = drivers.find((d) => d.id === driverId) || drivers[0];
+      if (action === 'select' || action === 'continue') {
+        const driver = drivers.find((d) => d.id === driverId) || selectedDriver || drivers[0];
         const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
         go(activeRideUrl(handoff.tripId));
         return;
