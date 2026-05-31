@@ -189,16 +189,16 @@ localStorage.removeItem('bazardrive.ride_history.v1');
 ### Useful URLs
 
 ```text
-/profile?role=passenger
-/profile?role=driver
-/map?role=passenger
-/order-map-draft?role=passenger
-/driver-map?role=driver
-/driver-map?role=passenger          (expect driver guard)
-/order-map-draft?role=driver         (expect redirect to /driver-map)
-/active-ride?role=driver
-/active-ride?role=passenger
-/active-ride?role=driver&tripId=trip_<orderId>&status=DRIVER_EN_ROUTE
+#/profile?role=passenger
+#/profile?role=driver
+#/map?role=passenger
+#/order-map-draft?role=passenger
+#/driver-map?role=driver
+#/driver-map?role=passenger          (expect driver guard)
+#/order-map-draft?role=driver         (expect redirect to /driver-map)
+#/active-ride?role=driver
+#/active-ride?role=passenger
+#/active-ride?role=driver&tripId=trip_<orderId>&status=DRIVER_EN_ROUTE
 ```
 
 > Note: `?role=` on `/profile`, `/map`, `/order-map-draft` and
