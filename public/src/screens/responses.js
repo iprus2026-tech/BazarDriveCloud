@@ -380,7 +380,8 @@ function renderEmptyState() {
       </div>
       <h2 class="responses__empty-title">Ищем водителей...</h2>
       <p class="responses__empty-body">
-        Заявка опубликована. Обычно первый отклик приходит за 1–3 минуты.
+        Заказ опубликован. Водители увидят маршрут и смогут откликнуться —
+        обычно первый отклик приходит за 1–3 минуты.
       </p>
     </div>
     <div class="responses__hints">

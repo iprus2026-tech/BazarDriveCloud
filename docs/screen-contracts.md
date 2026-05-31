@@ -3645,21 +3645,24 @@ responses         → /responses (success CTA)
 ### Success state copy
 
 ```text
+Pill:     «ОПУБЛИКОВАН» (topbar subtitle, success tone)
 Badge:    «ЗАКАЗ № <last6 chars> · ОПУБЛИКОВАН»
 Title:    «Заказ опубликован»
-Hint:     «Водители рядом смогут увидеть его в списке заказов.
-           Мы пришлём push, как только появится отклик.» (push — mock)
+Status:   «Ищем водителей»
+Hint:     «Водители увидят маршрут и смогут откликнуться.»
 Summary:  Маршрут (pickup → dropoff)
           Время (Сейчас · подача 4–8 мин | DD.MM.YYYY · HH:MM)
           Цена (estimatedPrice ₽)
-          Статус («Ждём отклики», success-pill)
-Actions:  «→ Посмотреть отклики» → /responses
-          «В ленту»               → /feed
+          Статус («Ищем водителей», success-pill)
+Actions:  «Смотреть отклики» (data-action=my-order)
+            → /responses?orderId=<id>&state=empty
+          «В ленту»          → /feed
 ```
 
 ### Missing state copy
 
 ```text
+Pill:     «МАРШРУТ НЕ ВЫБРАН» (topbar subtitle, missing tone)
 Title:    «Маршрут не выбран»
 Hint:     «Сначала выберите точки поездки, затем создайте заказ.»
 Diag:     Источник = localStorage · пусто
