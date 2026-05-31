@@ -87,6 +87,32 @@ for (const f of walk(srcDir, ['.js'])) {
   }
 }
 
+
+const activeRidePath = path.join(srcDir, 'screens', 'active_ride.js');
+if (exists(activeRidePath)) {
+  const activeRideSrc = fs.readFileSync(activeRidePath, 'utf8');
+  if (!/const\s+latestHandedOffTripId\s*=\s*rawTripId\s*\?\s*null\s*:\s*findLatestHandedOffOrderTripId\(\)/.test(activeRideSrc)) {
+    errors.push('active_ride.js driver branch must resolve latest handed-off order tripId before demo fallback');
+  }
+  if (!/const\s+tripId\s*=\s*rawTripId\s*\|\|\s*latestHandedOffTripId\s*\|\|\s*DEMO_ACTIVE_RIDE_ID/.test(activeRideSrc)) {
+    errors.push('active_ride.js driver branch must prefer explicit tripId, then latest handed-off tripId, then demo fallback');
+  }
+  if (!/!hasValidStatusQuery\s*&&\s*!driverSnapshot\s*&&\s*!hasExplicitTripId\s*&&\s*!hasLatestHandedOffTripId/.test(activeRideSrc)) {
+    errors.push('active_ride.js driver empty state must not render when a latest handed-off tripId exists');
+  }
+  if (!/updateTripStatus/.test(activeRideSrc) || !/function\s+syncCanonicalOrderStatus/.test(activeRideSrc)) {
+    errors.push('active_ride.js driver lifecycle must sync canonical ride order status');
+  }
+  if (!/\[RIDE_STATUS\.NO_SHOW\]:\s*RIDE_STATUS\.CANCELED/.test(activeRideSrc)) {
+    errors.push('active_ride.js must map NO_SHOW active rides to CANCELED canonical ride orders');
+  }
+  if (!/persistDriverRideStatus\(RIDE_STATUS\.IN_PROGRESS\)/.test(activeRideSrc)
+      || !/persistDriverRideStatus\(RIDE_STATUS\.COMPLETED\)/.test(activeRideSrc)
+      || !/persistDriverRideStatus\(RIDE_STATUS\.CANCELED\)/.test(activeRideSrc)) {
+    errors.push('active_ride.js driver lifecycle actions must persist and sync in-progress, completed, and canceled statuses');
+  }
+}
+
 for (const f of walk(path.join(root, 'public'), ['.js'])) {
   try {
     execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' });

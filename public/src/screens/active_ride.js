@@ -18,7 +18,10 @@ import {
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { findLatestHandedOffOrderTripId } from '../mock_api.js';
+import {
+  findLatestHandedOffOrderTripId,
+  updateTripStatus,
+} from '../mock_api.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
   saveRideHistoryEntry,
@@ -145,6 +148,46 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
 }
 
 function pad2(n) { return n < 10 ? `0${n}` : String(n); }
+
+const ACTIVE_RIDE_TO_ORDER_STATUS = {
+  [RIDE_STATUS.IN_PROGRESS]: RIDE_STATUS.IN_PROGRESS,
+  [RIDE_STATUS.COMPLETED]: RIDE_STATUS.COMPLETED,
+  [RIDE_STATUS.CANCELED]: RIDE_STATUS.CANCELED,
+  [RIDE_STATUS.NO_SHOW]: RIDE_STATUS.CANCELED,
+};
+
+function canonicalOrderIdForRide(ride) {
+  if (!ride || typeof ride !== 'object') return null;
+  if (typeof ride.orderId === 'string' && ride.orderId.trim()) return ride.orderId.trim();
+  if (typeof ride.tripId === 'string' && ride.tripId.startsWith('trip_order-')) {
+    return ride.tripId.slice('trip_'.length);
+  }
+  return null;
+}
+
+function syncCanonicalOrderStatus(ride, activeStatus) {
+  const orderStatus = ACTIVE_RIDE_TO_ORDER_STATUS[activeStatus];
+  if (!orderStatus) return;
+  const orderId = canonicalOrderIdForRide(ride);
+  if (!orderId) return;
+
+  // BD-ORDER-P-09 — active_ride.v1 is the status source while the driver
+  // lifecycle is running, but Feed/DriverMap read ride_orders.v1. Keep the
+  // canonical order moving forward as active ride actions persist, including
+  // a defensive CREATED→ACCEPTED bridge for older handoffs that failed to
+  // mark the order accepted before the driver completed the trip.
+  if (updateTripStatus(orderId, orderStatus)) return;
+  if (orderStatus === RIDE_STATUS.IN_PROGRESS) {
+    updateTripStatus(orderId, RIDE_STATUS.ACCEPTED);
+    updateTripStatus(orderId, RIDE_STATUS.IN_PROGRESS);
+    return;
+  }
+  if (orderStatus === RIDE_STATUS.COMPLETED) {
+    updateTripStatus(orderId, RIDE_STATUS.ACCEPTED);
+    updateTripStatus(orderId, RIDE_STATUS.IN_PROGRESS);
+    updateTripStatus(orderId, RIDE_STATUS.COMPLETED);
+  }
+}
 
 function appendDriverChatMessage(tripId, text) {
   try {
@@ -476,7 +519,13 @@ export default function activeRide() {
   ensureDriverSheetsCss();
 
   const rawTripId = query.get('tripId');
-  const tripId = rawTripId || DEMO_ACTIVE_RIDE_ID;
+  // BD-ORDER-P-08 — DriverMap accept → ActiveRide handoff. Driver
+  // mirrors the passenger resolver: when the URL omits tripId, look up
+  // the latest live handed-off order before falling back to the demo id.
+  // findLatestHandedOffOrderTripId() skips terminal canonical rides, so
+  // completed/canceled/no-show trips do not reopen from the bare driver URL.
+  const latestHandedOffTripId = rawTripId ? null : findLatestHandedOffOrderTripId();
+  const tripId = rawTripId || latestHandedOffTripId || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
@@ -494,13 +543,13 @@ export default function activeRide() {
   if (!ride) {
     const driverSnapshot = loadDriverHandoffSnapshot(tripId);
     const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
-    // BD-RIDE-D-10 — When an explicit tripId is in the URL, mirror the
-    // passenger fallback and materialize the same non-persisted demo
-    // record so both roles agree on the trip identity. The
-    // "no active order" empty placeholder is reserved for the default
-    // /active-ride?role=driver URL (no tripId in query).
+    // BD-RIDE-D-10 / BD-ORDER-P-08 — Only show the driver empty
+    // placeholder when nothing can identify a real/simulated ride: no
+    // explicit tripId, no latest live DriverMap handoff, no valid status
+    // simulation, no driver handoff snapshot, and no canonical ride.
     const hasExplicitTripId = Boolean(rawTripId);
-    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId) return renderDriverEmpty();
+    const hasLatestHandedOffTripId = Boolean(latestHandedOffTripId);
+    if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty();
     const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
@@ -512,6 +561,12 @@ export default function activeRide() {
     }
   }
   ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
+
+  function persistDriverRideStatus(nextStatus) {
+    const nextRide = updateActiveRideStatus(ride.tripId, nextStatus);
+    if (nextRide) syncCanonicalOrderStatus(nextRide, nextStatus);
+    return nextRide || ride;
+  }
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride';
@@ -589,7 +644,7 @@ export default function activeRide() {
     const tagsHtml = (ride.order?.tags || []).map((t) => `<span class="active-ride__tag">${escapeHtml(t)}</span>`).join('');
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title"><span class="active-ride__sheet-bullet" aria-hidden="true">●</span>НОВЫЙ ЗАКАЗ</div><div class="active-ride__timer">${escapeHtml(String(ride.order?.acceptTimerSec ?? 14))}</div></div><div class="active-ride__price-row"><div class="active-ride__price-col"><div class="active-ride__price">${escapeHtml(ride.order?.offerPrice || '')}</div><div class="active-ride__meta">${escapeHtml(ride.order?.rate || '')} · комиссия ${escapeHtml(ride.order?.commission || '')}</div></div><button type="button" class="active-ride__map-btn" id="ar-map-btn">Карта</button></div>${routeRows()}${tagsHtml ? `<div class="active-ride__tags" role="list">${tagsHtml}</div>` : ''}<div class="active-ride__actions"><button type="button" class="bd-btn ghost active-ride__btn-skip" id="ar-skip">Пропустить</button><button type="button" class="bd-btn primary active-ride__btn-accept" id="ar-accept">Принять заказ</button></div>`;
     sheet.querySelector('#ar-map-btn').addEventListener('click', () => showNotice('Детальная карта будет доступна после Mapbox integration'));
-    sheet.querySelector('#ar-accept').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
+    sheet.querySelector('#ar-accept').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-skip').addEventListener('click', () => showNotice('Заказ пропущен. Полный idle-flow будет добавлен позже.'));
   }
 
@@ -600,18 +655,18 @@ export default function activeRide() {
 
   function renderAccepted() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.pickupLabel || 'Точка подачи')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
-    sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
+    sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-open-chat-accepted').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
-    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED); renderSheet(); } }));
+    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: () => { ride = persistDriverRideStatus(RIDE_STATUS.CANCELED); renderSheet(); } }));
     bindPassengerActions();
   }
 
   function renderEnRoute() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-write">Написать «подъезжаю»</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
-    sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
+    sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
     sheet.querySelector('#ar-write').addEventListener('click', () => { appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи'); showNotice('Сообщение «подъезжаю» отправлено'); });
-    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED); renderSheet(); } }));
+    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: () => { ride = persistDriverRideStatus(RIDE_STATUS.CANCELED); renderSheet(); } }));
     bindPassengerActions();
   }
 
@@ -630,7 +685,7 @@ export default function activeRide() {
     const freeLimit = waiting.freeLimit || '3:00';
     setMapBanner('Пассажир уведомлён · ждёт у подъезда');
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="active-ride__waiting-badge"><div class="active-ride__waiting-badge-value">${escapeHtml(remaining)}</div><div class="active-ride__waiting-badge-label">осталось</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressStep(remaining, freeLimit) * 10}"><div class="active-ride__progress-bar-fill" data-step="${progressStep(remaining, freeLimit)}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
-    sheet.querySelector('#ar-start').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); renderSheet(); });
+    sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     // No-show stays reachable via the cancel sheet (passenger_no_show reason),
     // keeping the NO_SHOW transition out of the now placeholder-only problem sheet.
@@ -638,7 +693,7 @@ export default function activeRide() {
       reason: 'passenger_no_show',
       outcomeLabel: (code) => (code === 'passenger_no_show' ? 'NO_SHOW' : 'CANCELED'),
       onConfirm: (code) => {
-        ride = updateActiveRideStatus(ride.tripId, code === 'passenger_no_show' ? RIDE_STATUS.NO_SHOW : RIDE_STATUS.CANCELED);
+        ride = persistDriverRideStatus(code === 'passenger_no_show' ? RIDE_STATUS.NO_SHOW : RIDE_STATUS.CANCELED);
         renderSheet();
       },
     }));
@@ -649,7 +704,7 @@ export default function activeRide() {
     const finishPrice = ride.ride?.price || '';
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.dropoffLabel || '')}</div></div><div class="active-ride__pickup-eta active-ride__pickup-eta--progress"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.route?.etaToDestination || '')}</div><div class="active-ride__pickup-eta-label">до места</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
-    sheet.querySelector('#ar-finish').addEventListener('click', () => { ride = updateActiveRideStatus(ride.tripId, RIDE_STATUS.COMPLETED); renderSheet(); });
+    sheet.querySelector('#ar-finish').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); });
     sheet.querySelector('#ar-stop').addEventListener('click', () => showNotice('Добавление остановки будет доступно позже'));
     sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { onAction: showNotice }));
     bindPassengerActions();
