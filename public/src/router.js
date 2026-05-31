@@ -8,17 +8,8 @@ const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-c
 const SHOW_FAB    = new Set(['/feed']);
 const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft']);
 
-function hasExplicitPassengerMode(fullPath) {
-  const queryIndex = fullPath.indexOf('?');
-  if (queryIndex === -1) return false;
-  const params = new URLSearchParams(fullPath.slice(queryIndex + 1));
-  return params.get('role') === 'passenger' || params.get('mode') === 'passenger';
-}
-
-function redirectDriverPassengerOrderFlow(fullPath, path, u) {
-  return isDriverMode(u)
-    && PASSENGER_ORDER_ROUTES.has(path)
-    && !hasExplicitPassengerMode(fullPath);
+function redirectDriverPassengerOrderFlow(path, u) {
+  return isDriverMode(u) && PASSENGER_ORDER_ROUTES.has(path);
 }
 
 export function register(path, loader) {
@@ -51,7 +42,7 @@ async function render() {
     return;
   }
 
-  if (redirectDriverPassengerOrderFlow(fullPath, path, u)) {
+  if (redirectDriverPassengerOrderFlow(path, u)) {
     go('/driver-map');
     return;
   }
