@@ -80,7 +80,16 @@ All checks passed.   (exit 0)
   каноничным `lastOrder.id`), success pill уже `ОПУБЛИКОВАН` — UX не менялся.
 - **BD-DRIVER-01:** driver guard корректен и устойчив к URL-override
   (читает только `user.get().role`, игнорирует hash). Passenger не может
-  достучаться до accept-actions. *No fix needed.*
+  достучаться до accept-actions. *Закрыто PR3
+  (`test/bd-driver-01-guard-smoke`):* добавлен статический регрессионный
+  smoke `scripts/smoke-driver-map-guard.mjs` (подключён в
+  `scripts/check.mjs`), который фиксирует контракт guard в исходнике —
+  `resolveEffectiveRole` читает `user.get().role`, render-gate
+  `if (role !== 'driver') return renderPassengerGuard()`, копия
+  «Это экран водителя», отсутствие `URLSearchParams` /
+  `location.hash` / `location.search` для role override и отсутствие
+  `data-action="accept"` в guard-шаблоне. Поведение `driver_map.js` не
+  менялось. Ручной smoke: `/#/driver-map?role=driver`.
 
 ## Follow-up PR
 
@@ -91,8 +100,11 @@ PR2  BD-MAP-05 wrapper cleanup — ✅ выполнено: dead-code wrapper
                                  order_map_draft_handoff.js удалён (хуки
                                  localizeSuccessStatus / bindResponsesHandoff
                                  не срабатывали против реального DOM)
-PR3  BD-DRIVER-01 guard smoke  — регрессионный тест: #/driver-map?role=driver
-                                 у пассажира по-прежнему рендерит guard
+PR3  BD-DRIVER-01 guard smoke  — ✅ выполнено: статический регрессионный
+                                 smoke scripts/smoke-driver-map-guard.mjs
+                                 (подключён в scripts/check.mjs); ручной
+                                 smoke #/driver-map?role=driver у пассажира
+                                 по-прежнему рендерит guard
 PR4  docs sync                 — этот PR: BD-MAP-02 / BD-MAP-04 контракты +
                                  исправление stale BD-MAP-03 + этот документ
 ```
