@@ -491,13 +491,12 @@ function renderClearButton(kind) {
 // render-gate states 1–3 (ОТКУДА / КУДА, «Где вас забрать?» / «Куда едем?»).
 function renderPointField(kind) {
   const isActive = routeDraft.focus === kind;
-  const point = routeDraft[kind];
   const placeholder = kind === 'pickup'
     ? 'Где вас забрать?'
     : 'Куда едем?';
 
   return `
-    <div class="rp-field ${isActive ? 'is-active' : ''} ${point ? 'is-filled' : ''}"
+    <div class="rp-field ${isActive ? 'is-active' : ''}"
          data-focus="${kind}">
       <label class="rp-field__label" for="rp-${kind}">${FOCUS_LABELS[kind]}</label>
       <div class="rp-field__input-row">
@@ -1170,6 +1169,15 @@ function applyHashParams() {
 
 export default function routePickerScreen() {
   hydrateFromStorage();
+  // BD-MAP-03B (review F1/F2) — routeDraft is a module singleton, so the
+  // transient UI-only flags (manual form open, in-progress search query)
+  // would otherwise leak across mounts: opening the manual form / a search,
+  // leaving to /map, then re-opening #/route-picker must boot a fresh picker.
+  // Reset here AFTER hydrating the persisted route (pickup/dropoff/prefill
+  // survive) and BEFORE applyHashParams() so the ?manual=1 / ?q= deep-links
+  // can re-enable those states for this mount.
+  routeDraft.manual = false;
+  routeDraft.query = '';
   applyHashParams();
   syncDraft();
   // Resolve the /active-ride guard once for this mount. A fresh navigation
