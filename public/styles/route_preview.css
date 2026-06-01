@@ -9,8 +9,16 @@
   padding-bottom: 8px;
 }
 
-.rpv-topbar__back {
-  margin-top: 2px;
+/* back · centred title · share — symmetric icon buttons keep the title optically
+   centred between them, matching the Cloud Design render gate. */
+.rpv-topbar .bd-topbar__titles {
+  align-items: center;
+  text-align: center;
+}
+
+.rpv-topbar__back,
+.rpv-topbar__share {
+  margin-top: 0;
 }
 
 .rpv-scroll {
@@ -219,25 +227,6 @@
   font-weight: 500;
 }
 
-.rpv-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: rgba(52, 199, 89, 0.12);
-  border: 1px solid rgba(52, 199, 89, 0.32);
-  color: #34c759;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.rpv-status__check {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 /* ── Empty & malformed shared ── */
 .rpv-empty {
   display: flex;
@@ -377,4 +366,38 @@
   font-size: 12px;
   color: var(--accent);
   word-break: break-all;
+}
+
+/* ── Bottom-sheet treatment for the empty / malformed states ──
+   These cards read as a sheet docked to the bottom of the shell on the
+   render gate, with a centred grabber at the top. */
+.rpv-card--missing,
+.rpv-card--malformed {
+  position: relative;
+  padding-top: 22px;
+}
+
+.rpv-card--missing::before,
+.rpv-card--malformed::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transform: translateX(-50%);
+}
+
+/* ── Malformed: collapsible diagnostic details ──
+   .rpv-diag sets display:flex, so the bare [hidden] attribute would not hide
+   the panel — re-assert display:none here so the toggle works without any
+   inline style. */
+.rpv-details {
+  margin-top: 4px;
+}
+
+.rpv-details[hidden] {
+  display: none;
 }
