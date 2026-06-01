@@ -122,7 +122,7 @@ export default function rules() {
     ${hasTemplates ? `
       <div class="bd-section-h">
         <h2>Шаблоны документов</h2>
-        <a data-noop role="button" tabindex="0">Все</a>
+        <button type="button" data-noop>Все</button>
       </div>
       ${DOCUMENT_TEMPLATES.map(renderTemplate).join('')}
     ` : ''}
