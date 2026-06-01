@@ -192,6 +192,13 @@ function applyPassengerStatusFromQuery(ride, statusQuery) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
       return ride;
     }
+    // A stale ?status=DRIVER_EN_ROUTE (e.g. an old shared link) must not pull
+    // a ride that already advanced to DRIVER_APPROACHING_PICKUP back to the
+    // earlier en-route phase. The approaching phase wins once it's persisted.
+    if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+      && (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP || ts.approachingAt)) {
+      return ride;
+    }
     return { ...ride, status: statusQuery };
   }
   if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {

@@ -100,6 +100,26 @@ function getHashQuery() {
   return qi === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qi + 1));
 }
 
+// Keep the address-bar ?status= in sync after a driver lifecycle hop so a
+// reload reflects the real persisted phase. Uses replaceState (no hashchange,
+// so the router does not re-render mid-flow) and only rewrites the param when
+// one is already present, leaving status-less entry URLs untouched. The
+// safeApplyStatusFromQuery guard is the durable backstop; this just keeps the
+// visible URL honest.
+function syncDriverStatusQuery(nextStatus) {
+  try {
+    const hash = window.location.hash || '';
+    const qi = hash.indexOf('?');
+    if (qi === -1) return;
+    const params = new URLSearchParams(hash.slice(qi + 1));
+    if (!params.has('status') || params.get('status') === nextStatus) return;
+    params.set('status', nextStatus);
+    window.history.replaceState(null, '', `${hash.slice(0, qi)}?${params.toString()}`);
+  } catch {
+    // history unavailable — fail soft; the query-override guard still holds.
+  }
+}
+
 function ensureDriverSheetsCss() {
   if (document.getElementById(DRIVER_SHEETS_CSS_ID)) return;
   const link = document.createElement('link');
@@ -132,6 +152,14 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    // A stale ?status=DRIVER_EN_ROUTE (the address bar still carries the
+    // entry status after the driver tapped "Подъезжаю") must not pull a ride
+    // that already advanced to DRIVER_APPROACHING_PICKUP back to the en-route
+    // phase on reload — that would re-enable the approaching auto-message.
+    if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+      && (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP || ts.approachingAt)) {
+      return ride;
+    }
     return { ...ride, status: statusQuery };
   }
   if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
@@ -208,7 +236,11 @@ function appendDriverChatMessage(tripId, text) {
     const chatId = `trip-${tripId}`;
     const list = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
     const now = new Date();
-    list.push({ id: Date.now(), dir: 'out', text, time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` });
+    // senderRole pins the author so a passenger-facing chat renders this
+    // driver auto-notice as incoming. `dir: 'out'` stays for back-compat
+    // (it is outgoing from the driver's own perspective); the chat renderer
+    // prefers senderRole when deciding which side of the thread to show.
+    list.push({ id: Date.now(), dir: 'out', senderRole: 'driver', text, time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` });
     store[chatId] = list;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(store));
   } catch {
@@ -687,6 +719,7 @@ export default function activeRide() {
     sheet.querySelector('#ar-approaching').addEventListener('click', () => {
       appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи');
       ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_APPROACHING_PICKUP);
+      syncDriverStatusQuery(ride.status);
       renderSheet();
     });
     sheet.querySelector('#ar-open-chat-enroute').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));

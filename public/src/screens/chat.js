@@ -130,8 +130,19 @@ function resolveRideContext({ responseId }) {
   return { isRide: false, tripId: null };
 }
 
+// This chat surface is passenger-facing (the header is the driver), so an
+// incoming bubble is one authored by the driver. Messages appended from the
+// driver flow (e.g. the "Подъезжаю к точке подачи" auto-notice) carry an
+// explicit senderRole; prefer it over the legacy `dir` so a driver-authored
+// message is never mistaken for the passenger's own outgoing bubble.
+function directionForMessage(msg) {
+  if (msg.senderRole === 'driver') return 'in';
+  if (msg.senderRole === 'passenger') return 'out';
+  return msg.dir === 'in' ? 'in' : 'out';
+}
+
 function createMsgEl(msg) {
-  const dir  = msg.dir === 'in' ? 'in' : 'out';
+  const dir  = directionForMessage(msg);
   const wrap = document.createElement('div');
   wrap.className = `chat__msg chat__msg--${dir}`;
 
