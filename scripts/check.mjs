@@ -122,6 +122,17 @@ for (const f of walk(path.join(root, 'public'), ['.js'])) {
   }
 }
 
+// BD-DRIVER-01 — static regression smoke for the driver-map role guard.
+const driverMapGuardSmoke = path.join(root, 'scripts', 'smoke-driver-map-guard.mjs');
+if (exists(driverMapGuardSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverMapGuardSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-map-guard.mjs failed\n${msg}`);
+  }
+}
+
 if (errors.length) {
   console.error('CHECK FAILED:');
   for (const e of errors) console.error('  - ' + e);
