@@ -133,6 +133,19 @@ if (exists(driverMapGuardSmoke)) {
   }
 }
 
+// BD-DRIVER-DOCS-01 — behavioural smoke for the driver document readiness
+// contract (registration docs vs shift docs). Guards against onboarding's
+// 3 required docs being reported as documentsReady:false again.
+const driverDocsReadinessSmoke = path.join(root, 'scripts', 'smoke-driver-docs-readiness.mjs');
+if (exists(driverDocsReadinessSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverDocsReadinessSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-docs-readiness.mjs failed\n${msg}`);
+  }
+}
+
 if (errors.length) {
   console.error('CHECK FAILED:');
   for (const e of errors) console.error('  - ' + e);

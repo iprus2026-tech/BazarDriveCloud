@@ -1,8 +1,23 @@
 const KEY = 'bazardrive.user.v1';
 
-// Required driver documents (BD-PROFILE-DOCS-01).
-// Single source of truth for both the Documents tab and readiness checklist.
-export const REQUIRED_DOCS = ['driverLicense', 'taxiOsago', 'taxiRegistry', 'waybill', 'medicalCheck'];
+// Driver document readiness model (BD-PROFILE-DOCS-01 / BD-DRIVER-DOCS-01).
+//
+// The onboarding UI marks only three documents as обязательные (dl / osago /
+// permit) — the rest are optional "загружу позже" items. The readiness model
+// honours that split so a driver who completes onboarding with the three
+// required docs is NOT reported as documentsReady:false just because the
+// shift-only documents (путевой лист / медосмотр) are still pending.
+//
+//   REGISTRATION_DOCS — base documents needed to finish registration. Drives
+//                       documentsReady (a.k.a. registration readiness).
+//   SHIFT_DOCS        — extra documents needed to actually go online for a
+//                       shift, on top of the registration docs.
+//   REQUIRED_DOCS     — canonical full document set (registration + shift).
+//                       Single source of truth for the Documents tab shape,
+//                       normalize(), and the line-blocking attention counts.
+export const REGISTRATION_DOCS = ['driverLicense', 'taxiOsago', 'taxiRegistry'];
+export const SHIFT_DOCS = ['waybill', 'medicalCheck'];
+export const REQUIRED_DOCS = [...REGISTRATION_DOCS, ...SHIFT_DOCS];
 
 // Allowed statuses for a single document. Used by setDocumentStatus() to
 // reject typos and by normalize() to fall back to defaults if persisted
@@ -49,7 +64,11 @@ function buildDefaults() {
     medicalCheckPassed: false,
     parkMode: 'independent',
     // v5 — BD-DRIVER-02 (derived from driverDocuments)
+    // documentsReady = registration readiness (REGISTRATION_DOCS only).
+    // shiftDocsReady = every document, incl. путевой лист / медосмотр, ready
+    // for going online (BD-DRIVER-DOCS-01).
     documentsReady: false,
+    shiftDocsReady: false,
     // v6 — BD-PROFILE-READYNESS-01 (derived from driverDocuments.taxiRegistry)
     taxiPermit: false,
     taxiPermitDraft: null,
@@ -105,21 +124,36 @@ export function computeTaxiPermit(docs) {
   return docs?.taxiRegistry?.status === 'uploaded';
 }
 
-// documentsReady requires every required document to be uploaded or under review.
+// Shared rule: a document counts as "ready" when uploaded or under review;
 // expired / missing / draft block readiness.
-export function computeDocumentsReady(docs) {
+function docsReadyOver(keys, docs) {
   if (!docs) return false;
-  return REQUIRED_DOCS.every((k) => {
+  return keys.every((k) => {
     const s = docs[k]?.status;
     return s === 'uploaded' || s === 'review_required';
   });
 }
 
+// documentsReady = registration readiness: only the REGISTRATION_DOCS (dl /
+// osago / permit) must be ready. Mirrors the обязательные set in the
+// onboarding UI so finishing onboarding with the three required docs does not
+// report documentsReady:false (BD-DRIVER-DOCS-01).
+export function computeDocumentsReady(docs) {
+  return docsReadyOver(REGISTRATION_DOCS, docs);
+}
+
+// shiftDocsReady = full readiness to go online: every document (registration
+// docs PLUS путевой лист / медосмотр) must be ready.
+export function computeShiftDocsReady(docs) {
+  return docsReadyOver(REQUIRED_DOCS, docs);
+}
+
 function syncDerived(state) {
   const docs = state.driverDocuments;
   if (!docs) return state;
-  state.taxiPermit     = computeTaxiPermit(docs);
-  state.documentsReady = computeDocumentsReady(docs);
+  state.taxiPermit      = computeTaxiPermit(docs);
+  state.documentsReady  = computeDocumentsReady(docs);
+  state.shiftDocsReady  = computeShiftDocsReady(docs);
   return state;
 }
 
