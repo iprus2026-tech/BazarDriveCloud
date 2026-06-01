@@ -54,9 +54,12 @@ All checks passed.   (exit 0)
 
 ## Найденные gaps (конкретные)
 
-- **BD-MAP-01:** token-missing action card показывает техническую копию
+- **BD-MAP-01:** token-missing action card показывал техническую копию
   пользователю (`token_missing`, `Fallback`, `Issue #105`) вместо Cloud
-  passenger-копии. *Low — copy polish.*
+  passenger-копии. *Закрыто PR1 (`fix/bd-map-01-token-copy-polish`):*
+  badge → «Демо-режим», title → «Карта временно недоступна», подзаголовок →
+  «Можно выбрать маршрут вручную — заказ всё равно сохранится», CTA →
+  «Выбрать маршрут» / «Ввести адрес вручную»; технический meta-card удалён.
 - **BD-MAP-02:** экран реализован, но контракт отсутствовал в
   `docs/screen-contracts.md`. *Закрыто этим PR.*
 - **BD-MAP-03:** контракт был помечен `implementation not started`,
@@ -78,8 +81,8 @@ All checks passed.   (exit 0)
 ## Follow-up PR
 
 ```text
-PR1  BD-MAP-01 copy polish     — заменить dev-строки token-missing card
-                                 на passenger-копию (или скрыть за debug-флаг)
+PR1  BD-MAP-01 copy polish     — ✅ выполнено: dev-строки token-missing card
+                                 заменены на passenger-копию (Cloud Design)
 PR2  BD-MAP-05 wrapper cleanup — удалить/исправить dead-code хуки
                                  localizeSuccessStatus / bindResponsesHandoff
 PR3  BD-DRIVER-01 guard smoke  — регрессионный тест: #/driver-map?role=driver

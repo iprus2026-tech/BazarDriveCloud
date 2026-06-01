@@ -46,9 +46,9 @@ const STATE_COPY = {
     hint:    'Реальные заказы появятся, когда подключим Mapbox и данные водителей.',
   },
   [MAP_STATE.TOKEN_MISSING]: {
-    badge:   'Mapbox token отсутствует',
+    badge:   'Демо-режим',
     title:   'Карта временно недоступна',
-    hint:    'Mapbox SDK ещё не подключён. Маршрут можно выбрать вручную, без живой карты.',
+    hint:    'Можно выбрать маршрут вручную — заказ всё равно сохранится.',
   },
 };
 
@@ -292,26 +292,12 @@ function buildNearbyOrdersCard() {
 function buildTokenMissingCard() {
   const card = makeCardRoot(MAP_STATE.TOKEN_MISSING);
   card.insertAdjacentHTML('beforeend', `
-    <div class="map-home__meta-card" role="group" aria-label="Состояние Mapbox foundation">
-      <div class="map-home__meta-row">
-        <span class="map-home__meta-key">Статус</span>
-        <span class="map-home__meta-val map-home__meta-val--danger">token_missing</span>
-      </div>
-      <div class="map-home__meta-row">
-        <span class="map-home__meta-key">Fallback</span>
-        <span class="map-home__meta-val">Лента · ручной ввод</span>
-      </div>
-      <div class="map-home__meta-row">
-        <span class="map-home__meta-key">Issue</span>
-        <span class="map-home__meta-val">#105</span>
-      </div>
-    </div>
-    <button class="bd-btn primary map-home__cta" type="button" data-action="feed">
-      Вернуться в ленту
+    <button class="bd-btn primary map-home__cta" type="button" data-action="route">
+      Выбрать маршрут
     </button>
     <button class="bd-btn ghost map-home__cta map-home__cta--ghost" type="button"
             data-action="manual">
-      Ввести вручную
+      Ввести адрес вручную
     </button>
   `);
   return card;
