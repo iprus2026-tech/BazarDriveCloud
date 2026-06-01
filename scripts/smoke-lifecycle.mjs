@@ -137,7 +137,7 @@ expect('Refresh — passenger sees same passenger identity',
   refreshedPassenger?.passenger?.name === 'Refresh',
   'got=' + refreshedPassenger?.passenger?.name);
 
-// ── Passenger cancel after accept (BD-RIDE-SIM-01) — order stays CANCELED ──
+// ── Passenger cancel after accept (BD-RIDE-P-10) — canonical mirrored to CANCELED ──
 const order5 = mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'P' }, dropoff: { id: null, label: 'Q' },
@@ -146,25 +146,55 @@ const order5 = mockApi.createRideOrder({
 });
 const accepted5 = rideActions.acceptCanonicalRideOrder(order5.id);
 rideState.updateActiveRideStatus(accepted5.tripId, rideState.RIDE_STATUS.DRIVER_EN_ROUTE);
-// Passenger flips it to CANCELED. Passenger renderer does NOT call syncCanonical
-// (active_ride_passenger.js uses updateActiveRideStatus directly), so the
-// canonical ride_orders.v1 record may not be advanced here. Verify what happens.
+// Mirror what active_ride_passenger.js now does on confirmed cancel:
+// 1) flip active_ride.v1 → CANCELED, 2) mirror canonical ride_orders.v1 → CANCELED.
 const ride5 = rideState.updateActiveRideStatus(accepted5.tripId, rideState.RIDE_STATUS.CANCELED, {
   cancel: { by: 'passenger', reason: 'plans_changed' },
 });
-expect('PassengerCancel — active ride canceled', ride5.status === rideState.RIDE_STATUS.CANCELED);
-const order5After = mockApi.getOrderById(order5.id)?.status;
-console.log('NOTE: passenger-cancel does NOT sync canonical order. After passenger CANCEL, order.status=' + order5After);
-// findLatestHandedOffOrderTripId() walks newest-first; order5 (newer) is skipped because its active ride is terminal.
-// Earlier non-terminal orders (e.g. order4) remain reachable — that is correct, not a leak.
+syncCanonical(ride5, rideState.RIDE_STATUS.CANCELED);
+expect('PassengerCancel — active ride status CANCELED', ride5.status === rideState.RIDE_STATUS.CANCELED);
+expect('PassengerCancel — canonical ride_orders.v1 mirrored to CANCELED',
+  mockApi.getOrderById(order5.id)?.status === 'CANCELED');
+expect('PassengerCancel — canceled order NOT in listNearbyOrders()',
+  !mockApi.listNearbyOrders().some(o => o.id === order5.id));
+expect('PassengerCancel — canceled order NOT in Feed projection',
+  !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order5.id));
+// findLatestHandedOffOrderTripId() walks newest-first; order5 must be
+// excluded because its canonical status is now CANCELED (not ACCEPTED/IN_PROGRESS)
+// AND its active ride is terminal. Earlier non-terminal orders may still be
+// reachable — that is correct, not a leak.
 const latestAfterPassengerCancel = mockApi.findLatestHandedOffOrderTripId();
-expect('PassengerCancel — findLatest skips order5 even when canonical still ACCEPTED',
+expect('PassengerCancel — findLatest excludes the canceled trip',
   latestAfterPassengerCancel !== `trip_${order5.id}`,
   'got=' + latestAfterPassengerCancel);
-expect('PassengerCancel — order5 NOT in listNearbyOrders (status!=CREATED)',
-  !mockApi.listNearbyOrders().some(o => o.id === order5.id));
-expect('PassengerCancel — order5 NOT in feed projection (status!=CREATED)',
-  !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order5.id));
+
+// ── Bare /active-ride?role=driver must not revive a terminal trip ──
+// active_ride.js driver branch resolves an empty `/active-ride?role=driver`
+// via findLatestHandedOffOrderTripId() → returns null when every live order
+// has been passenger-canceled. Without the BD-RIDE-P-10 canonical sync the
+// canceled order would stay ACCEPTED in ride_orders.v1 and findLatest would
+// hand the driver a stale terminal trip.
+mockApi.clearRideOrdersStore();
+rideState.clearActiveRideStore();
+const order6 = mockApi.createRideOrder({
+  type: 'passenger_request', source: 'feed',
+  pickup: { id: null, label: 'S' }, dropoff: { id: null, label: 'T' },
+  estimatedPrice: 600, estimatedPriceLabel: '600', scheduledMode: 'now', comment: '',
+  passenger: { name: 'BareDriver', initials: 'B', authorId: 'local-user', isCurrentUser: true },
+});
+const accepted6 = rideActions.acceptCanonicalRideOrder(order6.id);
+const ride6 = rideState.updateActiveRideStatus(accepted6.tripId, rideState.RIDE_STATUS.CANCELED, {
+  cancel: { by: 'passenger', reason: 'plans_changed' },
+});
+syncCanonical(ride6, rideState.RIDE_STATUS.CANCELED);
+expect('BareDriver — canonical ride_orders.v1 is CANCELED',
+  mockApi.getOrderById(order6.id)?.status === 'CANCELED');
+expect('BareDriver — findLatestHandedOffOrderTripId returns null after passenger cancel',
+  mockApi.findLatestHandedOffOrderTripId() === null);
+expect('BareDriver — canceled order NOT in listNearbyOrders()',
+  !mockApi.listNearbyOrders().some(o => o.id === order6.id));
+expect('BareDriver — canceled order NOT in Feed projection',
+  !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order6.id));
 
 console.log('\n' + (issues.length ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ') : 'ALL PASSED'));
 process.exit(issues.length ? 1 : 0);

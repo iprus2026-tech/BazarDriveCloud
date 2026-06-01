@@ -20,6 +20,7 @@ import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
+import { updateTripStatus } from '../mock_api.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import {
   saveRideHistoryEntry,
@@ -1924,12 +1925,25 @@ export default function activeRidePassenger(options = {}) {
             // driver-side canceled sheet would not see the audit
             // scenario.
             saveActiveRide(ride);
-            updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
+            const canceledRide = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
               cancel: {
                 by: 'passenger',
                 reason: reasonId || 'passenger_cancel_after_accept',
               },
             });
+            // BD-RIDE-P-10 — mirror the cancellation into canonical
+            // bazardrive.ride_orders.v1 so Feed / DriverMap /
+            // findLatestHandedOffOrderTripId stop treating the trip as
+            // live. Matches the driver branch syncCanonicalOrderStatus
+            // pattern in active_ride.js; CANCELED is a legal transition
+            // from CREATED, ACCEPTED and IN_PROGRESS so no defensive
+            // bridge is needed.
+            const orderForSync = canceledRide || ride;
+            const canonicalOrderId = (orderForSync && typeof orderForSync.orderId === 'string' && orderForSync.orderId)
+              || (typeof ride.tripId === 'string' && ride.tripId.startsWith('trip_order-')
+                  ? ride.tripId.slice('trip_'.length)
+                  : null);
+            if (canonicalOrderId) updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
             go(`/active-ride?role=passenger&status=${RIDE_STATUS.CANCELED}&tripId=${encodeURIComponent(ride.tripId)}`);
           },
         });
