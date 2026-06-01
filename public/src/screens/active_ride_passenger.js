@@ -172,9 +172,9 @@ function loadPassengerRideView(tripId, statusQuery) {
   return ride;
 }
 
-// DRIVER_APPROACHING_PICKUP is accepted as an alias to DRIVER_EN_ROUTE
-// for the passenger UI — BD-RIDE-P-02 currently renders the same layout
-// for both phases. WAITING_PASSENGER is the BD-RIDE-P-03 driver-arrived
+// DRIVER_APPROACHING_PICKUP is now a distinct passenger phase — the driver
+// is almost at the pickup point. renderEnRouteSheet reuses the same layout
+// but swaps the title/sub copy. WAITING_PASSENGER is the BD-RIDE-P-03 driver-arrived
 // view. IN_PROGRESS is the BD-RIDE-P-04 on-ride view. Status overrides
 // are kept in-memory and do not roll back past later lifecycle
 // timestamps already on the ride.
@@ -188,11 +188,11 @@ function applyPassengerStatusFromQuery(ride, statusQuery) {
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
     || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
-    if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) return ride;
+    if (ride.status === statusQuery) return ride;
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) {
       return ride;
     }
-    return { ...ride, status: RIDE_STATUS.DRIVER_EN_ROUTE };
+    return { ...ride, status: statusQuery };
   }
   if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) return ride;
@@ -457,13 +457,22 @@ function paymentBlockHtml(ride, options = {}) {
 }
 
 function renderEnRouteSheet(sheet, ride) {
+  let title = 'Водитель едет к вам';
+  let subHtml = '';
+  if (ride.status === RIDE_STATUS.ACCEPTED) {
+    title = 'Водитель назначен';
+  } else if (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
+    title = 'Водитель почти на месте';
+    subHtml = `<div class="active-ride-passenger__sub">Выходите к точке подачи</div>`;
+  }
   sheet.innerHTML = `
     <div class="active-ride-passenger__handle" aria-hidden="true"></div>
 
     <div class="active-ride-passenger__header">
       <div class="active-ride-passenger__header-main">
-        <div class="active-ride-passenger__title">${escapeHtml(ride.status === RIDE_STATUS.ACCEPTED ? 'Водитель назначен' : 'Водитель едет к вам')}</div>
+        <div class="active-ride-passenger__title">${escapeHtml(title)}</div>
         <div class="active-ride-passenger__car">${escapeHtml(carLine(ride))}</div>
+        ${subHtml}
       </div>
     </div>
 
