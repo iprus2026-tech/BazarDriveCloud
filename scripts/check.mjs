@@ -106,9 +106,9 @@ if (exists(activeRidePath)) {
   if (!/\[RIDE_STATUS\.NO_SHOW\]:\s*RIDE_STATUS\.CANCELED/.test(activeRideSrc)) {
     errors.push('active_ride.js must map NO_SHOW active rides to CANCELED canonical ride orders');
   }
-  if (!/persistDriverRideStatus\(RIDE_STATUS\.IN_PROGRESS\)/.test(activeRideSrc)
-      || !/persistDriverRideStatus\(RIDE_STATUS\.COMPLETED\)/.test(activeRideSrc)
-      || !/persistDriverRideStatus\(RIDE_STATUS\.CANCELED\)/.test(activeRideSrc)) {
+  if (!/persistDriverRideStatus\(RIDE_STATUS\.IN_PROGRESS[,)]/.test(activeRideSrc)
+      || !/persistDriverRideStatus\(RIDE_STATUS\.COMPLETED[,)]/.test(activeRideSrc)
+      || !/persistDriver(?:RideStatus|Cancel)\(RIDE_STATUS\.CANCELED[,)]/.test(activeRideSrc)) {
     errors.push('active_ride.js driver lifecycle actions must persist and sync in-progress, completed, and canceled statuses');
   }
 }
