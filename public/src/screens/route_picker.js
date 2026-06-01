@@ -9,6 +9,7 @@ import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { peekRepeatRouteDraft, clearRepeatRouteDraft } from '../repeat_route.js';
 import { peekFavoriteNotice, clearFavoriteNotice } from '../favorite_routes.js';
+import { findLatestHandedOffOrderTripId } from '../mock_api.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
@@ -71,6 +72,32 @@ const routeDraft = {
 
 let notice = '';
 let hydrated = false;
+
+// BD-MAP-03 (/active-ride guard) — when the passenger already has a live
+// handed-off trip, the picker must not silently start a brand-new route on
+// top of it. We surface a non-blocking guard banner (resume vs. plan a new
+// route) and keep the Continue CTA gated until the passenger explicitly
+// dismisses the guard. Read-only: this only *reads* the active-ride record
+// via the existing mock_api helper, it never mutates the active-ride state
+// machine (active_ride.js / ride_state.js stay untouched). `dismissed` is
+// the explicit-action latch and lives in module scope for the session.
+let activeRideGuardDismissed = false;
+let activeRideGuardTripId = null;
+
+function resolveActiveRideGuardTripId() {
+  if (activeRideGuardDismissed) {
+    activeRideGuardTripId = null;
+    return null;
+  }
+  let tripId = null;
+  try {
+    tripId = findLatestHandedOffOrderTripId();
+  } catch {
+    tripId = null;
+  }
+  activeRideGuardTripId = typeof tripId === 'string' && tripId ? tripId : null;
+  return activeRideGuardTripId;
+}
 
 function makePoint(id, label, hint, source) {
   return {
@@ -284,6 +311,8 @@ export function clearRouteDraftStore() {
   routeDraft.prefillSource = null;
   routeDraft.prefillLabel = '';
   notice = '';
+  activeRideGuardDismissed = false;
+  activeRideGuardTripId = null;
   clearPersistedDraft();
 }
 
@@ -407,7 +436,7 @@ function renderPointField(kind) {
   const isActive = routeDraft.focus === kind;
   const point = routeDraft[kind];
   const placeholder = kind === 'pickup'
-    ? 'Адрес подачи или район'
+    ? 'Где вас забрать?'
     : 'Куда едем?';
   const sourceLabel = point?.source === 'current'
     ? 'Моё место'
@@ -528,20 +557,23 @@ function renderSuggestions() {
 
 function renderEstimate() {
   if (!routeDraft.route) return '';
+  // Order mirrors the Cloud Design render gate (state 6 · Route draft
+  // ready): Время → Расстояние → Ориентир. цена. Price is shown as an
+  // "от …" estimate to read as an orientation figure, not a final fare.
   const { distanceKm, durationMin, estimatedPrice } = routeDraft.route;
   return `
     <dl class="rp-bottom-card__estimate" aria-label="Оценка маршрута">
+      <div class="rp-bottom-card__metric">
+        <dt>Время</dt>
+        <dd>${escapeHtml(String(durationMin))} мин</dd>
+      </div>
       <div class="rp-bottom-card__metric">
         <dt>Расстояние</dt>
         <dd>${escapeHtml(distanceKm.toFixed(1))} км</dd>
       </div>
       <div class="rp-bottom-card__metric">
-        <dt>В пути</dt>
-        <dd>~${escapeHtml(String(durationMin))} мин</dd>
-      </div>
-      <div class="rp-bottom-card__metric">
         <dt>Ориентир. цена</dt>
-        <dd>${escapeHtml(String(estimatedPrice))} ₽</dd>
+        <dd>от ${escapeHtml(String(estimatedPrice))} ₽</dd>
       </div>
     </dl>
   `;
@@ -549,13 +581,26 @@ function renderEstimate() {
 
 function renderStatusCard() {
   const ready = routeDraft.status === ROUTE_STATUS.ROUTE_DRAFT_READY;
-  const statusCopy = ready
-    ? 'Маршрут готов. Продолжите, чтобы перейти к созданию заявки.'
-    : 'Заполните точку подачи и назначения, чтобы продолжить.';
+  // The /active-ride guard is resolved once per render in buildBody and
+  // cached in activeRideGuardTripId; an active trip gates Continue so the
+  // passenger cannot start a second route without an explicit dismissal.
+  const guarded = Boolean(activeRideGuardTripId);
+  const ctaEnabled = ready && !guarded;
+  const statusCopy = guarded
+    ? 'Сначала завершите активную поездку или продолжите планировать новый маршрут.'
+    : ready
+      ? 'Маршрут готов. Продолжите, чтобы выбрать водителя.'
+      : 'Заполните точку подачи и назначения, чтобы продолжить.';
   const hasPrefill = Boolean(routeDraft.prefillSource);
   const clearCaption = hasPrefill
     ? 'Очистит только поля маршрута. Черновик публикации сохранится.'
     : 'Очистит только поля маршрута.';
+
+  // BD-MAP-03 TODO (time picker) — Cloud Design render gate (state 6)
+  // shows «Сейчас / Запланировать / + Остановка» above the CTA. A real
+  // schedule/stop picker is a separate under-issue (native
+  // <input type="datetime-local"> for PWA); intentionally not built here
+  // so this audit stays a targeted polish and does not ship a stub picker.
 
   return `
     <div class="rp-bottom-card">
@@ -570,8 +615,8 @@ function renderStatusCard() {
       ${ready ? renderEstimate() : ''}
       ${notice ? `<p class="rp-bottom-card__notice" role="status">${escapeHtml(notice)}</p>` : ''}
       <button class="bd-btn primary rp-bottom-card__cta" type="button" data-action="continue"
-              ${ready ? '' : 'disabled'} aria-disabled="${ready ? 'false' : 'true'}">
-        Продолжить
+              ${ctaEnabled ? '' : 'disabled'} aria-disabled="${ctaEnabled ? 'false' : 'true'}">
+        Продолжить — выбрать водителя
       </button>
       <div class="rp-bottom-card__row">
         <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="clear-all"
@@ -583,6 +628,39 @@ function renderStatusCard() {
         </button>
       </div>
       <p class="rp-bottom-card__caption">${escapeHtml(clearCaption)}</p>
+    </div>
+  `;
+}
+
+// BD-MAP-03 (/active-ride guard) — non-blocking banner shown above the
+// route fields when the passenger already has a live handed-off trip.
+// Offers an explicit choice: resume the active ride, or dismiss the guard
+// to keep planning a new route. Rendered only while not dismissed.
+function renderActiveRideGuard() {
+  const tripId = activeRideGuardTripId;
+  if (!tripId) return '';
+  return `
+    <div class="rp-active-guard" role="status" data-active-guard="${escapeHtml(tripId)}">
+      <span class="rp-active-guard__icon" aria-hidden="true">!</span>
+      <div class="rp-active-guard__body">
+        <p class="rp-active-guard__title">У вас уже есть активная поездка</p>
+        <p class="rp-active-guard__hint">
+          Можно вернуться к ней или продолжить планировать новый маршрут —
+          новый заказ не создастся, пока вы не выберете действие.
+        </p>
+        <div class="rp-active-guard__row">
+          <button class="bd-btn primary rp-active-guard__resume" type="button"
+                  data-action="open-active-ride"
+                  aria-label="Открыть активную поездку">
+            К активной поездке
+          </button>
+          <button class="bd-btn ghost rp-active-guard__dismiss" type="button"
+                  data-action="dismiss-active-guard"
+                  aria-label="Продолжить планировать новый маршрут">
+            Новый маршрут
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -616,6 +694,9 @@ function renderPrefillBanner() {
 
 function buildBody() {
   syncDraft();
+  // Resolve the /active-ride guard once per render so the banner and the
+  // Continue-gating in renderStatusCard agree on the same trip.
+  resolveActiveRideGuardTripId();
 
   const fragment = document.createDocumentFragment();
 
@@ -639,6 +720,7 @@ function buildBody() {
   scroll.className = 'bd-scroll rp-scroll';
   scroll.appendChild(renderMapSnippet());
   scroll.insertAdjacentHTML('beforeend', `
+    ${renderActiveRideGuard()}
     ${renderPrefillBanner()}
     <div class="rp-card">
       ${renderPointField('pickup')}
@@ -718,6 +800,19 @@ function handleClick(root, target) {
     go('/map');
     return;
   }
+  if (action === 'open-active-ride') {
+    // Resume the passenger's live handed-off trip. Read-only handoff —
+    // active_ride.js resolves the status from the shared record.
+    const tripId = activeRideGuardTripId;
+    if (tripId) go(`/active-ride?role=passenger&tripId=${encodeURIComponent(tripId)}`);
+    return;
+  }
+  if (action === 'dismiss-active-guard') {
+    // Explicit action: the passenger chose to plan a new route anyway.
+    activeRideGuardDismissed = true;
+    rerender(root);
+    return;
+  }
   if (action === 'current-location') {
     setPoint('pickup', MOCK_CURRENT_LOCATION);
     rerender(root, 'dropoff');
@@ -735,6 +830,9 @@ function handleClick(root, target) {
   }
   if (action === 'continue') {
     if (routeDraft.status !== ROUTE_STATUS.ROUTE_DRAFT_READY) return;
+    // /active-ride guard: never start a new route over a live trip until
+    // the passenger has explicitly dismissed the guard banner.
+    if (activeRideGuardTripId) return;
     persistDraft();
     go('/route-preview');
     return;
