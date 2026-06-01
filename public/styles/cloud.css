@@ -6844,6 +6844,14 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pfp-menu-row--toggle { cursor: default; }
 .pfp-menu-row--danger .pfp-menu-title { color: var(--danger); }
 
+/* Disabled menu row (e.g. "Мои черновики" with no saved draft): dimmed and
+   non-interactive so the entry stays visible without a dead navigation. */
+.pfp-menu-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pfp-menu-row:disabled:active { opacity: 0.45; }
+
 .pfp-menu-icon {
   width: 40px;
   height: 40px;

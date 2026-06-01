@@ -71,6 +71,15 @@ function fmtRub(n) {
   return new Intl.NumberFormat('ru-RU').format(n) + ' ₽';
 }
 
+// Reads the query string off the current hash route. Mirrors the parser used
+// by active_ride.js / map.js so the render-gate preview URLs
+// (/profile?role=passenger&state=empty) resolve the same way everywhere.
+function getHashQuery() {
+  const hash = (typeof window !== 'undefined' && window.location.hash) || '';
+  const qi = hash.indexOf('?');
+  return qi === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qi + 1));
+}
+
 function checklistItems(u) {
   return [
     { id: 'phone',       label: 'Телефон подтверждён', done: !!u.phone },
@@ -344,8 +353,8 @@ function getTripDemoMode() {
   }
 }
 
-function resolveTripsForDemo(activeTrip, plannedTrip) {
-  const mode = getTripDemoMode();
+function resolveTripsForDemo(activeTrip, plannedTrip, forcedMode) {
+  const mode = forcedMode || getTripDemoMode();
   if (mode === 'active') {
     const status = isTripActive(activeTrip) ? activeTrip.status : 'ONTRIP';
     return { active: { ...activeTrip, status }, planned: plannedTrip };
@@ -399,6 +408,57 @@ function isPassengerReady(u) {
   return u.profileStatus === 'ready';
 }
 
+// BD-PROFILE-PASSENGER-01 — render-gate preview overlay. Maps the ?state=
+// query param to a NON-PERSISTED user overlay so the documented preview URLs
+// render the matching gate without mutating localStorage or the stored role.
+// Returns the user untouched for an unknown / missing state. The "ready"
+// family seeds sensible mock figures only when the real account has none, so
+// the preview looks complete without clobbering a genuinely populated profile.
+function applyPassengerStatePreview(u, state) {
+  if (!state) return u;
+  if (state === 'needs_phone') {
+    return { ...u, phoneVerified: false };
+  }
+  if (state === 'empty') {
+    return { ...u, profileStatus: 'incomplete', phoneVerified: true, savedAddressCount: 0 };
+  }
+  if (state === 'ready' || state === 'active_trip' || state === 'notifications_on') {
+    const seeded = {
+      ...u,
+      profileStatus: 'ready',
+      phoneVerified: true,
+      tripCount: u.tripCount || 38,
+      savedAddressCount: u.savedAddressCount || 3,
+      paymentLast4: u.paymentLast4 || '4821',
+      promoCount: u.promoCount || 2,
+      trustedContactsCount: u.trustedContactsCount || 2,
+    };
+    if (state === 'notifications_on') seeded.notificationsEnabled = true;
+    return seeded;
+  }
+  return u;
+}
+
+// BD-PROFILE-PASSENGER-01 — drafts entry. The project persists in-progress
+// composer drafts under this key (see screens/composer.js DRAFT_KEY). There
+// is no dedicated "drafts list" route, so the menu row links to the composer
+// (which restores the draft) when one exists and renders a safe disabled row
+// otherwise — it never dead-ends the navigation.
+const COMPOSER_DRAFT_KEY = 'bazardrive.draft.v2';
+
+function hasComposerDraft() {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    const raw = localStorage.getItem(COMPOSER_DRAFT_KEY);
+    if (!raw) return false;
+    const draft = JSON.parse(raw);
+    return !!draft && typeof draft === 'object'
+      && Object.values(draft).some((v) => typeof v === 'string' && v.trim() !== '');
+  } catch {
+    return false;
+  }
+}
+
 function currentTripHtml(trip) {
   if (!isTripActive(trip)) return '';
   const drv  = trip.driver || {};
@@ -449,6 +509,7 @@ function currentTripHtml(trip) {
           <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-call" aria-label="Позвонить водителю">${SVG_PHONE_LG}</button>
           <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-chat" aria-label="Чат с водителем">${SVG_CHAT_BUBBLE}</button>
         </div>
+        <button type="button" class="bd-btn primary pfp-cta pfp-trip-open" id="pfp-trip-open">Открыть поездку</button>
       </div>
   `;
 }
@@ -511,7 +572,7 @@ function plannedTripHtml(trip) {
   `;
 }
 
-function renderPassenger(root, u) {
+function renderPassenger(root, u, previewState) {
   const ready  = isPassengerReady(u);
   const ini    = escapeHtml(initials(u));
   const name   = escapeHtml(passengerDisplayName(u));
@@ -523,6 +584,7 @@ function renderPassenger(root, u) {
   const trusted = Number(u.trustedContactsCount) || 0;
   const promos  = Number(u.promoCount) || 0;
   const last4   = u.paymentLast4 ? String(u.paymentLast4) : null;
+  const hasDrafts = hasComposerDraft();
 
   const phoneVerified = !!u.phoneVerified;
   const showPhoneVerify = !phoneVerified;
@@ -667,7 +729,10 @@ function renderPassenger(root, u) {
       </div>
 
       ${ready ? (() => {
-        const t = resolveTripsForDemo(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP);
+        // state=active_trip forces the active-trip card for the preview URL;
+        // otherwise the localStorage demo switch / default mocks decide.
+        const forced = previewState === 'active_trip' ? 'active' : null;
+        const t = resolveTripsForDemo(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP, forced);
         return tripSectionHtml(t.active, t.planned);
       })() : ''}
 
@@ -712,10 +777,19 @@ function renderPassenger(root, u) {
           </span>
           <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
         </button>
+        <button type="button" class="pfp-menu-row" id="pfp-menu-drafts"${hasDrafts ? '' : ' disabled'}>
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_PENCIL}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Мои черновики</span>
+            <span class="pfp-menu-sub">${hasDrafts ? 'Продолжить заполнение' : 'Черновиков пока нет'}</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
         <div class="pfp-menu-row pfp-menu-row--toggle">
           <span class="pfp-menu-icon" aria-hidden="true">${SVG_BELL}</span>
           <span class="pfp-menu-text">
             <span class="pfp-menu-title">Уведомления</span>
+            <span class="pfp-menu-sub" id="pfp-notif-state">${notif ? 'Включены' : 'Выключены'}</span>
           </span>
           <label class="pf-toggle" aria-label="Получать уведомления">
             <input type="checkbox" class="pf-toggle__input" id="pfp-notif-cb"${notif ? ' checked' : ''}>
@@ -809,33 +883,43 @@ function renderPassenger(root, u) {
     rerender();
   });
 
+  // Notifications toggle is functional: it reads the persisted
+  // notificationsEnabled flag (rendered above) and writes the new value back
+  // to state/localStorage, updating the On/Off label in place.
   root.querySelector('#pfp-notif-cb')?.addEventListener('change', (e) => {
-    user.set({ notificationsEnabled: e.target.checked });
+    const on = e.target.checked;
+    user.set({ notificationsEnabled: on });
+    const stateLabel = root.querySelector('#pfp-notif-state');
+    if (stateLabel) stateLabel.textContent = on ? 'Включены' : 'Выключены';
   });
 
-  // Phone verification — visual prototype only. No real SMS provider:
-  // both CTAs mark the phone as verified in localStorage and re-render
-  // the screen so the verify banner + ТРЕБУЕТСЯ ДЕЙСТВИЕ card disappear.
-  // A future AuthPhone screen can replace these handlers.
-  const verifyPhoneMock = () => {
-    user.set({ phoneVerified: true });
-    rerender();
-  };
-  root.querySelector('#pfp-verify-getcode')?.addEventListener('click', verifyPhoneMock);
-  root.querySelector('#pfp-verify-confirm')?.addEventListener('click', verifyPhoneMock);
+  // Phone verification — both CTAs route into the existing onboarding phone
+  // step (the project's phone-verify flow). The query hint targets the phone
+  // step so the flow lands on SMS entry rather than dead-ending in the
+  // profile. No real SMS provider is wired; onboarding owns the mock OTP.
+  const goVerifyPhone = () => go('/onboarding?step=phone');
+  root.querySelector('#pfp-verify-getcode')?.addEventListener('click', goVerifyPhone);
+  root.querySelector('#pfp-verify-confirm')?.addEventListener('click', goVerifyPhone);
 
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
 
-  // Active trip — visual prototype only. No real call/chat API,
-  // no navigation: both buttons just dismiss focus.
+  // Drafts row only navigates when a draft exists; the disabled state above
+  // keeps the dead-end case safe (no listener fires on a disabled button).
+  root.querySelector('#pfp-menu-drafts')?.addEventListener('click', () => {
+    if (hasComposerDraft()) go('/new');
+  });
+
+  // Active trip — call/chat remain visual prototypes (no real API). The
+  // card CTA opens the live ride screen in passenger mode.
   root.querySelector('#pfp-trip-call')?.addEventListener('click', (e) => {
     e.currentTarget.blur();
   });
   root.querySelector('#pfp-trip-chat')?.addEventListener('click', (e) => {
     e.currentTarget.blur();
   });
+  root.querySelector('#pfp-trip-open')?.addEventListener('click', () => go('/active-ride?role=passenger'));
 
   // Planned trip — visual prototype only. No backend; the action buttons
   // just dismiss focus until the planning flow is wired up.
@@ -2882,12 +2966,27 @@ export default function profile() {
   root.className = 'screen screen--profile';
   const u = user.get();
 
-  if (!u.onboarded || u.role === 'guest') {
+  // Render-gate preview params. ?role= picks the view without mutating the
+  // stored role; ?state= overlays a passenger sub-state (see
+  // applyPassengerStatePreview). Both are non-destructive — real user actions
+  // still re-render from the persisted user via the in-screen rerender().
+  const q = getHashQuery();
+  const roleParam = q.get('role');
+  const stateParam = q.get('state');
+
+  let view;
+  if (roleParam === 'driver') view = 'driver';
+  else if (roleParam === 'passenger') view = 'passenger';
+  else if (!u.onboarded || u.role === 'guest') view = 'guest';
+  else if (u.role === 'driver') view = 'driver';
+  else view = 'passenger';
+
+  if (view === 'guest') {
     renderGuest(root);
-  } else if (u.role === 'driver') {
+  } else if (view === 'driver') {
     renderDriver(root, u);
   } else {
-    renderPassenger(root, u);
+    renderPassenger(root, applyPassengerStatePreview(u, stateParam), stateParam);
   }
 
   return root;
