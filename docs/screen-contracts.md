@@ -3531,6 +3531,15 @@ post.type === 'announcement' || post.type === 'system'
  && documentsReady === true && waybillOpen === true
  && medicalCheckPassed === true`.
 
+`documentsReady` — это *регистрационная* готовность документов
+(BD-DRIVER-DOCS-01): только `REGISTRATION_DOCS` (driverLicense / taxiOsago /
+taxiRegistry), что соответствует трём обязательным документам онбординга.
+Путевой лист и медосмотр в неё не входят — они закрываются отдельными флагами
+`waybillOpen` / `medicalCheckPassed` (и дублирующим `shiftDocsReady`, который
+сводит воедино все пять документов). Поэтому водитель, завершивший онбординг с
+тремя обязательными документами, получает `documentsReady === true`, но всё ещё
+видит требование путевого листа / медосмотра для выхода на линию.
+
 ### Onboarding gate
 
 Поведение онбординга наследуется от BD-POST-01:
