@@ -2799,6 +2799,108 @@ Backend / API / driver markers / live navigation
 
 ---
 
+## BD-MAP-02 — LocationPermission
+
+### Identity
+
+```text
+Screen:        BD-MAP-02 LocationPermission
+Route:         /location-permission
+File:          public/src/screens/location_permission.js
+Data source:   localStorage `bazardrive.map_prefs.v1`
+               (managed by public/src/mapbox/mapbox_state.js)
+Design ref:    Cloud Design — BD-MAP-02 LocationPermission
+Parent issue:  #19
+Status:        implemented (registered in public/src/app.js). Audited
+               under #325.
+```
+
+### Purpose
+
+Экран-объяснение перед тем, как приложение получит доступ к
+геолокации. Достигается из BD-MAP-01 MapHome (permission-state →
+«Моё место») и из RoutePicker-ветки ручного ввода. Объясняет ценность
+геолокации, затем mock-разрешает доступ записью в localStorage.
+
+Реальный `navigator.geolocation` prompt **не вызывается** — это
+безопасный mock-gate: «Разрешить доступ» лишь выставляет
+`map_prefs.locationAllowed = true`. Нативный prompt и реальные
+координаты подключаются отдельной задачей.
+
+### Route contract
+
+```text
+Path:          /location-permission
+Query:         нет
+Chrome:        visible (tabbar + welcome-gate)
+Entry points:
+  - /map (permission-state) → «Моё место»
+  - прямой переход
+```
+
+### State / data contract
+
+```text
+Reads:    bazardrive.map_prefs.v1 (через mapbox_state.js)
+Writes:   bazardrive.map_prefs.v1 — { locationAllowed: true } по клику
+          «Разрешить доступ». Других ключей экран не трогает.
+Mock:     createMapShell({ variant: 'passenger' }) — декоративная
+          карта-заглушка, без реального Mapbox SDK / токена.
+```
+
+### UI states
+
+```text
+default   — hero с map-заглушкой + floating «Моё место» badge,
+            sheet с интро, списком benefits, mock-notice и тремя CTA.
+```
+
+Экран одно-состоянный: динамики render-gate здесь нет, вся вариативность
+живёт на BD-MAP-01 MapHome.
+
+### Actions
+
+```text
+allow   → saveMapPrefs({ locationAllowed: true }) → /map?state=default
+manual  → /route-picker (ручной ввод адреса)
+back    → /map
+```
+
+### A11y
+
+```text
+- Map-заглушка (createMapShell) помечена aria-hidden="true".
+- Watermark «Mapbox SDK пока не подключён» — визуальный.
+- Кнопка «Назад к карте»: aria-label.
+- Benefits / notice — текстовые блоки, читаемы скринридером.
+```
+
+### Acceptance checklist
+
+- [x] `/location-permission` открывается через hash-роутер; chrome виден.
+- [x] Экран объясняет ценность геолокации (benefits list).
+- [x] CTA «Разрешить доступ» mock-выставляет `locationAllowed=true` и
+      уводит на `/map?state=default`.
+- [x] Есть ручной fallback «Выбрать адрес вручную» → `/route-picker`.
+- [x] Реальный `navigator.geolocation` prompt не вызывается;
+      есть видимый mock-notice об этом.
+- [x] Mapbox SDK / токен не подключены; CSP не ослаблен.
+- [x] Нет inline `<script>` / `<style>` / `style=""` / `on*=`;
+      нет `.style.<property>` присвоений в JS.
+- [x] `node scripts/check.mjs` проходит.
+
+### Out of scope for BD-MAP-02
+
+```text
+Реальный navigator.geolocation prompt / реальные координаты
+Реальный Mapbox SDK / токен / CSP-расширение
+Backend / API
+Reverse geocoding точки подачи
+APK / Android shell
+```
+
+---
+
 ## BD-MAP-03 — RoutePicker
 
 ### Identity
@@ -2807,14 +2909,17 @@ Backend / API / driver markers / live navigation
 Screen ID:           BD-MAP-03
 Name:                RoutePicker
 Route:               /route-picker
-Future file:         public/src/screens/route_picker.js
-Data source:         in-memory `routeDraft` (passenger session draft);
-                     no localStorage write in this contract pass
+File:                public/src/screens/route_picker.js
+Data source:         persisted `routeDraft` in localStorage
+                     (`bazardrive.route_draft.v1`); pickup/dropoff survive
+                     refresh, malformed payloads are safely reset
 Design ref:          Cloud Design — BD-MAP-03 RoutePicker — Render Gate
 Cloud Design render: https://claude.ai/design/p/5906cb18-3016-4c57-879c-d1f89a532a34?file=BazarDrive+Prototype.html&via=share
 Parent issue:        #19
 Render gate issue:   #144
-Status:              docs-only contract (implementation not yet started)
+Status:              implemented (registered in public/src/app.js;
+                     persists bazardrive.route_draft.v1; handoff to
+                     /route-preview). Audited under #325.
 ```
 
 ### Purpose
@@ -2827,10 +2932,14 @@ MapHome и попадает в этот экран. Здесь он выбира
 pickup, и формирует объект `routeDraft`, который затем передаётся в
 BD-MAP-04 RoutePreview.
 
-Этот контракт — render-gate sync с Cloud Design. Реальный поиск
-адресов, Mapbox SDK / Geocoding API, сетевые вызовы и сохранение в
-localStorage сюда **не входят** — экран описывается через mock
-suggestions и in-memory draft.
+Экран реализован (`public/src/screens/route_picker.js`, зарегистрирован
+в `public/src/app.js`). Реальный поиск адресов, Mapbox SDK / Geocoding
+API и сетевые вызовы сюда **не входят** — экран работает через mock
+suggestions. В отличие от первоначального render-gate контракта,
+`routeDraft` **персистится** в localStorage под ключом
+`bazardrive.route_draft.v1`: pickup/dropoff переживают refresh,
+повреждённый payload безопасно сбрасывается, а готовый маршрут
+передаётся в BD-MAP-04 RoutePreview.
 
 ### User role
 
@@ -2855,8 +2964,9 @@ Boot:          экран открывается с пустым routeDraft, е�
 
 ### State / data contract
 
-In-memory `routeDraft` (живёт в модуле `route_picker.js`, не пишется
-в localStorage в рамках этого контракта):
+`routeDraft` живёт в модуле `route_picker.js` и **персистится** в
+localStorage под ключом `bazardrive.route_draft.v1` (pickup / dropoff /
+focus / route / prefill survive refresh):
 
 ```text
 routeDraft {
@@ -2889,12 +2999,15 @@ Reads / writes:
 
 ```text
 Reads:    Cloud Design mock suggestions (in-file MOCK_SUGGESTIONS).
-          Никаких чтений `bazardrive.map_prefs.v1` / геолокации в
-          этом контракте.
-Writes:   только in-memory `routeDraft`. Никаких ключей в
-          localStorage не создаётся и не обновляется.
-Mock:     route_service.estimateRoute / price_estimator не вызываются
-          здесь — оценка маршрута живёт в BD-MAP-04 RoutePreview.
+          bazardrive.route_draft.v1 при монтировании (hydrate).
+          Read-only peek в active-ride record через mock_api
+          (findLatestHandedOffOrderTripId) для /active-ride guard —
+          state machine не мутируется.
+Writes:   bazardrive.route_draft.v1 (pickup/dropoff/focus/route/prefill).
+          Повреждённый payload безопасно сбрасывается (removeItem).
+          Composer draft `bazardrive.draft.v2` не затрагивается.
+Mock:     локальная детерминированная оценка маршрута (estimateRoute
+          внутри route_picker.js) — без Mapbox Directions API.
 ```
 
 ### Required states
@@ -2921,10 +3034,12 @@ Mock:     route_service.estimateRoute / price_estimator не вызываютс�
 ### Actions
 
 ```text
-back to /map               — стрелка назад в topbar → router.go('/map').
-                              Текущий routeDraft теряется (или
-                              сохраняется в module-scope, см.
-                              «Out of scope» ниже).
+back to /map               — стрелка назад (или ×) в topbar →
+                              router.go('/map'). Заданные pickup/dropoff
+                              сохраняются в bazardrive.route_draft.v1 и
+                              переживают возврат на экран; transient
+                              UI-флаги (manual form / search query)
+                              сбрасываются при следующем монтировании.
 select pickup              — тап по pickup-полю или по suggestion в
                               режиме focus=pickup. Обновляет
                               routeDraft.pickup и переводит status в
@@ -2942,12 +3057,14 @@ clear route                — кнопка / иконка крестика ря
                               заполненным полем. Сбрасывает только
                               соответствующий point. Двойной clear
                               возвращает экран в `empty`.
-continue to route preview  — основной CTA «Продолжить». Активен
-                              только в `route-draft-ready`. В этом
-                              контракте действие описано как «уведёт
-                              на /route-preview», но сам переход и
-                              регистрация маршрута — out of scope
-                              (см. BD-MAP-04).
+continue to route preview  — основной CTA «Продолжить — выбрать
+                              водителя». Активен только в
+                              `route-draft-ready`. Персистит routeDraft
+                              и делает router.go('/route-preview')
+                              (BD-MAP-04). CTA gated /active-ride guard:
+                              при наличии живой handed-off поездки
+                              остаётся disabled до явного выбора
+                              «Новый маршрут».
 ```
 
 ### A11y
@@ -2965,66 +3082,173 @@ continue to route preview  — основной CTA «Продолжить». А
 
 ### Acceptance checklist
 
-- [ ] Cloud Design render для BD-MAP-03 RoutePicker зафиксирован
+- [x] Cloud Design render для BD-MAP-03 RoutePicker зафиксирован
       (см. ссылку выше) и сверен с шестью required-state выше.
-- [ ] Контракт BD-MAP-03 присутствует в `docs/screen-contracts.md`
-      и содержит все требуемые поля (Screen ID, Name, Route, Future
-      file, Parent, Render gate issue, Cloud Design render link,
-      Purpose, User role, Data/state contract, Required states,
-      Actions, Acceptance checklist, Out of scope).
-- [ ] BD-MAP-03 удалён из «Planned screens» и больше не значится
-      как «not yet implemented» в этом файле.
-- [ ] Никакой реальной реализации `/route-picker` в этом PR нет
-      (файл `public/src/screens/route_picker.js` не создаётся).
-- [ ] `public/src/app.js` не модифицируется — маршрут
-      `/route-picker` не регистрируется.
-- [ ] `public/src/router.js` не модифицируется (нет HIDE_CHROME,
-      нет welcome-gate изменений).
-- [ ] `public/sw.js` PRECACHE и VERSION не трогаются.
-- [ ] CSP (`<meta http-equiv="Content-Security-Policy">`) не
-      ослабляется.
-- [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
-      изменений в HTML (этот PR docs-only).
-- [ ] Нет `.style.<property>` присвоений в JS (этот PR docs-only).
-- [ ] Active-ride flow (BD-RIDE-D / BD-RIDE-P) не затрагивается.
-- [ ] `node scripts/check.mjs` проходит на этом PR.
+- [x] `/route-picker` реализован в `public/src/screens/route_picker.js`
+      и зарегистрирован в `public/src/app.js`.
+- [x] Шесть required-state (empty / pickup / dropoff / search-results /
+      manual-fallback / route-draft-ready) рендерятся.
+- [x] routeDraft персистится в `bazardrive.route_draft.v1`; pickup /
+      dropoff переживают refresh.
+- [x] Повреждённый routeDraft безопасно сбрасывается (removeItem),
+      экран возвращается в empty.
+- [x] CTA «Продолжить» персистит маршрут и уводит на `/route-preview`
+      (BD-MAP-04), gated /active-ride guard.
+- [x] Composer draft `bazardrive.draft.v2` не затрагивается.
+- [x] «Моё место» подставляет MOCK_CURRENT_LOCATION; реальный
+      `navigator.geolocation` не вызывается.
+- [x] Mapbox SDK / Geocoding / Directions API не подключены.
+- [x] `public/src/router.js` не требует изменений (welcome-gate +
+      PASSENGER_ORDER_ROUTES redirect уже покрывают экран).
+- [x] CSP не ослаблен; нет inline `<script>` / `<style>` / `style=""` /
+      `on*=`; нет `.style.<property>` присвоений в JS.
+- [x] Active-ride flow (BD-RIDE-D / BD-RIDE-P) не затрагивается
+      (route-picker только читает active-ride record).
+- [x] `node scripts/check.mjs` проходит.
 
 ### Out of scope for BD-MAP-03
 
 ```text
-no /route-picker implementation
-  (контракт описывает экран, но `public/src/screens/route_picker.js`
-   в этом PR не создаётся)
-no app.js route registration
-  (route `/route-picker` пока НЕ зарегистрирован в router-таблице
-   `public/src/app.js`)
-no router.js changes
-  (HIDE_CHROME, welcome-gate, syncTabActive — без изменений)
 no real Mapbox SDK
   (никаких подключений к `api.mapbox.com` / `events.mapbox.com` /
    `tiles.mapbox.com`; safe-stubs `public/src/mapbox/*` не трогаются)
 no backend / API
   (нет реального Geocoding / Search / Directions; suggestions —
-   mock-массив в будущем файле экрана)
+   in-file mock-массив MOCK_SUGGESTIONS)
 no CSP changes
   (`<meta http-equiv="Content-Security-Policy">` в
    `public/index.html` не редактируется)
-no Service Worker changes
-  (`public/sw.js` PRECACHE и VERSION не обновляются — implementation
-   PR поднимет VERSION и добавит файл в PRECACHE отдельно)
 no active ride changes
   (active_ride.js / active_ride_passenger.js / ride_state.js не
    модифицируются; routeDraft не перетекает в active-ride state
-   machine в рамках BD-MAP-03)
-no localStorage persistence
-  (routeDraft живёт только в module-scope; персистентность маршрута —
-   отдельный вопрос для BD-MAP-04 / BD-MAP-05)
+   machine; route-picker только читает active-ride record для guard)
 no real navigator.geolocation prompt
   («Моё место» подставляет MOCK_CURRENT_LOCATION; реальный prompt —
    отдельный гейт, см. BD-MAP-02 LocationPermission)
-no /route-preview implementation
-  (CTA «Продолжить» — placeholder в этом контракте; экран
-   назначения описывается отдельно в BD-MAP-04)
+no time picker / stop picker
+  (чипы «Запланировать» / «+ Остановка» — visual-only, показывают
+   информационный notice; реальный datetime/stop picker — отдельный
+   under-issue)
+```
+
+---
+
+## BD-MAP-04 — RoutePreview
+
+### Identity
+
+```text
+Screen:        BD-MAP-04 RoutePreview
+Route:         /route-preview
+File:          public/src/screens/route_preview.js
+Data source:   routeDraft из localStorage (`bazardrive.route_draft.v1`,
+               см. BD-MAP-03 RoutePicker)
+Design ref:    Cloud Design — BD-MAP-04 RoutePreview — Render Gate
+Parent issue:  #19
+Status:        implemented (registered в public/src/app.js). Audited
+               под #325.
+```
+
+### Purpose
+
+Шаг между BD-MAP-03 RoutePicker и BD-MAP-05 OrderMapDraft. Читает
+персистнутый `routeDraft`, валидирует форму и показывает сводку
+маршрута (откуда / куда) с метриками: время в пути, расстояние и
+ориентировочная цена (mock-оценка).
+
+Реальный Mapbox Directions API / SDK / backend сюда **не входят** —
+карта-область переиспользует `createMapShell` placeholder с оранжевой
+линией маршрута. Метрики берутся из `route.{distanceKm, durationMin,
+estimatedPrice}`, рассчитанных RoutePicker-ом локально.
+
+### Route contract
+
+```text
+Path:          /route-preview
+Query:         нет
+Chrome:        visible (tabbar; в PASSENGER_ORDER_ROUTES — driver
+               redirect на /driver-map)
+Entry points:
+  - /route-picker → CTA «Продолжить» (BD-MAP-03)
+  - прямой переход (анализируется как missing routeDraft)
+```
+
+### Data contract — routeDraft (in)
+
+```text
+Reads:   bazardrive.route_draft.v1
+Shape:   {
+  pickup:  { label, ... }
+  dropoff: { label, ... }
+  route:   { distanceKm:number, durationMin:number, estimatedPrice:number }
+}
+Validation (defensive):
+  - localStorage пуст / ключа нет        → state=missing
+  - JSON.parse failure / !isPlainObject  → state=malformed
+  - pickup/dropoff/route поля невалидны   → state=malformed (со списком
+                                            недостающих полей + путями)
+Writes:  ничего (read-only экран).
+```
+
+### UI states
+
+```text
+1 · valid     — routeDraft валиден; карта с маршрутом, summary
+                (ОТКУДА / КУДА), метрики В ПУТИ / РАССТОЯНИЕ / ОЦЕНКА,
+                CTA «Создать заказ» + «Изменить маршрут», status «Готово».
+2 · missing   — routeDraft отсутствует; empty-state «Нет данных о
+                маршруте» + diag-card (источник / ключ / шаг назад),
+                CTA «Выбрать маршрут» / «Вернуться на карту».
+3 · malformed — routeDraft повреждён / неполный; warn-state «Черновик
+                повреждён» + список проблемных полей с путями,
+                CTA «Выбрать маршрут».
+```
+
+### Actions
+
+```text
+create-order  → /order-map-draft (BD-MAP-05)
+edit-route    → /route-picker
+pick-route    → /route-picker (missing / malformed state)
+back-picker   → /route-picker (стрелка назад в topbar)
+back-map      → /map (missing state)
+```
+
+### A11y
+
+```text
+- Карта-область: aria-label «Карта маршрута»; inner MapShell
+  aria-hidden="true".
+- Метрики — <dl> с aria-label «Параметры маршрута».
+- Status «Готово» — role="status".
+- Кнопки навигации topbar — aria-label.
+```
+
+### Acceptance checklist
+
+- [x] `/route-preview` открывается через hash-роутер; chrome виден.
+- [x] Валидный routeDraft → summary + метрики (мин / км / ₽) из
+      `route.distanceKm` / `durationMin` / `estimatedPrice`.
+- [x] Отсутствующий routeDraft → missing-state с diag-card.
+- [x] Повреждённый / неполный routeDraft → malformed-state со списком
+      проблемных полей (безопасно, без падения).
+- [x] CTA «Создать заказ» → `/order-map-draft` (BD-MAP-05).
+- [x] CTA «Изменить маршрут» / «Выбрать маршрут» → `/route-picker`.
+- [x] Реальный Mapbox Directions API / SDK не вызывается;
+      карта — `createMapShell` placeholder.
+- [x] Экран read-only: `bazardrive.route_draft.v1` не перезаписывается.
+- [x] CSP не ослаблен; нет inline `<script>` / `<style>` / `style=""` /
+      `on*=`; нет `.style.<property>` присвоений в JS.
+- [x] `node scripts/check.mjs` проходит.
+
+### Out of scope for BD-MAP-04
+
+```text
+Реальный Mapbox Directions API / route geometry / SDK / tiles
+Backend / API / реальный расчёт цены
+Геокодирование точек
+Редактирование маршрута на месте (правка уходит в /route-picker)
+APK / Android shell
 ```
 
 ---
