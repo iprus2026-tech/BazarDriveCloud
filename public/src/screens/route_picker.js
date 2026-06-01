@@ -79,23 +79,28 @@ let hydrated = false;
 // route) and keep the Continue CTA gated until the passenger explicitly
 // dismisses the guard. Read-only: this only *reads* the active-ride record
 // via the existing mock_api helper, it never mutates the active-ride state
-// machine (active_ride.js / ride_state.js stay untouched). `dismissed` is
-// the explicit-action latch and lives in module scope for the session.
-let activeRideGuardDismissed = false;
+// machine (active_ride.js / ride_state.js stay untouched). The guard is
+// resolved once per RoutePicker mount (not on every render), so typing in
+// the fields never re-parses localStorage. Dismissal is scoped to the
+// current tripId: dismissing trip A hides the guard only for trip A, so a
+// later/different live trip (or a fresh navigation to #/route-picker) still
+// re-shows it.
+let activeRideGuardDismissedTripId = null;
 let activeRideGuardTripId = null;
 
 function resolveActiveRideGuardTripId() {
-  if (activeRideGuardDismissed) {
-    activeRideGuardTripId = null;
-    return null;
-  }
-  let tripId = null;
+  let candidateTripId = null;
   try {
-    tripId = findLatestHandedOffOrderTripId();
+    candidateTripId = findLatestHandedOffOrderTripId();
   } catch {
-    tripId = null;
+    candidateTripId = null;
   }
-  activeRideGuardTripId = typeof tripId === 'string' && tripId ? tripId : null;
+  candidateTripId = typeof candidateTripId === 'string' && candidateTripId
+    ? candidateTripId
+    : null;
+  activeRideGuardTripId = candidateTripId && candidateTripId !== activeRideGuardDismissedTripId
+    ? candidateTripId
+    : null;
   return activeRideGuardTripId;
 }
 
@@ -311,7 +316,7 @@ export function clearRouteDraftStore() {
   routeDraft.prefillSource = null;
   routeDraft.prefillLabel = '';
   notice = '';
-  activeRideGuardDismissed = false;
+  activeRideGuardDismissedTripId = null;
   activeRideGuardTripId = null;
   clearPersistedDraft();
 }
@@ -694,9 +699,10 @@ function renderPrefillBanner() {
 
 function buildBody() {
   syncDraft();
-  // Resolve the /active-ride guard once per render so the banner and the
-  // Continue-gating in renderStatusCard agree on the same trip.
-  resolveActiveRideGuardTripId();
+  // The /active-ride guard is resolved once per mount (see
+  // routePickerScreen) and re-evaluated only on dismissal — never here, so
+  // re-rendering on every keystroke does not re-parse localStorage. The
+  // banner and the Continue-gating both read the cached activeRideGuardTripId.
 
   const fragment = document.createDocumentFragment();
 
@@ -809,7 +815,10 @@ function handleClick(root, target) {
   }
   if (action === 'dismiss-active-guard') {
     // Explicit action: the passenger chose to plan a new route anyway.
-    activeRideGuardDismissed = true;
+    // Scope the dismissal to this specific trip and hide the guard without
+    // re-reading localStorage — a later/different live trip re-shows it.
+    activeRideGuardDismissedTripId = activeRideGuardTripId;
+    activeRideGuardTripId = null;
     rerender(root);
     return;
   }
@@ -851,6 +860,11 @@ function handleClick(root, target) {
 export default function routePickerScreen() {
   hydrateFromStorage();
   syncDraft();
+  // Resolve the /active-ride guard once for this mount. A fresh navigation
+  // to #/route-picker clears any prior trip-scoped dismissal so the guard
+  // is re-shown for whatever live trip exists now.
+  activeRideGuardDismissedTripId = null;
+  resolveActiveRideGuardTripId();
   const root = document.createElement('section');
   root.className = 'screen screen--route-picker';
   root.dataset.status = routeDraft.status;
