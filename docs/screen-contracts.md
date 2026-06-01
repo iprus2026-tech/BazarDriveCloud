@@ -894,7 +894,7 @@ Phone call between parties
 Driver / passenger state machine outside this bridge
 ```
 
-## BD-RULES-01 — Rules
+## BD-RULES-01 — Rules V2
 
 ### Identity
 
@@ -902,16 +902,28 @@ Driver / passenger state machine outside this bridge
 Screen:       Rules V2 — community rules + safety block
 Route:        /rules
 File:         public/src/screens/rules.js
-Data source:  in-file `RULES` constant (no localStorage, no network)
+Purpose:      правила сервиса, безопасность, публикации, жалобы
+Data source:  static RULES array inside rules.js (no localStorage, no network)
+State:        no persistent state
 Design ref:   Cloud Design — Rules V2
 Parent issue: #28 (BD-RULES-01 Rules V2 render sync)
 ```
 
+### Cloud Design render/frame gate
+
+Status: needs explicit render/frame confirmation.
+
+Rules V2 уже существует в коде и выровнен под Cloud Design (mobile shell,
+bd-card / bd-badge / bd-btn, namespace `rules-v2-*`). Перед дальнейшей
+визуальной полировкой подтвердите актуальный Cloud Design render/frame,
+используемый как визуальный референс.
+
 ### Purpose
 
-Статический экран правил сообщества. Гость может открыть его без
-onboarding (см. router welcome-gate). Ничего не пишет в `localStorage`,
-ничего не читает из `state.js` — чистый рендер.
+Статический экран правил сервиса: безопасность, публикации, поездки,
+жалобы. Гость может открыть его без onboarding (см. router welcome-gate).
+Ничего не пишет в `localStorage`, ничего не читает из `state.js` —
+чистый рендер.
 
 ### Layout
 
@@ -950,8 +962,11 @@ data-go="/feed"         → router.go('/feed')   (safety CTA, empty CTA)
 ### Acceptance checklist
 
 - [ ] `/rules` открывается через hash-роутер
-- [ ] Bottom navigation подсвечивает «Правила» на `/rules`
+- [ ] Bottom navigation (tabbar) подсвечивает «Правила» на `/rules`
 - [ ] Список отрисовывается из `RULES` через `escapeHtml`
+- [ ] Список правил читаем на mobile shell (max-width 430px)
+- [ ] Есть разделы: сообщество, публикации, поездки, безопасность, жалобы
+- [ ] Есть safety-card (`rules-v2-safety`)
 - [ ] Empty-состояние рендерится, если `RULES` пустой
 - [ ] Кнопка «Вернуться в ленту» уходит на `/feed`
 - [ ] Гость может открыть `/rules` без onboarding
