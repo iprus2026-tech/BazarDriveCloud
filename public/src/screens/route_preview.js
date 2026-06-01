@@ -17,12 +17,15 @@ const STATE = {
   MALFORMED: 'malformed',
 };
 
+// BD-MAP-04 — diagnostic labels mirror the Cloud Design flat paths. These are
+// presentational only; the persisted draft keeps its nested shape (route.*),
+// which flattenDraft() still reads from.
 const FIELD_LABELS = {
   pickup: { copy: 'Не указано место подачи', path: 'routeDraft.pickup' },
   dropoff: { copy: 'Не указано место назначения', path: 'routeDraft.dropoff' },
-  distanceKm: { copy: 'Расстояние не рассчитано', path: 'routeDraft.route.distanceKm' },
-  durationMin: { copy: 'Время поездки не рассчитано', path: 'routeDraft.route.durationMin' },
-  estimatePriceFrom: { copy: 'Стоимость не оценена', path: 'routeDraft.route.estimatedPrice' },
+  distanceKm: { copy: 'Расстояние не рассчитано', path: 'routeDraft.distanceKm' },
+  durationMin: { copy: 'Время поездки не рассчитано', path: 'routeDraft.durationMin' },
+  estimatePriceFrom: { copy: 'Стоимость не оценена', path: 'routeDraft.estimatePriceFrom' },
 };
 
 function isPlainObject(value) {
@@ -113,6 +116,15 @@ function renderTopbar() {
     <div class="bd-topbar__titles">
       <h1 class="bd-topbar__title">Предпросмотр маршрута</h1>
     </div>
+    <button class="bd-iconbtn rpv-topbar__share" type="button" data-action="share-route"
+            aria-label="Поделиться маршрутом">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7"/>
+        <polyline points="16 6 12 2 8 6"/>
+        <line x1="12" y1="2" x2="12" y2="15"/>
+      </svg>
+    </button>
   `;
   return topbar;
 }
@@ -204,11 +216,6 @@ function renderValidCard(draft) {
       </svg>
       <span>Изменить маршрут</span>
     </button>
-
-    <div class="rpv-status rpv-status--ready" role="status">
-      <span class="rpv-status__check" aria-hidden="true">✓</span>
-      <span>Готово · можно создать заказ</span>
-    </div>
   `;
   return card;
 }
@@ -309,6 +316,31 @@ function renderMalformedCard(missing) {
       </svg>
       <span>Выбрать маршрут</span>
     </button>
+    <button class="bd-btn rpv-secondary" type="button" data-action="toggle-details"
+            aria-expanded="false" aria-controls="rpv-details">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="12" y1="11" x2="12" y2="16"/>
+        <line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+      <span>Подробнее</span>
+    </button>
+
+    <dl class="rpv-diag rpv-details" id="rpv-details" aria-label="Диагностика черновика" hidden>
+      <div class="rpv-diag__row">
+        <dt>Источник</dt>
+        <dd>${escapeHtml(STORAGE_LABEL)}</dd>
+      </div>
+      <div class="rpv-diag__row">
+        <dt>Ключ</dt>
+        <dd><code>${escapeHtml(ROUTE_DRAFT_KEY)}</code></dd>
+      </div>
+      <div class="rpv-diag__row">
+        <dt>Шаг назад</dt>
+        <dd><code>/route-picker</code></dd>
+      </div>
+    </dl>
   `;
   return card;
 }
@@ -334,7 +366,29 @@ function buildBody() {
   return { fragment, state: result.state };
 }
 
-function handleAction(action) {
+function shareRoute() {
+  // Fail-soft: use the native Web Share API when present, otherwise no-op.
+  // No backend, no network — a missing/declined share never throws.
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      const url = typeof location !== 'undefined' ? location.href : undefined;
+      navigator.share({ title: 'Предпросмотр маршрута', url }).catch(() => {});
+    }
+  } catch {
+    /* ignore — share is best-effort */
+  }
+}
+
+function toggleDetails(target) {
+  const card = target.closest('.rpv-card');
+  const details = card?.querySelector('.rpv-details');
+  if (!details) return;
+  const willShow = details.hidden;
+  details.hidden = !willShow;
+  target.setAttribute('aria-expanded', String(willShow));
+}
+
+function handleAction(action, target) {
   if (action === 'create-order') {
     go('/order-map-draft');
     return;
@@ -351,6 +405,14 @@ function handleAction(action) {
     go('/map');
     return;
   }
+  if (action === 'share-route') {
+    shareRoute();
+    return;
+  }
+  if (action === 'toggle-details') {
+    toggleDetails(target);
+    return;
+  }
 }
 
 export default function routePreviewScreen() {
@@ -363,7 +425,7 @@ export default function routePreviewScreen() {
   root.addEventListener('click', (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
-    handleAction(target.dataset.action);
+    handleAction(target.dataset.action, target);
   });
 
   return root;
