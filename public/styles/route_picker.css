@@ -134,7 +134,7 @@
 
 .rp-field.is-active {
   border-color: rgba(255, 107, 53, 0.35);
-  background: rgba(255, 107, 53, 0.08);
+  background: rgba(255, 107, 53, 0.12);
 }
 
 .rp-field__label {
@@ -144,6 +144,11 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* Active field eyebrow reads accent in the Cloud Design render gate. */
+.rp-field.is-active .rp-field__label {
+  color: var(--accent);
 }
 
 .rp-field__input-row {
@@ -478,6 +483,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Highlight the matched query token («Внуково») inside a result label. */
+.rp-suggestion__mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .rp-suggestion__body small {
