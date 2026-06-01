@@ -4862,6 +4862,37 @@ body {
   text-align: center;
 }
 
+/* BD-RIDE-D-10 — Canceled / no-show stub route + reason rows. */
+.active-ride__cancel-route {
+  margin-top: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.active-ride__cancel-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.active-ride__cancel-label {
+  color: var(--text-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  min-width: 64px;
+}
+.active-ride__cancel-value {
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
 .active-ride__notice {
   position: absolute;
   left: var(--pad);
