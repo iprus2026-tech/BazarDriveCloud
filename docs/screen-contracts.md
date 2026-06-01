@@ -899,55 +899,67 @@ Driver / passenger state machine outside this bridge
 ### Identity
 
 ```text
-Screen:       Rules V2 — community rules + safety block
+Screen:       Rules V2 — «Правила и документы» (разделы + шаблоны)
 Route:        /rules
 File:         public/src/screens/rules.js
-Purpose:      правила сервиса, безопасность, публикации, жалобы
-Data source:  static RULES array inside rules.js (no localStorage, no network)
+Purpose:      разделы правил/памяток/налогов + скачиваемые шаблоны документов
+Data source:  static SECTIONS + DOCUMENT_TEMPLATES в rules.js (no localStorage, no network)
 State:        no persistent state
-Design ref:   Cloud Design — Rules V2
+Design ref:   Cloud Design — «7 · Правила и документы»
 Parent issue: #28 (BD-RULES-01 Rules V2 render sync)
 ```
 
 ### Cloud Design render/frame gate
 
-Status: needs explicit render/frame confirmation.
+Status: implementation aligned to provided screenshots, needs final review.
 
-Rules V2 уже существует в коде и выровнен под Cloud Design (mobile shell,
-bd-card / bd-badge / bd-btn, namespace `rules-v2-*`). Перед дальнейшей
-визуальной полировкой подтвердите актуальный Cloud Design render/frame,
-используемый как визуальный референс.
+Layout выровнен под Cloud Design экран «Правила и документы» по скриншотам,
+приложенным к issue #28 (mobile shell, bd-card / bd-badge / bd-btn, namespace
+`rules-v2-*`). Подтверждение по скриншотам, не по live-фрейму Claude Design —
+до финального ревью статус не переводится в `confirmed`.
 
 ### Purpose
 
-Статический экран правил сервиса: безопасность, публикации, поездки,
-жалобы. Гость может открыть его без onboarding (см. router welcome-gate).
-Ничего не пишет в `localStorage`, ничего не читает из `state.js` —
-чистый рендер.
+Статический экран-хаб: тематические разделы (правила сообщества, памятка
+водителю, налоги) и библиотека скачиваемых шаблонов документов. Гость может
+открыть его без onboarding (см. router welcome-gate). Ничего не пишет в
+`localStorage`, ничего не читает из `state.js` — чистый рендер.
 
 ### Layout
 
 ```text
-1. bd-topbar         — title «Правила» + subtitle «Сообщество и безопасность»
-2. intro card        — bd-card + badges «Сообщество» / «Безопасность»
-3. section header    — «Правила сообщества» + счётчик
-4. rules list        — карточки с номером, заголовком, описанием, tone-варианты
-5. safety card       — info-блок про уважение, безопасность, мошенничество
-6. CTA               — «Вернуться в ленту» → /feed
+1. bd-topbar         — title «Правила» + subtitle «Документы и шаблоны» + search icon (no-op)
+2. section header    — «Разделы»
+3. section cards     — bd-card: иконка + title + subtitle + chevron + chips (bd-badge)
+4. section header    — «Шаблоны документов» + действие «Все» (no-op)
+5. document rows     — bd-card-tight: иконка + title + meta + кнопка «Скачать» (mock)
+6. support card      — «Не нашли нужный шаблон?» (info, без backend)
+```
+
+### Required sections
+
+```text
+Разделы              — SECTIONS (community / driver-memo / taxes), chips на карточку
+Шаблоны документов   — DOCUMENT_TEMPLATES, строки с «Скачать» (mock/no-op)
+Support card         — «Не нашли нужный шаблон?» → текст про поддержку, без действия
 ```
 
 ### UI states
 
 ```text
-list      — массив RULES (>=1) → intro + список + safety + CTA
-empty     — пустой массив RULES → bd-empty с CTA «Вернуться в ленту»
+content   — SECTIONS и/или DOCUMENT_TEMPLATES непустые → разделы + шаблоны + support card
+empty     — оба массива пустые → bd-empty с CTA «Вернуться в ленту»
 ```
 
 ### Data
 
 ```text
-const RULES = [
-  { title, text, tone: 'default' | 'warning' | 'success' | 'danger' },
+const SECTIONS = [
+  { id, title, subtitle, icon, tone: 'accent' | 'info' | 'success' | 'danger', chips: [...] },
+  ...
+]
+const DOCUMENT_TEMPLATES = [
+  { id, title, size, format, updated },
   ...
 ]
 ```
@@ -955,20 +967,24 @@ const RULES = [
 ### Actions
 
 ```text
-Bottom tabbar           → переходы /feed / /rules / /profile
-data-go="/feed"         → router.go('/feed')   (safety CTA, empty CTA)
+Bottom tabbar           → переходы /feed / /map / /rules / /profile
+data-go="/feed"         → router.go('/feed')   (empty-state CTA)
+data-doc="<id>"         → mock/no-op (нет backend, нет реальных файлов)
+data-noop               → search icon / «Все» — заглушки без действия
 ```
 
 ### Acceptance checklist
 
 - [ ] `/rules` открывается через hash-роутер
 - [ ] Bottom navigation (tabbar) подсвечивает «Правила» на `/rules`
-- [ ] Список отрисовывается из `RULES` через `escapeHtml`
-- [ ] Список правил читаем на mobile shell (max-width 430px)
-- [ ] Есть разделы: сообщество, публикации, поездки, безопасность, жалобы
-- [ ] Есть safety-card (`rules-v2-safety`)
-- [ ] Empty-состояние рендерится, если `RULES` пустой
-- [ ] Кнопка «Вернуться в ленту» уходит на `/feed`
+- [ ] Topbar: title «Правила» + subtitle «Документы и шаблоны» + search icon
+- [ ] Разделы (`SECTIONS`) рендерятся карточками с chips через `escapeHtml`
+- [ ] Шаблоны (`DOCUMENT_TEMPLATES`) рендерятся строками с кнопкой «Скачать»
+- [ ] Кнопки «Скачать» — mock/no-op, экран не ломается
+- [ ] Search icon и «Все» — no-op заглушки (нет роутов)
+- [ ] Support-card «Не нашли нужный шаблон?» отрисована
+- [ ] Экран читаем на mobile shell (max-width 430px)
+- [ ] Empty-состояние рендерится, если оба массива пустые → CTA «Вернуться в ленту»
 - [ ] Гость может открыть `/rules` без onboarding
 - [ ] Нет inline `<script>` / `<style>` / `style=""` / `on*=`
 - [ ] Нет `.style.<property>` присвоений в JS
@@ -978,9 +994,11 @@ data-go="/feed"         → router.go('/feed')   (safety CTA, empty CTA)
 ### Out of scope for BD-RULES-01
 
 ```text
-Per-rule navigation, anchors, deep-linking
-Real moderation / report submission backend
-Editing rules from the client
+Per-section navigation, anchors, deep-linking
+Real document downloads / file delivery
+Working search / «Все» listing screens
+Support ticket / moderation backend
+Editing rules or templates from the client
 Remote rules feed / CMS
 ```
 
