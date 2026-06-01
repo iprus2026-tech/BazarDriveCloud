@@ -137,6 +137,16 @@ function stepsFor(role) {
     : ['role', 'phone', 'otp', 'profile', 'done'];
 }
 
+// Reads the query string off the current hash route. Mirrors the parser used
+// by profile.js / active_ride.js so deep links such as #/onboarding?step=phone
+// resolve consistently. Returns an empty URLSearchParams for a plain
+// #/onboarding so the normal flow is untouched.
+function getHashQuery() {
+  const hash = (typeof window !== 'undefined' && window.location.hash) || '';
+  const qi = hash.indexOf('?');
+  return qi === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qi + 1));
+}
+
 // ── Dot progress indicator ────────────────────────────────────────────────────
 function renderDots(current, total) {
   return Array.from({ length: total }, (_, i) => {
@@ -454,6 +464,19 @@ export default function onboarding() {
 
   // Accumulated draft — cleared on finish
   const currentUser = user.get();
+
+  // Deep-link support: #/onboarding?step=phone routes here from the passenger
+  // "needs phone" gate (profile.js). For an already-onboarded user this runs a
+  // trimmed phone→otp verification that flips phoneVerified WITHOUT rebuilding
+  // the rest of the profile, so the user is not bounced back to the gate.
+  const startAtPhone = getHashQuery().get('step') === 'phone';
+  // Working role: keep a real passenger/driver role; otherwise fall back to
+  // passenger for the phone flow (a safe default — never persisted on its own).
+  const knownRole = (currentUser.role === 'passenger' || currentUser.role === 'driver')
+    ? currentUser.role
+    : null;
+  const verifyPhoneOnly = startAtPhone && currentUser.onboarded === true;
+  const verifyReturnRoute = () => (knownRole === 'driver' ? '/profile' : '/profile?role=passenger');
   // Pre-fill the docs checklist from the canonical driverDocuments state so
   // re-edit reflects uploads made via Profile → Documents (not just the
   // legacy documentsReady flag).
@@ -468,8 +491,10 @@ export default function onboarding() {
         .map((d) => d.id)
     : [];
   const draft = {
-    role: currentUser.role ?? null,
-    phone: '',
+    role: knownRole ?? (startAtPhone ? 'passenger' : (currentUser.role ?? null)),
+    // Prefill the existing number for the verify flow so the user re-confirms
+    // their own phone rather than typing it from scratch.
+    phone: (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
     firstName: '',
     lastName: '',
     vehicleMake: '',
@@ -497,12 +522,34 @@ export default function onboarding() {
     if (currentStep() !== 'otp') return;
     otpSubmitting = true;
     clearOtpAdvanceTimer();
+    if (verifyPhoneOnly) {
+      completePhoneVerification();
+      return;
+    }
     next();
   }
 
-  function steps() { return stepsFor(draft.role); }
+  // Verify-only entry uses a trimmed phone→otp flow; everything else keeps the
+  // full role-based step list.
+  function steps() { return verifyPhoneOnly ? ['phone', 'otp'] : stepsFor(draft.role); }
   function totalSteps() { return steps().length; }
   function currentStep() { return steps()[step]; }
+
+  // Deep-link landing: jump straight to the phone step when requested.
+  if (startAtPhone) {
+    const phoneIdx = steps().indexOf('phone');
+    if (phoneIdx >= 0) step = phoneIdx;
+  }
+
+  // Verify-only completion: persist phoneVerified (and the confirmed phone)
+  // while preserving every other field, then return to the profile so the
+  // needs-phone gate is gone. No full profile rebuild, no role mutation.
+  function completePhoneVerification() {
+    const patch = { phoneVerified: true };
+    if (draft.phone) patch.phone = draft.phone;
+    user.set(patch);
+    go(verifyReturnRoute());
+  }
 
   function next() {
     clearOtpAdvanceTimer();
@@ -512,7 +559,10 @@ export default function onboarding() {
 
   function back() {
     clearOtpAdvanceTimer();
-    if (step === 0) { go('/welcome'); return; }
+    if (step === 0) {
+      go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
+      return;
+    }
     step--;
     render();
   }
@@ -549,6 +599,13 @@ export default function onboarding() {
       }
     }
 
+    // finish() is only reachable by passenger/driver (the guest path bails out
+    // at the role step), i.e. after the phone→otp flow. Mark the phone verified
+    // when a number was confirmed in this run, and keep an already-verified
+    // status if the user re-edited onboarding without retyping their phone —
+    // so completing onboarding never drops the user back into the gate.
+    const phoneVerified = currentUser.phoneVerified || !!draft.phone;
+
     user.set({
       onboarded: true,
       role: draft.role,
@@ -563,6 +620,7 @@ export default function onboarding() {
       vehiclePlate: draft.vehiclePlate,
       vehicleColor: draft.vehicleColor,
       vehicleBody: draft.vehicleBody,
+      phoneVerified,
       documentsReady,
       driverDocuments,
     });
