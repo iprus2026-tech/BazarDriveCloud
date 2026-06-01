@@ -651,6 +651,25 @@ function renderSavedRecent() {
   `;
 }
 
+// BD-MAP-03 (visual parity) — highlight the matched query token inside a
+// result label («Аэропорт *Внуково*, терминал А»). Display-only: the label
+// is escaped first, then the (regex-escaped, case-insensitive) query match is
+// wrapped in a styled <mark>. No data contract change — aria-label stays the
+// plain label and the data-suggestion id is untouched.
+function highlightMatch(label, query) {
+  const safe = escapeHtml(label);
+  const q = query.trim();
+  if (!q) return safe;
+  const needle = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let re;
+  try {
+    re = new RegExp(`(${needle})`, 'gi');
+  } catch {
+    return safe;
+  }
+  return safe.replace(re, '<mark class="rp-suggestion__mark">$1</mark>');
+}
+
 // BD-MAP-03B — search-results sheet (render-gate state 4 · «Внуково»).
 // Header «Найдено по «<query>»» + «Nмест» count, then the suggestion rows
 // (data-suggestion contract preserved), then a manual-entry escape hatch.
@@ -677,7 +696,7 @@ function renderSearchResults() {
             role="option" aria-label="${escapeHtml(item.label)}">
       <span class="rp-suggestion__icon" aria-hidden="true">⌕</span>
       <span class="rp-suggestion__body">
-        <strong>${escapeHtml(item.label)}</strong>
+        <strong>${highlightMatch(item.label, query)}</strong>
         <small>${escapeHtml(item.hint ?? 'Адрес')}</small>
       </span>
       <span class="rp-suggestion__go" aria-hidden="true">↗</span>
