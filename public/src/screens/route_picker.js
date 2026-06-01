@@ -42,16 +42,63 @@ const MOCK_CURRENT_LOCATION = makePoint(
   'current'
 );
 
+// BD-MAP-03B — mock suggestion pool aligned with the Cloud Design render
+// gate (state 4 · Search results — «Внуково»). Typing «Внуково» yields the
+// four airport rows shown in the design; the rest keep the recent picks
+// reachable from search. No Geocoding API — this is an in-file mock list.
 const MOCK_SUGGESTIONS = [
-  makePoint('place-home', 'Дом · ул. Мира, 18', 'Сохранённый адрес', 'search'),
-  makePoint('place-work', 'Работа · Бизнес-центр Север', 'Сохранённый адрес', 'search'),
-  makePoint('place-airport', 'Аэропорт Внуково', 'Терминал А', 'search'),
-  makePoint('place-station', 'Ж/д вокзал Центральный', 'Площадь вокзала', 'search'),
-  makePoint('place-market', 'ТЦ Галерея', 'Вход со стороны парковки', 'search'),
-  makePoint('place-clinic', 'Городская клиника №4', 'ул. Садовая, 9', 'search'),
-  makePoint('place-school', 'Школа №12', 'Северный район', 'search'),
-  makePoint('place-park', 'Парк Победы', 'Главный вход', 'search'),
+  makePoint('vnukovo-a', 'Аэропорт Внуково, терминал А', 'Москва · 28 км', 'search'),
+  makePoint('vnukovo-b', 'Аэропорт Внуково, терминал B', 'Москва · 28 км', 'search'),
+  makePoint('vnukovo-road', 'Внуковское ш., 24', 'Москва · 26 км', 'search'),
+  makePoint('vnukovo-hotel', 'Гостиница «Внуково Аэро»', 'Внуково · 27 км', 'search'),
+  makePoint('sheremetyevo', 'Аэропорт Шереметьево, терминал D', 'Москва · 38 км', 'search'),
+  makePoint('mega-himki', 'ТЦ Мега Химки', 'Химки · 22 км', 'search'),
+  makePoint('park-pobedy', 'м. Парк Победы', 'Москва', 'search'),
 ];
+
+// BD-MAP-03B — mock saved / recent rows for the picker body (states 1–3).
+// Display-only chrome: a row carries its own `name` (Дом / Работа) while the
+// `point` it selects keeps the human-readable address as the label, so the
+// chosen pickup/dropoff reads exactly like the Cloud Design field value.
+const SAVED_PLACES = [
+  {
+    id: 'saved-home',
+    name: 'Дом',
+    icon: 'home',
+    point: makePoint('saved-home', 'ул. Малая Бронная, 28', 'Дом', 'search'),
+  },
+  {
+    id: 'saved-work',
+    name: 'Работа',
+    icon: 'work',
+    point: makePoint('saved-work', 'Бизнес-центр «Лесная Плаза»', 'Работа', 'search'),
+  },
+];
+
+const RECENT_PLACES = [
+  {
+    id: 'recent-svo',
+    date: 'Вчера',
+    point: makePoint('recent-svo', 'Аэропорт Шереметьево, терминал D', 'Москва · 38 км', 'search'),
+  },
+  {
+    id: 'recent-mega',
+    date: '11 мая',
+    point: makePoint('recent-mega', 'ТЦ Мега Химки', 'Химки · 22 км', 'search'),
+  },
+  {
+    id: 'recent-park',
+    date: '08 мая',
+    point: makePoint('recent-park', 'м. Парк Победы', 'Москва', 'search'),
+  },
+];
+
+// data-place lookup: saved + recent rows resolve to a RoutePoint that is
+// dropped into the currently focused field via the shared setPoint() path.
+const STATIC_PLACES = new Map();
+for (const entry of [...SAVED_PLACES, ...RECENT_PLACES]) {
+  STATIC_PLACES.set(entry.id, entry.point);
+}
 
 const routeDraft = {
   pickup: null,
@@ -63,6 +110,10 @@ const routeDraft = {
   status: ROUTE_STATUS.EMPTY,
   stage: 'pickup',
   route: null,
+  // BD-MAP-03B — transient UI flag for the "Ввод адреса вручную" form
+  // (render-gate state 5). Never persisted: it only toggles which body the
+  // picker renders, the actual address is committed through setPoint().
+  manual: false,
   // BD-ROUTE-REPEAT-02 — non-blocking provenance marker for a prefilled
   // route. Surfaces a soft helper banner ("Маршрут заполнен из истории" /
   // "Маршрут заполнен из избранного") and is cleared by every clear path.
@@ -313,6 +364,7 @@ export function clearRouteDraftStore() {
   routeDraft.status = ROUTE_STATUS.EMPTY;
   routeDraft.stage = 'pickup';
   routeDraft.route = null;
+  routeDraft.manual = false;
   routeDraft.prefillSource = null;
   routeDraft.prefillLabel = '';
   notice = '';
@@ -380,6 +432,7 @@ function setPoint(kind, point) {
   // over a route the user has since reshaped.
   routeDraft.prefillSource = null;
   routeDraft.prefillLabel = '';
+  routeDraft.manual = false;
   clearQuery();
   notice = '';
   syncDraft();
@@ -405,6 +458,7 @@ function clearAll() {
   routeDraft.source = null;
   routeDraft.prefillSource = null;
   routeDraft.prefillLabel = '';
+  routeDraft.manual = false;
   clearQuery();
   notice = '';
   syncDraft();
@@ -421,12 +475,6 @@ function activeInputValue(kind) {
   return routeDraft[kind]?.label ?? '';
 }
 
-function pointHint(kind) {
-  const point = routeDraft[kind];
-  if (!point?.hint) return '';
-  return `<p class="rp-field__hint">${escapeHtml(point.hint)}</p>`;
-}
-
 function renderClearButton(kind) {
   if (!routeDraft[kind]) return '';
   return `
@@ -437,55 +485,90 @@ function renderClearButton(kind) {
   `;
 }
 
+// BD-MAP-03B — route input field. The pickup/dropoff dots and the
+// connecting line live in the card rail (renderRouteCard), so the field
+// itself only carries the label + input + clear button. Visual parity with
+// render-gate states 1–3 (ОТКУДА / КУДА, «Где вас забрать?» / «Куда едем?»).
 function renderPointField(kind) {
   const isActive = routeDraft.focus === kind;
-  const point = routeDraft[kind];
   const placeholder = kind === 'pickup'
     ? 'Где вас забрать?'
     : 'Куда едем?';
-  const sourceLabel = point?.source === 'current'
-    ? 'Моё место'
-    : point?.source === 'manual'
-      ? 'Вручную'
-      : 'Адрес';
 
   return `
-    <div class="rp-field ${isActive ? 'is-active' : ''} ${point ? 'is-filled' : ''}"
+    <div class="rp-field ${isActive ? 'is-active' : ''}"
          data-focus="${kind}">
-      <span class="rp-field__pin rp-field__pin--${kind}" aria-hidden="true"></span>
-      <div class="rp-field__body">
-        <div class="rp-field__head">
-          <label class="rp-field__label" for="rp-${kind}">${FOCUS_LABELS[kind]}</label>
-          ${point ? `<span class="rp-field__source">${escapeHtml(sourceLabel)}</span>` : ''}
-        </div>
-        <div class="rp-field__input-row">
-          <input id="rp-${kind}" class="rp-field__input" data-input="${kind}"
-                 value="${escapeHtml(activeInputValue(kind))}"
-                 placeholder="${escapeHtml(placeholder)}"
-                 aria-label="${escapeHtml(FOCUS_LABELS[kind])}"
-                 autocomplete="off" inputmode="search">
-          ${renderClearButton(kind)}
-        </div>
-        ${pointHint(kind)}
-        ${kind === 'pickup' ? `
-          <button class="rp-field__current" type="button" data-action="current-location"
-                  aria-label="Использовать моё место">
-            Моё место
-          </button>
-        ` : ''}
+      <label class="rp-field__label" for="rp-${kind}">${FOCUS_LABELS[kind]}</label>
+      <div class="rp-field__input-row">
+        <input id="rp-${kind}" class="rp-field__input" data-input="${kind}"
+               value="${escapeHtml(activeInputValue(kind))}"
+               placeholder="${escapeHtml(placeholder)}"
+               aria-label="${escapeHtml(FOCUS_LABELS[kind])}"
+               autocomplete="off" inputmode="search">
+        ${renderClearButton(kind)}
       </div>
     </div>
   `;
 }
 
-function renderMapSnippet() {
+// BD-MAP-03B — route input card: vertical route rail (pickup dot → line →
+// dropoff dot) on the left, the two fields stacked on the right, and a
+// "Моё место" route action on the far right (mirrors the render-gate icon
+// button). The action keeps the existing current-location contract.
+function renderRouteCard() {
+  return `
+    <div class="rp-card ${routeDraft.pickup ? 'has-pickup' : ''} ${routeDraft.dropoff ? 'has-dropoff' : ''}">
+      <div class="rp-card__rail" aria-hidden="true">
+        <span class="rp-card__dot rp-card__dot--pickup"></span>
+        <span class="rp-card__line"></span>
+        <span class="rp-card__dot rp-card__dot--dropoff"></span>
+      </div>
+      <div class="rp-card__fields">
+        ${renderPointField('pickup')}
+        <div class="rp-card__divider" aria-hidden="true"></div>
+        ${renderPointField('dropoff')}
+      </div>
+      <button class="rp-card__action" type="button" data-action="current-location"
+              aria-label="Использовать моё место">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="6" cy="6" r="2.4"/>
+          <circle cx="18" cy="18" r="2.4"/>
+          <path d="M8.4 6H15a3 3 0 0 1 3 3v6.6"/>
+        </svg>
+      </button>
+    </div>
+  `;
+}
+
+// BD-MAP-03B — search status row under the card. Copy follows the render
+// gate: «Введите место подачи» (empty), «Введите место назначения» (pickup
+// set), «Поиск: «<query>»» while typing. The «Готово» action collapses the
+// search back to the saved/recent list.
+function searchRowText() {
+  if (routeDraft.query.trim()) return `Поиск: «${routeDraft.query.trim()}»`;
+  if (routeDraft.focus === 'pickup') return 'Введите место подачи';
+  return 'Введите место назначения';
+}
+
+function renderSearchRow() {
+  return `
+    <div class="rp-searchrow">
+      <span class="rp-searchrow__icon" aria-hidden="true">i</span>
+      <span class="rp-searchrow__text">${escapeHtml(searchRowText())}</span>
+      <button class="rp-searchrow__done" type="button" data-action="done">Готово</button>
+    </div>
+  `;
+}
+
+function renderMap(ready) {
   const wrap = document.createElement('div');
-  wrap.className = `rp-map rp-map--${routeDraft.status}`;
-  wrap.setAttribute('aria-label', 'Маршрут-заглушка');
+  wrap.className = `rp-map ${ready ? 'rp-map--ready' : 'rp-map--compact'}`;
+  wrap.setAttribute('aria-hidden', 'true');
 
   const shell = createMapShell({
     variant: 'passenger',
-    showRoute: routeDraft.status === ROUTE_STATUS.ROUTE_DRAFT_READY,
+    showRoute: ready,
     showCar: false,
     showPickup: Boolean(routeDraft.pickup),
     showDropoff: Boolean(routeDraft.dropoff),
@@ -498,15 +581,12 @@ function renderMapSnippet() {
   shell.setAttribute('aria-hidden', 'true');
   wrap.appendChild(shell);
 
-  const card = document.createElement('div');
-  card.className = 'rp-map__snippet';
-  card.setAttribute('aria-hidden', 'true');
-  card.innerHTML = `
-    <span>${escapeHtml(routeDraft.pickup?.label ?? 'Выберите подачу')}</span>
-    <strong>→</strong>
-    <span>${escapeHtml(routeDraft.dropoff?.label ?? 'Выберите назначение')}</span>
-  `;
-  wrap.appendChild(card);
+  if (!ready) {
+    const crosshair = document.createElement('div');
+    crosshair.className = 'rp-map__crosshair';
+    crosshair.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(crosshair);
+  }
 
   const watermark = document.createElement('div');
   watermark.className = 'rp-map__watermark';
@@ -516,124 +596,220 @@ function renderMapSnippet() {
   return wrap;
 }
 
-function renderSuggestions() {
-  if (!routeDraft.query) {
-    return `
-      <div class="rp-results rp-results--empty" aria-live="polite">
-        <div class="rp-results__title">Начните вводить адрес</div>
-        <p class="rp-results__hint">Подсказки появятся здесь. Пока это mock-список без Geocoding API.</p>
-      </div>
-    `;
-  }
+// BD-MAP-03B — saved + recent body (render-gate states 1–3). Mock-only:
+// each row resolves through data-place → STATIC_PLACES → setPoint() for the
+// currently focused field, so route_draft.v1 stays the single source of
+// truth. «Добавить адрес» / «Ввести адрес вручную» open the manual form.
+function savedIcon(kind) {
+  if (kind === 'home') return '♥';
+  if (kind === 'work') return '🏢';
+  return '＋';
+}
 
-  if (routeDraft.results.length > 0) {
-    const rows = routeDraft.results.map((item) => `
-      <button class="rp-suggestion" type="button" data-suggestion="${escapeHtml(item.id)}"
-              role="option" aria-label="${escapeHtml(item.label)}">
-        <span class="rp-suggestion__icon" aria-hidden="true">⌕</span>
-        <span class="rp-suggestion__body">
-          <strong>${escapeHtml(item.label)}</strong>
-          <small>${escapeHtml(item.hint ?? 'Адрес')}</small>
-        </span>
-      </button>
-    `).join('');
-    return `
-      <div class="rp-results" role="listbox" aria-label="Подсказки адресов">
-        <div class="rp-results__title">Найдено для поля «${escapeHtml(FOCUS_LABELS[routeDraft.focus])}»</div>
-        ${rows}
-      </div>
-    `;
-  }
+function renderSavedRecent() {
+  const saved = SAVED_PLACES.map((entry) => `
+    <button class="rp-place" type="button" data-place="${escapeHtml(entry.id)}"
+            aria-label="${escapeHtml(entry.name)} — ${escapeHtml(entry.point.label)}">
+      <span class="rp-place__icon rp-place__icon--saved" aria-hidden="true">${savedIcon(entry.icon)}</span>
+      <span class="rp-place__body">
+        <strong>${escapeHtml(entry.name)}</strong>
+        <small>${escapeHtml(entry.point.label)}</small>
+      </span>
+      <span class="rp-place__chevron" aria-hidden="true">›</span>
+    </button>
+  `).join('');
+
+  const recent = RECENT_PLACES.map((entry) => `
+    <button class="rp-place" type="button" data-place="${escapeHtml(entry.id)}"
+            aria-label="${escapeHtml(entry.point.label)}">
+      <span class="rp-place__icon" aria-hidden="true">🕓</span>
+      <span class="rp-place__body">
+        <strong>${escapeHtml(entry.point.label)}</strong>
+        <small>${escapeHtml(entry.point.hint ?? '')}</small>
+      </span>
+      <span class="rp-place__date" aria-hidden="true">${escapeHtml(entry.date)}</span>
+    </button>
+  `).join('');
 
   return `
-    <div class="rp-results" role="listbox" aria-label="Ручной ввод адреса">
-      <div class="rp-results__title">Адрес не найден</div>
-      <button class="rp-suggestion rp-suggestion--manual" type="button" data-action="manual-address"
-              role="option" aria-label="Использовать как адрес">
-        <span class="rp-suggestion__icon" aria-hidden="true">＋</span>
-        <span class="rp-suggestion__body">
-          <strong>${escapeHtml(routeDraft.query.trim())}</strong>
-          <small>Использовать как адрес</small>
-        </span>
+    <section class="rp-places" aria-label="Сохранённые адреса">
+      <h2 class="rp-places__title">Сохранённые</h2>
+      ${saved}
+      <button class="rp-place rp-place--add" type="button" data-action="manual-open"
+              aria-label="Добавить адрес вручную">
+        <span class="rp-place__icon rp-place__icon--add" aria-hidden="true">＋</span>
+        <span class="rp-place__body"><strong>Добавить адрес</strong></span>
       </button>
-    </div>
+    </section>
+    <section class="rp-places" aria-label="Недавние адреса">
+      <h2 class="rp-places__title">Недавние</h2>
+      ${recent}
+    </section>
+    <button class="rp-manual-link" type="button" data-action="manual-open">
+      <span aria-hidden="true">✎</span> Ввести адрес вручную
+    </button>
   `;
 }
 
+// BD-MAP-03B — search-results sheet (render-gate state 4 · «Внуково»).
+// Header «Найдено по «<query>»» + «Nмест» count, then the suggestion rows
+// (data-suggestion contract preserved), then a manual-entry escape hatch.
+function renderSearchResults() {
+  const query = routeDraft.query.trim();
+  if (routeDraft.results.length === 0) {
+    return `
+      <section class="rp-sheet rp-sheet--empty" aria-label="Результаты поиска">
+        <div class="rp-sheet__head">
+          <span class="rp-sheet__title">
+            <span class="rp-sheet__spark" aria-hidden="true">✦</span>
+            Ничего не найдено по «${escapeHtml(query)}»
+          </span>
+        </div>
+        <button class="rp-sheet__manual" type="button" data-action="manual-open">
+          <span aria-hidden="true">✎</span> Не вижу нужного — ввести вручную
+        </button>
+      </section>
+    `;
+  }
+
+  const rows = routeDraft.results.map((item) => `
+    <button class="rp-suggestion" type="button" data-suggestion="${escapeHtml(item.id)}"
+            role="option" aria-label="${escapeHtml(item.label)}">
+      <span class="rp-suggestion__icon" aria-hidden="true">⌕</span>
+      <span class="rp-suggestion__body">
+        <strong>${escapeHtml(item.label)}</strong>
+        <small>${escapeHtml(item.hint ?? 'Адрес')}</small>
+      </span>
+      <span class="rp-suggestion__go" aria-hidden="true">↗</span>
+    </button>
+  `).join('');
+
+  return `
+    <section class="rp-sheet rp-sheet--results" role="listbox" aria-label="Результаты поиска">
+      <div class="rp-sheet__head">
+        <span class="rp-sheet__title">
+          <span class="rp-sheet__spark" aria-hidden="true">✦</span>
+          Найдено по «${escapeHtml(query)}»
+        </span>
+        <span class="rp-sheet__count">${routeDraft.results.length}мест</span>
+      </div>
+      ${rows}
+      <button class="rp-sheet__manual" type="button" data-action="manual-open">
+        <span aria-hidden="true">✎</span> Не вижу нужного — ввести вручную
+      </button>
+    </section>
+  `;
+}
+
+// BD-MAP-03B — manual address fallback (render-gate state 5). Mock-only
+// form: city / street+house / entrance comment. The inputs carry
+// data-manual="…" (NOT data-input) so typing never triggers a re-render;
+// «Сохранить адрес» reads the live DOM values and commits via setPoint().
+// No geocoding, no backend.
+function renderManualForm() {
+  const prefill = routeDraft.query.trim();
+  return `
+    <section class="rp-manual" aria-label="Ввод адреса вручную">
+      <div class="rp-manual__head">
+        <span class="rp-manual__icon" aria-hidden="true">✎</span>
+        <div class="rp-manual__heading">
+          <p class="rp-manual__title">Ввод адреса вручную</p>
+          <p class="rp-manual__hint">Когда автодополнения нет или нужно уточнить точку</p>
+        </div>
+      </div>
+      <label class="rp-manual__label" for="rp-manual-city">Город</label>
+      <input id="rp-manual-city" class="rp-manual__input" data-manual="city"
+             value="Москва" autocomplete="off" aria-label="Город">
+      <label class="rp-manual__label" for="rp-manual-street">Улица, дом</label>
+      <input id="rp-manual-street" class="rp-manual__input" data-manual="street"
+             value="${escapeHtml(prefill)}" placeholder="ул. Тверская, 12"
+             autocomplete="off" aria-label="Улица и дом">
+      <label class="rp-manual__label" for="rp-manual-extra">Подъезд / комментарий (необязательно)</label>
+      <input id="rp-manual-extra" class="rp-manual__input" data-manual="extra"
+             placeholder="Подъезд 3, домофон 28#" autocomplete="off"
+             aria-label="Подъезд или комментарий">
+      <button class="bd-btn primary rp-manual__save" type="button" data-action="manual-save">
+        <span aria-hidden="true">✓</span> Сохранить адрес
+      </button>
+      <button class="rp-manual__cancel" type="button" data-action="manual-cancel">
+        Отмена
+      </button>
+    </section>
+  `;
+}
+
+function formatPrice(value) {
+  // Thin-space thousands separator to mirror the render-gate «1 200 ₽».
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+// BD-MAP-03B — estimate card for the route-draft-ready state (render-gate
+// state 6). Order: ВРЕМЯ → РАССТОЯНИЕ → ОРИЕНТИР. ЦЕНА. Price is an «от …»
+// orientation figure, not a final fare (the real fare lives in /route-preview).
 function renderEstimate() {
   if (!routeDraft.route) return '';
-  // Order mirrors the Cloud Design render gate (state 6 · Route draft
-  // ready): Время → Расстояние → Ориентир. цена. Price is shown as an
-  // "от …" estimate to read as an orientation figure, not a final fare.
   const { distanceKm, durationMin, estimatedPrice } = routeDraft.route;
   return `
-    <dl class="rp-bottom-card__estimate" aria-label="Оценка маршрута">
-      <div class="rp-bottom-card__metric">
+    <dl class="rp-estimate" aria-label="Оценка маршрута">
+      <div class="rp-estimate__metric">
         <dt>Время</dt>
         <dd>${escapeHtml(String(durationMin))} мин</dd>
       </div>
-      <div class="rp-bottom-card__metric">
+      <div class="rp-estimate__metric">
         <dt>Расстояние</dt>
         <dd>${escapeHtml(distanceKm.toFixed(1))} км</dd>
       </div>
-      <div class="rp-bottom-card__metric">
+      <div class="rp-estimate__metric">
         <dt>Ориентир. цена</dt>
-        <dd>от ${escapeHtml(String(estimatedPrice))} ₽</dd>
+        <dd>от ${escapeHtml(formatPrice(estimatedPrice))} ₽</dd>
       </div>
     </dl>
   `;
 }
 
-function renderStatusCard() {
-  const ready = routeDraft.status === ROUTE_STATUS.ROUTE_DRAFT_READY;
-  // The /active-ride guard is resolved once per render in buildBody and
-  // cached in activeRideGuardTripId; an active trip gates Continue so the
-  // passenger cannot start a second route without an explicit dismissal.
+// BD-MAP-03B — route-draft-ready panel (render-gate state 6): estimate card,
+// time chips, primary «Продолжить — выбрать водителя» CTA and the secondary
+// «Изменить маршрут». The Continue CTA stays gated by the /active-ride guard
+// exactly as in PR #323 — an active live trip disables it until dismissed.
+//
+// BD-MAP-03 TODO (time picker) — the «Сейчас / Запланировать / + Остановка»
+// chips are visual-only here. A real schedule/stop picker (native
+// <input type="datetime-local"> for PWA) is a separate under-issue; these
+// chips surface an informational notice instead of shipping a stub picker.
+function renderReadyPanel() {
   const guarded = Boolean(activeRideGuardTripId);
-  const ctaEnabled = ready && !guarded;
-  const statusCopy = guarded
-    ? 'Сначала завершите активную поездку или продолжите планировать новый маршрут.'
-    : ready
-      ? 'Маршрут готов. Продолжите, чтобы выбрать водителя.'
-      : 'Заполните точку подачи и назначения, чтобы продолжить.';
+  const ctaEnabled = !guarded;
   const hasPrefill = Boolean(routeDraft.prefillSource);
-  const clearCaption = hasPrefill
-    ? 'Очистит только поля маршрута. Черновик публикации сохранится.'
-    : 'Очистит только поля маршрута.';
-
-  // BD-MAP-03 TODO (time picker) — Cloud Design render gate (state 6)
-  // shows «Сейчас / Запланировать / + Остановка» above the CTA. A real
-  // schedule/stop picker is a separate under-issue (native
-  // <input type="datetime-local"> for PWA); intentionally not built here
-  // so this audit stays a targeted polish and does not ship a stub picker.
+  const editCaption = hasPrefill
+    ? 'Изменение полей не затронет черновик публикации.'
+    : '';
 
   return `
-    <div class="rp-bottom-card">
-      <div class="rp-bottom-card__grip" aria-hidden="true"></div>
-      <div class="rp-bottom-card__head">
-        <span class="rp-bottom-card__status rp-bottom-card__status--${ready ? 'ready' : 'draft'}">
-          ${ready ? 'Готово' : 'Черновик'}
-        </span>
-        <span class="rp-bottom-card__code">${escapeHtml(routeDraft.stage)}</span>
+    <section class="rp-ready" aria-label="Готовый маршрут">
+      ${renderEstimate()}
+      <div class="rp-ready__chips" role="group" aria-label="Время поездки">
+        <button class="rp-chip is-active" type="button" data-action="schedule-now"
+                aria-pressed="true">
+          <span aria-hidden="true">🕓</span> Сейчас
+        </button>
+        <button class="rp-chip" type="button" data-action="schedule-later">
+          <span aria-hidden="true">🗓</span> Запланировать
+        </button>
+        <button class="rp-chip" type="button" data-action="add-stop">+ Остановка</button>
       </div>
-      <p class="rp-bottom-card__hint">${escapeHtml(statusCopy)}</p>
-      ${ready ? renderEstimate() : ''}
-      ${notice ? `<p class="rp-bottom-card__notice" role="status">${escapeHtml(notice)}</p>` : ''}
-      <button class="bd-btn primary rp-bottom-card__cta" type="button" data-action="continue"
+      ${guarded
+        ? `<p class="rp-ready__guard" role="status">Сначала завершите активную поездку или продолжите планировать новый маршрут.</p>`
+        : ''}
+      ${notice ? `<p class="rp-ready__notice" role="status">${escapeHtml(notice)}</p>` : ''}
+      <button class="bd-btn primary rp-ready__cta" type="button" data-action="continue"
               ${ctaEnabled ? '' : 'disabled'} aria-disabled="${ctaEnabled ? 'false' : 'true'}">
-        Продолжить — выбрать водителя
+        <span aria-hidden="true">→</span> Продолжить — выбрать водителя
       </button>
-      <div class="rp-bottom-card__row">
-        <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="clear-all"
-                aria-label="Очистить маршрут. Только поля подачи и назначения.">
-          Очистить маршрут
-        </button>
-        <button class="bd-btn rp-bottom-card__secondary" type="button" data-action="back">
-          Назад к карте
-        </button>
-      </div>
-      <p class="rp-bottom-card__caption">${escapeHtml(clearCaption)}</p>
-    </div>
+      <button class="bd-btn rp-ready__secondary" type="button" data-action="edit-route">
+        Изменить маршрут
+      </button>
+      ${editCaption ? `<p class="rp-ready__caption">${escapeHtml(editCaption)}</p>` : ''}
+    </section>
   `;
 }
 
@@ -697,15 +873,11 @@ function renderPrefillBanner() {
   `;
 }
 
-function buildBody() {
-  syncDraft();
-  // The /active-ride guard is resolved once per mount (see
-  // routePickerScreen) and re-evaluated only on dismissal — never here, so
-  // re-rendering on every keystroke does not re-parse localStorage. The
-  // banner and the Continue-gating both read the cached activeRideGuardTripId.
-
-  const fragment = document.createDocumentFragment();
-
+// BD-MAP-03B — topbar: «НОВАЯ ПОЕЗДКА» eyebrow over the «Маршрут» title,
+// a back arrow on the left and a close × on the right (both → /map). The
+// technical subtitle «Pickup → dropoff · mock routeDraft» is removed for
+// render-gate parity. Back/close keep the existing router contract.
+function renderTopbar() {
   const topbar = document.createElement('div');
   topbar.className = 'bd-topbar rp-topbar';
   topbar.innerHTML = `
@@ -715,32 +887,60 @@ function buildBody() {
         <path d="M15 18l-6-6 6-6"/>
       </svg>
     </button>
-    <div class="bd-topbar__titles">
-      <h1 class="bd-topbar__title">Выбор маршрута</h1>
-      <p class="bd-topbar__sub">Pickup → dropoff · mock routeDraft</p>
+    <div class="bd-topbar__titles rp-topbar__titles">
+      <p class="rp-topbar__eyebrow">Новая поездка</p>
+      <h1 class="bd-topbar__title">Маршрут</h1>
     </div>
+    <button class="bd-iconbtn rp-topbar__close" type="button" data-action="back" aria-label="Закрыть">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </button>
   `;
-  fragment.appendChild(topbar);
+  return topbar;
+}
+
+// Non-ready body: search results (typing), the manual form, or the
+// saved/recent list. Manual takes precedence so the fallback form is
+// reachable from both the search sheet and the saved list.
+function renderPickerBody() {
+  if (routeDraft.manual) return renderManualForm();
+  if (routeDraft.query.trim()) return renderSearchResults();
+  return renderSavedRecent();
+}
+
+function buildBody() {
+  syncDraft();
+  // The /active-ride guard is resolved once per mount (see
+  // routePickerScreen) and re-evaluated only on dismissal — never here, so
+  // re-rendering on every keystroke does not re-parse localStorage. The
+  // banner and the Continue-gating both read the cached activeRideGuardTripId.
+
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(renderTopbar());
 
   const scroll = document.createElement('div');
   scroll.className = 'bd-scroll rp-scroll';
-  scroll.appendChild(renderMapSnippet());
+
+  const ready = routeDraft.status === ROUTE_STATUS.ROUTE_DRAFT_READY
+    && !routeDraft.manual;
+
   scroll.insertAdjacentHTML('beforeend', `
     ${renderActiveRideGuard()}
     ${renderPrefillBanner()}
-    <div class="rp-card">
-      ${renderPointField('pickup')}
-      <div class="rp-card__divider" aria-hidden="true"></div>
-      ${renderPointField('dropoff')}
-    </div>
-    ${renderSuggestions()}
+    ${renderRouteCard()}
+    ${ready ? renderReadyPanel() : renderSearchRow()}
   `);
+
+  if (ready) {
+    scroll.appendChild(renderMap(true));
+  } else {
+    scroll.appendChild(renderMap(false));
+    scroll.insertAdjacentHTML('beforeend', renderPickerBody());
+  }
+
   fragment.appendChild(scroll);
-
-  const bottom = document.createElement('div');
-  bottom.innerHTML = renderStatusCard();
-  fragment.append(...bottom.childNodes);
-
   return fragment;
 }
 
@@ -767,6 +967,7 @@ function handleInput(root, target) {
   if (kind !== 'pickup' && kind !== 'dropoff') return;
   routeDraft.focus = kind;
   routeDraft.query = target.value;
+  routeDraft.manual = false;
   notice = '';
   // BD-MAP-03 (hardening) — typing into a field is the start of a manual
   // edit, so drop the repeat/favorite provenance immediately rather than
@@ -796,6 +997,17 @@ function handleClick(root, target) {
   const suggestionId = target.closest('[data-suggestion]')?.dataset.suggestion;
   if (suggestionId) {
     const point = findSuggestion(suggestionId);
+    if (point) setPoint(routeDraft.focus, point);
+    rerender(root);
+    return;
+  }
+
+  // BD-MAP-03B — saved / recent rows (mock). Resolve through STATIC_PLACES
+  // and drop a clone into the focused field via the shared setPoint() path,
+  // so route_draft.v1 stays the single source of truth.
+  const placeId = target.closest('[data-place]')?.dataset.place;
+  if (placeId) {
+    const point = STATIC_PLACES.get(placeId);
     if (point) setPoint(routeDraft.focus, point);
     rerender(root);
     return;
@@ -832,6 +1044,79 @@ function handleClick(root, target) {
     rerender(root);
     return;
   }
+  if (action === 'done') {
+    // «Готово» collapses the search query back to the saved/recent list
+    // without committing anything — the field value stays as-is.
+    if (routeDraft.query) {
+      clearQuery();
+      notice = '';
+      syncDraft();
+    }
+    rerender(root);
+    return;
+  }
+  if (action === 'manual-open') {
+    routeDraft.manual = true;
+    rerender(root);
+    return;
+  }
+  if (action === 'manual-cancel') {
+    routeDraft.manual = false;
+    rerender(root);
+    return;
+  }
+  if (action === 'manual-save') {
+    // Read the live DOM values (the manual inputs carry data-manual, not
+    // data-input, so they never trigger a re-render while typing). Commit
+    // through setPoint() which also drops the manual flag. Mock-only: no
+    // geocoding, label is the entered street (or city) verbatim.
+    const cityEl = root.querySelector('[data-manual="city"]');
+    const streetEl = root.querySelector('[data-manual="street"]');
+    const extraEl = root.querySelector('[data-manual="extra"]');
+    const city = (cityEl?.value ?? '').trim();
+    const street = (streetEl?.value ?? '').trim();
+    const extra = (extraEl?.value ?? '').trim();
+    if (street || city) {
+      const hintParts = [];
+      if (street && city) hintParts.push(city);
+      if (extra) hintParts.push(extra);
+      const point = makePoint(
+        `manual-${Date.now()}`,
+        street || city,
+        hintParts.join(' · ') || 'Введено вручную',
+        'manual',
+      );
+      setPoint(routeDraft.focus, point);
+    } else {
+      routeDraft.manual = false;
+    }
+    rerender(root);
+    return;
+  }
+  if (action === 'edit-route') {
+    // Secondary CTA in the ready state — reveal the route fields for editing
+    // by focusing pickup. Points stay set, so route_draft.v1 is untouched.
+    routeDraft.manual = false;
+    routeDraft.focus = 'pickup';
+    notice = '';
+    syncDraft();
+    rerender(root, 'pickup');
+    return;
+  }
+  if (action === 'schedule-later' || action === 'add-stop') {
+    // BD-MAP-03 TODO (time picker) — visual-only chips. Surface an
+    // informational notice instead of shipping a stub scheduler/stop picker.
+    notice = 'Планировщик времени и остановки появятся отдельным шагом.';
+    rerender(root);
+    return;
+  }
+  if (action === 'schedule-now') {
+    if (notice) {
+      notice = '';
+      rerender(root);
+    }
+    return;
+  }
   if (action === 'clear-all') {
     clearAll();
     rerender(root, 'pickup');
@@ -851,14 +1136,49 @@ function handleClick(root, target) {
   if (focusKind === 'pickup' || focusKind === 'dropoff') {
     routeDraft.focus = focusKind;
     routeDraft.query = '';
+    routeDraft.manual = false;
     notice = '';
     syncDraft();
     rerender(root, focusKind);
   }
 }
 
+// BD-MAP-03B — deep-link helpers for the render-gate smoke states:
+//   #/route-picker?q=Внуково → seed the search query (search-results state)
+//   #/route-picker?manual=1  → open the manual-address fallback form
+// Purely additive: the router still calls the loader with no arguments, so
+// the screen reads its own hash. Unknown / absent params leave state as-is.
+function applyHashParams() {
+  let params;
+  try {
+    const hash = typeof location !== 'undefined' ? (location.hash || '') : '';
+    const qi = hash.indexOf('?');
+    params = new URLSearchParams(qi === -1 ? '' : hash.slice(qi + 1));
+  } catch {
+    return;
+  }
+  const q = params.get('q');
+  if (typeof q === 'string' && q.trim()) {
+    routeDraft.query = q.trim();
+    routeDraft.manual = false;
+  }
+  if (params.get('manual') === '1') {
+    routeDraft.manual = true;
+  }
+}
+
 export default function routePickerScreen() {
   hydrateFromStorage();
+  // BD-MAP-03B (review F1/F2) — routeDraft is a module singleton, so the
+  // transient UI-only flags (manual form open, in-progress search query)
+  // would otherwise leak across mounts: opening the manual form / a search,
+  // leaving to /map, then re-opening #/route-picker must boot a fresh picker.
+  // Reset here AFTER hydrating the persisted route (pickup/dropoff/prefill
+  // survive) and BEFORE applyHashParams() so the ?manual=1 / ?q= deep-links
+  // can re-enable those states for this mount.
+  routeDraft.manual = false;
+  routeDraft.query = '';
+  applyHashParams();
   syncDraft();
   // Resolve the /active-ride guard once for this mount. A fresh navigation
   // to #/route-picker clears any prior trip-scoped dismissal so the guard
