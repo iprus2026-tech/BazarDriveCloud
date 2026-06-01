@@ -10,7 +10,7 @@ import map        from './screens/map.js';
 import locationPermission from './screens/location_permission.js';
 import routePicker from './screens/route_picker.js';
 import routePreview from './screens/route_preview.js';
-import orderMapDraft from './screens/order_map_draft_handoff.js';
+import orderMapDraft from './screens/order_map_draft.js';
 import rules      from './screens/rules.js';
 import profile    from './screens/profile.js';
 import onboarding from './screens/onboarding.js';

@@ -73,7 +73,11 @@ All checks passed.   (exit 0)
   `bindResponsesHandoff` ждёт `data-action="responses"`; базовый экран
   рендерит pill как `ОПУБЛИКОВАН` и success CTA как `data-action="my-order"`,
   поэтому оба хука не срабатывают. Безопасно, но вводит в заблуждение.
-  *Low — cleanup, не функциональный баг.*
+  *Закрыто PR2 (`fix/bd-map-05-wrapper-cleanup`):* wrapper удалён,
+  `app.js` импортирует `order_map_draft.js` напрямую, запись убрана из
+  `sw.js` precache (VERSION v71→v72). Responses/my-order handoff уже живёт
+  в базовом экране (`handleAction` → `/responses?orderId=…&state=empty` с
+  каноничным `lastOrder.id`), success pill уже `ОПУБЛИКОВАН` — UX не менялся.
 - **BD-DRIVER-01:** driver guard корректен и устойчив к URL-override
   (читает только `user.get().role`, игнорирует hash). Passenger не может
   достучаться до accept-actions. *No fix needed.*
@@ -83,8 +87,10 @@ All checks passed.   (exit 0)
 ```text
 PR1  BD-MAP-01 copy polish     — ✅ выполнено: dev-строки token-missing card
                                  заменены на passenger-копию (Cloud Design)
-PR2  BD-MAP-05 wrapper cleanup — удалить/исправить dead-code хуки
+PR2  BD-MAP-05 wrapper cleanup — ✅ выполнено: dead-code wrapper
+                                 order_map_draft_handoff.js удалён (хуки
                                  localizeSuccessStatus / bindResponsesHandoff
+                                 не срабатывали против реального DOM)
 PR3  BD-DRIVER-01 guard smoke  — регрессионный тест: #/driver-map?role=driver
                                  у пассажира по-прежнему рендерит guard
 PR4  docs sync                 — этот PR: BD-MAP-02 / BD-MAP-04 контракты +
