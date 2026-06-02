@@ -116,6 +116,9 @@ Merge gate: READY != auto-merge — финальный gate всегда за Gi
 // ---------------------------------------------------------------------------
 function rel(p) { return path.relative(ROOT, p); }
 function exists(p) { try { fs.accessSync(p); return true; } catch { return false; } }
+// Нормализация id пути: Windows backslash → POSIX slash, чтобы классификация
+// риска и дедуп проб не зависели от разделителя путей ОС.
+function normalizeId(id) { return String(id).replace(/\\/g, '/'); }
 
 function listFiles(dir, exts, { recursive = true } = {}) {
   const out = [];
@@ -190,7 +193,7 @@ function runProbe(scriptRelPath) {
 
 function runDebug(inventory) {
   const probes = ['scripts/check.mjs'];
-  for (const n of inventory) if (n.kind === 'smoke' && n.id !== 'scripts/check.mjs') probes.push(n.id);
+  for (const n of inventory) if (n.kind === 'smoke' && normalizeId(n.id) !== 'scripts/check.mjs') probes.push(n.id);
   const results = probes.map(runProbe);
   const failures = results.filter((r) => !r.ok);
   // Сопоставляем упавшие проверки с файлами проекта (для само-выбора цели).
@@ -220,7 +223,8 @@ function saveState(state) {
 
 function selectTarget(inventory, debug, forced, state) {
   if (forced) {
-    const hit = inventory.find((n) => n.id === forced || n.id.endsWith(forced));
+    const f = normalizeId(forced);
+    const hit = inventory.find((n) => normalizeId(n.id) === f || normalizeId(n.id).endsWith(f));
     if (hit) return { node: hit, reason: 'forced via --target' };
     return { node: { id: forced, file: path.join(ROOT, forced), kind: classify(forced), hint: 'forced' },
              reason: 'forced via --target (вне инвентаря)' };
@@ -238,12 +242,13 @@ function selectTarget(inventory, debug, forced, state) {
 }
 
 function classify(relPath) {
-  if (relPath.endsWith('.css')) return 'style';
-  if (relPath.endsWith('index.html')) return 'shell';
-  if (relPath.endsWith('.md')) return 'doc';
-  if (relPath.includes('.github/workflows')) return 'workflow';
-  if (relPath.startsWith('scripts/')) return 'smoke';
-  if (relPath.includes('/screens/')) return 'screen';
+  const p = normalizeId(relPath);
+  if (p.endsWith('.css')) return 'style';
+  if (p.endsWith('index.html')) return 'shell';
+  if (p.endsWith('.md')) return 'doc';
+  if (p.includes('.github/workflows')) return 'workflow';
+  if (p.startsWith('scripts/')) return 'smoke';
+  if (p.includes('/screens/')) return 'screen';
   return 'module';
 }
 
@@ -257,7 +262,7 @@ function classify(relPath) {
 const MEDIUM_DOCS = new Set(['README.md', 'ROADMAP.md', 'docs/screen-contracts.md']);
 
 function classifyRisk(node) {
-  const id = node.id;
+  const id = normalizeId(node.id);
   // HIGH — runtime приложения, маршрутизатор, state-машина, CSP, SW, Mapbox, ride/order flow.
   if (id.startsWith('public/src/')) return 'HIGH';
   if (id === 'public/index.html' || id === 'public/sw.js') return 'HIGH';
@@ -274,7 +279,7 @@ function classifyRisk(node) {
 // Авто-фикс допустим только для LOW-риска. Генерируемый отчёт переписывается
 // целиком в другом месте, поэтому как «цель фикса» исключён.
 function canAutoFix(node) {
-  if (node.id === 'docs/dispatcher-report.md') return false;
+  if (normalizeId(node.id) === 'docs/dispatcher-report.md') return false;
   return classifyRisk(node) === 'LOW';
 }
 
@@ -495,6 +500,12 @@ function selfTest() {
                     'public/index.html', 'public/sw.js']) {
     if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH`);
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (HIGH-риск)`);
+  }
+  // Windows-style разделители должны классифицироваться идентично POSIX.
+  for (const id of ['public\\src\\screens\\feed.js', 'public\\src\\router.js',
+                    'public\\index.html', 'public\\sw.js']) {
+    if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH (win-path)`);
+    if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (win-path public)`);
   }
   for (const id of ['scripts/check.mjs', 'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md'])
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (MEDIUM-риск)`);
