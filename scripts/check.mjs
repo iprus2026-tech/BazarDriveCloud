@@ -157,6 +157,17 @@ if (exists(driverDocsReadinessSmoke)) {
   }
 }
 
+// BD-RIDE-P-12 — static regression smoke for the passenger active ride contract.
+const passengerActiveRideSmoke = path.join(root, 'scripts', 'smoke-passenger-active-ride.mjs');
+if (exists(passengerActiveRideSmoke)) {
+  try {
+    execFileSync(process.execPath, [passengerActiveRideSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-passenger-active-ride.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
