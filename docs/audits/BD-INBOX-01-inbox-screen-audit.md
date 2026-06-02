@@ -5,12 +5,14 @@
 - **Type:** report-only audit. No runtime changes were made.
 - **Branch:** `audit/inbox-screen-contract`.
 - **Date:** 2026-06-03.
-- **Why the dispatcher selected this node:** `public/src/screens/inbox.js` was picked on a
-  round-robin planned pass (`docs/dispatcher-report.md`). It is marked **HIGH risk** with
-  **6/6 debug checks PASS** and merge gate **READY**. Because the code is already green and the
-  risk is HIGH, this is *not* a blind runtime fix — it is a drift check of the Inbox screen
-  against the current routes, data contract, Cloud Design, and smoke coverage before any code is
-  touched.
+- **Why the dispatcher selected this node:** the selection came from a **local run of
+  `node scripts/dispatcher.mjs`** (its report output is not a checked-in file — `docs/dispatcher-report.md`
+  is git-ignored). The dispatcher picked `public/src/screens/inbox.js` on a round-robin planned
+  pass and marked it **HIGH risk** with **6/6 debug checks PASS** and merge gate **READY**. The
+  checked-in dispatcher docs in the repo are `docs/dispatcher-status.md` and
+  `docs/dispatcher-report.example.md`. Because the code is already green and the risk is HIGH, this
+  is *not* a blind runtime fix — it is a drift check of the Inbox screen against the current routes,
+  data contract, Cloud Design, and smoke coverage before any code is touched.
 - **Constraint:** the only file produced by this task is this audit document. No change to
   `public/src/*`, `app.js`, `router.js`, `state.js`, `mock_api.js`, `cloud.css`, `sw.js`,
   `scripts/check.mjs`, CSP, Mapbox, backend, or APK.
@@ -22,14 +24,15 @@
 | `public/src/screens/inbox.js` | The Inbox screen render + behavior (subject) | Production-quality, class-driven, no TODO/placeholder. Renders list/empty/unread states, 4 tabs, primary/secondary/card/CTA actions. |
 | `public/src/app.js` | Route registry | `register('/inbox', inbox)` at line 45; all inbox action targets (`/responses`, `/chat`, `/respond`, `/active-ride`, `/post`, `/feed`) are registered (lines 28–45). |
 | `public/src/router.js` | Hash router + chrome control | `HIDE_CHROME` (line 8) does not include `/inbox` → tabbar shown; `SHOW_FAB` = `/feed` only (line 9) → FAB hidden; unknown routes fall back to `/feed` (line 57). |
-| `public/src/mock_api.js` | Inbox data source | `listInboxItems()` (line 315) returns defensive copies of `INBOX_ITEMS_V1` (lines 199–290): **6 items**. Status enums `INBOX_STATUS_LABEL`/`INBOX_STATUS_TONE` (lines 294–313). |
+| `public/src/mock_api.js` | Inbox data source | `listInboxItems()` (line 315) returns top-level shallow copies of `INBOX_ITEMS_V1` via `{ ...item }` (lines 199–290): **6 items**. Status enums `INBOX_STATUS_LABEL`/`INBOX_STATUS_TONE` (lines 294–313). |
 | `public/index.html` | App shell + tabbar | Tabbar (lines 23–57) has only `/feed`, `/map`, `/rules`, `/profile` — **no Inbox entry**. |
 | `public/styles/cloud.css` | Cloud Design theme + components | Dark shell + accent `#FF6B35` tokens; full inbox block (~10166–10361) — all ~35 inbox classes defined. |
 | `public/sw.js` | Service worker / precache | `'./src/screens/inbox.js'` precached (line 44); cache version global, no inbox-specific versioning. |
 | `scripts/check.mjs` | CI guard | No inbox checks (CSP, manifest, SW precache, active-ride guards, JS syntax, dispatcher selftest only). |
 | `scripts/smoke-*.mjs` | Targeted smoke scripts | None mention inbox (driver-docs, driver-map-guard, driver-map-readiness, lifecycle, passenger-active-ride). |
-| `docs/screen-contracts.md` | Screen contracts | BD-INBOX-01 contract present (lines 217–226); matches code; silent on entry point + persistence. |
-| `docs/dispatcher-report.md` | Dispatcher state | Tracks the node; risk HIGH; merge gate READY; all global smokes PASS. |
+| `docs/screen-contracts.md` | Screen contracts | BD-INBOX-01 contract present (lines 217–226); matches code; silent on entry point + persistence. **BD-PROFILE-01 (line 157) promises "view inbox/history/favorites"** — see Findings (profile drift). |
+| `scripts/dispatcher.mjs` (run locally) | Dispatcher node selector | Source of the selection (HIGH risk, merge gate READY, global smokes PASS). Output report (`docs/dispatcher-report.md`) is git-ignored, not checked in. |
+| `docs/dispatcher-status.md`, `docs/dispatcher-report.example.md` | Checked-in dispatcher docs | The only dispatcher docs tracked in the repo. |
 | `README.md` / `ROADMAP.md` | Project notes | Inbox listed as shipped (`BD-INBOX-01` hub). |
 
 ## Current route / entry points
@@ -50,7 +53,10 @@
   rewrite ([inbox.js:250](../../public/src/screens/inbox.js#L250)). **No screen navigates to
   `/inbox`**, and Inbox is **not** one of the four tabbar buttons
   ([index.html:23-57](../../public/index.html#L23-L57)). The screen is reachable only by typing
-  the hash directly. See [Findings](#findings) → drift.
+  the hash directly. This is sharper than a missing tabbar link: the passenger-profile contract
+  (`screen-contracts.md` BD-PROFILE-01, line 157) explicitly promises "view inbox", yet
+  `profile.js` never routes to `/inbox` — a documented entry-point contract drift. See
+  [Findings](#findings) → drift (items 1–2).
 
 ## Current states
 
@@ -71,8 +77,12 @@
 ## Data contract
 
 - **Source:** `listInboxItems()` ([mock_api.js:315-318](../../public/src/mock_api.js#L315-L318))
-  returns shallow copies of the in-memory seed `INBOX_ITEMS_V1`
-  ([mock_api.js:199-290](../../public/src/mock_api.js#L199-L290)) so screens cannot mutate the seed.
+  returns **top-level shallow copies** of the in-memory seed `INBOX_ITEMS_V1`
+  ([mock_api.js:199-290](../../public/src/mock_api.js#L199-L290)) via `{ ...item }`. This protects
+  the seed against reassignment of top-level fields, but **nested objects (`route`, `primary`,
+  `secondary`) are still shared by reference with `INBOX_ITEMS_V1`** — it is *not* a deep defensive
+  clone. `inbox.js` only reads those nested objects (it never mutates them), so current screen usage
+  is safe; the caveat matters only if a future caller mutates a nested field in place.
 - **localStorage / mock API:** Inbox itself is **stateless** — it reads no localStorage and writes
   none. Related stores used by the *targets* of inbox links (chat, responses, active ride) live in
   separate modules and are out of inbox scope.
@@ -178,19 +188,30 @@ messages, Passenger chat thread, Driver/respond thread, Active-ride thread, and 
    tabbar and not linked from any screen (`feed`, `profile`, `chat`, `respond`, `responses`,
    `active-ride`). Reachable only by typing the hash. Resolving this is a runtime/product change →
    deferred (BD-INBOX-04).
-2. **No smoke/regression coverage — `smoke gap`.** Neither `check.mjs` nor any `smoke-*.mjs`
+2. **Passenger profile contract promises inbox access that the code does not deliver — `drift`.**
+   `docs/screen-contracts.md` BD-PROFILE-01 (passenger profile, line 157) lists the action
+   **"Verify phone mock, edit profile, create ride, view inbox/history/favorites"**, yet
+   `public/src/screens/profile.js` has **no `/inbox` navigation** — its closest menu item
+   (`#pfp-menu-history`) routes to `/feed` ([profile.js:898](../../public/src/screens/profile.js#L898)),
+   and a search of the file finds no `go('/inbox')`. This is a **documented entry-point contract
+   drift** (contract says profile opens the inbox; the screen never does), not merely a missing
+   tabbar link. → folded into BD-INBOX-04.
+3. **No smoke/regression coverage — `smoke gap`.** Neither `check.mjs` nor any `smoke-*.mjs`
    exercises Inbox. → BD-INBOX-03.
-3. **Contract omits entry point + persistence facts — `docs gap`.** `screen-contracts.md` (217–226)
+4. **Contract omits entry point + persistence facts — `docs gap`.** `screen-contracts.md` (217–226)
    documents states/actions/acceptance but not the stateless unread model (no persistence, no
    mark-read) or the entry-point status. → BD-INBOX-05 (optional).
-4. **Unread/read is non-persistent — `informational`.** `unread` is a per-load boolean; reloading
+5. **Unread/read is non-persistent — `informational`.** `unread` is a per-load boolean; reloading
    resets it. Matches the mock spine; no backend store implied. Not a defect.
-5. **No loading/error state — `informational`.** `listInboxItems()` resolves synchronously from an
+6. **No loading/error state — `informational`.** `listInboxItems()` resolves synchronously from an
    in-memory seed, so there is no async failure surface by design.
-6. **Route acceptance criterion met — `informational`.** All action hrefs target registered routes;
+7. **Route acceptance criterion met — `informational`.** All action hrefs target registered routes;
    router falls back to `/feed` for unknown paths. No broken-link drift.
-7. **Cloud Design parity complete — `informational`.** All ~35 inbox classes defined; accent
+8. **Cloud Design parity complete — `informational`.** All ~35 inbox classes defined; accent
    `#FF6B35`; no placeholder/stub. No render-gate or visual-polish issue needed.
+9. **`listInboxItems()` is a top-level shallow copy, not a deep clone — `informational`.** Nested
+   `route`/`primary`/`secondary` objects remain shared with the seed; safe today because `inbox.js`
+   never mutates them. Not a defect under current usage.
 
 ## Recommended follow-up issues
 
@@ -199,8 +220,11 @@ messages, Passenger chat thread, Driver/respond thread, Active-ride thread, and 
   `responses/messages/rides/all`, every action href resolves to a registered route, empty CTA →
   `/feed`, and that the topbar unread count equals the number of items flagged `unread`.
 - **BD-INBOX-04 Inbox entry-point / navigation** *(drift)* — product/runtime decision on how users
-  reach Inbox (e.g. a notifications/messages affordance or tabbar slot). Out of scope for this
-  report-only task.
+  reach Inbox (e.g. a notifications/messages affordance or tabbar slot). **Must explicitly resolve
+  the passenger-profile contract mismatch:** `screen-contracts.md` BD-PROFILE-01 (line 157) lists
+  "view inbox" as a passenger-profile action, but `profile.js` provides no `/inbox` navigation —
+  either wire a profile → `/inbox` entry point or correct the BD-PROFILE-01 contract. Out of scope
+  for this report-only task.
 - **BD-INBOX-05 Inbox docs contract sync** *(docs gap, optional)* — extend `screen-contracts.md`
   BD-INBOX-01 to record the stateless unread model (no persistence / no mark-read), the absence of
   an async error/loading state, and the current entry-point status.
@@ -212,7 +236,9 @@ no visual-parity/polish issue — parity is already met.
 
 **FOLLOW-UP REQUIRED — no runtime changes in this task.**
 
-The Inbox screen is contract-correct, route-safe, and at full Cloud Design parity with green
-checks. Two gaps remain that are *not* runtime fixes for this audit: it has **no smoke coverage**
-(BD-INBOX-03) and **no in-app entry point** (BD-INBOX-04), plus an optional docs sync (BD-INBOX-05).
-No code, CSS, service worker, or smoke script was modified.
+The Inbox screen is itself contract-correct, route-safe, and at full Cloud Design parity with green
+checks. Gaps remain that are *not* runtime fixes for this audit: it has **no smoke coverage**
+(BD-INBOX-03) and **no in-app entry point** — including a documented passenger-profile contract
+drift where BD-PROFILE-01 promises "view inbox" but `profile.js` provides no `/inbox` navigation
+(BD-INBOX-04) — plus an optional docs sync (BD-INBOX-05). No code, CSS, service worker, or smoke
+script was modified.
