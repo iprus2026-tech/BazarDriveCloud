@@ -139,7 +139,7 @@ no CSP weakening
 
 ## Запуск локально
 
-Любой статический сервер из корня репозитория:
+Поддерживаемый локальный запуск — через статический сервер из корня репозитория:
 
 ```bash
 python -m http.server 8000 -d public
@@ -151,7 +151,7 @@ python -m http.server 8000 -d public
 http://localhost:8000
 ```
 
-Или открыть `public/index.html` напрямую, но для Service Worker лучше статический сервер.
+Не используйте прямое открытие `public/index.html` через `file://`: приложение грузит ES-модули, а Service Worker работает только на HTTP(S) или localhost.
 
 ---
 
