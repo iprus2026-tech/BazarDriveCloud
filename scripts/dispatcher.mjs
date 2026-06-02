@@ -7,17 +7,28 @@
 // ролям (Claude Code / Cloud Design / ChatGPT / Codex / GitHub) —
 // до зелёного состояния и готовности к фиксации (commit).
 //
-// Полностью локальная и автономная: только node-builtins, без сети,
-// без API-ключей, без зависимостей. Совместима с CSP-инвариантами
-// (живёт в scripts/, не попадает в public/ и не сканируется на inline
-// style/script со стороны check.mjs).
+// Полностью локальная и автономная: только node-builtins, без сети, без
+// API-ключей, без зависимостей. Раскладка задач по ролям — это локальный
+// task routing (текстовые задачи в отчёте), а НЕ живые вызовы ChatGPT /
+// Codex / Claude API. Совместима с CSP-инвариантами (живёт в scripts/, не
+// попадает в public/ и не сканируется на inline style/script в check.mjs).
+//
+// Границы безопасности:
+//   - default mode = inspect/report: НЕ трогает application code (public/src,
+//     router, state, mock_api, ride_state, mapbox, index.html CSP, sw.js).
+//     Пишет только отчёт docs/dispatcher-report.md и ignored-курсор.
+//   - --fix = safe fixes only: обратимая гигиена (CRLF→LF, хвостовые пробелы,
+//     финальный перевод строки) и ТОЛЬКО по LOW-риск узлам (docs). Любые
+//     структурные дефекты и HIGH/MEDIUM узлы делегируются ролям (NEEDS-ROLES).
+//   - READY != auto-merge: GitHub остаётся merge gate; READY значит лишь
+//     «узел зелёный, PR можно рассматривать».
 //
 // Использование:
-//   node scripts/dispatcher.mjs                 цикл: выбор → дебаг → план → отчёт (read-only по коду)
-//   node scripts/dispatcher.mjs --fix           + безопасные авто-фиксы цели, цикл до зелёного
+//   node scripts/dispatcher.mjs                 inspect/report (read-only по app-коду)
+//   node scripts/dispatcher.mjs --fix           + safe fixes (только LOW-риск), цикл до зелёного
 //   node scripts/dispatcher.mjs --target <путь> форсировать цель вместо само-выбора
 //   node scripts/dispatcher.mjs --json          машиночитаемый вывод
-//   node scripts/dispatcher.mjs --max N         предел итераций (по умолчанию 3)
+//   node scripts/dispatcher.mjs --max N         предел итераций фикс-цикла (по умолчанию 3)
 //   node scripts/dispatcher.mjs --selftest      самопроверка рутины, без мутаций (для check.mjs)
 
 import fs from 'node:fs';
@@ -207,6 +218,37 @@ function classify(relPath) {
 }
 
 // ---------------------------------------------------------------------------
+// Классификация риска узла. Определяет, можно ли вообще авто-фиксить цель.
+//   HIGH   — application runtime / контракты: public/src/**, index.html, sw.js
+//   MEDIUM — оснастка и визуал: scripts, styles, workflows, README/ROADMAP/contracts
+//   LOW    — docs и генерируемые отчёты
+// Авто-фикс разрешён ТОЛЬКО для LOW. Всё остальное уходит задачей в роли.
+// ---------------------------------------------------------------------------
+const MEDIUM_DOCS = new Set(['README.md', 'ROADMAP.md', 'docs/screen-contracts.md']);
+
+function classifyRisk(node) {
+  const id = node.id;
+  // HIGH — runtime приложения, маршрутизатор, state-машина, CSP, SW, Mapbox, ride/order flow.
+  if (id.startsWith('public/src/')) return 'HIGH';
+  if (id === 'public/index.html' || id === 'public/sw.js') return 'HIGH';
+  // MEDIUM — инструментальный и визуальный слой + ключевые проектные доки.
+  if (id.startsWith('public/styles/')) return 'MEDIUM';
+  if (id.startsWith('scripts/')) return 'MEDIUM';
+  if (id.startsWith('.github/')) return 'MEDIUM';
+  if (MEDIUM_DOCS.has(id)) return 'MEDIUM';
+  // LOW — генерируемый отчёт и обычные docs.
+  if (id.startsWith('docs/')) return 'LOW';
+  return 'MEDIUM';
+}
+
+// Авто-фикс допустим только для LOW-риска. Генерируемый отчёт переписывается
+// целиком в другом месте, поэтому как «цель фикса» исключён.
+function canAutoFix(node) {
+  if (node.id === 'docs/dispatcher-report.md') return false;
+  return classifyRisk(node) === 'LOW';
+}
+
+// ---------------------------------------------------------------------------
 // Безопасные авто-фиксы (только при --fix, только по выбранной цели).
 // Whitelist: обратимая гигиена, не меняющая поведение и не трогающая CSP.
 // Структурные дефекты (например inline style в JS) НЕ чинятся автоматически —
@@ -215,8 +257,9 @@ function classify(relPath) {
 function applySafeFixes(node) {
   const applied = [];
   if (!exists(node.file) || !fs.statSync(node.file).isFile()) return applied;
-  // Не трогаем артефакты самой рутины.
-  if (node.id === 'docs/dispatcher-report.md') return applied;
+  // Жёсткая граница: авто-фикс только для LOW-риска (docs). HIGH/MEDIUM —
+  // никогда не редактируются автоматически, даже при прямом вызове.
+  if (!canAutoFix(node)) return applied;
   const orig = fs.readFileSync(node.file, 'utf8');
   let next = orig;
 
@@ -284,32 +327,52 @@ function groupByRole(tasks) {
 }
 
 function buildReport(ctx) {
-  const { target, debug, fixesApplied, tasks, iterations, ready } = ctx;
+  const { target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner } = ctx;
   const date = new Date().toISOString().slice(0, 10);
+  const mergeGate = ready ? 'READY' : 'NEEDS-ROLES';
+  const grouped = groupByRole(tasks);
   const lines = [];
+
   lines.push('# Dispatcher report');
   lines.push('');
   lines.push(`Date: ${date}`);
   lines.push('');
-  lines.push('Сгенерировано рутиной `scripts/dispatcher.mjs`. Не редактировать вручную.');
+  lines.push('Генерируется рутиной `scripts/dispatcher.mjs` — рабочая карточка узла, не править вручную.');
+  lines.push('READY означает лишь «узел зелёный, PR можно рассматривать». Merge gate остаётся за GitHub.');
   lines.push('');
-  lines.push('## Выбранная цель');
+
+  // Карточка-шапка узла.
+  lines.push('## Карточка узла');
   lines.push('');
   lines.push('```text');
-  lines.push(`узел      ${target.node.id}`);
-  lines.push(`тип       ${target.node.kind} — ${(NODE_KINDS[target.node.kind] || {}).desc || ''}`);
-  lines.push(`причина    ${target.reason}`);
-  lines.push(`итераций   ${iterations}`);
+  lines.push(`Target           ${target.node.id}`);
+  lines.push(`Kind             ${target.node.kind} — ${(NODE_KINDS[target.node.kind] || {}).desc || ''}`);
+  lines.push(`Reason selected  ${target.reason}`);
+  lines.push(`Risk             ${risk}`);
+  lines.push(`Can auto-fix     ${autoFixable ? 'yes (safe hygiene only)' : 'no — delegated to roles'}`);
+  lines.push(`Suggested owner  ${suggestedOwner}`);
+  lines.push(`Iterations       ${iterations}`);
+  lines.push(`Merge gate       ${mergeGate}`);
   lines.push('```');
   lines.push('');
-  lines.push('## Дебаг (проверки)');
+
+  // 1. Что проверено?
+  lines.push('## 1. Что проверено (checks run)');
   lines.push('');
   lines.push('```text');
   for (const r of debug.results) lines.push(`${r.ok ? 'PASS' : 'FAIL'}  ${r.id}`);
   lines.push('```');
+  lines.push('');
+
+  // 2. Что упало? + 3. Почему упало?
+  lines.push('## 2. Что упало (failures)');
+  lines.push('');
   if (debug.failures.length) {
+    lines.push('```text');
+    for (const f of debug.failures) lines.push(`FAIL  ${f.id}`);
+    lines.push('```');
     lines.push('');
-    lines.push('Хвосты падений:');
+    lines.push('## 3. Почему упало (хвосты)');
     lines.push('');
     for (const f of debug.failures) {
       lines.push('```text');
@@ -317,17 +380,33 @@ function buildReport(ctx) {
       lines.push(f.tail || '(нет вывода)');
       lines.push('```');
     }
+  } else {
+    lines.push('```text');
+    lines.push('(ничего — все проверки зелёные)');
+    lines.push('```');
+    lines.push('');
+    lines.push('## 3. Почему упало');
+    lines.push('');
+    lines.push('```text');
+    lines.push('(нет падений)');
+    lines.push('```');
   }
   lines.push('');
-  lines.push('## Применённые авто-фиксы');
+
+  // Применённые safe-фиксы.
+  lines.push('## Применённые safe-фиксы');
   lines.push('');
   lines.push('```text');
-  lines.push(fixesApplied.length ? fixesApplied.map((x) => '- ' + x).join('\n') : '(нет — безопасных авто-фиксов не потребовалось)');
+  lines.push(fixesApplied.length
+    ? fixesApplied.map((x) => '- ' + x).join('\n')
+    : autoFixable ? '(нет — safe-фиксов не потребовалось)'
+                  : '(пропущено — узел не LOW-риск, авто-фикс запрещён)');
   lines.push('```');
   lines.push('');
-  lines.push('## Распределение задач по ролям');
+
+  // 4. Кто чинит?
+  lines.push('## 4. Кто чинит (распределение по ролям)');
   lines.push('');
-  const grouped = groupByRole(tasks);
   for (const role of Object.keys(ROLES)) {
     const items = grouped.get(role);
     if (!items || !items.length) continue;
@@ -336,12 +415,25 @@ function buildReport(ctx) {
     for (const t of items) lines.push(`- [ ] ${t}`);
     lines.push('');
   }
-  lines.push('## Готовность к сдаче');
+
+  // 5. Что должен сделать следующий PR?
+  lines.push('## 5. Что следующий PR должен сделать');
+  lines.push('');
+  const nextSteps = ready
+    ? [`Узел «${target.node.id}» зелёный — PR можно рассматривать; GitHub проводит merge gate.`]
+    : tasks.filter((t) => t.role !== 'GITHUB').map((t) => `(${t.roleLabel}) ${t.task}`);
+  lines.push('```text');
+  for (const s of nextSteps) lines.push('- ' + s);
+  lines.push('```');
+  lines.push('');
+
+  // Merge gate.
+  lines.push('## Merge gate');
   lines.push('');
   lines.push('```text');
   lines.push(ready
-    ? 'READY — все проверки зелёные, узел в рабочем состоянии, можно фиксировать (commit).'
-    : 'NEEDS-ROLES — остались задачи по ролям; merge gate держать закрытым до зелёного.');
+    ? 'READY — узел зелёный, PR можно рассматривать. Это НЕ auto-merge: финальный gate за GitHub.'
+    : 'NEEDS-ROLES — остались задачи по ролям; merge gate держать закрытым до зелёного CI.');
   lines.push('```');
   lines.push('');
   return lines.join('\n');
@@ -366,6 +458,27 @@ function selfTest() {
                         ['docs/x.md', 'doc'], ['scripts/smoke-x.mjs', 'smoke'],
                         ['public/src/screens/feed.js', 'screen'], ['public/src/state.js', 'module']])
     if (classify(p) !== k) fail(`classify(${p}) ожидался ${k}, получено ${classify(p)}`);
+
+  // Risk-граница: HIGH/MEDIUM узлы НЕ должны быть авто-фиксимыми.
+  for (const id of ['public/src/screens/feed.js', 'public/src/router.js', 'public/src/state.js',
+                    'public/src/mock_api.js', 'public/src/ride_state.js', 'public/src/mapbox/map_shell.js',
+                    'public/index.html', 'public/sw.js']) {
+    if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH`);
+    if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (HIGH-риск)`);
+  }
+  for (const id of ['scripts/check.mjs', 'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md'])
+    if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (MEDIUM-риск)`);
+  if (canAutoFix({ id: 'docs/dispatcher-report.md' })) fail('генерируемый отчёт не должен быть авто-фиксимым');
+  if (!canAutoFix({ id: 'docs/flow-contracts.md' })) fail('обычный docs/*.md (LOW) должен быть авто-фиксимым');
+
+  // Guard в applySafeFixes: для HIGH-узла возвращает [] и НЕ пишет файл.
+  const highNode = inv.find((n) => n.kind === 'screen');
+  if (highNode) {
+    const before = fs.readFileSync(highNode.file, 'utf8');
+    const applied = applySafeFixes(highNode);
+    if (applied.length) fail('applySafeFixes тронул HIGH-узел');
+    if (fs.readFileSync(highNode.file, 'utf8') !== before) fail('applySafeFixes изменил HIGH-узел на диске');
+  }
   console.log('Dispatcher selftest passed.');
 }
 
@@ -382,15 +495,20 @@ function main() {
   // Первичный дебаг до выбора цели — чтобы приоритетно взять упавший узел.
   let debug = runDebug(inventory);
   const target = selectTarget(inventory, debug, args.target, state);
+  const risk = classifyRisk(target.node);
+  const autoFixable = canAutoFix(target.node);
 
   const fixesApplied = [];
   let iterations = 1;
-  // Цикл «до полной фиксации»: дебаг → фикс → перепроверка.
+  // Цикл «до полной фиксации»: дебаг → safe fix → перепроверка.
+  // Авто-фикс срабатывает ТОЛЬКО для LOW-риск целей; HIGH/MEDIUM узлы
+  // никогда не редактируются автоматически — они уходят задачей в роли.
   while (true) {
     if (debug.green) break;
     if (!args.fix) break;
+    if (!autoFixable) break;             // risk != LOW → делегируем ролям
     const applied = applySafeFixes(target.node);
-    if (!applied.length) break;          // авто-фиксы исчерпаны → дальше роли
+    if (!applied.length) break;          // safe-фиксы исчерпаны → дальше роли
     fixesApplied.push(...applied);
     if (iterations >= args.max) break;
     iterations++;
@@ -399,6 +517,7 @@ function main() {
 
   const tasks = routeTasks(target.node, debug);
   const ready = debug.green;
+  const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
 
   // Обновляем курсор/историю само-выбора.
   state.cursor = (inventory.findIndex((n) => n.id === target.node.id) + 1) % Math.max(1, inventory.length);
@@ -406,19 +525,22 @@ function main() {
   saveState(state);
 
   // Пишем отчёт-артефакт.
-  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, ready });
+  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner });
   try { fs.writeFileSync(REPORT_FILE, report); } catch { /* best effort */ }
 
   if (args.json) {
     console.log(JSON.stringify({
-      target: { id: target.node.id, kind: target.node.kind, reason: target.reason },
+      target: { id: target.node.id, kind: target.node.kind, reason: target.reason,
+                risk, canAutoFix: autoFixable, suggestedOwner },
       debug: { green: debug.green, results: debug.results.map((r) => ({ id: r.id, ok: r.ok })) },
-      fixesApplied, tasks, iterations, ready, report: rel(REPORT_FILE),
+      fixesApplied, tasks, iterations, ready, mergeGate: ready ? 'READY' : 'NEEDS-ROLES',
+      report: rel(REPORT_FILE),
     }, null, 2));
   } else {
     console.log(`\n=== BazarDrive Dispatcher ===`);
     console.log(`Цель:    ${target.node.id}  [${target.node.kind}]`);
     console.log(`Причина: ${target.reason}`);
+    console.log(`Риск:    ${risk}   Авто-фикс: ${autoFixable ? 'да (safe)' : 'нет → роли'}   Владелец: ${suggestedOwner}`);
     console.log(`Дебаг:   ${debug.results.filter((r) => r.ok).length}/${debug.results.length} PASS`
       + (debug.green ? '  (зелёный)' : `  (падает: ${debug.failures.map((f) => f.id).join(', ')})`));
     if (fixesApplied.length) console.log(`Фиксы:   ${fixesApplied.join('; ')}`);
