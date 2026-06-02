@@ -26,11 +26,26 @@ function expect(label, cond, detail = '') {
 }
 
 // Extract a function body by name via brace matching, so an assertion
-// scoped to one renderer doesn't accidentally inspect another.
+// scoped to one renderer doesn't accidentally inspect another. Skips the
+// parameter list first so an object-default param (e.g. `(options = {})`)
+// is not mistaken for the function body's opening brace.
 function functionBody(source, name) {
   const start = source.indexOf(`function ${name}`);
   if (start === -1) return null;
-  const open = source.indexOf('{', start);
+  const paren = source.indexOf('(', start);
+  if (paren === -1) return null;
+  let pdepth = 0;
+  let afterParams = -1;
+  for (let i = paren; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '(') pdepth++;
+    else if (ch === ')') {
+      pdepth--;
+      if (pdepth === 0) { afterParams = i + 1; break; }
+    }
+  }
+  if (afterParams === -1) return null;
+  const open = source.indexOf('{', afterParams);
   if (open === -1) return null;
   let depth = 0;
   for (let i = open; i < source.length; i++) {
@@ -50,33 +65,72 @@ function arrayBody(source, name) {
   return m ? m[1] : null;
 }
 
-// ── A. Supported-status coverage ─────────────────────────────
-// The live passenger stages live in PASSENGER_SUPPORTED_STATUSES; the
-// terminal CANCELED / NO_SHOW states are deliberately NOT in the set —
-// they route through renderPassengerCanceledFallback (see B).
+// ── A. Supported-status coverage (exact set) ─────────────────
+// PASSENGER_SUPPORTED_STATUSES must equal EXACTLY the six live passenger
+// stages. Presence-only checks would let a refactor add a pre-ride state
+// (NEW_ORDER / CONFIRMATION_PENDING / CONFIRMED / CHAT_STARTED) into the
+// set, dropping its renderPassengerStub fall-through and pushing it into
+// the active-ride render pipeline — so compare the whole set, failing on
+// any MISSING or EXTRA status.
+const ALLOWED_SUPPORTED = [
+  'ACCEPTED',
+  'DRIVER_EN_ROUTE',
+  'DRIVER_APPROACHING_PICKUP',
+  'WAITING_PASSENGER',
+  'IN_PROGRESS',
+  'COMPLETED',
+];
 const supportedMatch = passenger.match(/PASSENGER_SUPPORTED_STATUSES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
-const supported = supportedMatch ? supportedMatch[1] : '';
 expect('PASSENGER_SUPPORTED_STATUSES set resolved', !!supportedMatch);
-for (const s of ['ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED']) {
-  expect(`supported set includes RIDE_STATUS.${s}`,
-    new RegExp(`RIDE_STATUS\\.${s}\\b`).test(supported));
-}
-expect('supported set excludes RIDE_STATUS.CANCELED (served by fallback)',
-  !/RIDE_STATUS\.CANCELED\b/.test(supported));
-expect('supported set excludes RIDE_STATUS.NO_SHOW (served by fallback)',
-  !/RIDE_STATUS\.NO_SHOW\b/.test(supported));
+const supportedStatuses = supportedMatch
+  ? (supportedMatch[1].match(/RIDE_STATUS\.(\w+)/g) || []).map((t) => t.replace('RIDE_STATUS.', ''))
+  : [];
+const missing = ALLOWED_SUPPORTED.filter((s) => !supportedStatuses.includes(s));
+const extra = supportedStatuses.filter((s) => !ALLOWED_SUPPORTED.includes(s));
+expect('PASSENGER_SUPPORTED_STATUSES has no missing status',
+  missing.length === 0, 'missing=' + JSON.stringify(missing));
+expect('PASSENGER_SUPPORTED_STATUSES has no extra status',
+  extra.length === 0, 'extra=' + JSON.stringify(extra));
+expect('PASSENGER_SUPPORTED_STATUSES equals the exact allowed set',
+  JSON.stringify([...supportedStatuses].sort()) === JSON.stringify([...ALLOWED_SUPPORTED].sort()),
+  'got=' + JSON.stringify(supportedStatuses));
 
-// ── B. CANCELED / NO_SHOW → canceled fallback routing ────────
+// ── B. CANCELED / NO_SHOW → canceled fallback (scoped + ordered) ──
+// Scope to the activeRidePassenger() dispatch body and assert the
+// terminal CANCELED / NO_SHOW branches run BEFORE the
+// `!PASSENGER_SUPPORTED_STATUSES.has(...)` fallback. If a refactor hoists
+// the unsupported-status branch above them, terminal rides would render
+// the generic stub instead of renderPassengerCanceledFallback.
 expect('renderPassengerCanceledFallback is defined',
   /function\s+renderPassengerCanceledFallback\s*\(/.test(passenger));
-expect('CANCELED routes to renderPassengerCanceledFallback(ride, \'canceled\')',
-  /ride\.status\s*===\s*RIDE_STATUS\.CANCELED\s*\)\s*\{?\s*return\s+renderPassengerCanceledFallback\(\s*ride\s*,\s*'canceled'\s*\)/.test(passenger));
-expect('NO_SHOW routes to renderPassengerCanceledFallback(ride, \'no_show\')',
-  /ride\.status\s*===\s*RIDE_STATUS\.NO_SHOW\s*\)\s*\{?\s*return\s+renderPassengerCanceledFallback\(\s*ride\s*,\s*'no_show'\s*\)/.test(passenger));
+const dispatchBody = functionBody(passenger, 'activeRidePassenger') || '';
+expect('activeRidePassenger() body resolved', dispatchBody.length > 0);
+expect('activeRidePassenger CANCELED routes to renderPassengerCanceledFallback(ride, \'canceled\')',
+  /ride\.status\s*===\s*RIDE_STATUS\.CANCELED\s*\)\s*\{?\s*return\s+renderPassengerCanceledFallback\(\s*ride\s*,\s*'canceled'\s*\)/.test(dispatchBody));
+expect('activeRidePassenger NO_SHOW routes to renderPassengerCanceledFallback(ride, \'no_show\')',
+  /ride\.status\s*===\s*RIDE_STATUS\.NO_SHOW\s*\)\s*\{?\s*return\s+renderPassengerCanceledFallback\(\s*ride\s*,\s*'no_show'\s*\)/.test(dispatchBody));
+const idxCanceled = dispatchBody.search(/ride\.status\s*===\s*RIDE_STATUS\.CANCELED/);
+const idxNoShow = dispatchBody.search(/ride\.status\s*===\s*RIDE_STATUS\.NO_SHOW/);
+const idxUnsupported = dispatchBody.search(/!\s*PASSENGER_SUPPORTED_STATUSES\.has\s*\(/);
+expect('activeRidePassenger has the unsupported-status fallback branch', idxUnsupported !== -1);
+expect('CANCELED branch precedes the unsupported-status fallback',
+  idxCanceled !== -1 && idxUnsupported !== -1 && idxCanceled < idxUnsupported,
+  `canceled@${idxCanceled} unsupported@${idxUnsupported}`);
+expect('NO_SHOW branch precedes the unsupported-status fallback',
+  idxNoShow !== -1 && idxUnsupported !== -1 && idxNoShow < idxUnsupported,
+  `noShow@${idxNoShow} unsupported@${idxUnsupported}`);
 
 // ── C. Cancel sheet ──────────────────────────────────────────
 expect('openPassengerCancelSheet is defined',
   /function\s+openPassengerCancelSheet\s*\(/.test(passenger));
+// Reachability: the active-ride render path must wire a user action to
+// openPassengerCancelSheet(...), not just leave a dead helper behind. A
+// future change that removes the cancel button/listener should trip this.
+const cancelCallSites = (passenger.match(/openPassengerCancelSheet\s*\(/g) || []).length;
+expect('openPassengerCancelSheet has a call site beyond its definition',
+  cancelCallSites >= 2, 'occurrences=' + cancelCallSites);
+expect('cancel button (#arp-cancel) click wires to openPassengerCancelSheet(...)',
+  /#arp-cancel'\)[\s\S]{0,600}addEventListener\(\s*'click'[\s\S]{0,400}openPassengerCancelSheet\s*\(/.test(passenger));
 const cancelReasons = arrayBody(passenger, 'CANCEL_REASONS');
 expect('CANCEL_REASONS array resolved', !!cancelReasons);
 const reasonCount = cancelReasons ? (cancelReasons.match(/\bid:/g) || []).length : 0;
@@ -106,12 +160,18 @@ for (const id of ['share', 'trusted', 'support', 'help']) {
     new RegExp(`id:\\s*'${id}'`).test(safetyActions || ''));
 }
 
-// ── E. Role isolation ────────────────────────────────────────
-// Dispatch: active_ride.js routes a non-driver role to the passenger
-// renderer and never lets the passenger reach driver-only branches.
+// ── E. Role isolation / dispatch contract ────────────────────
+// Current, intentional contract: active_ride.js derives the role from the
+// ?role= query override first, then the persisted user role. role ===
+// 'driver' renders the driver flow; any other role renders the passenger
+// flow. The URL ?role= override is intentional for manual/mock testing,
+// so this guard pins the CURRENT contract — it does NOT assert the
+// override is impossible.
 expect('dispatcher imports activeRidePassenger',
   /import\s+activeRidePassenger\s+from\s+'\.\/active_ride_passenger\.js'/.test(dispatcher));
-expect('dispatcher routes non-driver role to renderPassenger()',
+expect('dispatcher derives role from ?role= override then persisted role',
+  /const\s+role\s*=\s*query\.get\('role'\)\s*\|\|/.test(dispatcher));
+expect('dispatcher renders passenger flow for any non-driver role (driver flow only when role === "driver")',
   /if\s*\(\s*role\s*!==\s*'driver'\s*\)\s*return\s+renderPassenger\(\)/.test(dispatcher));
 expect('renderPassenger() returns activeRidePassenger(...)',
   /return\s+activeRidePassenger\(/.test(dispatcher));
