@@ -133,6 +133,17 @@ if (exists(driverMapGuardSmoke)) {
   }
 }
 
+// BD-DRIVER-02 — static regression smoke for the driver-map readiness gate.
+const driverMapReadinessSmoke = path.join(root, 'scripts', 'smoke-driver-map-readiness.mjs');
+if (exists(driverMapReadinessSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverMapReadinessSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-map-readiness.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-DOCS-01 — behavioural smoke for the driver document readiness
 // contract (registration docs vs shift docs). Guards against onboarding's
 // 3 required docs being reported as documentsReady:false again.

@@ -45,7 +45,7 @@ Registered in `public/src/app.js`.
 | `/feed` | BD-FEED-01 | `public/src/screens/feed.js` | implemented |
 | `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented, mock MapShell only |
 | `/location-permission` | BD-MAP-02 | `public/src/screens/location_permission.js` | implemented, mock permission UX |
-| `/driver-map` | BD-DRIVER-01 | `public/src/screens/driver_map.js` | implemented, mock orders only |
+| `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented, mock orders only; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
 | `/route-picker` | BD-MAP-03 | `public/src/screens/route_picker.js` | implemented, route draft store |
 | `/route-preview` | BD-MAP-04 | `public/src/screens/route_preview.js` | implemented, route preview mock |
 | `/order-map-draft` | BD-MAP-05 | `public/src/screens/order_map_draft.js` | implemented, creates local ride order |
@@ -166,7 +166,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | `bazardrive.user.v1`, driver document flags. |
 | Main states | Overview, Taxi IP, Documents, Payouts, Safety. |
 | Actions | Online toggle, driver/passenger mode, readiness checklist, document mock updates. |
-| Acceptance | Driver readiness gates Feed/Post Detail accept CTAs. `/driver-map` is only role-guarded today and does not enforce `isDriverLineReady()`. |
+| Acceptance | Driver readiness gates Feed/Post Detail accept CTAs and `/driver-map` (BD-DRIVER-02): all accept surfaces now enforce `isDriverLineReady()` via the shared rule in `state.js`. |
 
 ### BD-RESPOND-01 - Respond
 
@@ -303,17 +303,18 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Publish order, edit route, set now/later, set price/comment, go to my order/feed. |
 | Acceptance | Publish CTA always gives visible feedback and never silently fails. |
 
-### BD-DRIVER-01 - DriverMap
+### BD-DRIVER-01 / BD-DRIVER-02 - DriverMap
 
 | Field | Contract |
 |---|---|
 | Route | `/driver-map` |
 | File | `public/src/screens/driver_map.js` |
 | Data | `listNearbyOrders()` and `acceptCanonicalRideOrder()` mock flow. |
-| Guard | Role-guarded only: non-driver roles see a safe fallback. It does **not** check `isDriverLineReady()` today. |
-| Main states | Order list, empty, accepted handoff. |
-| Actions | Accept order, create test order, open feed/map, go to active ride. |
-| Acceptance | Uses MapShell placeholder and local ride order store only; incomplete driver readiness is a known follow-up gap for this surface. |
+| Guard | Two gates. Role gate (BD-ROLE-01): non-driver roles see a safe passenger fallback. Readiness gate (BD-DRIVER-02): a `role=driver` who is not `isDriverLineReady()` sees the readiness gate, not the working surface. |
+| Variants | `ready` (working order list) \| `not_ready` (readiness banner + read-only checklist + LOCKED orders) \| `non_driver` (existing passenger guard). |
+| Main states | Order list, empty, accepted handoff, not_ready gate. |
+| Actions | ready: accept order, create test order, open feed/map, go to active ride. not_ready: «Завершить готовность» → `/profile` only — no accept action is rendered. |
+| Acceptance | Uses MapShell placeholder and local ride order store only. Readiness derives from the single `isDriverLineReady()` rule in `state.js` (shared with Profile), so the gate and the Profile readiness card cannot drift. Covered by `scripts/smoke-driver-map-readiness.mjs`. |
 
 ### BD-RIDE-D-01..09 - Active ride driver
 
@@ -356,7 +357,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Real Mapbox SDK | Separate Phase 4 issue. Requires CSP and SW update. |
 | `driver_markers.js` and `trip_status_layer.js` stubs | Still not created in `public/src/mapbox/`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
-| DriverMap readiness gate | `/driver-map` is role-guarded but not `isDriverLineReady()`-gated today. Feed/Post Detail accept paths are readiness-gated separately. |
+| ~~DriverMap readiness gate~~ | Resolved (BD-DRIVER-02): `/driver-map` now enforces `isDriverLineReady()` — the shared `state.js` rule — alongside the role guard. |
 | Backend/auth/payments/uploads/push/APK | Out of scope for the current PWA mock spine. |
 | Automated tests | `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt. |
 

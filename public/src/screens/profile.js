@@ -4,6 +4,8 @@ import {
   documentsAttentionCount,
   documentsReviewCount,
   REQUIRED_DOCS,
+  canShowReadyStatus,
+  isDriverLineReady,
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -90,19 +92,9 @@ function checklistItems(u) {
   ];
 }
 
-function canShowReadyStatus(u) {
-  return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
-}
-
-// Single line-readiness rule shared by Overview and Taxi/IP cards.
-// A driver is ready to go online only when basic profile data is complete
-// AND the waybill is open AND the medical check has been passed.
-function isDriverLineReady(u) {
-  return canShowReadyStatus(u)
-    && u.documentsReady === true
-    && u.waybillOpen === true
-    && u.medicalCheckPassed === true;
-}
+// canShowReadyStatus + isDriverLineReady are imported from state.js — the
+// single line-readiness rule shared by Overview, Taxi/IP cards and the
+// DriverMap readiness gate (BD-DRIVER-02), so the surfaces cannot drift.
 
 function getDriverStatusState(u) {
   return (isDriverLineReady(u) && u.driverOnline) ? 'ready' : 'action';

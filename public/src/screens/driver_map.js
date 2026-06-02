@@ -5,19 +5,33 @@
 // backend, no driver assignment service. Orders come from
 // listNearbyOrders() (BD-MAP-05 OrderMapDraft mock store), accepting
 // an order flips its local status via acceptNearbyOrder().
+//
+// BD-DRIVER-02 — DriverMap readiness gate.
+// Variants: ready | not_ready | non_driver. A role=driver who is not
+// isDriverLineReady() (state.js, the same rule Profile enforces) sees a
+// readiness banner + read-only checklist + LOCKED order cards instead of the
+// working accept surface, and is routed to /profile to finish readiness. The
+// non_driver path keeps the existing BD-ROLE-01 passenger guard unchanged.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders } from '../mock_api.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
-import { user } from '../state.js';
+import { user, isDriverLineReady } from '../state.js';
 
 const STATE = {
-  LIST:     'list',
-  EMPTY:    'empty',
-  ACCEPTED: 'accepted',
+  LIST:      'list',
+  EMPTY:     'empty',
+  ACCEPTED:  'accepted',
+  NOT_READY: 'not_ready',
 };
+
+// Inline glyphs for the BD-DRIVER-02 readiness gate (no icon dependency).
+const SVG_WARN = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+const SVG_CHECK_SM = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+const SVG_ARROW_RIGHT = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+const SVG_LOCK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 
 function pointLabel(point, fallback) {
   if (point && typeof point === 'object' && typeof point.label === 'string' && point.label.trim()) {
@@ -81,12 +95,13 @@ const MAP_VARIANT_COPY = {
   },
 };
 
-function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY } = {}) {
+function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY, dimmed = false } = {}) {
   const copy = MAP_VARIANT_COPY[variant] || MAP_VARIANT_COPY[MAP_VARIANT.NEARBY];
   const showClusters = variant === MAP_VARIANT.NEARBY && orderCount > 0;
 
   const wrap = document.createElement('div');
-  wrap.className = 'map-home__map map-home__map--nearby driver-map__map';
+  wrap.className = 'map-home__map map-home__map--nearby driver-map__map'
+    + (dimmed ? ' driver-map__map--dimmed' : '');
   wrap.setAttribute('role', 'img');
   wrap.setAttribute('aria-label', copy.ariaLabel);
   wrap.dataset.state = variant;
@@ -129,14 +144,27 @@ function buildMapPlaceholder(orderCount, { variant = MAP_VARIANT.NEARBY } = {}) 
   return wrap;
 }
 
-function buildOrderRow(order, index) {
+function buildOrderRow(order, index, { locked = false } = {}) {
   const pickupLabel  = pointLabel(order.pickup,  'Точка подачи');
   const dropoffLabel = pointLabel(order.dropoff, 'Точка назначения');
   const safeId = escapeHtml(order.id);
 
   const row = document.createElement('li');
-  row.className = 'driver-map__order';
+  row.className = locked ? 'driver-map__order is-locked' : 'driver-map__order';
   row.dataset.orderId = order.id;
+
+  // BD-DRIVER-02 — locked rows expose NO accept action: the foot button is
+  // replaced by a disabled "Доступно после готовности" zone so a not-ready
+  // driver can never accept from the gate.
+  const foot = locked
+    ? `<div class="driver-map__order-locked">${SVG_LOCK}<span>Доступно после готовности</span></div>`
+    : `<div class="driver-map__order-foot">
+      <span class="driver-map__order-meta">${escapeHtml(formatMeta(order))}</span>
+      <button class="bd-btn primary sm" type="button"
+              data-action="accept" data-order-id="${safeId}">
+        Принять
+      </button>
+    </div>`;
 
   row.innerHTML = `
     <div class="driver-map__order-head">
@@ -148,13 +176,7 @@ function buildOrderRow(order, index) {
       </div>
       <div class="map-home__order-price">${escapeHtml(formatPrice(order.estimatedPrice))}</div>
     </div>
-    <div class="driver-map__order-foot">
-      <span class="driver-map__order-meta">${escapeHtml(formatMeta(order))}</span>
-      <button class="bd-btn primary sm" type="button"
-              data-action="accept" data-order-id="${safeId}">
-        Принять
-      </button>
-    </div>
+    ${foot}
   `;
   return row;
 }
@@ -211,6 +233,106 @@ function buildEmptyCard() {
       Вернуться в ленту
     </button>
   `;
+  return card;
+}
+
+// ── BD-DRIVER-02 readiness gate ─────────────────────────────────────────────
+
+// Russian plural for "шаг" (1 шаг / 2 шага / 5 шагов).
+function pluralStep(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'шаг';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'шага';
+  return 'шагов';
+}
+
+// 7-item readiness model mirroring the design, with every `done` derived from
+// the same persisted user fields that drive isDriverLineReady() — so the gate
+// and the Profile readiness card cannot disagree.
+function driverReadinessChecklist(u) {
+  return [
+    { key: 'phone',              label: 'Телефон подтверждён', done: !!u.phone },
+    { key: 'vehicleMake',        label: 'Марка авто',          done: !!u.vehicleMake,  hint: u.vehicleMake || null },
+    { key: 'vehicleModel',       label: 'Модель авто',         done: !!u.vehicleModel, hint: u.vehicleModel || null },
+    { key: 'vehiclePlate',       label: 'Госномер',            done: !!u.vehiclePlate, hint: u.vehiclePlate || null },
+    { key: 'documentsReady',     label: 'Документы готовы',    done: !!u.documentsReady },
+    { key: 'waybillOpen',        label: 'Открыт путевой лист', done: !!u.waybillOpen,        hint: u.waybillOpen ? null : 'Откройте смену в профиле' },
+    { key: 'medicalCheckPassed', label: 'Пройден медосмотр',  done: !!u.medicalCheckPassed, hint: u.medicalCheckPassed ? null : 'Предрейсовый, не пройден сегодня' },
+  ];
+}
+
+function readinessRowHtml(item) {
+  const dot = item.done
+    ? `<div class="driver-map__check on" aria-hidden="true">${SVG_CHECK_SM}</div>`
+    : `<div class="driver-map__check" aria-hidden="true"><span class="driver-map__check-empty"></span></div>`;
+  const hint = item.hint
+    ? `<div class="driver-map__check-hint${item.done ? ' is-done' : ''}">${escapeHtml(item.hint)}</div>`
+    : '';
+  const needTag = item.done ? '' : '<span class="driver-map__need-tag">нужно</span>';
+  return `
+    <div class="driver-map__check-row">
+      ${dot}
+      <div class="driver-map__check-body">
+        <div class="driver-map__check-label${item.done ? ' is-done' : ''}">${escapeHtml(item.label)}</div>
+        ${hint}
+      </div>
+      ${needTag}
+    </div>`;
+}
+
+function buildReadinessGate(u, orders) {
+  const items = driverReadinessChecklist(u);
+  const done  = items.filter((i) => i.done).length;
+  const total = items.length;
+  const remaining = total - done;
+  const rows = items.map(readinessRowHtml).join('');
+
+  const card = document.createElement('div');
+  card.className = 'map-home__sheet driver-map__sheet driver-map__gate-sheet';
+  card.dataset.state = STATE.NOT_READY;
+  card.innerHTML = `
+    <div class="map-home__sheet-grip" aria-hidden="true"></div>
+    <div class="driver-map__gate">
+      <div class="driver-map__banner" role="status">
+        <div class="driver-map__banner-icon" aria-hidden="true">${SVG_WARN}</div>
+        <div class="driver-map__banner-text">
+          <div class="driver-map__banner-title">Вы не на линии · профиль не готов</div>
+          <div class="driver-map__banner-sub">Завершите готовность, чтобы принимать заказы</div>
+        </div>
+      </div>
+
+      <div class="bd-card driver-map__checklist">
+        <div class="driver-map__checklist-head">
+          <span class="driver-map__checklist-title">Готовность к линии</span>
+          <span class="driver-map__progress-count">${done} из ${total}</span>
+        </div>
+        <div class="driver-map__progress" data-done="${done}" data-total="${total}" aria-hidden="true">
+          <div class="driver-map__progress-fill"></div>
+        </div>
+        <div class="driver-map__checklist-rows">${rows}</div>
+        <button class="bd-btn primary driver-map__gate-cta" type="button" data-action="complete-readiness">
+          ${SVG_ARROW_RIGHT}
+          Завершить готовность
+        </button>
+        <div class="driver-map__gate-foot">Откроется профиль · ${remaining} ${pluralStep(remaining)} осталось</div>
+      </div>
+
+      <div class="driver-map__locked-h">
+        <span>Заказы рядом</span>
+        <span class="driver-map__locked-h-badge">${SVG_LOCK}заблокировано</span>
+      </div>
+    </div>
+  `;
+
+  if (orders.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'map-home__order-list driver-map__list driver-map__orders-locked';
+    list.setAttribute('aria-label', 'Заказы рядом · заблокировано');
+    orders.forEach((o, i) => list.appendChild(buildOrderRow(o, i, { locked: true })));
+    card.appendChild(list);
+  }
+
   return card;
 }
 
@@ -361,6 +483,33 @@ export default function driverMapScreen() {
   const sheetSlot = document.createElement('div');
   sheetSlot.className = 'driver-map__sheet-slot';
   root.appendChild(sheetSlot);
+
+  // BD-DRIVER-02 — readiness gate. A driver who is not isDriverLineReady()
+  // (the same rule Profile enforces) never reaches the working accept surface:
+  // the stage dims, the sheet shows the readiness banner + checklist, orders
+  // render LOCKED, and "Завершить готовность" routes to /profile. No accept
+  // wiring is attached in this branch, so an order can't be taken from here.
+  const u = user.get();
+  if (!isDriverLineReady(u)) {
+    root.dataset.state = STATE.NOT_READY;
+    stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
+    sheetSlot.replaceChildren(buildReadinessGate(u, listNearbyOrders()));
+
+    root.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn || btn.disabled) return;
+      const action = btn.dataset.action;
+      if (action === 'complete-readiness') {
+        go('/profile');
+      } else if (action === 'feed') {
+        go('/feed');
+      } else if (action === 'map') {
+        go('/map');
+      }
+    });
+
+    return root;
+  }
 
   function renderList() {
     const live = listNearbyOrders();
