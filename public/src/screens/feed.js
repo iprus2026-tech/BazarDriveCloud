@@ -9,7 +9,7 @@ import {
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
-import { resolveRole } from '../smoke_role.js';
+import { applySmokeRole, getSmokeRole, resolveRole } from '../smoke_role.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -92,8 +92,12 @@ export default async function feed() {
   });
 
   root.querySelector('.feed-btn-new').addEventListener('click', () => {
-    // BD-SMOKE-ROLE-01 — per-tab role override decides where "+" routes.
-    go(resolveRole(user.get()) === 'driver' ? '/driver-map' : '/new');
+    // BD-SMOKE-ROLE-01 — per-tab role override decides where "+" routes. A
+    // passenger smoke tab carries passenger intent into the composer; real
+    // passengers keep '/new' so an in-progress draft type is preserved.
+    const role = resolveRole(user.get());
+    if (role === 'driver') { go('/driver-map'); return; }
+    go(getSmokeRole() === 'passenger' ? '/new?type=passenger_request' : '/new');
   });
 
   feedList.addEventListener('click', (e) => {
@@ -122,7 +126,10 @@ export default async function feed() {
       }
 
       if (actionBtn.dataset.action === 'accept-order') {
-        const u = user.get();
+        // BD-SMOKE-ROLE-01 — gate the driver accept on the per-tab effective
+        // role so a passenger smoke tab cannot execute the accept flow even if
+        // the shared persisted role is driver.
+        const u = applySmokeRole(user.get());
         const post = posts.find((p) => String(p.id) === String(postId));
         if (!canAcceptPassengerRequest(u, post)) return;
 
@@ -252,7 +259,10 @@ function renderTripCard(p) {
     </svg>
   `;
 
-  const u = user.get();
+  // BD-SMOKE-ROLE-01 — the accept CTA visibility follows the per-tab effective
+  // role; a passenger smoke tab never sees "Принять заказ". canManageOwnOrder
+  // is identity-based (authorId), so the role override does not affect it.
+  const u = applySmokeRole(user.get());
   const ownPassengerOrder = p.passenger === true && canManageOwnOrder(p, u);
   const driverCanAccept = canAcceptOrder(p, u);
   const postId = escapeHtml(p.id || '');

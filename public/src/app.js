@@ -2,8 +2,7 @@ import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
-import { isDriverMode } from './ride_actions.js';
-import { applySmokeRole, resolveRole } from './smoke_role.js';
+import { getSmokeRole, resolveRole } from './smoke_role.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -62,7 +61,14 @@ function getMapEntryRoute() {
 }
 
 function getCreateEntryRoute() {
-  return isDriverMode(applySmokeRole(user.get())) ? '/driver-map' : '/new';
+  const role = resolveRole(user.get());
+  if (role === 'driver') return '/driver-map';
+  // BD-SMOKE-ROLE-01 — a passenger smoke tab's persisted role may be driver,
+  // so the composer can't infer passenger intent from user.get(). Carry the
+  // intent in the route. Real passengers keep '/new' so an in-progress draft
+  // type is not overridden by the ?type= intent.
+  if (getSmokeRole() === 'passenger') return '/new?type=passenger_request';
+  return '/new';
 }
 
 document.getElementById('tabbar').addEventListener('click', (e) => {
