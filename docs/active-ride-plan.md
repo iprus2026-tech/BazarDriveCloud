@@ -1,338 +1,242 @@
-# Active ride implementation plan (D0)
+# Active ride contract
 
-Tracking issues:
+> **BD-DOCS-01 note:** this document was refreshed after the routines/storage-boundary audit. It is no longer a D0-only implementation plan. It now documents the current implemented mock active-ride flow and the boundaries that future Mapbox/backend work must preserve.
+
+Tracking history:
 
 - #52 BD-RIDE-PLAN-01 Active ride passenger/driver Mapbox implementation plan
-- #53 BD-RIDE-D-01 Driver active ride flow — Cloud Design screen map and staged plan
-
-This document is the D0 deliverable. **D0 is documentation only.** It does not add UI, routes, Mapbox, backend, dependencies, or service-worker entries.
+- #53 BD-RIDE-D-01 Driver active ride flow - Cloud Design screen map and staged plan
 
 ---
 
-## 1. Активная поездка — overview
+## 1. Current implementation status
 
-Cloud Design уже содержит экраны активной поездки для двух ролей:
+Active ride is implemented as a mock-only PWA flow.
 
-- пассажира
-- водителя
+| Area | Current status |
+|---|---|
+| Route | `/active-ride` is registered in `public/src/app.js`. |
+| Driver renderer | `public/src/screens/active_ride.js`. |
+| Passenger renderer | `public/src/screens/active_ride_passenger.js`, imported by `active_ride.js`. |
+| State contract | `public/src/ride_state.js`. |
+| Storage key | `bazardrive.active_ride.v1`. |
+| Map | `public/src/mapbox/map_shell.js` DOM placeholder only. |
+| Real Mapbox | Not connected. No SDK, token, tiles, Directions API or network calls. |
+| Backend | Not present. |
+| Chrome | Router hides tabbar/FAB on `/active-ride`. |
 
-В Cloud Design присутствует макет карты — позже он должен быть реализован через Mapbox. Сейчас раздел слишком большой для одной итерации:
-
-- много экранов (passenger + driver + foundation),
-- много кнопок и нижних шторок,
-- разные роли с разными переходами,
-- собственная state machine поездки,
-- связь с существующим чатом и откликами,
-- будущая Mapbox-интеграция, которую нужно изолировать.
-
-Поэтому D0 фиксирует план внедрения, а не реализацию. Любая работа над экранами активной поездки и Mapbox должна сверяться с этим документом.
-
----
-
-## 2. Текущие готовые flow
-
-Уже реализовано в репозитории и доступно в Cloud Design:
-
-- `/feed` — лента постов;
-- `/respond` — экран отклика;
-- `/chat` — чат водителя и пассажира;
-- переход `/feed → Откликнуться → /respond?postId=<id>`;
-- переход `/feed → Написать водителю → /chat?tripId=<id>`.
-
-Активная поездка стыкуется именно с этими flow — она запускается после чата и временного подтверждения.
+There is no separate `/active-ride-passenger` route. Passenger UI is selected by `?role=passenger` on the same route.
 
 ---
 
-## 3. High-level flow
-
-```text
-Feed
-  └─ Chat
-       └─ temporary confirmation handoff
-            └─ Active ride
-                 └─ Ride completion
-```
-
-**Важно:** Cloud Design пока не содержит отдельный экран подтверждения поездки. Поэтому подтверждение поездки в первой итерации должно быть **временным мостом** (handoff), а не финальным дизайном. Финальный confirmation screen появится позже, когда дизайн будет отрисован в Cloud Design отдельным макетом.
-
----
-
-## 4. Роли
+## 2. Role split
 
 ### Passenger
 
-- смотрит, где сейчас водитель (карта + статус);
-- пишет водителю (переиспользует существующий `/chat`);
-- инициирует звонок через **stub** (без реальной телефонии);
-- может отменить поездку;
-- видит блок «Безопасность» (stub);
-- видит статус прибытия водителя (en route → approaching → arrived);
-- видит статус самой поездки (waiting → in progress → completed).
+Passenger active ride:
+
+- watches driver progress on the placeholder map;
+- opens chat with the driver;
+- uses phone/safety stubs;
+- can cancel through the passenger cancel sheet;
+- sees en-route, approaching, waiting, in-progress, completed, canceled and no-show surfaces;
+- reads the same trip store as the driver view.
 
 ### Driver
 
-- принимает и ведёт активную поездку;
-- едет к пассажиру;
-- нажимает **«Я на месте»**;
-- ждёт пассажира (с лимитом бесплатного ожидания);
-- начинает поездку;
-- завершает поездку;
-- пишет или звонит пассажиру через stub;
-- открывает внешний навигатор через stub;
-- может открыть «Отменить» или «Проблема» — оба через stub-шторки.
+Driver active ride:
 
-Обе роли работают с одним и тем же `tripId` и одной и той же state machine, но видят разные действия и разные нижние шторки.
+- accepts a new order;
+- moves through the lifecycle;
+- opens chat/phone/navigation stubs;
+- uses cancel/problem/earnings sheets;
+- writes canonical status transitions through `ride_state.js`;
+- can render simulation overlays via `?status=` for audit without corrupting the canonical store.
 
 ---
 
-## 5. State machine
+## 3. Canonical status contract
 
-Полный список состояний поездки (используется в `status` data contract):
+Defined in `public/src/ride_state.js` as `RIDE_STATUS`.
 
 ```text
-DRAFT
-REQUESTED
-RESPONDED
-CHAT_STARTED
+NEW_ORDER
 CONFIRMATION_PENDING
 CONFIRMED
+CHAT_STARTED
 DRIVER_EN_ROUTE
 DRIVER_APPROACHING_PICKUP
-DRIVER_ARRIVED
 WAITING_PASSENGER
-PASSENGER_ONBOARD
 IN_PROGRESS
 COMPLETED
 CANCELED
 NO_SHOW
 ```
 
-### Минимальный happy path для первого driver prototype (D1/D2)
+### Driver happy path
 
 ```text
+NEW_ORDER
+  ↓
 DRIVER_EN_ROUTE
-  → WAITING_PASSENGER
-      → IN_PROGRESS
-          → COMPLETED
+  ↓
+DRIVER_APPROACHING_PICKUP
+  ↓
+WAITING_PASSENGER
+  ↓
+IN_PROGRESS
+  ↓
+COMPLETED
 ```
 
-Все остальные состояния валидны в контракте, но первая driver-итерация должна корректно работать только на этих четырёх. `CONFIRMATION_PENDING` обслуживает временный bridge (см. BD-CONFIRM-01).
+### Terminal states
+
+```text
+COMPLETED
+CANCELED
+NO_SHOW
+```
+
+Terminal states must not reopen into active Feed/DriverMap flows unless a dedicated migration or backend state-machine issue explicitly changes the contract.
 
 ---
 
-## 6. Screen inventory
+## 4. Screen inventory
 
 ### Passenger side
 
-- **BD-RIDE-P-01** PassengerActiveRideMap — корневой экран активной поездки пассажира с картой.
-- **BD-RIDE-P-02** PassengerDriverEnRoute — состояние «водитель едет к вам».
-- **BD-RIDE-P-03** PassengerDriverArrived — состояние «водитель на месте».
-- **BD-RIDE-P-04** PassengerOnRide — состояние «в пути».
-- **BD-RIDE-P-05** PassengerRideComplete — экран завершения поездки.
-- **BD-RIDE-P-06** PassengerCancelRideSheet — нижняя шторка отмены.
-- **BD-RIDE-P-07** PassengerSafetySheet — нижняя шторка «Безопасность» (stub).
+| ID | Surface | Current file/status |
+|---|---|---|
+| BD-RIDE-P-01 | PassengerActiveRideMap | `active_ride_passenger.js` |
+| BD-RIDE-P-02 | PassengerDriverEnRoute | `active_ride_passenger.js` |
+| BD-RIDE-P-03 | PassengerDriverArrived / waiting | `active_ride_passenger.js` |
+| BD-RIDE-P-04 | PassengerOnRide | `active_ride_passenger.js` |
+| BD-RIDE-P-05 | PassengerRideComplete | `active_ride_passenger.js` |
+| BD-RIDE-P-06 | PassengerCancelRideSheet | `active_ride_passenger.js` |
+| BD-RIDE-P-07 | PassengerSafetySheet | `active_ride_passenger.js` |
 
 ### Driver side
 
-- **BD-RIDE-D-01** DriverActiveRideMap — корневой экран активной поездки водителя.
-- **BD-RIDE-D-02** DriverToPickup — «Еду к пассажиру».
-- **BD-RIDE-D-03** DriverApproachingPickup — «Подъезжаете к точке».
-- **BD-RIDE-D-04** DriverWaitingPassenger — «Ожидание пассажира» с таймером.
-- **BD-RIDE-D-05** DriverRideInProgress — «Везёте пассажира».
-- **BD-RIDE-D-06** DriverRideComplete — экран завершения для водителя.
-- **BD-RIDE-D-07** DriverCancelRideSheet — нижняя шторка отмены.
-- **BD-RIDE-D-08** DriverProblemSheet — нижняя шторка «Проблема» (stub).
-- **BD-RIDE-D-09** DriverEarningsSheet — заработок за поездку и за день.
+| ID | Surface | Current file/status |
+|---|---|---|
+| BD-RIDE-D-01 | DriverActiveRideMap | `active_ride.js` |
+| BD-RIDE-D-02 | DriverToPickup | `active_ride.js` |
+| BD-RIDE-D-03 | DriverApproachingPickup | `active_ride.js` |
+| BD-RIDE-D-04 | DriverWaitingPassenger | `active_ride.js` |
+| BD-RIDE-D-05 | DriverRideInProgress | `active_ride.js` |
+| BD-RIDE-D-06 | DriverRideComplete | `active_ride.js` |
+| BD-RIDE-D-07 | DriverCancelRideSheet | `active_ride.js` |
+| BD-RIDE-D-08 | DriverProblemSheet | `active_ride.js` |
+| BD-RIDE-D-09 | DriverEarningsSheet | `active_ride.js` |
 
-### Foundation / shared
+### Foundation/shared
 
-- **BD-RIDE-F-01** ActiveRideStateContract — единый контракт состояния поездки.
-- **BD-RIDE-F-02** MapShellPlaceholder — placeholder карты без Mapbox.
-- **BD-RIDE-F-03** RouteLineMock — мок маршрутной линии поверх placeholder.
-- **BD-RIDE-F-04** BottomSheetLayout — переиспользуемая нижняя шторка.
-- **BD-RIDE-F-05** TripStatusBanner — баннер статуса поездки.
-- **BD-RIDE-F-06** SafetyAndProblemStubs — stub-шторки для безопасности и проблем.
-- **BD-RIDE-F-07** ActiveRideStorage — слой над localStorage.
-
-### Missing temporary bridge
-
-- **BD-CONFIRM-01** TripConfirmationHandoff — временный экран подтверждения поездки между чатом и активной поездкой. Финального дизайна в Cloud Design ещё нет.
-
----
-
-## 7. Driver Cloud Design screen map
-
-Раздел: **Активная поездка · водитель**.
-
-Состояния (соответствуют скринам Cloud Design):
-
-1. Новый заказ
-2. Еду к пассажиру
-3. Подъезжаете к точке
-4. Ожидание пассажира
-5. Везёте пассажира
-
-### 1 · Новый заказ
-
-- **Title:** Новый заказ
-- **Details:** короткая сводка маршрута (откуда → куда), цена, расстояние.
-- **Passenger:** имя, инициалы, рейтинг, маска телефона, багаж.
-- **Primary action:** Принять заказ
-- **Secondary actions:** Отказаться · Открыть детали
-- **Transition:** `REQUESTED → CONFIRMED → DRIVER_EN_ROUTE`
-
-### 2 · Еду к пассажиру
-
-- **Title:** Едете к пассажиру
-- **Details:** `1,2 км · ул. Малая Бронная, 28`
-- **Instruction:** `Через 350 м направо` / `на Тверской бульвар`
-- **Passenger:** `Анна М. · ★ 4,86` / `+7 ... 23-45 · 1 чемодан`
-- **Primary action:** Я на месте
-- **Secondary actions:** Написать «подъезжаю» · Отменить · Навигатор · Message · Phone
-- **Transition:** `DRIVER_EN_ROUTE → WAITING_PASSENGER` (через `DRIVER_APPROACHING_PICKUP` при подъезде)
-
-### 3 · Подъезжаете к точке
-
-- **Title:** Подъезжаете к точке
-- **Details:** оставшееся расстояние/время до пикапа.
-- **Instruction:** последняя инструкция перед прибытием.
-- **Passenger:** те же данные, что и в состоянии 2.
-- **Primary action:** Я на месте
-- **Secondary actions:** Написать · Позвонить · Навигатор · Отменить
-- **Transition:** `DRIVER_APPROACHING_PICKUP → DRIVER_ARRIVED → WAITING_PASSENGER`
-
-### 4 · Ожидание пассажира
-
-- **Title:** Ожидание пассажира
-- **Details:** таймер свободного ожидания, момент начала платного ожидания, ставка.
-- **Passenger:** имя, рейтинг, контакт.
-- **Primary action:** Начать поездку
-- **Secondary actions:** Написать · Позвонить · Пассажир не пришёл · Отменить
-- **Transition:** `WAITING_PASSENGER → IN_PROGRESS` (или `NO_SHOW` через secondary action)
-
-### 5 · Везёте пассажира
-
-- **Title:** Везёте пассажира
-- **Details:** ETA до точки назначения, текущая улица/инструкция.
-- **Passenger:** имя, рейтинг.
-- **Primary action:** Завершить поездку
-- **Secondary actions:** Навигатор · Сообщение · Проблема
-- **Transition:** `IN_PROGRESS → COMPLETED`
-
-Каждое состояние позже мапится на один и тот же экран `DriverActiveRideMap` (BD-RIDE-D-01) с переключаемой нижней шторкой.
+| ID | Surface | Current file/status |
+|---|---|---|
+| BD-RIDE-F-01 | ActiveRideStateContract | `public/src/ride_state.js` |
+| BD-RIDE-F-02 | MapShellPlaceholder | `public/src/mapbox/map_shell.js` |
+| BD-RIDE-F-03 | RouteLineMock | inside MapShell / ride renderers |
+| BD-RIDE-F-04 | BottomSheetLayout | CSS + active ride DOM |
+| BD-RIDE-F-05 | TripStatusBanner | active ride renderers |
+| BD-RIDE-F-06 | SafetyAndProblemStubs | passenger/driver sheets |
+| BD-RIDE-F-07 | ActiveRideStorage | `ride_state.js` helpers |
+| BD-CONFIRM-01 | TripConfirmationHandoff | `public/src/screens/trip_confirmation.js` |
 
 ---
 
-## 8. Routes
+## 5. Driver Cloud Design mapping
 
-Для первого этапа реализации (D1) предполагаются hash-маршруты в существующем роутере:
+| State | User-facing title | Primary action | Transition |
+|---|---|---|---|
+| `NEW_ORDER` | Новый заказ | Принять заказ | `NEW_ORDER → DRIVER_EN_ROUTE` |
+| `DRIVER_EN_ROUTE` | Едете к пассажиру | Я на месте / approaching path | `DRIVER_EN_ROUTE → DRIVER_APPROACHING_PICKUP` or `WAITING_PASSENGER` |
+| `DRIVER_APPROACHING_PICKUP` | Подъезжаете к точке | Я на месте | `DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER` |
+| `WAITING_PASSENGER` | Ожидание пассажира | Начать поездку | `WAITING_PASSENGER → IN_PROGRESS` |
+| `IN_PROGRESS` | Везёте пассажира | Завершить поездку | `IN_PROGRESS → COMPLETED` |
+| `COMPLETED` | Поездка завершена | Закрыть / earnings | terminal |
+| `CANCELED` | Поездка отменена | Вернуться | terminal |
+| `NO_SHOW` | Пассажир не пришёл | Вернуться | terminal |
+
+---
+
+## 6. Routes and audit URLs
+
+Implemented route:
 
 ```text
 /active-ride?tripId=<id>&role=driver
 /active-ride?tripId=<id>&role=passenger
 ```
 
-Fallback (если `tripId` отсутствует — используется демо-поездка из localStorage):
+Fallback/demo URLs:
 
 ```text
 /active-ride?role=driver
 /active-ride?role=passenger
 ```
 
-Позже, когда роли разойдутся по разным шеллам, возможно:
+### Role simulation / audit URLs
 
-```text
-/ride/driver
-/ride/passenger
-```
+The `?status=` query parameter is supported for parallel passenger/driver audits.
 
-В D0 ни один из этих маршрутов в `router.js` не регистрируется.
-
-### BD-RIDE-SIM-01 — Role simulation / audit URLs
-
-Для аудита параллельных passenger ↔ driver состояний (issue #101) поддерживается
-явный query-параметр `?status=`, который переопределяет фазу нижней шторки.
-Контракт:
-
-- На стороне пассажира (`role=passenger`) — view-only override, состояние не пишется
-  в `localStorage` (см. `loadPassengerRideView` / `applyPassengerStatusFromQuery`).
-- На стороне водителя (`role=driver`) — `NEW_ORDER` остаётся reset-операцией и
-  персистится; остальные статусы (`DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`,
-  `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`, `CANCELED`, `NO_SHOW`) — это
-  view-only overlay для симуляции. Канонический lifecycle всё так же двигают
-  кнопки нижней шторки через `updateActiveRideStatus`. Override не откатывает
-  состояние назад, если соответствующий timestamp уже зафиксирован.
-- Если у trip-а нет записи в `localStorage`, но в URL передан `?status=`, водительская
-  ветка рендерит демо-объект из `createDemoActiveRide` — это даёт возможность аудита
-  без предварительного seed-а.
-
-Required manual test URLs (issue #101):
+Passenger side:
 
 ```text
 /active-ride?role=passenger
 /active-ride?role=passenger&status=DRIVER_EN_ROUTE
+/active-ride?role=passenger&status=DRIVER_APPROACHING_PICKUP
 /active-ride?role=passenger&status=WAITING_PASSENGER
 /active-ride?role=passenger&status=IN_PROGRESS
 /active-ride?role=passenger&status=COMPLETED
 /active-ride?role=passenger&status=CANCELED
+/active-ride?role=passenger&status=NO_SHOW
+```
 
+Driver side:
+
+```text
 /active-ride?role=driver
+/active-ride?role=driver&status=NEW_ORDER
 /active-ride?role=driver&status=DRIVER_EN_ROUTE
+/active-ride?role=driver&status=DRIVER_APPROACHING_PICKUP
 /active-ride?role=driver&status=WAITING_PASSENGER
 /active-ride?role=driver&status=IN_PROGRESS
 /active-ride?role=driver&status=COMPLETED
 /active-ride?role=driver&status=CANCELED
+/active-ride?role=driver&status=NO_SHOW
 ```
 
-#### Passenger cancel after driver accepted
+Simulation rules:
 
-После того как driver принял заказ и поездка в `DRIVER_EN_ROUTE`, пассажир может
-отменить через кнопку «Отменить» в en-route шторке. Handler делает:
-
-1. `saveActiveRide(ride)` — фиксирует текущий view (в т.ч. SIM-overrides:
-   Алексей, маршрут, цена, заметка), чтобы driver-side canceled sheet потом
-   увидел корректную идентичность пассажира.
-2. `updateActiveRideStatus(tripId, RIDE_STATUS.CANCELED, { cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept' } })`.
-3. Навигация на `?role=passenger&status=CANCELED` — passenger UI переходит в
-   стаб «Поездка отменена».
-
-Driver-side canceled sheet проверяет `ride.cancel?.by === 'passenger'` и
-показывает:
-
-```text
-Пассажир отменил заказ
-Алексей отменил поездку после принятия заказа.
-```
-
-Test URLs:
-
-```text
-/active-ride?role=passenger&status=DRIVER_EN_ROUTE
-    → tap «Отменить»
-/active-ride?role=passenger&status=CANCELED
-/active-ride?role=driver&status=CANCELED
-```
+- Passenger `?status=` is view-only and should not write to localStorage.
+- Driver `NEW_ORDER` can reset the demo ride, but lifecycle buttons must still use `updateActiveRideStatus()` for canonical transitions.
+- Other driver `?status=` values are audit overlays and must not silently roll back timestamps.
 
 ---
 
-## 9. localStorage keys
+## 7. localStorage keys
 
-Зарезервированные ключи для активной поездки и сопутствующего состояния:
+Current active-ride adjacent keys:
 
-```text
-bazardrive.active_ride.v1     — текущий объект активной поездки
-bazardrive.trip_status.v1     — последний статус (для быстрого восстановления)
-bazardrive.route_draft.v1     — черновик маршрута до активации поездки
-bazardrive.map_prefs.v1       — настройки карты (zoom, центр, тема)
-```
+| Key | Owner | Current purpose |
+|---|---|---|
+| `bazardrive.active_ride.v1` | `ride_state.js` | Current active ride map keyed by `tripId`. |
+| `bazardrive.ride_history.v1` | `ride_history.js` | Completed ride history. |
+| `bazardrive.chat.v1` | `chat.js`, active ride | Trip/response messages. |
+| `bazardrive.trip_confirmation.v1` | `trip_confirmation.js`, `chat.js` | Confirmation handoff state. |
+| `bazardrive.driver_handoff_snapshot.v1` | `driver_handoff_snapshot.js` | Driver-side confirmed handoff pin. |
+| `bazardrive.route_draft.v1` | `route_picker.js` | Passenger route draft before order/ride. |
+| `bazardrive.order_form.v1` | `order_map_draft.js` | Pending order form details. |
+| `bazardrive.ride_orders.v1` | `mock_api.js` | Local passenger orders visible to DriverMap/feed. |
+| `bazardrive.map_prefs.v1` | map layer | Device-level map preference, not identity-scoped. |
 
-Версия `v1` зафиксирована, чтобы поздние миграции могли вводить `v2` без коллизий.
+`bazardrive.trip_status.v1` is not part of the current authoritative implementation. Do not introduce it unless a new issue defines why it is needed and how it relates to `bazardrive.active_ride.v1`.
 
 ---
 
-## 10. Data contract
+## 8. Data contract shape
 
-Пример JS-объекта активной поездки (используется в `bazardrive.active_ride.v1`):
+Representative active ride object:
 
 ```js
 {
@@ -376,112 +280,61 @@ bazardrive.map_prefs.v1       — настройки карты (zoom, цент�
   },
   timestamps: {
     createdAt: 'ISO_DATE',
-    confirmedAt: null,
+    acceptedAt: null,
     arrivedAt: null,
     startedAt: null,
-    completedAt: null
+    completedAt: null,
+    canceledAt: null
   }
 }
 ```
 
-Поля `pickup` и `dropoff` хранятся в формате `{ lng, lat }` сразу, чтобы при подключении Mapbox их можно было передать в API без преобразований.
+Coordinates stay in `{ lng, lat }` format so future Mapbox integration can consume them without a migration.
 
 ---
 
-## 11. Mapbox boundary
+## 9. Mapbox boundary
 
-**Важно:** в D1 и D2 реальный Mapbox не подключается.
-
-Вместо него используется placeholder. Будущий файл:
+Current active ride and map screens use:
 
 ```text
 public/src/mapbox/map_shell.js
 ```
 
-В D0 этот файл **не создаётся** — он только описывается.
+MapShell must keep working without:
 
-### MapShell placeholder должен позже поддерживать
+```text
+Mapbox token
+Mapbox SDK
+network requests
+native geolocation prompt
+external tile cache
+```
 
-- тёмную сетку карты в стилистике Cloud Design;
-- mock route line поверх сетки;
-- маркер pickup;
-- маркер dropoff;
-- маркер машины;
-- стабильный sizing контейнера (без layout shift);
-- работу без Mapbox-токена;
-- работу без внешних сетевых запросов;
-- fallback-режим при будущем сбое Mapbox.
-
-Реальная интеграция Mapbox — отдельный issue: **BD-MAP-FOUND-01 Mapbox integration foundation**. Туда же выносится загрузка токена, CSP-исключения, dependency и SW-обновления.
+Real Mapbox integration is a separate future issue: **BD-MAP-FOUND-01 Mapbox integration foundation**. That work must update token handling, CSP, service worker behavior, error states and fallback states together.
 
 ---
 
-## 12. Phased implementation
+## 10. Future work
 
-### Phase D0 (этот этап)
-
-- только документация;
-- нет UI, нет routes, нет Mapbox, нет backend, нет CSS, нет SW-изменений.
-
-### Phase D1
-
-- `/active-ride` route stub в существующем hash-роутере;
-- mock map shell (placeholder без Mapbox);
-- верхняя driver-панель (контекст поездки);
-- нижняя шторка, переключаемая по статусу;
-- состояние поездки в localStorage по ключам из §9.
-
-### Phase D2
-
-- driver status transitions (en route → waiting → in progress);
-- кнопка «Я на месте»;
-- кнопка «Начать поездку»;
-- кнопка «Завершить поездку»;
-- stub-действия: навигатор, сообщение, звонок, проблема.
-
-### Phase D3
-
-- экран/шторка завершения поездки;
-- earnings summary (BD-RIDE-D-09);
-- возврат к `/feed`.
-
-### Phase P1
-
-- passenger-сторона активной поездки (BD-RIDE-P-01 … P-07);
-- та же state machine, разная нижняя шторка.
-
-### Phase M1
-
-- Mapbox foundation (BD-MAP-FOUND-01);
-- замена MapShell placeholder на реальную карту;
-- обновление CSP и SW в рамках именно этого issue.
+| Item | Status |
+|---|---|
+| Driver no-show full flow | Open. Current no-show work still needs a dedicated full-flow issue. |
+| Real Mapbox integration | Open Phase 4 work. |
+| Backend/server ride state machine | Phase 2 work. |
+| Automated unit tests for `ride_state.js` | Technical debt. |
+| `driver_markers.js` and `trip_status_layer.js` | Remaining mapbox stub gap. |
 
 ---
 
-## 13. Follow-up issues
+## 11. Boundaries
 
-После D0 ожидается следующий список issues / PR:
-
-- **BD-RIDE-F-01** Active ride contracts and storage — implemented in `public/src/ride_state.js`
-- **BD-RIDE-F-02** MapShell placeholder — implemented in `public/src/mapbox/map_shell.js`
-- **BD-RIDE-D-01** Driver active ride foundation
-- **BD-RIDE-D-02** Driver state transitions
-- **BD-RIDE-D-03** Driver completion sheet
-- **BD-RIDE-P-01** Passenger active ride foundation
-- **BD-CONFIRM-01** Trip confirmation bridge
-- **BD-MAP-FOUND-01** Mapbox integration foundation
-
----
-
-## 14. D0 boundaries (что НЕ делается в этом этапе)
-
-- не создаётся JS-экран активной поездки;
-- не регистрируется route `/active-ride`;
-- не меняется `public/sw.js`;
-- не меняется `public/styles/cloud.css`;
-- не меняется `public/src/app.js` и `public/src/router.js`;
-- не добавляется Mapbox (ни SDK, ни токен, ни CSP-исключения);
-- не добавляется backend / network-слой;
-- не добавляются package-зависимости;
-- не ослабляется CSP, не вводятся inline `<script>` / `<style>`;
-- не копируется Cloud Design prototype в `public/`.
+```text
+no backend/API in active ride UI work
+no real Mapbox until BD-MAP-FOUND-01
+no route split for passenger active ride
+no CSP weakening
+no inline scripts/styles/on* handlers
+no new active-ride storage key without storage_boundary review
+no rewriting driver and passenger renderers into one giant branch
+```
