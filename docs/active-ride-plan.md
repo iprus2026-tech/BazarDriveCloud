@@ -194,10 +194,18 @@ Passenger side:
 /active-ride?role=passenger&status=DRIVER_APPROACHING_PICKUP
 /active-ride?role=passenger&status=WAITING_PASSENGER
 /active-ride?role=passenger&status=IN_PROGRESS
+/active-ride?role=passenger&status=IN_PROGRESS&phase=ARRIVING_DROPOFF
 /active-ride?role=passenger&status=COMPLETED
+/active-ride?role=passenger&status=COMPLETED&payment=pending
+/active-ride?role=passenger&status=COMPLETED&payment=paid
 /active-ride?role=passenger&status=CANCELED
 /active-ride?role=passenger&status=NO_SHOW
 ```
+
+In addition to `?status=`, the passenger view supports two optional view-only
+simulation params (BD-RIDE-P-13 docs sync; see `screen-contracts.md` BD-RIDE-P row):
+`?phase=ARRIVING_DROPOFF` (IN_PROGRESS dropoff sub-phase overlay) and
+`?payment=auto|pending|paid` (COMPLETED charge presentation, default `auto`).
 
 Driver side:
 
