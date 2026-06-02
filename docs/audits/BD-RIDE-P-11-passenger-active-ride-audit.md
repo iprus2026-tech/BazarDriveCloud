@@ -208,20 +208,22 @@ Verdict: **matches contract**.
 | Manual URL | Expected result |
 |---|---|
 | `/active-ride?role=passenger` | Resolves latest handed-off trip or demo; renders default status sheet |
+| `/active-ride?role=passenger&status=ACCEPTED` | En-route sheet variant, "Водитель назначен" |
 | `/active-ride?role=passenger&status=DRIVER_EN_ROUTE` | En-route sheet, "Водитель едет к вам" |
 | `/active-ride?role=passenger&status=DRIVER_APPROACHING_PICKUP` | "Водитель почти на месте" + "Выходите к точке подачи" |
 | `/active-ride?role=passenger&status=WAITING_PASSENGER` | Waiting sheet, free-wait countdown, "Я в машине — поехали" |
 | `/active-ride?role=passenger&status=IN_PROGRESS` | In-progress sheet, "В пути" |
-| `/active-ride?role=passenger&status=IN_PROGRESS&phase=ARRIVING_DROPOFF` | "Прибываем", "Завершить и оценить поездку" *(phase param not in contract — see Findings)* |
-| `/active-ride?role=passenger&status=COMPLETED` | Completed/rating screen *(optional `&payment=auto\|pending\|paid` — not in contract)* |
+| `/active-ride?role=passenger&status=IN_PROGRESS&phase=ARRIVING_DROPOFF` | "Прибываем", "Завершить и оценить поездку" (phase param documented in contract — BD-RIDE-P-13) |
+| `/active-ride?role=passenger&status=COMPLETED` | Completed/rating screen (optional `&payment=auto\|pending\|paid`, default `auto`; documented in contract — BD-RIDE-P-13) |
 | `/active-ride?role=passenger&status=CANCELED` | Canceled fallback, "Поездка отменена" |
 | `/active-ride?role=passenger&status=NO_SHOW` | No-show fallback, "Поездка не состоялась" |
 | `/active-ride?role=driver` | Driver flow (`active_ride.js`); passenger renderer not invoked |
 
 **Note on `ACCEPTED`:** the contract lists it as a main state and the code renders it
-("Водитель назначен"), but neither the task manual-URL list nor the BD-ACTIVE-08 smoke
-doc includes `?status=ACCEPTED`. A `/active-ride?role=passenger&status=ACCEPTED` row
-should be added to the manual matrix.
+("Водитель назначен"). The `/active-ride?role=passenger&status=ACCEPTED` row has now been
+added to the manual matrix above (BD-RIDE-P-13 docs sync); it already matched
+`active-ride-plan.md` §6. The BD-ACTIVE-08 smoke doc remains a separate static review and
+is out of scope for this docs-only sync.
 
 **Automated coverage:** `node scripts/check.mjs` enforces CSP/inline-style invariants,
 manifest fields, SW precache hygiene, JS syntax for all `public/**/*.js`, the **driver**
@@ -255,8 +257,8 @@ flows are cleanly isolated:
 | # | Finding | Type |
 |---|---|---|
 | 1 | **No executable passenger regression guard.** `check.mjs` pins the driver contract and driver-map smoke but nothing pins the passenger supported-status set, cancel/safety sheet presence, CANCELED/NO_SHOW routing, or role isolation. Passenger coverage is documentation-only (BD-ACTIVE-08 static review). | Drift (coverage) |
-| 2 | **`ACCEPTED` has no manual-URL / smoke row** despite being a contract main state that the screen renders ("Водитель назначен"). | Drift (doc/coverage) |
-| 3 | **`phase=ARRIVING_DROPOFF` and `payment=…` query params are undocumented** in `screen-contracts.md` BD-RIDE-P row, although both are consumed by the screen and exercised in BD-ACTIVE-08. | Drift (doc) |
+| 2 | **`ACCEPTED` has no manual-URL / smoke row** despite being a contract main state that the screen renders ("Водитель назначен"). ✅ Resolved by BD-RIDE-P-13 (docs sync): `?status=ACCEPTED` row added to the manual-URL matrix above. | Drift (doc/coverage) |
+| 3 | **`phase=ARRIVING_DROPOFF` and `payment=…` query params are undocumented** in `screen-contracts.md` BD-RIDE-P row, although both are consumed by the screen and exercised in BD-ACTIVE-08. ✅ Resolved by BD-RIDE-P-13 (docs sync): documented in the `screen-contracts.md` BD-RIDE-P Query-params row. | Drift (doc) |
 | 4 | **No i18n layer** — passenger strings are hardcoded Russian. Contract does not require i18n at this phase. | Informational |
 | 5 | **`DRIVER_APPROACHING_PICKUP` top-card ETA label** stays "до подачи" (shared en-route branch, `:378`) while the sheet copy escalates to "почти на месте". Semantically correct (still ETA to pickup). | Informational |
 
@@ -273,11 +275,12 @@ Deferred — **not** actioned in this audit (per report-only scope).
   `scripts/smoke-passenger-active-ride.mjs` (assert supported-status set, cancel +
   safety sheet presence, `CANCELED`/`NO_SHOW` → fallback routing, role isolation) and
   wire it into `scripts/check.mjs` alongside the existing driver smokes. Closes Finding #1.
-- **BD-RIDE-P-13 — Contract param & ACCEPTED doc sync.** In `docs/screen-contracts.md`
-  (BD-RIDE-P row) document the optional `phase=ARRIVING_DROPOFF` and
-  `payment=auto|pending|paid` query params, and add a
-  `/active-ride?role=passenger&status=ACCEPTED` row to the manual-URL matrix.
-  Closes Findings #2 and #3.
+- **BD-RIDE-P-13 — Contract param & ACCEPTED doc sync.** ✅ Done. In
+  `docs/screen-contracts.md` (BD-RIDE-P row) documented the optional `phase=ARRIVING_DROPOFF`
+  and `payment=auto|pending|paid` query params, added a
+  `/active-ride?role=passenger&status=ACCEPTED` row to the manual-URL matrix above, and
+  added matching phase/payment audit URLs to `active-ride-plan.md` §6. Closed Findings #2
+  and #3.
 
 ---
 
@@ -291,5 +294,6 @@ Cloud Design system. All eight contract statuses, the cancel sheet, the safety s
 the MapShell placeholder, role isolation, and query-param handling are present and
 correct. No runtime drift found.
 
-**FOLLOW-UP (optional, deferred):** BD-RIDE-P-12 (passenger smoke guard),
-BD-RIDE-P-13 (contract param / ACCEPTED doc sync).
+**FOLLOW-UP:** BD-RIDE-P-12 (passenger smoke guard) — ✅ done; BD-RIDE-P-13 (contract
+param / ACCEPTED doc sync) — ✅ done. Both deferred follow-ups are now complete; Findings
+#2 and #3 are closed.

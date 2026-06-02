@@ -336,7 +336,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | Reads same `bazardrive.active_ride.v1`; writes cancel/safety UI actions where needed. |
 | Main states | ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Message driver, phone stub, cancel sheet, safety sheet, done/new ride. |
+| Query params | `?status=<main state>` (view-only override, no persist); `?phase=ARRIVING_DROPOFF` (IN_PROGRESS dropoff sub-phase overlay); `?payment=auto\|pending\|paid` (COMPLETED charge presentation, default `auto`). QA/audit simulation only. |
 | Acceptance | Same tripId as driver view, same status enum, role-specific UI only. |
+
+*Query-params row synced by BD-RIDE-P-13 (docs sync after BD-RIDE-P-11 audit + BD-RIDE-P-12 smoke guard); params already exist in `active_ride_passenger.js` — no runtime change.*
 
 ### BD-RIDE-F-02 - MapShell placeholder
 
