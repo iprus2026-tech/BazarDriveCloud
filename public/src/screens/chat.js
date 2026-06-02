@@ -137,16 +137,25 @@ const LEGACY_DRIVER_AUTO_TEXTS = new Set([
   'Подъезжаю к точке подачи',
 ]);
 
+// A message is driver-authored when it carries senderRole==='driver' or,
+// for legacy records stored before that field existed, when its text matches
+// a known driver auto-notice. Values are trimmed/stringified so stray
+// whitespace or non-string fields can't slip past the match.
+function isDriverAuthoredMessage(msg) {
+  const senderRole = String(msg.senderRole || '').trim();
+  const normalizedText = String(msg.text || '').trim();
+  return senderRole === 'driver'
+    || LEGACY_DRIVER_AUTO_TEXTS.has(normalizedText);
+}
+
 // This chat surface is passenger-facing (the header is the driver), so an
-// incoming bubble is one authored by the driver. Messages appended from the
-// driver flow (e.g. the "Подъезжаю к точке подачи" auto-notice) carry an
-// explicit senderRole; prefer it over the legacy `dir` so a driver-authored
-// message is never mistaken for the passenger's own outgoing bubble.
+// incoming bubble is one authored by the driver. Prefer authorship over the
+// legacy `dir` so a driver-authored message (e.g. the "Подъезжаю к точке
+// подачи" auto-notice) is never mistaken for the passenger's own outgoing
+// bubble.
 function directionForMessage(msg) {
-  if (msg.senderRole === 'driver') return 'in';
-  if (msg.senderRole === 'passenger') return 'out';
-  // Defensive migration: a senderRole-less driver auto-notice is incoming.
-  if (!msg.senderRole && LEGACY_DRIVER_AUTO_TEXTS.has(msg.text)) return 'in';
+  if (isDriverAuthoredMessage(msg)) return 'in';
+  if (String(msg.senderRole || '').trim() === 'passenger') return 'out';
   return msg.dir === 'in' ? 'in' : 'out';
 }
 
