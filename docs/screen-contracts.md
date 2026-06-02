@@ -171,10 +171,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | Route | `/respond?postId=...` |
 | File | `public/src/screens/respond.js` |
-| Storage | `bazardrive.respond.v1`, `bazardrive.responses.v1` |
+| Storage | Writes `bazardrive.respond.v1`; some chat/response flows can also write `bazardrive.responses.v1`. |
 | Main states | Offer form, vehicle card if available, validation, submitted state. |
-| Actions | Send offer, cancel/back, open profile/feed. |
-| Acceptance | Response can feed `/responses` and chat handoff without backend. |
+| Actions | Send offer, cancel/back, open profile/feed/chat where supported. |
+| Acceptance | Respond data is local mock data. Do not assume `/responses` reads `bazardrive.responses.v1`; current `/responses` uses its own mock driver board and order lookup. |
 
 ### BD-RESPONSES-01 - Responses inbox
 
@@ -182,10 +182,11 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | Route | `/responses` |
 | File | `public/src/screens/responses.js` |
-| Storage | `bazardrive.responses.v1` |
-| Main states | List, empty, accepted/declined mock response. |
-| Actions | Open response, accept, go to chat, return to feed/profile. |
-| Acceptance | Passenger can see driver responses created by mock flows. |
+| Data | In-file `MOCK_DRIVERS` plus canonical order lookup through `getOrderById()` and accept flow through `acceptOrder()` from `mock_api.js`. |
+| Storage | Does **not** read `bazardrive.responses.v1` today. `bazardrive.responses.v1` remains a separate user-scoped store used by respond/chat helper flows. |
+| Main states | Driver offer board, empty/missing-order fallback, accepted driver handoff. |
+| Actions | Pick/accept a mock driver, open chat/active ride, return to feed/profile. |
+| Acceptance | QA should not expect `/respond` submissions in `bazardrive.responses.v1` to automatically appear here until a future integration issue wires that handoff. |
 
 ### BD-CHAT-01 - Chat
 
@@ -316,7 +317,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Route | `/active-ride?role=driver` |
 | File | `public/src/screens/active_ride.js` |
 | Storage | `bazardrive.active_ride.v1`, ride history, chat helpers. |
-| Main states | NEW_ORDER, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
+| Main states | NEW_ORDER, ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Accept, arrived, start, complete, cancel sheet, problem sheet, earnings sheet, chat/nav/phone stubs. |
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
 
@@ -327,7 +328,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Route | `/active-ride?role=passenger` |
 | File | `public/src/screens/active_ride_passenger.js` |
 | Storage | Reads same `bazardrive.active_ride.v1`; writes cancel/safety UI actions where needed. |
-| Main states | DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
+| Main states | ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Message driver, phone stub, cancel sheet, safety sheet, done/new ride. |
 | Acceptance | Same tripId as driver view, same status enum, role-specific UI only. |
 
