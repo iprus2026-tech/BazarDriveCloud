@@ -83,6 +83,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | `bazardrive.ride_history.v1` | `public/src/ride_history.js` |
 | `bazardrive.favorite_routes.v1` | `public/src/favorite_routes.js` |
+| `bazardrive.favorite_route_notice.v1` | `public/src/favorite_routes.js` |
 | `bazardrive.active_ride.v1` | `public/src/ride_state.js` |
 | `bazardrive.chat.v1` | `public/src/screens/chat.js`, also written by active ride |
 | `bazardrive.responses.v1` | `public/src/screens/respond.js`, `public/src/screens/chat.js` |
@@ -96,6 +97,8 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | `bazardrive.ride_orders.v1` | `public/src/mock_api.js` |
 | `bazardrive.myposts.v1` | `public/src/mock_api.js` |
 | `profileTripDemo` | passenger profile demo override |
+
+`bazardrive.favorite_route_notice.v1` is transient copy for favorite-route repeat handoff. It is cleared by `clearFavoriteRoutes()` together with `bazardrive.favorite_routes.v1`.
 
 ### Not cleared by the user-scoped boundary
 
@@ -163,7 +166,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | `bazardrive.user.v1`, driver document flags. |
 | Main states | Overview, Taxi IP, Documents, Payouts, Safety. |
 | Actions | Online toggle, driver/passenger mode, readiness checklist, document mock updates. |
-| Acceptance | Driver readiness gates accepting passenger orders. |
+| Acceptance | Driver readiness gates Feed/Post Detail accept CTAs. `/driver-map` is only role-guarded today and does not enforce `isDriverLineReady()`. |
 
 ### BD-RESPOND-01 - Respond
 
@@ -306,9 +309,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Route | `/driver-map` |
 | File | `public/src/screens/driver_map.js` |
 | Data | `listNearbyOrders()` and `acceptCanonicalRideOrder()` mock flow. |
+| Guard | Role-guarded only: non-driver roles see a safe fallback. It does **not** check `isDriverLineReady()` today. |
 | Main states | Order list, empty, accepted handoff. |
 | Actions | Accept order, create test order, open feed/map, go to active ride. |
-| Acceptance | Uses MapShell placeholder and local ride order store only. |
+| Acceptance | Uses MapShell placeholder and local ride order store only; incomplete driver readiness is a known follow-up gap for this surface. |
 
 ### BD-RIDE-D-01..09 - Active ride driver
 
@@ -351,6 +355,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Real Mapbox SDK | Separate Phase 4 issue. Requires CSP and SW update. |
 | `driver_markers.js` and `trip_status_layer.js` stubs | Still not created in `public/src/mapbox/`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
+| DriverMap readiness gate | `/driver-map` is role-guarded but not `isDriverLineReady()`-gated today. Feed/Post Detail accept paths are readiness-gated separately. |
 | Backend/auth/payments/uploads/push/APK | Out of scope for the current PWA mock spine. |
 | Automated tests | `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt. |
 
