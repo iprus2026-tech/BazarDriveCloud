@@ -100,6 +100,26 @@ function getHashQuery() {
   return qi === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qi + 1));
 }
 
+// Keep the address-bar ?status= in sync after a driver lifecycle hop so a
+// reload reflects the real persisted phase. Uses replaceState (no hashchange,
+// so the router does not re-render mid-flow) and only rewrites the param when
+// one is already present, leaving status-less entry URLs untouched. The
+// safeApplyStatusFromQuery guard is the durable backstop; this just keeps the
+// visible URL honest.
+function syncDriverStatusQuery(nextStatus) {
+  try {
+    const hash = window.location.hash || '';
+    const qi = hash.indexOf('?');
+    if (qi === -1) return;
+    const params = new URLSearchParams(hash.slice(qi + 1));
+    if (!params.has('status') || params.get('status') === nextStatus) return;
+    params.set('status', nextStatus);
+    window.history.replaceState(null, '', `${hash.slice(0, qi)}?${params.toString()}`);
+  } catch {
+    // history unavailable — fail soft; the query-override guard still holds.
+  }
+}
+
 function ensureDriverSheetsCss() {
   if (document.getElementById(DRIVER_SHEETS_CSS_ID)) return;
   const link = document.createElement('link');
@@ -132,6 +152,14 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
+    // A stale ?status=DRIVER_EN_ROUTE (the address bar still carries the
+    // entry status after the driver tapped "Подъезжаю") must not pull a ride
+    // that already advanced to DRIVER_APPROACHING_PICKUP back to the en-route
+    // phase on reload — that would re-enable the approaching auto-message.
+    if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
+      && (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP || ts.approachingAt)) {
+      return ride;
+    }
     return { ...ride, status: statusQuery };
   }
   if (statusQuery === RIDE_STATUS.WAITING_PASSENGER) {
@@ -208,7 +236,11 @@ function appendDriverChatMessage(tripId, text) {
     const chatId = `trip-${tripId}`;
     const list = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
     const now = new Date();
-    list.push({ id: Date.now(), dir: 'out', text, time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` });
+    // senderRole pins the author so a passenger-facing chat renders this
+    // driver auto-notice as incoming. `dir: 'out'` stays for back-compat
+    // (it is outgoing from the driver's own perspective); the chat renderer
+    // prefers senderRole when deciding which side of the thread to show.
+    list.push({ id: Date.now(), dir: 'out', senderRole: 'driver', text, time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` });
     store[chatId] = list;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(store));
   } catch {
@@ -644,7 +676,8 @@ export default function activeRide() {
     setMapBanner('');
     if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
     else if (ride.status === RIDE_STATUS.ACCEPTED) renderAccepted();
-    else if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE || ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) renderEnRoute();
+    else if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) renderEnRoute();
+    else if (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) renderApproaching();
     else if (ride.status === RIDE_STATUS.WAITING_PASSENGER) renderWaiting();
     else if (ride.status === RIDE_STATUS.IN_PROGRESS) renderInProgress();
     else if (ride.status === RIDE_STATUS.COMPLETED) renderCompleted();
@@ -678,10 +711,27 @@ export default function activeRide() {
   }
 
   function renderEnRoute() {
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-write">Написать «подъезжаю»</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-approaching">Подъезжаю</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-enroute">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
+    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
+    // BD-RIDE-D — entering DRIVER_APPROACHING_PICKUP auto-notifies the
+    // passenger via the chat store, so the standalone "написать подъезжаю"
+    // button is no longer needed.
+    sheet.querySelector('#ar-approaching').addEventListener('click', () => {
+      appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи');
+      ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_APPROACHING_PICKUP);
+      syncDriverStatusQuery(ride.status);
+      renderSheet();
+    });
+    sheet.querySelector('#ar-open-chat-enroute').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
+    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); renderSheet(); } }));
+    bindPassengerActions();
+  }
+
+  function renderApproaching() {
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Почти у пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-approaching">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
-    sheet.querySelector('#ar-write').addEventListener('click', () => { appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи'); showNotice('Сообщение «подъезжаю» отправлено'); });
+    sheet.querySelector('#ar-open-chat-approaching').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
     sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); renderSheet(); } }));
     bindPassengerActions();
   }
