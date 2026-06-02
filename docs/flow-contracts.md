@@ -120,8 +120,8 @@ Backed by `RIDE_STATUS` in `public/src/ride_state.js`.
 |---|---|---|---|
 | order accepted | Driver accepts local order/feed request | `NEW_ORDER` or `ACCEPTED` depending entry path | Active ride record is created/saved. |
 | `NEW_ORDER` | Driver confirms accept | `ACCEPTED` | `acceptedAt` is stamped. |
-| `ACCEPTED` | Driver begins pickup | `DRIVER_EN_ROUTE` | Driver en-route UI becomes available. |
-| `DRIVER_EN_ROUTE` | Driver is near/arrives | `DRIVER_APPROACHING_PICKUP` or `WAITING_PASSENGER` | Approach/arrival UI updates. |
+| `ACCEPTED` | Driver begins pickup | `DRIVER_EN_ROUTE` | Driver en-route UI becomes available. `DRIVER_EN_ROUTE` reuses the `acceptedAt` stamp; no separate timestamp is recorded (see notes below). |
+| `DRIVER_EN_ROUTE` | Driver nears pickup | `DRIVER_APPROACHING_PICKUP` | Approach UI updates. |
 | `DRIVER_APPROACHING_PICKUP` | Driver presses arrived | `WAITING_PASSENGER` | `arrivedAt` is stamped. |
 | `WAITING_PASSENGER` | Driver starts trip | `IN_PROGRESS` | `startedAt` is stamped. |
 | `IN_PROGRESS` | Driver completes trip | `COMPLETED` | `completedAt` is stamped and history can be written. |
@@ -147,6 +147,13 @@ NO_SHOW
 ```
 
 `ACCEPTED` is a current persisted mock status between `NEW_ORDER` and `DRIVER_EN_ROUTE`. It is not just a conceptual backend alias.
+
+`CONFIRMATION_PENDING`, `CONFIRMED`, and `CHAT_STARTED` are reserved/legacy enum members only. They are not wired into the active-ride driver state machine in `public/src/ride_state.js`: they have no `STATUS_TIMESTAMP_FIELD` entry and no `NEXT_DRIVER_STATUS` transition. They are kept as enum constants and are candidates for cleanup. The active driver transition spine is `NEW_ORDER → ACCEPTED → DRIVER_EN_ROUTE → DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER → IN_PROGRESS → COMPLETED`, plus the terminal states `CANCELED` and `NO_SHOW`.
+
+### Follow-up notes (deferred to future code PRs)
+
+- A `DRIVER_EN_ROUTE → WAITING_PASSENGER` shortcut is **not implemented**: `NEXT_DRIVER_STATUS` only advances `DRIVER_EN_ROUTE` to `DRIVER_APPROACHING_PICKUP`. If the shortcut is wanted, track it in a separate follow-up code task; do not fold it into this docs-only contract cleanup.
+- `DRIVER_EN_ROUTE` currently reuses the `acceptedAt` timestamp (mapped to `acceptedAt` in `STATUS_TIMESTAMP_FIELD`, and `acceptedAt` is stamped only once at `ACCEPTED`), so the en-route transition records no distinct timestamp. A dedicated `driverEnRouteAt` timestamp could be added in a future code PR; keep it out of this docs-only PR.
 
 Conceptual backend labels map to this enum during mock-only work:
 
@@ -219,6 +226,8 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 | `public/src/screens/responses.js` | Responses inbox. |
 | `public/src/screens/chat.js` | Chat and confirmation hooks. |
 | `public/src/screens/trip_confirmation.js` | Confirmation handoff screen. |
+| `public/src/screens/trip_confirmation_handoff.js` | Non-route helper. Seeds `/active-ride` from a confirmed `/trip-confirmation` handoff; cross-role canonical active-ride loader. No DOM/router. |
+| `public/src/screens/driver_handoff_snapshot.js` | Non-route helper. Driver-side confirmed-handoff snapshot store (TTL-bounded) plus overlay onto a ride object. No DOM/router. |
 | `public/src/screens/active_ride.js` | Driver active ride and role dispatch. |
 | `public/src/screens/active_ride_passenger.js` | Passenger active ride renderer. |
 | `public/src/screens/inbox.js` | Cross-flow inbox hub. |

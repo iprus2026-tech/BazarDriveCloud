@@ -208,6 +208,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | Route | `/trip-confirmation` |
 | File | `public/src/screens/trip_confirmation.js` |
+| Helper modules (no route) | `public/src/screens/trip_confirmation_handoff.js` (seed + cross-role canonical active-ride loader), `public/src/screens/driver_handoff_snapshot.js` (driver-side snapshot store + ride overlay). Both are non-route helper modules, not routed screens. |
 | Storage | `bazardrive.trip_confirmation.v1`, `bazardrive.driver_handoff_snapshot.v1` |
 | Main states | Pending, passenger confirmed, driver confirmed, both confirmed, expired/canceled mock states. |
 | Actions | Confirm, decline/back, continue to `/active-ride?role=...`. |
