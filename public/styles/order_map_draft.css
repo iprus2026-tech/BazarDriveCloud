@@ -56,20 +56,26 @@
   height: 220px;
 }
 
+/* BD-MAP-05-FOLLOWUP — Cloud Design confirmed badge tokens. ОТКУДА and
+   КУДА share identical box styling (height, padding, radius, font, border);
+   only position and dot color differ. */
 .omd-map__from {
   position: absolute;
-  bottom: 10px;
-  left: 12px;
+  z-index: 5;
+  pointer-events: none;
+  bottom: 18px;
+  left: 16px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(20, 20, 22, 0.65);
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-2);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .omd-map__from-dot {
@@ -78,6 +84,54 @@
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.18);
+}
+
+/* BD-MAP-05-FOLLOWUP — КУДА badge mirrors .omd-map__from exactly, anchored
+   top-right so the two endpoints frame the placeholder. */
+.omd-map__to {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.omd-map__to-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+}
+
+/* BD-MAP-05-FOLLOWUP — low-emphasis watermark stating the placeholder is
+   not a live map. Bottom-center, non-blocking, clears both endpoint badges. */
+.omd-map__watermark {
+  position: absolute;
+  z-index: 5;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* ── Form card ── */

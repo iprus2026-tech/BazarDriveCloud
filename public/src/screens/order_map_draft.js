@@ -353,6 +353,23 @@ function renderMap(draft) {
   pickup.setAttribute('aria-hidden', 'true');
   pickup.innerHTML = `<span class="omd-map__from-dot"></span>ОТКУДА`;
   wrap.appendChild(pickup);
+
+  // BD-MAP-05-FOLLOWUP — pair the ОТКУДА badge with a КУДА badge so the
+  // placeholder matches the BD-MAP-05 render gate. Purely cosmetic; the
+  // canonical pickup/dropoff data still lives in the route summary card.
+  const dropoff = document.createElement('div');
+  dropoff.className = 'omd-map__to';
+  dropoff.setAttribute('aria-hidden', 'true');
+  dropoff.innerHTML = `<span class="omd-map__to-dot"></span>КУДА`;
+  wrap.appendChild(dropoff);
+
+  // BD-MAP-05-FOLLOWUP — render-gate watermark: this surface is a DOM
+  // placeholder, not a live map. No Mapbox SDK, token, or network here.
+  const watermark = document.createElement('div');
+  watermark.className = 'omd-map__watermark';
+  watermark.setAttribute('aria-hidden', 'true');
+  watermark.textContent = 'Mapbox SDK пока не подключён';
+  wrap.appendChild(watermark);
   return wrap;
 }
 
