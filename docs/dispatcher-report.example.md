@@ -1,0 +1,92 @@
+# Dispatcher report (пример формата)
+
+Date: (локальный отчёт подставляет дату прогона)
+
+Это **стабильный пример** того, что рутиной генерируется в локальный
+`docs/dispatcher-report.md` (git-ignored — в коммиты не попадает). Здесь правки
+безопасны; сам live-отчёт регенерируется на каждом `node scripts/dispatcher.mjs`
+и редактировать его вручную не нужно.
+
+READY означает лишь «узел зелёный, PR можно рассматривать». Merge gate остаётся за GitHub.
+
+## Risk legend
+
+```text
+HIGH    public/src/** (screens, router, state, mock_api, ride_state, mapbox),
+        public/index.html (CSP), public/sw.js (precache)        → Can auto-fix: no
+MEDIUM  scripts/**, public/styles/**, .github/**,
+        README.md / ROADMAP.md / docs/screen-contracts.md       → Can auto-fix: no
+LOW     docs/*.md, генерируемый отчёт                            → Can auto-fix: yes (safe hygiene)
+```
+
+`--fix` применяет только обратимую гигиену (CRLF→LF, хвостовые пробелы, финальный
+перевод строки) и только к LOW-узлам. HIGH/MEDIUM и любые структурные дефекты
+авто-фиксу не подлежат — уходят задачей в роли (`NEEDS-ROLES`).
+
+## Карточка узла
+
+```text
+Target           public/src/screens/feed.js
+Kind             screen — экран (render + поведение)
+Reason selected  недавно изменён в git
+Risk             HIGH
+Can auto-fix     no — delegated to roles
+Suggested owner  Claude Code
+Iterations       1
+Merge gate       READY
+```
+
+## 1. Что проверено (checks run)
+
+```text
+PASS  scripts/check.mjs
+PASS  scripts/smoke-driver-docs-readiness.mjs
+PASS  scripts/smoke-driver-map-guard.mjs
+PASS  scripts/smoke-driver-map-readiness.mjs
+PASS  scripts/smoke-lifecycle.mjs
+```
+
+## 2. Что упало (failures)
+
+```text
+(ничего — все проверки зелёные)
+```
+
+## 3. Почему упало
+
+```text
+(нет падений)
+```
+
+## Применённые safe-фиксы
+
+```text
+(пропущено — узел не LOW-риск, авто-фикс запрещён)
+```
+
+## 4. Кто чинит (распределение по ролям)
+
+### Claude Code — _логика, JS, баги, поведение, smoke-фиксы_
+
+- [ ] Провести узел «public/src/screens/feed.js» (экран (render + поведение)) до зелёного и зафиксировать.
+
+### Cloud Design — _CSS, render интерфейса, кнопки, визуальные состояния_
+
+- [ ] Поддержать «public/src/screens/feed.js»: CSS, render интерфейса, кнопки, визуальные состояния.
+- [ ] Сверить render и кнопки «public/src/screens/feed.js» с Cloud Design (тема, #FF6B35, состояния).
+
+### GitHub — _CI/workflows, PR, issue triage, merge gate_
+
+- [ ] Подтвердить зелёный CI и провести merge gate.
+
+## 5. Что следующий PR должен сделать
+
+```text
+- Узел «public/src/screens/feed.js» зелёный — PR можно рассматривать; GitHub проводит merge gate.
+```
+
+## Merge gate
+
+```text
+READY — узел зелёный, PR можно рассматривать. Это НЕ auto-merge: финальный gate за GitHub.
+```

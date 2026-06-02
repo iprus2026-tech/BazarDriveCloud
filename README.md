@@ -90,7 +90,9 @@ public/
   prototypes/                 Визуальные эталоны Cloud Design (не кешируются SW)
 
 scripts/
-  check.mjs                   CI-проверки: CSP-инварианты, JSON, синтаксис JS
+  check.mjs                   CI-проверки: CSP-инварианты, JSON, синтаксис JS + dispatcher selftest
+  dispatcher.mjs              рутина-оркестратор: само-выбор узла → дебаг → фикс → план по ролям
+  smoke-*.mjs                 регрессионные smoke-инварианты (driver map/docs, lifecycle)
 
 docs/
   screen-contracts.md         Контракты экранов (Cloud Design → route → state → acceptance)
@@ -170,6 +172,71 @@ node scripts/check.mjs
 - JS синтаксис проходит node --check
 - prototype не используется как основной index.html
 ```
+
+---
+
+## Диспетчер (диспетчерская башня проекта)
+
+`scripts/dispatcher.mjs` — локальная диспетчерская башня, **не автопилот
+разработки**. Она выбирает следующий проектный узел (экран / модуль / стиль /
+кнопки оболочки / smoke / docs / workflow), гоняет проверки, сопоставляет
+падения с файлами, раскладывает задачи по ролям, пишет отчёт-карточку и держит
+merge gate через `READY` / `NEEDS-ROLES`. Полностью локальная: только
+node-builtins, **без сети, API, backend, GitHub API, ChatGPT/Codex API** —
+раскладка по ролям это *local task routing* (текстовые задачи в отчёте), а не
+живые вызовы моделей.
+
+```bash
+node scripts/dispatcher.mjs            # inspect/report — default, read-only по app-коду
+node scripts/dispatcher.mjs --fix      # + safe fixes (только LOW-риск docs), цикл до зелёного
+node scripts/dispatcher.mjs --target public/src/screens/feed.js   # форсировать цель
+node scripts/dispatcher.mjs --json     # машиночитаемый вывод
+node scripts/dispatcher.mjs --max 5    # предел итераций фикс-цикла (по умолчанию 3)
+node scripts/dispatcher.mjs --help     # справка по режимам (-h)
+```
+
+Распределение ролей:
+
+```text
+Claude Code   логика, JS, баги, поведение, smoke-фиксы
+Cloud Design  CSS, render интерфейса, кнопки, визуальные состояния
+ChatGPT       копирайт, контракты экранов, docs
+Codex         регрессионные тесты, генерация smoke, рефакторинг
+GitHub        CI/workflows, PR, merge gate
+```
+
+**Default mode (`inspect/report`)** не меняет application code: пишет только
+локальный отчёт `docs/dispatcher-report.md` и ignored-курсор. **`--fix`**
+ограничен обратимой гигиеной (CRLF→LF, хвостовые пробелы, финальный перевод
+строки) и срабатывает **только по LOW-риск узлам**. Структурные дефекты и любые
+HIGH/MEDIUM узлы никогда не редактируются автоматически — они делегируются ролям.
+
+Классификация риска (определяет `Can auto-fix`):
+
+```text
+HIGH    public/src/** (экраны, router, state, mock_api, ride_state, mapbox),
+        index.html (CSP), sw.js (precache) — auto-fix: НЕТ
+MEDIUM  scripts/**, public/styles/**, .github/**, README/ROADMAP/screen-contracts — auto-fix: НЕТ
+LOW     docs/*.md, генерируемый отчёт — auto-fix: да (safe hygiene)
+```
+
+Само-выбор цели: упавшая проверка → недавно изменённый в git узел → плановый
+round-robin. Каждый прогон пишет `docs/dispatcher-report.md` — рабочую карточку,
+отвечающую на 5 вопросов (что проверено / что упало / почему / кто чинит / что
+должен сделать следующий PR) + risk и merge gate.
+
+Отчёт `docs/dispatcher-report.md` — **локальный артефакт, в git не коммитится**
+(он в `.gitignore` и регенерируется на каждом прогоне). Стабильный пример формата
+лежит в `docs/dispatcher-report.example.md`. Курсор само-выбора
+(`scripts/.dispatcher-state.json`) — тоже рантайм-артефакт, в git не попадает.
+Поэтому обычный прогон диспетчера **не оставляет churn в tracked-файлах**.
+
+`READY` **не значит auto-merge** — только «узел зелёный, PR можно
+рассматривать». Финальный merge gate всегда остаётся за GitHub/CI.
+
+Рутина под CI: `scripts/check.mjs` гоняет `dispatcher.mjs --selftest` (быстрый,
+без сети и без записи на диск), так что сам оркестратор и его risk-границы
+остаются в рабочем состоянии.
 
 ---
 

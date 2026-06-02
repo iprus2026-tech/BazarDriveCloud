@@ -157,6 +157,18 @@ if (exists(driverDocsReadinessSmoke)) {
   }
 }
 
+// Dispatcher routine — self-test the orchestrator so the routine itself
+// stays in a working state under CI (no project mutation in --selftest mode).
+const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
+if (exists(dispatcherSelftest)) {
+  try {
+    execFileSync(process.execPath, [dispatcherSelftest, '--selftest'], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = ((e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : e.message)).slice(-400);
+    errors.push(`dispatcher.mjs --selftest failed\n${msg}`);
+  }
+}
+
 if (errors.length) {
   console.error('CHECK FAILED:');
   for (const e of errors) console.error('  - ' + e);
