@@ -130,6 +130,13 @@ function resolveRideContext({ responseId }) {
   return { isRide: false, tripId: null };
 }
 
+// Driver auto-notices that predate the senderRole field. Such legacy
+// messages were stored as `dir: 'out'`, so without a migration they would
+// keep rendering as the passenger's own outgoing bubble.
+const LEGACY_DRIVER_AUTO_TEXTS = new Set([
+  'Подъезжаю к точке подачи',
+]);
+
 // This chat surface is passenger-facing (the header is the driver), so an
 // incoming bubble is one authored by the driver. Messages appended from the
 // driver flow (e.g. the "Подъезжаю к точке подачи" auto-notice) carry an
@@ -138,6 +145,8 @@ function resolveRideContext({ responseId }) {
 function directionForMessage(msg) {
   if (msg.senderRole === 'driver') return 'in';
   if (msg.senderRole === 'passenger') return 'out';
+  // Defensive migration: a senderRole-less driver auto-notice is incoming.
+  if (!msg.senderRole && LEGACY_DRIVER_AUTO_TEXTS.has(msg.text)) return 'in';
   return msg.dir === 'in' ? 'in' : 'out';
 }
 
