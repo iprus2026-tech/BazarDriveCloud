@@ -168,6 +168,17 @@ if (exists(passengerActiveRideSmoke)) {
   }
 }
 
+// BD-INBOX-03 — static regression smoke for the inbox screen contract.
+const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
+if (exists(inboxSmoke)) {
+  try {
+    execFileSync(process.execPath, [inboxSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-inbox.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
