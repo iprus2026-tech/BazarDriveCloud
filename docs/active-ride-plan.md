@@ -39,7 +39,7 @@ Passenger active ride:
 - opens chat with the driver;
 - uses phone/safety stubs;
 - can cancel through the passenger cancel sheet;
-- sees en-route, approaching, waiting, in-progress, completed, canceled and no-show surfaces;
+- sees accepted, en-route, approaching, waiting, in-progress, completed, canceled and no-show surfaces;
 - reads the same trip store as the driver view.
 
 ### Driver
@@ -64,6 +64,7 @@ NEW_ORDER
 CONFIRMATION_PENDING
 CONFIRMED
 CHAT_STARTED
+ACCEPTED
 DRIVER_EN_ROUTE
 DRIVER_APPROACHING_PICKUP
 WAITING_PASSENGER
@@ -73,10 +74,14 @@ CANCELED
 NO_SHOW
 ```
 
+`ACCEPTED` is a real current enum value and may appear in persisted records or audit URLs. It represents the accepted-before-en-route phase and must not be removed from docs or follow-up state work.
+
 ### Driver happy path
 
 ```text
 NEW_ORDER
+  ↓
+ACCEPTED
   ↓
 DRIVER_EN_ROUTE
   ↓
@@ -148,8 +153,9 @@ Terminal states must not reopen into active Feed/DriverMap flows unless a dedica
 
 | State | User-facing title | Primary action | Transition |
 |---|---|---|---|
-| `NEW_ORDER` | Новый заказ | Принять заказ | `NEW_ORDER → DRIVER_EN_ROUTE` |
-| `DRIVER_EN_ROUTE` | Едете к пассажиру | Я на месте / approaching path | `DRIVER_EN_ROUTE → DRIVER_APPROACHING_PICKUP` or `WAITING_PASSENGER` |
+| `NEW_ORDER` | Новый заказ | Принять заказ | `NEW_ORDER → ACCEPTED` |
+| `ACCEPTED` | Заказ принят | Начать подачу / ехать к пассажиру | `ACCEPTED → DRIVER_EN_ROUTE` |
+| `DRIVER_EN_ROUTE` | Едете к пассажиру | Подъезжаю / approaching path | `DRIVER_EN_ROUTE → DRIVER_APPROACHING_PICKUP` |
 | `DRIVER_APPROACHING_PICKUP` | Подъезжаете к точке | Я на месте | `DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER` |
 | `WAITING_PASSENGER` | Ожидание пассажира | Начать поездку | `WAITING_PASSENGER → IN_PROGRESS` |
 | `IN_PROGRESS` | Везёте пассажира | Завершить поездку | `IN_PROGRESS → COMPLETED` |
@@ -183,6 +189,7 @@ Passenger side:
 
 ```text
 /active-ride?role=passenger
+/active-ride?role=passenger&status=ACCEPTED
 /active-ride?role=passenger&status=DRIVER_EN_ROUTE
 /active-ride?role=passenger&status=DRIVER_APPROACHING_PICKUP
 /active-ride?role=passenger&status=WAITING_PASSENGER
@@ -197,6 +204,7 @@ Driver side:
 ```text
 /active-ride?role=driver
 /active-ride?role=driver&status=NEW_ORDER
+/active-ride?role=driver&status=ACCEPTED
 /active-ride?role=driver&status=DRIVER_EN_ROUTE
 /active-ride?role=driver&status=DRIVER_APPROACHING_PICKUP
 /active-ride?role=driver&status=WAITING_PASSENGER
