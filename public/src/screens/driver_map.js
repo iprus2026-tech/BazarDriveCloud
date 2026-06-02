@@ -16,7 +16,7 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { listNearbyOrders } from '../mock_api.js';
+import { listNearbyOrders, createRideOrder } from '../mock_api.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { user, isDriverLineReady } from '../state.js';
 
@@ -561,7 +561,33 @@ export default function driverMapScreen() {
       // (originally ready) surface — keep the gate's CTA / locked rows live.
       go('/profile');
     } else if (action === 'create-order') {
-      go('/order-map-draft');
+      // BD-MAP-08 — "Создать тестовый заказ" must seed a visible order from
+      // the driver surface itself. It cannot route to /order-map-draft: that
+      // is a PASSENGER_ORDER_ROUTE and the router (BD-ROLE-01) bounces a
+      // driver straight back to /driver-map, so the button never produced a
+      // CREATED order and the nearby list stayed empty forever. Instead create
+      // the order inline through the same canonical createRideOrder() contract
+      // /order-map-draft uses (status CREATED → bazardrive.ride_orders.v1) and
+      // re-render so it surfaces immediately. The self-contained passenger
+      // snapshot keeps the later accept → active-ride handoff off the demo
+      // "Анна М." seed.
+      createRideOrder({
+        type: 'passenger_request',
+        source: 'map',
+        pickup: { id: null, label: 'Тестовая точка подачи' },
+        dropoff: { id: null, label: 'Тестовая точка назначения' },
+        distanceKm: 6.4,
+        durationMin: 18,
+        estimatedPrice: 420,
+        comment: 'Тестовый заказ для проверки DriverMap',
+        passenger: {
+          name: 'Тестовый пассажир',
+          initials: 'ТП',
+          phoneMasked: '+7 ··· ···-00-00',
+          comment: 'Тестовый заказ для проверки DriverMap',
+        },
+      });
+      renderList();
     } else if (action === 'map') {
       go('/map');
     } else if (action === 'feed') {
