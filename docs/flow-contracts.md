@@ -118,8 +118,9 @@ Backed by `RIDE_STATUS` in `public/src/ride_state.js`.
 
 | From | Event | To | Side effect |
 |---|---|---|---|
-| order accepted | Driver accepts local order/feed request | `NEW_ORDER` or `DRIVER_EN_ROUTE` depending entry path | Active ride record is created/saved. |
-| `NEW_ORDER` | Driver confirms accept | `DRIVER_EN_ROUTE` | `acceptedAt` is stamped. |
+| order accepted | Driver accepts local order/feed request | `NEW_ORDER` or `ACCEPTED` depending entry path | Active ride record is created/saved. |
+| `NEW_ORDER` | Driver confirms accept | `ACCEPTED` | `acceptedAt` is stamped. |
+| `ACCEPTED` | Driver begins pickup | `DRIVER_EN_ROUTE` | Driver en-route UI becomes available. |
 | `DRIVER_EN_ROUTE` | Driver is near/arrives | `DRIVER_APPROACHING_PICKUP` or `WAITING_PASSENGER` | Approach/arrival UI updates. |
 | `DRIVER_APPROACHING_PICKUP` | Driver presses arrived | `WAITING_PASSENGER` | `arrivedAt` is stamped. |
 | `WAITING_PASSENGER` | Driver starts trip | `IN_PROGRESS` | `startedAt` is stamped. |
@@ -135,6 +136,7 @@ NEW_ORDER
 CONFIRMATION_PENDING
 CONFIRMED
 CHAT_STARTED
+ACCEPTED
 DRIVER_EN_ROUTE
 DRIVER_APPROACHING_PICKUP
 WAITING_PASSENGER
@@ -144,12 +146,14 @@ CANCELED
 NO_SHOW
 ```
 
+`ACCEPTED` is a current persisted mock status between `NEW_ORDER` and `DRIVER_EN_ROUTE`. It is not just a conceptual backend alias.
+
 Conceptual backend labels map to this enum during mock-only work:
 
 | Conceptual label | Current persisted value |
 |---|---|
 | `CREATED` | `NEW_ORDER` |
-| `ACCEPTED` | `DRIVER_EN_ROUTE` plus `acceptedAt` |
+| `ACCEPTED` | `ACCEPTED` |
 | `ARRIVING` | `DRIVER_APPROACHING_PICKUP` |
 | `ONTRIP` | `IN_PROGRESS` |
 | `DONE` | `COMPLETED` |
@@ -243,6 +247,8 @@ Use local serving or GitHub Pages, then walk:
 #/chat
 #/trip-confirmation
 #/inbox
+#/active-ride?role=driver&status=ACCEPTED
+#/active-ride?role=passenger&status=ACCEPTED
 #/active-ride?role=driver&status=DRIVER_EN_ROUTE
 #/active-ride?role=passenger&status=DRIVER_EN_ROUTE
 #/active-ride?role=driver&status=DRIVER_APPROACHING_PICKUP
@@ -278,5 +284,4 @@ default-src 'self' remains intact
 no inline scripts/styles/on* handlers
 no APK/TWA work in this repo phase
 no prototype replacement as index.html
-no user-scoped storage key without storage-boundary treatment
 ```
