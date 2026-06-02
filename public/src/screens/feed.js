@@ -9,6 +9,7 @@ import {
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
+import { resolveRole } from '../smoke_role.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -91,8 +92,8 @@ export default async function feed() {
   });
 
   root.querySelector('.feed-btn-new').addEventListener('click', () => {
-    const u = user.get();
-    go(u.role === 'driver' ? '/driver-map' : '/new');
+    // BD-SMOKE-ROLE-01 — per-tab role override decides where "+" routes.
+    go(resolveRole(user.get()) === 'driver' ? '/driver-map' : '/new');
   });
 
   feedList.addEventListener('click', (e) => {

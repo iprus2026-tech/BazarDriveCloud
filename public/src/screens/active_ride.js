@@ -5,6 +5,7 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
+import { resolveRole } from '../smoke_role.js';
 import {
   updateActiveRideStatus,
   createDemoActiveRide,
@@ -552,7 +553,7 @@ function openDriverEarningsSheet(root, { ride }) {
 
 export default function activeRide() {
   const query = getHashQuery();
-  const role = query.get('role') || (user.get().role === 'driver' ? 'driver' : 'passenger');
+  const role = query.get('role') || (resolveRole(user.get()) === 'driver' ? 'driver' : 'passenger');
   if (role !== 'driver') return renderPassenger();
   ensureDriverSheetsCss();
 

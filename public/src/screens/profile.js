@@ -11,6 +11,7 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync } from '../mock_api.js';
 import { isDriverMode } from '../ride_actions.js';
+import { getSmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -2966,11 +2967,17 @@ export default function profile() {
   const roleParam = q.get('role');
   const stateParam = q.get('state');
 
+  // BD-SMOKE-ROLE-01 — the per-tab role override picks which profile *view*
+  // renders, so a passenger tab and a driver tab show their own role even
+  // though the profile DATA (name, vehicle, docs) is the shared user. The
+  // explicit ?role= preview param still wins over the override.
+  const effectiveRole = getSmokeRole() || u.role;
+
   let view;
   if (roleParam === 'driver') view = 'driver';
   else if (roleParam === 'passenger') view = 'passenger';
-  else if (!u.onboarded || u.role === 'guest') view = 'guest';
-  else if (u.role === 'driver') view = 'driver';
+  else if (!u.onboarded || effectiveRole === 'guest') view = 'guest';
+  else if (effectiveRole === 'driver') view = 'driver';
   else view = 'passenger';
 
   if (view === 'guest') {
