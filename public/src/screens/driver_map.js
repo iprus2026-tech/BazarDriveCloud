@@ -19,6 +19,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders, createRideOrder } from '../mock_api.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { user, isDriverLineReady } from '../state.js';
+import { getSmokeRole } from '../smoke_role.js';
 
 const STATE = {
   LIST:      'list',
@@ -373,13 +374,17 @@ function buildStage(orderCount) {
 }
 
 // BD-ROLE-01 — /driver-map is a driver-only working surface. Access is
-// determined exclusively by the persisted user state (user.get().role).
-// The URL hash is intentionally NOT consulted: a ?role= override would
-// re-open the leak this guard exists to close (a passenger or guest
-// could simply load #/driver-map?role=driver to bypass it).
+// determined by the persisted user state (user.get().role), with the
+// BD-SMOKE-ROLE-01 per-tab sessionStorage override taking precedence so a
+// two-tab smoke can pin this tab to driver. The URL hash is still NOT read
+// here: the smoke override is bootstrapped in the router and read from
+// sessionStorage, never from ?role=, so the original leak (a passenger
+// loading #/driver-map?role=driver to bypass the guard) stays closed.
 function resolveEffectiveRole() {
   try {
+    const smoke = getSmokeRole();
     const u = user.get();
+    if (smoke) return smoke;
     return typeof u.role === 'string' ? u.role : null;
   } catch {
     return null;

@@ -1,5 +1,6 @@
 import { user } from './state.js';
 import { isDriverMode } from './ride_actions.js';
+import { applySmokeRole, bootstrapSmokeRoleFromQuery } from './smoke_role.js';
 
 const routes = new Map();
 let pendingAction = null;
@@ -35,7 +36,13 @@ export function consumePendingAction() {
 async function render() {
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
-  const u = user.get();
+  // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,
+  // so location.search is empty) into the per-tab sessionStorage override,
+  // then read the user with that override layered on. The override only
+  // affects role context; the persisted bazardrive.user.v1 is never written.
+  const qi = fullPath.indexOf('?');
+  bootstrapSmokeRoleFromQuery(qi === -1 ? '' : fullPath.slice(qi + 1));
+  const u = applySmokeRole(user.get());
 
   if (!u.welcomeSeen && path !== '/welcome') {
     go('/welcome');

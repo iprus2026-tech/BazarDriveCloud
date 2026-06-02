@@ -9,6 +9,7 @@ import {
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
+import { applySmokeRole } from '../smoke_role.js';
 
 const TYPE_LABELS = {
   trip:          'Поездка',
@@ -240,7 +241,9 @@ function renderFooter(spec) {
 }
 
 function runCtaAction(spec, post, detailsHref) {
-  const fresh = user.get();
+  // BD-SMOKE-ROLE-01 — re-check the accept gate against the per-tab effective
+  // role; onboarded and identity fields are untouched by the override.
+  const fresh = applySmokeRole(user.get());
   if (!fresh.onboarded) {
     setPendingAction(() => go(detailsHref));
     go('/onboarding');
@@ -275,7 +278,9 @@ function runCtaAction(spec, post, detailsHref) {
 }
 
 function renderPost(root, post) {
-  const u = user.get();
+  // BD-SMOKE-ROLE-01 — pick the CTA from the per-tab effective role so a
+  // passenger smoke tab never renders the driver "Принять заказ" action.
+  const u = applySmokeRole(user.get());
   const onboarded = !!u.onboarded;
   const detailsHref = `/post?id=${encodeURIComponent(post.id || '')}`;
   const ctaSpec = pickCtaSpec(post, u);
