@@ -257,9 +257,9 @@ function driverReadinessChecklist(u) {
     { key: 'vehicleMake',        label: 'Марка авто',          done: !!u.vehicleMake,  hint: u.vehicleMake || null },
     { key: 'vehicleModel',       label: 'Модель авто',         done: !!u.vehicleModel, hint: u.vehicleModel || null },
     { key: 'vehiclePlate',       label: 'Госномер',            done: !!u.vehiclePlate, hint: u.vehiclePlate || null },
-    { key: 'documentsReady',     label: 'Документы готовы',    done: !!u.documentsReady },
-    { key: 'waybillOpen',        label: 'Открыт путевой лист', done: !!u.waybillOpen,        hint: u.waybillOpen ? null : 'Откройте смену в профиле' },
-    { key: 'medicalCheckPassed', label: 'Пройден медосмотр',  done: !!u.medicalCheckPassed, hint: u.medicalCheckPassed ? null : 'Предрейсовый, не пройден сегодня' },
+    { key: 'documentsReady',     label: 'Документы готовы',    done: u.documentsReady === true },
+    { key: 'waybillOpen',        label: 'Открыт путевой лист', done: u.waybillOpen === true,        hint: u.waybillOpen === true ? null : 'Откройте смену в профиле' },
+    { key: 'medicalCheckPassed', label: 'Пройден медосмотр',  done: u.medicalCheckPassed === true, hint: u.medicalCheckPassed === true ? null : 'Предрейсовый, не пройден сегодня' },
   ];
 }
 
@@ -535,6 +535,17 @@ export default function driverMapScreen() {
     const action = btn.dataset.action;
 
     if (action === 'accept') {
+      // BD-DRIVER-02 — re-check readiness at accept time. The list rendered
+      // while line-ready, but readiness can be revoked between render and tap
+      // (e.g. the waybill is closed in another tab). If so, swap to the gate
+      // and bail WITHOUT calling acceptCanonicalRideOrder — the order must not
+      // be mutated by a no-longer-ready driver.
+      if (!isDriverLineReady(user.get())) {
+        root.dataset.state = STATE.NOT_READY;
+        stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
+        sheetSlot.replaceChildren(buildReadinessGate(user.get(), listNearbyOrders()));
+        return;
+      }
       const id = btn.dataset.orderId;
       const result = acceptCanonicalRideOrder(id);
       if (result) {
@@ -545,6 +556,10 @@ export default function driverMapScreen() {
         // local order to accept.
         go('/order-map-draft');
       }
+    } else if (action === 'complete-readiness') {
+      // Reachable once the accept-time re-check above swaps the gate into this
+      // (originally ready) surface — keep the gate's CTA / locked rows live.
+      go('/profile');
     } else if (action === 'create-order') {
       go('/order-map-draft');
     } else if (action === 'map') {

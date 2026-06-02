@@ -11,9 +11,10 @@
 import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
-const driverMap = read('../public/src/screens/driver_map.js');
-const state     = read('../public/src/state.js');
-const profile   = read('../public/src/screens/profile.js');
+const driverMap   = read('../public/src/screens/driver_map.js');
+const state       = read('../public/src/state.js');
+const profile     = read('../public/src/screens/profile.js');
+const rideActions = read('../public/src/ride_actions.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -33,11 +34,24 @@ expect('profile.js does not redefine isDriverLineReady locally',
 expect('profile.js imports isDriverLineReady from state.js',
   /import\s*\{[^}]*isDriverLineReady[^}]*\}\s*from\s*'\.\.\/state\.js'/s.test(profile));
 
+// 2b) ride_actions.js shares the SAME rule — no third copy that could drift.
+//     Its canAcceptOrder() accept gating must call the state.js helper.
+expect('ride_actions.js imports isDriverLineReady from state.js',
+  /import\s*\{[^}]*isDriverLineReady[^}]*\}\s*from\s*'\.\/state\.js'/s.test(rideActions));
+expect('ride_actions.js does not define a local function isDriverLineReady',
+  !/function\s+isDriverLineReady\s*\(/.test(rideActions));
+expect('ride_actions.js does not define a local function canShowReadyStatus',
+  !/function\s+canShowReadyStatus\s*\(/.test(rideActions));
+
 // 3) driver_map.js imports and enforces the gate.
 expect('driver_map.js imports isDriverLineReady from state.js',
   /import\s*\{[^}]*isDriverLineReady[^}]*\}\s*from\s*'\.\.\/state\.js'/s.test(driverMap));
 expect('driver_map.js branches on !isDriverLineReady(...)',
   /if\s*\(\s*!\s*isDriverLineReady\s*\(/.test(driverMap));
+// Accept-time re-check: readiness is re-validated BEFORE acceptCanonicalRideOrder,
+// so readiness revoked between render and tap cannot mutate the order.
+expect('accept branch re-checks readiness before acceptCanonicalRideOrder',
+  /action === 'accept'[\s\S]*?!\s*isDriverLineReady\(\s*user\.get\(\)\s*\)[\s\S]*?acceptCanonicalRideOrder\(/.test(driverMap));
 
 // 4) Gate copy is present.
 expect('gate banner copy "профиль не готов" present',

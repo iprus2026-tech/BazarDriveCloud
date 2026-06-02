@@ -155,6 +155,7 @@ export function computeShiftDocsReady(docs) {
 
 // Profile data completeness — phone + vehicle identity all present.
 export function canShowReadyStatus(u) {
+  if (!u) return false;
   return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
 }
 
@@ -162,6 +163,7 @@ export function canShowReadyStatus(u) {
 // when basic profile data is complete AND documents are ready AND the waybill
 // is open AND today's medical check has been passed.
 export function isDriverLineReady(u) {
+  if (!u) return false;
   return canShowReadyStatus(u)
     && u.documentsReady === true
     && u.waybillOpen === true

@@ -9,6 +9,7 @@ import {
   RIDE_STATUS,
 } from './ride_state.js';
 import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
+import { isDriverLineReady } from './state.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -22,14 +23,11 @@ export function isDriverMode(u) {
   return !!u && u.role === 'driver';
 }
 
-export function isDriverLineReady(u) {
-  if (!u) return false;
-  return !!(u.phone
-    && u.vehicleMake && u.vehicleModel && u.vehiclePlate
-    && u.documentsReady === true
-    && u.waybillOpen === true
-    && u.medicalCheckPassed === true);
-}
+// BD-DRIVER-02 — line-readiness is the single source of truth in state.js.
+// Re-exported here so Feed / Post Detail accept gating (canAcceptOrder) shares
+// the exact same rule as Profile and the /driver-map readiness gate, and the
+// three surfaces cannot drift.
+export { isDriverLineReady };
 
 export function canManageOwnOrder(order, _user) {
   if (!order || typeof order !== 'object') return false;
