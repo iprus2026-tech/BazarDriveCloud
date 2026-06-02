@@ -192,6 +192,7 @@ node scripts/dispatcher.mjs --fix      # + safe fixes (только LOW-риск
 node scripts/dispatcher.mjs --target public/src/screens/feed.js   # форсировать цель
 node scripts/dispatcher.mjs --json     # машиночитаемый вывод
 node scripts/dispatcher.mjs --max 5    # предел итераций фикс-цикла (по умолчанию 3)
+node scripts/dispatcher.mjs --help     # справка по режимам (-h)
 ```
 
 Распределение ролей:
@@ -205,10 +206,10 @@ GitHub        CI/workflows, PR, merge gate
 ```
 
 **Default mode (`inspect/report`)** не меняет application code: пишет только
-`docs/dispatcher-report.md` и ignored-курсор. **`--fix`** ограничен обратимой
-гигиеной (CRLF→LF, хвостовые пробелы, финальный перевод строки) и срабатывает
-**только по LOW-риск узлам**. Структурные дефекты и любые HIGH/MEDIUM узлы
-никогда не редактируются автоматически — они делегируются ролям.
+локальный отчёт `docs/dispatcher-report.md` и ignored-курсор. **`--fix`**
+ограничен обратимой гигиеной (CRLF→LF, хвостовые пробелы, финальный перевод
+строки) и срабатывает **только по LOW-риск узлам**. Структурные дефекты и любые
+HIGH/MEDIUM узлы никогда не редактируются автоматически — они делегируются ролям.
 
 Классификация риска (определяет `Can auto-fix`):
 
@@ -222,8 +223,13 @@ LOW     docs/*.md, генерируемый отчёт — auto-fix: да (safe 
 Само-выбор цели: упавшая проверка → недавно изменённый в git узел → плановый
 round-robin. Каждый прогон пишет `docs/dispatcher-report.md` — рабочую карточку,
 отвечающую на 5 вопросов (что проверено / что упало / почему / кто чинит / что
-должен сделать следующий PR) + risk и merge gate. Курсор само-выбора
-(`scripts/.dispatcher-state.json`) — рантайм-артефакт, в git не попадает.
+должен сделать следующий PR) + risk и merge gate.
+
+Отчёт `docs/dispatcher-report.md` — **локальный артефакт, в git не коммитится**
+(он в `.gitignore` и регенерируется на каждом прогоне). Стабильный пример формата
+лежит в `docs/dispatcher-report.example.md`. Курсор само-выбора
+(`scripts/.dispatcher-state.json`) — тоже рантайм-артефакт, в git не попадает.
+Поэтому обычный прогон диспетчера **не оставляет churn в tracked-файлах**.
 
 `READY` **не значит auto-merge** — только «узел зелёный, PR можно
 рассматривать». Финальный merge gate всегда остаётся за GitHub/CI.

@@ -69,16 +69,46 @@ const NODE_KINDS = {
 // CLI
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { fix: false, json: false, selftest: false, max: 3, target: null };
+  const a = { fix: false, json: false, selftest: false, help: false, max: 3, target: null };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--fix') a.fix = true;
     else if (t === '--json') a.json = true;
     else if (t === '--selftest') a.selftest = true;
+    else if (t === '--help' || t === '-h') a.help = true;
     else if (t === '--max') a.max = Math.max(1, parseInt(argv[++i], 10) || 3);
     else if (t === '--target') a.target = argv[++i];
   }
   return a;
+}
+
+function printHelp() {
+  console.log(`BazarDrive Dispatcher — локальная диспетчерская башня проекта (не автопилот).
+Выбирает узел, гоняет проверки, сопоставляет падения с файлами, классифицирует
+риск, раскладывает задачи по ролям, пишет отчёт-карточку и держит merge gate
+через READY / NEEDS-ROLES. Только node-builtins: без сети, API и зависимостей.
+Раскладка по ролям — локальный task routing, без живых вызовов ChatGPT/Codex/Claude API.
+
+Использование:
+  node scripts/dispatcher.mjs [флаги]
+
+Режимы:
+  (без флагов)        inspect/report — безопасный режим, read-only по app-коду
+                      (public/src, router, state, mock_api, mapbox, CSP, sw.js).
+                      Пишет только локальный отчёт и ignored-курсор.
+  --fix               safe fixes only: обратимая гигиена (CRLF→LF, хвостовые
+                      пробелы, финальный перевод строки) и ТОЛЬКО по LOW-риск
+                      узлам (docs). HIGH/MEDIUM узлы и структурные дефекты
+                      авто-фиксу не подлежат — уходят в роли (NEEDS-ROLES).
+  --json              машиночитаемый вывод (target/risk/canAutoFix/tasks/mergeGate).
+  --target <путь>     форсировать цель вместо само-выбора.
+  --max N             предел итераций фикс-цикла (по умолчанию 3).
+  --selftest          самопроверка рутины и risk-границ (для check.mjs), без мутаций.
+  --help, -h          показать эту справку.
+
+Отчёт: docs/dispatcher-report.md (локальный, git-ignored; регенерируется на прогоне).
+       Стабильный пример формата: docs/dispatcher-report.example.md
+Merge gate: READY != auto-merge — финальный gate всегда за GitHub/CI.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +501,11 @@ function selfTest() {
   if (canAutoFix({ id: 'docs/dispatcher-report.md' })) fail('генерируемый отчёт не должен быть авто-фиксимым');
   if (!canAutoFix({ id: 'docs/flow-contracts.md' })) fail('обычный docs/*.md (LOW) должен быть авто-фиксимым');
 
+  // Инвариант: рутина никогда не пишет внутрь public/ (runtime-дерево).
+  const publicDir = path.join(ROOT, 'public') + path.sep;
+  for (const [label, p] of [['REPORT_FILE', REPORT_FILE], ['STATE_FILE', STATE_FILE]])
+    if (p.startsWith(publicDir)) fail(`${label} не должен находиться внутри public/ (${rel(p)})`);
+
   // Guard в applySafeFixes: для HIGH-узла возвращает [] и НЕ пишет файл.
   const highNode = inv.find((n) => n.kind === 'screen');
   if (highNode) {
@@ -487,6 +522,7 @@ function selfTest() {
 // ---------------------------------------------------------------------------
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.help) { printHelp(); process.exit(0); }
   if (args.selftest) return selfTest();
 
   const inventory = buildInventory();
