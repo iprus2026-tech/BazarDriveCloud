@@ -90,7 +90,9 @@ public/
   prototypes/                 Визуальные эталоны Cloud Design (не кешируются SW)
 
 scripts/
-  check.mjs                   CI-проверки: CSP-инварианты, JSON, синтаксис JS
+  check.mjs                   CI-проверки: CSP-инварианты, JSON, синтаксис JS + dispatcher selftest
+  dispatcher.mjs              рутина-оркестратор: само-выбор узла → дебаг → фикс → план по ролям
+  smoke-*.mjs                 регрессионные smoke-инварианты (driver map/docs, lifecycle)
 
 docs/
   screen-contracts.md         Контракты экранов (Cloud Design → route → state → acceptance)
@@ -170,6 +172,44 @@ node scripts/check.mjs
 - JS синтаксис проходит node --check
 - prototype не используется как основной index.html
 ```
+
+---
+
+## Диспетчер (рутина-оркестратор)
+
+`scripts/dispatcher.mjs` — самоходная рутина: сама выбирает проектный узел
+(экран / модуль / стиль / кнопки оболочки / smoke / docs / workflow), дебажит
+его всем набором проверок, применяет безопасные авто-фиксы, перепроверяет и
+раздаёт оставшиеся задачи по ролям — до зелёного состояния и готовности к
+коммиту.
+
+```bash
+node scripts/dispatcher.mjs            # цикл: выбор → дебаг → план → отчёт (read-only по коду)
+node scripts/dispatcher.mjs --fix      # + безопасные авто-фиксы цели, цикл до зелёного
+node scripts/dispatcher.mjs --target public/src/screens/feed.js   # форсировать цель
+node scripts/dispatcher.mjs --json     # машиночитаемый вывод
+```
+
+Распределение ролей:
+
+```text
+Claude Code   логика, JS, баги, поведение, smoke-фиксы
+Cloud Design  CSS, render интерфейса, кнопки, визуальные состояния
+ChatGPT       копирайт, контракты экранов, docs
+Codex         регрессионные тесты, генерация smoke, рефакторинг
+GitHub        CI/workflows, PR, merge gate
+```
+
+Само-выбор цели: упавшая проверка → недавно изменённый в git узел →
+плановый round-robin. Безопасные авто-фиксы (`--fix`) ограничены обратимой
+гигиеной (CRLF→LF, хвостовые пробелы, финальный перевод строки); структурные
+дефекты (например inline-style в JS) не чинятся автоматически, а уходят
+задачей в Cloud Design. Каждый прогон пишет `docs/dispatcher-report.md` с
+чек-листом по ролям и статусом `READY` / `NEEDS-ROLES`. Курсор само-выбора
+(`scripts/.dispatcher-state.json`) — рантайм-артефакт, в git не попадает.
+
+Рутина под CI: `scripts/check.mjs` гоняет `dispatcher.mjs --selftest`, так что
+сам оркестратор остаётся в рабочем состоянии.
 
 ---
 
