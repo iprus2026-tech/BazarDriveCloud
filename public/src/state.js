@@ -148,6 +148,28 @@ export function computeShiftDocsReady(docs) {
   return docsReadyOver(REQUIRED_DOCS, docs);
 }
 
+// ── Line-readiness rule (single source of truth) ────────────────────────────
+// Promoted here from profile.js so every readiness surface derives from the
+// same rule and cannot drift: Profile's status/checklist (BD-PROFILE-02) and
+// the DriverMap readiness gate (BD-DRIVER-02) both call these.
+
+// Profile data completeness — phone + vehicle identity all present.
+export function canShowReadyStatus(u) {
+  if (!u) return false;
+  return !!(u.phone && u.vehicleMake && u.vehicleModel && u.vehiclePlate);
+}
+
+// A driver is ready to go on line — and to accept orders on /driver-map — only
+// when basic profile data is complete AND documents are ready AND the waybill
+// is open AND today's medical check has been passed.
+export function isDriverLineReady(u) {
+  if (!u) return false;
+  return canShowReadyStatus(u)
+    && u.documentsReady === true
+    && u.waybillOpen === true
+    && u.medicalCheckPassed === true;
+}
+
 function syncDerived(state) {
   const docs = state.driverDocuments;
   if (!docs) return state;
