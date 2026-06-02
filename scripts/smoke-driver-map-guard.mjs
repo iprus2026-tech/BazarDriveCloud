@@ -76,6 +76,15 @@ const guardCombined = guardSources.join('\n');
 expect('guard template contains no data-action="accept"',
   !/data-action="accept"/.test(guardCombined));
 
+// 6) BD-MAP-08 — "Создать тестовый заказ" must seed an order inline via the
+// canonical createRideOrder() contract, NOT navigate to /order-map-draft.
+// That route is passenger-only, so the router bounces a driver back to
+// /driver-map and the button would never produce a CREATED order.
+expect('create-order handler calls createRideOrder( inline',
+  /action === 'create-order'[\s\S]*?createRideOrder\(/.test(src));
+expect('create-order handler does not route to /order-map-draft',
+  !/action === 'create-order'[\s\S]*?go\(\s*'\/order-map-draft'\s*\)/.test(src));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
