@@ -54,12 +54,21 @@ expect("complete-readiness routes to '/profile'",
   /complete-readiness'\s*\)\s*\{\s*\n?\s*go\('\/profile'\)/.test(driverMap)
     || /action === 'complete-readiness'[\s\S]{0,80}go\('\/profile'\)/.test(driverMap));
 
-// 6) Locked rows expose NO accept action — the gate can't accept an order.
-//    The locked builder branch must render the locked zone, not the button.
+// 6) Locked rows expose NO accept action and instead route to /profile, so a
+//    not-ready driver can tap "Доступно после готовности" to finish readiness
+//    but can never accept an order from the gate.
 expect('buildOrderRow supports a locked variant',
   /buildOrderRow\s*\(\s*order\s*,\s*index\s*,\s*\{\s*locked/.test(driverMap));
-expect('locked variant renders the locked zone (no accept button)',
-  /locked\s*\n?\s*\?\s*`<div class="driver-map__order-locked"/.test(driverMap));
+
+const lockedFootMatch = driverMap.match(/locked\s*\n?\s*\?\s*`([\s\S]*?)`\s*\n?\s*:/);
+const lockedFoot = lockedFootMatch ? lockedFootMatch[1] : '';
+expect('locked branch resolved from buildOrderRow', !!lockedFootMatch);
+expect('locked branch renders the locked zone element',
+  /class="driver-map__order-locked"/.test(lockedFoot));
+expect('locked branch routes to complete-readiness (→ /profile)',
+  /data-action="complete-readiness"/.test(lockedFoot));
+expect('locked branch contains NO data-action="accept"',
+  !/data-action="accept"/.test(lockedFoot));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

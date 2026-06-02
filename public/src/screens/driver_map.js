@@ -153,11 +153,12 @@ function buildOrderRow(order, index, { locked = false } = {}) {
   row.className = locked ? 'driver-map__order is-locked' : 'driver-map__order';
   row.dataset.orderId = order.id;
 
-  // BD-DRIVER-02 — locked rows expose NO accept action: the foot button is
-  // replaced by a disabled "Доступно после готовности" zone so a not-ready
-  // driver can never accept from the gate.
+  // BD-DRIVER-02 — locked rows expose NO accept action: the «Принять» button is
+  // replaced by a "Доступно после готовности" zone that routes to /profile
+  // (data-action="complete-readiness"), so a not-ready driver can never accept
+  // from the gate but can still tap through to finish readiness.
   const foot = locked
-    ? `<div class="driver-map__order-locked">${SVG_LOCK}<span>Доступно после готовности</span></div>`
+    ? `<button class="driver-map__order-locked" type="button" data-action="complete-readiness">${SVG_LOCK}<span>Доступно после готовности</span></button>`
     : `<div class="driver-map__order-foot">
       <span class="driver-map__order-meta">${escapeHtml(formatMeta(order))}</span>
       <button class="bd-btn primary sm" type="button"
