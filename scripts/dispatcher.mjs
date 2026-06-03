@@ -370,8 +370,10 @@ function routeTasks(node, debug, designRegistry = null) {
   if (designRegistry && designRegistry.skipped)
     push('CHATGPT', `docs/design-registry.json не валидируется: ${designRegistry.reason || 'не прочитан'} — починить реестр.`);
 
-  // Merge gate — всегда финальная ответственность GitHub.
-  push('GITHUB', debug.green
+  // Merge gate — всегда финальная ответственность GitHub. Закрыт не только при
+  // падении проверок, но и при design drift / непрочитанном реестре.
+  const gateGreen = debug.green && (!designRegistry || (designRegistry.ok && !designRegistry.skipped));
+  push('GITHUB', gateGreen
     ? 'Подтвердить зелёный CI и провести merge gate.'
     : 'Держать merge gate закрытым до зелёного CI.');
 
@@ -388,12 +390,17 @@ function routeTasks(node, debug, designRegistry = null) {
 // ---------------------------------------------------------------------------
 
 // Маршруты, зарегистрированные в public/src/app.js: register('/path', loader).
-// Чистая функция над исходником — без импорта/исполнения app.js.
+// Чистая функция над исходником — без импорта/исполнения app.js. Комментарии
+// (// и /* */) вырезаются до поиска, чтобы закомментированный register(...) не
+// считался активным маршрутом.
 function readRegisteredRoutes(appSrc) {
   const routes = new Set();
+  const stripped = String(appSrc)
+    .replace(/\/\*[\s\S]*?\*\//g, '')   // блочные /* ... */
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1'); // строчные // (не трогаем «://» в URL)
   const re = /register\(\s*['"]([^'"]+)['"]/g;
   let m;
-  while ((m = re.exec(String(appSrc))) !== null) routes.add(m[1]);
+  while ((m = re.exec(stripped)) !== null) routes.add(m[1]);
   return routes;
 }
 
@@ -409,13 +416,16 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
   const renderGates = Array.isArray(registry && registry.renderGates) ? registry.renderGates : [];
   const screens = Array.isArray(registry && registry.screens) ? registry.screens : [];
 
-  // #1/#2 — артефакт render-gate (PDF) и standaloneExport (HTML) должны существовать.
+  // #1/#2 — поля artifact (PDF) и standaloneExport (HTML) обязательны: пустое/
+  // отсутствующее поле — расхождение; заполненное, но без файла на диске — тоже.
   for (const g of renderGates) {
     const gid = (g && g.id) || '(no id)';
-    if (g && g.artifact && !fileExists(g.artifact))
-      gap('MISSING_ARTIFACT', gid, `render-gate artifact отсутствует: ${g.artifact}`);
-    if (g && g.standaloneExport && !fileExists(g.standaloneExport))
-      gap('MISSING_EXPORT', gid, `standaloneExport отсутствует: ${g.standaloneExport}`);
+    const artifact = g && g.artifact ? String(g.artifact).trim() : '';
+    if (!artifact) gap('MISSING_ARTIFACT', gid, 'поле artifact отсутствует или пусто');
+    else if (!fileExists(artifact)) gap('MISSING_ARTIFACT', gid, `render-gate artifact отсутствует: ${artifact}`);
+    const standaloneExport = g && g.standaloneExport ? String(g.standaloneExport).trim() : '';
+    if (!standaloneExport) gap('MISSING_EXPORT', gid, 'поле standaloneExport отсутствует или пусто');
+    else if (!fileExists(standaloneExport)) gap('MISSING_EXPORT', gid, `standaloneExport отсутствует: ${standaloneExport}`);
   }
 
   const gateIds = new Set(renderGates.map((g) => g && g.id).filter(Boolean));
@@ -435,36 +445,46 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
 
     // #4/#7 — маршрут (база до «?») должен быть зарегистрирован в app.js.
     // Записи manual-interaction не требуют прямого routable-state: вместо
-    // расхождения по маршруту выводим отдельную заметку.
+    // расхождения по маршруту выводим отдельную заметку. Для остальных экранов
+    // route обязателен — пустой/отсутствующий это расхождение, а не «routable».
     if (s && s.interaction === 'manual-interaction') {
       manualInteraction++;
       const base = s.route ? String(s.route).split('?')[0] : '(no route)';
       note('MANUAL_INTERACTION', sid,
         `${s.section || '(no section)'}: ${s.note || `доступен через внутри-экранное действие, не прямым маршрутом (${base})`}`);
-    } else if (s && s.route) {
-      routesChecked++;
-      const base = String(s.route).split('?')[0];
-      if (!routes.has(base))
-        gap('UNREGISTERED_ROUTE', sid, `маршрут «${base}» не зарегистрирован в public/src/app.js`);
+    } else if (s) {
+      const route = s.route ? String(s.route).trim() : '';
+      if (!route) {
+        gap('MISSING_ROUTE', sid, 'у не-manual экрана отсутствует или пуст route');
+      } else {
+        routesChecked++;
+        const base = route.split('?')[0];
+        if (!routes.has(base))
+          gap('UNREGISTERED_ROUTE', sid, `маршрут «${base}» не зарегистрирован в public/src/app.js`);
+      }
     }
   }
 
   // #6 — каждая секция render-gate, кроме «cover», должна быть покрыта хотя бы
-  // одним экраном. Покрытие считаем по ВСЕМ экранам, включая manual-interaction
-  // (иначе секция Safety, покрытая только ими, ложно «провисает»).
-  const covered = new Set(screens.map((s) => s && s.section).filter(Boolean));
-  const trackedSections = [];
+  // одним экраном ИМЕННО ЭТОГО render-gate. Покрытие считаем по паре
+  // renderGate::section (а не по голому имени секции), чтобы секция в одном
+  // render-gate не «закрывала» одноимённую секцию в другом. Учитываем ВСЕ
+  // экраны, включая manual-interaction (иначе Safety, покрытая только ими,
+  // ложно «провисает»).
+  const coveredPairs = new Set(
+    screens.filter((s) => s && s.renderGate && s.section).map((s) => s.renderGate + '::' + s.section),
+  );
+  let sectionsTracked = 0;
+  let sectionsCovered = 0;
   for (const g of renderGates) {
+    const gid = (g && g.id) || '(no id)';
     for (const sec of Array.isArray(g && g.sections) ? g.sections : []) {
       if (sec === 'cover') continue;
-      trackedSections.push(sec);
-      if (!covered.has(sec))
-        gap('UNCOVERED_SECTION', (g && g.id) || '(no id)', `секция «${sec}» не покрыта ни одним экраном`);
+      sectionsTracked++;
+      if (coveredPairs.has(gid + '::' + sec)) sectionsCovered++;
+      else gap('UNCOVERED_SECTION', gid, `секция «${sec}» не покрыта ни одним экраном этого render-gate`);
     }
   }
-
-  const sectionsTracked = trackedSections.length;
-  const sectionsCovered = trackedSections.filter((sec) => covered.has(sec)).length;
 
   return {
     ok: gaps.length === 0,
@@ -732,35 +752,61 @@ function selfTest() {
 
   // (b) Негатив: на синтетике (офлайн, внедрённые зависимости) валидатор обязан
   // ловить каждую категорию расхождения и НЕ путать manual-interaction с gap.
+  // RG-1 — поля artifact/export заполнены, но файлы отсутствуют; RG-2 — поля
+  // вовсе отсутствуют. Секция «Shared» покрыта в RG-1, но НЕ в RG-2 (проверка
+  // покрытия по паре renderGate::section). S-NOROUTE — не-manual без маршрута.
   const broken = {
     version: 1,
-    renderGates: [{ id: 'RG-1', artifact: 'missing/artifact.pdf', standaloneExport: 'missing/export.html',
-                    sections: ['cover', 'CoveredSec', 'OrphanSec'] }],
+    renderGates: [
+      { id: 'RG-1', artifact: 'missing/artifact.pdf', standaloneExport: 'missing/export.html',
+        sections: ['cover', 'CoveredSec', 'OrphanSec', 'Shared'] },
+      { id: 'RG-2', sections: ['cover', 'Shared'] },
+    ],
     screens: [
-      { id: 'S-FILE',  route: '/ok',           file: 'missing/screen.js', renderGate: 'RG-1',       section: 'CoveredSec' },
-      { id: 'S-ROUTE', route: '/nope?x=1',     file: 'exists/only.js',    renderGate: 'RG-1',       section: 'CoveredSec' },
-      { id: 'S-RG',    route: '/ok',           file: 'exists/only.js',    renderGate: 'RG-MISSING', section: 'CoveredSec' },
-      { id: 'S-MAN',   route: '/unregistered-too', file: 'exists/only.js', renderGate: 'RG-1',      section: 'CoveredSec',
+      { id: 'S-FILE',    route: '/ok',               file: 'missing/screen.js', renderGate: 'RG-1',       section: 'CoveredSec' },
+      { id: 'S-ROUTE',   route: '/nope?x=1',         file: 'exists/only.js',    renderGate: 'RG-1',       section: 'CoveredSec' },
+      { id: 'S-RG',      route: '/ok',               file: 'exists/only.js',    renderGate: 'RG-MISSING', section: 'CoveredSec' },
+      { id: 'S-NOROUTE', route: '',                  file: 'exists/only.js',    renderGate: 'RG-1',       section: 'Shared' },
+      { id: 'S-MAN',     route: '/unregistered-too', file: 'exists/only.js',    renderGate: 'RG-1',       section: 'CoveredSec',
         interaction: 'manual-interaction', note: 'manual only' },
     ],
   };
   const a = auditDesignRegistry(broken, { routes: new Set(['/ok']), fileExists: (p) => p === 'exists/only.js' });
   const has = (code) => a.gaps.some((g) => g.code === code);
   for (const code of ['MISSING_ARTIFACT', 'MISSING_EXPORT', 'MISSING_SCREEN_FILE',
-                      'UNREGISTERED_ROUTE', 'BAD_RENDER_GATE', 'UNCOVERED_SECTION'])
+                      'UNREGISTERED_ROUTE', 'MISSING_ROUTE', 'BAD_RENDER_GATE', 'UNCOVERED_SECTION'])
     if (!has(code)) fail('auditDesignRegistry не поймал ' + code);
   if (a.ok) fail('битый реестр не должен быть ok');
   if (!a.notes.some((n) => n.code === 'MANUAL_INTERACTION' && n.id === 'S-MAN'))
     fail('manual-interaction экран должен давать заметку');
   if (a.gaps.some((g) => g.id === 'S-MAN'))
     fail('manual-interaction экран не должен порождать gap (маршрут не требуется)');
-  if (a.gaps.filter((g) => g.code === 'UNCOVERED_SECTION').length !== 1)
-    fail('ровно одна секция (OrphanSec) должна быть непокрыта — manual-экраны считаются в покрытии');
+  // #3 — у не-manual экрана без route это MISSING_ROUTE, а не молчаливый routable.
+  if (!a.gaps.some((g) => g.code === 'MISSING_ROUTE' && g.id === 'S-NOROUTE'))
+    fail('не-manual экран без route должен давать MISSING_ROUTE');
+  // #4 — обязательные поля artifact/standaloneExport: RG-2 без полей → gaps.
+  if (!a.gaps.some((g) => g.code === 'MISSING_ARTIFACT' && g.id === 'RG-2'))
+    fail('отсутствующее поле artifact должно давать MISSING_ARTIFACT');
+  if (!a.gaps.some((g) => g.code === 'MISSING_EXPORT' && g.id === 'RG-2'))
+    fail('отсутствующее поле standaloneExport должно давать MISSING_EXPORT');
+  // #2 — покрытие по паре renderGate::section: Shared покрыта в RG-1, но не в RG-2;
+  // OrphanSec не покрыта в RG-1. Итого ровно две непокрытые секции.
+  const uncovered = a.gaps.filter((g) => g.code === 'UNCOVERED_SECTION');
+  if (uncovered.length !== 2)
+    fail('ожидались ровно две непокрытые секции (RG-1::OrphanSec, RG-2::Shared), получено ' + uncovered.length);
+  if (!uncovered.some((g) => g.id === 'RG-2' && /Shared/.test(g.detail)))
+    fail('секция Shared в RG-2 должна быть непокрыта, даже если покрыта в RG-1 (покрытие по renderGate)');
 
   // readRegisteredRoutes — парсит register('/path', loader) в множество маршрутов.
   const sampleRoutes = readRegisteredRoutes("register('/feed', feed);\nregister( \"/profile\" , profile )");
   if (!sampleRoutes.has('/feed') || !sampleRoutes.has('/profile'))
     fail('readRegisteredRoutes не распарсил register() маршруты');
+  // #5 — закомментированные register(...) игнорируются (// и /* */).
+  const commentedRoutes = readRegisteredRoutes(
+    "register('/live', live); // register('/trail', trail)\n// register('/dead', dead)\n/* register('/block', block) */");
+  if (!commentedRoutes.has('/live')) fail('readRegisteredRoutes потерял активный register среди комментариев');
+  for (const dead of ['/trail', '/dead', '/block'])
+    if (commentedRoutes.has(dead)) fail('readRegisteredRoutes учёл закомментированный register ' + dead);
 
   console.log('Dispatcher selftest passed.');
 }
@@ -804,7 +850,9 @@ function main() {
   const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
 
   const tasks = routeTasks(target.node, debug, designRegistry);
-  const ready = debug.green;
+  // READY учитывает и design drift: зелёных проверок недостаточно, реестр обязан
+  // быть валиден (ok) и прочитан (не skipped), иначе merge gate = NEEDS-ROLES.
+  const ready = debug.green && designRegistry.ok && !designRegistry.skipped;
   const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
 
   // Обновляем курсор/историю само-выбора.
