@@ -335,7 +335,7 @@ function applySafeFixes(node) {
 // ---------------------------------------------------------------------------
 // Распределение задач по ролям для выбранной цели + по упавшим проверкам.
 // ---------------------------------------------------------------------------
-function routeTasks(node, debug) {
+function routeTasks(node, debug, designRegistry = null) {
   const tasks = [];
   const kind = NODE_KINDS[node.kind] || NODE_KINDS.module;
   const push = (role, task) => tasks.push({ role, roleLabel: ROLES[role].label, task });
@@ -363,6 +363,13 @@ function routeTasks(node, debug) {
   if (node.kind === 'doc') push('CHATGPT', `Актуализировать формулировки и acceptance в «${node.id}».`);
   if (node.kind === 'workflow') push('GITHUB', `Проверить, что workflow «${node.id}» зелёный на PR/branch.`);
 
+  // Design drift — расхождения design-registry уходят владельцу реестра (ChatGPT).
+  if (designRegistry && !designRegistry.ok && !designRegistry.skipped)
+    push('CHATGPT', `Устранить design drift в docs/design-registry.json: ${designRegistry.gaps.length} расхождение(й) — `
+      + designRegistry.gaps.map((g) => `${g.code}@${g.id}`).join(', ') + '.');
+  if (designRegistry && designRegistry.skipped)
+    push('CHATGPT', `docs/design-registry.json не валидируется: ${designRegistry.reason || 'не прочитан'} — починить реестр.`);
+
   // Merge gate — всегда финальная ответственность GitHub.
   push('GITHUB', debug.green
     ? 'Подтвердить зелёный CI и провести merge gate.'
@@ -371,6 +378,133 @@ function routeTasks(node, debug) {
   // Дедуп по (role, task).
   const seen = new Set();
   return tasks.filter((t) => { const k = t.role + '::' + t.task; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+// ---------------------------------------------------------------------------
+// Валидатор design-registry: сверяет docs/design-registry.json с живым деревом
+// (артефакты render-gate, файлы экранов, маршруты в app.js, ссылки render-gate,
+// покрытие секций). Только чтение — реестр это структурный контракт, рутина его
+// не правит. Расхождения («design drift») уходят в отчёт и задачей владельцу.
+// ---------------------------------------------------------------------------
+
+// Маршруты, зарегистрированные в public/src/app.js: register('/path', loader).
+// Чистая функция над исходником — без импорта/исполнения app.js.
+function readRegisteredRoutes(appSrc) {
+  const routes = new Set();
+  const re = /register\(\s*['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(String(appSrc))) !== null) routes.add(m[1]);
+  return routes;
+}
+
+// Чистое ядро аудита: без fs/ROOT. Зависимости (routes, fileExists) внедряются,
+// чтобы selftest гонял его офлайн на синтетике. Толерантно к кривому-но-валидному
+// JSON (renderGates/screens/sections могут отсутствовать → расхождения, не throw).
+function auditDesignRegistry(registry, { routes, fileExists }) {
+  const gaps = [];
+  const notes = [];
+  const gap = (code, id, detail) => gaps.push({ code, id, detail });
+  const note = (code, id, detail) => notes.push({ code, id, detail });
+
+  const renderGates = Array.isArray(registry && registry.renderGates) ? registry.renderGates : [];
+  const screens = Array.isArray(registry && registry.screens) ? registry.screens : [];
+
+  // #1/#2 — артефакт render-gate (PDF) и standaloneExport (HTML) должны существовать.
+  for (const g of renderGates) {
+    const gid = (g && g.id) || '(no id)';
+    if (g && g.artifact && !fileExists(g.artifact))
+      gap('MISSING_ARTIFACT', gid, `render-gate artifact отсутствует: ${g.artifact}`);
+    if (g && g.standaloneExport && !fileExists(g.standaloneExport))
+      gap('MISSING_EXPORT', gid, `standaloneExport отсутствует: ${g.standaloneExport}`);
+  }
+
+  const gateIds = new Set(renderGates.map((g) => g && g.id).filter(Boolean));
+  let routesChecked = 0;
+  let manualInteraction = 0;
+
+  for (const s of screens) {
+    const sid = (s && s.id) || '(no id)';
+
+    // #3 — файл экрана должен существовать.
+    if (s && s.file && !fileExists(s.file))
+      gap('MISSING_SCREEN_FILE', sid, `файл экрана отсутствует: ${s.file}`);
+
+    // #5 — renderGate должен ссылаться на существующий renderGates[].id.
+    if (s && s.renderGate && !gateIds.has(s.renderGate))
+      gap('BAD_RENDER_GATE', sid, `renderGate «${s.renderGate}» не найден среди renderGates[].id`);
+
+    // #4/#7 — маршрут (база до «?») должен быть зарегистрирован в app.js.
+    // Записи manual-interaction не требуют прямого routable-state: вместо
+    // расхождения по маршруту выводим отдельную заметку.
+    if (s && s.interaction === 'manual-interaction') {
+      manualInteraction++;
+      const base = s.route ? String(s.route).split('?')[0] : '(no route)';
+      note('MANUAL_INTERACTION', sid,
+        `${s.section || '(no section)'}: ${s.note || `доступен через внутри-экранное действие, не прямым маршрутом (${base})`}`);
+    } else if (s && s.route) {
+      routesChecked++;
+      const base = String(s.route).split('?')[0];
+      if (!routes.has(base))
+        gap('UNREGISTERED_ROUTE', sid, `маршрут «${base}» не зарегистрирован в public/src/app.js`);
+    }
+  }
+
+  // #6 — каждая секция render-gate, кроме «cover», должна быть покрыта хотя бы
+  // одним экраном. Покрытие считаем по ВСЕМ экранам, включая manual-interaction
+  // (иначе секция Safety, покрытая только ими, ложно «провисает»).
+  const covered = new Set(screens.map((s) => s && s.section).filter(Boolean));
+  const trackedSections = [];
+  for (const g of renderGates) {
+    for (const sec of Array.isArray(g && g.sections) ? g.sections : []) {
+      if (sec === 'cover') continue;
+      trackedSections.push(sec);
+      if (!covered.has(sec))
+        gap('UNCOVERED_SECTION', (g && g.id) || '(no id)', `секция «${sec}» не покрыта ни одним экраном`);
+    }
+  }
+
+  const sectionsTracked = trackedSections.length;
+  const sectionsCovered = trackedSections.filter((sec) => covered.has(sec)).length;
+
+  return {
+    ok: gaps.length === 0,
+    skipped: false,
+    gaps,
+    notes,
+    summary: {
+      renderGates: renderGates.length,
+      screens: screens.length,
+      sectionsTracked,
+      sectionsCovered,
+      manualInteraction,
+      routesChecked,
+      gaps: gaps.length,
+      notes: notes.length,
+    },
+  };
+}
+
+// IO-обёртка: читает реестр + app.js, подставляет реальные зависимости и зовёт
+// чистое ядро. Никогда не бросает: отсутствующий/битый файл → skipped-результат
+// (отчёт это переживает; жёсткий gate ловит skipped в selfTest).
+function validateDesignRegistry(registryFile) {
+  const blankSummary = {
+    renderGates: 0, screens: 0, sectionsTracked: 0, sectionsCovered: 0,
+    manualInteraction: 0, routesChecked: 0, gaps: 0, notes: 0,
+  };
+  let registry;
+  try {
+    registry = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
+  } catch (e) {
+    return { ok: false, skipped: true, reason: 'реестр не прочитан/не распарсен: ' + e.message,
+             gaps: [], notes: [], summary: blankSummary };
+  }
+  let routes = new Set();
+  const appFile = path.join(ROOT, 'public', 'src', 'app.js');
+  try { routes = readRegisteredRoutes(fs.readFileSync(appFile, 'utf8')); }
+  catch { /* app.js нет — все маршруты окажутся незарегистрированными (расхождение) */ }
+  const fileExists = (relPath) => exists(path.join(ROOT, relPath));
+  return auditDesignRegistry(registry, { routes, fileExists });
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +517,7 @@ function groupByRole(tasks) {
 }
 
 function buildReport(ctx) {
-  const { target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner } = ctx;
+  const { target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner, designRegistry } = ctx;
   const date = new Date().toISOString().slice(0, 10);
   const mergeGate = ready ? 'READY' : 'NEEDS-ROLES';
   const grouped = groupByRole(tasks);
@@ -459,6 +593,36 @@ function buildReport(ctx) {
                   : '(пропущено — узел не LOW-риск, авто-фикс запрещён)');
   lines.push('```');
   lines.push('');
+
+  // Design registry / Design drift — сверка docs/design-registry.json с деревом.
+  if (designRegistry) {
+    lines.push('## Design registry / Design drift');
+    lines.push('');
+    const s = designRegistry.summary || {};
+    const status = designRegistry.skipped
+      ? `SKIPPED (${designRegistry.reason || 'реестр не прочитан'})`
+      : designRegistry.ok ? 'CLEAN' : `DRIFT (${designRegistry.gaps.length} gap(s))`;
+    lines.push('```text');
+    lines.push('Registry      docs/design-registry.json');
+    lines.push(`Render gates  ${s.renderGates || 0}   Screens ${s.screens || 0}   `
+      + `Sections ${s.sectionsCovered || 0}/${s.sectionsTracked || 0} covered   `
+      + `Manual notes ${s.manualInteraction || 0}`);
+    lines.push(`Status        ${status}`);
+    lines.push('```');
+    lines.push('');
+    if (!designRegistry.skipped && designRegistry.gaps.length) {
+      lines.push('Gaps:');
+      lines.push('');
+      for (const g of designRegistry.gaps) lines.push(`- [${g.code}] ${g.id} — ${g.detail}`);
+      lines.push('');
+    }
+    if (designRegistry.notes && designRegistry.notes.length) {
+      lines.push('Manual-interaction notes (не расхождение — справочно):');
+      lines.push('');
+      for (const n of designRegistry.notes) lines.push(`- ${n.id} — ${n.detail}`);
+      lines.push('');
+    }
+  }
 
   // 4. Кто чинит?
   lines.push('## 4. Кто чинит (распределение по ролям)');
@@ -557,6 +721,47 @@ function selfTest() {
     if (applied.length) fail('applySafeFixes тронул HIGH-узел');
     if (fs.readFileSync(highNode.file, 'utf8') !== before) fail('applySafeFixes изменил HIGH-узел на диске');
   }
+
+  // ── Валидатор design-registry ──────────────────────────────────────────
+  // (a) Позитив: живой реестр обязан валидироваться без расхождений. Это и есть
+  // CI-gate против design drift (skipped тоже фейл — реестр пропал/побился).
+  const liveDr = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
+  if (liveDr.skipped) fail('design-registry validator: live-реестр skipped (' + (liveDr.reason || 'не прочитан') + ')');
+  if (!liveDr.ok) fail('design drift в live-реестре: ' + liveDr.gaps.map((g) => g.code + '@' + g.id).join(', '));
+  if (liveDr.summary.manualInteraction < 1) fail('live-реестр должен содержать manual-interaction записи');
+
+  // (b) Негатив: на синтетике (офлайн, внедрённые зависимости) валидатор обязан
+  // ловить каждую категорию расхождения и НЕ путать manual-interaction с gap.
+  const broken = {
+    version: 1,
+    renderGates: [{ id: 'RG-1', artifact: 'missing/artifact.pdf', standaloneExport: 'missing/export.html',
+                    sections: ['cover', 'CoveredSec', 'OrphanSec'] }],
+    screens: [
+      { id: 'S-FILE',  route: '/ok',           file: 'missing/screen.js', renderGate: 'RG-1',       section: 'CoveredSec' },
+      { id: 'S-ROUTE', route: '/nope?x=1',     file: 'exists/only.js',    renderGate: 'RG-1',       section: 'CoveredSec' },
+      { id: 'S-RG',    route: '/ok',           file: 'exists/only.js',    renderGate: 'RG-MISSING', section: 'CoveredSec' },
+      { id: 'S-MAN',   route: '/unregistered-too', file: 'exists/only.js', renderGate: 'RG-1',      section: 'CoveredSec',
+        interaction: 'manual-interaction', note: 'manual only' },
+    ],
+  };
+  const a = auditDesignRegistry(broken, { routes: new Set(['/ok']), fileExists: (p) => p === 'exists/only.js' });
+  const has = (code) => a.gaps.some((g) => g.code === code);
+  for (const code of ['MISSING_ARTIFACT', 'MISSING_EXPORT', 'MISSING_SCREEN_FILE',
+                      'UNREGISTERED_ROUTE', 'BAD_RENDER_GATE', 'UNCOVERED_SECTION'])
+    if (!has(code)) fail('auditDesignRegistry не поймал ' + code);
+  if (a.ok) fail('битый реестр не должен быть ok');
+  if (!a.notes.some((n) => n.code === 'MANUAL_INTERACTION' && n.id === 'S-MAN'))
+    fail('manual-interaction экран должен давать заметку');
+  if (a.gaps.some((g) => g.id === 'S-MAN'))
+    fail('manual-interaction экран не должен порождать gap (маршрут не требуется)');
+  if (a.gaps.filter((g) => g.code === 'UNCOVERED_SECTION').length !== 1)
+    fail('ровно одна секция (OrphanSec) должна быть непокрыта — manual-экраны считаются в покрытии');
+
+  // readRegisteredRoutes — парсит register('/path', loader) в множество маршрутов.
+  const sampleRoutes = readRegisteredRoutes("register('/feed', feed);\nregister( \"/profile\" , profile )");
+  if (!sampleRoutes.has('/feed') || !sampleRoutes.has('/profile'))
+    fail('readRegisteredRoutes не распарсил register() маршруты');
+
   console.log('Dispatcher selftest passed.');
 }
 
@@ -594,7 +799,11 @@ function main() {
     debug = runDebug(inventory);
   }
 
-  const tasks = routeTasks(target.node, debug);
+  // Аудит design-registry — независимо от выбранной цели: design drift это
+  // проектный сигнал, а не свойство одного узла.
+  const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
+
+  const tasks = routeTasks(target.node, debug, designRegistry);
   const ready = debug.green;
   const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
 
@@ -604,7 +813,7 @@ function main() {
   saveState(state);
 
   // Пишем отчёт-артефакт.
-  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner });
+  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner, designRegistry });
   try { fs.writeFileSync(REPORT_FILE, report); } catch { /* best effort */ }
 
   if (args.json) {
@@ -613,6 +822,8 @@ function main() {
                 risk, canAutoFix: autoFixable, suggestedOwner },
       debug: { green: debug.green, results: debug.results.map((r) => ({ id: r.id, ok: r.ok })) },
       fixesApplied, tasks, iterations, ready, mergeGate: ready ? 'READY' : 'NEEDS-ROLES',
+      designRegistry: { ok: designRegistry.ok, skipped: designRegistry.skipped,
+                        gaps: designRegistry.gaps, notes: designRegistry.notes, summary: designRegistry.summary },
       report: rel(REPORT_FILE),
     }, null, 2));
   } else {
@@ -622,6 +833,9 @@ function main() {
     console.log(`Риск:    ${risk}   Авто-фикс: ${autoFixable ? 'да (safe)' : 'нет → роли'}   Владелец: ${suggestedOwner}`);
     console.log(`Дебаг:   ${debug.results.filter((r) => r.ok).length}/${debug.results.length} PASS`
       + (debug.green ? '  (зелёный)' : `  (падает: ${debug.failures.map((f) => f.id).join(', ')})`));
+    console.log(`Drift:   ${designRegistry.skipped ? 'SKIPPED (' + (designRegistry.reason || 'реестр не прочитан') + ')'
+      : designRegistry.ok ? 'CLEAN' : designRegistry.gaps.length + ' gap(s) — ' + designRegistry.gaps.map((g) => g.code).join(', ')}`
+      + (designRegistry.summary && designRegistry.summary.manualInteraction ? `  (manual notes: ${designRegistry.summary.manualInteraction})` : ''));
     if (fixesApplied.length) console.log(`Фиксы:   ${fixesApplied.join('; ')}`);
     const grouped = groupByRole(tasks);
     console.log(`\nЗадачи по ролям:`);
