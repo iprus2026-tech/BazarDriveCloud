@@ -479,7 +479,9 @@ body {
 }
 .composer__body {
   flex: 1; min-height: 0; overflow-y: auto;
-  padding: 4px var(--pad) 0;
+  /* keep a little clearance above the in-flow footer (the .bd-scroll
+     --scroll-pb is overridden here, so set the bottom inset explicitly) */
+  padding: 4px var(--pad) 16px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
@@ -1119,6 +1121,10 @@ body {
   margin-bottom: 10px;
 }
 .composer__error svg { flex-shrink: 0; }
+/* Composer alerts (.composer__error, .bd-alert notes) set display:flex, which
+   beats the bare UA [hidden] rule — without this reset the empty error card and
+   prefill/role notes render visible on load. Mirrors .screen--respond. */
+.screen--composer [hidden] { display: none !important; }
 
 /* ── Preview area ────────────────────────────────────────── */
 .composer__preview-area {

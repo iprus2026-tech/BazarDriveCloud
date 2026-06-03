@@ -18,12 +18,20 @@ const POST_TYPES = [
 // BD-ROLE-01 — Composer intent vocabulary. External `?type=` values (used by
 // role-aware create links such as /new?type=driver_offer) map onto the
 // internal chip keys above so the create-flow stays role-aware without
-// leaking chip naming into URLs.
+// leaking chip naming into URLs. Direct chip-key aliases (trip/passenger/…)
+// and the passenger synonyms (request/companion) are accepted too, so deep
+// links and smoke checks like /new?type=passenger land on the right tab.
+// Anything unknown stays unmapped (→ role default), so the whitelist holds.
 const INTENT_TO_TYPE = {
   passenger_request: 'passenger',
   driver_offer:      'trip',
   marketplace:       'marketplace',
   service:           'service',
+  trip:              'trip',
+  passenger:         'passenger',
+  announcement:      'announcement',
+  request:           'passenger',
+  companion:         'passenger',
 };
 
 // Read a recognised `?type=` intent from the current hash, mapped to an
