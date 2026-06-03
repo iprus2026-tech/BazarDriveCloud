@@ -115,6 +115,13 @@ expect('responses detects a live active trip via findActiveRide()',
   /findActiveRide\s*\(/.test(responsesBody));
 expect('handoff detection covers ACCEPTED and IN_PROGRESS order status',
   /'ACCEPTED'/.test(responsesBody) && /'IN_PROGRESS'/.test(responsesBody));
+// A linked terminal ride (COMPLETED / CANCELED / NO_SHOW) must suppress the
+// handoff even when the order status still reads ACCEPTED / IN_PROGRESS, so a
+// finished/canceled trip never re-renders the accepted-driver card.
+expect('detection flags a linked terminal ride (COMPLETED, CANCELED, NO_SHOW)',
+  /rideTerminal[\s\S]*?RIDE_STATUS\.COMPLETED[\s\S]*?RIDE_STATUS\.CANCELED[\s\S]*?RIDE_STATUS\.NO_SHOW/.test(responsesBody));
+expect('a linked terminal ride forces isAccepted false (order-status fallback gated by !rideTerminal)',
+  /isAccepted\s*=\s*!!canonicalOrder\s*&&\s*!rideTerminal\s*&&/.test(responsesBody));
 expect('isAccepted overrides the URL state on the offer/list derivations',
   /!isAccepted\s*&&/.test(responsesBody));
 expect('accepted state renders renderAcceptedDriver instead of the empty search',

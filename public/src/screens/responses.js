@@ -814,17 +814,20 @@ export default function responses() {
   // or the passenger selected one) there is a live active trip at
   // `trip_${orderId}` and the screen must never show the empty search. Detect
   // it from the seeded active ride (strongest proof) OR the canonical order
-  // status, excluding terminal rides so a finished trip never re-renders as
-  // "accepted" (mirrors findLatestHandedOffOrderTripId in mock_api.js).
+  // status. A linked terminal ride (COMPLETED / CANCELED / NO_SHOW) is the
+  // authoritative signal that the trip is over, so it suppresses the handoff
+  // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
+  // status fallback only applies when there is no linked terminal ride.
   const handoffTripId = request.orderId ? `trip_${request.orderId}` : '';
   const handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
   const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
   const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
-  const rideLive = !!handoffRide
-    && handoffRide.status !== RIDE_STATUS.COMPLETED
-    && handoffRide.status !== RIDE_STATUS.CANCELED
-    && handoffRide.status !== RIDE_STATUS.NO_SHOW;
-  const isAccepted = !!canonicalOrder && (rideLive || orderHandedOff);
+  const rideTerminal = !!handoffRide
+    && (handoffRide.status === RIDE_STATUS.COMPLETED
+      || handoffRide.status === RIDE_STATUS.CANCELED
+      || handoffRide.status === RIDE_STATUS.NO_SHOW);
+  const rideLive = !!handoffRide && !rideTerminal;
+  const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
   const effectiveState = isAccepted ? 'accepted' : state;
 
   const isAllDeclined = !isAccepted && state === 'all-declined';
