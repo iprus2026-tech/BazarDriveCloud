@@ -214,14 +214,28 @@ function isTouched(nodeId, touchedSet) {
   return touchedSet.has(normalizeId(nodeId));
 }
 
-// Есть ли незакоммиченные изменения ОТСЛЕЖИВАЕМЫХ файлов (staged/unstaged/untracked).
-// git status --porcelain по умолчанию не показывает ignored — поэтому отчёт и курсор
-// рутины (git-ignored) сюда не попадают. Пусто → дерево чистое, коммитить нечего;
+// Чистая проверка porcelain-вывода: есть ли изменения ОТСЛЕЖИВАЕМЫХ файлов.
+// Untracked-строки («?? …») игнорируются — посторонние/скретч-файлы не делают
+// узел «грязным». Дублирует флаг --untracked-files=no (пояс + подтяжки) и делает
+// порог dirty юнит-тестируемым в selfTest без обращения к git.
+function porcelainHasTrackedChanges(porcelain) {
+  return String(porcelain)
+    .split('\n')
+    .map((l) => l.replace(/\s+$/, ''))
+    .filter((l) => l.length > 0)
+    .some((l) => !l.startsWith('??'));
+}
+
+// Есть ли незакоммиченные изменения ОТСЛЕЖИВАЕМЫХ файлов (staged/unstaged).
+// --untracked-files=no: untracked-файлы НЕ учитываются — иначе READY_DIRTY шумел бы
+// от посторонних скретч-файлов в рабочем дереве. git-ignored отчёт и курсор рутины
+// тоже не в счёт (porcelain их не печатает). Пусто → дерево чистое, коммитить нечего;
 // иначе → есть что коммитить. Ошибка git (нет репозитория) → считаем дерево чистым.
 function workingTreeDirty() {
   try {
-    const out = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-    return out.split('\n').some((l) => l.trim().length > 0);
+    const out = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'],
+      { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    return porcelainHasTrackedChanges(out);
   } catch { return false; }
 }
 
@@ -943,6 +957,20 @@ function selfTest() {
     fail('не зелёный → NEEDS_ROLES независимо от dirty');
   if (computeReadiness(false, false).readiness !== 'NEEDS_ROLES')
     fail('не зелёный (clean) → NEEDS_ROLES');
+
+  // ── P2: dirty считается по tracked-файлам — untracked НЕ делает узел «грязным» ──
+  // (соответствует git status --porcelain --untracked-files=no; здесь проверяем
+  // чистый разбор porcelain без обращения к git).
+  if (porcelainHasTrackedChanges('?? scratch.txt\n?? notes.log\n'))
+    fail('untracked-only porcelain не должен считаться dirty');
+  if (porcelainHasTrackedChanges(''))
+    fail('пустой porcelain (чистое дерево) не должен считаться dirty');
+  if (!porcelainHasTrackedChanges(' M scripts/dispatcher.mjs\n'))
+    fail('изменённый tracked-файл должен считаться dirty');
+  if (!porcelainHasTrackedChanges('A  scripts/new.mjs\n'))
+    fail('staged tracked-файл должен считаться dirty');
+  if (!porcelainHasTrackedChanges('?? scratch.txt\n M scripts/dispatcher.mjs\n'))
+    fail('смешанный (untracked + tracked) должен считаться dirty по tracked-части');
 
   console.log('Dispatcher selftest passed.');
 }
