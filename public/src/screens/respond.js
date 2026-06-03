@@ -605,6 +605,17 @@ function renderPassengerRide(root, post) {
 
     const responseId = `resp_${post.id}`;
     const tripId     = String(post.id);
+    // BD-RESPOND-ORDER-LINK-01 — when the answered post is a canonical ride
+    // order (a Feed projection of bazardrive.ride_orders.v1, tagged
+    // canonical:'ride_order' with an orderId), additively pin the canonical
+    // orderId + marker on the stored response so a future /responses read-side
+    // can resolve real responses back to the same ride order. Legacy/seed feed
+    // posts carry no orderId, so canonicalLink stays empty ({}) and their
+    // stored response is byte-for-byte unchanged. Reference only — respond
+    // never mutates the canonical store (no createRideOrder/acceptOrder/…).
+    const canonicalLink = (post.canonical === 'ride_order' && post.orderId)
+      ? { orderId: String(post.orderId), canonical: 'ride_order' }
+      : {};
     // We persist both ids on the response because downstream screens key
     // off different things:
     //   requestId — the originating passenger publication / заявка
@@ -619,6 +630,7 @@ function renderPassengerRide(root, post) {
       kind:         'passenger_response',
       tripId,
       requestId:    post.id,
+      ...canonicalLink,
       driverPrice:  priceNum,
       pickupTiming: selectedTiming,
       message,
