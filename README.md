@@ -249,6 +249,7 @@ Workflow `.github/workflows/pages.yml` деплоит `public/` как стат�
 ## Документация как источник правды
 
 - `docs/screen-contracts.md` - текущая карта экранов, маршрутов, storage ownership и acceptance boundary.
+- `docs/screen-map.md` - схема экранов (existing / planned) и Mermaid-схемы пользовательских путей и статусов поездки.
 - `docs/flow-contracts.md` - end-to-end passenger → driver flow, включая current route inventory.
 - `docs/active-ride-plan.md` - текущий контракт Active Ride, статусы и Mapbox boundary.
 - `ROADMAP.md` - фазовая карта, где real backend и real Mapbox остаются будущими фазами.
