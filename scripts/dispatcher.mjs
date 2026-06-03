@@ -117,6 +117,9 @@ Merge gate: READY != auto-merge — финальный gate всегда за Gi
 // ---------------------------------------------------------------------------
 function rel(p) { return path.relative(ROOT, p); }
 function exists(p) { try { fs.accessSync(p); return true; } catch { return false; } }
+// Путь существует И это именно файл (не директория). accessSync пропускал бы и
+// папки — для design-registry artifact/export/file нужна именно file-семантика.
+function isFile(p) { try { return fs.statSync(p).isFile(); } catch { return false; } }
 // Нормализация id пути: Windows backslash → POSIX slash, чтобы классификация
 // риска и дедуп проб не зависели от разделителя путей ОС.
 function normalizeId(id) { return String(id).replace(/\\/g, '/'); }
@@ -416,16 +419,27 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
   const renderGates = Array.isArray(registry && registry.renderGates) ? registry.renderGates : [];
   const screens = Array.isArray(registry && registry.screens) ? registry.screens : [];
 
-  // #1/#2 — поля artifact (PDF) и standaloneExport (HTML) обязательны: пустое/
-  // отсутствующее поле — расхождение; заполненное, но без файла на диске — тоже.
+  // #2 — структурный минимум: реестр без render-gate'ов или без экранов невалиден
+  // (даже {} не должен быть ok). Дальнейшие проверки идут по тому, что есть.
+  if (renderGates.length === 0)
+    gap('MISSING_RENDER_GATES', '(registry)', 'renderGates отсутствует, не массив или пуст');
+  if (screens.length === 0)
+    gap('MISSING_SCREENS', '(registry)', 'screens отсутствует, не массив или пуст');
+
+  // #1(art)/#4/#5 — у каждого render-gate: artifact (PDF), standaloneExport (HTML)
+  // и непустой sections. Поле обязательно; путь обязан указывать на реальный ФАЙЛ
+  // (не директорию) — fileExists несёт isFile-семантику.
   for (const g of renderGates) {
     const gid = (g && g.id) || '(no id)';
     const artifact = g && g.artifact ? String(g.artifact).trim() : '';
     if (!artifact) gap('MISSING_ARTIFACT', gid, 'поле artifact отсутствует или пусто');
-    else if (!fileExists(artifact)) gap('MISSING_ARTIFACT', gid, `render-gate artifact отсутствует: ${artifact}`);
+    else if (!fileExists(artifact)) gap('MISSING_ARTIFACT', gid, `render-gate artifact не найден как файл: ${artifact}`);
     const standaloneExport = g && g.standaloneExport ? String(g.standaloneExport).trim() : '';
     if (!standaloneExport) gap('MISSING_EXPORT', gid, 'поле standaloneExport отсутствует или пусто');
-    else if (!fileExists(standaloneExport)) gap('MISSING_EXPORT', gid, `standaloneExport отсутствует: ${standaloneExport}`);
+    else if (!fileExists(standaloneExport)) gap('MISSING_EXPORT', gid, `standaloneExport не найден как файл: ${standaloneExport}`);
+    // #4 — sections обязателен и непуст: gate с 0 секций нельзя считать CLEAN.
+    if (!(Array.isArray(g && g.sections) && g.sections.length > 0))
+      gap('MISSING_SECTIONS', gid, 'sections отсутствует, не массив или пуст');
   }
 
   const gateIds = new Set(renderGates.map((g) => g && g.id).filter(Boolean));
@@ -435,13 +449,16 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
   for (const s of screens) {
     const sid = (s && s.id) || '(no id)';
 
-    // #3 — файл экрана должен существовать.
-    if (s && s.file && !fileExists(s.file))
-      gap('MISSING_SCREEN_FILE', sid, `файл экрана отсутствует: ${s.file}`);
+    // #1 — файл экрана: поле обязательно; путь обязан быть реальным ФАЙЛОМ (не
+    // папкой и не несуществующим путём).
+    const file = s && s.file ? String(s.file).trim() : '';
+    if (!file) gap('MISSING_SCREEN_FILE', sid, 'поле file отсутствует или пусто');
+    else if (!fileExists(file)) gap('MISSING_SCREEN_FILE', sid, `файл экрана не найден как файл: ${file}`);
 
-    // #5 — renderGate должен ссылаться на существующий renderGates[].id.
-    if (s && s.renderGate && !gateIds.has(s.renderGate))
-      gap('BAD_RENDER_GATE', sid, `renderGate «${s.renderGate}» не найден среди renderGates[].id`);
+    // #3 — экран обязан называть render-gate; ссылка обязана существовать.
+    const renderGate = s && s.renderGate ? String(s.renderGate).trim() : '';
+    if (!renderGate) gap('MISSING_RENDER_GATE', sid, 'поле renderGate отсутствует или пусто');
+    else if (!gateIds.has(renderGate)) gap('BAD_RENDER_GATE', sid, `renderGate «${renderGate}» не найден среди renderGates[].id`);
 
     // #4/#7 — маршрут (база до «?») должен быть зарегистрирован в app.js.
     // Записи manual-interaction не требуют прямого routable-state: вместо
@@ -523,7 +540,8 @@ function validateDesignRegistry(registryFile) {
   const appFile = path.join(ROOT, 'public', 'src', 'app.js');
   try { routes = readRegisteredRoutes(fs.readFileSync(appFile, 'utf8')); }
   catch { /* app.js нет — все маршруты окажутся незарегистрированными (расхождение) */ }
-  const fileExists = (relPath) => exists(path.join(ROOT, relPath));
+  // isFile-семантика: artifact/export/file должны быть реальными файлами, не папками.
+  const fileExists = (relPath) => isFile(path.join(ROOT, relPath));
   return auditDesignRegistry(registry, { routes, fileExists });
 }
 
@@ -796,6 +814,41 @@ function selfTest() {
     fail('ожидались ровно две непокрытые секции (RG-1::OrphanSec, RG-2::Shared), получено ' + uncovered.length);
   if (!uncovered.some((g) => g.id === 'RG-2' && /Shared/.test(g.detail)))
     fail('секция Shared в RG-2 должна быть непокрыта, даже если покрыта в RG-1 (покрытие по renderGate)');
+
+  // (c) Структурный минимум: пустой {} реестр НЕ должен быть ok.
+  const emptyReg = auditDesignRegistry({}, { routes: new Set(), fileExists: () => false });
+  if (emptyReg.ok) fail('пустой реестр {} не должен быть ok');
+  if (!emptyReg.gaps.some((g) => g.code === 'MISSING_RENDER_GATES')) fail('{} должен давать MISSING_RENDER_GATES');
+  if (!emptyReg.gaps.some((g) => g.code === 'MISSING_SCREENS')) fail('{} должен давать MISSING_SCREENS');
+
+  // (d) Обязательные поля file / renderGate / sections.
+  const sparse = auditDesignRegistry({
+    renderGates: [{ id: 'RG-NOSEC', artifact: 'exists/only.js', standaloneExport: 'exists/only.js' }],
+    screens: [
+      { id: 'S-NOFILE', route: '/ok', renderGate: 'RG-NOSEC' },
+      { id: 'S-NORG',   route: '/ok', file: 'exists/only.js' },
+    ],
+  }, { routes: new Set(['/ok']), fileExists: (p) => p === 'exists/only.js' });
+  if (sparse.ok) fail('реестр с пропущенными обязательными полями не должен быть ok');
+  if (!sparse.gaps.some((g) => g.code === 'MISSING_SECTIONS' && g.id === 'RG-NOSEC'))
+    fail('render-gate без sections должен давать MISSING_SECTIONS');
+  if (!sparse.gaps.some((g) => g.code === 'MISSING_SCREEN_FILE' && g.id === 'S-NOFILE'))
+    fail('экран без file должен давать MISSING_SCREEN_FILE');
+  if (!sparse.gaps.some((g) => (g.code === 'MISSING_RENDER_GATE' || g.code === 'BAD_RENDER_GATE') && g.id === 'S-NORG'))
+    fail('экран без renderGate должен давать MISSING_RENDER_GATE/BAD_RENDER_GATE');
+
+  // (e) isFile-семантика (#5): реальный файл — да; директория и несуществующий — нет.
+  if (!isFile(path.join(ROOT, 'scripts', 'check.mjs'))) fail('isFile должен принимать реальный файл');
+  if (isFile(path.join(ROOT, 'docs'))) fail('isFile не должен принимать директорию за файл');
+  if (isFile(path.join(ROOT, 'no-such-file-xyz.js'))) fail('isFile не должен принимать несуществующий путь');
+  // Директория, поданная как screens[].file, должна давать MISSING_SCREEN_FILE
+  // (через ту же isFile-семантику, что и продакшен-обёртка validateDesignRegistry).
+  const dirReg = auditDesignRegistry({
+    renderGates: [{ id: 'RG-D', artifact: 'exists/only.js', standaloneExport: 'exists/only.js', sections: ['cover', 'Sec'] }],
+    screens: [{ id: 'S-DIR', route: '/ok', file: 'docs', renderGate: 'RG-D', section: 'Sec' }],
+  }, { routes: new Set(['/ok']), fileExists: (p) => isFile(path.join(ROOT, p)) });
+  if (!dirReg.gaps.some((g) => g.code === 'MISSING_SCREEN_FILE' && g.id === 'S-DIR'))
+    fail('директория в screens[].file должна давать MISSING_SCREEN_FILE');
 
   // readRegisteredRoutes — парсит register('/path', loader) в множество маршрутов.
   const sampleRoutes = readRegisteredRoutes("register('/feed', feed);\nregister( \"/profile\" , profile )");
