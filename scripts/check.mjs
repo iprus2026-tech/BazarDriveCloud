@@ -181,6 +181,21 @@ if (exists(driverMapAcceptHandoffSmoke)) {
   }
 }
 
+// BD-RIDE-ORDER-UNIFY-GUARD-01 — static regression guard for the unified ride
+// order model (#238): canonical store ownership, feed projection, Composer
+// passenger_request, CREATED-only nearby list, shared canonical accept path,
+// accepted/terminal drop-out, active-ride status sync mapping, and the legacy
+// seed-post demo contour staying separate.
+const rideOrderUnifySmoke = path.join(root, 'scripts', 'smoke-ride-order-unify.mjs');
+if (exists(rideOrderUnifySmoke)) {
+  try {
+    execFileSync(process.execPath, [rideOrderUnifySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-order-unify.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {
