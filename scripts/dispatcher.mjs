@@ -121,6 +121,17 @@ function exists(p) { try { fs.accessSync(p); return true; } catch { return false
 // риска и дедуп проб не зависели от разделителя путей ОС.
 function normalizeId(id) { return String(id).replace(/\\/g, '/'); }
 
+// Абсолютный --target → repo-relative путь, чтобы абсолютная цель попадала в
+// инвентарь и в special-case (docs/design-registry.json), а не падала в дефолт
+// 'module'. Цель вне репозитория возвращается без изменений.
+function toRepoRelative(p) {
+  if (!p) return p;
+  const abs = path.isAbsolute(p) ? p : path.resolve(ROOT, p);
+  const relPath = path.relative(ROOT, abs);
+  if (!relPath || relPath.startsWith('..') || path.isAbsolute(relPath)) return p;
+  return relPath;
+}
+
 function listFiles(dir, exts, { recursive = true } = {}) {
   const out = [];
   if (!exists(dir)) return out;
@@ -228,10 +239,11 @@ function saveState(state) {
 
 function selectTarget(inventory, debug, forced, state) {
   if (forced) {
-    const f = normalizeId(forced);
+    const relForced = toRepoRelative(forced);
+    const f = normalizeId(relForced);
     const hit = inventory.find((n) => normalizeId(n.id) === f || normalizeId(n.id).endsWith(f));
     if (hit) return { node: hit, reason: 'forced via --target' };
-    return { node: { id: forced, file: path.join(ROOT, forced), kind: classify(forced), hint: 'forced' },
+    return { node: { id: relForced, file: path.resolve(ROOT, relForced), kind: classify(relForced), hint: 'forced' },
              reason: 'forced via --target (вне инвентаря)' };
   }
   if (debug.implicated.length) {
@@ -507,6 +519,12 @@ function selfTest() {
                         ['docs/design-registry.json', 'design-registry'],
                         ['public/src/screens/feed.js', 'screen'], ['public/src/state.js', 'module']])
     if (classify(p) !== k) fail(`classify(${p}) ожидался ${k}, получено ${classify(p)}`);
+  // Абсолютный --target нормализуется в repo-relative и сохраняет kind.
+  const absRegistry = path.join(ROOT, 'docs', 'design-registry.json');
+  if (toRepoRelative(absRegistry) !== 'docs' + path.sep + 'design-registry.json')
+    fail(`toRepoRelative(absolute) ожидался repo-relative, получено ${toRepoRelative(absRegistry)}`);
+  if (classify(toRepoRelative(absRegistry)) !== 'design-registry')
+    fail('абсолютный путь design-registry должен классифицироваться как design-registry после нормализации');
 
   // Risk-граница: HIGH/MEDIUM узлы НЕ должны быть авто-фиксимыми.
   for (const id of ['public/src/screens/feed.js', 'public/src/router.js', 'public/src/state.js',

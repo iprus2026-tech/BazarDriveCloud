@@ -107,24 +107,16 @@
     {
       "id": "BD-RESPOND-01",
       "title": "Respond (offer)",
-      "route": "/respond",
+      "route": "/respond?postId=trip-2",
       "file": "public/src/screens/respond.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Confirm"
     },
     {
-      "id": "BD-RESPONSES-01",
-      "title": "Responses",
+      "id": "BD-FLOW-INBOX-01",
+      "title": "PassengerResponsesInbox",
       "route": "/responses",
       "file": "public/src/screens/responses.js",
-      "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "section": "Confirm"
-    },
-    {
-      "id": "BD-INBOX-01",
-      "title": "Inbox",
-      "route": "/inbox",
-      "file": "public/src/screens/inbox.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Inbox"
     },
@@ -135,7 +127,8 @@
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Safety",
-      "state": "safety"
+      "interaction": "manual-interaction",
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
     },
     {
       "id": "BD-RIDE-P-SAFETY-01",
@@ -144,43 +137,40 @@
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Safety",
-      "state": "safety"
+      "interaction": "manual-interaction",
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
     },
     {
       "id": "BD-RIDE-D-CANCEL-01",
       "title": "Driver Cancel",
-      "route": "/active-ride?role=driver",
+      "route": "/active-ride?role=driver&status=CANCELED",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "section": "Cancel",
-      "state": "cancel"
+      "section": "Cancel"
     },
     {
       "id": "BD-RIDE-P-CANCEL-01",
       "title": "Passenger Cancel",
-      "route": "/active-ride?role=passenger",
+      "route": "/active-ride?role=passenger&status=CANCELED",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "section": "Cancel",
-      "state": "cancel"
+      "section": "Cancel"
     },
     {
       "id": "BD-RIDE-D-COMPLETE-01",
       "title": "Driver Ride Complete",
-      "route": "/active-ride?role=driver",
+      "route": "/active-ride?role=driver&status=COMPLETED",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "section": "Ride Complete",
-      "state": "completed"
+      "section": "Ride Complete"
     },
     {
       "id": "BD-RIDE-P-COMPLETE-01",
       "title": "Passenger Ride Complete",
-      "route": "/active-ride?role=passenger",
+      "route": "/active-ride?role=passenger&status=COMPLETED",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "section": "Ride Complete",
-      "state": "completed"
+      "section": "Ride Complete"
     }
   ]
 }
