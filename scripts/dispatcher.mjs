@@ -41,6 +41,13 @@ const ROOT = path.resolve(__dirname, '..');
 const STATE_FILE = path.join(__dirname, '.dispatcher-state.json');
 const REPORT_FILE = path.join(ROOT, 'docs', 'dispatcher-report.md');
 
+// Сгенерированные/служебные артефакты самой рутины — это НЕ узлы проекта.
+// Исключаются из инвентаря, чтобы отчёт не выбирал сам себя целью (self-referential no-op).
+const GENERATED_DOC_ARTIFACTS = new Set([
+  'docs/dispatcher-report.md',
+  'docs/dispatcher-report.example.md',
+]);
+
 // ---------------------------------------------------------------------------
 // Роли диспетчера. Каждая цель распределяется владельцу (owner) и, при нужде,
 // вспомогательным ролям. Это и есть «распределяет задачи между клауд код /
@@ -101,7 +108,8 @@ function printHelp() {
                       пробелы, финальный перевод строки) и ТОЛЬКО по LOW-риск
                       узлам (docs). HIGH/MEDIUM узлы и структурные дефекты
                       авто-фиксу не подлежат — уходят в роли (NEEDS-ROLES).
-  --json              машиночитаемый вывод (target/risk/canAutoFix/tasks/mergeGate).
+  --json              машиночитаемый вывод (target/risk/canAutoFix/tasks/readiness/
+                      commitNeeded/dirty/noActionNeeded/mergeGate).
   --target <путь>     форсировать цель вместо само-выбора.
   --max N             предел итераций фикс-цикла (по умолчанию 3).
   --selftest          самопроверка рутины и risk-границ (для check.mjs), без мутаций.
@@ -152,7 +160,7 @@ function listFiles(dir, exts, { recursive = true } = {}) {
 
 function buildInventory() {
   const nodes = [];
-  const add = (file, kind, hint) => nodes.push({ id: rel(file), file, kind, hint });
+  const add = (file, kind, hint) => nodes.push({ id: normalizeId(rel(file)), file, kind, hint });
 
   for (const f of listFiles(path.join(ROOT, 'public', 'src', 'screens'), ['.js']))
     add(f, 'screen', 'render + кнопки экрана');
@@ -169,8 +177,10 @@ function buildInventory() {
     if (path.basename(f).startsWith('smoke-') || path.basename(f) === 'check.mjs')
       add(f, 'smoke', 'регрессионный инвариант');
   }
-  for (const f of listFiles(path.join(ROOT, 'docs'), ['.md']))
+  for (const f of listFiles(path.join(ROOT, 'docs'), ['.md'])) {
+    if (GENERATED_DOC_ARTIFACTS.has(normalizeId(rel(f)))) continue; // отчёт рутины — не узел проекта
     add(f, 'doc', 'контракт/аудит');
+  }
   // design-registry — структурный JSON-реестр render-gate секций. Из docs/
   // обычный обход берёт только .md, поэтому регистрируем его отдельным узлом.
   const designRegistry = path.join(ROOT, 'docs', 'design-registry.json');
@@ -190,9 +200,29 @@ function recentlyTouched() {
         .toString().split('\n').map((s) => s.trim()).filter(Boolean);
     } catch { return []; }
   };
-  for (const f of safe(['diff', '--name-only', 'HEAD~1', 'HEAD'])) set.add(f);
-  for (const f of safe(['status', '--porcelain'])) set.add(f.replace(/^.. /, '').trim());
+  // git всегда печатает POSIX-разделители; нормализуем явно, чтобы матчинг с
+  // инвентарём (тоже нормализованным) не зависел от ОС.
+  for (const f of safe(['diff', '--name-only', 'HEAD~1', 'HEAD'])) set.add(normalizeId(f));
+  for (const f of safe(['status', '--porcelain'])) set.add(normalizeId(f.replace(/^.. /, '').trim()));
   return set;
+}
+
+// Матч узла против множества «недавно тронутых». Нормализуем разделитель пути с
+// ОБЕИХ сторон: git печатает «/», а id инвентаря на Windows исторически приходил
+// с «\» — из-за этого приоритет «недавно изменён» был фактически мёртв на Windows.
+function isTouched(nodeId, touchedSet) {
+  return touchedSet.has(normalizeId(nodeId));
+}
+
+// Есть ли незакоммиченные изменения ОТСЛЕЖИВАЕМЫХ файлов (staged/unstaged/untracked).
+// git status --porcelain по умолчанию не показывает ignored — поэтому отчёт и курсор
+// рутины (git-ignored) сюда не попадают. Пусто → дерево чистое, коммитить нечего;
+// иначе → есть что коммитить. Ошибка git (нет репозитория) → считаем дерево чистым.
+function workingTreeDirty() {
+  try {
+    const out = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    return out.split('\n').some((l) => l.trim().length > 0);
+  } catch { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +284,7 @@ function selectTarget(inventory, debug, forced, state) {
     if (hit) return { node: hit, reason: 'падает проверка/smoke — дебаг-приоритет' };
   }
   const touched = recentlyTouched();
-  const touchedNode = inventory.find((n) => touched.has(n.id) && !state.history.slice(-3).includes(n.id));
+  const touchedNode = inventory.find((n) => isTouched(n.id, touched) && !state.history.slice(-3).includes(n.id));
   if (touchedNode) return { node: touchedNode, reason: 'недавно изменён в git' };
 
   const idx = state.cursor % inventory.length;
@@ -305,6 +335,20 @@ function classifyRisk(node) {
 function canAutoFix(node) {
   if (normalizeId(node.id) === 'docs/dispatcher-report.md') return false;
   return classifyRisk(node) === 'LOW';
+}
+
+// ---------------------------------------------------------------------------
+// Тройная семантика готовности. Разводит «узел зелёный» и «есть что коммитить» —
+// чтобы READY на чистом дереве не читался как «надо коммитить».
+//   NEEDS_ROLES — узел не зелёный: остались задачи по ролям, merge gate закрыт.
+//   READY_DIRTY — узел зелёный И есть незакоммиченные tracked-изменения → commitNeeded.
+//   READY_CLEAN — узел зелёный И дерево чистое → noActionNeeded (коммитить нечего).
+// Чистая функция (green, dirty) → состояние: тестируется в selfTest без git.
+// ---------------------------------------------------------------------------
+function computeReadiness(green, dirty) {
+  if (!green) return { readiness: 'NEEDS_ROLES', commitNeeded: false, noActionNeeded: false };
+  if (dirty)  return { readiness: 'READY_DIRTY', commitNeeded: true,  noActionNeeded: false };
+  return { readiness: 'READY_CLEAN', commitNeeded: false, noActionNeeded: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -555,9 +599,9 @@ function groupByRole(tasks) {
 }
 
 function buildReport(ctx) {
-  const { target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner, designRegistry } = ctx;
+  const { target, debug, fixesApplied, tasks, iterations, green, readiness, commitNeeded,
+          noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry } = ctx;
   const date = new Date().toISOString().slice(0, 10);
-  const mergeGate = ready ? 'READY' : 'NEEDS-ROLES';
   const grouped = groupByRole(tasks);
   const lines = [];
 
@@ -580,7 +624,10 @@ function buildReport(ctx) {
   lines.push(`Can auto-fix     ${autoFixable ? 'yes (safe hygiene only)' : 'no — delegated to roles'}`);
   lines.push(`Suggested owner  ${suggestedOwner}`);
   lines.push(`Iterations       ${iterations}`);
-  lines.push(`Merge gate       ${mergeGate}`);
+  lines.push(`Merge gate       ${readiness}`);
+  lines.push(`Commit needed    ${commitNeeded ? 'yes — node green with uncommitted tracked changes'
+    : green ? 'no — working tree clean, nothing to commit'
+            : 'no — node not green (resolve role tasks first)'}`);
   lines.push('```');
   lines.push('');
 
@@ -677,9 +724,12 @@ function buildReport(ctx) {
   // 5. Что должен сделать следующий PR?
   lines.push('## 5. Что следующий PR должен сделать');
   lines.push('');
-  const nextSteps = ready
-    ? [`Узел «${target.node.id}» зелёный — PR можно рассматривать; GitHub проводит merge gate.`]
-    : tasks.filter((t) => t.role !== 'GITHUB').map((t) => `(${t.roleLabel}) ${t.task}`);
+  const nextSteps =
+    readiness === 'READY_CLEAN'
+      ? [`Узел «${target.node.id}» зелёный, изменений нет — действий не требуется (no action needed), коммитить нечего.`]
+    : readiness === 'READY_DIRTY'
+      ? [`Узел «${target.node.id}» зелёный; есть незакоммиченные tracked-изменения — оформить commit/PR. GitHub проводит merge gate.`]
+      : tasks.filter((t) => t.role !== 'GITHUB').map((t) => `(${t.roleLabel}) ${t.task}`);
   lines.push('```text');
   for (const s of nextSteps) lines.push('- ' + s);
   lines.push('```');
@@ -689,9 +739,12 @@ function buildReport(ctx) {
   lines.push('## Merge gate');
   lines.push('');
   lines.push('```text');
-  lines.push(ready
-    ? 'READY — узел зелёный, PR можно рассматривать. Это НЕ auto-merge: финальный gate за GitHub.'
-    : 'NEEDS-ROLES — остались задачи по ролям; merge gate держать закрытым до зелёного CI.');
+  lines.push(
+    readiness === 'NEEDS_ROLES'
+      ? 'NEEDS_ROLES — остались задачи по ролям; merge gate держать закрытым до зелёного CI.'
+    : readiness === 'READY_DIRTY'
+      ? 'READY_DIRTY — узел зелёный, есть незакоммиченные изменения, готовые к commit/PR. Это НЕ auto-merge: финальный gate за GitHub.'
+      : 'READY_CLEAN — узел зелёный, изменений нет: действий не требуется, коммитить нечего. Это НЕ auto-merge: финальный gate за GitHub.');
   lines.push('```');
   lines.push('');
   return lines.join('\n');
@@ -861,6 +914,36 @@ function selfTest() {
   for (const dead of ['/trail', '/dead', '/block'])
     if (commentedRoutes.has(dead)) fail('readRegisteredRoutes учёл закомментированный register ' + dead);
 
+  // ── P0: нормализация путей (Windows) ────────────────────────────────────
+  // Все id инвентаря обязаны быть в POSIX-форме (без '\'), иначе матчинг против
+  // git-вывода (всегда '/') ломается на Windows.
+  if (inv.some((n) => n.id.includes('\\')))
+    fail('id инвентаря содержит backslash — пути не нормализованы (POSIX-инвариант)');
+  // isTouched матчит независимо от разделителя ОС с обеих сторон (git «/» vs win «\»).
+  const touchedSet = new Set(['scripts/smoke-foo.mjs', 'docs/x.md']);
+  if (!isTouched('scripts\\smoke-foo.mjs', touchedSet)) fail('isTouched: win-path не сматчился против git POSIX-set');
+  if (!isTouched('scripts/smoke-foo.mjs', touchedSet)) fail('isTouched: posix-path не сматчился');
+  if (isTouched('scripts\\smoke-bar.mjs', touchedSet)) fail('isTouched: несвязанный путь не должен матчиться');
+
+  // ── P0: генерируемые артефакты рутины исключены из инвентаря ─────────────
+  if (inv.some((n) => n.id === 'docs/dispatcher-report.md'))
+    fail('docs/dispatcher-report.md не должен попадать в инвентарь (self-referential no-op)');
+  if (inv.some((n) => n.id === 'docs/dispatcher-report.example.md'))
+    fail('docs/dispatcher-report.example.md не должен попадать в инвентарь');
+
+  // ── P0: тройная READY-семантика (зелёный ≠ есть что коммитить) ───────────
+  const rClean = computeReadiness(true, false);
+  if (rClean.readiness !== 'READY_CLEAN' || rClean.commitNeeded || !rClean.noActionNeeded)
+    fail('green+clean → READY_CLEAN / commitNeeded=false / noActionNeeded=true');
+  const rDirty = computeReadiness(true, true);
+  if (rDirty.readiness !== 'READY_DIRTY' || !rDirty.commitNeeded || rDirty.noActionNeeded)
+    fail('green+dirty → READY_DIRTY / commitNeeded=true / noActionNeeded=false');
+  const rNeeds = computeReadiness(false, true);
+  if (rNeeds.readiness !== 'NEEDS_ROLES' || rNeeds.commitNeeded || rNeeds.noActionNeeded)
+    fail('не зелёный → NEEDS_ROLES независимо от dirty');
+  if (computeReadiness(false, false).readiness !== 'NEEDS_ROLES')
+    fail('не зелёный (clean) → NEEDS_ROLES');
+
   console.log('Dispatcher selftest passed.');
 }
 
@@ -903,9 +986,13 @@ function main() {
   const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
 
   const tasks = routeTasks(target.node, debug, designRegistry);
-  // READY учитывает и design drift: зелёных проверок недостаточно, реестр обязан
-  // быть валиден (ok) и прочитан (не skipped), иначе merge gate = NEEDS-ROLES.
-  const ready = debug.green && designRegistry.ok && !designRegistry.skipped;
+  // «Зелёный» учитывает и design drift: зелёных проверок недостаточно, реестр обязан
+  // быть валиден (ok) и прочитан (не skipped). READY-семантика затем разводит зелёный
+  // на READY_CLEAN (дерево чистое, делать нечего) и READY_DIRTY (есть незакоммиченные
+  // tracked-изменения). dirty считаем по tracked-файлам — git-ignored отчёт/курсор не в счёт.
+  const green = debug.green && designRegistry.ok && !designRegistry.skipped;
+  const dirty = workingTreeDirty();
+  const { readiness, commitNeeded, noActionNeeded } = computeReadiness(green, dirty);
   const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
 
   // Обновляем курсор/историю само-выбора.
@@ -914,18 +1001,24 @@ function main() {
   saveState(state);
 
   // Пишем отчёт-артефакт.
-  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, ready, risk, autoFixable, suggestedOwner, designRegistry });
+  const report = buildReport({ target, debug, fixesApplied, tasks, iterations, green, readiness,
+    commitNeeded, noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry });
   try { fs.writeFileSync(REPORT_FILE, report); } catch { /* best effort */ }
+
+  // Путь отчёта в выводе — тоже POSIX-форма, чтобы консоль/JSON были консистентны с id узлов.
+  const reportRel = normalizeId(rel(REPORT_FILE));
 
   if (args.json) {
     console.log(JSON.stringify({
       target: { id: target.node.id, kind: target.node.kind, reason: target.reason,
                 risk, canAutoFix: autoFixable, suggestedOwner },
       debug: { green: debug.green, results: debug.results.map((r) => ({ id: r.id, ok: r.ok })) },
-      fixesApplied, tasks, iterations, ready, mergeGate: ready ? 'READY' : 'NEEDS-ROLES',
+      fixesApplied, tasks, iterations,
+      ready: green, dirty, commitNeeded, noActionNeeded, readiness,
+      mergeGate: green ? 'READY' : 'NEEDS-ROLES',
       designRegistry: { ok: designRegistry.ok, skipped: designRegistry.skipped,
                         gaps: designRegistry.gaps, notes: designRegistry.notes, summary: designRegistry.summary },
-      report: rel(REPORT_FILE),
+      report: reportRel,
     }, null, 2));
   } else {
     console.log(`\n=== BazarDrive Dispatcher ===`);
@@ -946,8 +1039,14 @@ function main() {
       console.log(`  • ${ROLES[role].label}:`);
       for (const t of items) console.log(`      - ${t}`);
     }
-    console.log(`\nОтчёт:   ${rel(REPORT_FILE)}`);
-    console.log(`Статус:  ${ready ? 'READY — можно фиксировать (commit)' : 'NEEDS-ROLES — merge gate закрыт'}\n`);
+    console.log(`\nОтчёт:   ${reportRel}`);
+    const statusLine =
+      readiness === 'NEEDS_ROLES'
+        ? 'NEEDS_ROLES — merge gate закрыт (остались задачи по ролям)'
+      : readiness === 'READY_DIRTY'
+        ? 'READY_DIRTY — узел зелёный, есть незакоммиченные tracked-изменения (готовить commit/PR)'
+        : 'READY_CLEAN — no action needed, nothing to commit';
+    console.log(`Статус:  ${statusLine}\n`);
   }
 
   // Не валим вызов из-за NEEDS-ROLES: рутина — оркестратор, а не gate.
