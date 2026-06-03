@@ -192,6 +192,18 @@ if (exists(inboxSmoke)) {
   }
 }
 
+// BD-CHAT-HANDOFF-01 — static regression smoke for the chat → trip-confirmation
+// → active-ride → driver-handoff chain.
+const chatHandoffSmoke = path.join(root, 'scripts', 'smoke-chat-handoff.mjs');
+if (exists(chatHandoffSmoke)) {
+  try {
+    execFileSync(process.execPath, [chatHandoffSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-chat-handoff.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
