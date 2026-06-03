@@ -64,6 +64,19 @@ PASS  scripts/smoke-lifecycle.mjs
 (пропущено — узел не LOW-риск, авто-фикс запрещён)
 ```
 
+## Design registry / Design drift
+
+```text
+Registry      docs/design-registry.json
+Render gates  1   Screens 18   Sections 9/9 covered   Manual notes 2
+Status        CLEAN
+```
+
+Manual-interaction notes (не расхождение — справочно):
+
+- BD-RIDE-D-SAFETY-01 — Safety: No query route renders the safety sheet; open it via the shield control inside active ride.
+- BD-RIDE-P-SAFETY-01 — Safety: No query route renders the safety sheet; open it via the shield control inside active ride.
+
 ## 4. Кто чинит (распределение по ролям)
 
 ### Claude Code — _логика, JS, баги, поведение, smoke-фиксы_
