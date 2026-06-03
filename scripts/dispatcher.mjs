@@ -62,6 +62,7 @@ const NODE_KINDS = {
   shell:    { owner: 'CLOUD_DESIGN', assist: ['CLAUDE_CODE'], desc: 'оболочка index.html + кнопки/tabbar/FAB' },
   smoke:    { owner: 'CODEX', assist: ['CLAUDE_CODE'],        desc: 'smoke/CI-проверка' },
   doc:      { owner: 'CHATGPT', assist: [],                   desc: 'документ-контракт' },
+  'design-registry': { owner: 'CHATGPT', assist: ['CLOUD_DESIGN', 'CLAUDE_CODE'], desc: 'реестр render-gate секций и экранов (docs/design-registry.json)' },
   workflow: { owner: 'GITHUB', assist: [],                    desc: 'GitHub Actions workflow' },
 };
 
@@ -156,6 +157,10 @@ function buildInventory() {
   }
   for (const f of listFiles(path.join(ROOT, 'docs'), ['.md']))
     add(f, 'doc', 'контракт/аудит');
+  // design-registry — структурный JSON-реестр render-gate секций. Из docs/
+  // обычный обход берёт только .md, поэтому регистрируем его отдельным узлом.
+  const designRegistry = path.join(ROOT, 'docs', 'design-registry.json');
+  if (exists(designRegistry)) add(designRegistry, 'design-registry', 'реестр render-gate секций и экранов');
   for (const f of listFiles(path.join(ROOT, '.github', 'workflows'), ['.yml', '.yaml'], { recursive: false }))
     add(f, 'workflow', 'CI/деплой');
 
@@ -243,6 +248,7 @@ function selectTarget(inventory, debug, forced, state) {
 
 function classify(relPath) {
   const p = normalizeId(relPath);
+  if (p === 'docs/design-registry.json') return 'design-registry';
   if (p.endsWith('.css')) return 'style';
   if (p.endsWith('index.html')) return 'shell';
   if (p.endsWith('.md')) return 'doc';
@@ -267,6 +273,9 @@ function classifyRisk(node) {
   if (id.startsWith('public/src/')) return 'HIGH';
   if (id === 'public/index.html' || id === 'public/sw.js') return 'HIGH';
   // MEDIUM — инструментальный и визуальный слой + ключевые проектные доки.
+  // design-registry — структурный контракт: правки только осознанные, без
+  // слепой авто-гигиены (поэтому MEDIUM, а не LOW как обычные docs/*).
+  if (id === 'docs/design-registry.json') return 'MEDIUM';
   if (id.startsWith('public/styles/')) return 'MEDIUM';
   if (id.startsWith('scripts/')) return 'MEDIUM';
   if (id.startsWith('.github/')) return 'MEDIUM';
@@ -483,6 +492,10 @@ function selfTest() {
   if (!inv.length) fail('инвентарь пуст');
   if (!inv.some((n) => n.kind === 'screen')) fail('не найдено ни одного экрана');
   if (!inv.some((n) => n.kind === 'smoke')) fail('не найдено ни одной smoke-проверки');
+  // design-registry — если файл существует, он обязан быть в инвентаре своим узлом.
+  const drPath = path.join(ROOT, 'docs', 'design-registry.json');
+  if (exists(drPath) && !inv.some((n) => n.kind === 'design-registry'))
+    fail('docs/design-registry.json существует, но не зарегистрирован узлом design-registry');
   // routeTasks на «зелёном» дебаге обязан вернуть владельца и merge gate.
   const sample = inv.find((n) => n.kind === 'screen');
   const tasks = routeTasks(sample, { failures: [], green: true });
@@ -491,6 +504,7 @@ function selfTest() {
   // classify покрывает все типы.
   for (const [p, k] of [['public/styles/cloud.css', 'style'], ['public/index.html', 'shell'],
                         ['docs/x.md', 'doc'], ['scripts/smoke-x.mjs', 'smoke'],
+                        ['docs/design-registry.json', 'design-registry'],
                         ['public/src/screens/feed.js', 'screen'], ['public/src/state.js', 'module']])
     if (classify(p) !== k) fail(`classify(${p}) ожидался ${k}, получено ${classify(p)}`);
 
@@ -507,7 +521,7 @@ function selfTest() {
     if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH (win-path)`);
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (win-path public)`);
   }
-  for (const id of ['scripts/check.mjs', 'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md'])
+  for (const id of ['scripts/check.mjs', 'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md', 'docs/design-registry.json'])
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (MEDIUM-риск)`);
   if (canAutoFix({ id: 'docs/dispatcher-report.md' })) fail('генерируемый отчёт не должен быть авто-фиксимым');
   if (!canAutoFix({ id: 'docs/flow-contracts.md' })) fail('обычный docs/*.md (LOW) должен быть авто-фиксимым');

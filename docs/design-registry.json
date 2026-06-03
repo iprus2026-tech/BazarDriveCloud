@@ -65,6 +65,22 @@
       "section": "Map Flow"
     },
     {
+      "id": "BD-DRIVER-02",
+      "title": "DriverMap",
+      "route": "/driver-map",
+      "file": "public/src/screens/driver_map.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-MAP-05",
+      "title": "OrderMapDraft",
+      "route": "/order-map-draft",
+      "file": "public/src/screens/order_map_draft.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
       "id": "BD-RIDE-D-02",
       "title": "Driver Active Ride",
       "route": "/active-ride?role=driver",
