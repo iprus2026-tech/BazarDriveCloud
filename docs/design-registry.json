@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "updatedAt": "2026-06-03",
+  "source": "Claude Design",
+  "renderGates": [
+    {
+      "id": "BD-RENDER-GATES-2026-06-03",
+      "title": "BazarDrive render gates comprehensive print",
+      "artifact": "docs/design-renders/bazar-drive-render-gates-2026-06-03.pdf",
+      "standaloneExport": "docs/design-exports/bazar-drive-prototype-standalone-2026-06-03.html",
+      "sections": [
+        "cover",
+        "Feed",
+        "Profile",
+        "Map Flow",
+        "Active Ride",
+        "Confirm",
+        "Safety",
+        "Cancel",
+        "Inbox",
+        "Ride Complete"
+      ],
+      "notes": "Comprehensive render-gate export from Claude Design. PDF is the visual audit artifact; standalone HTML is the archived interactive export."
+    }
+  ],
+  "screens": [
+    {
+      "id": "BD-FEED-01",
+      "title": "Feed V2",
+      "route": "/feed",
+      "file": "public/src/screens/feed.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Feed"
+    },
+    {
+      "id": "BD-PROFILE-01",
+      "title": "Profile V2",
+      "route": "/profile",
+      "file": "public/src/screens/profile.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Profile"
+    },
+    {
+      "id": "BD-MAP-01",
+      "title": "MapHome",
+      "route": "/map",
+      "file": "public/src/screens/map.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-MAP-03",
+      "title": "RoutePicker",
+      "route": "/route-picker",
+      "file": "public/src/screens/route_picker.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-MAP-04",
+      "title": "RoutePreview",
+      "route": "/route-preview",
+      "file": "public/src/screens/route_preview.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-DRIVER-02",
+      "title": "DriverMap",
+      "route": "/driver-map",
+      "file": "public/src/screens/driver_map.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-MAP-05",
+      "title": "OrderMapDraft",
+      "route": "/order-map-draft",
+      "file": "public/src/screens/order_map_draft.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Map Flow"
+    },
+    {
+      "id": "BD-RIDE-D-02",
+      "title": "Driver Active Ride",
+      "route": "/active-ride?role=driver",
+      "file": "public/src/screens/active_ride.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Active Ride"
+    },
+    {
+      "id": "BD-RIDE-P-01",
+      "title": "Passenger Active Ride",
+      "route": "/active-ride?role=passenger",
+      "file": "public/src/screens/active_ride_passenger.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Active Ride"
+    },
+    {
+      "id": "BD-CONFIRM-01",
+      "title": "Trip Confirmation Handoff",
+      "route": "/trip-confirmation",
+      "file": "public/src/screens/trip_confirmation.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Confirm"
+    },
+    {
+      "id": "BD-RESPOND-01",
+      "title": "Respond (offer)",
+      "route": "/respond?postId=trip-2",
+      "file": "public/src/screens/respond.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Confirm"
+    },
+    {
+      "id": "BD-FLOW-INBOX-01",
+      "title": "PassengerResponsesInbox",
+      "route": "/responses",
+      "file": "public/src/screens/responses.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Inbox"
+    },
+    {
+      "id": "BD-RIDE-D-SAFETY-01",
+      "title": "Driver Safety",
+      "route": "/active-ride?role=driver",
+      "file": "public/src/screens/active_ride.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Safety",
+      "interaction": "manual-interaction",
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
+    },
+    {
+      "id": "BD-RIDE-P-SAFETY-01",
+      "title": "Passenger Safety",
+      "route": "/active-ride?role=passenger",
+      "file": "public/src/screens/active_ride_passenger.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Safety",
+      "interaction": "manual-interaction",
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
+    },
+    {
+      "id": "BD-RIDE-D-CANCEL-01",
+      "title": "Driver Cancel",
+      "route": "/active-ride?role=driver&status=CANCELED",
+      "file": "public/src/screens/active_ride.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Cancel"
+    },
+    {
+      "id": "BD-RIDE-P-CANCEL-01",
+      "title": "Passenger Cancel",
+      "route": "/active-ride?role=passenger&status=CANCELED",
+      "file": "public/src/screens/active_ride_passenger.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Cancel"
+    },
+    {
+      "id": "BD-RIDE-D-COMPLETE-01",
+      "title": "Driver Ride Complete",
+      "route": "/active-ride?role=driver&status=COMPLETED",
+      "file": "public/src/screens/active_ride.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Ride Complete"
+    },
+    {
+      "id": "BD-RIDE-P-COMPLETE-01",
+      "title": "Passenger Ride Complete",
+      "route": "/active-ride?role=passenger&status=COMPLETED",
+      "file": "public/src/screens/active_ride_passenger.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Ride Complete"
+    }
+  ]
+}
