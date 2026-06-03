@@ -466,6 +466,76 @@ function renderEmptyState() {
   `;
 }
 
+// BD-DRIVER-MAP-X-15 — accepted-driver handoff card. Rendered in place of the
+// empty search once the linked order has an active trip. Reads the driver-seeded
+// (or passenger-selected) active ride record, falling back to the request when a
+// field is absent, and routes into the passenger active ride. Classes only — no
+// inline style (check.mjs forbids style= / .style writes in public/src).
+function renderAcceptedDriver(ride, request) {
+  const driver    = ride && typeof ride.driver  === 'object' && ride.driver  ? ride.driver  : {};
+  const vehicle   = ride && typeof ride.vehicle === 'object' && ride.vehicle ? ride.vehicle : {};
+  const rideRoute = ride && typeof ride.route   === 'object' && ride.route   ? ride.route   : {};
+  const rideOrder = ride && typeof ride.order   === 'object' && ride.order   ? ride.order   : {};
+  const rideStats = ride && typeof ride.ride    === 'object' && ride.ride    ? ride.ride    : {};
+
+  const name = String(driver.name || 'Водитель').trim() || 'Водитель';
+  const initials = String(driver.initials || name.charAt(0).toUpperCase() || 'В').trim();
+  const tone = String(driver.avatarTone || 'mint').trim() || 'mint';
+  const rating = String(driver.rating || '').trim();
+  const carLine = [vehicle.model, vehicle.color, vehicle.plate]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean)
+    .join(' · ');
+  const eta = String(rideOrder.pickupEta || rideRoute.etaToPickup || '').trim();
+  const price = String(rideStats.price || rideOrder.offerPrice || request.price || '').trim();
+
+  const ratingBlock = rating
+    ? `<span class="responses__driver-rating">${STAR_SVG}<span>${escapeHtml(rating)}</span></span>`
+    : '';
+  const carBlock = carLine
+    ? `<div class="responses__driver-car">${escapeHtml(carLine)}</div>`
+    : '';
+  const metaParts = [];
+  if (eta) metaParts.push(`<span>Подача ${escapeHtml(eta)}</span>`);
+  if (price) metaParts.push(`<span>${escapeHtml(price)}</span>`);
+  const metaBlock = metaParts.length
+    ? `<div class="responses__driver-meta">${metaParts.join('<span class="responses__driver-dot" aria-hidden="true">·</span>')}</div>`
+    : '';
+
+  return `
+    <div class="responses__empty">
+      <div class="responses__empty-icon" aria-hidden="true">
+        <span class="responses__empty-glow"></span>
+        <span class="responses__empty-icon-inner">${CHECK_SVG}</span>
+      </div>
+      <h2 class="responses__empty-title">Водитель найден</h2>
+      <p class="responses__empty-body">
+        Водитель принял ваш заказ и готов выехать. Откройте поездку, чтобы видеть статус и маршрут.
+      </p>
+    </div>
+    <div class="responses__drivers responses__drivers--single">
+      <article class="responses__driver responses__driver--best">
+        <div class="responses__driver-head">
+          <div class="responses__avatar responses__avatar--${escapeHtml(tone)}" aria-hidden="true">${escapeHtml(initials)}</div>
+          <div class="responses__driver-info">
+            <div class="responses__driver-line">
+              <span class="responses__driver-name">${escapeHtml(name)}</span>
+              ${ratingBlock}
+            </div>
+            ${carBlock}
+            ${metaBlock}
+          </div>
+        </div>
+        <div class="responses__selected-panel" role="status" aria-live="polite">
+          <span class="responses__selected-icon" aria-hidden="true">${CHECK_SVG}</span>
+          <span class="responses__selected-text">Водитель принял заказ · маршрут готов</span>
+          <button type="button" class="responses__selected-open" data-action="open-active-ride">Открыть поездку</button>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
 function renderAllDeclinedNotice() {
   return `
     <div class="responses__notice responses__notice--danger" role="status">
@@ -594,6 +664,14 @@ const RESPONSE_STATUS = {
     subtitle: 'Водитель выбран',
     chip: 'Водитель выбран',
     tone: 'selected',
+  },
+  // BD-DRIVER-MAP-X-15 — once the linked order is accepted (driver took it
+  // via DriverMap, or the passenger selected a driver) the screen must show
+  // the accepted-driver handoff instead of the empty "Ищем водителей" search.
+  accepted: {
+    subtitle: 'Водитель найден',
+    chip: 'Водитель найден',
+    tone: 'active',
   },
   'all-declined': {
     subtitle: 'Отклики отклонены',
@@ -731,9 +809,30 @@ export default function responses() {
   const state = getRouteParam('state') || 'empty';
   const drivers = buildDrivers(request);
 
-  const isAllDeclined = state === 'all-declined';
-  const isOffer = state === 'offer';
-  const isList = state === 'list' || state === 'selected' || isAllDeclined;
+  // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
+  // once the linked order is actually accepted (a driver took it on DriverMap,
+  // or the passenger selected one) there is a live active trip at
+  // `trip_${orderId}` and the screen must never show the empty search. Detect
+  // it from the seeded active ride (strongest proof) OR the canonical order
+  // status. A linked terminal ride (COMPLETED / CANCELED / NO_SHOW) is the
+  // authoritative signal that the trip is over, so it suppresses the handoff
+  // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
+  // status fallback only applies when there is no linked terminal ride.
+  const handoffTripId = request.orderId ? `trip_${request.orderId}` : '';
+  const handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
+  const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
+  const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
+  const rideTerminal = !!handoffRide
+    && (handoffRide.status === RIDE_STATUS.COMPLETED
+      || handoffRide.status === RIDE_STATUS.CANCELED
+      || handoffRide.status === RIDE_STATUS.NO_SHOW);
+  const rideLive = !!handoffRide && !rideTerminal;
+  const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
+  const effectiveState = isAccepted ? 'accepted' : state;
+
+  const isAllDeclined = !isAccepted && state === 'all-declined';
+  const isOffer = !isAccepted && state === 'offer';
+  const isList = !isAccepted && (state === 'list' || state === 'selected' || isAllDeclined);
   const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
   const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
   const selectedDriverId = selectedDriver ? selectedDriver.id : null;
@@ -742,12 +841,12 @@ export default function responses() {
   root.className = 'screen screen--responses';
   root.dataset.postId = postId;
   root.dataset.orderId = request.orderId;
-  root.dataset.state = state;
+  root.dataset.state = effectiveState;
   root.dataset.source = canonicalOrder ? 'ride-order' : (request.isLegacyMock ? 'legacy-post' : 'mock');
 
-  const status = responseStatus(state);
+  const status = responseStatus(effectiveState);
   const subTitle = status.subtitle;
-  const footer = (isList || isOffer) ? '' : `
+  const footer = (isList || isOffer || isAccepted) ? '' : `
     <div class="responses__footer responses__footer--in-scroll">
       <button type="button" class="bd-btn primary responses__cta" id="responses-check">
         <span>Проверить отклики</span>
@@ -800,7 +899,9 @@ export default function responses() {
           </button>
         </div>
       </div>
-      ${isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState())}
+      ${isAccepted
+        ? renderAcceptedDriver(handoffRide, request)
+        : (isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState()))}
       ${footer}
     </div>
 
@@ -892,6 +993,14 @@ export default function responses() {
         toast('Отклонение отклика будет добавлено позже');
       }
     });
+  }
+
+  // BD-DRIVER-MAP-X-15 — accepted-driver handoff CTA. The driversWrap listener
+  // above only binds inside `.responses__drivers` driver cards; the accepted
+  // state needs its own handler to open the linked passenger active ride.
+  const openActiveRideBtn = root.querySelector('[data-action="open-active-ride"]');
+  if (openActiveRideBtn && handoffTripId) {
+    openActiveRideBtn.addEventListener('click', () => go(activeRideUrl(handoffTripId)));
   }
 
   if (state === 'selected' && !selectedDriver) {

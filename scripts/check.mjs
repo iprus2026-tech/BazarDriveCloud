@@ -168,6 +168,19 @@ if (exists(passengerActiveRideSmoke)) {
   }
 }
 
+// BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
+// handoff (CREATED → Принять → one active trip → driver active ride → passenger
+// accepted-driver handoff, with no empty search after acceptance).
+const driverMapAcceptHandoffSmoke = path.join(root, 'scripts', 'smoke-driver-map-accept-handoff.mjs');
+if (exists(driverMapAcceptHandoffSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverMapAcceptHandoffSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-map-accept-handoff.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {
