@@ -196,6 +196,23 @@ if (exists(rideOrderUnifySmoke)) {
   }
 }
 
+// BD-RESPOND-ORDER-LINK-GUARD-01 — static guard for the /respond → canonical
+// ride order write-side bridge (#367): /respond additively pins
+// orderId + canonical:'ride_order' on the stored passenger_response for
+// canonical ride-order posts only (legacy/seed posts unchanged), preserves
+// tripId/requestId, keeps persisting via saveResponseToMap into
+// bazardrive.responses.v1, never mutates the canonical ride-order store, and
+// keeps the respond → chat link free of orderId.
+const respondOrderLinkSmoke = path.join(root, 'scripts', 'smoke-respond-order-link.mjs');
+if (exists(respondOrderLinkSmoke)) {
+  try {
+    execFileSync(process.execPath, [respondOrderLinkSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-respond-order-link.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {
