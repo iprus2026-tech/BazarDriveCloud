@@ -30,6 +30,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import {
   findLatestHandedOffOrderTripId,
   updateTripStatus,
+  getReceipt,
   saveDriverReceipt,
 } from '../mock_api.js';
 import activeRidePassenger from './active_ride_passenger.js';
@@ -560,8 +561,15 @@ export default function activeRide() {
     // stored fare / commission / tip / net and never recompute them. The
     // ?state=cash entry stage marks a cash-collected fare; everything else
     // records a non-cash (balance) settlement. commission is stored signed.
+    //
+    // PR #382 (Codex #1) — re-rendering COMPLETED must be idempotent. Reopening
+    // /active-ride?role=driver&status=COMPLETED without ?state=cash would
+    // otherwise re-run saveDriverReceipt() and silently flip an already-saved
+    // cash receipt back to noncash. So the receipt is written only on the FIRST
+    // completion; once one exists for this tripId its whole money payload
+    // (fare/commission/tip/net/paymentMode) is preserved verbatim.
     const paymentMode = earningsState === 'cash' ? 'cash' : 'noncash';
-    const receipt = saveDriverReceipt({
+    const receipt = getReceipt(ride.tripId) || saveDriverReceipt({
       tripId:      ride.tripId,
       completedAt: ride.timestamps?.completedAt || new Date().toISOString(),
       fare:        payload.fare,

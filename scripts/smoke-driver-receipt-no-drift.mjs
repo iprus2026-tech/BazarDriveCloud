@@ -64,9 +64,26 @@ globalThis.localStorage = {
   removeItem: (k) => { store.delete(k); },
   clear: () => store.clear(),
 };
+// Minimal window/document shims so storage_boundary.js (which transitively
+// imports screen modules) can be imported headlessly for the auth-boundary
+// assertion below. Every real DOM access in those modules is lazy.
+globalThis.window = globalThis.window || {
+  location: { hash: '' }, addEventListener() {},
+  matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
+};
+globalThis.document = globalThis.document || {
+  createElement: () => ({
+    style: {}, dataset: {}, classList: { add() {}, remove() {}, toggle() {} },
+    appendChild() {}, addEventListener() {}, setAttribute() {},
+    querySelector: () => null, querySelectorAll: () => [],
+  }),
+  getElementById: () => null, addEventListener() {},
+  querySelector: () => null, querySelectorAll: () => [], body: {},
+};
 
 const api = await import(new URL('../public/src/mock_api.js', import.meta.url).href);
 const history = await import(new URL('../public/src/ride_history.js', import.meta.url).href);
+const boundary = await import(new URL('../public/src/storage_boundary.js', import.meta.url).href);
 
 for (const fn of ['saveDriverReceipt', 'getReceipt', 'listDriverReceipts']) {
   expect(`mock_api exports ${fn}`, typeof api[fn] === 'function');
@@ -122,6 +139,48 @@ store.clear();
 expect('demo receipt 48-321 resolves from the seed', api.getReceipt('48-321')?.net === 1475);
 expect('demo receipt 48-321 still listed', api.listDriverReceipts().some((r) => r.tripId === '48-321'));
 
+// ── 0a. Idempotent COMPLETED rerender preserves cash (PR #382, Codex #1) ──
+// A live cash completion saves a cash receipt. Reopening COMPLETED without
+// ?state=cash recomputes paymentMode='noncash' — but renderCompleted now reads
+// `getReceipt(tripId) || saveDriverReceipt(...)`, so an existing receipt is
+// preserved verbatim and never flipped to noncash. Mirror that exact guard.
+const liveTripId = 'trip_cash_rerender_demo';
+api.saveDriverReceipt({
+  tripId: liveTripId,
+  completedAt: '2026-06-04T10:00:00.000Z',
+  fare: 1540, commission: -185, tip: 120, net: 1475,
+  paymentMode: 'cash', status: 'completed',
+});
+// Rerender guard: the second render computes noncash but must NOT overwrite.
+const recomputedNoncash = {
+  tripId: liveTripId,
+  completedAt: '2026-06-04T10:05:00.000Z',
+  fare: 1540, commission: -185, tip: 120, net: 1475,
+  paymentMode: 'noncash', status: 'completed',
+};
+const preserved = api.getReceipt(liveTripId) || api.saveDriverReceipt(recomputedNoncash);
+expect('cash receipt stays cash after rerender without ?state=cash',
+  preserved && preserved.paymentMode === 'cash');
+expect('idempotent rerender keeps the persisted cash receipt intact',
+  api.getReceipt(liveTripId)?.paymentMode === 'cash');
+
+// ── 0b. Auth boundary clears driver receipts (PR #382, Codex #2) ─────────
+// A persisted receipt must not survive a local logout / session reset.
+api.saveDriverReceipt({
+  tripId: 'trip_boundary_demo',
+  completedAt: '2026-06-04T11:00:00.000Z',
+  fare: 1540, commission: -185, tip: 120, net: 1475,
+  paymentMode: 'noncash', status: 'completed',
+});
+expect('receipt present before the auth boundary clear',
+  api.getReceipt('trip_boundary_demo')?.net === 1475);
+boundary.clearUserScopedStorage();
+expect('clearUserScopedStorage() clears persisted driver receipts',
+  api.getReceipt('trip_boundary_demo') === null);
+expect('clearUserScopedStorage() drops the persisted store entirely',
+  !api.listDriverReceipts().some((r) => r.tripId === 'trip_boundary_demo'));
+store.clear();
+
 // ── 1. Single computation source in the completed flow ───────
 const activeRide = read('../public/src/screens/active_ride.js');
 expect('net is computed once via buildDriverEarningsPayload',
@@ -134,6 +193,8 @@ expect('receipt commission is the signed payload commission',
   /commission:\s*-payload\.commissionAmount/.test(activeRide));
 expect('completed flow records the payment mode',
   /paymentMode/.test(activeRide) && /'cash'/.test(activeRide) && /'noncash'/.test(activeRide));
+expect('COMPLETED rerender is idempotent (getReceipt(tripId) || saveDriverReceipt)',
+  /getReceipt\(ride\.tripId\)\s*\|\|\s*saveDriverReceipt\(/.test(activeRide));
 
 // ── 2. Receipt screen reads + formats only (states C/D/E/F) ──
 const receipt = read('../public/src/screens/trip_receipt.js');
@@ -188,6 +249,13 @@ expect('app registers the /receipt route',
 const sw = read('../public/sw.js');
 expect('sw precaches the trip receipt screen',
   /screens\/trip_receipt\.js/.test(sw));
+
+// ── 6. Auth boundary wiring (PR #382, Codex #2) ──────────────
+const boundarySrc = read('../public/src/storage_boundary.js');
+expect('storage_boundary imports clearDriverReceiptsStore',
+  /import\s*\{[\s\S]*?clearDriverReceiptsStore[\s\S]*?\}\s*from\s*'\.\/mock_api\.js'/.test(boundarySrc));
+expect('clearUserScopedStorage calls clearDriverReceiptsStore()',
+  /clearUserScopedStorage[\s\S]*?clearDriverReceiptsStore\(\)/.test(boundarySrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
