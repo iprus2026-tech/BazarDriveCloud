@@ -3,6 +3,12 @@ import { escapeHtml } from '../util.js';
 import { acceptOrder, getOrderById } from '../mock_api.js';
 import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 
+// BD-RESPOND-ORDER-LINK-02 — read-side store. /respond writes a
+// passenger_response into this keyed map; this screen reads it back to surface
+// real driver responses on the board. Read-only here: never written from
+// /responses (respond.js / chat.js own writes + the user-scoped clear).
+const RESPONSES_KEY = 'bazardrive.responses.v1';
+
 const MOCK_REQUEST = {
   id:          'post_1001',
   orderId:     'order_1001',
@@ -305,6 +311,95 @@ function buildDrivers(request) {
       price: value ? formatRub(value) : fallbackPrice,
     };
   });
+}
+
+// BD-RESPOND-ORDER-LINK-02 — read-side canonical response integration.
+// /respond stores a passenger_response in bazardrive.responses.v1 keyed by
+// resp_<post.id>; for a canonical ride-order post it additively pins
+// orderId + canonical:'ride_order' (BD-RESPOND-ORDER-LINK-01 / #368). Here we
+// read those real responses back for the current canonical order and surface
+// them on the driver board, falling back to MOCK_DRIVERS when none match.
+//
+// Strictly read-only: it parses the keyed store and never writes it. The
+// accept → active-ride handoff (buildPassengerActiveRide) is untouched and
+// still keys on the canonical order, so a real or mock card seed the same trip.
+function loadResponsesForOrder(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return [];
+  try {
+    const raw = localStorage.getItem(RESPONSES_KEY);
+    if (!raw) return [];
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
+    return Object.values(map).filter((r) =>
+      r && typeof r === 'object'
+      && r.kind === 'passenger_response'
+      && String(r.orderId || '') === id);
+  } catch {
+    return [];
+  }
+}
+
+// pickupTiming on the stored response is a coarse enum; map it to the short
+// "Подача" label the card already renders. Unknown / missing → em-dash.
+const PICKUP_TIMING_LABELS = {
+  at_time:   'К времени',
+  earlier:   'Можно раньше',
+  negotiate: 'Договоримся',
+};
+function timingLabel(timing) {
+  return PICKUP_TIMING_LABELS[timing] || '—';
+}
+
+// Map a real passenger_response into the exact card shape renderDriverCard /
+// renderOffer consume. Real fields: price (driverPrice), note (message) and a
+// real responseId (so /chat?responseId resolves the same handoff). The stored
+// response does not capture driver identity, so name/rating/car/plate use
+// neutral, CSS-valid placeholders. EVERY field is filled — escapeHtml turns
+// undefined into the literal "undefined", and each tone must map to a real
+// class (avatar mint/amber/violet, delta same/up/down, eta good/mid/low).
+function mapResponseToDriverCard(response, request, index) {
+  const responseId = String(response.id || `response_${index + 1}`);
+  const value = Number(response.driverPrice);
+  const price = Number.isFinite(value) && value > 0
+    ? formatRub(value)
+    : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
+  const note = typeof response.message === 'string' ? response.message.trim() : '';
+  return {
+    id:         responseId,
+    responseId,
+    name:       'Водитель',
+    initials:   'В',
+    avatarTone: 'mint',
+    rating:     '—',
+    car:        '',
+    carModel:   '',
+    carColor:   '',
+    plate:      '',
+    trips:      '',
+    price,
+    priceDelta: '',
+    priceTone:  'same',
+    eta:        timingLabel(response.pickupTiming),
+    etaTone:    'mid',
+    etaBars:    2,
+    note,
+    isBest:     index === 0,
+  };
+}
+
+// Driver board source of truth. Real canonical responses win when the resolved
+// order has any; otherwise the MOCK_DRIVERS board is preserved unchanged for
+// every fallback path: no orderId, no real response, legacy postId flow, and
+// the fallback/QA request (request.isFallback).
+function buildDriversForOrder(request) {
+  const real = (request && request.orderId && !request.isFallback)
+    ? loadResponsesForOrder(request.orderId)
+    : [];
+  if (real.length) {
+    return real.map((response, index) => mapResponseToDriverCard(response, request, index));
+  }
+  return buildDrivers(request);
 }
 
 function renderEtaBars(active) {
@@ -807,7 +902,7 @@ export default function responses() {
     : (legacyPostId ? requestFromLegacyPost(legacyPostId) : requestFromOrder(null, explicitOrderId));
   const postId = request.legacyPostId || request.orderId || request.id;
   const state = getRouteParam('state') || 'empty';
-  const drivers = buildDrivers(request);
+  const drivers = buildDriversForOrder(request);
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
