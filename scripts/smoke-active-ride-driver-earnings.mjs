@@ -92,6 +92,21 @@ expect('active_ride.js no longer defines the inline sheet helpers',
 expect('ride history is still persisted in renderCompleted',
   /saveRideHistoryEntry\(/.test(screen) && /buildDriverHistoryEntry\(/.test(screen));
 
+// ── G2. Follow-up regressions (Codex review after #378) ──────
+// 1) Dismissing the earnings sheet must leave an exit, not a blank map.
+expect('renderCompleted wires an onClose exit to /driver-map',
+  /onClose:\s*\(\)\s*=>\s*go\('\/driver-map'\)/.test(screen));
+// 2) Completing via the normal flow re-syncs the map shell data-status so the
+//    COMPLETED polish applies without a reload.
+expect('renderSheet re-syncs the map shell data-status without reload',
+  /mapShell\.dataset\.status\s*=\s*ride\.status/.test(screen));
+// 3) History persists the same earnings the sheet displays — sourced from the
+//    payload, with the divergent (8%, no-tip) calc removed entirely.
+expect('history earnings are sourced from the sheet payload (net parity)',
+  /net:\s*payload\.net/.test(screen) && /buildDriverEarningsPayload\(ride\)/.test(screen));
+expect('the divergent calcEarnings helper is gone',
+  !/function\s+calcEarnings\s*\(/.test(screen));
+
 // ── H. Passenger flow untouched ──────────────────────────────
 expect('driver guard still hands non-driver roles to renderPassenger',
   /if\s*\(\s*role\s*!==\s*'driver'\s*\)\s*return\s+renderPassenger\(\)/.test(screen));

@@ -79,13 +79,6 @@ export function formatRub(value) {
   return `${sign}${abs.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₽`;
 }
 
-export function parsePercent(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value > 1 ? value / 100 : value;
-  if (typeof value !== 'string') return 0;
-  const n = Number(value.replace(/\s/g, '').replace(',', '.').replace('%', ''));
-  return Number.isFinite(n) ? n / 100 : 0;
-}
-
 function getHashQuery() {
   const hash = window.location.hash || '';
   const qi = hash.indexOf('?');
@@ -273,25 +266,6 @@ function renderDriverEmpty() {
   return root;
 }
 
-function calcEarnings(ride) {
-  const gross = parseMoney(ride.ride?.price);
-  const commissionRate = parsePercent(ride.order?.commission);
-  const commissionAmount = Math.round(gross * commissionRate);
-  const net = gross - commissionAmount;
-  const previousToday = parseMoney(ride.ride?.todayEarnings);
-  const previousTrips = Number(ride.ride?.tripsToday || 0);
-  return {
-    gross,
-    commissionAmount,
-    net,
-    previousToday,
-    nextToday: previousToday + net,
-    previousTrips,
-    nextTrips: previousTrips + 1,
-    commissionLabel: ride.order?.commission ? String(ride.order.commission) : `${Math.round(commissionRate * 100)}%`,
-  };
-}
-
 // BD-RIDE-D-09 — builds the mock earnings payload for DriverEarningsSheet.
 // Fixed 12% commission + a mock tip so the net equals the noncash balance
 // delta (1 475 ₽). Every value is pre-formatted here so the sheet module
@@ -310,6 +284,14 @@ function buildDriverEarningsPayload(ride) {
     { val: ride.ride?.rating ? String(ride.ride.rating) : '4,92', lbl: 'Рейтинг' },
   ];
   return {
+    // BD-RIDE-D-09 follow-up (Codex #3) — expose the raw numerics so
+    // renderCompleted persists the exact earnings the sheet shows. The sheet
+    // itself only reads the *Label fields below; these are for history parity.
+    fare,
+    commissionRate,
+    commissionAmount,
+    tip,
+    net,
     netLabel: formatRub(net),
     netAria: `${net} рублей`,
     fareLabel: formatRub(fare),
@@ -397,7 +379,12 @@ export default function activeRide() {
   root.className = 'screen screen--active-ride';
   const mapWrap = document.createElement('div');
   mapWrap.className = 'active-ride__map';
-  mapWrap.appendChild(createMapShell({ variant: 'driver', status: ride.status, route: ride.route }));
+  // BD-RIDE-D-09 follow-up (Codex #2) — keep a handle on the map shell so
+  // renderSheet() can re-sync its data-status as ride.status changes. Without
+  // this the COMPLETED polish (hidden car marker, green finish pin) only
+  // applied after a reload, since the shell is created once up front.
+  const mapShell = createMapShell({ variant: 'driver', status: ride.status, route: ride.route });
+  mapWrap.appendChild(mapShell);
   root.appendChild(mapWrap);
 
   const top = document.createElement('div');
@@ -450,6 +437,7 @@ export default function activeRide() {
   function renderSheet() {
     sheet.replaceChildren();
     sheet.dataset.status = ride.status;
+    mapShell.dataset.status = ride.status;
     setMapBanner('');
     if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
     else if (ride.status === RIDE_STATUS.ACCEPTED) renderAccepted();
@@ -559,22 +547,32 @@ export default function activeRide() {
     // completed map shell, replacing the old inline completion card. Ride
     // history is still persisted here exactly as before; only the visible
     // card was swapped for the terminal sheet.
-    const e = calcEarnings(ride);
+    //
+    // BD-RIDE-D-09 follow-up (Codex #3) — history is now derived from the same
+    // payload the sheet renders, so the profile receipt and the sheet never
+    // disagree (net 1 475 ₽, 12% commission + tip). order.commission on the
+    // shared demo ride is never mutated.
+    const payload = buildDriverEarningsPayload(ride);
     const entry = buildDriverHistoryEntry(ride, {
       earnings: {
-        gross: e.gross,
-        commissionAmount: e.commissionAmount,
-        net: e.net,
-        commissionLabel: e.commissionLabel,
+        gross: payload.fare,
+        commissionAmount: payload.commissionAmount,
+        net: payload.net,
+        commissionLabel: payload.commissionPctLabel,
+        tip: payload.tip,
       },
     });
     if (entry) saveRideHistoryEntry(entry);
     // The bottom sheet stays empty so the completed map + chrome read as a
     // calm background; the earnings overlay (mounted on root) is the UI.
     sheet.innerHTML = '';
+    // BD-RIDE-D-09 follow-up (Codex #1) — dismissing the sheet (X / backdrop /
+    // Escape) must leave an exit; without onClose the driver was stranded on a
+    // blank completed map. /driver-map is the online driver's home route.
     openDriverEarningsSheet(root, {
       state: earningsState,
-      payload: buildDriverEarningsPayload(ride),
+      payload,
+      onClose: () => go('/driver-map'),
     });
   }
 
