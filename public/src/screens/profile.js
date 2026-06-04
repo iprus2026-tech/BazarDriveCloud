@@ -1688,22 +1688,28 @@ function driverEntryNetValue(entry) {
   return entry?.fare;
 }
 
+// BD-PROFILE-D-04 — canonical driver-facing payment-mode labels live here once
+// so payout / history / detail surfaces share the exact same wording and cannot
+// drift apart. Mirrors trip_receipt.js#paymentBadgeHtml and
+// active_ride_driver_sheets.js. paymentMode is read straight from the stored
+// receipt — no derivation.
+const PAYMENT_MODE_LABELS = {
+  cash: 'Оплата наличными',
+  noncash: 'Безналичный расчёт',
+};
+
 function receiptPaymentModeLabel(mode) {
-  if (mode === 'cash') return 'Наличными';
-  if (mode === 'noncash') return 'Безналичный расчёт';
-  return '';
+  return PAYMENT_MODE_LABELS[mode] || '';
 }
 
-// BD-PROFILE-D-03 — cash / noncash badge for payout receipt rows. Wording and
-// the cash/noncash split mirror the receipt screen badge
-// (trip_receipt.js#paymentBadgeHtml) so the payout list and the receipt cannot
-// drift. paymentMode is read straight from the stored receipt — no derivation.
+// BD-PROFILE-D-03 — cash / noncash badge for payout receipt rows. Reuses the
+// shared label constant so the payout list and the receipt cannot drift.
 function receiptPaymentBadgeHtml(mode) {
   if (mode === 'cash') {
-    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--cash">Оплата наличными</span>`;
+    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--cash">${PAYMENT_MODE_LABELS.cash}</span>`;
   }
   if (mode === 'noncash') {
-    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--noncash">Безналичный расчёт</span>`;
+    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--noncash">${PAYMENT_MODE_LABELS.noncash}</span>`;
   }
   return '';
 }
