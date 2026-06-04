@@ -16,6 +16,7 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const passenger  = read('../public/src/screens/active_ride_passenger.js');
+const sheets     = read('../public/src/screens/active_ride_passenger_sheets.js');
 const dispatcher = read('../public/src/screens/active_ride.js');
 const rideState  = read('../public/src/ride_state.js');
 
@@ -120,45 +121,81 @@ expect('NO_SHOW branch precedes the unsupported-status fallback',
   idxNoShow !== -1 && idxUnsupported !== -1 && idxNoShow < idxUnsupported,
   `noShow@${idxNoShow} unsupported@${idxUnsupported}`);
 
-// ── C. Cancel sheet ──────────────────────────────────────────
-expect('openPassengerCancelSheet is defined',
-  /function\s+openPassengerCancelSheet\s*\(/.test(passenger));
+// ── C. Cancel sheet (BD-RIDE-P-06 — fresh Cloud Design contract) ──
+// PassengerCancelRideSheet now lives in active_ride_passenger_sheets.js;
+// the passenger screen only wires it in. Reasons, the in-sheet state
+// machine and the new copy are pinned here so a refactor can't silently
+// drop them back to the old two-stage "Точно отменить?" flow.
+expect('openPassengerCancelSheet is defined in the sheets module',
+  /function\s+openPassengerCancelSheet\s*\(/.test(sheets));
 // Reachability: the active-ride render path must wire a user action to
-// openPassengerCancelSheet(...), not just leave a dead helper behind. A
-// future change that removes the cancel button/listener should trip this.
-const cancelCallSites = (passenger.match(/openPassengerCancelSheet\s*\(/g) || []).length;
-expect('openPassengerCancelSheet has a call site beyond its definition',
-  cancelCallSites >= 2, 'occurrences=' + cancelCallSites);
+// openPassengerCancelSheet(...), not just leave a dead helper behind.
 expect('cancel button (#arp-cancel) click wires to openPassengerCancelSheet(...)',
   /#arp-cancel'\)[\s\S]{0,600}addEventListener\(\s*'click'[\s\S]{0,400}openPassengerCancelSheet\s*\(/.test(passenger));
-const cancelReasons = arrayBody(passenger, 'CANCEL_REASONS');
+const cancelReasons = arrayBody(sheets, 'CANCEL_REASONS');
 expect('CANCEL_REASONS array resolved', !!cancelReasons);
-const reasonCount = cancelReasons ? (cancelReasons.match(/\bid:/g) || []).length : 0;
-expect('CANCEL_REASONS has exactly 6 reasons', reasonCount === 6, 'count=' + reasonCount);
-for (const id of ['driver_slow', 'plans_changed', 'other_transport', 'address_error', 'no_contact', 'other']) {
+const cancelReasonCount = cancelReasons ? (cancelReasons.match(/\bid:/g) || []).length : 0;
+expect('CANCEL_REASONS has exactly 5 reasons', cancelReasonCount === 5, 'count=' + cancelReasonCount);
+for (const id of ['changed_mind', 'driver_far', 'address_error', 'other_way', 'other']) {
   expect(`CANCEL_REASONS includes id '${id}'`,
     new RegExp(`id:\\s*'${id}'`).test(cancelReasons || ''));
 }
-// Two-stage confirm: reason select (stage A/B) then "Точно отменить?" (stage C).
-expect('cancel sheet has select stage',
-  /dataset\.stage\s*=\s*'select'/.test(passenger));
-expect('cancel sheet has confirm stage',
-  /dataset\.stage\s*=\s*'confirm'/.test(passenger));
-expect('cancel sheet confirm copy "Точно отменить?" present',
-  passenger.includes('Точно отменить?'));
+// State machine: default → reason_selected → validation_error → loading → canceled.
+for (const stage of ['default', 'reason_selected', 'validation_error', 'loading', 'canceled']) {
+  expect(`cancel sheet knows the '${stage}' stage`,
+    new RegExp(`'${stage}'`).test(sheets));
+}
+expect('cancel sheet actually transitions into loading then the canceled state',
+  /dataset\.stage\s*=\s*'loading'/.test(sheets) && /dataset\.stage\s*=\s*'canceled'/.test(sheets));
+expect('cancel sheet shows the "водитель в пути" rating warning',
+  sheets.includes('Отмена может повлиять на рейтинг'));
+expect('cancel sheet shows the validation copy',
+  sheets.includes('Выберите причину отмены, чтобы продолжить'));
+expect('cancel sheet shows the loading copy "Отменяем…"',
+  sheets.includes('Отменяем…'));
+expect('cancel sheet shows the canceled-state title "Поездка отменена"',
+  sheets.includes('Поездка отменена'));
 
-// ── D. Safety sheet ──────────────────────────────────────────
-expect('openPassengerSafetySheet is defined',
-  /function\s+openPassengerSafetySheet\s*\(/.test(passenger));
-expect('safety sheet exposes SOS button (#arp-safety-sos)',
-  passenger.includes('arp-safety-sos'));
-expect('safety sheet has SOS label', passenger.includes('SOS'));
-const safetyActions = arrayBody(passenger, 'SAFETY_ACTIONS');
+// ── D. Safety sheet (BD-RIDE-P-07 — fresh Cloud Design contract) ──
+// PassengerSafetySheet now lives in the sheets module with a default /
+// report / emergency view machine. Pin the new action set, the report
+// flow (selected → submitted №RPT-4821) and the demo-only emergency view.
+expect('openPassengerSafetySheet is defined in the sheets module',
+  /function\s+openPassengerSafetySheet\s*\(/.test(sheets));
+expect('safety sheet exposes the SOS hold tile (#arp-safety-sos)',
+  sheets.includes('arp-safety-sos'));
+expect('safety sheet has the SOS label', /\bSOS\b/.test(sheets));
+const safetyActions = arrayBody(sheets, 'SAFETY_ACTIONS');
 expect('SAFETY_ACTIONS array resolved', !!safetyActions);
-for (const id of ['share', 'trusted', 'support', 'help']) {
-  expect(`SAFETY_ACTIONS includes row '${id}'`,
+const safetyActionCount = safetyActions ? (safetyActions.match(/\bid:/g) || []).length : 0;
+expect('SAFETY_ACTIONS has exactly 5 actions', safetyActionCount === 5, 'count=' + safetyActionCount);
+for (const id of ['call', 'chat', 'report', 'sos', 'share']) {
+  expect(`SAFETY_ACTIONS includes action '${id}'`,
     new RegExp(`id:\\s*'${id}'`).test(safetyActions || ''));
 }
+const safetyReportReasons = arrayBody(sheets, 'SAFETY_REPORT_REASONS');
+expect('SAFETY_REPORT_REASONS array resolved', !!safetyReportReasons);
+const safetyReasonCount = safetyReportReasons ? (safetyReportReasons.match(/\bid:/g) || []).length : 0;
+expect('SAFETY_REPORT_REASONS has exactly 5 reasons', safetyReasonCount === 5, 'count=' + safetyReasonCount);
+for (const id of ['route_deviation', 'rude', 'car_mismatch', 'unsafe_driving', 'other']) {
+  expect(`SAFETY_REPORT_REASONS includes id '${id}'`,
+    new RegExp(`id:\\s*'${id}'`).test(safetyReportReasons || ''));
+}
+// View machine: default / report / emergency, with a report sub-state.
+for (const view of ['default', 'report', 'emergency']) {
+  expect(`safety sheet knows the '${view}' view`,
+    new RegExp(`dataset\\.view\\s*=\\s*'${view}'`).test(sheets) || new RegExp(`view--${view}`).test(sheets));
+}
+expect('safety report has a selected sub-state',
+  /dataset\.report\s*=\s*'selected'/.test(sheets));
+expect('safety report has a submitted sub-state',
+  /dataset\.report\s*=\s*'submitted'/.test(sheets));
+expect('safety report shows the submitted ticket id RPT-4821',
+  sheets.includes('RPT-4821'));
+expect('safety emergency shows "Позвонить 112"',
+  sheets.includes('Позвонить 112'));
+expect('safety emergency notifies contacts', sheets.includes('Уведомить контакты'));
+expect('safety emergency is demo-only (no real dispatch)', /demo/i.test(sheets));
 
 // ── E. Role isolation / dispatch contract ────────────────────
 // Current, intentional contract: active_ride.js derives the role from the
@@ -175,6 +212,14 @@ expect('dispatcher renders passenger flow for any non-driver role (driver flow o
   /if\s*\(\s*role\s*!==\s*'driver'\s*\)\s*return\s+renderPassenger\(\)/.test(dispatcher));
 expect('renderPassenger() returns activeRidePassenger(...)',
   /return\s+activeRidePassenger\(/.test(dispatcher));
+// BD-RIDE-SHEETS-01 — the sheets live in their own module and are
+// imported into the passenger screen, not redefined inline. This keeps
+// the screen lean and is the seam sections C/D assert against.
+expect('passenger screen imports the sheets from active_ride_passenger_sheets.js',
+  /import\s*\{[^}]*openPassengerSafetySheet[^}]*openPassengerCancelSheet[^}]*\}\s*from\s*'\.\/active_ride_passenger_sheets\.js'/.test(passenger));
+expect('passenger screen does not redefine the sheets inline',
+  !/function\s+openPassengerSafetySheet\s*\(/.test(passenger)
+  && !/function\s+openPassengerCancelSheet\s*\(/.test(passenger));
 // No driver renderers/handlers duplicated into the passenger file. These
 // are specific driver-only identifiers — NOT a broad /Driver/ match, since
 // the passenger file legitimately imports the data-only
