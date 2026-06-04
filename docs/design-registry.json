@@ -177,6 +177,17 @@
       "section": "Ride Complete"
     },
     {
+      "id": "BD-RIDE-D-09",
+      "title": "Driver Earnings / Completion Polish",
+      "route": "/active-ride?role=driver&status=COMPLETED",
+      "file": "public/src/screens/active_ride_driver_sheets.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Ride Complete",
+      "role": "driver",
+      "status": "COMPLETED",
+      "note": "Terminal DriverEarningsSheet over the completed map shell with seven ?state= stages (summary, cash, noncash, shift, loading, closed, empty). Mounted by renderCompleted in active_ride.js. Mock/UI only — fixed 12% commission + mock tip so net equals the balance delta (1 475 ₽); no real payments, balances, push or tax/accounting math."
+    },
+    {
       "id": "BD-RIDE-P-COMPLETE-01",
       "title": "Passenger Ride Complete",
       "route": "/active-ride?role=passenger&status=COMPLETED",
