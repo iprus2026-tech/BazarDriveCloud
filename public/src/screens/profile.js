@@ -2815,8 +2815,13 @@ function renderDriver(root, u) {
     payouts: 'payouts',
     security: 'security', safety: 'security',
   };
+  // Own-property guard: a prototype key (e.g. ?pane=constructor) must resolve to
+  // no pane, never to an inherited Object.prototype value that would be
+  // interpolated into the selector below and could make querySelector throw.
   const paneParam = getHashQuery().get('pane');
-  const resolvedPane = paneParam ? PANE_ALIASES[paneParam] : null;
+  const resolvedPane = (paneParam && Object.hasOwn(PANE_ALIASES, paneParam))
+    ? PANE_ALIASES[paneParam]
+    : null;
   if (resolvedPane) {
     root.querySelector(`.pf2-tab[data-pane="${resolvedPane}"]`)?.click();
   }
