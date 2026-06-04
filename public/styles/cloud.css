@@ -3402,6 +3402,68 @@ body {
   white-space: nowrap;
 }
 
+/* ── Completed-ride payout rows (BD-RIDE-HISTORY-D-01) ─────── */
+.pf2-po-trips {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pf2-po-trip-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.pf2-po-trip-row:hover { background: var(--bg-2); }
+.pf2-po-trip-row:active { background: var(--bg-3); }
+.pf2-po-trip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pf2-po-trip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.pf2-po-trip-name { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.pf2-po-trip-sub  { font-size: 12px; color: var(--text-3); }
+.pf2-po-trip-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.pf2-po-trip-net {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--success);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+.pf2-po-trip-chevron { color: var(--text-3); display: inline-flex; }
+.profile-history__pay {
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+
 /* ── Tax cards ────────────────────────────────────────────── */
 .pf2-po-tax-card {
   background: var(--bg-1);
@@ -12430,4 +12492,220 @@ button.pfp-menu-row:active { opacity: 0.7; }
   background: transparent;
   padding: 9px;
   font-weight: 700;
+}
+
+/* ── Trip receipt screen (BD-RIDE-HISTORY-D-01, issue #381) ─────────────────
+   A closed financial document — not an active-ride cockpit. Calm surface, a
+   single settled receipt card, no map and no live actions. */
+.trip-receipt {
+  background: var(--bg-0);
+  overflow-y: auto;
+}
+.trip-receipt__head {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  padding: 16px 16px 8px;
+}
+.trip-receipt__back {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+.trip-receipt__back:active { background: var(--bg-2); }
+.trip-receipt__doc-kicker {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.trip-receipt__content {
+  padding: 8px 16px 32px;
+}
+.trip-receipt__doc {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  padding: 22px 18px;
+}
+.trip-receipt__doc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.trip-receipt__status-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.12);
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+.trip-receipt__pay-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+.trip-receipt__pay-badge--cash {
+  color: #FACC15;
+  background: rgba(250, 204, 21, 0.12);
+}
+.trip-receipt__pay-badge--noncash {
+  color: #60A5FA;
+  background: rgba(96, 165, 250, 0.12);
+}
+.trip-receipt__hero {
+  text-align: center;
+  padding: 8px 0 20px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 18px;
+}
+.trip-receipt__hero-label {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.trip-receipt__hero-value {
+  margin: 0;
+  font-size: 38px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.trip-receipt__hero-trip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.trip-receipt__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.trip-receipt__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+.trip-receipt__row-label { font-size: 14px; color: var(--text-2); }
+.trip-receipt__row-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.trip-receipt__row-value--neg { color: var(--danger); }
+.trip-receipt__row-value--pos { color: var(--success); }
+.trip-receipt__divider {
+  height: 1px;
+  background: var(--line);
+  margin: 8px 0;
+}
+.trip-receipt__row--total .trip-receipt__row-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.trip-receipt__total {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+}
+.trip-receipt__meta {
+  margin: 0 0 16px;
+  padding: 14px;
+  background: var(--bg-2);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trip-receipt__meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+.trip-receipt__meta-row dt { font-size: 13px; color: var(--text-3); margin: 0; }
+.trip-receipt__meta-row dd { font-size: 13px; color: var(--text-2); margin: 0; text-align: right; }
+.trip-receipt__settle-note {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.trip-receipt__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.trip-receipt__action { width: 100%; }
+.trip-receipt__legal {
+  margin: 16px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* Missing-receipt fallback (state E) */
+.trip-receipt__doc--missing { text-align: center; padding: 32px 20px; }
+.trip-receipt__missing-icon { font-size: 40px; margin-bottom: 12px; }
+.trip-receipt__missing-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.trip-receipt__missing-text {
+  margin: 0 0 22px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Loading / syncing skeleton (state F) */
+.trip-receipt__doc--loading { padding: 22px 18px; }
+.trip-receipt__sk {
+  border-radius: 10px;
+  background: linear-gradient(100deg, var(--bg-2) 30%, var(--bg-3) 50%, var(--bg-2) 70%);
+  background-size: 200% 100%;
+  animation: trip-receipt-shimmer 1.2s ease-in-out infinite;
+  margin-bottom: 12px;
+}
+.trip-receipt__sk--badges { height: 24px; width: 60%; }
+.trip-receipt__sk--hero   { height: 56px; width: 100%; margin: 18px 0 22px; }
+.trip-receipt__sk--row    { height: 18px; width: 100%; }
+.trip-receipt__sk--total  { height: 28px; width: 70%; margin-top: 16px; }
+.trip-receipt__sk-text {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+}
+@keyframes trip-receipt-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trip-receipt__sk { animation: none; }
 }

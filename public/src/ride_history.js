@@ -213,6 +213,10 @@ export function buildDriverHistoryEntry(ride, extras = {}) {
     fare: pickFare(ride),
     distance: pickDistance(ride),
     duration: pickDuration(ride),
+    // BD-RIDE-HISTORY-D-01 — canonical receipt persisted by the completed
+    // driver earnings flow. History rows READ this object (fare / commission /
+    // tip / net / paymentMode) and only format it; they never recalculate.
+    receipt: isPlainObject(extras.receipt) ? { ...extras.receipt } : null,
     earnings: isPlainObject(extras.earnings) ? { ...extras.earnings } : null,
   };
 }

@@ -9,7 +9,7 @@ import {
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { listMyPostsSync } from '../mock_api.js';
+import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
@@ -1400,7 +1400,7 @@ function buildDaySummary(rides) {
   const parts = [];
   if (driverRides.length) {
     const income = driverRides.reduce(
-      (s, r) => s + parseFareNumber(r?.earnings?.net ?? r?.fare), 0
+      (s, r) => s + parseFareNumber(driverEntryNetValue(r)), 0
     );
     const count = driverRides.length;
     const word  = pluralRu(count, 'поездка', 'поездки', 'поездок');
@@ -1502,7 +1502,7 @@ function selectedDayRideRowHtml(ride, index) {
     const when    = formatHistoryTime(getRideCompletedAt(ride));
     const isDriver = ride?.role === 'driver';
     const amountRaw = isDriver
-      ? (ride?.earnings?.net ?? ride?.fare)
+      ? driverEntryNetValue(ride)
       : ride?.fare;
     const amount = formatHistoryFare(amountRaw);
     return `
@@ -1570,6 +1570,29 @@ function historyVehicleText(vehicle) {
   return parts.join(' · ');
 }
 
+// BD-RIDE-HISTORY-D-01 — completed driver rides carry the canonical receipt
+// persisted by the earnings flow. History rows/cards READ this object and only
+// format it; they never recompute fare / commission / tip / net.
+function driverEntryReceipt(entry) {
+  const r = entry && entry.receipt;
+  return (r && typeof r === 'object' && !Array.isArray(r)) ? r : null;
+}
+
+// Single net source for a driver entry: the persisted receipt wins, then the
+// legacy earnings block, then the raw fare. No arithmetic — only selection.
+function driverEntryNetValue(entry) {
+  const receipt = driverEntryReceipt(entry);
+  if (receipt && receipt.net != null) return receipt.net;
+  if (entry?.earnings && entry.earnings.net != null) return entry.earnings.net;
+  return entry?.fare;
+}
+
+function receiptPaymentModeLabel(mode) {
+  if (mode === 'cash') return 'Наличными';
+  if (mode === 'noncash') return 'Безналичный расчёт';
+  return '';
+}
+
 function historyRoleBadgeHtml(role) {
   if (role === 'driver') {
     return `<span class="bd-badge profile-history__role profile-history__role--driver">Водитель</span>`;
@@ -1619,14 +1642,22 @@ function driverHistoryEntryHtml(entry, index) {
   const pickup    = escapeHtml(entry?.route?.pickupLabel  || '—');
   const dropoff   = escapeHtml(entry?.route?.dropoffLabel || '—');
   const passenger = escapeHtml(entry?.passenger?.name || 'Пассажир');
-  const fare      = formatHistoryFare(entry?.fare);
-  const net       = entry?.earnings && entry.earnings.net != null
-    ? formatHistoryFare(entry.earnings.net) : '';
-  const when      = formatHistoryDate(historyEntryTimestamp(entry));
+  const receipt   = driverEntryReceipt(entry);
+  // BD-RIDE-HISTORY-D-01 — completed row reads the persisted receipt: route,
+  // completedAt, payment mode, breakdown preview (fare / commission / tip) and
+  // net all format stored values only. Falls back to the legacy fields for
+  // older records without a receipt.
+  const fare       = receipt ? formatHistoryFare(receipt.fare) : formatHistoryFare(entry?.fare);
+  const commission = receipt ? formatHistoryFare(receipt.commission) : '';
+  const tip        = receipt ? formatHistoryFare(receipt.tip) : '';
+  const net        = formatHistoryFare(driverEntryNetValue(entry));
+  const payLabel   = receipt ? receiptPaymentModeLabel(receipt.paymentMode) : '';
+  const when       = formatHistoryDate(historyEntryTimestamp(entry));
   return `
     <article class="bd-card-tight profile-history__card profile-history__card--clickable" role="button" tabindex="0" data-history-index="${index}" aria-haspopup="dialog">
       <div class="profile-history__head">
         ${historyRoleBadgeHtml('driver')}
+        ${payLabel ? `<span class="bd-badge profile-history__pay">${escapeHtml(payLabel)}</span>` : ''}
         ${when ? `<span class="profile-history__when profile-history__when--head">${escapeHtml(when)}</span>` : ''}
       </div>
       <p class="profile-history__route">
@@ -1642,6 +1673,16 @@ function driverHistoryEntryHtml(entry, index) {
       <div class="profile-history__meta">
         <span class="profile-history__meta-label">Стоимость</span>
         <span class="profile-history__meta-value">${escapeHtml(fare)}</span>
+      </div>` : ''}
+      ${commission ? `
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Комиссия</span>
+        <span class="profile-history__meta-value">${escapeHtml(commission)}</span>
+      </div>` : ''}
+      ${tip ? `
+      <div class="profile-history__meta">
+        <span class="profile-history__meta-label">Чаевые</span>
+        <span class="profile-history__meta-value">+${escapeHtml(tip)}</span>
       </div>` : ''}
       ${net ? `
       <div class="profile-history__meta profile-history__meta--accent">
@@ -1919,16 +1960,25 @@ function passengerDetailRowsHtml(entry) {
 }
 
 function driverDetailRowsHtml(entry) {
-  const passenger = entry?.passenger?.name || 'Пассажир';
-  const fare      = formatHistoryFare(entry?.fare);
-  const net       = (entry?.earnings && entry.earnings.net != null)
-    ? formatHistoryFare(entry.earnings.net) : '';
-  const distance  = formatHistoryDistance(entry?.distance);
-  const duration  = formatHistoryDuration(entry?.duration);
-  const when      = formatHistoryDate(historyEntryTimestamp(entry));
+  const passenger  = entry?.passenger?.name || 'Пассажир';
+  const receipt    = driverEntryReceipt(entry);
+  // BD-RIDE-HISTORY-D-01 — the detail receipt reads the persisted receipt
+  // object verbatim (fare / commission / tip / net / paymentMode); it never
+  // recalculates. Legacy entries without a receipt keep the prior fields.
+  const fare       = receipt ? formatHistoryFare(receipt.fare) : formatHistoryFare(entry?.fare);
+  const commission = receipt ? formatHistoryFare(receipt.commission) : '';
+  const tip        = receipt ? formatHistoryFare(receipt.tip) : '';
+  const net        = formatHistoryFare(driverEntryNetValue(entry));
+  const payLabel   = receipt ? receiptPaymentModeLabel(receipt.paymentMode) : '';
+  const distance   = formatHistoryDistance(entry?.distance);
+  const duration   = formatHistoryDuration(entry?.duration);
+  const when       = formatHistoryDate(historyEntryTimestamp(entry));
   return [
     detailRowHtml('Пассажир', passenger),
-    detailRowHtml('Стоимость', fare),
+    detailRowHtml('Способ оплаты', payLabel),
+    detailRowHtml('Стоимость поездки', fare),
+    detailRowHtml('Комиссия сервиса', commission),
+    detailRowHtml('Чаевые', tip ? `+${tip}` : ''),
     detailRowHtml('Доход', net, true),
     detailRowHtml('Расстояние', distance),
     detailRowHtml('Время в пути', duration),
@@ -2381,6 +2431,42 @@ function ipPaneHtml(u) {
 //   processing-payout — handled via CSS class on Вывести button
 //   report-generating — handled via CSS class on Сформировать отчёт button
 
+// BD-RIDE-HISTORY-D-01 — Driver payouts: completed-ride rows sourced from the
+// canonical receipt store. Each row shows net straight from receipt.net (no
+// recalculation) and deep-links to the trip receipt at /receipt?tripId=…. The
+// balance / weekly cards above stay demo/static.
+function driverReceiptPayoutSectionHtml() {
+  let receipts = [];
+  try { receipts = listDriverReceipts(); } catch { receipts = []; }
+  if (!Array.isArray(receipts) || !receipts.length) return '';
+  const rows = receipts.map((r) => {
+    const tripId  = String(r.tripId);
+    const when    = formatHistoryDate(r.completedAt);
+    const payLbl  = receiptPaymentModeLabel(r.paymentMode);
+    const sub     = [when, payLbl].filter(Boolean).join(' · ');
+    const net     = formatHistoryFare(r.net);
+    return `
+      <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
+        <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
+        <span class="pf2-po-trip-info">
+          <span class="pf2-po-trip-name">Поездка № ${escapeHtml(tripId)}</span>
+          ${sub ? `<span class="pf2-po-trip-sub">${escapeHtml(sub)}</span>` : ''}
+        </span>
+        <span class="pf2-po-trip-right">
+          <span class="pf2-po-trip-net">${escapeHtml(net)}</span>
+          <span class="pf2-po-trip-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
+        </span>
+      </button>`;
+  }).join('');
+  return `
+    <div class="pf2-po-sect-hdr">
+      <span class="pf2-po-sect-title">Завершённые поездки</span>
+    </div>
+    <div class="pf2-po-trips" id="pf2-po-trips-block">
+      ${rows}
+    </div>`;
+}
+
 function payoutsPaneHtml() {
   const s          = MOCK_PAYOUT_SUMMARY;
   const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
@@ -2489,6 +2575,7 @@ function payoutsPaneHtml() {
         <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
       </div>
     </div>
+    ${driverReceiptPayoutSectionHtml()}
     ${taxCards}
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">Способы вывода</span>
@@ -2567,6 +2654,15 @@ function renderDriver(root, u) {
       if (pane) pane.classList.add('pf2-pane--active');
     });
   });
+
+  // BD-RIDE-HISTORY-D-01 — deep-link to a pane, e.g. /profile?pane=payouts
+  // from the trip receipt's "К выплатам" action. Validated against the known
+  // tab ids so the param can only activate an existing pane.
+  const PANE_IDS = new Set(['overview', 'ip', 'docs', 'payouts', 'security']);
+  const paneParam = getHashQuery().get('pane');
+  if (paneParam && PANE_IDS.has(paneParam)) {
+    root.querySelector(`.pf2-tab[data-pane="${paneParam}"]`)?.click();
+  }
 
   // Overview online toggle — syncs both status cards.
   // Guard: do not allow ON unless driver is line-ready.
@@ -2902,6 +2998,14 @@ function renderDriver(root, u) {
 
   root.querySelector('#pf2-po-history-btn')?.addEventListener('click', () => {
     root.querySelector('#pf2-po-history-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // BD-RIDE-HISTORY-D-01 — a completed-ride payout row opens its trip receipt.
+  root.querySelector('#pf2-po-trips-block')?.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-receipt-trip]');
+    if (!row) return;
+    const tripId = row.dataset.receiptTrip;
+    if (tripId) go(`/receipt?tripId=${encodeURIComponent(tripId)}`);
   });
 
   root.querySelector('#pf2-po-hist-all-btn')?.addEventListener('click', () => {

@@ -30,6 +30,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import {
   findLatestHandedOffOrderTripId,
   updateTripStatus,
+  saveDriverReceipt,
 } from '../mock_api.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
@@ -553,7 +554,28 @@ export default function activeRide() {
     // disagree (net 1 475 ₽, 12% commission + tip). order.commission on the
     // shared demo ride is never mutated.
     const payload = buildDriverEarningsPayload(ride);
+    // BD-RIDE-HISTORY-D-01 (issue #381) — net is computed ONCE here (in
+    // buildDriverEarningsPayload). Persist the canonical receipt object so
+    // ride history, Driver payouts and the /receipt screen can READ the same
+    // stored fare / commission / tip / net and never recompute them. The
+    // ?state=cash entry stage marks a cash-collected fare; everything else
+    // records a non-cash (balance) settlement. commission is stored signed.
+    const paymentMode = earningsState === 'cash' ? 'cash' : 'noncash';
+    const receipt = saveDriverReceipt({
+      tripId:      ride.tripId,
+      completedAt: ride.timestamps?.completedAt || new Date().toISOString(),
+      fare:        payload.fare,
+      commission:  -payload.commissionAmount,
+      tip:         payload.tip,
+      net:         payload.net,
+      paymentMode,
+      status:      'completed',
+    });
     const entry = buildDriverHistoryEntry(ride, {
+      // History reads the persisted receipt — no recalculation. The legacy
+      // earnings block is kept (sourced from the same single payload) so older
+      // calendar/aggregate readers still resolve a net while they migrate.
+      receipt,
       earnings: {
         gross: payload.fare,
         commissionAmount: payload.commissionAmount,
