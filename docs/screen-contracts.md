@@ -326,7 +326,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Main states | NEW_ORDER, ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Accept, arrived, start, complete, cancel sheet, problem sheet, earnings sheet, chat/nav/phone stubs. |
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
-| Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet stays inline in `active_ride.js` with `driver-sheet__*` / `styles/driver_sheets.css`. |
+| Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. |
 
 ### BD-RIDE-D-SHEETS-01 - Driver cancel + problem sheets
 
@@ -334,7 +334,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | Route | Reused inside `/active-ride?role=driver`, no route of its own. |
 | File | `public/src/screens/active_ride_driver_sheets.js` (driver counterpart of `active_ride_passenger_sheets.js`). |
-| Exports | `openDriverCancelSheet`, `openDriverProblemSheet`, `renderDriverCancelSheet`, `renderDriverProblemSheet`, `bindDriverSheetEvents`, `DRIVER_CANCEL_REASON_LABEL_BY_CODE`. |
+| Exports | `openDriverCancelSheet`, `openDriverProblemSheet`, `openDriverEarningsSheet`, `renderDriverCancelSheet`, `renderDriverProblemSheet`, `renderDriverEarningsSheet`, `bindDriverSheetEvents`, `DRIVER_CANCEL_REASON_LABEL_BY_CODE`. |
 | Cancel states | `default → reason_selected → validation_error → loading → canceled`; `other` reveals a custom-reason textarea. Persistence (CANCELED / NO_SHOW) stays in the screen's `onConfirm`; the in-sheet canceled card offers «Вернуться в ленту» / «Закрыть». |
 | Problem states | `default → type_selected → loading → sent`; safety-class types flip a `data-safety` danger visual state; optional comment field; pure UI placeholder — never changes ride status. |
 | Actions | Cancel: select reason, custom reason, confirm. Problem: select type, comment, submit. Both: close / Esc / backdrop (disabled mid-loading and on the terminal card). |

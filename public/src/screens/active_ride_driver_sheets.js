@@ -339,6 +339,9 @@ function bindProblemEvents(overlay, options) {
   const submit = overlay.querySelector('#driver-problem-submit');
 
   typeBtns.forEach((btn) => btn.addEventListener('click', () => {
+    // Once the signal is in flight (loading) or delivered (sent) the type is
+    // frozen — re-selecting must not roll dataset.stage back and unlock the card.
+    if (overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'sent') return;
     selectedType = btn.dataset.value || '';
     typeBtns.forEach((b) => b.setAttribute('aria-checked', b === btn ? 'true' : 'false'));
     overlay.dataset.stage = selectedType ? 'type_selected' : 'default';
@@ -349,6 +352,9 @@ function bindProblemEvents(overlay, options) {
   submit.addEventListener('click', () => {
     if (!selectedType || overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'sent') return;
     overlay.dataset.stage = 'loading';
+    // Belt-and-suspenders: disable inputs so nothing can mutate the in-flight sheet.
+    typeBtns.forEach((btn) => { btn.disabled = true; });
+    submit.disabled = true;
     const message = problemActionNotice(selectedType);
     setTimeout(() => {
       const doneText = overlay.querySelector('#driver-problem-done-text');
