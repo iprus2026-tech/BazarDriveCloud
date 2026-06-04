@@ -131,6 +131,30 @@ expect('driver screen still persists CANCELED via persistDriverCancel',
 expect('driver screen still routes the no-show path to NO_SHOW',
   /RIDE_STATUS\.NO_SHOW/.test(screen) && screen.includes('passenger_no_show'));
 
+// ── H. Problem type stays frozen once the signal is in flight ──
+// Re-selecting a type during loading/sent must NOT roll dataset.stage back to
+// 'type_selected'; that would unlock the in-flight card (backdrop/Esc/re-submit).
+// The guard must live in the type-button click handler itself — the submit
+// handler already references those stages, so a bare source search isn't enough.
+const problemTypeHandler = sheets.match(
+  /typeBtns\.forEach\(\(btn\) => btn\.addEventListener\('click', \(\) => \{([\s\S]*?)\}\)\);/);
+expect('problem-type click handler is resolved', !!problemTypeHandler);
+expect('problem-type click is ignored while stage is loading/sent',
+  !!problemTypeHandler
+  && /dataset\.stage === 'loading'/.test(problemTypeHandler[1])
+  && /dataset\.stage === 'sent'/.test(problemTypeHandler[1]));
+expect('submit freezes the type buttons while loading',
+  /typeBtns\.forEach\(\(btn\) => \{\s*btn\.disabled = true;?\s*\}\);/.test(sheets));
+
+// ── I. Service worker precaches the driver sheets module ──
+// active_ride.js statically imports active_ride_driver_sheets.js; if the SW
+// PRECACHE omits it, an offline PWA session serves index.html for the module
+// request and the driver active-ride screen fails to boot.
+const sw = read('../public/sw.js');
+const precache = (sw.match(/PRECACHE\s*=\s*\[([\s\S]*?)\]/) || [])[1] || '';
+expect('public/sw.js PRECACHE includes active_ride_driver_sheets.js',
+  /active_ride_driver_sheets\.js/.test(precache));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
