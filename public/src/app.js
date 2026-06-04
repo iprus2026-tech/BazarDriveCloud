@@ -23,6 +23,7 @@ import tripConfirmation from './screens/trip_confirmation.js';
 import postDetail from './screens/post_detail.js';
 import inbox      from './screens/inbox.js';
 import driverMap  from './screens/driver_map.js';
+import tripReceipt from './screens/trip_receipt.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -43,6 +44,7 @@ register('/responses',   responses);
 register('/trip-confirmation', tripConfirmation);
 register('/post',        postDetail);
 register('/inbox',       inbox);
+register('/receipt',     tripReceipt);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {

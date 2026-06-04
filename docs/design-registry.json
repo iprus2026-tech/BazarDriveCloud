@@ -194,6 +194,21 @@
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Ride Complete"
+    },
+    {
+      "id": "BD-RIDE-HISTORY-D-01",
+      "title": "Driver Completed Ride Receipt",
+      "route": "/receipt?tripId=48-321",
+      "file": "public/src/screens/trip_receipt.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "section": "Ride Complete",
+      "states": {
+        "C": "/receipt?tripId=48-321 — trip receipt · cash",
+        "D": "/receipt?tripId=48-321&state=noncash — trip receipt · noncash",
+        "E": "/receipt?tripId=missing — missing receipt fallback",
+        "F": "/receipt?state=loading — receipt loading / syncing"
+      },
+      "note": "Read-only closed financial document for a completed driver ride. net is computed ONCE in the completed driver earnings flow (active_ride.js → buildDriverEarningsPayload) and persisted as one canonical receipt object via mock_api.saveDriverReceipt { tripId, completedAt, fare, commission, tip, net, paymentMode, status }. Ride history, Driver payouts and this screen only READ + FORMAT the stored receipt (fare 1540, commission -185, tip 120, net 1475 ₽) — no recalculation, no drift. Mock/UI only — no backend, no real payments, no tax / accounting math."
     }
   ]
 }

@@ -194,6 +194,19 @@ if (exists(driverEarningsSmoke)) {
   }
 }
 
+// BD-RIDE-HISTORY-D-01 — no-drift guard for the driver completed-ride receipt
+// (issue #381): net computed once, persisted as one canonical receipt object,
+// and read (never recomputed) by ride history, Driver payouts and /receipt.
+const driverReceiptNoDriftSmoke = path.join(root, 'scripts', 'smoke-driver-receipt-no-drift.mjs');
+if (exists(driverReceiptNoDriftSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverReceiptNoDriftSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-receipt-no-drift.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).

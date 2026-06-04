@@ -59,6 +59,7 @@ Registered in `public/src/app.js`.
 | `/trip-confirmation` | BD-CONFIRM-01 | `public/src/screens/trip_confirmation.js` | implemented |
 | `/post` | BD-POST-01 | `public/src/screens/post_detail.js` | implemented |
 | `/inbox` | BD-INBOX-01 | `public/src/screens/inbox.js` | implemented |
+| `/receipt` | BD-RIDE-HISTORY-D-01 | `public/src/screens/trip_receipt.js` | implemented, driver completed-ride receipt by `?tripId=` |
 
 ### Shell invariants
 
@@ -339,6 +340,20 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Problem states | `default → type_selected → loading → sent`; safety-class types flip a `data-safety` danger visual state; optional comment field; pure UI placeholder — never changes ride status. |
 | Actions | Cancel: select reason, custom reason, confirm. Problem: select type, comment, submit. Both: close / Esc / backdrop (disabled mid-loading and on the terminal card). |
 | Acceptance | No inline styles (`active-ride-driver-sheet__*` / `driver-cancel-sheet__*` / `driver-problem-sheet__*` in `cloud.css`); the screen imports the openers and does not redefine them inline; the problem sheet never persists ride state. Covered by `scripts/smoke-active-ride-driver-sheets.mjs`. |
+
+### BD-RIDE-HISTORY-D-01 - Driver completed ride receipt
+
+| Field | Contract |
+|---|---|
+| Route | `/receipt?tripId=<id>` (own route). Render-gate preview: `?state=loading\|missing\|cash\|noncash`. |
+| File | `public/src/screens/trip_receipt.js` |
+| Storage | `bazardrive.driver_receipts.v1` (canonical receipt store in `mock_api.js`). |
+| Receipt object | `{ tripId, completedAt, fare, commission, tip, net, paymentMode, status }`. `commission` is stored signed (negative); `net` is computed **once** in the completed driver earnings flow (`active_ride.js` → `buildDriverEarningsPayload`) and persisted via `saveDriverReceipt`. |
+| mock_api helpers | `saveDriverReceipt(receipt)`, `getReceipt(tripId)`, `listDriverReceipts()`, `clearDriverReceiptsStore()`, plus the seeded `DEMO_DRIVER_RECEIPT` (tripId `48-321`). |
+| States | C · cash, D · noncash, E · missing-receipt fallback, F · loading/syncing skeleton. |
+| Consumers | Ride history rows + detail (Profile), Driver payouts list (`/profile?pane=payouts`) and this screen all **read + format** the same persisted receipt — they never recompute fare/commission/tip/net. |
+| Canonical demo | fare 1540, commission −185, tip 120, **net 1475 ₽**, tripId `48-321`, status completed. |
+| Acceptance | No inline styles (`trip-receipt__*` in `cloud.css`); reads only the stored receipt; not an active-ride cockpit (no map, no live actions). Covered by `scripts/smoke-driver-receipt-no-drift.mjs`. |
 
 ### BD-RIDE-P-01..07 - Active ride passenger
 

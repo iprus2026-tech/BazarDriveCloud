@@ -773,3 +773,133 @@ export function mergeFeedAndRideOrderPosts(feedPosts, rideOrderPosts) {
 
   return [...dedupedRides, ...filteredFeed];
 }
+
+// ── Driver ride receipts (BD-RIDE-HISTORY-D-01, issue #381) ───────────────
+// Canonical post-completion financial document for a driver's completed
+// ride. The driver earnings flow (active_ride.js → buildDriverEarningsPayload)
+// computes `net` exactly ONCE and persists this object. Ride history, Driver
+// payouts and the Trip receipt screen all READ this shape and only FORMAT it
+// — they never recompute fare / commission / tip / net. No backend, no real
+// payments, no balances, no tax / accounting math.
+//
+// Shape (the single source of truth for every completed-ride money surface):
+//   { tripId, completedAt, fare, commission, tip, net, paymentMode, status }
+// fare / tip / net are whole-ruble numbers; `commission` is stored already
+// SIGNED (negative) so every reader formats it verbatim instead of
+// re-deriving a sign. paymentMode is 'cash' | 'noncash'.
+const DRIVER_RECEIPTS_KEY = 'bazardrive.driver_receipts.v1';
+
+const VALID_PAYMENT_MODES = new Set(['cash', 'noncash']);
+
+// Canonical demo receipt (issue #381). Always resolvable at
+// /receipt?tripId=48-321 so the render gate + manual URLs work without first
+// driving a live completion. Persisted receipts override it by tripId.
+export const DEMO_DRIVER_RECEIPT = Object.freeze({
+  tripId:      '48-321',
+  completedAt: '2026-06-04T09:12:00.000Z',
+  fare:        1540,
+  commission:  -185,
+  tip:         120,
+  net:         1475,
+  paymentMode: 'cash',
+  status:      'completed',
+});
+
+function loadDriverReceiptsRaw() {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(DRIVER_RECEIPTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((r) => r && typeof r === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistDriverReceipts(list) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(DRIVER_RECEIPTS_KEY, JSON.stringify(list));
+  } catch {
+    // storage unavailable — fail soft.
+  }
+}
+
+function toReceiptInt(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function toReceiptTripId(value) {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
+// Normalize to the canonical receipt shape. Returns null when the identity
+// (tripId) or any money field is missing / malformed, so a partial write can
+// never poison the store or the receipt screen. This is the data boundary —
+// it copies and rounds the persisted numbers but never combines them, so the
+// "net computed once" invariant is preserved.
+export function sanitizeDriverReceipt(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const tripId = toReceiptTripId(input.tripId);
+  if (!tripId) return null;
+  const fare = toReceiptInt(input.fare);
+  const commission = toReceiptInt(input.commission);
+  const tip = toReceiptInt(input.tip);
+  const net = toReceiptInt(input.net);
+  if (fare === null || commission === null || tip === null || net === null) return null;
+  const paymentMode = VALID_PAYMENT_MODES.has(input.paymentMode) ? input.paymentMode : 'noncash';
+  const completedAt = typeof input.completedAt === 'string' && input.completedAt.trim()
+    ? input.completedAt.trim()
+    : new Date().toISOString();
+  return { tripId, completedAt, fare, commission, tip, net, paymentMode, status: 'completed' };
+}
+
+// Upsert a canonical receipt by tripId (newest write wins). Returns the
+// sanitized receipt that was stored, or null when the input was unusable.
+export function saveDriverReceipt(receipt) {
+  const clean = sanitizeDriverReceipt(receipt);
+  if (!clean) return null;
+  const list = loadDriverReceiptsRaw().filter((r) => toReceiptTripId(r.tripId) !== clean.tripId);
+  list.unshift(clean);
+  persistDriverReceipts(list);
+  return clean;
+}
+
+// Read one receipt by tripId. Persisted receipts win; the canonical demo
+// receipt (48-321) is the seed fallback so the render-gate URL always
+// resolves. Returns null when nothing matches → missing-receipt fallback.
+export function getReceipt(tripId) {
+  const id = toReceiptTripId(tripId);
+  if (!id) return null;
+  const persisted = loadDriverReceiptsRaw().find((r) => toReceiptTripId(r.tripId) === id);
+  if (persisted) return sanitizeDriverReceipt(persisted);
+  if (id === DEMO_DRIVER_RECEIPT.tripId) return { ...DEMO_DRIVER_RECEIPT };
+  return null;
+}
+
+// List receipts newest-first for the Driver payouts surface. Persisted
+// receipts are merged with the canonical demo seed (persisted wins by
+// tripId) so the payouts list is never empty in the prototype.
+export function listDriverReceipts() {
+  const persisted = loadDriverReceiptsRaw()
+    .map((r) => sanitizeDriverReceipt(r))
+    .filter(Boolean);
+  const seen = new Set(persisted.map((r) => r.tripId));
+  const merged = seen.has(DEMO_DRIVER_RECEIPT.tripId)
+    ? persisted
+    : [...persisted, { ...DEMO_DRIVER_RECEIPT }];
+  return merged.sort((a, b) => (Date.parse(b.completedAt) || 0) - (Date.parse(a.completedAt) || 0));
+}
+
+export function clearDriverReceiptsStore() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(DRIVER_RECEIPTS_KEY);
+  } catch {
+    // fail soft
+  }
+}

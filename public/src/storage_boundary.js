@@ -42,6 +42,10 @@
 //                                     date, time, price, comment, fingerprint)
 //   bazardrive.ride_orders.v1       → mock_api.js (BD-MAP-05 locally
 //                                     published mock passenger orders)
+//   bazardrive.driver_receipts.v1   → mock_api.js (BD-RIDE-HISTORY-D-01
+//                                     canonical driver completed-ride
+//                                     receipts read by history / payouts /
+//                                     the /receipt screen)
 //   bazardrive.myposts.v1           → mock_api.js
 //   profileTripDemo                 → passenger Profile demo override
 //
@@ -68,7 +72,11 @@ import { clearComposerDraft } from './screens/composer.js';
 import { clearRepeatRouteDraft } from './repeat_route.js';
 import { clearRouteDraftStore } from './screens/route_picker.js';
 import { clearOrderFormDraftStore } from './screens/order_map_draft.js';
-import { clearMyPostsStore, clearRideOrdersStore } from './mock_api.js';
+import {
+  clearMyPostsStore,
+  clearRideOrdersStore,
+  clearDriverReceiptsStore,
+} from './mock_api.js';
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
 
@@ -99,6 +107,7 @@ export function clearUserScopedStorage() {
   clearRouteDraftStore();
   clearOrderFormDraftStore();
   clearRideOrdersStore();
+  clearDriverReceiptsStore();
   clearMyPostsStore();
   clearTripDemoMode();
 }
