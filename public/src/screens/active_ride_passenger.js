@@ -22,6 +22,7 @@ import {
 } from './driver_handoff_snapshot.js';
 import { updateTripStatus } from '../mock_api.js';
 import { createMapShell } from '../mapbox/map_shell.js';
+import { openPassengerSafetySheet, openPassengerCancelSheet } from './active_ride_passenger_sheets.js';
 import {
   saveRideHistoryEntry,
   buildPassengerHistoryEntry,
@@ -1074,7 +1075,7 @@ function renderPassengerRideComplete(ride, deps) {
     localToast('Сворачивание панели будет добавлено позже');
   });
   top.querySelector('#arp-shield').addEventListener('click', () => {
-    openPassengerSafetySheet(root, { toast: localToast });
+    openPassengerSafetySheet(root, { toast: localToast, ride, tripLabel: formatTripNumber(ride.tripId) });
   });
 
   // ── Rating widget ────────────────────────────────────────
@@ -1325,165 +1326,6 @@ function renderPassengerRideComplete(ride, deps) {
   return root;
 }
 
-// BD-RIDE-P-06 — Passenger cancel ride sheet.
-// Ordered list mirrors the Cloud Design render gate exactly; ids are
-// stable so the cancel reason can be persisted into the ride's
-// cancel.reason field without re-checking labels.
-const CANCEL_REASONS = [
-  { id: 'driver_slow',     label: 'Водитель долго едет',           icon: CLOCK_SVG },
-  { id: 'plans_changed',   label: 'Изменились планы',              icon: CALENDAR_SVG },
-  { id: 'other_transport', label: 'Выбрал другой способ доехать',  icon: ROUTE_SWAP_SVG },
-  { id: 'address_error',   label: 'Ошибка в адресе',               icon: PIN_SVG },
-  { id: 'no_contact',      label: 'Не могу связаться с водителем', icon: PHONE_SVG },
-  { id: 'other',           label: 'Другая причина',                icon: INFO_SVG },
-];
-
-function cancelReasonsHtml() {
-  return CANCEL_REASONS.map((r) => `
-    <button type="button"
-            class="passenger-cancel-sheet__reason"
-            role="radio"
-            aria-checked="false"
-            data-reason-id="${escapeHtml(r.id)}">
-      <span class="passenger-cancel-sheet__reason-icon" aria-hidden="true">${r.icon}</span>
-      <span class="passenger-cancel-sheet__reason-text">${escapeHtml(r.label)}</span>
-      <span class="passenger-cancel-sheet__reason-radio" aria-hidden="true"></span>
-    </button>
-  `).join('');
-}
-
-// Build and mount the cancel ride overlay into `root`. The overlay
-// covers the active ride screen via `position: absolute; inset: 0` and
-// dims the underlying map. Two visual stages live inside the same
-// overlay node, swapped via `data-stage`:
-//   "select"  — reason list (state A / B)
-//   "confirm" — "Точно отменить?" card  (state C)
-// State D (canceled fallback) is a separate screen routed via
-// `?status=CANCELED`, so this overlay just navigates there once the
-// user confirms.
-function openPassengerCancelSheet(root, { onConfirm }) {
-  const existing = root.querySelector('.passenger-cancel-overlay');
-  if (existing) return existing;
-
-  const overlay = document.createElement('div');
-  overlay.className = 'passenger-cancel-overlay';
-  overlay.dataset.stage = 'select';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-labelledby', 'arp-cancel-title');
-  overlay.innerHTML = `
-    <div class="passenger-cancel-overlay__backdrop" aria-hidden="true"></div>
-
-    <div class="passenger-cancel-sheet" data-stage="select">
-      <div class="passenger-cancel-sheet__handle" aria-hidden="true"></div>
-      <div class="passenger-cancel-sheet__header">
-        <div class="passenger-cancel-sheet__pill">
-          <span class="passenger-cancel-sheet__pill-dot" aria-hidden="true"></span>
-          Отмена поездки
-        </div>
-        <button type="button" class="passenger-cancel-sheet__close" id="arp-cancel-close" aria-label="Закрыть">
-          ${CLOSE_SVG}
-        </button>
-      </div>
-      <div id="arp-cancel-title" class="passenger-cancel-sheet__title">Отменить поездку?</div>
-      <div class="passenger-cancel-sheet__sub">Водитель уже может быть в пути. Выберите причину отмены.</div>
-      <div class="passenger-cancel-sheet__list-label">Причина</div>
-      <div class="passenger-cancel-sheet__reasons" role="radiogroup" aria-label="Причина отмены">
-        ${cancelReasonsHtml()}
-      </div>
-      <div class="passenger-cancel-sheet__hint" role="note">
-        <span class="passenger-cancel-sheet__hint-dot" aria-hidden="true"></span>
-        Мы передадим статус поездки водителю.
-      </div>
-      <div class="passenger-cancel-sheet__actions">
-        <button type="button" class="passenger-cancel-sheet__btn-back" id="arp-cancel-back">
-          Назад к поездке
-        </button>
-        <button type="button" class="passenger-cancel-sheet__btn-confirm" id="arp-cancel-confirm" disabled>
-          Подтвердить отмену
-        </button>
-      </div>
-    </div>
-
-    <div class="passenger-cancel-confirm" role="alertdialog" aria-modal="true" aria-labelledby="arp-cancel-confirm-title">
-      <div class="passenger-cancel-confirm__icon" aria-hidden="true">${ALERT_TRI_SVG}</div>
-      <div id="arp-cancel-confirm-title" class="passenger-cancel-confirm__title">Точно отменить?</div>
-      <div class="passenger-cancel-confirm__text">
-        После отмены поездка будет закрыта. Вы сможете создать новую поездку из ленты или карты.
-      </div>
-      <button type="button" class="passenger-cancel-confirm__btn-primary" id="arp-cancel-confirm-yes">
-        Да, отменить поездку
-      </button>
-      <button type="button" class="passenger-cancel-confirm__btn-secondary" id="arp-cancel-confirm-no">
-        Не отменять
-      </button>
-    </div>
-  `;
-
-  let selectedReason = null;
-  const reasonBtns = Array.from(overlay.querySelectorAll('.passenger-cancel-sheet__reason'));
-  const confirmBtn = overlay.querySelector('#arp-cancel-confirm');
-
-  function close() {
-    document.removeEventListener('keydown', onKey);
-    overlay.remove();
-  }
-
-  function onKey(ev) {
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      if (overlay.dataset.stage === 'confirm') {
-        overlay.dataset.stage = 'select';
-        return;
-      }
-      close();
-    }
-  }
-  document.addEventListener('keydown', onKey);
-
-  reasonBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      selectedReason = btn.dataset.reasonId || null;
-      reasonBtns.forEach((b) => {
-        b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
-      });
-      if (confirmBtn) confirmBtn.disabled = !selectedReason;
-    });
-  });
-
-  overlay.querySelector('#arp-cancel-back').addEventListener('click', close);
-  overlay.querySelector('#arp-cancel-close').addEventListener('click', close);
-
-  if (confirmBtn) {
-    confirmBtn.addEventListener('click', () => {
-      if (!selectedReason) return;
-      overlay.dataset.stage = 'confirm';
-    });
-  }
-
-  overlay.querySelector('#arp-cancel-confirm-no').addEventListener('click', () => {
-    overlay.dataset.stage = 'select';
-  });
-
-  overlay.querySelector('#arp-cancel-confirm-yes').addEventListener('click', () => {
-    document.removeEventListener('keydown', onKey);
-    if (typeof onConfirm === 'function') {
-      onConfirm(selectedReason);
-    }
-  });
-
-  overlay.querySelector('.passenger-cancel-overlay__backdrop').addEventListener('click', () => {
-    if (overlay.dataset.stage === 'confirm') {
-      overlay.dataset.stage = 'select';
-      return;
-    }
-    close();
-  });
-
-  root.appendChild(overlay);
-  return overlay;
-}
-
 function formatCanceledAt(ride) {
   const ts = ride && ride.timestamps && ride.timestamps.canceledAt;
   if (ts) {
@@ -1569,144 +1411,6 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   return root;
 }
 
-// BD-RIDE-P-07 — Passenger safety sheet (Безопасность / SOS).
-// Stub bottom-sheet overlay opened from the shield icon in the top
-// overlay and from the SOS button inside the active-ride sheet. All
-// actions are safe placeholders — no real SOS dispatch, no real
-// telephony, no backend call, no push, no Mapbox. Closing the sheet
-// (X button, "Закрыть" CTA, backdrop tap, Escape) only detaches the
-// overlay; the underlying active-ride status (DRIVER_EN_ROUTE,
-// WAITING_PASSENGER, IN_PROGRESS, COMPLETED) is untouched.
-const SAFETY_ACTIONS = [
-  { id: 'share',   label: 'Поделиться поездкой',   icon: SHARE_SVG },
-  { id: 'trusted', label: 'Доверенные контакты',   icon: HEART_SVG },
-  { id: 'support', label: 'Позвонить в поддержку', icon: PHONE_SVG },
-  { id: 'help',    label: 'Справка',               icon: INFO_SVG },
-];
-
-const SAFETY_ACTION_TOASTS = {
-  share:   'Поделиться поездкой пока заглушка',
-  trusted: 'Доверенные контакты будут добавлены позже',
-  support: 'Звонок в поддержку пока заглушка',
-  help:    'Справка будет добавлена позже',
-};
-
-function openPassengerSafetySheet(root, options = {}) {
-  if (!root) return null;
-  const existing = root.querySelector('.passenger-safety-overlay');
-  if (existing) return existing;
-
-  const toast = typeof options.toast === 'function' ? options.toast : null;
-  const safeToast = (msg) => { if (toast) toast(msg); };
-
-  const overlay = document.createElement('div');
-  overlay.className = 'passenger-safety-overlay';
-  overlay.dataset.sosState = 'idle';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-labelledby', 'arp-safety-title');
-
-  const actionsHtml = SAFETY_ACTIONS.map((a) => `
-    <li>
-      <button type="button"
-        class="passenger-safety-sheet__row"
-        data-safety-action="${escapeHtml(a.id)}">
-        <span class="passenger-safety-sheet__row-ic" aria-hidden="true">${a.icon}</span>
-        <span class="passenger-safety-sheet__row-text">${escapeHtml(a.label)}</span>
-        <span class="passenger-safety-sheet__row-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-      </button>
-    </li>
-  `).join('');
-
-  overlay.innerHTML = `
-    <div class="passenger-safety-overlay__backdrop" aria-hidden="true"></div>
-
-    <div class="passenger-safety-sheet" role="document">
-      <div class="passenger-safety-sheet__handle" aria-hidden="true"></div>
-      <div class="passenger-safety-sheet__header">
-        <div class="passenger-safety-sheet__pill">
-          <span class="passenger-safety-sheet__pill-dot" aria-hidden="true"></span>
-          Центр безопасности
-        </div>
-        <button type="button" class="passenger-safety-sheet__close" id="arp-safety-close" aria-label="Закрыть">
-          ${CLOSE_SVG}
-        </button>
-      </div>
-
-      <div id="arp-safety-title" class="passenger-safety-sheet__title">Безопасность</div>
-      <div class="passenger-safety-sheet__sub">
-        Если что-то пошло не так, используйте SOS или отправьте маршрут доверенному контакту.
-      </div>
-
-      <button type="button"
-        class="passenger-safety-sheet__sos-tile"
-        id="arp-safety-sos"
-        aria-pressed="false"
-        aria-label="SOS">
-        <span class="passenger-safety-sheet__sos-icon" aria-hidden="true">${ALERT_TRI_SVG}</span>
-        <div class="passenger-safety-sheet__sos-body">
-          <div class="passenger-safety-sheet__sos-title">SOS</div>
-          <div class="passenger-safety-sheet__sos-sub" data-sos-show="idle">
-            Быстрая помощь, пока без реального вызова
-          </div>
-          <div class="passenger-safety-sheet__sos-sub" data-sos-show="pressed">
-            Запрос отправлен · с вами свяжутся
-          </div>
-        </div>
-        <span class="passenger-safety-sheet__sos-badge" data-sos-show="pressed" aria-hidden="true">
-          Идёт обработка…
-        </span>
-      </button>
-
-      <div class="passenger-safety-sheet__list-label">Другие действия</div>
-      <ul class="passenger-safety-sheet__list" role="list">
-        ${actionsHtml}
-      </ul>
-
-      <button type="button" class="passenger-safety-sheet__btn-close" id="arp-safety-close-btn">
-        Закрыть
-      </button>
-    </div>
-  `;
-
-  function close() {
-    document.removeEventListener('keydown', onKey);
-    overlay.remove();
-  }
-
-  function onKey(ev) {
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      close();
-    }
-  }
-  document.addEventListener('keydown', onKey);
-
-  const sosTile = overlay.querySelector('#arp-safety-sos');
-  if (sosTile) {
-    sosTile.addEventListener('click', () => {
-      if (overlay.dataset.sosState === 'pressed') return;
-      overlay.dataset.sosState = 'pressed';
-      sosTile.setAttribute('aria-pressed', 'true');
-      safeToast('SOS — пока заглушка, реальный вызов не отправляется');
-    });
-  }
-
-  overlay.querySelectorAll('[data-safety-action]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-safety-action');
-      safeToast(SAFETY_ACTION_TOASTS[id] || 'Раздел будет добавлен позже');
-    });
-  });
-
-  overlay.querySelector('#arp-safety-close').addEventListener('click', close);
-  overlay.querySelector('#arp-safety-close-btn').addEventListener('click', close);
-  overlay.querySelector('.passenger-safety-overlay__backdrop').addEventListener('click', close);
-
-  root.appendChild(overlay);
-  return overlay;
-}
-
 export default function activeRidePassenger(options = {}) {
   const tripId = (options && options.tripId) || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = (options && options.statusQuery) || null;
@@ -1749,6 +1453,9 @@ export default function activeRidePassenger(options = {}) {
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride active-ride-passenger';
+
+  // Display label (e.g. №48-321) reused by the cancel / safety sheets.
+  const tripLabel = formatTripNumber(ride.tripId);
 
   // ── Map layer ────────────────────────────────────────────
   const mapWrap = document.createElement('div');
@@ -1818,7 +1525,7 @@ export default function activeRidePassenger(options = {}) {
     toast('Сворачивание панели будет добавлено позже');
   });
   top.querySelector('#arp-shield').addEventListener('click', () => {
-    openPassengerSafetySheet(root, { toast });
+    openPassengerSafetySheet(root, { toast, ride, tripLabel });
   });
 
   // ── Top driver card handlers ─────────────────────────────
@@ -1851,7 +1558,7 @@ export default function activeRidePassenger(options = {}) {
     const sosBtn = sheet.querySelector('#arp-sos');
     if (sosBtn) {
       sosBtn.addEventListener('click', () => {
-        openPassengerSafetySheet(root, { toast });
+        openPassengerSafetySheet(root, { toast, ride, tripLabel });
       });
     }
     const shareBtn = sheet.querySelector('#arp-share');
@@ -1927,11 +1634,14 @@ export default function activeRidePassenger(options = {}) {
     const cancelBtn = sheet.querySelector('#arp-cancel');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', () => {
-        // BD-RIDE-P-06 — open the cancel sheet instead of cancelling
-        // immediately. Persistence + navigation only fire after the
-        // user confirms in the "Точно отменить?" state.
+        // BD-RIDE-P-06 — open the redesigned cancel sheet. Persistence
+        // fires once the user confirms inside the sheet; the sheet then
+        // renders its in-sheet canceled state (loading → canceled) and
+        // owns the follow-up navigation (new ride / feed).
         openPassengerCancelSheet(root, {
-          onConfirm: (reasonId) => {
+          ride,
+          tripLabel,
+          onConfirm: (reasonId, comment) => {
             // BD-RIDE-SIM-01 — passenger cancels after the driver has
             // already accepted. Persist the current view first so the
             // ride's passenger identity (sim overrides — Алексей,
@@ -1945,6 +1655,7 @@ export default function activeRidePassenger(options = {}) {
               cancel: {
                 by: 'passenger',
                 reason: reasonId || 'passenger_cancel_after_accept',
+                comment: comment || '',
               },
             });
             // BD-RIDE-P-10 — mirror the cancellation into canonical
@@ -1960,7 +1671,13 @@ export default function activeRidePassenger(options = {}) {
                   ? ride.tripId.slice('trip_'.length)
                   : null);
             if (canonicalOrderId) updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
-            go(`/active-ride?role=passenger&status=${RIDE_STATUS.CANCELED}&tripId=${encodeURIComponent(ride.tripId)}`);
+            // Hand the canceled-state copy back to the sheet. The
+            // ?status=CANCELED fallback screen still renders on direct
+            // entry / reload via renderPassengerCanceledFallback.
+            return {
+              tripLabel,
+              timeLabel: formatCanceledAt(canceledRide || ride),
+            };
           },
         });
       });
