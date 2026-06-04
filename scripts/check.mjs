@@ -168,6 +168,19 @@ if (exists(passengerActiveRideSmoke)) {
   }
 }
 
+// BD-RIDE-D-SHEETS-01 — static regression smoke for the driver active ride
+// cancel + problem bottom sheets (own module, in-sheet state machines,
+// safety visual state, placeholder problem sheet never persists ride state).
+const driverSheetsSmoke = path.join(root, 'scripts', 'smoke-active-ride-driver-sheets.mjs');
+if (exists(driverSheetsSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverSheetsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-active-ride-driver-sheets.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).
