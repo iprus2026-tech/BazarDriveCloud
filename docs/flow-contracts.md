@@ -179,7 +179,7 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 | `bazardrive.active_ride.v1` | `ride_state.js` | Keyed active ride store. |
 | `bazardrive.ride_history.v1` | `ride_history.js` | Completed ride history. |
 | `bazardrive.chat.v1` | `chat.js`, active ride | One thread per trip/response. |
-| `bazardrive.responses.v1` | `respond.js`, `chat.js` | Mock response inbox data. |
+| `bazardrive.responses.v1` | `respond.js`, `chat.js` | Mock response inbox data. Read-only by `responses.js` (read-side board by `orderId`, #369). |
 | `bazardrive.respond.v1` | `respond.js` | Last respond draft/payload. |
 | `bazardrive.trip_confirmation.v1` | `trip_confirmation.js`, `chat.js` | Confirmation bridge store. |
 | `bazardrive.driver_handoff_snapshot.v1` | `driver_handoff_snapshot.js` | Driver handoff pin for active ride. |

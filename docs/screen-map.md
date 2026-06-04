@@ -45,7 +45,7 @@ Status: `implemented` (рабочий экран) / `partial` (есть, но с
 | BD-MAP-05 | OrderMapDraft | `/order-map-draft` | `public/src/screens/order_map_draft.js` | passenger | implemented | Создаёт локальный заказ `bazardrive.ride_orders.v1`. |
 | BD-DRIVER-01 / -02 | DriverMap | `/driver-map` | `public/src/screens/driver_map.js` | driver | partial | Mock-заказы. Role gate + readiness gate (`isDriverLineReady()`). MapShell placeholder. |
 | BD-RESPOND-01 | Respond | `/respond?postId=…` | `public/src/screens/respond.js` | driver / passenger | implemented | Отклик/оффер на заявку из ленты. |
-| BD-RESPONSES-01 | Responses inbox | `/responses` | `public/src/screens/responses.js` | passenger | implemented | Доска откликов водителей (in-file `MOCK_DRIVERS` + `getOrderById()`). |
+| BD-RESPONSES-01 | Responses inbox | `/responses` | `public/src/screens/responses.js` | passenger | implemented | Доска откликов: реальные отклики из `bazardrive.responses.v1` по `orderId` (read-side, #369) + `MOCK_DRIVERS` fallback; `getOrderById()` для заказа. |
 | BD-CHAT-01 | Chat | `/chat?tripId=… \| ?responseId=…` | `public/src/screens/chat.js` | common | implemented | Один тред на trip/response, мост к confirmation/active ride. |
 | BD-CONFIRM-01 | Trip Confirmation handoff | `/trip-confirmation` | `public/src/screens/trip_confirmation.js` | common | implemented | Мост чат → активная поездка. Скрывает chrome. |
 | BD-RIDE-D-01..09 | Driver Active Ride | `/active-ride?role=driver` | `public/src/screens/active_ride.js` | driver | implemented | Жизненный цикл + cancel/problem/earnings sheets (in-screen). |
@@ -387,13 +387,13 @@ flowchart LR
 - **Work slice:** Chat / handoff flow
 - **Touches:** `screens/respond.js`, storage `bazardrive.respond.v1` (+ иногда `bazardrive.responses.v1`)
 - **Upstream deps:** Feed (postId)
-- **Downstream deps:** Chat, Responses inbox (через отдельную интеграцию, см. ниже)
+- **Downstream deps:** Chat, Responses inbox (read-side подключён — #369)
 - **Related user flows:** offer на заявку
-- **Risk:** medium — `/responses` сегодня НЕ читает `bazardrive.responses.v1`
-- **Do not touch:** не предполагать, что respond-сабмиты появятся в `/responses` без future-интеграции
+- **Risk:** medium — write-side линкует `orderId`; read-side в `/responses` подключён (#369)
+- **Do not touch:** write-side контракт (`orderId`+`canonical` только для canonical-постов; respond → chat link без `orderId`)
 - **Acceptance checklist:** offer-форма + vehicle card; submitted state; данные локальные
 - **Recommended branch:** `feature/bd-respond-01-<slice>`
-- **Recommended next PR:** wired-интеграция respond → responses inbox (отдельный issue)
+- **Recommended next PR:** захват driver identity (имя/рейтинг/авто) в `passenger_response` — отдельный issue
 - **Test URLs:** `#/respond?postId=trip-2`
 
 ### BD-CHAT-01 — Chat
@@ -616,7 +616,7 @@ flowchart LR
 ```
 
 - **Можно:** offer-форму, vehicle card, submitted state.
-- **Нельзя:** предполагать авто-появление в `/responses` (нет интеграции сегодня).
+- **Нельзя:** менять write-side контракт; respond → chat link без `orderId`. (Read-side в `/responses` подключён — #369.)
 - **Тянет файлы:** `respond.js`.
 - **Проверить URL:** `#/respond?postId=trip-2`.
 

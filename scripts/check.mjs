@@ -213,6 +213,23 @@ if (exists(respondOrderLinkSmoke)) {
   }
 }
 
+// BD-RESPOND-ORDER-LINK-READSIDE-GUARD-01 — static guard for the /responses
+// read-side canonical response integration (#369): /responses surfaces real
+// passenger_response records from bazardrive.responses.v1 keyed by the
+// canonical orderId, maps them into the existing responses__driver card shape
+// with a real responseId, preserves the MOCK_DRIVERS fallback, stays read-only
+// (no responses.v1 write, no canonical ride-order mutation), and leaves the
+// accept → active-ride handoff intact.
+const respondOrderLinkReadsideSmoke = path.join(root, 'scripts', 'smoke-respond-order-link-readside.mjs');
+if (exists(respondOrderLinkReadsideSmoke)) {
+  try {
+    execFileSync(process.execPath, [respondOrderLinkReadsideSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-respond-order-link-readside.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {

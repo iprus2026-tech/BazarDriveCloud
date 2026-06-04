@@ -177,7 +177,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | Writes `bazardrive.respond.v1`; some chat/response flows can also write `bazardrive.responses.v1`. |
 | Main states | Offer form, vehicle card if available, validation, submitted state. |
 | Actions | Send offer, cancel/back, open profile/feed/chat where supported. |
-| Acceptance | Respond data is local mock data. Do not assume `/responses` reads `bazardrive.responses.v1`; current `/responses` uses its own mock driver board and order lookup. |
+| Acceptance | Respond data is local mock data. The passenger_response is keyed by `resp_<post.id>` and, for canonical ride-order posts, additively pins `orderId` + `canonical:'ride_order'` (BD-RESPOND-ORDER-LINK-01 / #368). `/responses` reads those back read-side by `orderId` (BD-RESPOND-ORDER-LINK-02 / #369); the respond → chat link stays `responseId`-only. |
 
 ### BD-RESPONSES-01 - Responses inbox
 
@@ -185,11 +185,11 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 |---|---|
 | Route | `/responses` |
 | File | `public/src/screens/responses.js` |
-| Data | In-file `MOCK_DRIVERS` plus canonical order lookup through `getOrderById()` and accept flow through `acceptOrder()` from `mock_api.js`. |
-| Storage | Does **not** read `bazardrive.responses.v1` today. `bazardrive.responses.v1` remains a separate user-scoped store used by respond/chat helper flows. |
-| Main states | Driver offer board, empty/missing-order fallback, accepted driver handoff. |
-| Actions | Pick/accept a mock driver, open chat/active ride, return to feed/profile. |
-| Acceptance | QA should not expect `/respond` submissions in `bazardrive.responses.v1` to automatically appear here until a future integration issue wires that handoff. |
+| Data | Real driver responses from `bazardrive.responses.v1` (read-side, BD-RESPOND-ORDER-LINK-02 / #369): `kind==='passenger_response'` rows for the current canonical `orderId`, mapped into the `responses__driver` card shape. Falls back to in-file `MOCK_DRIVERS` when there is no `orderId` / no real response / legacy `postId` / fallback request. Canonical order lookup via `getOrderById()`; accept flow via `acceptOrder()`. |
+| Storage | Reads `bazardrive.responses.v1` read-only (never written from `/responses` — respond.js/chat.js own writes + the user-scoped clear). `bazardrive.ride_orders.v1` is read-only here via `getOrderById()`. |
+| Main states | Driver offer board (real responses or `MOCK_DRIVERS`), empty/missing-order fallback, accepted driver handoff. |
+| Actions | Pick/accept a driver, open chat/active ride, return to feed/profile. |
+| Acceptance | Real `/respond` submissions for a canonical `orderId` appear here; the `MOCK_DRIVERS` board is preserved for the fallback paths. Render is read-only (no store writes); the accept → active-ride handoff and chat confirmation flow are unchanged. |
 
 ### BD-CHAT-01 - Chat
 
