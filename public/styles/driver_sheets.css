@@ -184,66 +184,190 @@
 .driver-sheet--problem .driver-sheet__confirm strong { color: var(--warning); }
 
 /* ═══════════════════════════════════════════════════════════
-   BD-RIDE-D-09 — DriverEarningsSheet
+   BD-RIDE-D-09 — DriverEarningsSheet (issue #376)
+   Terminal completion sheet over the completed map shell. Uses the shared
+   active-ride-driver-sheet shell (cloud.css) + the de-* namespace below.
+   Seven states are driven by [data-stage] on .active-ride-driver-sheet--
+   earnings. All visual state is class/data driven — no inline styles.
 ═══════════════════════════════════════════════════════════ */
-.driver-sheet__earnings-hero {
-  background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 122, 72, 0.07));
-  border: 1px solid rgba(255, 107, 53, 0.32);
-  border-radius: 22px;
-  padding: 18px;
+
+/* Light dim so the calm completed map reads through behind the sheet. */
+.active-ride-driver-sheet--earnings .active-ride-driver-sheet__backdrop {
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+/* Earnings hero — the net payout is the hero, in success green. */
+.de-earn { margin-top: 2px; }
+.de-earn__hero {
+  text-align: center;
+  padding: 18px 14px;
+  background: linear-gradient(180deg, rgba(74, 222, 128, 0.12), var(--bg-2) 82%);
+  border: 1px solid rgba(74, 222, 128, 0.24);
+  border-radius: 18px;
   margin-bottom: 12px;
 }
-.driver-sheet__earnings-label {
-  font-size: 11px;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 800;
-}
-.driver-sheet__earnings-total {
-  font-size: 38px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: -0.04em;
-  margin-top: 4px;
-}
-.driver-sheet__earnings-route {
-  color: var(--text-2);
-  font-size: 13px;
-  margin-top: 4px;
-}
-.driver-sheet__breakdown,
-.driver-sheet__shift {
+.de-earn__hero-label { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
+.de-earn__hero-value { font-size: 38px; font-weight: 800; letter-spacing: -0.04em; color: var(--success); line-height: 1; }
+.de-earn__hero-route { font-size: 13px; color: var(--text-2); margin-top: 8px; }
+
+/* Breakdown rows — fare → commission → tip → net. */
+.de-earn__rows {
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 12px;
+  border-radius: 16px;
+  padding: 4px 14px;
   margin-bottom: 10px;
 }
-.driver-sheet__row,
-.driver-sheet__shift-line {
+.de-earn__row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 14px;
-  padding: 8px 0;
+  padding: 10px 0;
   color: var(--text-2);
   font-size: 14px;
 }
-.driver-sheet__row + .driver-sheet__row,
-.driver-sheet__shift-line + .driver-sheet__shift-line {
-  border-top: 1px solid var(--line);
+.de-earn__row strong { color: var(--text); font-weight: 800; white-space: nowrap; }
+.de-earn__row--total { padding-top: 12px; }
+.de-earn__total { color: var(--success); font-size: 16px; }
+.de-earn__divider { height: 1px; background: var(--line); margin: 2px 0; }
+
+/* Payment badges. */
+.de-pay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
 }
-.driver-sheet__row strong,
-.driver-sheet__shift-line strong {
+.de-pay-badge.cash { background: rgba(251, 191, 36, 0.14); color: var(--warning); }
+.de-pay-badge.noncash { background: rgba(96, 165, 250, 0.14); color: var(--info); }
+
+/* Cash confirm row — gates the primary "Закрыть поездку" until checked. */
+.de-confirm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
   color: var(--text);
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.de-confirm.on { border-color: var(--success); background: rgba(74, 222, 128, 0.08); }
+.de-confirm__label { min-width: 0; }
+.de-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1.5px solid var(--line-strong);
+  color: transparent;
+}
+.de-confirm.on .de-check { background: var(--success); border-color: var(--success); color: var(--bg-0); }
+
+/* Non-cash balance preview. */
+.de-balance {
+  margin-bottom: 4px;
+  padding: 14px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.12), var(--bg-2) 82%);
+  border: 1px solid rgba(96, 165, 250, 0.24);
+}
+.de-balance__top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.de-balance__label { font-size: 12px; color: var(--text-2); margin-bottom: 3px; }
+.de-balance__value { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
+.de-balance__delta {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.12);
+  padding: 6px 10px;
+  border-radius: 999px;
   white-space: nowrap;
 }
-.driver-sheet__row--net strong { color: var(--success); }
-.driver-sheet__shift-title {
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 800;
-  margin-bottom: 4px;
+.de-balance__hint { margin-top: 10px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
+
+/* Shift 3-up stat grid + calm "Такси · ИП" UI hint (no real tax math). */
+.de-statgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.de-stat { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px 8px; text-align: center; }
+.de-stat__val { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; color: var(--text); }
+.de-stat__lbl { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); margin-top: 4px; }
+.de-earn__taxnote {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 10px;
+}
+.de-earn__cta { margin-top: 12px; }
+
+/* Loading / closed / empty — transition + terminal blocks. */
+.de-empty,
+.de-loading,
+.de-closed { display: none; }
+.de-loading,
+.de-empty,
+.de-closed {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+.de-loading { padding: 44px 16px; }
+.de-empty,
+.de-closed { padding: 24px 16px 6px; }
+.de-loading__spinner { color: var(--accent); display: inline-flex; animation: de-earn-spin 0.9s linear infinite; }
+.de-loading__spinner svg { width: 30px; height: 30px; }
+.de-loading__text { font-size: 14px; color: var(--text-2); font-weight: 600; }
+@keyframes de-earn-spin { to { transform: rotate(360deg); } }
+.de-closed__icon,
+.de-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+}
+.de-closed__icon { background: rgba(74, 222, 128, 0.14); color: var(--success); }
+.de-empty__icon { background: rgba(251, 191, 36, 0.14); color: var(--warning); }
+.de-closed__title,
+.de-empty__title { font-size: 18px; font-weight: 800; color: var(--text); margin-top: 4px; }
+.de-closed__text,
+.de-empty__text { font-size: 13.5px; color: var(--text-2); line-height: 1.45; max-width: 280px; }
+.de-empty .active-ride-driver-sheet__actions,
+.de-closed .active-ride-driver-sheet__actions { width: 100%; margin-top: 12px; }
+
+/* Stage visibility — entry stage + transitions live on the overlay. */
+.active-ride-driver-sheet--earnings[data-stage="empty"] .de-earn,
+.active-ride-driver-sheet--earnings[data-stage="loading"] .de-earn,
+.active-ride-driver-sheet--earnings[data-stage="closed"] .de-earn { display: none; }
+.active-ride-driver-sheet--earnings[data-stage="empty"] .de-empty { display: flex; }
+.active-ride-driver-sheet--earnings[data-stage="loading"] .de-loading { display: flex; }
+.active-ride-driver-sheet--earnings[data-stage="closed"] .de-closed { display: flex; }
+
+/* Calm completed map behind the light dim: hide the car marker and let the
+   dropoff read as a green finish pin. map_shell.js stays untouched. */
+.bd-map-shell--driver[data-status="COMPLETED"] .bd-map-shell__marker--car { display: none; }
+.bd-map-shell--driver[data-status="COMPLETED"] .bd-map-shell__marker--dropoff {
+  background: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.22);
 }

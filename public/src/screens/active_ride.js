@@ -1,6 +1,14 @@
 // BD-RIDE-D-02 / D-07 / D-08 / D-09 — Driver active ride flow.
 // Mock/UI only. No Mapbox SDK, no token, no backend, no geolocation,
 // no real calls, no payments, no push, no packages.
+//
+// BD-RIDE-D-09 — Driver Earnings / Completion Polish (issue #376). The
+// completed driver flow no longer renders an inline completion card: it
+// computes a mock earnings payload (12% commission + tip, net == balance
+// delta) and mounts the seven-state DriverEarningsSheet overlay from
+// active_ride_driver_sheets.js over the completed map shell. The ?state=
+// query selects the entry stage (summary | cash | noncash | shift | loading
+// | closed | empty); ride history is still persisted exactly as before.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
@@ -31,6 +39,7 @@ import {
 import {
   openDriverCancelSheet,
   openDriverProblemSheet,
+  openDriverEarningsSheet,
   DRIVER_CANCEL_REASON_LABEL_BY_CODE,
 } from './active_ride_driver_sheets.js';
 
@@ -283,77 +292,35 @@ function calcEarnings(ride) {
   };
 }
 
-function createDriverSheet(root, config) {
-  const previousFocus = document.activeElement;
-  const overlay = document.createElement('div');
-  overlay.className = `driver-sheet driver-sheet--${config.kind}`;
-  overlay.innerHTML = `
-    <div class="driver-sheet__backdrop" data-driver-sheet-close="true"></div>
-    <section class="driver-sheet__panel" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(config.titleId)}" tabindex="-1">
-      <div class="driver-sheet__handle" aria-hidden="true"></div>
-      <div class="driver-sheet__head"><div><div class="driver-sheet__eyebrow">${escapeHtml(config.eyebrow)}</div><h2 class="driver-sheet__title" id="${escapeHtml(config.titleId)}">${escapeHtml(config.title)}</h2></div><button type="button" class="driver-sheet__close" aria-label="Закрыть" data-driver-sheet-close="true">×</button></div>
-      <div class="driver-sheet__body">${config.bodyHtml}</div>
-    </section>
-  `;
-  function close() {
-    overlay.removeEventListener('keydown', onKeydown);
-    overlay.remove();
-    if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
-  }
-  function onKeydown(event) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(overlay.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled && !el.hidden);
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-  overlay.addEventListener('click', (event) => {
-    const target = event.target;
-    if (target instanceof HTMLElement && target.dataset.driverSheetClose === 'true') close();
-  });
-  overlay.addEventListener('keydown', onKeydown);
-  root.appendChild(overlay);
-  const focusTarget = overlay.querySelector('button, [tabindex]');
-  if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
-  return { overlay, close };
-}
-
-function moneyAria(value) {
-  return `${Math.round(Number(value) || 0)} рублей`;
-}
-
-function openDriverEarningsSheet(root, { ride }) {
-  const e = calcEarnings(ride);
-  const dropoff = ride.route?.dropoffLabel || 'Точка назначения';
-  createDriverSheet(root, {
-    kind: 'earnings',
-    titleId: 'driver-earnings-title',
-    eyebrow: 'BD-RIDE-D-09',
-    title: 'Подробнее о доходе',
-    bodyHtml: `
-      <div class="driver-sheet__earnings-hero" aria-label="Ваш доход: ${escapeHtml(moneyAria(e.net))}"><div class="driver-sheet__earnings-label">Ваш доход</div><div class="driver-sheet__earnings-total">${escapeHtml(formatRub(e.net))}</div><div class="driver-sheet__earnings-route">${escapeHtml(dropoff)}</div></div>
-      <div class="driver-sheet__breakdown" role="list" aria-label="Разбивка поездки">
-        <div class="driver-sheet__row" role="listitem"><span>Стоимость поездки</span><strong>${escapeHtml(formatRub(e.gross))}</strong></div>
-        <div class="driver-sheet__row" role="listitem"><span>Комиссия сервиса</span><strong>${escapeHtml(e.commissionLabel)}</strong></div>
-        <div class="driver-sheet__row" role="listitem"><span>К удержанию</span><strong>${escapeHtml(formatRub(e.commissionAmount))}</strong></div>
-        <div class="driver-sheet__row driver-sheet__row--net" role="listitem"><span>Итого водителю</span><strong>${escapeHtml(formatRub(e.net))}</strong></div>
-      </div>
-      <div class="driver-sheet__shift"><div class="driver-sheet__shift-title">Смена сегодня</div><div class="driver-sheet__shift-line"><span>${escapeHtml(formatRub(e.previousToday))}</span><span>→</span><strong>${escapeHtml(formatRub(e.nextToday))}</strong></div><div class="driver-sheet__shift-line"><span>${escapeHtml(String(e.previousTrips))} поездок</span><span>→</span><strong>${escapeHtml(String(e.nextTrips))} поездок</strong></div></div>
-      <div class="driver-sheet__actions"><button type="button" class="bd-btn primary driver-sheet__primary" data-driver-sheet-close="true">Закрыть</button></div>
-    `,
-  });
+// BD-RIDE-D-09 — builds the mock earnings payload for DriverEarningsSheet.
+// Fixed 12% commission + a mock tip so the net equals the noncash balance
+// delta (1 475 ₽). Every value is pre-formatted here so the sheet module
+// stays data-free (it never imports ride_state). No real payments, no real
+// balances, no tax/accounting math — UI hints only.
+function buildDriverEarningsPayload(ride) {
+  const fare = parseMoney(ride.ride?.price) || 1540;
+  const commissionRate = 0.12;
+  const commissionAmount = Math.round(fare * commissionRate);
+  const tip = 120;
+  const net = fare - commissionAmount + tip;
+  const balance = 19195;
+  const stats = [
+    { val: ride.ride?.todayEarnings ? String(ride.ride.todayEarnings) : '4 720 ₽', lbl: 'Сегодня' },
+    { val: String(Number(ride.ride?.tripsToday || 7)), lbl: 'Поездок' },
+    { val: ride.ride?.rating ? String(ride.ride.rating) : '4,92', lbl: 'Рейтинг' },
+  ];
+  return {
+    netLabel: formatRub(net),
+    netAria: `${net} рублей`,
+    fareLabel: formatRub(fare),
+    commissionPctLabel: '12%',
+    commissionAmountLabel: `−${formatRub(commissionAmount)}`,
+    tipLabel: `+${formatRub(tip)}`,
+    balanceLabel: formatRub(balance),
+    balanceDeltaLabel: `+${formatRub(net)}`,
+    dropoffLabel: ride.route?.dropoffLabel || 'Точка назначения',
+    stats,
+  };
 }
 
 export default function activeRide() {
@@ -371,6 +338,10 @@ export default function activeRide() {
   const latestHandedOffTripId = rawTripId ? null : findLatestHandedOffOrderTripId();
   const tripId = rawTripId || latestHandedOffTripId || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
+  // BD-RIDE-D-09 — entry stage for the driver completion sheet
+  // (?state=summary|cash|noncash|shift|loading|closed|empty). Ignored by
+  // every other status; the sheet itself falls back to "summary".
+  const earningsState = query.get('state');
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
   // handoff for either role so driver and passenger converge on one
@@ -583,13 +554,12 @@ export default function activeRide() {
   }
 
   function renderCompleted() {
+    // BD-RIDE-D-09 — the completed driver flow is now the seven-state
+    // DriverEarningsSheet (active_ride_driver_sheets.js) mounted over the
+    // completed map shell, replacing the old inline completion card. Ride
+    // history is still persisted here exactly as before; only the visible
+    // card was swapped for the terminal sheet.
     const e = calcEarnings(ride);
-    const dropoffLabel = ride.route?.dropoffLabel || '';
-    const pickupLabel = ride.route?.pickupLabel || '';
-    const passenger = ride.passenger || {};
-    const passengerCardHtml = `<div class="active-ride__completion-passenger" role="group" aria-label="Пассажир"><div class="active-ride__avatar" aria-hidden="true">${escapeHtml(passenger.initials || 'АМ')}</div><div class="active-ride__passenger-info"><div class="active-ride__passenger-name">${escapeHtml(passenger.name || 'Пассажир')}${passenger.rating ? `<span class="active-ride__passenger-rating">★ ${escapeHtml(passenger.rating)}</span>` : ''}</div><div class="active-ride__passenger-meta">${escapeHtml(passenger.phoneMasked || '')}${passenger.luggage ? ` · ${escapeHtml(passenger.luggage)}` : ''}</div></div></div>`;
-    const summaryHtml = `<div class="active-ride__completion-summary" role="list" aria-label="Сводка поездки">${pickupLabel ? `<div class="active-ride__completion-summary-row" role="listitem"><span class="active-ride__completion-summary-label">Откуда</span><span class="active-ride__completion-summary-value">${escapeHtml(pickupLabel)}</span></div>` : ''}${dropoffLabel ? `<div class="active-ride__completion-summary-row" role="listitem"><span class="active-ride__completion-summary-label">Куда</span><span class="active-ride__completion-summary-value">${escapeHtml(dropoffLabel)}</span></div>` : ''}<div class="active-ride__completion-summary-row" role="listitem"><span class="active-ride__completion-summary-label">Время</span><span class="active-ride__completion-summary-value">${escapeHtml(ride.ride?.duration || ride.order?.destinationEta || '—')}</span></div><div class="active-ride__completion-summary-row" role="listitem"><span class="active-ride__completion-summary-label">Расстояние</span><span class="active-ride__completion-summary-value">${escapeHtml(ride.ride?.distance || ride.order?.destinationDistance || '—')}</span></div></div>`;
-    sheet.innerHTML = `<div class="active-ride__completion-card"><div class="active-ride__completion"><div class="active-ride__completion-badge" aria-hidden="true">✓</div><div class="active-ride__sheet-title">Поездка завершена</div>${dropoffLabel ? `<div class="active-ride__completion-route">${escapeHtml(dropoffLabel)}</div>` : ''}</div>${passengerCardHtml}${summaryHtml}<div class="active-ride__earnings-total"><div class="active-ride__completion-price">${escapeHtml(formatRub(e.gross))}</div><div class="active-ride__completion-note">стоимость поездки</div></div><div class="active-ride__earnings-breakdown" role="list"><div class="active-ride__earnings-row" role="listitem"><span class="active-ride__earnings-row-label">Комиссия сервиса</span><span class="active-ride__earnings-row-value">${escapeHtml(e.commissionLabel)}</span></div><div class="active-ride__earnings-row" role="listitem"><span class="active-ride__earnings-row-label">К удержанию</span><span class="active-ride__earnings-row-value">${escapeHtml(formatRub(e.commissionAmount))}</span></div><div class="active-ride__earnings-row active-ride__earnings-row--net" role="listitem"><span class="active-ride__earnings-row-label">Ваш доход</span><span class="active-ride__earnings-row-value">${escapeHtml(formatRub(e.net))}</span></div></div><div class="active-ride__shift-summary"><div class="active-ride__shift-summary-title">Смена сегодня</div><div class="active-ride__shift-delta"><span class="active-ride__shift-delta-prev">${escapeHtml(formatRub(e.previousToday))}</span><span class="active-ride__shift-delta-arrow" aria-hidden="true">→</span><span class="active-ride__shift-delta-next">${escapeHtml(formatRub(e.nextToday))}</span></div><div class="active-ride__shift-delta active-ride__shift-delta--trips"><span class="active-ride__shift-delta-prev">${escapeHtml(String(e.previousTrips))} поездок</span><span class="active-ride__shift-delta-arrow" aria-hidden="true">→</span><span class="active-ride__shift-delta-next">${escapeHtml(String(e.nextTrips))} поездок</span></div></div><div class="active-ride__completion-history" role="status" aria-live="polite" data-history-saved="false">Поездка сохранена в историю</div></div><div class="active-ride__completion-actions"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-back-feed">Вернуться на линию</button><button type="button" class="bd-btn ghost active-ride__btn-primary" id="ar-earnings">Подробнее о доходе</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-profile">Профиль</button></div></div>`;
     const entry = buildDriverHistoryEntry(ride, {
       earnings: {
         gross: e.gross,
@@ -598,18 +568,14 @@ export default function activeRide() {
         commissionLabel: e.commissionLabel,
       },
     });
-    const savedEntry = entry ? saveRideHistoryEntry(entry) : null;
-    // The "saved" badge must never claim a write that did not happen: it
-    // only flips to data-history-saved="true" (and becomes visible) when
-    // saveRideHistoryEntry actually persisted a record. A null entry
-    // (buildDriverHistoryEntry returned null) or a failed write leaves the
-    // badge hidden, and the rest of the completed screen still renders.
-    const badge = sheet.querySelector('.active-ride__completion-history');
-    if (badge) badge.dataset.historySaved = savedEntry ? 'true' : 'false';
-    sheet.querySelector('#ar-earnings').addEventListener('click', () => openDriverEarningsSheet(root, { ride }));
-    sheet.querySelector('#ar-back-feed').addEventListener('click', () => go('/feed'));
-    sheet.querySelector('#ar-open-chat').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
-    sheet.querySelector('#ar-profile').addEventListener('click', () => go('/profile'));
+    if (entry) saveRideHistoryEntry(entry);
+    // The bottom sheet stays empty so the completed map + chrome read as a
+    // calm background; the earnings overlay (mounted on root) is the UI.
+    sheet.innerHTML = '';
+    openDriverEarningsSheet(root, {
+      state: earningsState,
+      payload: buildDriverEarningsPayload(ride),
+    });
   }
 
   function renderCanceledStub() {

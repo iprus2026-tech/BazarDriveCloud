@@ -226,6 +226,7 @@ export function bindDriverSheetEvents(overlay, options = {}) {
   const kind = overlay.dataset.kind;
   if (kind === 'cancel') bindCancelEvents(overlay, options);
   else if (kind === 'problem') bindProblemEvents(overlay, options);
+  else if (kind === 'earnings') bindEarningsEvents(overlay, options);
   bindSheetChrome(overlay, options);
 }
 
@@ -396,4 +397,231 @@ export function openDriverCancelSheet(root, options = {}) {
 // surfaces inline + toast feedback (onAction) and never changes ride status.
 export function openDriverProblemSheet(root, options = {}) {
   return openDriverSheet(root, 'problem', renderDriverProblemSheet(), options);
+}
+
+// ── BD-RIDE-D-09 DriverEarningsSheet ─────────────────────────
+// Terminal completion sheet for the driver completed flow, ported from the
+// Cloud Design render gate (de-* namespace). It is a regular driver overlay
+// (active-ride-driver-sheet shell + light dim over the completed map) with
+// seven states carried on overlay.dataset.stage:
+//   "summary"  — earnings hero + fare → commission → tip → net breakdown
+//   "cash"     — cash badge + "Оплату получил" confirm gating the primary
+//   "noncash"  — blue balance preview card (mock balance + delta)
+//   "shift"    — 3-up stat grid + calm "Такси · ИП" UI hint
+//   "loading"  — optimistic close spinner, mock 1.4s → "closed"
+//   "closed"   — calm "Вы снова на линии" (driver stays online/searching)
+//   "empty"    — fallback when the earnings payload is absent/malformed
+// All money is pre-formatted by the driver screen and passed in via options;
+// this module never imports ride_state or touches real payments/tax.
+const EARNINGS_STATES = new Set(['summary', 'cash', 'noncash', 'shift', 'loading', 'closed', 'empty']);
+
+function normalizeEarningsPayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (typeof payload.netLabel !== 'string' || !payload.netLabel) return null;
+  if (typeof payload.fareLabel !== 'string' || !payload.fareLabel) return null;
+  return payload;
+}
+
+// The entry stage comes from ?state=; an invalid value falls back to
+// "summary", and a missing/malformed payload forces "empty".
+function resolveEarningsState(state, payload) {
+  if (!normalizeEarningsPayload(payload)) return 'empty';
+  return EARNINGS_STATES.has(state) ? state : 'summary';
+}
+
+function earningsHeroHtml(p) {
+  return `
+    <div class="de-earn__hero">
+      <div class="de-earn__hero-label">Ваш доход за поездку</div>
+      <div class="de-earn__hero-value" aria-label="Ваш доход: ${escapeHtml(p.netAria || p.netLabel)}">${escapeHtml(p.netLabel)}</div>
+      <div class="de-earn__hero-route">${escapeHtml(p.dropoffLabel || 'Поездка завершена')}</div>
+    </div>`;
+}
+
+function earningsRowsHtml(p) {
+  return `
+    <div class="de-earn__rows" role="list" aria-label="Разбивка поездки">
+      <div class="de-earn__row" role="listitem"><span>Стоимость поездки</span><strong>${escapeHtml(p.fareLabel)}</strong></div>
+      <div class="de-earn__row" role="listitem"><span>Комиссия сервиса · ${escapeHtml(p.commissionPctLabel || '')}</span><strong>${escapeHtml(p.commissionAmountLabel)}</strong></div>
+      <div class="de-earn__row" role="listitem"><span>Чаевые и бонусы</span><strong>${escapeHtml(p.tipLabel)}</strong></div>
+      <div class="de-earn__divider" aria-hidden="true"></div>
+      <div class="de-earn__row de-earn__row--total" role="listitem"><span>Итого вам</span><strong class="de-earn__total">${escapeHtml(p.netLabel)}</strong></div>
+    </div>`;
+}
+
+function earningsBadgeHtml(kind) {
+  return kind === 'cash'
+    ? '<span class="de-pay-badge cash">Оплата наличными</span>'
+    : '<span class="de-pay-badge noncash">Безналичный расчёт</span>';
+}
+
+function earningsConfirmHtml() {
+  return `
+    <button type="button" class="de-confirm" id="driver-earnings-confirm" aria-pressed="false">
+      <span class="de-check" aria-hidden="true">${CHECK_SVG}</span>
+      <span class="de-confirm__label">Оплату получил наличными</span>
+    </button>`;
+}
+
+function earningsBalanceHtml(p) {
+  return `
+    <div class="de-balance">
+      <div class="de-balance__top">
+        <div>
+          <div class="de-balance__label">Баланс</div>
+          <div class="de-balance__value">${escapeHtml(p.balanceLabel || '')}</div>
+        </div>
+        <div class="de-balance__delta">${escapeHtml(p.balanceDeltaLabel || '')}</div>
+      </div>
+      <div class="de-balance__hint">Деньги за поездку зачислятся на ваш баланс.</div>
+    </div>`;
+}
+
+function earningsStatgridHtml(p) {
+  const stats = Array.isArray(p.stats) ? p.stats : [];
+  const cells = stats.map((s) => `
+    <div class="de-stat" role="listitem">
+      <div class="de-stat__val">${escapeHtml(s.val)}</div>
+      <div class="de-stat__lbl">${escapeHtml(s.lbl)}</div>
+    </div>`).join('');
+  return `
+    <div class="de-statgrid" role="list" aria-label="Смена сегодня">${cells}</div>
+    <div class="de-earn__taxnote">Такси · ИП · автоналог считается отдельно</div>`;
+}
+
+// Builds the visible earnings content for the chosen variant. summary/cash/
+// noncash share the breakdown rows; shift swaps them for the stat grid.
+function earningsContentHtml(variant, p) {
+  let inner;
+  if (variant === 'shift') {
+    inner = earningsStatgridHtml(p);
+  } else if (variant === 'cash') {
+    inner = earningsBadgeHtml('cash') + earningsRowsHtml(p) + earningsConfirmHtml();
+  } else if (variant === 'noncash') {
+    inner = earningsBadgeHtml('noncash') + earningsRowsHtml(p) + earningsBalanceHtml(p);
+  } else {
+    inner = earningsRowsHtml(p);
+  }
+  const disabled = variant === 'cash' ? ' disabled' : '';
+  return `
+    <div class="de-earn">
+      ${earningsHeroHtml(p)}
+      ${inner}
+      <div class="active-ride-driver-sheet__actions de-earn__cta">
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent de-earn__primary" id="driver-earnings-close"${disabled}>Закрыть поездку</button>
+      </div>
+    </div>`;
+}
+
+export function renderDriverEarningsSheet(state, payload) {
+  const p = normalizeEarningsPayload(payload);
+  const resolved = resolveEarningsState(state, payload);
+  // For loading/closed entry there is no chosen earn variant; render the
+  // summary layout underneath (it stays hidden behind the stage overlay).
+  const variant = (resolved === 'cash' || resolved === 'noncash' || resolved === 'shift') ? resolved : 'summary';
+  const earnBlock = p ? earningsContentHtml(variant, p) : '';
+  const body = `
+    ${earnBlock}
+    <div class="de-loading" role="status" aria-live="polite">
+      <span class="de-loading__spinner active-ride-driver-sheet__spinner" aria-hidden="true">${SPINNER_SVG}</span>
+      <div class="de-loading__text">Закрываем поездку…</div>
+    </div>
+    <div class="de-closed" role="status" aria-live="polite">
+      <div class="de-closed__icon" aria-hidden="true">${CHECK_SVG}</div>
+      <div class="de-closed__title">Вы снова на линии</div>
+      <div class="de-closed__text">Поездка закрыта. Ищем для вас новые заказы поблизости.</div>
+      <div class="active-ride-driver-sheet__actions">
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-earnings-online">К заказам</button>
+      </div>
+    </div>
+    <div class="de-empty" role="status" aria-live="polite">
+      <div class="de-empty__icon" aria-hidden="true">${ALERT_TRI_SVG}</div>
+      <div class="de-empty__title">Нет данных о доходе</div>
+      <div class="de-empty__text">Не удалось загрузить детали по этой поездке. Откройте ленту, чтобы продолжить работу.</div>
+      <div class="active-ride-driver-sheet__actions">
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-earnings-empty-feed">Открыть ленту</button>
+      </div>
+    </div>
+  `;
+  return sheetShell('earnings', 'driver-earnings-title', 'Поездка завершена', 'Ваш доход', body);
+}
+
+function bindEarningsEvents(overlay, options) {
+  const state = EARNINGS_STATES.has(options.state) ? options.state : 'summary';
+  overlay.dataset.stage = state;
+
+  const primary = overlay.querySelector('#driver-earnings-close');
+  const confirm = overlay.querySelector('#driver-earnings-confirm');
+  const online = overlay.querySelector('#driver-earnings-online');
+  const emptyFeed = overlay.querySelector('#driver-earnings-empty-feed');
+
+  let cashConfirmed = false;
+
+  // Optimistic close: spinner for a beat, then the calm "снова на линии"
+  // card. Mock only — no status mutation, no backend.
+  function scheduleClose() {
+    setTimeout(() => { overlay.dataset.stage = 'closed'; }, 1400);
+  }
+  function enterLoading() {
+    if (overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'closed') return;
+    overlay.dataset.stage = 'loading';
+    scheduleClose();
+  }
+
+  // Cash: the primary stays disabled until the driver confirms they took
+  // the fare; toggling the confirm row flips both the visual + the button.
+  if (confirm) {
+    confirm.addEventListener('click', () => {
+      cashConfirmed = !cashConfirmed;
+      confirm.classList.toggle('on', cashConfirmed);
+      confirm.setAttribute('aria-pressed', cashConfirmed ? 'true' : 'false');
+      if (primary) primary.disabled = !cashConfirmed;
+    });
+  }
+
+  if (primary) {
+    primary.addEventListener('click', () => {
+      if (primary.disabled) return;
+      enterLoading();
+    });
+  }
+
+  if (online) {
+    online.addEventListener('click', () => {
+      if (overlay.__closeSheet) overlay.__closeSheet();
+      go('/driver-map');
+    });
+  }
+
+  if (emptyFeed) {
+    emptyFeed.addEventListener('click', () => {
+      if (overlay.__closeSheet) overlay.__closeSheet();
+      go('/feed');
+    });
+  }
+
+  // Direct ?state=loading entry runs the optimistic close timer immediately.
+  if (state === 'loading') scheduleClose();
+}
+
+// BD-RIDE-D-09 — open the driver earnings / completion sheet. options.state
+// is the entry stage (?state=); options.payload carries the pre-formatted
+// earnings strings built by the driver screen. Both are normalized here so
+// renderer and event wiring agree on the resolved state.
+export function openDriverEarningsSheet(root, options = {}) {
+  const state = resolveEarningsState(options.state, options.payload);
+  const markup = renderDriverEarningsSheet(state, options.payload);
+  return openDriverSheet(root, 'earnings', markup, { ...options, state });
+}
+
+// BD-RIDE-D-09 — prototype-parity global handle. The live app consumes the
+// ES exports above; window.BD mirrors the standalone prototype's component
+// name so design references resolve. Guarded so headless/smoke contexts
+// (no window) stay unaffected.
+if (typeof window !== 'undefined') {
+  window.BD = window.BD || {};
+  window.BD.DriverEarningsSheet = {
+    open: openDriverEarningsSheet,
+    render: renderDriverEarningsSheet,
+  };
 }

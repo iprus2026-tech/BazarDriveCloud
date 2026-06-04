@@ -181,6 +181,19 @@ if (exists(driverSheetsSmoke)) {
   }
 }
 
+// BD-RIDE-D-09 — static regression smoke for the driver earnings /
+// completion polish sheet (seven ?state= stages, cash confirm gate,
+// optimistic close timer, data-free isolation, inline-card replacement).
+const driverEarningsSmoke = path.join(root, 'scripts', 'smoke-active-ride-driver-earnings.mjs');
+if (exists(driverEarningsSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverEarningsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-active-ride-driver-earnings.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).
