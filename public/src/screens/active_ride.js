@@ -28,6 +28,11 @@ import {
   saveRideHistoryEntry,
   buildDriverHistoryEntry,
 } from '../ride_history.js';
+import {
+  openDriverCancelSheet,
+  openDriverProblemSheet,
+  DRIVER_CANCEL_REASON_LABEL_BY_CODE,
+} from './active_ride_driver_sheets.js';
 
 const CHAT_STORAGE_KEY = 'bazardrive.chat.v1';
 const DRIVER_SHEETS_CSS_ID = 'driver-sheets-css';
@@ -44,33 +49,10 @@ const DRIVER_SIMULATION_STATUSES = new Set([
   RIDE_STATUS.NO_SHOW,
 ]);
 
-// BD-RIDE-D-07 — Driver cancel reasons. The internal codes are fixed by the
-// issue #265 contract; the second/third columns are Russian UI copy. Mock
-// only — selecting a reason never extends or mutates the ride_state schema.
-const CANCEL_REASONS = [
-  ['passenger_no_show', 'Пассажир не вышел', 'Жду у точки подачи, пассажира нет'],
-  ['wrong_pickup', 'Неверная точка подачи', 'Адрес или подъезд указан неправильно'],
-  ['car_problem', 'Проблема с автомобилем', 'Не могу безопасно продолжить подачу'],
-  ['unsafe_situation', 'Небезопасная ситуация', 'Есть риск для водителя или пассажира'],
-  ['cannot_reach_passenger', 'Не могу связаться с пассажиром', 'Нет ответа в чате и по телефону'],
-  ['other', 'Другая причина', 'Опишу подробнее в поддержке'],
-];
-
-// BD-RIDE-D-07 — Reason label lookup used by the canceled stub to show the
-// driver why the trip was closed without re-deriving the strings.
-const CANCEL_REASON_LABEL_BY_CODE = Object.fromEntries(
-  CANCEL_REASONS.map(([code, label]) => [code, label]),
-);
-
-// BD-RIDE-D-08 — Driver problem actions are pure UI placeholders. None of
-// them changes ride status; each only surfaces local/toast feedback.
-const PROBLEM_ACTIONS = [
-  ['passenger_no_show', 'Пассажир не выходит', 'Уведомим пассажира, что вы ждёте'],
-  ['cannot_reach', 'Не могу дозвониться', 'Отметим, что связи с пассажиром нет'],
-  ['wrong_pickup', 'Неверная точка подачи', 'Передадим, что адрес подачи неверный'],
-  ['car_problem', 'Проблема с авто', 'Зафиксируем неполадку с автомобилем'],
-  ['contact_support', 'Связаться с поддержкой', 'Откроем обращение в поддержку'],
-];
+// BD-RIDE-D-SHEETS-01 — Driver cancel reasons / problem types and the
+// cancel + problem sheet UI now live in active_ride_driver_sheets.js (the
+// driver counterpart of active_ride_passenger_sheets.js). This screen only
+// imports the openers + the reason-label lookup used by the canceled stub.
 
 export function parseMoney(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -301,15 +283,6 @@ function calcEarnings(ride) {
   };
 }
 
-function renderCancelOptions(selected) {
-  return CANCEL_REASONS.map(([value, label, meta]) => `
-    <button type="button" class="driver-cancel-sheet__option${selected === value ? ' driver-cancel-sheet__option--selected' : ''}" role="radio" aria-checked="${selected === value ? 'true' : 'false'}" data-value="${escapeHtml(value)}">
-      <span class="driver-cancel-sheet__radio" aria-hidden="true"></span>
-      <span class="driver-cancel-sheet__option-copy"><span class="driver-cancel-sheet__option-label">${escapeHtml(label)}</span><span class="driver-cancel-sheet__option-meta">${escapeHtml(meta)}</span></span>
-    </button>
-  `).join('');
-}
-
 function createDriverSheet(root, config) {
   const previousFocus = document.activeElement;
   const overlay = document.createElement('div');
@@ -355,174 +328,6 @@ function createDriverSheet(root, config) {
   const focusTarget = overlay.querySelector('button, [tabindex]');
   if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
   return { overlay, close };
-}
-
-// BD-RIDE-D-07 / D-08 — Driver cancel & problem sheet shell. Mirrors the
-// earnings sheet chrome behaviour (backdrop, focus trap, Esc) but uses the
-// dedicated `active-ride-driver__*` namespace styled in cloud.css, so the
-// older `driver-sheet__*` / driver_sheets.css remains exclusive to the
-// untouched earnings sheet.
-function createDriverActionSheet(root, config) {
-  const previousFocus = document.activeElement;
-  const overlay = document.createElement('div');
-  overlay.className = `active-ride-driver__sheet active-ride-driver__sheet--${config.kind}`;
-  overlay.innerHTML = `
-    <div class="active-ride-driver__backdrop" data-driver-sheet-close="true"></div>
-    <section class="active-ride-driver__panel" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(config.titleId)}" tabindex="-1">
-      <div class="active-ride-driver__handle" aria-hidden="true"></div>
-      <div class="active-ride-driver__head"><div><div class="active-ride-driver__eyebrow">${escapeHtml(config.eyebrow)}</div><h2 class="active-ride-driver__title" id="${escapeHtml(config.titleId)}">${escapeHtml(config.title)}</h2></div><button type="button" class="active-ride-driver__close" aria-label="Закрыть" data-driver-sheet-close="true">×</button></div>
-      <div class="active-ride-driver__body">${config.bodyHtml}</div>
-    </section>
-  `;
-  function close() {
-    overlay.removeEventListener('keydown', onKeydown);
-    overlay.remove();
-    if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
-  }
-  function onKeydown(event) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(overlay.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled && !el.hidden);
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-  overlay.addEventListener('click', (event) => {
-    const target = event.target;
-    if (target instanceof HTMLElement && target.dataset.driverSheetClose === 'true') close();
-  });
-  overlay.addEventListener('keydown', onKeydown);
-  root.appendChild(overlay);
-  const focusTarget = overlay.querySelector('button, [tabindex]');
-  if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
-  return { overlay, close };
-}
-
-function bindCancelOptions(overlay, selected, onChange) {
-  let current = selected || '';
-  const buttons = Array.from(overlay.querySelectorAll('.driver-cancel-sheet__option'));
-  function sync() {
-    buttons.forEach((btn) => {
-      const checked = btn.dataset.value === current;
-      btn.classList.toggle('driver-cancel-sheet__option--selected', checked);
-      btn.setAttribute('aria-checked', checked ? 'true' : 'false');
-    });
-    onChange(current);
-  }
-  buttons.forEach((btn) => btn.addEventListener('click', () => {
-    current = btn.dataset.value || '';
-    sync();
-  }));
-  sync();
-}
-
-// BD-RIDE-D-07 — Driver cancel sheet. Two-step confirm. `onConfirm` receives
-// the selected reason code; the caller decides the resulting status so the
-// shared sheet never hard-codes a ride_state transition. `outcomeLabel` is
-// display-only copy and may be a static string or a function of the selected
-// reason — so the confirmation strip stays accurate when the reason changes
-// (e.g. the "не приехал" entry: passenger_no_show → NO_SHOW, else CANCELED).
-function openDriverCancelSheet(root, { reason = '', outcomeLabel = 'CANCELED', onConfirm }) {
-  const resolveOutcome = typeof outcomeLabel === 'function' ? outcomeLabel : () => outcomeLabel;
-  let selected = CANCEL_REASONS.some(([value]) => value === reason) ? reason : '';
-  let confirmPending = false;
-  const sheet = createDriverActionSheet(root, {
-    kind: 'cancel',
-    titleId: 'driver-cancel-title',
-    eyebrow: 'Отмена заказа',
-    title: 'Почему отменяем заказ?',
-    bodyHtml: `
-      <p class="driver-cancel-sheet__lead">Выберите причину. Отмена потребует подтверждения на следующем шаге — пассажир получит уведомление.</p>
-      <div class="driver-cancel-sheet__options" role="radiogroup" aria-label="Причина отмены">${renderCancelOptions(selected)}</div>
-      <div class="driver-cancel-sheet__confirm" id="driver-cancel-confirm" hidden><strong>Подтвердите отмену</strong><span id="driver-cancel-confirm-text"></span></div>
-      <div class="active-ride-driver__actions"><button type="button" class="bd-btn primary active-ride-driver__primary" id="driver-cancel-primary" disabled>Подтвердить отмену</button><button type="button" class="bd-btn ghost active-ride-driver__secondary" data-driver-sheet-close="true">Вернуться к поездке</button></div>
-    `,
-  });
-  const primary = sheet.overlay.querySelector('#driver-cancel-primary');
-  const confirmBox = sheet.overlay.querySelector('#driver-cancel-confirm');
-  const confirmText = sheet.overlay.querySelector('#driver-cancel-confirm-text');
-  function syncConfirmText() {
-    confirmText.textContent = resolveOutcome(selected) === 'NO_SHOW'
-      ? 'Поездка будет закрыта со статусом «пассажир не вышел». Отменить это действие нельзя.'
-      : 'Поездка будет отменена. Отменить это действие нельзя.';
-  }
-  bindCancelOptions(sheet.overlay, selected, (next) => {
-    selected = next;
-    confirmPending = false;
-    confirmBox.hidden = true;
-    primary.textContent = 'Подтвердить отмену';
-    primary.disabled = !selected;
-    syncConfirmText();
-  });
-  primary.addEventListener('click', () => {
-    if (!selected) return;
-    if (!confirmPending) {
-      confirmPending = true;
-      syncConfirmText();
-      confirmBox.hidden = false;
-      primary.textContent = 'Да, отменить заказ';
-      return;
-    }
-    sheet.close();
-    onConfirm(selected);
-  });
-}
-
-function problemActionNotice(code) {
-  switch (code) {
-    case 'passenger_no_show': return 'Пассажиру отправлено напоминание, что вы ждёте';
-    case 'cannot_reach': return 'Поддержка увидит, что связи с пассажиром нет';
-    case 'wrong_pickup': return 'Жалоба на точку подачи отправлена';
-    case 'car_problem': return 'Проблема с авто зафиксирована';
-    case 'contact_support': return 'Обращение в поддержку открыто';
-    default: return 'Сообщение отправлено в поддержку';
-  }
-}
-
-// BD-RIDE-D-08 — Driver problem sheet. Every action is a pure UI placeholder:
-// it surfaces inline + toast feedback (`onAction`) and never changes ride
-// status. The no-show transition lives in the cancel sheet (passenger_no_show
-// reason), not here.
-function openDriverProblemSheet(root, { onAction } = {}) {
-  const actionsHtml = PROBLEM_ACTIONS.map(([value, label, meta]) => `
-    <button type="button" class="driver-problem-sheet__action" data-value="${escapeHtml(value)}">
-      <span class="driver-problem-sheet__action-label">${escapeHtml(label)}</span>
-      <span class="driver-problem-sheet__action-meta">${escapeHtml(meta)}</span>
-    </button>
-  `).join('');
-  const sheet = createDriverActionSheet(root, {
-    kind: 'problem',
-    titleId: 'driver-problem-title',
-    eyebrow: 'Сообщить о проблеме',
-    title: 'Что случилось?',
-    bodyHtml: `
-      <p class="driver-problem-sheet__lead">Отправьте сигнал поддержке. Поездка останется активной — статус не изменится.</p>
-      <div class="driver-problem-sheet__actions" role="group" aria-label="Действия при проблеме">${actionsHtml}</div>
-      <div class="driver-problem-confirm__box" id="driver-problem-confirm" role="status" aria-live="polite" hidden><span class="driver-problem-confirm__title">Сигнал отправлен</span><span class="driver-problem-confirm__text" id="driver-problem-confirm-text"></span></div>
-      <div class="active-ride-driver__actions"><button type="button" class="bd-btn ghost active-ride-driver__secondary" data-driver-sheet-close="true">Закрыть</button></div>
-    `,
-  });
-  const confirmBox = sheet.overlay.querySelector('#driver-problem-confirm');
-  const confirmText = sheet.overlay.querySelector('#driver-problem-confirm-text');
-  sheet.overlay.querySelectorAll('.driver-problem-sheet__action').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const message = problemActionNotice(btn.dataset.value || '');
-      confirmText.textContent = message;
-      confirmBox.hidden = false;
-      if (typeof onAction === 'function') onAction(message);
-    });
-  });
 }
 
 function moneyAria(value) {
@@ -707,7 +512,7 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.pickupLabel || 'Точка подачи')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
     sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-open-chat-accepted').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
-    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); renderSheet(); } }));
+    sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
     bindPassengerActions();
   }
 
@@ -724,7 +529,7 @@ export default function activeRide() {
       renderSheet();
     });
     sheet.querySelector('#ar-open-chat-enroute').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
-    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); renderSheet(); } }));
+    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
     bindPassengerActions();
   }
 
@@ -733,7 +538,7 @@ export default function activeRide() {
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
     sheet.querySelector('#ar-open-chat-approaching').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`));
-    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); renderSheet(); } }));
+    sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
     bindPassengerActions();
   }
 
@@ -761,8 +566,8 @@ export default function activeRide() {
       outcomeLabel: (code) => (code === 'passenger_no_show' ? 'NO_SHOW' : 'CANCELED'),
       onConfirm: (code) => {
         ride = persistDriverCancel(code === 'passenger_no_show' ? RIDE_STATUS.NO_SHOW : RIDE_STATUS.CANCELED, code);
-        renderSheet();
       },
+      onClose: () => renderSheet(),
     }));
     bindPassengerActions();
   }
@@ -811,7 +616,7 @@ export default function activeRide() {
     const cancel = ride.cancel || {};
     const byPassenger = cancel.by === 'passenger';
     const passengerName = (ride.passenger && ride.passenger.name) || 'Пассажир';
-    const reasonLabel = cancel.reason ? CANCEL_REASON_LABEL_BY_CODE[cancel.reason] : '';
+    const reasonLabel = cancel.reason ? DRIVER_CANCEL_REASON_LABEL_BY_CODE[cancel.reason] : '';
     const pickup = ride.route?.pickupLabel || '';
     const dropoff = ride.route?.dropoffLabel || '';
     let title;
