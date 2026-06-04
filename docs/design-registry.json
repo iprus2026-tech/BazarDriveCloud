@@ -21,6 +21,16 @@
         "Ride Complete"
       ],
       "notes": "Comprehensive render-gate export from Claude Design. PDF is the visual audit artifact; standalone HTML is the archived interactive export."
+    },
+    {
+      "id": "BD-PROFILE-D-03-RENDER-GATE",
+      "title": "Driver Dashboard Profile Polish render gate",
+      "artifact": "public/prototypes/profile/BD-PROFILE-D-03-driver-dashboard-render-gate.pdf",
+      "standaloneExport": "public/prototypes/profile/BD-PROFILE-D-03-driver-dashboard-render-gate.html",
+      "sections": [
+        "Profile"
+      ],
+      "notes": "BD-PROFILE-D-03 driver dashboard render gate (merged via PR #384). Visual reference only — never copied into runtime (public/index.html and the SW precache stay free of prototype HTML)."
     }
   ],
   "screens": [
@@ -39,6 +49,29 @@
       "file": "public/src/screens/profile.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "section": "Profile"
+    },
+    {
+      "id": "BD-PROFILE-D-03",
+      "title": "Driver Dashboard Profile Polish",
+      "route": "/profile?role=driver",
+      "file": "public/src/screens/profile.js",
+      "renderGate": "BD-PROFILE-D-03-RENDER-GATE",
+      "section": "Profile",
+      "role": "driver",
+      "tabs": ["Обзор", "Такси·ИП", "Документы", "Выплаты", "Безопасность"],
+      "states": {
+        "A": "/profile?role=driver&pane=overview — overview ready",
+        "B": "/profile?role=driver&pane=overview — overview offline (driverOnline=false)",
+        "C": "/profile?role=driver&pane=overview — readiness checklist with missing docs",
+        "D": "/profile?role=driver&pane=taxi-ip — Такси·ИП static demo",
+        "E": "/profile?role=driver&pane=documents — documents pending (На проверке)",
+        "F": "/profile?role=driver&pane=documents — documents verified (Проверено)",
+        "G": "/profile?role=driver&pane=payouts — payouts receipt rows (cash/noncash badges)",
+        "H": "/profile?role=driver&pane=payouts&state=empty — payouts empty",
+        "I": "/profile?role=driver&pane=safety — safety center",
+        "J": "/profile?role=driver&state=loading — profile loading / skeleton"
+      },
+      "note": "Polish of the driver dashboard (BD-PROFILE-02). Five tabs (Обзор default) switch panes without remounting the top bar. Documents are readiness cards (Проверено / На проверке / Нужно обновить). Payout rows read receipt.net straight from the BD-RIDE-HISTORY-D-01 canonical receipt store (mock_api.listDriverReceipts) and show cash/noncash badges that mirror the receipt screen — no recalculation of fare / commission / tip / net in profile.js. Такси·ИП is a static demo with no tax math. Safety center and the loading/skeleton + empty-payouts states are class-driven, demo-only. Mock/UI only — no backend, no Mapbox, no real payments, no real document upload, no tax/accounting math, no CSP weakening, no inline script/style. The render-gate PDF/HTML are visual reference only and are not copied into runtime."
     },
     {
       "id": "BD-MAP-01",

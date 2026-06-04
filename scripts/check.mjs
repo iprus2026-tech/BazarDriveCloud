@@ -194,6 +194,19 @@ if (exists(driverEarningsSmoke)) {
   }
 }
 
+// BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
+// ?pane=constructor must not resolve to an inherited value or make the profile
+// render throw; valid aliases keep activating the right pane.
+const profilePaneAliasSmoke = path.join(root, 'scripts', 'smoke-profile-pane-alias.mjs');
+if (exists(profilePaneAliasSmoke)) {
+  try {
+    execFileSync(process.execPath, [profilePaneAliasSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-pane-alias.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-D-01 — no-drift guard for the driver completed-ride receipt
 // (issue #381): net computed once, persisted as one canonical receipt object,
 // and read (never recomputed) by ride history, Driver payouts and /receipt.

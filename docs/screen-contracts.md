@@ -169,6 +169,23 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Online toggle, driver/passenger mode, readiness checklist, document mock updates. |
 | Acceptance | Driver readiness gates Feed/Post Detail accept CTAs and `/driver-map` (BD-DRIVER-02): all accept surfaces now enforce `isDriverLineReady()` via the shared rule in `state.js`. |
 
+### BD-PROFILE-D-03 - Driver dashboard profile polish
+
+| Field | Contract |
+|---|---|
+| Route | `/profile?role=driver` (renders `renderDriver`). `/profile?role=passenger` stays the passenger dashboard — the two role branches are fully separated. |
+| File | `public/src/screens/profile.js` |
+| Render gate | `public/prototypes/profile/BD-PROFILE-D-03-driver-dashboard-render-gate.{pdf,html}` — visual reference only; never copied into runtime. |
+| Tabs | `Обзор` (default) · `Такси·ИП` · `Документы` · `Выплаты` · `Безопасность`. The five tabs switch panes via a CSS active class; the top bar + tab row are not remounted on switch. |
+| Pane deep-link | `?pane=` accepts internal ids (`overview` / `ip` / `docs` / `payouts` / `security`) and render-gate aliases (`taxi-ip` → ip, `documents` → docs, `safety` → security). |
+| States | A overview ready · B overview offline · C checklist missing docs · D Такси·ИП demo · E documents pending (`На проверке`) · F documents verified (`Проверено`) · G payouts receipt rows · H payouts empty (`?pane=payouts&state=empty`) · I safety center (`?pane=safety`) · J loading/skeleton (`?state=loading`). |
+| Documents | Readiness cards only: `Проверено` (uploaded), `На проверке` (review_required), `Нужно обновить` (expired/missing). No real upload. |
+| Payouts | Completed-ride rows read `receipt.net` straight from the BD-RIDE-HISTORY-D-01 canonical store (`mock_api.listDriverReceipts`); cash/noncash badges mirror the receipt screen wording. profile.js never recalculates fare / commission / tip / net. |
+| Такси·ИП | Static demo only — no tax math. |
+| Safety | Calm, visible driver safety center (driver-scoped `pf2-safety-*` classes); tiles are demo placeholders (no real call / SOS). |
+| Constraints | No backend, no Mapbox, no real payments, no real document upload, no tax/accounting math, no passenger redesign, no active-ride redesign, no CSP weakening, no inline script/style, no copying generated HTML into runtime. |
+| Acceptance | `node scripts/check.mjs` green (no inline-style patterns, JS syntax, smokes). Loading/skeleton and empty-payouts states reachable from the documented URLs; payouts no-drift stays covered by `scripts/smoke-driver-receipt-no-drift.mjs`. |
+
 ### BD-RESPOND-01 - Respond
 
 | Field | Contract |

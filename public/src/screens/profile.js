@@ -957,7 +957,7 @@ function renderPassenger(root, u, previewState) {
 function tabsHtml(activeId = 'overview') {
   const TABS = [
     { id: 'overview', label: 'Обзор' },
-    { id: 'ip',       label: 'Такси / ИП' },
+    { id: 'ip',       label: 'Такси·ИП' },
     { id: 'docs',     label: 'Документы' },
     { id: 'payouts',  label: 'Выплаты' },
     { id: 'security', label: 'Безопасность' },
@@ -1134,8 +1134,109 @@ function quickActionsHtml() {
     </div>`;
 }
 
-function placeholderPane(label) {
-  return `<div class="pf2-placeholder"><p class="pf2-placeholder__text">${label} — скоро здесь появится информация</p></div>`;
+// ── Safety center pane (BD-PROFILE-D-03 · state I) ───────────────────────────
+// Calm, visible driver safety surface. Static demo only: the tiles never place
+// a real call and the readiness rows read fixed copy. Driver-scoped pf2-safety-*
+// classes only — the passenger safety card (.pfp-safety-*) is left untouched so
+// the two role branches stay fully separated.
+function securityPaneHtml() {
+  return `
+    <div class="bd-card pf2-safety-card">
+      <div class="pf2-safety-head">
+        <span class="pf2-safety-icon" aria-hidden="true">${SVG_SHIELD}</span>
+        <span class="pf2-safety-headtext">
+          <span class="pf2-safety-title">Центр безопасности</span>
+          <span class="pf2-safety-sub">Поддержка, маршрут смены и экстренная связь</span>
+        </span>
+        <span class="pf2-safety-badge">
+          <span class="pf2-safety-badge-dot" aria-hidden="true"></span>
+          Активно
+        </span>
+      </div>
+      <div class="pf2-safety-tiles">
+        <button type="button" class="pf2-safety-tile" id="pf2-safety-contacts">
+          <span class="pf2-safety-tile-head">
+            <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_PHONE}</span>
+            <span class="pf2-safety-tile-count">2</span>
+          </span>
+          <span class="pf2-safety-tile-label">Доверенные контакты</span>
+        </button>
+        <button type="button" class="pf2-safety-tile" id="pf2-safety-share">
+          <span class="pf2-safety-tile-head">
+            <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_PAPERPLANE}</span>
+            <span class="pf2-safety-tile-count">Авто</span>
+          </span>
+          <span class="pf2-safety-tile-label">Поделиться сменой</span>
+        </button>
+        <button type="button" class="pf2-safety-tile pf2-safety-tile--danger" id="pf2-safety-sos">
+          <span class="pf2-safety-tile-head">
+            <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
+            <span class="pf2-safety-tile-count">112</span>
+          </span>
+          <span class="pf2-safety-tile-label">Кнопка SOS</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="bd-card pf2-safety-note">
+      <span class="pf2-safety-note-icon" aria-hidden="true">${SVG_INFO}</span>
+      <p class="pf2-safety-note-text">Если есть угроза безопасности — сначала свяжитесь с поддержкой. В экстренной ситуации звоните 112. Кнопки на этом экране — демонстрация интерфейса.</p>
+    </div>
+
+    <p class="pf2-safety-sect-title">Проверки безопасности</p>
+    <div class="bd-card pf2-safety-checks">
+      <div class="pf2-safety-check-row">
+        <span class="pf2-safety-check-dot pf2-safety-check-dot--ok" aria-hidden="true"></span>
+        <span class="pf2-safety-check-label">Личность подтверждена</span>
+        <span class="pf2-safety-check-val pf2-safety-check-val--ok">Готово</span>
+      </div>
+      <div class="pf2-safety-check-row">
+        <span class="pf2-safety-check-dot pf2-safety-check-dot--ok" aria-hidden="true"></span>
+        <span class="pf2-safety-check-label">Поездки записываются в историю</span>
+        <span class="pf2-safety-check-val pf2-safety-check-val--ok">Включено</span>
+      </div>
+      <div class="pf2-safety-check-row">
+        <span class="pf2-safety-check-dot" aria-hidden="true"></span>
+        <span class="pf2-safety-check-label">Автоотправка маршрута контакту</span>
+        <span class="pf2-safety-check-val">Настроить</span>
+      </div>
+    </div>`;
+}
+
+// ── Driver skeleton / loading state (BD-PROFILE-D-03 · state J) ───────────────
+// Reachable through /profile?role=driver&state=loading. Renders the same top
+// bar + tab row so the loading state does not remount chrome, then a set of
+// shimmer bones in the scroll area. Static, non-interactive, class-driven
+// shimmer only (no inline styles, no timers).
+function driverSkeletonBonesHtml() {
+  return `
+    <div class="pf2-skeleton" aria-hidden="true">
+      <div class="pf2-sk-hero">
+        <span class="pf2-sk pf2-sk-avatar"></span>
+        <span class="pf2-sk pf2-sk-line pf2-sk-line--lg"></span>
+        <span class="pf2-sk pf2-sk-line pf2-sk-line--sm"></span>
+      </div>
+      <span class="pf2-sk pf2-sk-card"></span>
+      <div class="pf2-sk-stats">
+        <span class="pf2-sk pf2-sk-stat"></span>
+        <span class="pf2-sk pf2-sk-stat"></span>
+        <span class="pf2-sk pf2-sk-stat"></span>
+      </div>
+      <span class="pf2-sk pf2-sk-card pf2-sk-card--tall"></span>
+    </div>`;
+}
+
+function renderDriverSkeleton(root) {
+  root.innerHTML = `
+    <div class="pf2-topbar">
+      <h1 class="pf2-topbar__title">Профиль</h1>
+      <button type="button" class="pf2-topbar__gear" aria-label="Настройки" disabled>${SVG_GEAR}</button>
+    </div>
+    ${tabsHtml('overview')}
+    <div class="bd-scroll" aria-busy="true">
+      <p class="pf2-sk-status" role="status">Загружаем профиль…</p>
+      ${driverSkeletonBonesHtml()}
+    </div>`;
 }
 
 // BD-ROLE-01 — Explicit driver-facing create/order actions. Drivers default
@@ -1590,6 +1691,20 @@ function driverEntryNetValue(entry) {
 function receiptPaymentModeLabel(mode) {
   if (mode === 'cash') return 'Наличными';
   if (mode === 'noncash') return 'Безналичный расчёт';
+  return '';
+}
+
+// BD-PROFILE-D-03 — cash / noncash badge for payout receipt rows. Wording and
+// the cash/noncash split mirror the receipt screen badge
+// (trip_receipt.js#paymentBadgeHtml) so the payout list and the receipt cannot
+// drift. paymentMode is read straight from the stored receipt — no derivation.
+function receiptPaymentBadgeHtml(mode) {
+  if (mode === 'cash') {
+    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--cash">Оплата наличными</span>`;
+  }
+  if (mode === 'noncash') {
+    return `<span class="pf2-po-trip-badge pf2-po-trip-badge--noncash">Безналичный расчёт</span>`;
+  }
   return '';
 }
 
@@ -2140,11 +2255,17 @@ function pluralDoc(n) {
   return 'документов';
 }
 
+// BD-PROFILE-D-03 — readiness card labels. The Documents tab is a readiness
+// surface, so each card states its readiness in three words shared with the
+// Cloud Design render gate:
+//   Проверено      — uploaded / verified (state F)
+//   На проверке    — under review (state E · documents pending)
+//   Нужно обновить — expired or never added (state C · checklist missing docs)
 function docStatusBadgeHtml(status) {
-  if (status === 'uploaded')        return `<span class="bd-badge success">${SVG_CHECK_SM} Загружен</span>`;
-  if (status === 'review_required') return `<span class="bd-badge info">${SVG_CLOCK_SM} Требует проверки</span>`;
-  if (status === 'expired')         return `<span class="bd-badge danger">${SVG_WARN_TRI} Истёк</span>`;
-  if (status === 'missing')         return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Не загружен</span>`;
+  if (status === 'uploaded')        return `<span class="bd-badge success">${SVG_CHECK_SM} Проверено</span>`;
+  if (status === 'review_required') return `<span class="bd-badge info">${SVG_CLOCK_SM} На проверке</span>`;
+  if (status === 'expired')         return `<span class="bd-badge danger">${SVG_WARN_TRI} Нужно обновить</span>`;
+  if (status === 'missing')         return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Нужно обновить</span>`;
   if (status === 'draft')           return `<span class="bd-badge">${SVG_CLOCK_SM} Черновик</span>`;
   return '';
 }
@@ -2442,15 +2563,17 @@ function driverReceiptPayoutSectionHtml() {
   const rows = receipts.map((r) => {
     const tripId  = String(r.tripId);
     const when    = formatHistoryDate(r.completedAt);
-    const payLbl  = receiptPaymentModeLabel(r.paymentMode);
-    const sub     = [when, payLbl].filter(Boolean).join(' · ');
     const net     = formatHistoryFare(r.net);
+    const badge   = receiptPaymentBadgeHtml(r.paymentMode);
     return `
       <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
         <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
         <span class="pf2-po-trip-info">
           <span class="pf2-po-trip-name">Поездка № ${escapeHtml(tripId)}</span>
-          ${sub ? `<span class="pf2-po-trip-sub">${escapeHtml(sub)}</span>` : ''}
+          <span class="pf2-po-trip-meta">
+            ${when ? `<span class="pf2-po-trip-sub">${escapeHtml(when)}</span>` : ''}
+            ${badge}
+          </span>
         </span>
         <span class="pf2-po-trip-right">
           <span class="pf2-po-trip-net">${escapeHtml(net)}</span>
@@ -2467,7 +2590,27 @@ function driverReceiptPayoutSectionHtml() {
     </div>`;
 }
 
-function payoutsPaneHtml() {
+// BD-PROFILE-D-03 — Empty payouts state (state H). Reachable through the
+// render-gate preview URL /profile?role=driver&pane=payouts&state=empty. Calm,
+// honest copy with a single forward action; no balance, no receipts, no
+// history. Demo-only — it does not clear any persisted receipt store.
+function payoutsEmptyPaneHtml() {
+  return `
+    <div class="pf2-po-balance-card pf2-po-balance-card--empty">
+      <p class="pf2-po-balance-lbl">Доступно к выводу</p>
+      <p class="pf2-po-balance-amount">0 ₽</p>
+      <p class="pf2-po-balance-empty-note">Заработок появится после первых поездок</p>
+    </div>
+    <div class="pf2-po-empty">
+      <span class="pf2-po-empty-icon" aria-hidden="true">${SVG_RUBLE_COIN}</span>
+      <p class="pf2-po-empty-title">Выплат пока нет</p>
+      <p class="pf2-po-empty-text">Завершите первую поездку — доход, чеки и выводы на карту появятся в этом разделе.</p>
+      <button type="button" class="bd-btn primary pf2-po-empty-cta" id="pf2-po-empty-cta">Найти заказы</button>
+    </div>`;
+}
+
+function payoutsPaneHtml(previewEmpty = false) {
+  if (previewEmpty) return payoutsEmptyPaneHtml();
   const s          = MOCK_PAYOUT_SUMMARY;
   const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
   const hasHistory = MOCK_PAYOUT_HISTORY.length > 0;
@@ -2614,6 +2757,11 @@ function renderDriver(root, u) {
   }
   const items = checklistItems(u);
 
+  // BD-PROFILE-D-03 — payouts empty preview (state H). ?state=empty renders the
+  // empty payouts pane without touching the persisted receipt store. Other
+  // panes are unaffected by the flag.
+  const payoutsEmpty = getHashQuery().get('state') === 'empty';
+
   root.innerHTML = `
     <div class="pf2-topbar">
       <h1 class="pf2-topbar__title">Профиль</h1>
@@ -2634,8 +2782,8 @@ function renderDriver(root, u) {
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml()}</div>
-      <div class="pf2-pane" id="pf2-pane-security">${placeholderPane('Безопасность')}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty)}</div>
+      <div class="pf2-pane" id="pf2-pane-security">${securityPaneHtml()}</div>
     </div>`;
 
   wireMyPostsSection(root);
@@ -2655,13 +2803,27 @@ function renderDriver(root, u) {
     });
   });
 
-  // BD-RIDE-HISTORY-D-01 — deep-link to a pane, e.g. /profile?pane=payouts
-  // from the trip receipt's "К выплатам" action. Validated against the known
-  // tab ids so the param can only activate an existing pane.
-  const PANE_IDS = new Set(['overview', 'ip', 'docs', 'payouts', 'security']);
+  // BD-RIDE-HISTORY-D-01 / BD-PROFILE-D-03 — deep-link to a pane, e.g.
+  // /profile?pane=payouts from the trip receipt's "К выплатам" action. The map
+  // accepts both the internal pane ids (ip / docs / security) and the
+  // human-readable render-gate aliases (taxi-ip / documents / safety) so the
+  // documented manual URLs resolve to the same tab.
+  const PANE_ALIASES = {
+    overview: 'overview',
+    ip: 'ip', 'taxi-ip': 'ip',
+    docs: 'docs', documents: 'docs',
+    payouts: 'payouts',
+    security: 'security', safety: 'security',
+  };
+  // Own-property guard: a prototype key (e.g. ?pane=constructor) must resolve to
+  // no pane, never to an inherited Object.prototype value that would be
+  // interpolated into the selector below and could make querySelector throw.
   const paneParam = getHashQuery().get('pane');
-  if (paneParam && PANE_IDS.has(paneParam)) {
-    root.querySelector(`.pf2-tab[data-pane="${paneParam}"]`)?.click();
+  const resolvedPane = (paneParam && Object.hasOwn(PANE_ALIASES, paneParam))
+    ? PANE_ALIASES[paneParam]
+    : null;
+  if (resolvedPane) {
+    root.querySelector(`.pf2-tab[data-pane="${resolvedPane}"]`)?.click();
   }
 
   // Overview online toggle — syncs both status cards.
@@ -3054,6 +3216,17 @@ function renderDriver(root, u) {
       }, 2000);
     }, 1000);
   });
+
+  // BD-PROFILE-D-03 — empty payouts CTA (state H) routes the driver to nearby
+  // orders so the empty state has a single forward action.
+  root.querySelector('#pf2-po-empty-cta')?.addEventListener('click', () => go('/driver-map'));
+
+  // BD-PROFILE-D-03 — safety center tiles (state I). Demo placeholders: no real
+  // call, no SOS dispatch — they only dismiss focus, matching the passenger
+  // safety tiles.
+  ['#pf2-safety-contacts', '#pf2-safety-share', '#pf2-safety-sos'].forEach((sel) => {
+    root.querySelector(sel)?.addEventListener('click', (e) => e.currentTarget.blur());
+  });
 }
 
 // ── Main factory ──────────────────────────────────────────────────────────────
@@ -3087,7 +3260,12 @@ export default function profile() {
   if (view === 'guest') {
     renderGuest(root);
   } else if (view === 'driver') {
-    renderDriver(root, u);
+    // BD-PROFILE-D-03 — loading / skeleton preview (state J). ?state=loading
+    // renders the non-interactive driver skeleton; any other value falls
+    // through to the live dashboard (where ?state=empty drives the payouts
+    // empty state).
+    if (stateParam === 'loading') renderDriverSkeleton(root);
+    else renderDriver(root, u);
   } else {
     renderPassenger(root, applyPassengerStatePreview(u, stateParam), stateParam);
   }
