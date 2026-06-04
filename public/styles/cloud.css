@@ -3706,6 +3706,239 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   BD-PROFILE-D-03 — Driver dashboard polish
+   Payout payment badge · empty payouts · safety center · skeleton
+═══════════════════════════════════════════════════════════ */
+
+/* ── Payout receipt row: payment meta + cash/noncash badge (state G) ── */
+.pf2-po-trip-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+.pf2-po-trip-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.pf2-po-trip-badge--cash    { background: rgba(251,191,36,0.14); color: var(--warning); }
+.pf2-po-trip-badge--noncash { background: rgba(96,165,250,0.14); color: var(--info); }
+
+/* ── Empty payouts state (state H) ──────────────────────────── */
+.pf2-po-balance-card--empty {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+}
+.pf2-po-balance-card--empty .pf2-po-balance-lbl    { color: var(--text-3); }
+.pf2-po-balance-card--empty .pf2-po-balance-amount { color: var(--text-2); margin-bottom: 6px; }
+.pf2-po-balance-empty-note { font-size: 13px; color: var(--text-3); margin: 0; }
+.pf2-po-empty {
+  margin-top: 12px;
+  padding: 32px var(--pad);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.pf2-po-empty-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.pf2-po-empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin: 0; }
+.pf2-po-empty-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 280px;
+}
+.pf2-po-empty-cta { margin-top: 8px; }
+
+/* ── Safety center pane (state I) ───────────────────────────── */
+.pf2-safety-card { padding: 14px; margin-bottom: 12px; }
+.pf2-safety-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.pf2-safety-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: rgba(74,222,128,0.10);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(74,222,128,0.20);
+  flex-shrink: 0;
+}
+.pf2-safety-headtext {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pf2-safety-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.pf2-safety-sub   { font-size: 12px; color: var(--text-2); line-height: 1.35; }
+.pf2-safety-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(74,222,128,0.12);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.pf2-safety-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.pf2-safety-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pf2-safety-tile {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  color: var(--text);
+  transition: opacity 0.1s, transform 0.08s;
+  min-height: 96px;
+}
+.pf2-safety-tile:active { transform: scale(0.97); opacity: 0.85; }
+.pf2-safety-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-2);
+}
+.pf2-safety-tile-icon  { display: flex; align-items: center; }
+.pf2-safety-tile-count { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.pf2-safety-tile-label { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.25; }
+.pf2-safety-tile--danger {
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.30);
+}
+.pf2-safety-tile--danger .pf2-safety-tile-head,
+.pf2-safety-tile--danger .pf2-safety-tile-count,
+.pf2-safety-tile--danger .pf2-safety-tile-label { color: var(--danger); }
+
+.pf2-safety-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.pf2-safety-note-icon { color: var(--info); flex-shrink: 0; display: flex; margin-top: 1px; }
+.pf2-safety-note-text { font-size: 13px; color: var(--text-2); line-height: 1.5; margin: 0; }
+
+.pf2-safety-sect-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin: 0 0 8px;
+  padding: 0 2px;
+}
+.pf2-safety-checks { padding: 4px 14px; }
+.pf2-safety-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pf2-safety-check-row:last-child { border-bottom: none; }
+.pf2-safety-check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.pf2-safety-check-dot--ok { background: var(--success); }
+.pf2-safety-check-label { flex: 1; min-width: 0; font-size: 14px; color: var(--text); }
+.pf2-safety-check-val   { font-size: 13px; color: var(--text-3); font-weight: 600; flex-shrink: 0; }
+.pf2-safety-check-val--ok { color: var(--success); }
+
+/* ── Driver loading skeleton (state J) ──────────────────────── */
+.pf2-sk-status {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+  padding: 14px 0 4px;
+  margin: 0;
+}
+.pf2-skeleton {
+  padding: 4px var(--pad) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pf2-sk {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-2);
+  border-radius: var(--radius-md);
+}
+.pf2-sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  animation: pf2-sk-shimmer 1.3s infinite;
+}
+@keyframes pf2-sk-shimmer {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf2-sk::after { animation: none; }
+}
+.pf2-sk-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+}
+.pf2-sk-avatar { width: 76px; height: 76px; border-radius: 50%; }
+.pf2-sk-line { height: 14px; border-radius: 7px; width: 100%; }
+.pf2-sk-line--lg { width: 160px; height: 20px; }
+.pf2-sk-line--sm { width: 110px; }
+.pf2-sk-card { height: 132px; border-radius: var(--radius-lg); }
+.pf2-sk-card--tall { height: 200px; }
+.pf2-sk-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pf2-sk-stat { height: 76px; border-radius: var(--radius-md); }
+
+/* ═══════════════════════════════════════════════════════════
    BD-RESPOND-01 — Driver response to passenger request
 ═══════════════════════════════════════════════════════════ */
 
