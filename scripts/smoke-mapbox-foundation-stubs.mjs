@@ -6,10 +6,11 @@
 //   • export the agreed stub contract;
 //   • contain no real Mapbox SDK / network / CDN / dynamic-import / inline-CSP
 //     escape hatch;
-//   • cover every RIDE_STATUS value (trip status layer);
-// and that public/sw.js precaches both files with a bumped VERSION (and never
-// precaches sw.js itself), and that docs/design-registry.json stays valid JSON
-// and registers both modules. Static only — no browser, no DOM, no network.
+//   • cover every active RIDE_STATUS value (trip status layer);
+//   • keep canonical price-field and marker-CSS contracts aligned;
+// and that public/sw.js precaches both files + marker CSS with a bumped VERSION
+// (and never precaches sw.js itself), and docs/design-registry.json stays valid
+// JSON and registers both modules. Static only — no browser, no DOM, no network.
 
 import fs from 'node:fs';
 
@@ -31,6 +32,7 @@ function existsRel(p) {
 
 const DRIVER_MARKERS = 'public/src/mapbox/driver_markers.js';
 const TRIP_STATUS = 'public/src/mapbox/trip_status_layer.js';
+const MARKER_CSS = 'public/styles/map_shell_foundation.css';
 
 const MODULES = [
   {
@@ -79,9 +81,10 @@ for (const mod of MODULES) {
   }
 }
 
-// Trip status layer must cover every RIDE_STATUS value from ride_state.js.
+// Trip status layer must cover every active RIDE_STATUS value from ride_state.js.
 const RIDE_STATUSES = [
   'NEW_ORDER',
+  'ACCEPTED',
   'DRIVER_EN_ROUTE',
   'DRIVER_APPROACHING_PICKUP',
   'WAITING_PASSENGER',
@@ -95,16 +98,45 @@ if (existsRel(TRIP_STATUS)) {
   for (const status of RIDE_STATUSES) {
     expect(`trip_status_layer.js handles ${status}`, tripSrc.includes(status), status);
   }
+  expect('trip_status_layer.js normalizes status input', tripSrc.includes('toUpperCase()'));
+  expect('trip_status_layer.js maps ACCEPTED to accepted modifier', tripSrc.includes("modifier: 'accepted'"));
+  expect('trip_status_layer.js preserves UNKNOWN fallback', tripSrc.includes('DEFAULT_VISUAL'));
 }
 
-// Service worker: both files precached, VERSION bumped, sw.js not self-cached.
+// Driver marker summary must count the canonical current order price fields.
+if (existsRel(DRIVER_MARKERS)) {
+  const markerSrc = readRel(DRIVER_MARKERS);
+  for (const field of ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price']) {
+    expect(`driver_markers.js counts ${field} as a price field`, markerSrc.includes(field));
+  }
+  expect('driver_markers.js ignores empty price values', markerSrc.includes("!== ''"));
+}
+
+// Marker CSS must make rendered placeholder order markers visible without inline style.
+expect(`${MARKER_CSS} exists`, existsRel(MARKER_CSS));
+if (existsRel(MARKER_CSS)) {
+  const markerCss = readRel(MARKER_CSS);
+  expect('order marker CSS present', markerCss.includes('.bd-map-shell__marker--order'));
+  expect('order marker CSS gives width', /width:\s*28px/.test(markerCss));
+  expect('order marker CSS gives height', /height:\s*28px/.test(markerCss));
+  expect('order marker CSS gives fallback left/top', markerCss.includes('left: 50%') && markerCss.includes('top: 50%'));
+  expect('order marker CSS gives indexed positions', markerCss.includes('[data-index="0"]'));
+  expect('order marker CSS stays inline-style free', !markerCss.includes('style='));
+}
+
+// Runtime HTML should load the marker CSS explicitly so the class is not invisible.
+const indexHtml = readRel('public/index.html');
+expect('index.html loads map_shell_foundation.css', indexHtml.includes('./styles/map_shell_foundation.css'));
+
+// Service worker: both files and marker CSS precached, VERSION bumped, sw.js not self-cached.
 const sw = readRel('public/sw.js');
+expect('sw.js precaches map_shell_foundation.css', sw.includes('./styles/map_shell_foundation.css'));
 expect('sw.js precaches driver_markers.js', sw.includes('./src/mapbox/driver_markers.js'));
 expect('sw.js precaches trip_status_layer.js', sw.includes('./src/mapbox/trip_status_layer.js'));
 const versionMatch = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
 expect('sw.js VERSION present', !!versionMatch, versionMatch ? versionMatch[0] : 'none');
-expect('sw.js VERSION bumped to v86 or later',
-  !!versionMatch && Number(versionMatch[1]) >= 86,
+expect('sw.js VERSION bumped to v87 or later',
+  !!versionMatch && Number(versionMatch[1]) >= 87,
   versionMatch ? 'v' + versionMatch[1] : 'n/a');
 expect('sw.js does not precache sw.js itself', !/['"`]\.\/sw\.js['"`]/.test(sw));
 
