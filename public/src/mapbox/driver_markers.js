@@ -69,11 +69,15 @@ export function renderDriverMarkers(mapShell, orders = [], options = {}) {
     && typeof document !== 'undefined';
   if (!canRenderDom) return layer;
   layer.root = mapShell;
+  // BD-MAP-FOUND-05C — batch DOM insertion so N markers cost one append on the
+  // live map shell instead of N (no per-marker layout invalidation).
+  const fragment = document.createDocumentFragment();
   list.forEach((order, index) => {
     const el = createMarkerEl(order, index);
-    mapShell.appendChild(el);
+    fragment.appendChild(el);
     layer.markers.push(el);
   });
+  mapShell.appendChild(fragment);
   return layer;
 }
 

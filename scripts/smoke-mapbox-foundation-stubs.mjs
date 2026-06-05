@@ -127,6 +127,53 @@ if (existsRel(DRIVER_MARKERS)) {
   expect('driver_markers.js anchor count matches CSS anchors',
     !!jsAnchorCount && Number(jsAnchorCount[1]) === ANCHOR_COUNT,
     jsAnchorCount ? jsAnchorCount[1] : 'none');
+
+  // BD-MAP-FOUND-05C — renderDriverMarkers must batch DOM appends through a
+  // DocumentFragment so N markers cost one live appendChild on the map shell,
+  // not N. A bare `createDocumentFragment` substring check could be satisfied
+  // by an unrelated helper added later, so scope the assertions to the body of
+  // renderDriverMarkers (and the body of its list.forEach callback) via a
+  // naive brace counter. Naive is enough because renderDriverMarkers has no
+  // strings/regex/template literals containing `{` or `}`.
+  const sliceBracedBody = (src, openIdx) => {
+    let depth = 1;
+    let i = openIdx + 1;
+    while (i < src.length && depth > 0) {
+      const c = src[i];
+      if (c === '{') depth += 1;
+      else if (c === '}') depth -= 1;
+      i += 1;
+    }
+    return depth === 0 ? src.slice(openIdx + 1, i - 1) : '';
+  };
+  const extractBody = (src, headerRe) => {
+    const m = src.match(headerRe);
+    if (!m || m[0].slice(-1) !== '{') return '';
+    return sliceBracedBody(src, m.index + m[0].length - 1);
+  };
+
+  const renderBody = extractBody(markerSrc,
+    /export\s+function\s+renderDriverMarkers\s*\([^)]*\)\s*\{/);
+  expect('renderDriverMarkers body is extractable from driver_markers.js',
+    renderBody.length > 0);
+
+  expect('renderDriverMarkers creates a DocumentFragment',
+    /document\.createDocumentFragment\s*\(/.test(renderBody));
+
+  const forEachBody = extractBody(renderBody,
+    /list\.forEach\s*\(\s*\([^)]*\)\s*=>\s*\{/);
+  expect('renderDriverMarkers list.forEach callback body is extractable',
+    forEachBody.length > 0);
+
+  expect('renderDriverMarkers appends each marker to the fragment inside the forEach loop',
+    /\bfragment\.appendChild\s*\(/.test(forEachBody));
+  expect('renderDriverMarkers does not append markers to mapShell inside the forEach loop',
+    !/mapShell\.appendChild\s*\(/.test(forEachBody));
+
+  const forEachStart = renderBody.indexOf('list.forEach');
+  const flushMatch = renderBody.match(/mapShell\.appendChild\s*\(\s*fragment\b/);
+  expect('renderDriverMarkers flushes the fragment to mapShell after the forEach loop',
+    !!flushMatch && forEachStart >= 0 && flushMatch.index > forEachStart);
 }
 
 // Marker CSS must make rendered placeholder order markers visible without inline style.
