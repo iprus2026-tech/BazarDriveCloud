@@ -151,6 +151,17 @@ if (registry) {
     : [];
   expect('design-registry.json registers BD-MAP-FOUND-03', ids.includes('BD-MAP-FOUND-03'));
   expect('design-registry.json registers BD-MAP-FOUND-04', ids.includes('BD-MAP-FOUND-04'));
+
+  // BD-MAP-FOUND-04 statusVocabulary must stay in sync with the trip status
+  // layer (STATUS_VISUAL) — ACCEPTED is implemented and must be documented.
+  const tripModule = Array.isArray(registry.foundationModules)
+    ? registry.foundationModules.find((m) => m && m.id === 'BD-MAP-FOUND-04')
+    : null;
+  const statusVocabulary = tripModule && Array.isArray(tripModule.statusVocabulary)
+    ? tripModule.statusVocabulary
+    : [];
+  expect('design-registry.json BD-MAP-FOUND-04 statusVocabulary includes ACCEPTED',
+    statusVocabulary.includes('ACCEPTED'), JSON.stringify(statusVocabulary));
 }
 
 console.log('\n' + (issues.length

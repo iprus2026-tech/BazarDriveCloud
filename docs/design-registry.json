@@ -275,6 +275,7 @@
       ],
       "statusVocabulary": [
         "NEW_ORDER",
+        "ACCEPTED",
         "DRIVER_EN_ROUTE",
         "DRIVER_APPROACHING_PICKUP",
         "WAITING_PASSENGER",
