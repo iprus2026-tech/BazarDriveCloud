@@ -162,6 +162,39 @@ if (registry) {
     : [];
   expect('design-registry.json BD-MAP-FOUND-04 statusVocabulary includes ACCEPTED',
     statusVocabulary.includes('ACCEPTED'), JSON.stringify(statusVocabulary));
+
+  // BD-MAP-FOUND-05A — cross-validate every foundationModules entry against the real
+  // module contract, not just its id. file → expected exports comes from the MODULES
+  // table above, whose exports are already proven ⊆ source by the `export function`
+  // regex loop, so registry === MODULES ⇒ registry exports ⊆ source.
+  const EXPECTED_EXPORTS = new Map(MODULES.map((m) => [m.rel, m.exports]));
+  const tripSrcForRegistry = existsRel(TRIP_STATUS) ? readRel(TRIP_STATUS) : '';
+  const setEq = (a, b) =>
+    Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x) => new Set(b).has(x));
+  const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const foundationEntries = Array.isArray(registry.foundationModules) ? registry.foundationModules : [];
+  for (const entry of foundationEntries) {
+    const eid = (entry && entry.id) || '(no id)';
+    const file = entry && entry.file ? String(entry.file) : '';
+    expect(`design-registry.json ${eid} declares file`, !!file);
+    expect(`design-registry.json ${eid} file exists`, !!file && existsRel(file), file);
+
+    const expected = EXPECTED_EXPORTS.get(file);
+    expect(`design-registry.json ${eid} exports is non-empty array`,
+      Array.isArray(entry && entry.exports) && entry.exports.length > 0);
+    expect(`design-registry.json ${eid} exports match known module contract`,
+      !!expected && setEq(entry && entry.exports, expected),
+      JSON.stringify(entry && entry.exports) + ' vs ' + JSON.stringify(expected || null));
+
+    // statusVocabulary is optional (BD-MAP-FOUND-03 has none); when present every value
+    // must appear in trip_status_layer.js as a STATUS_VISUAL key (word-boundary match).
+    if (entry && Array.isArray(entry.statusVocabulary)) {
+      for (const status of entry.statusVocabulary) {
+        expect(`design-registry.json ${eid} statusVocabulary ${status} present in trip_status_layer.js`,
+          new RegExp('\\b' + escapeRe(status) + '\\b').test(tripSrcForRegistry), status);
+      }
+    }
+  }
 }
 
 console.log('\n' + (issues.length

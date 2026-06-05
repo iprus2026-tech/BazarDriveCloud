@@ -468,7 +468,7 @@ function readRegisteredRoutes(appSrc) {
 // Чистое ядро аудита: без fs/ROOT. Зависимости (routes, fileExists) внедряются,
 // чтобы selftest гонял его офлайн на синтетике. Толерантно к кривому-но-валидному
 // JSON (renderGates/screens/sections могут отсутствовать → расхождения, не throw).
-function auditDesignRegistry(registry, { routes, fileExists }) {
+function auditDesignRegistry(registry, { routes, fileExists, readSource = () => '' }) {
   const gaps = [];
   const notes = [];
   const gap = (code, id, detail) => gaps.push({ code, id, detail });
@@ -476,6 +476,9 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
 
   const renderGates = Array.isArray(registry && registry.renderGates) ? registry.renderGates : [];
   const screens = Array.isArray(registry && registry.screens) ? registry.screens : [];
+  // BD-MAP-FOUND-05A — foundationModules: переиспользуемые stub-модули (карта),
+  // перечисленные отдельной секцией, а не в screens[] (они не маршрутизируются).
+  const foundationModules = Array.isArray(registry && registry.foundationModules) ? registry.foundationModules : [];
 
   // #2 — структурный минимум: реестр без render-gate'ов или без экранов невалиден
   // (даже {} не должен быть ok). Дальнейшие проверки идут по тому, что есть.
@@ -561,6 +564,72 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
     }
   }
 
+  // BD-MAP-FOUND-05A — кросс-валидация foundationModules против РЕАЛЬНОГО исходника
+  // модуля. Секция ОПЦИОНАЛЬНА: пустой/отсутствующий массив → ноль проверок (это не
+  // структурный минимум, в отличие от renderGates/screens). Для каждой записи:
+  // объявленные exports и (если задан) statusVocabulary обязаны встречаться в файле,
+  // иначе реестр «уплыл» относительно кода — это design drift.
+  const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // export NAME: покрываем `export function/const/let/var/class NAME` и `export { NAME }`.
+  // Живые stub'ы используют только `export function`, но более широкий паттерн
+  // страхует контракт без ложных «не найдено».
+  const exportDeclared = (src, name) => {
+    const n = escapeRe(name);
+    return new RegExp('export\\s+(?:async\\s+)?(?:function\\*?|const|let|var|class)\\s+' + n + '\\b').test(src)
+        || new RegExp('export\\s*\\{[^}]*\\b' + n + '\\b[^}]*\\}').test(src);
+  };
+  // Значения statusVocabulary встречаются в trip_status_layer.js как ключи
+  // замороженного STATUS_VISUAL (`ACCEPTED:` …). Граница слова, а не includes:
+  // чтобы `NEW` не «совпал» внутри `NEW_ORDER`.
+  const tokenPresent = (src, value) => new RegExp('\\b' + escapeRe(value) + '\\b').test(src);
+
+  let foundationExportsChecked = 0;
+  let foundationStatusesChecked = 0;
+  for (const m of foundationModules) {
+    const fid = m && m.id ? String(m.id).trim() : '';
+    const id = fid || '(no id)';
+    if (!fid) gap('FOUNDATION_MISSING_ID', '(foundationModules)', 'поле id отсутствует или пусто');
+
+    // file обязателен и обязан быть реальным ФАЙЛОМ (isFile-семантика fileExists).
+    const file = m && m.file ? String(m.file).trim() : '';
+    const fileOk = !!file && fileExists(file);
+    if (!file) gap('FOUNDATION_MISSING_FILE', id, 'поле file отсутствует или пусто');
+    else if (!fileExists(file)) gap('FOUNDATION_MISSING_FILE', id, `файл модуля не найден как файл: ${file}`);
+
+    // exports обязателен и непуст.
+    const exportsArr = Array.isArray(m && m.exports) ? m.exports : null;
+    if (!exportsArr || exportsArr.length === 0)
+      gap('FOUNDATION_MISSING_EXPORTS', id, 'exports отсутствует, не массив или пуст');
+
+    // foundation-stub переиспользуется, а не маршрутизируется: route обязан быть null/пуст.
+    const route = m && m.route ? String(m.route).trim() : '';
+    if (route) gap('FOUNDATION_UNEXPECTED_ROUTE', id, `у foundation-stub присутствует route «${route}» (ожидался null)`);
+
+    // statusVocabulary ОПЦИОНАЛЬНО (BD-MAP-FOUND-03 без него — норма). Но если ключ
+    // присутствует — обязан быть непустым массивом.
+    let statusVocab = null;
+    if (m && Object.prototype.hasOwnProperty.call(m, 'statusVocabulary')) {
+      if (Array.isArray(m.statusVocabulary) && m.statusVocabulary.length > 0) statusVocab = m.statusVocabulary;
+      else gap('FOUNDATION_BAD_STATUS_VOCABULARY', id, 'statusVocabulary присутствует, но не массив или пуст');
+    }
+
+    // Проверки по исходнику — только если файл реально есть: иначе один чистый
+    // FOUNDATION_MISSING_FILE, без каскада «export/status не найден» по пустому src.
+    if (fileOk) {
+      const src = readSource(file);
+      if (exportsArr && exportsArr.length) for (const name of exportsArr) {
+        foundationExportsChecked++;
+        if (!exportDeclared(src, name))
+          gap('FOUNDATION_EXPORT_NOT_IN_SOURCE', id, `экспорт «${name}» не объявлен в ${file}`);
+      }
+      if (statusVocab) for (const status of statusVocab) {
+        foundationStatusesChecked++;
+        if (!tokenPresent(src, status))
+          gap('FOUNDATION_STATUS_NOT_IN_SOURCE', id, `статус «${status}» не встречается в ${file}`);
+      }
+    }
+  }
+
   return {
     ok: gaps.length === 0,
     skipped: false,
@@ -573,6 +642,9 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
       sectionsCovered,
       manualInteraction,
       routesChecked,
+      foundationModules: foundationModules.length,
+      foundationExportsChecked,
+      foundationStatusesChecked,
       gaps: gaps.length,
       notes: notes.length,
     },
@@ -585,7 +657,9 @@ function auditDesignRegistry(registry, { routes, fileExists }) {
 function validateDesignRegistry(registryFile) {
   const blankSummary = {
     renderGates: 0, screens: 0, sectionsTracked: 0, sectionsCovered: 0,
-    manualInteraction: 0, routesChecked: 0, gaps: 0, notes: 0,
+    manualInteraction: 0, routesChecked: 0,
+    foundationModules: 0, foundationExportsChecked: 0, foundationStatusesChecked: 0,
+    gaps: 0, notes: 0,
   };
   let registry;
   try {
@@ -600,7 +674,13 @@ function validateDesignRegistry(registryFile) {
   catch { /* app.js нет — все маршруты окажутся незарегистрированными (расхождение) */ }
   // isFile-семантика: artifact/export/file должны быть реальными файлами, не папками.
   const fileExists = (relPath) => isFile(path.join(ROOT, relPath));
-  return auditDesignRegistry(registry, { routes, fileExists });
+  // Читатель исходника модуля для кросс-валидации foundationModules (экспорты/статусы
+  // по факту в файле). Не бросает: нет файла → '' (даст только FOUNDATION_MISSING_FILE).
+  const readSource = (relPath) => {
+    try { return fs.readFileSync(path.join(ROOT, relPath), 'utf8'); }
+    catch { return ''; }
+  };
+  return auditDesignRegistry(registry, { routes, fileExists, readSource });
 }
 
 // ---------------------------------------------------------------------------
@@ -916,6 +996,79 @@ function selfTest() {
   }, { routes: new Set(['/ok']), fileExists: (p) => isFile(path.join(ROOT, p)) });
   if (!dirReg.gaps.some((g) => g.code === 'MISSING_SCREEN_FILE' && g.id === 'S-DIR'))
     fail('директория в screens[].file должна давать MISSING_SCREEN_FILE');
+
+  // (f) foundationModules (BD-MAP-FOUND-05A) — кросс-валидация переиспользуемых
+  // stub-модулей против РЕАЛЬНОГО исходника (внедрённый readSource).
+  // Позитив (герметичный): чистая запись + мок reader с совпадающим исходником →
+  // ни одного FOUNDATION_* gap; счётчики выросли.
+  const fOkSrc = 'export function alpha(){}\nexport function beta(){}\n'
+    + 'const STATUS_VISUAL = Object.freeze({ ACCEPTED: {} });';
+  const fOk = auditDesignRegistry({
+    renderGates: [{ id: 'RG', artifact: 'exists/only.js', standaloneExport: 'exists/only.js', sections: ['cover'] }],
+    screens: [{ id: 'S', route: '/ok', file: 'exists/only.js', renderGate: 'RG', section: 'cover',
+      interaction: 'manual-interaction', note: 'manual' }],
+    foundationModules: [
+      { id: 'F-OK', file: 'exists/only.js', type: 'foundation-stub', status: 'stub', route: null,
+        exports: ['alpha', 'beta'], statusVocabulary: ['ACCEPTED'] },
+    ],
+  }, {
+    routes: new Set(['/ok']),
+    fileExists: (p) => p === 'exists/only.js',
+    readSource: (p) => (p === 'exists/only.js' ? fOkSrc : ''),
+  });
+  const fOkFoundationGaps = fOk.gaps.filter((g) => g.code.startsWith('FOUNDATION_'));
+  if (fOkFoundationGaps.length)
+    fail('чистый foundationModules не должен давать FOUNDATION_* gap: ' + fOkFoundationGaps.map((g) => g.code).join(','));
+  if (fOk.summary.foundationModules !== 1) fail('summary.foundationModules должен быть 1');
+  if (fOk.summary.foundationExportsChecked !== 2) fail('summary.foundationExportsChecked должен быть 2');
+  if (fOk.summary.foundationStatusesChecked !== 1) fail('summary.foundationStatusesChecked должен быть 1');
+
+  // Негатив: каждая категория FOUNDATION_* обязана ловиться. Reader отдаёт исходник
+  // БЕЗ 'absentExport' и БЕЗ 'GHOST_STATUS'. Ghost-запись (несуществующий файл,
+  // пустой exports, без id) даёт MISSING_ID/MISSING_FILE/MISSING_EXPORTS и НЕ должна
+  // порождать каскад EXPORT_NOT_IN_SOURCE (исходник не читался).
+  const fBadSrc = 'export function present(){}';
+  const fBad = auditDesignRegistry({
+    renderGates: [{ id: 'RG', artifact: 'exists/only.js', standaloneExport: 'exists/only.js', sections: ['cover'] }],
+    screens: [{ id: 'S', route: '/ok', file: 'exists/only.js', renderGate: 'RG', section: 'cover',
+      interaction: 'manual-interaction', note: 'manual' }],
+    foundationModules: [
+      { file: 'stale/ghost.js', exports: [], route: null },
+      { id: 'F-BAD', file: 'exists/only.js', route: '/should-not-have',
+        exports: ['present', 'absentExport'], statusVocabulary: [] },
+      { id: 'F-STATUS', file: 'exists/only.js', exports: ['present'], statusVocabulary: ['GHOST_STATUS'] },
+    ],
+  }, {
+    routes: new Set(['/ok']),
+    fileExists: (p) => p === 'exists/only.js',
+    readSource: (p) => (p === 'exists/only.js' ? fBadSrc : ''),
+  });
+  const hasF = (code) => fBad.gaps.some((g) => g.code === code);
+  for (const code of ['FOUNDATION_MISSING_ID', 'FOUNDATION_MISSING_FILE', 'FOUNDATION_MISSING_EXPORTS',
+                      'FOUNDATION_EXPORT_NOT_IN_SOURCE', 'FOUNDATION_UNEXPECTED_ROUTE',
+                      'FOUNDATION_BAD_STATUS_VOCABULARY', 'FOUNDATION_STATUS_NOT_IN_SOURCE'])
+    if (!hasF(code)) fail('auditDesignRegistry не поймал ' + code);
+  if (fBad.ok) fail('битый foundationModules не должен быть ok');
+  if (fBad.gaps.some((g) => g.code === 'FOUNDATION_EXPORT_NOT_IN_SOURCE' && /ghost\.js/.test(g.detail)))
+    fail('отсутствующий файл не должен порождать каскад FOUNDATION_EXPORT_NOT_IN_SOURCE');
+
+  // Запись без ключа statusVocabulary (форма BD-MAP-FOUND-03) НЕ должна давать
+  // статус-gap — vocabulary опционально.
+  const fNoStatus = auditDesignRegistry({
+    foundationModules: [{ id: 'F-NOSTATUS', file: 'exists/only.js', exports: ['present'], route: null }],
+  }, {
+    routes: new Set(), fileExists: (p) => p === 'exists/only.js',
+    readSource: () => 'export function present(){}',
+  });
+  if (fNoStatus.gaps.some((g) => g.code === 'FOUNDATION_BAD_STATUS_VOCABULARY' || g.code === 'FOUNDATION_STATUS_NOT_IN_SOURCE'))
+    fail('запись без statusVocabulary не должна давать статус-gap (кейс BD-MAP-FOUND-03)');
+
+  // Живой реестр уже валидируется в (a); зафиксируем, что foundationModules в нём
+  // учтены и проверены по исходнику (BD-MAP-FOUND-03/04 = 2 модуля, 8 экспортов).
+  if (liveDr.summary.foundationModules < 2)
+    fail('live-реестр должен содержать ≥2 foundationModules (BD-MAP-FOUND-03/04)');
+  if (liveDr.summary.foundationExportsChecked < 8)
+    fail('live foundation exports должны проверяться по исходнику (>=8)');
 
   // readRegisteredRoutes — парсит register('/path', loader) в множество маршрутов.
   const sampleRoutes = readRegisteredRoutes("register('/feed', feed);\nregister( \"/profile\" , profile )");
