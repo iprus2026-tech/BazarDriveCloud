@@ -103,6 +103,13 @@ if (existsRel(TRIP_STATUS)) {
   expect('trip_status_layer.js preserves UNKNOWN fallback', tripSrc.includes('DEFAULT_VISUAL'));
 }
 
+// BD-MAP-FOUND-05B — placeholder markers 4+ (data-index >= 3) must land on a
+// stable off-center anchor, never the center (50%/50%) fallback. driver_markers
+// wraps the marker index modulo the anchor count, and the CSS defines an
+// off-center rule for every anchor 0..ANCHOR_COUNT-1; together that proves no
+// marker (incl. 12+) can stack on the center, since e.g. 12 % 12 = 0.
+const ANCHOR_COUNT = 12;
+
 // Driver marker summary must count the canonical current order price fields.
 if (existsRel(DRIVER_MARKERS)) {
   const markerSrc = readRel(DRIVER_MARKERS);
@@ -110,6 +117,16 @@ if (existsRel(DRIVER_MARKERS)) {
     expect(`driver_markers.js counts ${field} as a price field`, markerSrc.includes(field));
   }
   expect('driver_markers.js ignores empty price values', markerSrc.includes("!== ''"));
+
+  // BD-MAP-FOUND-05B — the marker index must be wrapped modulo the anchor count
+  // so the 4th+ marker (and any 12+ overflow) maps onto a defined off-center
+  // anchor rather than falling through to the center fallback.
+  expect('driver_markers.js wraps marker index modulo anchor count',
+    /index\s*%\s*\d+/.test(markerSrc) || /index\s*%\s*MARKER_ANCHOR_COUNT/.test(markerSrc));
+  const jsAnchorCount = markerSrc.match(/MARKER_ANCHOR_COUNT\s*=\s*(\d+)/);
+  expect('driver_markers.js anchor count matches CSS anchors',
+    !!jsAnchorCount && Number(jsAnchorCount[1]) === ANCHOR_COUNT,
+    jsAnchorCount ? jsAnchorCount[1] : 'none');
 }
 
 // Marker CSS must make rendered placeholder order markers visible without inline style.
@@ -122,6 +139,24 @@ if (existsRel(MARKER_CSS)) {
   expect('order marker CSS gives fallback left/top', markerCss.includes('left: 50%') && markerCss.includes('top: 50%'));
   expect('order marker CSS gives indexed positions', markerCss.includes('[data-index="0"]'));
   expect('order marker CSS stays inline-style free', !markerCss.includes('style='));
+
+  // BD-MAP-FOUND-05B — every anchor 0..ANCHOR_COUNT-1 must have an off-center
+  // position (percentage left/top, neither exactly 50%) so wrapped markers never
+  // land on the center fallback.
+  const cssRule = (i) => (markerCss.match(
+    new RegExp('\\[data-index="' + i + '"\\]\\s*\\{([^}]*)\\}')) || ['', ''])[1];
+  const offCenter = (r) => /left:\s*\d+%/.test(r) && /top:\s*\d+%/.test(r)
+    && !/left:\s*50%/.test(r) && !/top:\s*50%/.test(r);
+  for (let i = 0; i < ANCHOR_COUNT; i += 1) {
+    expect(`order marker CSS anchor ${i} is off-center`, offCenter(cssRule(i)), cssRule(i).trim());
+  }
+  // 1–3 existing markers must not regress — anchors 0/1/2 keep their positions.
+  expect('order marker CSS keeps anchor 0 at 28%/36%',
+    /left:\s*28%/.test(cssRule(0)) && /top:\s*36%/.test(cssRule(0)));
+  expect('order marker CSS keeps anchor 1 at 58%/42%',
+    /left:\s*58%/.test(cssRule(1)) && /top:\s*42%/.test(cssRule(1)));
+  expect('order marker CSS keeps anchor 2 at 44%/64%',
+    /left:\s*44%/.test(cssRule(2)) && /top:\s*64%/.test(cssRule(2)));
 }
 
 // Runtime HTML should load the marker CSS explicitly so the class is not invisible.
