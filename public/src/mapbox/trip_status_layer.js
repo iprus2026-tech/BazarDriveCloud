@@ -26,6 +26,7 @@ const DEFAULT_VISUAL = Object.freeze({
 // falls back to DEFAULT_VISUAL so the helper never throws.
 const STATUS_VISUAL = Object.freeze({
   NEW_ORDER:                 { tone: 'info',    modifier: 'new-order',    label: 'Новый заказ',         terminal: false },
+  ACCEPTED:                  { tone: 'active',  modifier: 'accepted',     label: 'Заказ принят',        terminal: false },
   DRIVER_EN_ROUTE:           { tone: 'active',  modifier: 'en-route',     label: 'Водитель в пути',     terminal: false },
   DRIVER_APPROACHING_PICKUP: { tone: 'active',  modifier: 'approaching',  label: 'Водитель подъезжает', terminal: false },
   WAITING_PASSENGER:         { tone: 'warning', modifier: 'waiting',      label: 'Ожидание пассажира',  terminal: false },
@@ -39,17 +40,21 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeStatus(status) {
+  return String(status || '').toUpperCase();
+}
+
 export function getTripStatusVisualState(status) {
-  if (typeof status === 'string'
-      && Object.prototype.hasOwnProperty.call(STATUS_VISUAL, status)) {
-    return { status, ...STATUS_VISUAL[status] };
+  const key = normalizeStatus(status);
+  if (Object.prototype.hasOwnProperty.call(STATUS_VISUAL, key)) {
+    return { status: key, ...STATUS_VISUAL[key] };
   }
   return { ...DEFAULT_VISUAL };
 }
 
 export function createTripStatusLayer(options = {}) {
   const opts = isPlainObject(options) ? options : {};
-  const status = typeof opts.status === 'string' ? opts.status : DEFAULT_VISUAL.status;
+  const status = typeof opts.status === 'string' ? normalizeStatus(opts.status) : DEFAULT_VISUAL.status;
   return {
     type: LAYER_TYPE,
     status,
@@ -62,8 +67,8 @@ export function renderTripStatusLayer(mapShell, trip = null, options = {}) {
   const status = isPlainObject(trip) && typeof trip.status === 'string'
     ? trip.status
     : (typeof opts.status === 'string' ? opts.status : DEFAULT_VISUAL.status);
-  const layer = createTripStatusLayer({ status });
   const visual = getTripStatusVisualState(status);
+  const layer = createTripStatusLayer({ status: visual.status });
   // No real map / no DOM target → safe no-op, return the descriptor only.
   const canRenderDom = mapShell
     && typeof mapShell === 'object'
