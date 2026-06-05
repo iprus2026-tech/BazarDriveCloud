@@ -11,6 +11,7 @@
 //   getDriverMarkerSummary(orders)           → { total, withCoords, withPrice }
 
 const LAYER_TYPE = 'driver-markers';
+const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price'];
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -29,7 +30,7 @@ function hasCoords(order) {
 
 function hasPrice(order) {
   return isPlainObject(order)
-    && (typeof order.offerPrice === 'string' || typeof order.price === 'number');
+    && PRICE_FIELDS.some((field) => order[field] != null && order[field] !== '');
 }
 
 export function createDriverMarkersLayer(options = {}) {
