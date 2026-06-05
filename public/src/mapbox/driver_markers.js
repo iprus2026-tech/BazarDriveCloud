@@ -12,6 +12,11 @@
 
 const LAYER_TYPE = 'driver-markers';
 const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price'];
+// BD-MAP-FOUND-05B — placeholder anchors are a fixed off-center set in
+// map_shell_foundation.css ([data-index="0".."11"]). Wrap the marker index
+// modulo the anchor count so the 4th+ marker (and any 12+ overflow) reuses a
+// real off-center anchor instead of stacking on the center (50%/50%) fallback.
+const MARKER_ANCHOR_COUNT = 12;
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -48,7 +53,7 @@ function createMarkerEl(order, index) {
   el.className = 'bd-map-shell__marker bd-map-shell__marker--order';
   el.setAttribute('role', 'img');
   el.setAttribute('aria-label', 'Заказ на карте');
-  el.dataset.index = String(index);
+  el.dataset.index = String(index % MARKER_ANCHOR_COUNT);
   const id = isPlainObject(order) && typeof order.id === 'string' ? order.id : '';
   if (id) el.dataset.orderId = id;
   return el;
