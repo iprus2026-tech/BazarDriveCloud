@@ -404,6 +404,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | File | `public/src/mapbox/driver_markers.js` |
 | Purpose | Foundation stub for plotting driver/order markers onto the MapShell placeholder. No-op / pure helpers until BD-MAP-FOUND-01 wires the real Mapbox layer. |
 | Exports | `createDriverMarkersLayer(options)`, `renderDriverMarkers(mapShell, orders, options)`, `clearDriverMarkers(layer)`, `getDriverMarkerSummary(orders)`. |
+| Summary contract | `getDriverMarkerSummary(orders)` returns `{ total, withCoords, withPrice }`. `total` = order count. `withCoords` counts orders whose `pickup.lng` AND `pickup.lat` are finite numbers (`Number.isFinite`); rejects `NaN`, `Infinity`, `-Infinity`, strings, null, undefined, missing `pickup`. `withPrice` counts orders where any of `estimatedPrice`, `estimatedPriceLabel`, `offerPrice`, `price` is a finite number OR a trimmed non-empty string that is not (case-insensitive) `"nan"` / `"infinity"` / `"-infinity"`. `0` is a valid price; whitespace-only strings are not. |
 | Constraints | No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. |
 | Acceptance | Exports stable contract; `renderDriverMarkers` returns an empty layer when no DOM map is present; `getDriverMarkerSummary` is a pure counter. |
 
