@@ -33,9 +33,25 @@ function hasCoords(order) {
     && typeof order.pickup.lat === 'number';
 }
 
+// BD-MAP-FOUND-05D — price detection must reject NaN / Infinity / blank and
+// their string twins ("NaN" / "Infinity" / "-Infinity", case-insensitive) so
+// withPrice in getDriverMarkerSummary cannot be inflated by malformed values.
+function hasPriceValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string') {
+    const label = value.trim();
+    const normalized = label.toLowerCase();
+    return label !== ''
+      && normalized !== 'nan'
+      && normalized !== 'infinity'
+      && normalized !== '-infinity';
+  }
+  return false;
+}
+
 function hasPrice(order) {
   return isPlainObject(order)
-    && PRICE_FIELDS.some((field) => order[field] != null && order[field] !== '');
+    && PRICE_FIELDS.some((field) => hasPriceValue(order[field]));
 }
 
 export function createDriverMarkersLayer(options = {}) {
