@@ -1,4 +1,4 @@
-const VERSION    = 'v85';
+const VERSION    = 'v87';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -6,6 +6,7 @@ const PRECACHE = [
   './index.html',
   './manifest.webmanifest',
   './styles/cloud.css',
+  './styles/map_shell_foundation.css',
   './styles/driver_sheets.css',
   './styles/route_picker.css',
   './styles/route_picker_layout_fix.css',
@@ -57,6 +58,8 @@ const PRECACHE = [
   './src/mapbox/geolocation_service.js',
   './src/mapbox/route_service.js',
   './src/mapbox/price_estimator.js',
+  './src/mapbox/driver_markers.js',
+  './src/mapbox/trip_status_layer.js',
   './icons/icon.svg',
   './icons/maskable-192.png',
   './icons/maskable-512.png',

@@ -396,6 +396,29 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Constraints | No SDK, no token, no network, no tile cache. |
 | Acceptance | Can render route line, pickup/dropoff/car markers as static DOM. |
 
+### BD-MAP-FOUND-03 - Driver Markers Layer (foundation stub)
+
+| Field | Contract |
+|---|---|
+| Route | Reused module, no route. |
+| File | `public/src/mapbox/driver_markers.js` |
+| Purpose | Foundation stub for plotting driver/order markers onto the MapShell placeholder. No-op / pure helpers until BD-MAP-FOUND-01 wires the real Mapbox layer. |
+| Exports | `createDriverMarkersLayer(options)`, `renderDriverMarkers(mapShell, orders, options)`, `clearDriverMarkers(layer)`, `getDriverMarkerSummary(orders)`. |
+| Constraints | No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. |
+| Acceptance | Exports stable contract; `renderDriverMarkers` returns an empty layer when no DOM map is present; `getDriverMarkerSummary` is a pure counter. |
+
+### BD-MAP-FOUND-04 - Trip Status Layer (foundation stub)
+
+| Field | Contract |
+|---|---|
+| Route | Reused module, no route. |
+| File | `public/src/mapbox/trip_status_layer.js` |
+| Purpose | Foundation stub for reflecting active-ride status on the MapShell placeholder. No-op / pure helpers until BD-MAP-FOUND-01 wires the real Mapbox layer. |
+| Exports | `createTripStatusLayer(options)`, `renderTripStatusLayer(mapShell, trip, options)`, `clearTripStatusLayer(layer)`, `getTripStatusVisualState(status)`. |
+| Status vocabulary | Mirrors `RIDE_STATUS`: NEW_ORDER, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
+| Constraints | No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. |
+| Acceptance | `getTripStatusVisualState` resolves every RIDE_STATUS to a visual descriptor and falls back safely for unknown input; `renderTripStatusLayer` returns the descriptor when no DOM map is present. |
+
 ---
 
 ## 5. Known gaps that remain true
@@ -403,7 +426,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Gap | Why it remains open |
 |---|---|
 | Real Mapbox SDK | Separate Phase 4 issue. Requires CSP and SW update. |
-| `driver_markers.js` and `trip_status_layer.js` stubs | Still not created in `public/src/mapbox/`. |
+| ~~`driver_markers.js` and `trip_status_layer.js` stubs~~ | Resolved (BD-MAP-FOUND-03 / BD-MAP-FOUND-04): both foundation stubs now exist in `public/src/mapbox/` as no-op / pure-helper modules (no real Mapbox, no token, no network), precached in `sw.js` and guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
 | ~~DriverMap readiness gate~~ | Resolved (BD-DRIVER-02): `/driver-map` now enforces `isDriverLineReady()` — the shared `state.js` rule — alongside the role guard. |
 | Backend/auth/payments/uploads/push/APK | Out of scope for the current PWA mock spine. |

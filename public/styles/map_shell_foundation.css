@@ -1,0 +1,18 @@
+/* BD-MAP-FOUND-03 — placeholder order markers for MapShell foundation stubs. */
+.bd-map-shell__marker--order {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  border-radius: 50% 50% 50% 2px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--accent, #FF6B35);
+  border: 2px solid #1a0a04;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: 4;
+}
+
+.bd-map-shell__marker--order[data-index="0"] { left: 28%; top: 36%; }
+.bd-map-shell__marker--order[data-index="1"] { left: 58%; top: 42%; }
+.bd-map-shell__marker--order[data-index="2"] { left: 44%; top: 64%; }
