@@ -33,9 +33,21 @@ function hasCoords(order) {
     && typeof order.pickup.lat === 'number';
 }
 
+// BD-MAP-FOUND-05D — price detection must reject NaN / Infinity / blank /
+// the literal "NaN" string so withPrice in getDriverMarkerSummary cannot be
+// inflated by malformed numeric fields.
+function hasPriceValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string') {
+    const label = value.trim();
+    return label !== '' && label.toLowerCase() !== 'nan';
+  }
+  return false;
+}
+
 function hasPrice(order) {
   return isPlainObject(order)
-    && PRICE_FIELDS.some((field) => order[field] != null && order[field] !== '');
+    && PRICE_FIELDS.some((field) => hasPriceValue(order[field]));
 }
 
 export function createDriverMarkersLayer(options = {}) {
