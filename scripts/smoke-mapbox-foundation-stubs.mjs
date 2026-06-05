@@ -127,6 +127,12 @@ if (existsRel(DRIVER_MARKERS)) {
   expect('driver_markers.js anchor count matches CSS anchors',
     !!jsAnchorCount && Number(jsAnchorCount[1]) === ANCHOR_COUNT,
     jsAnchorCount ? jsAnchorCount[1] : 'none');
+
+  // BD-MAP-FOUND-05C — renderDriverMarkers must batch DOM appends through a
+  // DocumentFragment so N markers cost one live appendChild on the map shell,
+  // not N (per-marker layout invalidation regression guard).
+  expect('driver_markers.js batches marker appends via DocumentFragment',
+    /createDocumentFragment\s*\(/.test(markerSrc));
 }
 
 // Marker CSS must make rendered placeholder order markers visible without inline style.
