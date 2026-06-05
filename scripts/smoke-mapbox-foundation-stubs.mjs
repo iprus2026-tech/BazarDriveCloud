@@ -141,6 +141,22 @@ if (existsRel(DRIVER_MARKERS)) {
   expect('driver_markers.js no longer uses loose != null price check',
     !/order\[field\]\s*!=\s*null/.test(markerSrc));
 
+  // BD-MAP-FOUND-05E — hasCoords must reject NaN / Infinity coordinates so
+  // withCoords in getDriverMarkerSummary is not inflated. The bare Number.isFinite
+  // substring is already asserted by the 05D price guard, so 05E proves the
+  // delegation from hasCoords to hasCoordinateValue and the removal of the old
+  // typeof-only lng/lat checks (which let NaN through, since typeof NaN === 'number').
+  expect('driver_markers.js defines hasCoordinateValue helper',
+    /function\s+hasCoordinateValue\s*\(/.test(markerSrc));
+  expect('driver_markers.js hasCoords delegates lng to hasCoordinateValue',
+    /hasCoordinateValue\s*\(\s*order\.pickup\.lng\s*\)/.test(markerSrc));
+  expect('driver_markers.js hasCoords delegates lat to hasCoordinateValue',
+    /hasCoordinateValue\s*\(\s*order\.pickup\.lat\s*\)/.test(markerSrc));
+  expect('driver_markers.js no longer uses typeof-only lng coordinate check',
+    !/typeof\s+order\.pickup\.lng\s*===?\s*'number'/.test(markerSrc));
+  expect('driver_markers.js no longer uses typeof-only lat coordinate check',
+    !/typeof\s+order\.pickup\.lat\s*===?\s*'number'/.test(markerSrc));
+
   // BD-MAP-FOUND-05B — the marker index must be wrapped modulo the anchor count
   // so the 4th+ marker (and any 12+ overflow) maps onto a defined off-center
   // anchor rather than falling through to the center fallback.

@@ -26,11 +26,18 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+// BD-MAP-FOUND-05E — coordinate detection must reject NaN / Infinity values so
+// withCoords in getDriverMarkerSummary cannot be inflated by malformed numbers.
+// Number.isFinite does not coerce, so string/null/undefined coords stay rejected.
+function hasCoordinateValue(value) {
+  return Number.isFinite(value);
+}
+
 function hasCoords(order) {
   return isPlainObject(order)
     && isPlainObject(order.pickup)
-    && typeof order.pickup.lng === 'number'
-    && typeof order.pickup.lat === 'number';
+    && hasCoordinateValue(order.pickup.lng)
+    && hasCoordinateValue(order.pickup.lat);
 }
 
 // BD-MAP-FOUND-05D — price detection must reject NaN / Infinity / blank and
