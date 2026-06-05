@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-04",
+  "updatedAt": "2026-06-05",
   "source": "Claude Design",
   "renderGates": [
     {
@@ -242,6 +242,48 @@
         "F": "/receipt?state=loading — receipt loading / syncing"
       },
       "note": "Read-only closed financial document for a completed driver ride. net is computed ONCE in the completed driver earnings flow (active_ride.js → buildDriverEarningsPayload) and persisted as one canonical receipt object via mock_api.saveDriverReceipt { tripId, completedAt, fare, commission, tip, net, paymentMode, status }. Ride history, Driver payouts and this screen only READ + FORMAT the stored receipt (fare 1540, commission -185, tip 120, net 1475 ₽) — no recalculation, no drift. Mock/UI only — no backend, no real payments, no tax / accounting math."
+    }
+  ],
+  "foundationModules": [
+    {
+      "id": "BD-MAP-FOUND-03",
+      "title": "Driver Markers Layer",
+      "file": "public/src/mapbox/driver_markers.js",
+      "type": "foundation-stub",
+      "status": "stub",
+      "route": null,
+      "exports": [
+        "createDriverMarkersLayer",
+        "renderDriverMarkers",
+        "clearDriverMarkers",
+        "getDriverMarkerSummary"
+      ],
+      "note": "No-op / pure-helper foundation layer for plotting driver/order markers onto the MapShell placeholder. No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. BD-MAP-FOUND-01 will replace the body with real Mapbox GL markers; the export contract stays stable. Not a routed screen — reused module, so it is intentionally listed here rather than in screens[]."
+    },
+    {
+      "id": "BD-MAP-FOUND-04",
+      "title": "Trip Status Layer",
+      "file": "public/src/mapbox/trip_status_layer.js",
+      "type": "foundation-stub",
+      "status": "stub",
+      "route": null,
+      "exports": [
+        "createTripStatusLayer",
+        "renderTripStatusLayer",
+        "clearTripStatusLayer",
+        "getTripStatusVisualState"
+      ],
+      "statusVocabulary": [
+        "NEW_ORDER",
+        "DRIVER_EN_ROUTE",
+        "DRIVER_APPROACHING_PICKUP",
+        "WAITING_PASSENGER",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELED",
+        "NO_SHOW"
+      ],
+      "note": "No-op / pure-helper foundation layer reflecting active-ride status on the MapShell placeholder. Status vocabulary mirrors RIDE_STATUS in public/src/ride_state.js. No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. BD-MAP-FOUND-01 will replace the body with real Mapbox GL layers; the export contract stays stable. Not a routed screen — reused module, so it is intentionally listed here rather than in screens[]."
     }
   ]
 }

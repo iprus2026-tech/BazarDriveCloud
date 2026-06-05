@@ -305,6 +305,20 @@ if (exists(chatHandoffSmoke)) {
   }
 }
 
+// BD-MAP-FOUND-03 / BD-MAP-FOUND-04 — static regression smoke for the Mapbox
+// foundation stubs (driver_markers + trip_status_layer): export contract,
+// no real Mapbox SDK / network / CDN / dynamic import, RIDE_STATUS coverage,
+// SW precache + VERSION bump, and valid design-registry JSON.
+const mapboxFoundationStubsSmoke = path.join(root, 'scripts', 'smoke-mapbox-foundation-stubs.mjs');
+if (exists(mapboxFoundationStubsSmoke)) {
+  try {
+    execFileSync(process.execPath, [mapboxFoundationStubsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-mapbox-foundation-stubs.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
