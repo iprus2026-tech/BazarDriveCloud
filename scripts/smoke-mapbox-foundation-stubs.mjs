@@ -162,6 +162,67 @@ if (registry) {
     : [];
   expect('design-registry.json BD-MAP-FOUND-04 statusVocabulary includes ACCEPTED',
     statusVocabulary.includes('ACCEPTED'), JSON.stringify(statusVocabulary));
+
+  // BD-MAP-FOUND-05A — cross-validate every foundationModules entry against the real
+  // module contract, not just its id. file → expected exports comes from the MODULES
+  // table above, whose exports are already proven ⊆ source by the `export function`
+  // regex loop, so registry === MODULES ⇒ registry exports ⊆ source.
+  const EXPECTED_EXPORTS = new Map(MODULES.map((m) => [m.rel, m.exports]));
+  // Reject duplicate registry exports and catch missing ones: a duplicate that masks a
+  // dropped required export must NOT pass (review BD-MAP-FOUND-05A #1).
+  const sameExports = (registryExports, expected) => {
+    if (!Array.isArray(registryExports) || !Array.isArray(expected)) return false;
+    if (new Set(registryExports).size !== registryExports.length) return false; // no duplicates
+    if (registryExports.length !== expected.length) return false;
+    const want = new Set(expected);
+    return registryExports.every((x) => want.has(x));
+  };
+  // Statuses must be REAL STATUS_VISUAL keys, not any token present in the source
+  // (DEFAULT_VISUAL / normalizeStatus / 'UNKNOWN' are not statuses) — review #2.
+  const statusVisualKeys = (src) => {
+    const body = (String(src).match(/STATUS_VISUAL\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || ['', ''])[1];
+    const keys = new Set();
+    const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
+    let k;
+    while ((k = re.exec(body)) !== null) keys.add(k[1]);
+    return keys;
+  };
+  // Local expected active map vocabulary for this guard only — NOT imported from
+  // RIDE_STATUS (single-source dedupe is a separate #389 item) — review #3.
+  const EXPECTED_MAP_STATUS_VOCABULARY = [
+    'NEW_ORDER', 'ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
+    'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED', 'CANCELED', 'NO_SHOW',
+  ];
+  const foundationEntries = Array.isArray(registry.foundationModules) ? registry.foundationModules : [];
+  for (const entry of foundationEntries) {
+    const eid = (entry && entry.id) || '(no id)';
+    const file = entry && entry.file ? String(entry.file) : '';
+    expect(`design-registry.json ${eid} declares file`, !!file);
+    expect(`design-registry.json ${eid} file exists`, !!file && existsRel(file), file);
+
+    const expected = EXPECTED_EXPORTS.get(file);
+    expect(`design-registry.json ${eid} exports is non-empty array`,
+      Array.isArray(entry && entry.exports) && entry.exports.length > 0);
+    expect(`design-registry.json ${eid} exports match known module contract (no dups, none missing)`,
+      !!expected && sameExports(entry && entry.exports, expected),
+      JSON.stringify(entry && entry.exports) + ' vs ' + JSON.stringify(expected || null));
+
+    // statusVocabulary is optional (BD-MAP-FOUND-03 has none); when present every value
+    // must be a real STATUS_VISUAL key in the entry's own source, and the list must
+    // cover the full expected active map vocabulary.
+    if (entry && Array.isArray(entry.statusVocabulary)) {
+      const entrySrc = file && existsRel(file) ? readRel(file) : '';
+      const visualKeys = statusVisualKeys(entrySrc);
+      for (const status of entry.statusVocabulary) {
+        expect(`design-registry.json ${eid} statusVocabulary ${status} is a STATUS_VISUAL key`,
+          visualKeys.has(status), status);
+      }
+      for (const expectedStatus of EXPECTED_MAP_STATUS_VOCABULARY) {
+        expect(`design-registry.json ${eid} statusVocabulary lists ${expectedStatus}`,
+          entry.statusVocabulary.includes(expectedStatus), expectedStatus);
+      }
+    }
+  }
 }
 
 console.log('\n' + (issues.length
