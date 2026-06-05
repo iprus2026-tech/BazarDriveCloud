@@ -116,11 +116,12 @@ if (existsRel(DRIVER_MARKERS)) {
   for (const field of ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price']) {
     expect(`driver_markers.js counts ${field} as a price field`, markerSrc.includes(field));
   }
-  // BD-MAP-FOUND-05D — hasPrice must reject NaN / Infinity / blank string /
-  // the literal "NaN" so withPrice in getDriverMarkerSummary is not inflated.
-  // Guard both the new positive contract (hasPriceValue + Number.isFinite +
-  // trim + lowercase != 'nan') and lock the door against a regression to the
-  // old loose `order[field] != null` shape.
+  // BD-MAP-FOUND-05D — hasPrice must reject NaN / Infinity / blank and their
+  // string twins ("NaN" / "Infinity" / "-Infinity", case-insensitive) so
+  // withPrice in getDriverMarkerSummary is not inflated. Guard the positive
+  // contract (hasPriceValue + Number.isFinite + trim + lowercased literal
+  // rejections) and lock the door against a regression to the old loose
+  // `order[field] != null` shape.
   expect('driver_markers.js defines hasPriceValue helper',
     /function\s+hasPriceValue\s*\(/.test(markerSrc));
   expect('driver_markers.js hasPrice delegates to hasPriceValue',
@@ -129,8 +130,14 @@ if (existsRel(DRIVER_MARKERS)) {
     markerSrc.includes('Number.isFinite('));
   expect('driver_markers.js price check trims string labels',
     /\.trim\s*\(\s*\)/.test(markerSrc));
+  expect('driver_markers.js price check lowercases string labels',
+    markerSrc.includes('.toLowerCase('));
   expect('driver_markers.js price check rejects "NaN" string',
-    /toLowerCase\s*\(\s*\)\s*!==\s*'nan'/.test(markerSrc));
+    /!==\s*'nan'/.test(markerSrc));
+  expect('driver_markers.js price check rejects "Infinity" string',
+    /!==\s*'infinity'/.test(markerSrc));
+  expect('driver_markers.js price check rejects "-Infinity" string',
+    /!==\s*'-infinity'/.test(markerSrc));
   expect('driver_markers.js no longer uses loose != null price check',
     !/order\[field\]\s*!=\s*null/.test(markerSrc));
 
