@@ -598,3 +598,23 @@ Final report:
 Сначала паспорт экрана, потом дизайн, потом контракт, потом issue, потом маленький PR.
 
 Так BazarDriveCloud растёт как нормальное приложение: секция за секцией, болт за болтом, без дымящегося капота.
+
+---
+
+## 7. BD-RIDE-D-11 — Driver Earnings Completed (visual-review URLs)
+
+Семь стадий DriverEarningsSheet (BD-RIDE-D-09 реализация, BD-RIDE-D-11 render-gate
+эталон) достижимы через `?state=`. Используйте эти URL для визуальной сверки с
+эталоном в `docs/design-renders/bd-ride-d-11/page-14.png` и `page-15.png`.
+
+| Состояние | URL                                                                  |
+| --------- | -------------------------------------------------------------------- |
+| summary   | `/#/active-ride?role=driver&status=COMPLETED`                        |
+| cash      | `/#/active-ride?role=driver&status=COMPLETED&state=cash`             |
+| noncash   | `/#/active-ride?role=driver&status=COMPLETED&state=noncash`          |
+| shift     | `/#/active-ride?role=driver&status=COMPLETED&state=shift`            |
+| loading   | `/#/active-ride?role=driver&status=COMPLETED&state=loading`          |
+| closed    | `/#/active-ride?role=driver&status=COMPLETED&state=closed`           |
+| empty     | `/#/active-ride?role=driver&status=COMPLETED&state=empty`            |
+
+Эталонный PDF: `docs/design/BD-RIDE-D-11-driver-earnings-completed-trip-render-gate.pdf`.

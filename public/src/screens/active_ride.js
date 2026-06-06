@@ -285,6 +285,9 @@ function buildDriverEarningsPayload(ride) {
     { val: String(Number(ride.ride?.tripsToday || 7)), lbl: 'Поездок' },
     { val: ride.ride?.rating ? String(ride.ride.rating) : '4,92', lbl: 'Рейтинг' },
   ];
+  // BD-RIDE-D-11 — passenger + trip context for the completed earnings sheet
+  // (issue #403). Pre-formatted here so the sheet module stays data-free.
+  const tripNumber = ride.order?.number;
   return {
     // BD-RIDE-D-09 follow-up (Codex #3) — expose the raw numerics so
     // renderCompleted persists the exact earnings the sheet shows. The sheet
@@ -304,6 +307,13 @@ function buildDriverEarningsPayload(ride) {
     balanceDeltaLabel: `+${formatRub(net)}`,
     dropoffLabel: ride.route?.dropoffLabel || 'Точка назначения',
     stats,
+    // BD-RIDE-D-11 — passenger context row + trip-number eyebrow.
+    passengerName: ride.passenger?.name || '',
+    passengerInitials: ride.passenger?.initials || 'АМ',
+    pickupLabel: ride.route?.pickupLabel || '',
+    distanceLabel: ride.order?.destinationDistance || '',
+    durationLabel: ride.order?.destinationEta || '',
+    tripNumberLabel: tripNumber ? `Поездка №${tripNumber}` : 'Поездка',
   };
 }
 
@@ -602,7 +612,9 @@ export default function activeRide() {
     openDriverEarningsSheet(root, {
       state: earningsState,
       payload,
-      onClose: () => go('/driver-map'),
+      onClose:  () => go('/driver-map'),
+      onOrders: () => go('/driver-map'),
+      onFeed:   () => go('/feed'),
     });
   }
 
