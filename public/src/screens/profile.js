@@ -2483,6 +2483,7 @@ function ipPaneHtml(u) {
       <button type="button" class="bd-btn primary pf2-ip-go-btn" id="pf2-ip-go-online"${goDisabled}>
         ${SVG_CAR_FRONT} ${escapeHtml(goLabel)}
       </button>
+      ${goDisabled ? `<p class="pf2-ip-go-reason" id="pf2-ip-go-reason">${escapeHtml(sub)}</p>` : ''}
       <div class="pf2-ip-shift-row">
         <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-open-shift">
           ${SVG_CLOCK_SM} Открыть смену

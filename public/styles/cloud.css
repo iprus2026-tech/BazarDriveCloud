@@ -2239,10 +2239,16 @@ body {
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
+  /* BD-PROFILE-D-05 — proximity-snap so the rightmost tab ("Безопасность")
+     settles cleanly when the user releases a horizontal pan, and reserve room
+     past the right-edge fade so the snapped tab is fully visible. */
+  scroll-snap-type: x proximity;
+  scroll-padding-inline-end: 44px;
 }
 .pf2-tabs-row::-webkit-scrollbar { display: none; }
 .pf2-tab {
   flex-shrink: 0;
+  scroll-snap-align: start;
   height: 34px;
   padding: 0 14px;
   border-radius: 999px;
@@ -2922,9 +2928,11 @@ body {
   top: 0;
   right: 0;
   bottom: 10px;
-  width: 28px;
+  /* BD-PROFILE-D-05 — wider/stronger fade so the rightmost tab clipping is
+     read as scrollable affordance instead of a hard edge. */
+  width: 44px;
   pointer-events: none;
-  background: linear-gradient(to right, rgba(10,10,12,0) 0%, var(--bg-0) 90%);
+  background: linear-gradient(to right, rgba(10,10,12,0) 0%, var(--bg-0) 100%);
 }
 
 /* IP status card data-state styles. Mirrors Overview's action/ready but adds
@@ -3076,7 +3084,18 @@ body {
    bottom navigation on iOS Safari. Use safe-area + buffer to keep the last
    card clearly above the tab bar / browser chrome. */
 #pf2-pane-ip {
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  padding-bottom: calc(var(--tabbar-h, 88px) + env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+/* BD-PROFILE-D-05 — when the "Выйти на линию" CTA is disabled, surface the
+   readiness reason directly below the button so the cause is co-located with
+   the disabled action. The same text also lives in #pf2-ip-scard-sub above
+   the readiness list; this is the inline echo for mobile clarity. */
+.pf2-ip-go-reason {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: center;
 }
 
 /* ═══════════════════════════════════════════════════════════
