@@ -220,6 +220,19 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Send message, quick reply, open trip confirmation, open active ride where applicable. |
 | Acceptance | Same `tripId` links feed/respond/confirmation/active ride. |
 
+### BD-CHAT-02 - Chat bridge (ride + response context)
+
+| Field | Contract |
+|---|---|
+| Route | `/chat?tripId=<id>&role=<driver\|passenger>` (from `/active-ride`) or `/chat?responseId=<id>` (from `/respond`) or legacy `/chat?tripId=<id>` (feed/post-detail/inbox). |
+| File | `public/src/screens/chat.js` |
+| Storage | Reads `bazardrive.active_ride.v1` and `bazardrive.responses.v1`; writes `bazardrive.chat.v1` (message threads) and `bazardrive.trip_confirmation.v1` (BD-CHAT-01 handoff, unchanged). |
+| Hydration order | (1) `tripId` → `findActiveRide(tripId)` → counterpart = `viewerRole === 'driver' ? ride.passenger : ride.driver`; trip = `ride.route` + `ride.ride.price` / `ride.order.offerPrice` + `ride.status`. (2) Else `responseId` → `loadResponse(responseId)` → counterpart falls back to `MOCK_DRIVER`; trip price from `response.driverPrice`. (3) Else demo `MOCK_DRIVER` / `MOCK_TRIP`. |
+| Back-link | `tripId` + explicit `role` → `/active-ride?role=<role>&tripId=<tripId>`. `responseId` with known `response.requestId` → `/respond?postId=<requestId>`. Otherwise `/feed` (legacy / demo). |
+| Message schema | Outgoing send writes `{ id, senderRole: viewerRole, dir: 'out', text, time }`. Readers prefer `senderRole`; legacy `dir`-only records keep rendering via the existing fallback in `directionForMessage`. |
+| Preserved | BD-CHAT-01 confirmation CTA flow (`/chat?responseId=…` → `bazardrive.trip_confirmation.v1` → `/trip-confirmation`) unchanged. `/respond` write side unchanged. `/active-ride` driver/passenger flows unchanged apart from the appended `&role=` on chat deep-links. |
+| Acceptance | Round-trip `/active-ride?role=<r>&tripId=<id>` → `/chat?tripId=<id>&role=<r>` → back returns to the originating `/active-ride` view with `role`+`tripId` preserved; counterpart matches the role; trip route/price/status come from `bazardrive.active_ride.v1`. |
+
 ### BD-CONFIRM-01 - Trip confirmation handoff
 
 | Field | Contract |

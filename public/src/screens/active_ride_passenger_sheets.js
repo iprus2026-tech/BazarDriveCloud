@@ -320,7 +320,7 @@ export function openPassengerSafetySheet(root, options = {}) {
       } else if (id === 'chat') {
         const tripId = ride && ride.tripId;
         close();
-        go(tripId ? `/chat?tripId=${encodeURIComponent(tripId)}` : '/chat');
+        go(tripId ? `/chat?tripId=${encodeURIComponent(tripId)}&role=passenger` : '/chat');
       } else if (id === 'report') {
         overlay.dataset.report = 'idle';
         reportReason = null;

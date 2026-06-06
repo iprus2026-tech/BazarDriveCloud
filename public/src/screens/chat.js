@@ -1,5 +1,6 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
+import { findActiveRide } from '../ride_state.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -130,6 +131,68 @@ function resolveRideContext({ responseId }) {
   return { isRide: false, tripId: null };
 }
 
+// BD-CHAT-02 — Hydrate header + trip bar from the canonical ride when the
+// caller supplies tripId, fall back to the stored response payload when only
+// responseId is present, and otherwise show the demo card. The ride store
+// owns `passenger`/`driver`/`route`/`ride.price`/`status`; the response store
+// owns `driverPrice` and the originating `requestId`. We never throw — every
+// lookup degrades gracefully so a stale/unknown id renders the demo instead
+// of a blank screen.
+function resolveChatHydration({ tripId, responseId, viewerRole }) {
+  if (tripId) {
+    const ride = findActiveRide(tripId);
+    if (ride) {
+      const counterpart = viewerRole === 'driver'
+        ? (ride.passenger || {})
+        : (ride.driver || {});
+      const trip = {
+        from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
+        to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
+        price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
+        when:   MOCK_TRIP.when,
+        seats:  MOCK_TRIP.seats,
+        status: ride.status || 'Принят',
+      };
+      return { counterpart, trip, response: null };
+    }
+  }
+  if (responseId) {
+    const response = loadResponse(responseId);
+    if (response) {
+      const trip = {
+        from:   MOCK_TRIP.from,
+        to:     MOCK_TRIP.to,
+        price:  response.driverPrice ? `${response.driverPrice} ₽` : MOCK_TRIP.price,
+        when:   MOCK_TRIP.when,
+        seats:  MOCK_TRIP.seats,
+        status: 'Принят',
+      };
+      return { counterpart: MOCK_DRIVER, trip, response };
+    }
+  }
+  return {
+    counterpart: MOCK_DRIVER,
+    trip: { ...MOCK_TRIP, status: 'Принят' },
+    response: null,
+  };
+}
+
+// BD-CHAT-02 — Back link respects the entry point. When the user arrives
+// from /active-ride (tripId + explicit role), return there; from /respond
+// (responseId with a known requestId), return to /respond; otherwise fall
+// back to /feed which matches the historical default for demo and legacy
+// chat URLs. The `hasExplicitRole` gate keeps bare /chat?tripId= links
+// (used by feed, post-detail, mock inbox) on the legacy /feed back path.
+function resolveBackHref({ tripId, responseId, viewerRole, hasExplicitRole, response }) {
+  if (tripId && hasExplicitRole) {
+    return `/active-ride?role=${viewerRole}&tripId=${encodeURIComponent(tripId)}`;
+  }
+  if (responseId && response && response.requestId) {
+    return `/respond?postId=${encodeURIComponent(response.requestId)}`;
+  }
+  return '/feed';
+}
+
 // Driver auto-notices that predate the senderRole field. Such legacy
 // messages were stored as `dir: 'out'`, so without a migration they would
 // keep rendering as the passenger's own outgoing bubble.
@@ -202,6 +265,14 @@ const SEND_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 export default function chat() {
   const tripId     = getRouteParam('tripId');
   const responseId = getRouteParam('responseId');
+  // BD-CHAT-02 — `role` is the viewer's identity inside this chat. It picks
+  // which side of the counterpart to show (driver-view → passenger, and
+  // vice-versa) and stamps outgoing messages with the canonical authorship
+  // field. Defaults to 'passenger' so legacy URLs without ?role= keep the
+  // historical passenger-facing render.
+  const rawRole         = getRouteParam('role');
+  const hasExplicitRole = rawRole === 'driver' || rawRole === 'passenger';
+  const viewerRole      = rawRole === 'driver' ? 'driver' : 'passenger';
   const chatId     = tripId
     ? `trip-${tripId}`
     : responseId
@@ -212,6 +283,12 @@ export default function chat() {
   let messages  = stored ? [...stored] : MOCK_MESSAGES.map((m) => ({ ...m }));
 
   const rideContext = resolveRideContext({ responseId });
+  // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
+  // person on the other end of the thread (driver for passenger viewers,
+  // passenger for driver viewers); `trip` carries route + price + status.
+  const hydration   = resolveChatHydration({ tripId, responseId, viewerRole });
+  const counterpart = hydration.counterpart;
+  const trip        = hydration.trip;
 
   const root = document.createElement('section');
   root.className = 'screen screen--chat';
@@ -221,12 +298,12 @@ export default function chat() {
       <button type="button" class="bd-iconbtn chat__back" id="chat-back" aria-label="Назад">
         ${BACK_SVG}
       </button>
-      <div class="chat__avatar" aria-hidden="true">${escapeHtml(MOCK_DRIVER.initials)}</div>
+      <div class="chat__avatar" aria-hidden="true">${escapeHtml(counterpart.initials || '')}</div>
       <div class="chat__driver-info">
-        <div class="chat__driver-name">${escapeHtml(MOCK_DRIVER.name)}</div>
+        <div class="chat__driver-name">${escapeHtml(counterpart.name || '')}</div>
         <div class="chat__driver-meta">
           <span class="chat__online-dot" aria-hidden="true"></span>
-          ${escapeHtml(MOCK_DRIVER.status)} · ★ ${escapeHtml(MOCK_DRIVER.rating)}
+          ${escapeHtml(counterpart.onlineLabel || counterpart.status || 'в сети')} · ★ ${escapeHtml(counterpart.rating || '')}
         </div>
       </div>
       <button type="button" class="bd-iconbtn chat__call" id="chat-call" aria-label="Позвонить">
@@ -238,13 +315,13 @@ export default function chat() {
       <div class="chat__trip-left">
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
-          <span>${escapeHtml(MOCK_TRIP.from)} → ${escapeHtml(MOCK_TRIP.to)}</span>
+          <span>${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
           <span class="inbox-item__status inbox-item__status--success chat__trip-status"
-                aria-label="Статус поездки">Принят</span>
+                aria-label="Статус поездки">${escapeHtml(trip.status || 'Принят')}</span>
         </div>
-        <div class="chat__trip-meta">${escapeHtml(MOCK_TRIP.when)} · ${MOCK_TRIP.seats} места</div>
+        <div class="chat__trip-meta">${escapeHtml(trip.when || '')} · ${trip.seats || ''} места</div>
       </div>
-      <div class="chat__trip-price">${escapeHtml(MOCK_TRIP.price)}</div>
+      <div class="chat__trip-price">${escapeHtml(String(trip.price || ''))}</div>
     </div>
 
     <div class="chat__confirm-bar" id="chat-confirm-bar"${rideContext.isRide ? '' : ' hidden'}>
@@ -341,7 +418,12 @@ export default function chat() {
     const now  = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    const msg = { id: Date.now(), dir: 'out', text, time };
+    // BD-CHAT-02 — `senderRole` is the canonical authorship field; readers
+    // (driver and passenger viewers alike) compute incoming/outgoing from it.
+    // `dir: 'out'` is retained as the legacy fallback for stores written
+    // before senderRole existed and is correct here because this is the
+    // local outgoing send.
+    const msg = { id: Date.now(), senderRole: viewerRole, dir: 'out', text, time };
     messages = [...messages, msg];
     saveMessages(chatId, messages);
 
@@ -376,7 +458,18 @@ export default function chat() {
   });
 
   // ── Back ────────────────────────────────────────────────────────
-  root.querySelector('#chat-back').addEventListener('click', () => go('/feed'));
+  // BD-CHAT-02 — Round-trip to the entry point. `resolveBackHref` keeps the
+  // confirmation CTA's forward path (handled separately below) unchanged
+  // and only governs the back arrow.
+  root.querySelector('#chat-back').addEventListener('click', () => {
+    go(resolveBackHref({
+      tripId,
+      responseId,
+      viewerRole,
+      hasExplicitRole,
+      response: hydration.response,
+    }));
+  });
 
   // ── Trip confirmation CTA (ride context only) ───────────────────
   if (rideContext.isRide && rideContext.tripId) {
