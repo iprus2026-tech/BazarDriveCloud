@@ -53,6 +53,10 @@ const MODULES = [
       'getTripStatusVisualState',
     ],
   },
+  {
+    rel: 'public/src/mapbox/foundation_utils.js',
+    exports: ['isPlainObject', 'safeArray'],
+  },
 ];
 
 // Tokens that would betray a real Mapbox SDK, a network call, a CDN load, a
@@ -101,6 +105,13 @@ if (existsRel(TRIP_STATUS)) {
   expect('trip_status_layer.js normalizes status input', tripSrc.includes('toUpperCase()'));
   expect('trip_status_layer.js maps ACCEPTED to accepted modifier', tripSrc.includes("modifier: 'accepted'"));
   expect('trip_status_layer.js preserves UNKNOWN fallback', tripSrc.includes('DEFAULT_VISUAL'));
+
+  // BD-MAP-FOUND-05G — trip_status_layer must import shared isPlainObject from
+  // ./foundation_utils.js instead of defining it privately (issue #389 item 4).
+  expect('trip_status_layer.js imports isPlainObject from foundation_utils',
+    /import\s*\{[^}]*\bisPlainObject\b[^}]*\}\s*from\s*['"]\.\/foundation_utils\.js['"]/.test(tripSrc));
+  expect('trip_status_layer.js no longer defines local isPlainObject',
+    !/function\s+isPlainObject\s*\(/.test(tripSrc));
 }
 
 // BD-MAP-FOUND-05B — placeholder markers 4+ (data-index >= 3) must land on a
@@ -156,6 +167,18 @@ if (existsRel(DRIVER_MARKERS)) {
     !/typeof\s+order\.pickup\.lng\s*===?\s*'number'/.test(markerSrc));
   expect('driver_markers.js no longer uses typeof-only lat coordinate check',
     !/typeof\s+order\.pickup\.lat\s*===?\s*'number'/.test(markerSrc));
+
+  // BD-MAP-FOUND-05G — driver_markers must import shared isPlainObject + safeArray
+  // from ./foundation_utils.js instead of defining them privately. Lock the door
+  // against re-duplication of the foundation primitives (issue #389 item 4).
+  expect('driver_markers.js imports isPlainObject from foundation_utils',
+    /import\s*\{[^}]*\bisPlainObject\b[^}]*\}\s*from\s*['"]\.\/foundation_utils\.js['"]/.test(markerSrc));
+  expect('driver_markers.js imports safeArray from foundation_utils',
+    /import\s*\{[^}]*\bsafeArray\b[^}]*\}\s*from\s*['"]\.\/foundation_utils\.js['"]/.test(markerSrc));
+  expect('driver_markers.js no longer defines local isPlainObject',
+    !/function\s+isPlainObject\s*\(/.test(markerSrc));
+  expect('driver_markers.js no longer defines local safeArray',
+    !/function\s+safeArray\s*\(/.test(markerSrc));
 
   // BD-MAP-FOUND-05B — the marker index must be wrapped modulo the anchor count
   // so the 4th+ marker (and any 12+ overflow) maps onto a defined off-center
@@ -254,6 +277,7 @@ const sw = readRel('public/sw.js');
 expect('sw.js precaches map_shell_foundation.css', sw.includes('./styles/map_shell_foundation.css'));
 expect('sw.js precaches driver_markers.js', sw.includes('./src/mapbox/driver_markers.js'));
 expect('sw.js precaches trip_status_layer.js', sw.includes('./src/mapbox/trip_status_layer.js'));
+expect('sw.js precaches foundation_utils.js', sw.includes('./src/mapbox/foundation_utils.js'));
 const versionMatch = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
 expect('sw.js VERSION present', !!versionMatch, versionMatch ? versionMatch[0] : 'none');
 expect('sw.js VERSION bumped to v87 or later',

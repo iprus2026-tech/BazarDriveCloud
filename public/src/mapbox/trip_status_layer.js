@@ -11,6 +11,8 @@
 //   clearTripStatusLayer(layer)                 → void
 //   getTripStatusVisualState(status)            → { status, tone, modifier, label, terminal }
 
+import { isPlainObject } from './foundation_utils.js';
+
 const LAYER_TYPE = 'trip-status';
 
 const DEFAULT_VISUAL = Object.freeze({
@@ -35,10 +37,6 @@ const STATUS_VISUAL = Object.freeze({
   CANCELED:                  { tone: 'danger',  modifier: 'canceled',     label: 'Поездка отменена',    terminal: true },
   NO_SHOW:                   { tone: 'danger',  modifier: 'no-show',      label: 'Пассажир не пришёл',  terminal: true },
 });
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function normalizeStatus(status) {
   return String(status || '').toUpperCase();

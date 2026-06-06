@@ -10,6 +10,8 @@
 //   clearDriverMarkers(layer)                → void
 //   getDriverMarkerSummary(orders)           → { total, withCoords, withPrice }
 
+import { isPlainObject, safeArray } from './foundation_utils.js';
+
 const LAYER_TYPE = 'driver-markers';
 const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price'];
 // BD-MAP-FOUND-05B — placeholder anchors are a fixed off-center set in
@@ -17,14 +19,6 @@ const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'pr
 // modulo the anchor count so the 4th+ marker (and any 12+ overflow) reuses a
 // real off-center anchor instead of stacking on the center (50%/50%) fallback.
 const MARKER_ANCHOR_COUNT = 12;
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
 
 // BD-MAP-FOUND-05E — coordinate detection must reject NaN / Infinity values so
 // withCoords in getDriverMarkerSummary cannot be inflated by malformed numbers.

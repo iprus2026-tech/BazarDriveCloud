@@ -1,4 +1,4 @@
-const VERSION    = 'v90';
+const VERSION    = 'v91';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -52,6 +52,7 @@ const PRECACHE = [
   './src/repeat_route.js',
   './src/favorite_routes.js',
   './src/mapbox/map_shell.js',
+  './src/mapbox/foundation_utils.js',
   './src/mapbox/mapbox_config.js',
   './src/mapbox/mapbox_loader.js',
   './src/mapbox/mapbox_state.js',
