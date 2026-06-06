@@ -248,6 +248,81 @@
 .de-pay-badge.cash { background: rgba(251, 191, 36, 0.14); color: var(--warning); }
 .de-pay-badge.noncash { background: rgba(96, 165, 250, 0.14); color: var(--info); }
 
+/* BD-RIDE-D-11 — header status pill (replaces the close X for the earnings
+   sheet). Per-variant color tracks the inline .de-pay-badge so the header
+   and body read as one. */
+.de-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.de-pill--ok       { background: rgba(74, 222, 128, 0.14); color: var(--success); }
+.de-pill--cash     { background: rgba(251, 191, 36, 0.14); color: var(--warning); }
+.de-pill--noncash  { background: rgba(96, 165, 250, 0.14); color: var(--info); }
+
+/* BD-RIDE-D-11 — compact passenger context row above the hero. Avatar +
+   name + pickup→dropoff + distance/duration metrics. */
+.de-passenger {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  margin-bottom: 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.de-passenger__avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.de-passenger__info { min-width: 0; }
+.de-passenger__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+.de-passenger__route { font-size: 12px; color: var(--text-2); line-height: 1.35; }
+.de-passenger__pickup,
+.de-passenger__dropoff { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.de-passenger__dropoff { color: var(--text); }
+.de-passenger__metrics {
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* BD-RIDE-D-11 — secondary nav row under the primary CTA. Two ghost buttons
+   side-by-side (Открыть заказы / В ленту) — uses the existing ghost button
+   token from cloud.css. */
+.de-earn__secondary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+.de-earn__secondary .active-ride-driver-sheet__btn { height: 44px; font-size: 14px; }
+
 /* Cash confirm row — gates the primary "Закрыть поездку" until checked. */
 .de-confirm {
   display: flex;

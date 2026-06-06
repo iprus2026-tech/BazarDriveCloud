@@ -86,8 +86,13 @@ function problemActionNotice(code) {
   }
 }
 
+// Default head-right slot for cancel + problem sheets. Earnings sheet (D-11)
+// passes a per-variant status pill instead — dismiss is still available via
+// backdrop / Escape / primary CTA.
+const CLOSE_X_HTML = '<button type="button" class="active-ride-driver-sheet__close" aria-label="Закрыть" data-driver-sheet-close="true">×</button>';
+
 // ── Shared overlay shell ─────────────────────────────────────
-function sheetShell(kind, titleId, eyebrow, title, bodyHtml) {
+function sheetShell(kind, titleId, eyebrow, title, bodyHtml, headRight = CLOSE_X_HTML) {
   return `
     <div class="active-ride-driver-sheet__backdrop" data-driver-sheet-close="true" aria-hidden="true"></div>
     <section class="active-ride-driver-sheet__panel" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(titleId)}" tabindex="-1">
@@ -97,7 +102,7 @@ function sheetShell(kind, titleId, eyebrow, title, bodyHtml) {
           <div class="active-ride-driver-sheet__eyebrow">${escapeHtml(eyebrow)}</div>
           <h2 class="active-ride-driver-sheet__title" id="${escapeHtml(titleId)}">${escapeHtml(title)}</h2>
         </div>
-        <button type="button" class="active-ride-driver-sheet__close" aria-label="Закрыть" data-driver-sheet-close="true">×</button>
+        ${headRight}
       </div>
       ${bodyHtml}
     </section>
@@ -438,8 +443,8 @@ function resolveEarningsState(state, payload) {
 function earningsHeroHtml(p) {
   return `
     <div class="de-earn__hero">
-      <div class="de-earn__hero-label">Ваш доход за поездку</div>
-      <div class="de-earn__hero-value" aria-label="Ваш доход: ${escapeHtml(p.netAria || p.netLabel)}">${escapeHtml(p.netLabel)}</div>
+      <div class="de-earn__hero-label">Заработок за поездку</div>
+      <div class="de-earn__hero-value" aria-label="Заработок: ${escapeHtml(p.netAria || p.netLabel)}">${escapeHtml(p.netLabel)}</div>
       <div class="de-earn__hero-route">${escapeHtml(p.dropoffLabel || 'Поездка завершена')}</div>
     </div>`;
 }
@@ -449,9 +454,9 @@ function earningsRowsHtml(p) {
     <div class="de-earn__rows" role="list" aria-label="Разбивка поездки">
       <div class="de-earn__row" role="listitem"><span>Стоимость поездки</span><strong>${escapeHtml(p.fareLabel)}</strong></div>
       <div class="de-earn__row" role="listitem"><span>Комиссия сервиса · ${escapeHtml(p.commissionPctLabel || '')}</span><strong>${escapeHtml(p.commissionAmountLabel)}</strong></div>
-      <div class="de-earn__row" role="listitem"><span>Чаевые и бонусы</span><strong>${escapeHtml(p.tipLabel)}</strong></div>
+      <div class="de-earn__row" role="listitem"><span>Чаевые / бонус</span><strong>${escapeHtml(p.tipLabel)}</strong></div>
       <div class="de-earn__divider" aria-hidden="true"></div>
-      <div class="de-earn__row de-earn__row--total" role="listitem"><span>Итого вам</span><strong class="de-earn__total">${escapeHtml(p.netLabel)}</strong></div>
+      <div class="de-earn__row de-earn__row--total" role="listitem"><span>Итого водителю</span><strong class="de-earn__total">${escapeHtml(p.netLabel)}</strong></div>
     </div>`;
 }
 
@@ -459,6 +464,49 @@ function earningsBadgeHtml(kind) {
   return kind === 'cash'
     ? '<span class="de-pay-badge cash">Оплата наличными</span>'
     : '<span class="de-pay-badge noncash">Безналичный расчёт</span>';
+}
+
+// BD-RIDE-D-11 — header status pill (replaces the close X for the earnings
+// sheet across all variants; dismiss stays available via primary CTA,
+// backdrop click, and Escape).
+function earningsPillHtml(variant) {
+  if (variant === 'cash') return '<span class="de-pill de-pill--cash">Оплата наличными</span>';
+  if (variant === 'noncash') return '<span class="de-pill de-pill--noncash">Безналичный расчёт</span>';
+  return '<span class="de-pill de-pill--ok">Завершено</span>';
+}
+
+// BD-RIDE-D-11 — compact passenger context row matching reference state 1.
+// Lightweight by design: no message/call icons or phone/luggage line (the
+// fuller .active-ride__passenger row used in en-route / waiting stays in
+// active_ride.js). Renders only for summary / cash / noncash; the shift /
+// loading / closed / empty stages skip it.
+function earningsPassengerHtml(p) {
+  return `
+    <div class="de-passenger">
+      <div class="de-passenger__avatar" aria-hidden="true">${escapeHtml(p.passengerInitials || 'АМ')}</div>
+      <div class="de-passenger__info">
+        <div class="de-passenger__name">${escapeHtml(p.passengerName || '')}</div>
+        <div class="de-passenger__route">
+          <div class="de-passenger__pickup">${escapeHtml(p.pickupLabel || '')}</div>
+          <div class="de-passenger__dropoff">${escapeHtml(p.dropoffLabel || '')}</div>
+        </div>
+      </div>
+      <div class="de-passenger__metrics" aria-hidden="true">
+        <div>${escapeHtml(p.distanceLabel || '')}</div>
+        <div>${escapeHtml(p.durationLabel || '')}</div>
+      </div>
+    </div>`;
+}
+
+// BD-RIDE-D-11 — secondary nav row under the primary CTA. Routes are wired
+// by the driver screen (onOrders / onFeed). Renders only for summary /
+// cash / noncash variants.
+function earningsSecondaryHtml() {
+  return `
+    <div class="de-earn__secondary">
+      <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" id="driver-earnings-orders">Открыть заказы</button>
+      <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" id="driver-earnings-feed">В ленту</button>
+    </div>`;
 }
 
 function earningsConfirmHtml() {
@@ -497,6 +545,8 @@ function earningsStatgridHtml(p) {
 
 // Builds the visible earnings content for the chosen variant. summary/cash/
 // noncash share the breakdown rows; shift swaps them for the stat grid.
+// BD-RIDE-D-11 — summary/cash/noncash also get the passenger context row
+// above the hero and the secondary nav row under the primary CTA.
 function earningsContentHtml(variant, p) {
   let inner;
   if (variant === 'shift') {
@@ -509,13 +559,16 @@ function earningsContentHtml(variant, p) {
     inner = earningsRowsHtml(p);
   }
   const disabled = variant === 'cash' ? ' disabled' : '';
+  const showPassenger = variant === 'summary' || variant === 'cash' || variant === 'noncash';
   return `
     <div class="de-earn">
+      ${showPassenger ? earningsPassengerHtml(p) : ''}
       ${earningsHeroHtml(p)}
       ${inner}
       <div class="active-ride-driver-sheet__actions de-earn__cta">
         <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent de-earn__primary" id="driver-earnings-close"${disabled}>Закрыть поездку</button>
       </div>
+      ${showPassenger ? earningsSecondaryHtml() : ''}
     </div>`;
 }
 
@@ -549,7 +602,8 @@ export function renderDriverEarningsSheet(state, payload) {
       </div>
     </div>
   `;
-  return sheetShell('earnings', 'driver-earnings-title', 'Поездка завершена', 'Ваш доход', body);
+  const eyebrow = (p && p.tripNumberLabel) || 'Поездка';
+  return sheetShell('earnings', 'driver-earnings-title', eyebrow, 'Поездка завершена', body, earningsPillHtml(variant));
 }
 
 function bindEarningsEvents(overlay, options) {
@@ -603,6 +657,26 @@ function bindEarningsEvents(overlay, options) {
     emptyFeed.addEventListener('click', () => {
       if (overlay.__closeSheet) overlay.__closeSheet();
       go('/feed');
+    });
+  }
+
+  // BD-RIDE-D-11 — secondary nav row under the primary CTA. The driver
+  // screen wires the route targets; fall back to /driver-map and /feed when
+  // no callback is provided so the buttons are never dead ends.
+  const ordersBtn = overlay.querySelector('#driver-earnings-orders');
+  if (ordersBtn) {
+    ordersBtn.addEventListener('click', () => {
+      if (overlay.__closeSheet) overlay.__closeSheet();
+      if (typeof options.onOrders === 'function') options.onOrders();
+      else go('/driver-map');
+    });
+  }
+  const feedBtn = overlay.querySelector('#driver-earnings-feed');
+  if (feedBtn) {
+    feedBtn.addEventListener('click', () => {
+      if (overlay.__closeSheet) overlay.__closeSheet();
+      if (typeof options.onFeed === 'function') options.onFeed();
+      else go('/feed');
     });
   }
 

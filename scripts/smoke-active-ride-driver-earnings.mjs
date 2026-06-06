@@ -52,6 +52,50 @@ for (const cls of ['de-earn', 'de-earn__hero', 'de-earn__total', 'de-pay-badge',
 expect('cash variant renders the yellow cash pay badge', /de-pay-badge cash/.test(sheets));
 expect('noncash variant renders the blue noncash pay badge', /de-pay-badge noncash/.test(sheets));
 
+// ── C2. BD-RIDE-D-11 reference copy parity ───────────────────
+// The merged BD-RIDE-D-11 render-gate (PR #402, closes #401) renames the
+// hero label, the tips row and the total row, and lifts the sheet title.
+// Old D-09 copy must be gone so the live and reference can't drift again.
+for (const present of ['Заработок за поездку', 'Чаевые / бонус', 'Итого водителю', 'Поездка завершена']) {
+  expect(`reference copy present: ${present}`, sheets.includes(present));
+}
+for (const absent of ['Ваш доход за поездку', 'Чаевые и бонусы', 'Итого вам']) {
+  expect(`legacy copy gone: ${absent}`, !sheets.includes(absent));
+}
+expect('legacy "Ваш доход" sheet title is gone',
+  !/['"]Ваш доход['"]/.test(sheets));
+
+// ── C3. BD-RIDE-D-11 header status pill (replaces close X) ───
+expect('earningsPillHtml renders a per-variant status pill',
+  /function\s+earningsPillHtml\s*\(/.test(sheets));
+expect('earnings sheetShell passes the pill into the head-right slot',
+  /sheetShell\(\s*['"]earnings['"][\s\S]{0,200}earningsPillHtml\(/.test(sheets));
+expect('sheetShell exposes a headRight slot with a CLOSE_X_HTML default',
+  /CLOSE_X_HTML\b/.test(sheets) && /headRight\s*=\s*CLOSE_X_HTML/.test(sheets));
+for (const pill of ['de-pill--ok', 'de-pill--cash', 'de-pill--noncash']) {
+  expect(`pill modifier .${pill} present in source`, sheets.includes(pill));
+  expect(`pill modifier .${pill} defined in css`, css.includes(pill));
+}
+
+// ── C4. BD-RIDE-D-11 passenger context row ───────────────────
+expect('earningsPassengerHtml renders the compact passenger row',
+  /function\s+earningsPassengerHtml\s*\(/.test(sheets));
+expect('earningsContentHtml gates the passenger row to summary/cash/noncash',
+  /showPassenger\s*=\s*variant\s*===\s*'summary'[\s\S]{0,80}variant\s*===\s*'cash'[\s\S]{0,80}variant\s*===\s*'noncash'/.test(sheets));
+expect('css defines the .de-passenger* row',
+  css.includes('.de-passenger') && css.includes('.de-passenger__avatar') && css.includes('.de-passenger__metrics'));
+
+// ── C5. BD-RIDE-D-11 secondary nav row ───────────────────────
+expect('earningsSecondaryHtml renders the secondary nav row',
+  /function\s+earningsSecondaryHtml\s*\(/.test(sheets));
+for (const id of ['driver-earnings-orders', 'driver-earnings-feed']) {
+  expect(`secondary nav button #${id} present`, sheets.includes(id));
+}
+for (const label of ['Открыть заказы', 'В ленту']) {
+  expect(`secondary nav label "${label}" present`, sheets.includes(label));
+}
+expect('css defines .de-earn__secondary', css.includes('.de-earn__secondary'));
+
 // ── D. Cash confirm gate ─────────────────────────────────────
 // Primary is disabled in the cash variant until the confirm row toggles it.
 expect('cash variant renders the primary disabled by default',
@@ -96,6 +140,16 @@ expect('ride history is still persisted in renderCompleted',
 // 1) Dismissing the earnings sheet must leave an exit, not a blank map.
 expect('renderCompleted wires an onClose exit to /driver-map',
   /onClose:\s*\(\)\s*=>\s*go\('\/driver-map'\)/.test(screen));
+// BD-RIDE-D-11 (#403) — secondary nav row routes
+expect('renderCompleted wires onOrders to /driver-map',
+  /onOrders:\s*\(\)\s*=>\s*go\('\/driver-map'\)/.test(screen));
+expect('renderCompleted wires onFeed to /feed',
+  /onFeed:\s*\(\)\s*=>\s*go\('\/feed'\)/.test(screen));
+// BD-RIDE-D-11 (#403) — payload exposes the passenger + trip context
+for (const key of ['passengerName', 'passengerInitials', 'pickupLabel', 'distanceLabel', 'durationLabel', 'tripNumberLabel']) {
+  expect(`buildDriverEarningsPayload exposes ${key}`,
+    new RegExp(`${key}\\s*:`).test(screen));
+}
 // 2) Completing via the normal flow re-syncs the map shell data-status so the
 //    COMPLETED polish applies without a reload.
 expect('renderSheet re-syncs the map shell data-status without reload',
