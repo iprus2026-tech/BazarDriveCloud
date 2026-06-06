@@ -30,8 +30,31 @@ function existsRel(p) {
   try { fs.accessSync(rel(p)); return true; } catch { return false; }
 }
 
+// BD-MAP-FOUND-05H — text-extract the canonical map status vocabulary
+// (Object.keys of trip_status_layer.STATUS_VISUAL) and the full RIDE_STATUS
+// vocabulary from ride_state.js, so the smoke derives both from source instead
+// of carrying hand-copied mirrors. Single source of truth = STATUS_VISUAL
+// (the curated map-relevant subset of RIDE_STATUS).
+function statusVisualKeys(src) {
+  const body = (String(src).match(/STATUS_VISUAL\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || ['', ''])[1];
+  const keys = new Set();
+  const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
+  let k;
+  while ((k = re.exec(body)) !== null) keys.add(k[1]);
+  return keys;
+}
+function rideStatusKeys(src) {
+  const body = (String(src).match(/RIDE_STATUS\s*=\s*\{([\s\S]*?)\}/) || ['', ''])[1];
+  const keys = new Set();
+  const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
+  let k;
+  while ((k = re.exec(body)) !== null) keys.add(k[1]);
+  return keys;
+}
+
 const DRIVER_MARKERS = 'public/src/mapbox/driver_markers.js';
 const TRIP_STATUS = 'public/src/mapbox/trip_status_layer.js';
+const RIDE_STATE = 'public/src/ride_state.js';
 const MARKER_CSS = 'public/styles/map_shell_foundation.css';
 
 const MODULES = [
@@ -85,18 +108,27 @@ for (const mod of MODULES) {
   }
 }
 
+// BD-MAP-FOUND-05H — derive the map vocabulary and the full RIDE_STATUS list
+// from source once, then reuse them everywhere (eliminates 3 hand-copied
+// mirrors: smoke RIDE_STATUSES, smoke EXPECTED_MAP_STATUS_VOCABULARY, and the
+// implicit copy inside the design-registry cross-check below).
+const MAP_STATUS_VOCABULARY = existsRel(TRIP_STATUS)
+  ? Array.from(statusVisualKeys(readRel(TRIP_STATUS)))
+  : [];
+const ALL_RIDE_STATUSES = existsRel(RIDE_STATE)
+  ? Array.from(rideStatusKeys(readRel(RIDE_STATE)))
+  : [];
+expect('MAP_STATUS_VOCABULARY derived non-empty from STATUS_VISUAL',
+  MAP_STATUS_VOCABULARY.length > 0,
+  String(MAP_STATUS_VOCABULARY.length));
+expect('MAP_STATUS_VOCABULARY includes ACCEPTED',
+  MAP_STATUS_VOCABULARY.includes('ACCEPTED'));
+expect('MAP_STATUS_VOCABULARY is a subset of ride_state.RIDE_STATUS keys',
+  MAP_STATUS_VOCABULARY.every((k) => ALL_RIDE_STATUSES.includes(k)),
+  MAP_STATUS_VOCABULARY.filter((k) => !ALL_RIDE_STATUSES.includes(k)).join(','));
+
 // Trip status layer must cover every active RIDE_STATUS value from ride_state.js.
-const RIDE_STATUSES = [
-  'NEW_ORDER',
-  'ACCEPTED',
-  'DRIVER_EN_ROUTE',
-  'DRIVER_APPROACHING_PICKUP',
-  'WAITING_PASSENGER',
-  'IN_PROGRESS',
-  'COMPLETED',
-  'CANCELED',
-  'NO_SHOW',
-];
+const RIDE_STATUSES = MAP_STATUS_VOCABULARY;
 if (existsRel(TRIP_STATUS)) {
   const tripSrc = readRel(TRIP_STATUS);
   for (const status of RIDE_STATUSES) {
@@ -324,20 +356,10 @@ if (registry) {
   };
   // Statuses must be REAL STATUS_VISUAL keys, not any token present in the source
   // (DEFAULT_VISUAL / normalizeStatus / 'UNKNOWN' are not statuses) — review #2.
-  const statusVisualKeys = (src) => {
-    const body = (String(src).match(/STATUS_VISUAL\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || ['', ''])[1];
-    const keys = new Set();
-    const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
-    let k;
-    while ((k = re.exec(body)) !== null) keys.add(k[1]);
-    return keys;
-  };
-  // Local expected active map vocabulary for this guard only — NOT imported from
-  // RIDE_STATUS (single-source dedupe is a separate #389 item) — review #3.
-  const EXPECTED_MAP_STATUS_VOCABULARY = [
-    'NEW_ORDER', 'ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
-    'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED', 'CANCELED', 'NO_SHOW',
-  ];
+  // BD-MAP-FOUND-05H — statusVisualKeys promoted to module scope; both checks
+  // below reuse the same derived MAP_STATUS_VOCABULARY as the trip-status guard
+  // above (single source = STATUS_VISUAL keys, no hand-copied mirror).
+  const EXPECTED_MAP_STATUS_VOCABULARY = MAP_STATUS_VOCABULARY;
   const foundationEntries = Array.isArray(registry.foundationModules) ? registry.foundationModules : [];
   for (const entry of foundationEntries) {
     const eid = (entry && entry.id) || '(no id)';
