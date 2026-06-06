@@ -30,8 +30,31 @@ function existsRel(p) {
   try { fs.accessSync(rel(p)); return true; } catch { return false; }
 }
 
+// BD-MAP-FOUND-05H — text-extract the canonical map status vocabulary
+// (Object.keys of trip_status_layer.STATUS_VISUAL) and the full RIDE_STATUS
+// vocabulary from ride_state.js, so the smoke derives both from source instead
+// of carrying hand-copied mirrors. Single source of truth = STATUS_VISUAL
+// (the curated map-relevant subset of RIDE_STATUS).
+function statusVisualKeys(src) {
+  const body = (String(src).match(/STATUS_VISUAL\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || ['', ''])[1];
+  const keys = new Set();
+  const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
+  let k;
+  while ((k = re.exec(body)) !== null) keys.add(k[1]);
+  return keys;
+}
+function rideStatusKeys(src) {
+  const body = (String(src).match(/RIDE_STATUS\s*=\s*\{([\s\S]*?)\}/) || ['', ''])[1];
+  const keys = new Set();
+  const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
+  let k;
+  while ((k = re.exec(body)) !== null) keys.add(k[1]);
+  return keys;
+}
+
 const DRIVER_MARKERS = 'public/src/mapbox/driver_markers.js';
 const TRIP_STATUS = 'public/src/mapbox/trip_status_layer.js';
+const RIDE_STATE = 'public/src/ride_state.js';
 const MARKER_CSS = 'public/styles/map_shell_foundation.css';
 
 const MODULES = [
@@ -85,18 +108,42 @@ for (const mod of MODULES) {
   }
 }
 
+// BD-MAP-FOUND-05H — derive both vocabularies from source, INDEPENDENTLY.
+// MAP_STATUS_VOCABULARY comes from trip_status_layer.STATUS_VISUAL (what the
+// implementation says is rendered on the map). EXPECTED_MAP_STATUS_VOCABULARY
+// comes from ride_state.RIDE_STATUS minus a reserved set of pre-handoff
+// statuses that have no map presentation by design. Keeping the EXPECTED side
+// independent of STATUS_VISUAL is what makes the coverage assertion meaningful
+// — otherwise dropping a status from STATUS_VISUAL would silently also drop it
+// from the expected set, and the regression would pass (Codex review on
+// PR #397).
+const MAP_STATUS_VOCABULARY = existsRel(TRIP_STATUS)
+  ? Array.from(statusVisualKeys(readRel(TRIP_STATUS)))
+  : [];
+const ALL_RIDE_STATUSES = existsRel(RIDE_STATE)
+  ? Array.from(rideStatusKeys(readRel(RIDE_STATE)))
+  : [];
+const RESERVED_NON_MAP_RIDE_STATUSES = new Set([
+  'CONFIRMATION_PENDING',
+  'CONFIRMED',
+  'CHAT_STARTED',
+]);
+const EXPECTED_MAP_STATUS_VOCABULARY = ALL_RIDE_STATUSES
+  .filter((status) => !RESERVED_NON_MAP_RIDE_STATUSES.has(status));
+expect('MAP_STATUS_VOCABULARY derived non-empty from STATUS_VISUAL',
+  MAP_STATUS_VOCABULARY.length > 0,
+  String(MAP_STATUS_VOCABULARY.length));
+expect('MAP_STATUS_VOCABULARY includes ACCEPTED',
+  MAP_STATUS_VOCABULARY.includes('ACCEPTED'));
+expect('MAP_STATUS_VOCABULARY is a subset of ride_state.RIDE_STATUS keys',
+  MAP_STATUS_VOCABULARY.every((k) => ALL_RIDE_STATUSES.includes(k)),
+  MAP_STATUS_VOCABULARY.filter((k) => !ALL_RIDE_STATUSES.includes(k)).join(','));
+expect('STATUS_VISUAL covers every expected active map status from ride_state.js',
+  EXPECTED_MAP_STATUS_VOCABULARY.every((s) => MAP_STATUS_VOCABULARY.includes(s)),
+  EXPECTED_MAP_STATUS_VOCABULARY.filter((s) => !MAP_STATUS_VOCABULARY.includes(s)).join(','));
+
 // Trip status layer must cover every active RIDE_STATUS value from ride_state.js.
-const RIDE_STATUSES = [
-  'NEW_ORDER',
-  'ACCEPTED',
-  'DRIVER_EN_ROUTE',
-  'DRIVER_APPROACHING_PICKUP',
-  'WAITING_PASSENGER',
-  'IN_PROGRESS',
-  'COMPLETED',
-  'CANCELED',
-  'NO_SHOW',
-];
+const RIDE_STATUSES = EXPECTED_MAP_STATUS_VOCABULARY;
 if (existsRel(TRIP_STATUS)) {
   const tripSrc = readRel(TRIP_STATUS);
   for (const status of RIDE_STATUSES) {
@@ -324,20 +371,10 @@ if (registry) {
   };
   // Statuses must be REAL STATUS_VISUAL keys, not any token present in the source
   // (DEFAULT_VISUAL / normalizeStatus / 'UNKNOWN' are not statuses) — review #2.
-  const statusVisualKeys = (src) => {
-    const body = (String(src).match(/STATUS_VISUAL\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || ['', ''])[1];
-    const keys = new Set();
-    const re = /(?:^|[\s,{])([A-Z][A-Z0-9_]*)\s*:/g;
-    let k;
-    while ((k = re.exec(body)) !== null) keys.add(k[1]);
-    return keys;
-  };
-  // Local expected active map vocabulary for this guard only — NOT imported from
-  // RIDE_STATUS (single-source dedupe is a separate #389 item) — review #3.
-  const EXPECTED_MAP_STATUS_VOCABULARY = [
-    'NEW_ORDER', 'ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
-    'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED', 'CANCELED', 'NO_SHOW',
-  ];
+  // BD-MAP-FOUND-05H — uses the module-scope EXPECTED_MAP_STATUS_VOCABULARY,
+  // which is derived independently from RIDE_STATUS minus reserved pre-handoff
+  // statuses (NOT from STATUS_VISUAL) so this registry cross-check stays an
+  // independent guard against silent regression (Codex review on PR #397).
   const foundationEntries = Array.isArray(registry.foundationModules) ? registry.foundationModules : [];
   for (const entry of foundationEntries) {
     const eid = (entry && entry.id) || '(no id)';
