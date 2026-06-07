@@ -372,13 +372,17 @@ writeResponseToStore(buildResponseFor(s7Order, { name: 'Рустам К.', ratin
     responses[0]?.kind === 'passenger_response', String(responses[0]?.kind));
 }
 
-// ── Scenario 8 — Stale active ride upgrade (BD-LIFE-05) ──────────────────────
-// Reproduces the GitHub Pages bug: a legacy "Рустам К." demo handoff sits at
-// trip_${orderId} (e.g. from createDemoActiveRide defaults at
-// ride_state.js:158 or from a DriverMap accept that used MOCK_DRIVER
-// literals). When a real driver later sends a response with their actual
-// driverSnapshot, opening /responses?orderId=…&state=accepted must surface
-// the real driver — not the seed.
+// ── Scenario 8 — Unpinned live ride is NOT upgraded (Codex P1 safety) ───────
+// SAFETY > RECOVERY: a live active ride that lacks `selectedDriver.responseId`
+// could have been accepted via any seam (DriverMap accept,
+// acceptCanonicalRideOrder, ride_actions, future canonical accept) that
+// does NOT pin a response id. Meanwhile bazardrive.responses.v1 may carry
+// passenger_response records from completely different drivers who never
+// became the accepted driver. Picking the "latest" of those would silently
+// rewrite the accepted identity on the next /responses or /active-ride
+// render. The fix runs at the accept seam (set responseId at the time of
+// acceptance), not at the render seam. Until then the render seam refuses
+// to guess: stale stays stale.
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
@@ -394,59 +398,69 @@ const s8StaleRide = {
   status: RIDE_STATUS.DRIVER_EN_ROUTE,
   driver:  { name: 'Рустам К.', initials: 'РК', rating: '4,92' },
   vehicle: { model: 'Toyota Camry', color: 'белый', plate: 'А 123 БВ 77' },
-  selectedDriver: { id: 'mock_d1', name: 'Рустам К.' },
+  selectedDriver: { id: 'mock_d1', name: 'Рустам К.' },  // no responseId pin
 };
 saveActiveRide(s8StaleRide);
 {
-  // Sanity: with no real response yet, the resolver returns null and the
-  // stale ride stays stale (legacy demo path keeps working).
-  expect('S8 pre: resolver returns null when no response exists',
-    resolveLatestDriverSnapshotForOrder(s8Order.id) === null);
-  const noopUpgrade = upgradeRideFromDriverSnapshot(s8StaleRide, null);
-  expect('S8 pre: upgrade with null snap is a no-op (returns same ref)',
-    noopUpgrade === s8StaleRide);
+  // No responses yet: resolver returns null, upgrade is a no-op.
+  expect('S8 pre: resolveDriverSnapshotForRide returns null with no responses',
+    resolveDriverSnapshotForRide(s8StaleRide, s8Order.id) === null);
+  const orchestratorEmpty = upgradeStoredActiveRideForOrder(s8Order.id);
+  expect('S8 pre: orchestrator no-op when no responses → returns stale ride',
+    orchestratorEmpty?.driver?.name === 'Рустам К.',
+    String(orchestratorEmpty?.driver?.name));
 }
-// Now the actual driver sends a response with their real profile.
+// A real driver sends a response. This is the P1 hazard: before the fix,
+// resolveDriverSnapshotForRide would have fallen back to latest and the
+// orchestrator would have rewritten the stale ride to this responder's
+// identity. After the fix the unpinned ride is left alone.
 writeResponseToStore(buildResponseFor(s8Order, { name: 'Алексей Тест', rating: 4.95 }));
 {
-  const snap = resolveLatestDriverSnapshotForOrder(s8Order.id);
-  expect('S8: resolver finds the real driver snapshot',
-    snap && snap.name === 'Алексей Тест', JSON.stringify(snap));
-  expect('S8: resolver type-guards rating as number',
-    typeof snap?.rating === 'number' && snap.rating === 4.95, String(snap?.rating));
-  expect('S8: resolver carries responseId for selectedDriver wiring',
-    typeof snap?.responseId === 'string' && snap.responseId.length > 0, String(snap?.responseId));
+  // The helper still works for diagnostic / legacy access — it's only the
+  // live upgrade path that stopped using it.
+  const latestHelper = resolveLatestDriverSnapshotForOrder(s8Order.id);
+  expect('S8: resolveLatestDriverSnapshotForOrder still surfaces Алексей (helper)',
+    latestHelper?.name === 'Алексей Тест', String(latestHelper?.name));
+  // The smart resolver refuses to guess for an unpinned ride.
+  expect('S8: resolveDriverSnapshotForRide returns null for unpinned ride',
+    resolveDriverSnapshotForRide(s8StaleRide, s8Order.id) === null);
+  // Orchestrator therefore returns the stale ride unchanged.
+  const result = upgradeStoredActiveRideForOrder(s8Order.id);
+  expect('S8: orchestrator does NOT upgrade unpinned ride',
+    result?.driver?.name === 'Рустам К.', String(result?.driver?.name));
+  expect('S8: persisted ride still shows stale "Рустам К." after orchestrator',
+    findActiveRide(s8TripId)?.driver?.name === 'Рустам К.',
+    String(findActiveRide(s8TripId)?.driver?.name));
+}
+// A second responder enters. Pre-fix, "latest" would have flipped the ride
+// to this newest record — post-fix, still no change.
+const s8SecondResponder = {
+  ...buildResponseFor(s8Order, { name: 'Сергей Петров', rating: 4.5 }),
+  id: `resp_second_${s8Order.id}`,
+  createdAt: '2030-01-01T00:00:00Z',  // ensure it's the newest
+};
+// Preserve both responses in the keyed map; writeResponseToStore would
+// replace the whole map.
+{
+  const existing = JSON.parse(localStorage.getItem(RESPONSES_KEY) || '{}');
+  existing[s8SecondResponder.id] = s8SecondResponder;
+  localStorage.setItem(RESPONSES_KEY, JSON.stringify(existing));
+}
+{
+  const latestHelper = resolveLatestDriverSnapshotForOrder(s8Order.id);
+  expect('S8: helper now returns "Сергей Петров" as latest (sanity)',
+    latestHelper?.name === 'Сергей Петров', String(latestHelper?.name));
+  const result = upgradeStoredActiveRideForOrder(s8Order.id);
+  expect('S8: orchestrator STILL refuses to upgrade unpinned ride',
+    result?.driver?.name === 'Рустам К.', String(result?.driver?.name));
+  expect('S8: persisted ride byte-stable, "Сергей Петров" did not leak in',
+    findActiveRide(s8TripId)?.driver?.name === 'Рустам К.',
+    String(findActiveRide(s8TripId)?.driver?.name));
 
-  const upgraded = upgradeRideFromDriverSnapshot(s8StaleRide, snap);
-  expect('S8: upgrade produces a new ride reference (caller persists)',
-    upgraded !== s8StaleRide);
-  expect('S8: upgraded ride.driver.name reflects the real driver',
-    upgraded.driver?.name === 'Алексей Тест', String(upgraded.driver?.name));
-  expect('S8: upgraded ride.driver.name does NOT contain "Рустам"',
-    !String(upgraded.driver?.name || '').includes('Рустам'));
-  expect('S8: upgraded ride.driver.initials recomputed from real name',
-    upgraded.driver?.initials === 'А', String(upgraded.driver?.initials));
-  expect('S8: upgraded ride.driver.rating reflects real rating',
-    upgraded.driver?.rating === 4.95, String(upgraded.driver?.rating));
-  expect('S8: upgraded ride.vehicle.plate matches snapshot',
-    upgraded.vehicle?.plate === 'А ••• АА 77', String(upgraded.vehicle?.plate));
-  expect('S8: upgraded ride.selectedDriver.name matches real driver',
-    upgraded.selectedDriver?.name === 'Алексей Тест', String(upgraded.selectedDriver?.name));
-  expect('S8: original stale ride object NOT mutated in place',
-    s8StaleRide.driver.name === 'Рустам К.', String(s8StaleRide.driver?.name));
-
-  // Persist + re-read to confirm the upgrade survives a save/load cycle.
-  saveActiveRide(upgraded);
-  const reread = findActiveRide(s8TripId);
-  expect('S8: persisted ride re-read carries the real driver name',
-    reread?.driver?.name === 'Алексей Тест', String(reread?.driver?.name));
-
-  // Idempotence: running the upgrade again returns the SAME reference, no
-  // pointless write — the caller's `upgraded !== handoffRide` guard against
-  // no-op saves stays meaningful.
-  const second = upgradeRideFromDriverSnapshot(reread, snap);
-  expect('S8: second upgrade is a no-op (idempotent fast-path)',
-    second === reread);
+  // upgradeRideFromDriverSnapshot itself stays an identity for null snap —
+  // the same guard the orchestrator relies on.
+  expect('S8: upgradeRideFromDriverSnapshot(ride, null) is a no-op',
+    upgradeRideFromDriverSnapshot(s8StaleRide, null) === s8StaleRide);
 }
 
 // ── Scenario 9 — Terminal ride is NEVER upgraded (BD-LIFE-05 guardrail) ──────
@@ -542,8 +556,13 @@ const s10Order = createRideOrder({
     findActiveRide(s10TripId)?.driver?.name === 'Driver A',
     String(findActiveRide(s10TripId)?.driver?.name));
 
-  // Pinned id pointing at a missing response → safety net: fall back to
-  // latest so the screen never renders "Водитель" forever.
+  // Pinned id pointing at a missing/malformed response → resolver returns
+  // null. SAFETY > RECOVERY (Codex P1): we do NOT fall back to latest here
+  // either, because the "latest" record may belong to an unrelated driver
+  // and would silently rewrite the accepted identity. The ride stays stale
+  // until either (a) the pinned response reappears, or (b) the accept seam
+  // is fixed to set a valid responseId. Stale render is preferable to wrong
+  // identity render.
   const orphanRide = {
     tripId: `trip_orphan_${s10Order.id}`,
     status: RIDE_STATUS.DRIVER_EN_ROUTE,
@@ -552,16 +571,21 @@ const s10Order = createRideOrder({
     selectedDriver: { id: 'resp_missing', responseId: 'resp_missing', name: 'Stale' },
   };
   const orphanSnap = resolveDriverSnapshotForRide(orphanRide, s10Order.id);
-  expect('S10: pinned-but-missing response falls back to latest (B)',
-    orphanSnap?.name === 'Driver B', String(orphanSnap?.name));
+  expect('S10: pinned-but-missing response returns null (no latest-guess)',
+    orphanSnap === null, String(orphanSnap?.name));
 }
 
-// ── Scenario 11 — Direct /active-ride entry upgrades stale ride (Codex P2) ───
-// Mirrors what active_ride_passenger.js now does after BD-LIFE-05:
-// loadCanonicalActiveRide returns a stale ride seeded with "Рустам К." from
-// an earlier DriverMap accept; the orchestrator picks the matching real
-// driverSnapshot and persists the upgrade so subsequent reloads / reads
-// see the actual driver. No DOM render, just the data-path contract.
+// ── Scenario 11 — Direct /active-ride entry orchestrator (Codex P2 + P1) ─────
+// Mirrors what active_ride_passenger.js does after BD-LIFE-05:
+// loadCanonicalActiveRide → upgradeStoredActiveRideForOrder. Two cases:
+//   A. PINNED ride (selectedDriver.responseId set) with a stale or partial
+//      driver display → orchestrator upgrades from the pinned response,
+//      not from "latest". This is the path /responses sets up when the
+//      passenger picks a driver — reload of /active-ride must converge.
+//   B. UNPINNED ride (no selectedDriver.responseId; DriverMap-style accept)
+//      → orchestrator is a no-op even when responses exist for the order,
+//      because picking the latest would risk renaming the accepted driver
+//      (Codex P1). Stale display stays as-is.
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
@@ -571,41 +595,95 @@ const s11Order = createRideOrder({
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
 });
 const s11TripId = `trip_${s11Order.id}`;
-const s11Stale = {
-  tripId: s11TripId,
-  status: RIDE_STATUS.DRIVER_EN_ROUTE,
-  driver:  { name: 'Рустам К.', initials: 'РК', rating: '4,92' },
-  vehicle: { model: 'Toyota Camry', color: 'белый', plate: 'А 123 БВ 77' },
-  // No selectedDriver.responseId → represents the unlinked legacy seed.
-};
-saveActiveRide(s11Stale);
-writeResponseToStore(buildResponseFor(s11Order, { name: 'Алексей Тест', rating: 4.95 }));
+const s11PinnedResponseId = `resp_pinned_${s11Order.id}`;
+const s11LatestResponderId = `resp_late_${s11Order.id}`;
+
+// CASE A — PINNED ride with stale display name. /responses created it
+// pointing at a specific response; the passenger reloads at /active-ride
+// before the in-memory upgrade fired, so the persisted record still has the
+// placeholder display name. Orchestrator must sync from the pinned
+// response.
 {
-  // Simulate direct entry to /active-ride: loadCanonicalActiveRide finds
-  // the stale ride; the orchestrator wired in active_ride_passenger.js
-  // runs next and upgrades it in place.
-  expect('S11 pre: stale ride loads as "Рустам К."',
-    findActiveRide(s11TripId)?.driver?.name === 'Рустам К.',
+  const pinnedResponse = {
+    ...buildResponseFor(s11Order, { name: 'Алексей Тест', rating: 4.95 }),
+    id: s11PinnedResponseId,
+    createdAt: '2026-06-01T10:00:00Z',
+  };
+  // Another responder enters later. Pre-fix, latest would have leaked into
+  // even pinned upgrades because the pinned lookup also had a latest
+  // fallback. After the fix, only the pinned record is consulted.
+  const lateResponder = {
+    ...buildResponseFor(s11Order, { name: 'Late Driver', rating: 4.3 }),
+    id: s11LatestResponderId,
+    createdAt: '2030-01-01T00:00:00Z',
+  };
+  localStorage.setItem(RESPONSES_KEY, JSON.stringify({
+    [pinnedResponse.id]: pinnedResponse,
+    [lateResponder.id]: lateResponder,
+  }));
+  const pinnedStale = {
+    tripId: s11TripId,
+    status: RIDE_STATUS.DRIVER_EN_ROUTE,
+    driver:  { name: 'Водитель', initials: 'В' },
+    vehicle: { model: '', color: '', plate: '' },
+    selectedDriver: { id: pinnedResponse.id, responseId: pinnedResponse.id, name: 'Водитель' },
+  };
+  saveActiveRide(pinnedStale);
+
+  expect('S11A pre: pinned stale ride loads with placeholder "Водитель"',
+    findActiveRide(s11TripId)?.driver?.name === 'Водитель',
     String(findActiveRide(s11TripId)?.driver?.name));
   const upgraded = upgradeStoredActiveRideForOrder(s11Order.id);
-  expect('S11: direct-entry upgrade flips driver.name to real "Алексей Тест"',
+  expect('S11A: direct-entry orchestrator upgrades pinned ride to "Алексей Тест"',
     upgraded?.driver?.name === 'Алексей Тест', String(upgraded?.driver?.name));
-  expect('S11: direct-entry upgrade persists — reload sees Алексей',
+  expect('S11A: pinned upgrade is NOT contaminated by the later responder',
+    upgraded?.driver?.name !== 'Late Driver', String(upgraded?.driver?.name));
+  expect('S11A: persisted ride re-read carries the pinned driver',
     findActiveRide(s11TripId)?.driver?.name === 'Алексей Тест',
     String(findActiveRide(s11TripId)?.driver?.name));
-  expect('S11: persisted ride no longer contains "Рустам"',
-    !String(findActiveRide(s11TripId)?.driver?.name || '').includes('Рустам'));
-
-  // Stable second pass: orchestrator still returns the upgraded driver and
-  // does not regress back to the demo seed. (Reference equality with
-  // findActiveRide cannot be used here — every findActiveRide call returns
-  // a fresh JSON-deserialised clone of the persisted record.)
   const second = upgradeStoredActiveRideForOrder(s11Order.id);
-  expect('S11: second orchestrator pass keeps driver.name = "Алексей Тест"',
+  expect('S11A: stable second pass — driver still "Алексей Тест"',
     second?.driver?.name === 'Алексей Тест', String(second?.driver?.name));
 }
 
-// Orchestrator no-op cases: empty/missing orderId, and no ride at tripId.
+// CASE B — UNPINNED ride (DriverMap-style accept that did not write a
+// selectedDriver.responseId). Even though responses exist for this order
+// AND the late responder is "latest", the orchestrator MUST leave the
+// stale display alone (Codex P1).
+reset();
+clearRideOrdersStore();
+user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
+const s11bOrder = createRideOrder({
+  type: 'ride_order',
+  pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
+  passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+});
+const s11bTripId = `trip_${s11bOrder.id}`;
+const s11bStale = {
+  tripId: s11bTripId,
+  status: RIDE_STATUS.DRIVER_EN_ROUTE,
+  driver:  { name: 'Рустам К.', initials: 'РК', rating: '4,92' },
+  vehicle: { model: 'Toyota Camry', color: 'белый', plate: 'А 123 БВ 77' },
+  // selectedDriver intentionally omitted — DriverMap accept path doesn't
+  // set it.
+};
+saveActiveRide(s11bStale);
+writeResponseToStore(buildResponseFor(s11bOrder, { name: 'Wrong Driver', rating: 4.5 }));
+{
+  expect('S11B pre: unpinned stale ride loads as "Рустам К."',
+    findActiveRide(s11bTripId)?.driver?.name === 'Рустам К.',
+    String(findActiveRide(s11bTripId)?.driver?.name));
+  const result = upgradeStoredActiveRideForOrder(s11bOrder.id);
+  expect('S11B: orchestrator no-op on unpinned ride — driver stays "Рустам К."',
+    result?.driver?.name === 'Рустам К.', String(result?.driver?.name));
+  expect('S11B: unrelated responder "Wrong Driver" did NOT leak into the ride',
+    result?.driver?.name !== 'Wrong Driver', String(result?.driver?.name));
+  expect('S11B: persisted ride byte-stable after orchestrator on unpinned',
+    findActiveRide(s11bTripId)?.driver?.name === 'Рустам К.',
+    String(findActiveRide(s11bTripId)?.driver?.name));
+}
+
+// Orchestrator no-op edge cases: empty/missing orderId, and no ride at tripId.
 {
   expect('S11: orchestrator with empty orderId returns null',
     upgradeStoredActiveRideForOrder('') === null);

@@ -363,12 +363,18 @@ function buildDriverSnapshotFromResponse(response) {
   };
 }
 
-// BD-LIFE-05 — Resolve the latest real driverSnapshot for an order from the
-// passenger_response store. Picks the response with the latest `createdAt`;
-// responses with an invalid date sort to the back. This is the
-// "unlinked-handoff" fallback used when no specific driver has been
-// accepted yet (legacy demo path / DriverMap accept that did not pin a
-// responseId on the active ride).
+// BD-LIFE-05 — Latest passenger_response by createdAt for an order. Type-
+// guarded, returns null when no usable record exists.
+//
+// SAFETY NOTE (Codex P1): this helper is intentionally NOT called from the
+// live accepted-ride upgrade path anymore. Live rides that lack an explicit
+// responseId pinning could have been accepted via a path that does not pin
+// the response (DriverMap accept, ride_actions, future canonical accept) —
+// in that case the "latest" record may belong to a different driver, and
+// using it would silently rewrite the accepted driver's identity. The
+// resolveDriverSnapshotForRide chain below therefore returns null for
+// unpinned rides instead of guessing. This export is preserved as a helper
+// for unit tests and legacy/diagnostic surfaces only.
 export function resolveLatestDriverSnapshotForOrder(orderId) {
   const responses = loadResponsesForOrder(orderId);
   if (!Array.isArray(responses) || responses.length === 0) return null;
@@ -386,29 +392,36 @@ export function resolveLatestDriverSnapshotForOrder(orderId) {
   return latest;
 }
 
-// BD-LIFE-05 (Codex P2) — Smart resolver that matches the snapshot to the
-// driver actually accepted on this ride. If `ride.selectedDriver.responseId`
-// is set (the passenger picked this driver and buildPassengerActiveRide
-// pinned the identity), look up THAT specific response and return its
-// snapshot. Only fall back to `resolveLatestDriverSnapshotForOrder` for
-// truly unlinked handoffs where no driver has been chosen yet. This keeps
-// a later-arriving response from rewriting the accepted driver on the next
-// /responses or /active-ride render.
+// BD-LIFE-05 (Codex P2 + P1) — Resolve the snapshot that matches the driver
+// actually accepted on this ride. The only safe source of "this is the
+// accepted driver" is an explicit pinning written at the accept seam:
+// `ride.selectedDriver.responseId` (set today by buildPassengerActiveRide
+// when the passenger picks a driver from /responses). When that link is
+// present we look up THAT specific passenger_response and return its
+// snapshot.
+//
+// SAFETY > RECOVERY (Codex P1): when the ride has NO `selectedDriver.responseId`
+// — typical of DriverMap accept, acceptCanonicalRideOrder, or any other
+// path that produces an active ride without going through /responses — we
+// return null and the orchestrator above is a no-op. Falling back to "the
+// latest passenger_response for this order" would silently rewrite the
+// accepted driver to whichever responder happened to write the newest
+// record. The right fix for those accept paths is to set the responseId at
+// the accept seam, not to guess at the render seam.
+//
+// When pinnedId IS set but the matching response is missing/malformed in
+// localStorage we also return null (do not fall back to latest) for the
+// same reason: a corrupted record must never let an unrelated responder
+// take the accepted driver's slot.
 export function resolveDriverSnapshotForRide(ride, orderId) {
   const pinnedId = typeof ride?.selectedDriver?.responseId === 'string'
     ? ride.selectedDriver.responseId.trim() : '';
-  if (pinnedId) {
-    const responses = loadResponsesForOrder(orderId);
-    const pinnedResponse = Array.isArray(responses)
-      ? responses.find((r) => r && r.id === pinnedId)
-      : null;
-    const pinnedSnap = buildDriverSnapshotFromResponse(pinnedResponse);
-    if (pinnedSnap) return pinnedSnap;
-    // Pinned id set but the matching response is missing/malformed in
-    // localStorage — fall through to latest so a corrupted single record
-    // does not leave the ride stuck rendering "Водитель" forever.
-  }
-  return resolveLatestDriverSnapshotForOrder(orderId);
+  if (!pinnedId) return null;
+  const responses = loadResponsesForOrder(orderId);
+  const pinnedResponse = Array.isArray(responses)
+    ? responses.find((r) => r && r.id === pinnedId)
+    : null;
+  return buildDriverSnapshotFromResponse(pinnedResponse);
 }
 
 // BD-LIFE-05 (Codex P2) — Single-call orchestrator that loads the stored
