@@ -18,13 +18,17 @@
 
 import { user } from './state.js';
 import { clearUserScopedStorage } from './storage_boundary.js';
+import { clearSmokeRole } from './smoke_role.js';
 import { go } from './router.js';
 
 // Clears all locally persisted user-scoped state without navigating. Use this
 // for non-logout local resets (account switch staging, profile wipe) that
 // still need the same cleanup guarantees.
+// BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
+// value cannot outlive the user that set it.
 export function resetLocalSession() {
   clearUserScopedStorage();
+  clearSmokeRole();
   user.reset();
 }
 

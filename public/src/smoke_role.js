@@ -39,6 +39,20 @@ export function setSmokeRole(role) {
   return role;
 }
 
+// BD-ROLE-05 — clear the per-tab override at the auth/logout boundary so a
+// stale override cannot outlive the user that set it. Without this, a same-tab
+// flow of "switch to driver → logout → onboard again as passenger" would still
+// render the driver view because getSmokeRole() wins over u.role.
+export function clearSmokeRole() {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(SMOKE_ROLE_KEY);
+    }
+  } catch {
+    // fail soft — same posture as get/set above.
+  }
+}
+
 // Capture ?smokeRole= from the current navigation. Only SETS on a valid
 // value and never clears, so the override stays sticky for the tab after the
 // param drops off the URL on later in-tab navigations.

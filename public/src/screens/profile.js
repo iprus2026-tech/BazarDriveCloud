@@ -11,7 +11,7 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
 import { isDriverMode } from '../ride_actions.js';
-import { getSmokeRole, setSmokeRole } from '../smoke_role.js';
+import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -1373,7 +1373,11 @@ function myPostsSectionHtml() {
 }
 
 function wireMyPostsSection(root) {
-  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go(createIntentRoute(user.get())));
+  // BD-ROLE-05 — route the create CTA through the tab's effective role so a
+  // persisted driver who switched this tab to passenger view does not land on
+  // /new?type=driver_offer. applySmokeRole returns the shared user with the
+  // per-tab override layered on; it never persists.
+  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go(createIntentRoute(applySmokeRole(user.get()))));
 }
 
 // ── Ride history (BD-RIDE-HISTORY-01 / BD-RIDE-HISTORY-08) ────────────────────
@@ -1972,7 +1976,9 @@ function replaceHistorySection(root) {
 }
 
 function wireHistorySection(root) {
-  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go(createIntentRoute(user.get())));
+  // BD-ROLE-05 — same effective-role routing as wireMyPostsSection so the
+  // empty-history "Создать поездку" CTA respects the tab's smoke role.
+  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go(createIntentRoute(applySmokeRole(user.get()))));
   root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
 
   // BD-RIDE-HISTORY-04/08 — section-level delegation handles three concerns:

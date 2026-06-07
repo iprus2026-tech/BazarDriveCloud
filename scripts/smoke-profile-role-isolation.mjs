@@ -39,10 +39,15 @@ globalThis.sessionStorage = {
   clear: () => session.clear(),
 };
 
-// ── Minimal DOM stub (records each element's innerHTML) ──────────────────────
-function makeEl() {
+// ── Minimal DOM stub (records each element's innerHTML and click handlers) ───
+// Click handlers are captured by selector so the smoke can invoke them later
+// and observe what route the click navigated to (via the hash spy below).
+const clickHandlers = new Map(); // selector → fn
+
+function makeEl(selectorHint) {
   return {
     _html: '',
+    _selector: selectorHint || null,
     className: '', textContent: '', value: '', checked: false,
     hidden: false, disabled: false,
     dataset: {},
@@ -51,8 +56,13 @@ function makeEl() {
     set innerHTML(v) { this._html = String(v); },
     get innerHTML() { return this._html; },
     get firstElementChild() { return makeEl(); },
-    addEventListener() {}, removeEventListener() {},
-    querySelector() { return makeEl(); },
+    addEventListener(type, fn) {
+      if (type === 'click' && this._selector && typeof fn === 'function') {
+        clickHandlers.set(this._selector, fn);
+      }
+    },
+    removeEventListener() {},
+    querySelector(sel) { return makeEl(sel); },
     querySelectorAll() { return []; },
     closest() { return null; },
     contains() { return false; },
@@ -63,17 +73,39 @@ function makeEl() {
   };
 }
 
-globalThis.window = { location: { hash: '' }, addEventListener() {}, removeEventListener() {} };
+// ── Window / location spy ────────────────────────────────────────────────────
+// router.go() writes to location.hash; capture every write so the smoke can
+// observe what route a click handler navigated to. Reads return the most
+// recently set value so router internals comparing `location.hash === target`
+// stay stable.
+const hashWrites = [];
+let currentHash = '';
+const locationStub = {};
+Object.defineProperty(locationStub, 'hash', {
+  configurable: true,
+  get: () => currentHash,
+  set: (v) => {
+    const next = typeof v === 'string' && v.startsWith('#') ? v : '#' + String(v);
+    currentHash = next;
+    hashWrites.push(next);
+  },
+});
+
+globalThis.window = { location: locationStub, addEventListener() {}, removeEventListener() {} };
+// router.js references the bare global `location` (not `window.location`), so
+// the spy must be visible under both names for go(path) to capture writes.
+globalThis.location = locationStub;
 globalThis.document = {
   createElement: () => makeEl(),
   addEventListener() {}, removeEventListener() {},
-  querySelector() { return makeEl(); },
+  querySelector: (sel) => makeEl(sel),
 };
 
 // ── Imports (after stubs are in place) ───────────────────────────────────────
 const { user } = await import('../public/src/state.js');
 const smokeRoleMod = await import('../public/src/smoke_role.js');
 const { getSmokeRole, setSmokeRole, SMOKE_ROLE_KEY } = smokeRoleMod;
+const { resetLocalSession } = await import('../public/src/mock_auth.js');
 const profile = (await import('../public/src/screens/profile.js')).default;
 
 const USER_KEY = 'bazardrive.user.v1';
@@ -89,6 +121,9 @@ function reset() {
   local.clear();
   session.clear();
   user.reset();
+  clickHandlers.clear();
+  hashWrites.length = 0;
+  currentHash = '';
 }
 
 function persistedRole() {
@@ -98,9 +133,21 @@ function persistedRole() {
 }
 
 function renderHtml() {
-  globalThis.window.location.hash = '#/profile';
+  currentHash = '#/profile';
+  clickHandlers.clear();
+  hashWrites.length = 0;
   const section = profile();
   return section._html || '';
+}
+
+// Capture the route a click handler navigated to. Returns the last hash write
+// the handler triggered, or null when no navigation happened.
+function clickAndCaptureRoute(selector) {
+  const before = hashWrites.length;
+  const fn = clickHandlers.get(selector);
+  if (typeof fn !== 'function') return null;
+  fn();
+  return hashWrites.length > before ? hashWrites[hashWrites.length - 1] : null;
 }
 
 const DRIVER_MARKER     = 'pf2-act-role-switch';
@@ -197,6 +244,75 @@ user.set({ welcomeSeen: true, role: 'guest' });
     !html.includes(DRIVER_MARKER));
   expect('S6: guest view does not expose passenger-side switcher',
     !html.includes(PASSENGER_MARKER));
+}
+
+// ── Scenario 7 — persisted driver in passenger-view tab routes CTAs as passenger ──
+// Codex P2: after a persisted driver flips to passenger view via setSmokeRole,
+// the create CTAs in wireMyPostsSection / wireHistorySection must route the
+// click through the tab's effective role rather than the raw persisted
+// user.role, otherwise the UI immediately drops the user back into
+// /new?type=driver_offer.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Алексей', lastName: 'В.', displayName: 'Алексей В.',
+  vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А123ВЕ77',
+});
+setSmokeRole('passenger');
+{
+  renderHtml();
+  const myPostsRoute = clickAndCaptureRoute('#pf-mypub-create');
+  expect('S7: #pf-mypub-create captured (passenger view rendered the row)',
+    myPostsRoute !== null, String(myPostsRoute));
+  expect('S7: #pf-mypub-create routes as passenger (passenger_request)',
+    typeof myPostsRoute === 'string' && myPostsRoute.includes('passenger_request'),
+    String(myPostsRoute));
+  expect('S7: persisted user.role still "driver" after CTA click',
+    persistedRole() === 'driver', String(persistedRole()));
+}
+
+// ── Scenario 8 — persisted passenger in driver-view tab routes CTAs as driver ──
+// Inverse of S7: a persisted passenger who flipped this tab to driver view
+// must see driver-publish CTAs route as driver. The wireMyPostsSection wiring
+// is shared by both renderDriver and renderPassenger, so this exercises the
+// other half of the applySmokeRole contract.
+reset();
+user.set({
+  onboarded: true, role: 'passenger',
+  firstName: 'Мария', lastName: 'К.', displayName: 'Мария К.',
+});
+setSmokeRole('driver');
+{
+  renderHtml();
+  const myPostsRoute = clickAndCaptureRoute('#pf-mypub-create');
+  expect('S8: #pf-mypub-create captured under driver-view (smoke=driver)',
+    myPostsRoute !== null, String(myPostsRoute));
+  expect('S8: #pf-mypub-create routes as driver (driver_offer)',
+    typeof myPostsRoute === 'string' && myPostsRoute.includes('driver_offer'),
+    String(myPostsRoute));
+  expect('S8: persisted user.role still "passenger" after CTA click',
+    persistedRole() === 'passenger', String(persistedRole()));
+}
+
+// ── Scenario 9 — logout / auth boundary clears the per-tab role override ─────
+// Codex P2: without this, the same-tab flow "switch to driver → logout →
+// onboard as passenger" leaves the sessionStorage override at "driver", and
+// /profile renders the driver view because getSmokeRole() wins over u.role.
+// resetLocalSession() is the shared boundary called by both performLocalLogout
+// and any future profile-wipe / account-switch flow.
+reset();
+user.set({ onboarded: true, role: 'driver', firstName: 'Кто-то' });
+setSmokeRole('driver');
+{
+  expect('S9 pre: sessionStorage override seeded',
+    session.get(SMOKE_ROLE_KEY) === 'driver', String(session.get(SMOKE_ROLE_KEY)));
+  resetLocalSession();
+  expect('S9: resetLocalSession removed bazardrive.smoke_role.v1',
+    !session.has(SMOKE_ROLE_KEY), String(session.get(SMOKE_ROLE_KEY)));
+  expect('S9: getSmokeRole() is null after the auth boundary cleared the override',
+    getSmokeRole() === null, String(getSmokeRole()));
+  expect('S9: user.reset also fired (persisted role gone)',
+    persistedRole() === null, String(persistedRole()));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
