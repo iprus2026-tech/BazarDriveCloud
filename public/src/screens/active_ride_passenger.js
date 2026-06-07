@@ -875,6 +875,7 @@ function renderPassengerRideComplete(ride, deps) {
         </div>
         <div class="passenger-complete__pay-method-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
       </div>
+      <div class="passenger-complete__pay-disclosure">Итог к оплате — без учёта комиссии сервиса</div>
       <div class="passenger-complete__receipt-note" data-pay-show="auto pending">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
         Чек будет доступен после оплаты
