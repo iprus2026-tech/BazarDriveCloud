@@ -72,6 +72,15 @@ const {
   readRideHistoryStatus,
   clearRideHistory,
 } = await import('../public/src/ride_history.js');
+const {
+  saveActiveRide,
+  findActiveRide,
+  RIDE_STATUS,
+} = await import('../public/src/ride_state.js');
+const {
+  resolveLatestDriverSnapshotForOrder,
+  upgradeRideFromDriverSnapshot,
+} = await import('../public/src/screens/responses.js');
 
 const RESPONSES_KEY = 'bazardrive.responses.v1';
 const USER_KEY = 'bazardrive.user.v1';
@@ -359,6 +368,110 @@ writeResponseToStore(buildResponseFor(s7Order, { name: 'Рустам К.', ratin
     reread?.passenger?.authorId === LOCAL_USER_ID, String(reread?.passenger?.authorId));
   expect('S7: response.kind tags it as driver→passenger response (no role conflation)',
     responses[0]?.kind === 'passenger_response', String(responses[0]?.kind));
+}
+
+// ── Scenario 8 — Stale active ride upgrade (BD-LIFE-05) ──────────────────────
+// Reproduces the GitHub Pages bug: a legacy "Рустам К." demo handoff sits at
+// trip_${orderId} (e.g. from createDemoActiveRide defaults at
+// ride_state.js:158 or from a DriverMap accept that used MOCK_DRIVER
+// literals). When a real driver later sends a response with their actual
+// driverSnapshot, opening /responses?orderId=…&state=accepted must surface
+// the real driver — not the seed.
+reset();
+clearRideOrdersStore();
+user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
+const s8Order = createRideOrder({
+  type: 'ride_order',
+  pickup:  { id: 'p1', label: 'A' },
+  dropoff: { id: 'p2', label: 'Б' },
+  passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+});
+const s8TripId = `trip_${s8Order.id}`;
+const s8StaleRide = {
+  tripId: s8TripId,
+  status: RIDE_STATUS.DRIVER_EN_ROUTE,
+  driver:  { name: 'Рустам К.', initials: 'РК', rating: '4,92' },
+  vehicle: { model: 'Toyota Camry', color: 'белый', plate: 'А 123 БВ 77' },
+  selectedDriver: { id: 'mock_d1', name: 'Рустам К.' },
+};
+saveActiveRide(s8StaleRide);
+{
+  // Sanity: with no real response yet, the resolver returns null and the
+  // stale ride stays stale (legacy demo path keeps working).
+  expect('S8 pre: resolver returns null when no response exists',
+    resolveLatestDriverSnapshotForOrder(s8Order.id) === null);
+  const noopUpgrade = upgradeRideFromDriverSnapshot(s8StaleRide, null);
+  expect('S8 pre: upgrade with null snap is a no-op (returns same ref)',
+    noopUpgrade === s8StaleRide);
+}
+// Now the actual driver sends a response with their real profile.
+writeResponseToStore(buildResponseFor(s8Order, { name: 'Алексей Тест', rating: 4.95 }));
+{
+  const snap = resolveLatestDriverSnapshotForOrder(s8Order.id);
+  expect('S8: resolver finds the real driver snapshot',
+    snap && snap.name === 'Алексей Тест', JSON.stringify(snap));
+  expect('S8: resolver type-guards rating as number',
+    typeof snap?.rating === 'number' && snap.rating === 4.95, String(snap?.rating));
+  expect('S8: resolver carries responseId for selectedDriver wiring',
+    typeof snap?.responseId === 'string' && snap.responseId.length > 0, String(snap?.responseId));
+
+  const upgraded = upgradeRideFromDriverSnapshot(s8StaleRide, snap);
+  expect('S8: upgrade produces a new ride reference (caller persists)',
+    upgraded !== s8StaleRide);
+  expect('S8: upgraded ride.driver.name reflects the real driver',
+    upgraded.driver?.name === 'Алексей Тест', String(upgraded.driver?.name));
+  expect('S8: upgraded ride.driver.name does NOT contain "Рустам"',
+    !String(upgraded.driver?.name || '').includes('Рустам'));
+  expect('S8: upgraded ride.driver.initials recomputed from real name',
+    upgraded.driver?.initials === 'А', String(upgraded.driver?.initials));
+  expect('S8: upgraded ride.driver.rating reflects real rating',
+    upgraded.driver?.rating === 4.95, String(upgraded.driver?.rating));
+  expect('S8: upgraded ride.vehicle.plate matches snapshot',
+    upgraded.vehicle?.plate === 'А ••• АА 77', String(upgraded.vehicle?.plate));
+  expect('S8: upgraded ride.selectedDriver.name matches real driver',
+    upgraded.selectedDriver?.name === 'Алексей Тест', String(upgraded.selectedDriver?.name));
+  expect('S8: original stale ride object NOT mutated in place',
+    s8StaleRide.driver.name === 'Рустам К.', String(s8StaleRide.driver?.name));
+
+  // Persist + re-read to confirm the upgrade survives a save/load cycle.
+  saveActiveRide(upgraded);
+  const reread = findActiveRide(s8TripId);
+  expect('S8: persisted ride re-read carries the real driver name',
+    reread?.driver?.name === 'Алексей Тест', String(reread?.driver?.name));
+
+  // Idempotence: running the upgrade again returns the SAME reference, no
+  // pointless write — the caller's `upgraded !== handoffRide` guard against
+  // no-op saves stays meaningful.
+  const second = upgradeRideFromDriverSnapshot(reread, snap);
+  expect('S8: second upgrade is a no-op (idempotent fast-path)',
+    second === reread);
+}
+
+// ── Scenario 9 — Terminal ride is NEVER upgraded (BD-LIFE-05 guardrail) ──────
+// COMPLETED / CANCELED / NO_SHOW rides are over; their final driver identity
+// must stay locked — upgrading them after the fact would rewrite history.
+reset();
+clearRideOrdersStore();
+user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
+const s9Order = createRideOrder({
+  type: 'ride_order',
+  pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
+  passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+});
+writeResponseToStore(buildResponseFor(s9Order, { name: 'Алексей Тест', rating: 4.95 }));
+const s9Snap = resolveLatestDriverSnapshotForOrder(s9Order.id);
+for (const terminalStatus of [RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW]) {
+  const terminalRide = {
+    tripId: `trip_${s9Order.id}`,
+    status: terminalStatus,
+    driver:  { name: 'Рустам К.', initials: 'РК', rating: '4,92' },
+    vehicle: { model: 'Toyota Camry', color: 'белый', plate: 'А 123 БВ 77' },
+  };
+  const result = upgradeRideFromDriverSnapshot(terminalRide, s9Snap);
+  expect(`S9: ${terminalStatus} ride is NOT upgraded (same reference returned)`,
+    result === terminalRide);
+  expect(`S9: ${terminalStatus} ride.driver.name preserved as "Рустам К."`,
+    result.driver?.name === 'Рустам К.', String(result.driver?.name));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

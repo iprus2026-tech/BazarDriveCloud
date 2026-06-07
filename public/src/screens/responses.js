@@ -340,6 +340,82 @@ function loadResponsesForOrder(orderId) {
   }
 }
 
+// BD-LIFE-05 — Resolve the latest real driverSnapshot for an order from the
+// passenger_response store. Returns null when no usable snapshot exists.
+// Treats localStorage as untrusted: every field is type-checked before use,
+// and a snapshot is "usable" only if its `name` is a non-empty string after
+// trim. Picks the response with the latest `createdAt`; responses with an
+// invalid date fall to the back. Field shape mirrors what BD-RIDE-ORDER-01
+// wrote in respond.js plus a passthrough of `responseId` so the caller can
+// keep ride.selectedDriver.responseId in sync.
+export function resolveLatestDriverSnapshotForOrder(orderId) {
+  const responses = loadResponsesForOrder(orderId);
+  if (!Array.isArray(responses) || responses.length === 0) return null;
+  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+  let latest = null;
+  let latestTs = -Infinity;
+  for (const r of responses) {
+    if (!r || typeof r !== 'object') continue;
+    const snap = r.driverSnapshot;
+    if (!snap || typeof snap !== 'object') continue;
+    const name = pickStr(snap.name);
+    if (!name) continue;
+    const ts = Date.parse(typeof r.createdAt === 'string' ? r.createdAt : '');
+    const ord = Number.isFinite(ts) ? ts : 0;
+    if (ord <= latestTs) continue;
+    latestTs = ord;
+    latest = {
+      name,
+      rating:   (typeof snap.rating === 'number' && Number.isFinite(snap.rating)) ? snap.rating : null,
+      car:      pickStr(snap.car),
+      carModel: pickStr(snap.carModel),
+      carColor: pickStr(snap.carColor),
+      plate:    pickStr(snap.plate),
+      responseId: typeof r.id === 'string' ? r.id : null,
+    };
+  }
+  return latest;
+}
+
+// BD-LIFE-05 — Upgrade a stored active ride from the latest real
+// driverSnapshot so a passenger handoff card and /active-ride render the
+// actual driver, not the "Рустам К." demo seed. Returns a NEW ride object
+// when an upgrade applies; returns the input ride unchanged when the
+// snapshot is missing/invalid, the ride is terminal, or the ride already
+// reflects the snapshot identity. The caller is responsible for persisting
+// the returned ride via saveActiveRide() when it differs by reference from
+// the input.
+const TERMINAL_RIDE_STATUSES = new Set([
+  RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW,
+]);
+
+export function upgradeRideFromDriverSnapshot(ride, snapshot) {
+  if (!ride || typeof ride !== 'object') return ride;
+  if (!snapshot || typeof snapshot !== 'object') return ride;
+  const name = typeof snapshot.name === 'string' ? snapshot.name.trim() : '';
+  if (!name) return ride;
+  if (TERMINAL_RIDE_STATUSES.has(ride.status)) return ride;
+  const incomingPlate = typeof snapshot.plate === 'string' ? snapshot.plate : '';
+  const currentName  = typeof ride.driver?.name   === 'string' ? ride.driver.name  : '';
+  const currentPlate = typeof ride.vehicle?.plate === 'string' ? ride.vehicle.plate : '';
+  // Idempotent fast-path: identity already matches → no upgrade needed.
+  if (currentName === name && currentPlate === incomingPlate) return ride;
+  const driver = { ...(ride.driver || {}), name, initials: name.charAt(0).toUpperCase() };
+  if (snapshot.rating !== null && snapshot.rating !== undefined) driver.rating = snapshot.rating;
+  const vehicle = { ...(ride.vehicle || {}) };
+  if (snapshot.carModel)       vehicle.model = snapshot.carModel;
+  else if (snapshot.car)       vehicle.model = snapshot.car;
+  if (snapshot.carColor)       vehicle.color = snapshot.carColor;
+  if (snapshot.plate)          vehicle.plate = snapshot.plate;
+  const selectedBase = (ride.selectedDriver && typeof ride.selectedDriver === 'object') ? ride.selectedDriver : {};
+  const selectedDriver = { ...selectedBase, name };
+  if (snapshot.responseId)               selectedDriver.responseId = snapshot.responseId;
+  if (snapshot.rating !== null && snapshot.rating !== undefined) selectedDriver.rating = snapshot.rating;
+  if (snapshot.car)                      selectedDriver.car   = snapshot.car;
+  if (snapshot.plate)                    selectedDriver.plate = snapshot.plate;
+  return { ...ride, driver, vehicle, selectedDriver };
+}
+
 // pickupTiming on the stored response is a coarse enum; map it to the short
 // "Подача" label the card already renders. Unknown / missing → em-dash.
 const PICKUP_TIMING_LABELS = {
@@ -836,6 +912,18 @@ function buildPassengerActiveRide(order, request, driver) {
   const tripId = `trip_${orderId}`;
   const existingRide = findActiveRide(tripId);
   if (existingRide) {
+    // BD-LIFE-05 — when a stale ride exists, apply the latest real
+    // driverSnapshot before reusing it so a previously-seeded "Рустам К."
+    // demo handoff cannot mask the actual driver. Terminal rides are
+    // preserved as-is by upgradeRideFromDriverSnapshot itself.
+    const realSnap = resolveLatestDriverSnapshotForOrder(orderId);
+    if (realSnap) {
+      const upgraded = upgradeRideFromDriverSnapshot(existingRide, realSnap);
+      if (upgraded !== existingRide) {
+        saveActiveRide(upgraded);
+        return { tripId, ride: upgraded, reused: true };
+      }
+    }
     return { tripId, ride: existingRide, reused: true };
   }
 
@@ -930,7 +1018,7 @@ export default function responses() {
   // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
   // status fallback only applies when there is no linked terminal ride.
   const handoffTripId = request.orderId ? `trip_${request.orderId}` : '';
-  const handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
+  let handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
   const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
   const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
   const rideTerminal = !!handoffRide
@@ -938,6 +1026,23 @@ export default function responses() {
       || handoffRide.status === RIDE_STATUS.CANCELED
       || handoffRide.status === RIDE_STATUS.NO_SHOW);
   const rideLive = !!handoffRide && !rideTerminal;
+
+  // BD-LIFE-05 — if a stale handoff ride is sitting in localStorage with the
+  // demo "Рустам К." seed (legacy DriverMap accept or createDemoActiveRide
+  // fallback), upgrade it from the latest real passenger_response
+  // driverSnapshot so renderAcceptedDriver below sees the actual driver.
+  // Terminal rides (COMPLETED / CANCELED / NO_SHOW) are NEVER upgraded — the
+  // ride is over, its final state is the source of truth.
+  if (handoffRide && !rideTerminal && request.orderId) {
+    const realSnap = resolveLatestDriverSnapshotForOrder(request.orderId);
+    if (realSnap) {
+      const upgraded = upgradeRideFromDriverSnapshot(handoffRide, realSnap);
+      if (upgraded !== handoffRide) {
+        saveActiveRide(upgraded);
+        handoffRide = upgraded;
+      }
+    }
+  }
   const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
   const effectiveState = isAccepted ? 'accepted' : state;
 
