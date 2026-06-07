@@ -107,18 +107,12 @@ Manual-interaction notes (не расхождение — справочно):
 
 ## 4. Кто чинит (распределение по ролям)
 
-### Claude Code — _логика, JS, баги, поведение, smoke-фиксы_
+_Нет назначений — узел зелёный и чистый, действий не требуется._
 
-- [ ] Провести узел «public/src/screens/feed.js» (экран (render + поведение)) до зелёного и зафиксировать.
-
-### Cloud Design — _CSS, render интерфейса, кнопки, визуальные состояния_
-
-- [ ] Поддержать «public/src/screens/feed.js»: CSS, render интерфейса, кнопки, визуальные состояния.
-- [ ] Сверить render и кнопки «public/src/screens/feed.js» с Cloud Design (тема, #FF6B35, состояния).
-
-### GitHub — _CI/workflows, PR, issue triage, merge gate_
-
-- [ ] Подтвердить зелёный CI и провести merge gate.
+> В состояниях READY_DIRTY и NEEDS_ROLES эта секция возвращает обычный список
+> ролевых задач (owner / assist / Cloud Design / merge gate). На READY_CLEAN
+> `tasks[]` в `--json` пуст и эта секция не назначает ни одной роли: статус
+> merge-gate остаётся за блоком «Merge gate» ниже.
 
 ## 5. Что следующий PR должен сделать
 

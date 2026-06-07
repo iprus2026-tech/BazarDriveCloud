@@ -396,18 +396,23 @@ function applySafeFixes(node) {
 // ---------------------------------------------------------------------------
 // Распределение задач по ролям для выбранной цели + по упавшим проверкам.
 // ---------------------------------------------------------------------------
-function routeTasks(node, debug, designRegistry = null) {
+function routeTasks(node, debug, designRegistry = null, { idle = false } = {}) {
   const tasks = [];
   const kind = NODE_KINDS[node.kind] || NODE_KINDS.module;
   const push = (role, task) => tasks.push({ role, roleLabel: ROLES[role].label, task });
 
-  // Базовое владение целью.
-  push(kind.owner, `Провести узел «${node.id}» (${kind.desc}) до зелёного и зафиксировать.`);
-  for (const a of kind.assist) push(a, `Поддержать «${node.id}»: ${ROLES[a].scope}.`);
+  // Базовое владение целью. На idle (READY_CLEAN) «довести до зелёного» нечего —
+  // подавляем owner/assist/render/doc «do work» эмиссии. noActionNeeded ≡ tasks[]
+  // не содержит ролевых назначений: оставляем только реальные сигналы (drift /
+  // падения проверок), которые сами по себе делают узел НЕ idle.
+  if (!idle) {
+    push(kind.owner, `Провести узел «${node.id}» (${kind.desc}) до зелёного и зафиксировать.`);
+    for (const a of kind.assist) push(a, `Поддержать «${node.id}»: ${ROLES[a].scope}.`);
 
-  // Render интерфейса / кнопки — всегда привлекаем Cloud Design.
-  if (node.kind === 'screen' || node.kind === 'shell')
-    push('CLOUD_DESIGN', `Сверить render и кнопки «${node.id}» с Cloud Design (тема, #FF6B35, состояния).`);
+    // Render интерфейса / кнопки — всегда привлекаем Cloud Design.
+    if (node.kind === 'screen' || node.kind === 'shell')
+      push('CLOUD_DESIGN', `Сверить render и кнопки «${node.id}» с Cloud Design (тема, #FF6B35, состояния).`);
+  }
 
   // Падения проверок — конкретные фикс-задачи.
   for (const f of debug.failures) {
@@ -421,22 +426,25 @@ function routeTasks(node, debug, designRegistry = null) {
   }
 
   // Документы/контракты — ChatGPT; CI — GitHub.
-  if (node.kind === 'doc') push('CHATGPT', `Актуализировать формулировки и acceptance в «${node.id}».`);
-  if (node.kind === 'workflow') push('GITHUB', `Проверить, что workflow «${node.id}» зелёный на PR/branch.`);
+  if (!idle && node.kind === 'doc') push('CHATGPT', `Актуализировать формулировки и acceptance в «${node.id}».`);
+  if (!idle && node.kind === 'workflow') push('GITHUB', `Проверить, что workflow «${node.id}» зелёный на PR/branch.`);
 
   // Design drift — расхождения design-registry уходят владельцу реестра (ChatGPT).
+  // Drift сам по себе делает узел НЕ idle (см. call site: green учитывает registry.ok).
   if (designRegistry && !designRegistry.ok && !designRegistry.skipped)
     push('CHATGPT', `Устранить design drift в docs/design-registry.json: ${designRegistry.gaps.length} расхождение(й) — `
       + designRegistry.gaps.map((g) => `${g.code}@${g.id}`).join(', ') + '.');
   if (designRegistry && designRegistry.skipped)
     push('CHATGPT', `docs/design-registry.json не валидируется: ${designRegistry.reason || 'не прочитан'} — починить реестр.`);
 
-  // Merge gate — всегда финальная ответственность GitHub. Закрыт не только при
-  // падении проверок, но и при design drift / непрочитанном реестре.
-  const gateGreen = debug.green && (!designRegistry || (designRegistry.ok && !designRegistry.skipped));
-  push('GITHUB', gateGreen
-    ? 'Подтвердить зелёный CI и провести merge gate.'
-    : 'Держать merge gate закрытым до зелёного CI.');
+  // Merge gate — финальная ответственность GitHub. На idle (READY_CLEAN) задачи нет:
+  // действий не требуется ни в одной роли; статус merge-gate остаётся в Секции 5 / Merge gate.
+  if (!idle) {
+    const gateGreen = debug.green && (!designRegistry || (designRegistry.ok && !designRegistry.skipped));
+    push('GITHUB', gateGreen
+      ? 'Подтвердить зелёный CI и провести merge gate.'
+      : 'Держать merge gate закрытым до зелёного CI.');
+  }
 
   // Дедуп по (role, task).
   const seen = new Set();
@@ -831,13 +839,20 @@ function buildReport(ctx) {
   // 4. Кто чинит?
   lines.push('## 4. Кто чинит (распределение по ролям)');
   lines.push('');
-  for (const role of Object.keys(ROLES)) {
-    const items = grouped.get(role);
-    if (!items || !items.length) continue;
-    lines.push(`### ${ROLES[role].label} — _${ROLES[role].scope}_`);
+  if (readiness === 'READY_CLEAN') {
+    // На чистом зелёном узле «do work» задач нет; merge-gate уходит в Секцию 5/Merge gate.
+    // Heading сохраняем для стабильности якорей/TOC, тело — однострочный idle-маркер.
+    lines.push('_Нет назначений — узел зелёный и чистый, действий не требуется._');
     lines.push('');
-    for (const t of items) lines.push(`- [ ] ${t}`);
-    lines.push('');
+  } else {
+    for (const role of Object.keys(ROLES)) {
+      const items = grouped.get(role);
+      if (!items || !items.length) continue;
+      lines.push(`### ${ROLES[role].label} — _${ROLES[role].scope}_`);
+      lines.push('');
+      for (const t of items) lines.push(`- [ ] ${t}`);
+      lines.push('');
+    }
   }
 
   // 5. Что должен сделать следующий PR?
@@ -887,6 +902,40 @@ function selfTest() {
   const tasks = routeTasks(sample, { failures: [], green: true });
   if (!tasks.some((t) => t.role === 'GITHUB')) fail('routeTasks не назначил GitHub merge gate');
   if (!tasks.some((t) => t.role === (NODE_KINDS[sample.kind].owner))) fail('routeTasks не назначил владельца');
+
+  // READY_CLEAN (idle:true) без drift/failures — tasks[] должен быть полностью пуст.
+  // noActionNeeded ≡ ни одной ролевой задачи: ни owner, ни assist, ни merge-gate.
+  // Проверки — чистые pure-функции, без git/fs.
+  const idleClean = routeTasks(sample, { failures: [], green: true }, null, { idle: true });
+  if (idleClean.length !== 0)
+    fail(`READY_CLEAN: tasks[] должен быть пуст (получено ${idleClean.length})`);
+  if (idleClean.some((t) => t.role === 'GITHUB' && /merge gate/i.test(t.task)))
+    fail('READY_CLEAN: merge-gate GitHub задача должна быть подавлена');
+  // READY_DIRTY (idle:false, green:true) — owner-задача и merge-gate GitHub обязаны сохраниться.
+  const dirtyTasks = routeTasks(sample, { failures: [], green: true }, null, { idle: false });
+  if (!dirtyTasks.some((t) => /Провести узел/.test(t.task)))
+    fail('READY_DIRTY: owner-задача «Провести узел» должна остаться при idle:false');
+  if (!dirtyTasks.some((t) => t.role === 'GITHUB' && /merge gate/i.test(t.task)))
+    fail('READY_DIRTY: merge-gate GitHub задача должна остаться при idle:false');
+  // NEEDS_ROLES (idle:false, green:false) — owner-задача и фикс-задачи обязаны сохраниться.
+  const redTasks = routeTasks(sample, { failures: [{ id: 'smoke-x.mjs', tail: 'Syntax error' }], green: false }, null, { idle: false });
+  if (!redTasks.some((t) => /Провести узел/.test(t.task)))
+    fail('NEEDS_ROLES: owner-задача обязательна при красном CI');
+  if (!redTasks.some((t) => /Починить синтаксис/.test(t.task)))
+    fail('NEEDS_ROLES: фикс-задача «Починить синтаксис» должна быть эмитирована');
+  // Drift на idle:true сам по себе делает узел НЕ idle, но как защита — если кто-то
+  // передаст идл с drift, drift-задача обязана остаться (а вызывающий должен пересчитать idle).
+  const driftRegistry = { ok: false, skipped: false, gaps: [{ code: 'X', id: 'y' }], notes: [], summary: {} };
+  const driftTasks = routeTasks(sample, { failures: [], green: true }, driftRegistry, { idle: true });
+  if (!driftTasks.some((t) => /Устранить design drift/.test(t.task)))
+    fail('drift: задача «Устранить design drift» обязательна даже при idle:true');
+  // Doc-узел на READY_CLEAN — tasks[] пуст.
+  const docNode = inv.find((n) => n.kind === 'doc');
+  if (docNode) {
+    const docIdle = routeTasks(docNode, { failures: [], green: true }, null, { idle: true });
+    if (docIdle.length !== 0)
+      fail(`READY_CLEAN doc: tasks[] должен быть пуст (получено ${docIdle.length})`);
+  }
   // classify покрывает все типы.
   for (const [p, k] of [['public/styles/cloud.css', 'style'], ['public/index.html', 'shell'],
                         ['docs/x.md', 'doc'], ['scripts/smoke-x.mjs', 'smoke'],
@@ -1209,7 +1258,6 @@ function main() {
   // проектный сигнал, а не свойство одного узла.
   const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
 
-  const tasks = routeTasks(target.node, debug, designRegistry);
   // «Зелёный» учитывает и design drift: зелёных проверок недостаточно, реестр обязан
   // быть валиден (ok) и прочитан (не skipped). READY-семантика затем разводит зелёный
   // на READY_CLEAN (дерево чистое, делать нечего) и READY_DIRTY (есть незакоммиченные
@@ -1217,6 +1265,9 @@ function main() {
   const green = debug.green && designRegistry.ok && !designRegistry.skipped;
   const dirty = workingTreeDirty();
   const { readiness, commitNeeded, noActionNeeded } = computeReadiness(green, dirty);
+  // idle === READY_CLEAN: на чистом зелёном узле routeTasks не эмитит owner/assist/doc
+  // «do work» задачи (см. routeTasks), а отчёт в секции 4 рисует idle-маркер.
+  const tasks = routeTasks(target.node, debug, designRegistry, { idle: noActionNeeded });
   const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
 
   // Обновляем курсор/историю само-выбора.
