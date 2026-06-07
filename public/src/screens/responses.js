@@ -365,17 +365,33 @@ function mapResponseToDriverCard(response, request, index) {
     ? formatRub(value)
     : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
   const note = typeof response.message === 'string' ? response.message.trim() : '';
+  // BD-RIDE-ORDER-01 — when respond.js attached a flat driverSnapshot to the
+  // stored response, render the driver card from it. Legacy responses (and
+  // any future write paths that omit the snapshot) keep the original neutral
+  // placeholders unchanged — every key in the returned object stays defined
+  // so escapeHtml never sees `undefined` (see comment above).
+  //
+  // localStorage is treated as untrusted: stale QA data, partially malformed
+  // payloads or schema drift may leave non-string values on the snapshot.
+  // Type-check each field before .trim() so one bad record cannot abort the
+  // whole responses render path.
+  const snap = (response && typeof response.driverSnapshot === 'object' && response.driverSnapshot !== null)
+    ? response.driverSnapshot
+    : null;
+  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+  const snapName = pickStr(snap?.name);
+  const initials = snapName ? snapName.slice(0, 1).toUpperCase() : 'В';
   return {
     id:         responseId,
     responseId,
-    name:       'Водитель',
-    initials:   'В',
+    name:       snapName || 'Водитель',
+    initials,
     avatarTone: 'mint',
-    rating:     '—',
-    car:        '',
-    carModel:   '',
-    carColor:   '',
-    plate:      '',
+    rating:     (snap && typeof snap.rating === 'number') ? snap.rating.toFixed(1) : '—',
+    car:        pickStr(snap?.car),
+    carModel:   pickStr(snap?.carModel),
+    carColor:   pickStr(snap?.carColor),
+    plate:      pickStr(snap?.plate),
     trips:      '',
     price,
     priceDelta: '',

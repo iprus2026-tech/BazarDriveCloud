@@ -625,6 +625,52 @@ function renderPassengerRide(root, post) {
     //                separate field so the contract can evolve without
     //                conflating "what was published" with "which trip
     //                this response opens").
+    // BD-RIDE-ORDER-01 — capture a flat driver/vehicle snapshot at response
+    // time so /responses can render a populated card without a backend.
+    // All fields are plain strings so the response round-trips through
+    // JSON.stringify in bazardrive.responses.v1 without a storage-version
+    // bump.
+    //
+    // Name cascade follows onboarding/profile field layout (displayName,
+    // firstName, lastName) — `u.name` is kept as a last-ditch alias for any
+    // legacy seeds. Falls back to the neutral 'Водитель' placeholder so a
+    // partially-onboarded driver still produces a renderable card.
+    const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+    const composedName = [pickStr(u?.firstName), pickStr(u?.lastName)]
+      .filter(Boolean).join(' ');
+    const driverName = pickStr(u?.displayName)
+      || composedName
+      || pickStr(u?.name)
+      || 'Водитель';
+    // Match MOCK_DRIVERS convention ('Model · цвет') so renderDriverCard /
+    // renderOffer show the same line shape for real and mock responses.
+    const carName  = pickStr(vehicle?.name);
+    const carColor = pickStr(vehicle?.color);
+    const carLine  = (carName && carColor) ? `${carName} · ${carColor}` : (carName || '');
+    // Russian plate format is "Л NNN ЛЛ RR" (e.g. "А 123 АА 77"). Mask the
+    // middle digit segment (the personal identifier) and keep the letter
+    // prefix, the letters and the trailing region visible so a passenger can
+    // still recognise their car. Plates without spaces or unexpected shapes
+    // fall back to a generic middle-mask that keeps first + last 2 chars.
+    function maskPlate(raw) {
+      const s = pickStr(raw);
+      if (!s) return '';
+      const parts = s.split(/\s+/);
+      if (parts.length >= 3) {
+        parts[1] = '•'.repeat(Math.max(parts[1].length, 3));
+        return parts.join(' ');
+      }
+      if (s.length > 3) return s.slice(0, 1) + '•'.repeat(Math.max(s.length - 3, 1)) + s.slice(-2);
+      return s;
+    }
+    const driverSnapshot = {
+      name:     driverName,
+      rating:   (typeof u?.rating === 'number') ? u.rating : null,
+      car:      carLine,
+      carModel: carName,
+      carColor,
+      plate:    maskPlate(vehicle?.plate),
+    };
     const response = {
       id:           responseId,
       kind:         'passenger_response',
@@ -635,6 +681,7 @@ function renderPassengerRide(root, post) {
       pickupTiming: selectedTiming,
       message,
       vehicleId:    vehicle.id,
+      driverSnapshot,
       status:       'SENT',
       createdAt:    new Date().toISOString(),
     };
