@@ -224,23 +224,38 @@ function isDriverAuthoredMessage(msg) {
     || LEGACY_DRIVER_AUTO_TEXTS.has(normalizedText);
 }
 
-// BD-CHAT-02 — Bubble direction is computed relative to the viewer's role.
-// When `msg.senderRole` is set, outgoing = senderRole === viewerRole and
-// incoming = otherwise. For legacy records written before `senderRole` shipped
-// we keep two fallbacks: (a) the driver auto-notice text set, which is
-// outgoing on the driver side and incoming on the passenger side, and (b) the
-// raw `dir` field, which was always written from a passenger-facing chat
-// (so `dir: 'out'` was the passenger's own bubble). The `dir`-only fallback
-// stays passenger-anchored to match how those records were originally stored.
+// BD-CHAT-02 / BD-CHAT-04 — Bubble direction is computed relative to the
+// viewer's role. Resolver precedence:
+//   1. Explicit `senderRole` (`'driver'` / `'passenger'`) wins when present.
+//   2. Else `authorRole` is accepted as a forward-compatible alias, also
+//      gated on `'driver'` / `'passenger'`. New writes always stamp
+//      `senderRole` (BD-CHAT-02), so `authorRole` only matters for records
+//      written by future producers that adopt the alias.
+//   3. Else, for legacy records written before either role field shipped:
+//      (a) the driver auto-notice text set — outgoing on the driver side
+//      and incoming on the passenger side — and (b) the raw `dir` field,
+//      taken literally relative to the current viewer (`dir: 'out'` =
+//      viewer's own bubble, `dir: 'in'` = counterpart's). The legacy
+//      branch never re-anchors `dir` by viewer role, so passenger and
+//      driver renderers stay symmetric on the same record. Anything that
+//      is not exactly `'out'` (including undefined / unknown / null)
+//      defaults to `'in'` — a safe "other-side" fallback that never
+//      falsely attributes a message to the viewer and never throws on a
+//      malformed record.
 function directionForMessage(msg, viewerRole) {
   const senderRole = String(msg.senderRole || '').trim();
-  if (senderRole === 'driver' || senderRole === 'passenger') {
-    return senderRole === viewerRole ? 'out' : 'in';
+  const authorRole = String(msg.authorRole || '').trim();
+  const explicitRole =
+    (senderRole === 'driver' || senderRole === 'passenger') ? senderRole
+    : (authorRole === 'driver' || authorRole === 'passenger') ? authorRole
+    : '';
+  if (explicitRole) {
+    return explicitRole === viewerRole ? 'out' : 'in';
   }
   if (isDriverAuthoredMessage(msg)) {
     return viewerRole === 'driver' ? 'out' : 'in';
   }
-  return msg.dir === 'in' ? 'in' : 'out';
+  return msg.dir === 'out' ? 'out' : 'in';
 }
 
 function createMsgEl(msg, viewerRole) {

@@ -109,9 +109,9 @@ expect("chat.js still defines directionForMessage with senderRole-first preceden
   /function\s+directionForMessage\s*\(/.test(chat) &&
   /isDriverAuthoredMessage\(msg\)/.test(chat));
 
-expect("directionForMessage takes viewerRole and compares senderRole === viewerRole",
+expect("directionForMessage takes viewerRole and compares the resolved explicit role to viewerRole",
   /function\s+directionForMessage\s*\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat) &&
-  /senderRole\s*===\s*viewerRole/.test(chat));
+  /(senderRole|explicitRole)\s*===\s*viewerRole/.test(chat));
 
 expect("createMsgEl threads viewerRole through to directionForMessage",
   /function\s+createMsgEl\s*\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat) &&
@@ -121,7 +121,76 @@ expect("chat.js call sites pass viewerRole into createMsgEl",
   (chat.match(/createMsgEl\(\s*msg\s*,\s*viewerRole\s*\)/g) || []).length >= 2);
 
 expect("chat.js still falls back to legacy msg.dir for pre-senderRole records",
-  /msg\.dir\s*===\s*'in'/.test(chat));
+  /msg\.dir\s*===\s*'out'/.test(chat));
+
+// ── F2. chat.js — BD-CHAT-04 legacy dir-only fallback asymmetry guard ──
+// Legacy records carry only `dir` (no senderRole / authorRole). The resolver
+// must treat dir literally relative to the current viewer (dir='out' = own,
+// dir='in' = other), must default unknown/missing dir to the safe 'in' side
+// (never falsely attribute a message to the viewer), must not crash on
+// missing fields, and must not re-anchor the dir branch by viewer role —
+// passenger and driver renderers stay symmetric on the same record.
+expect("directionForMessage legacy branch returns 'out' only for explicit dir==='out'",
+  /msg\.dir\s*===\s*'out'\s*\?\s*'out'\s*:\s*'in'/.test(chat));
+
+expect("directionForMessage legacy branch defaults unknown/missing dir to safe 'in' (other)",
+  /msg\.dir\s*===\s*'out'\s*\?\s*'out'\s*:\s*'in'/.test(chat));
+
+expect("directionForMessage coerces senderRole via String(msg.senderRole || '') so missing fields can't throw",
+  /const\s+senderRole\s*=\s*String\(\s*msg\.senderRole\s*\|\|\s*''\s*\)\.trim\(\)/.test(chat));
+
+expect("directionForMessage legacy dir branch does not re-anchor by viewerRole (passenger/driver stay symmetric)",
+  (() => {
+    const m = chat.match(/function\s+directionForMessage\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+    if (!m) return false;
+    const body = m[1];
+    const dirLine = body.match(/return\s+msg\.dir\s*===\s*'out'[^\n;]*;/);
+    return Boolean(dirLine) && !/viewerRole/.test(dirLine[0]);
+  })());
+
+expect("chat.js documents the legacy dir-only fallback rule above directionForMessage",
+  /BD-CHAT-04[\s\S]{0,1500}function\s+directionForMessage/.test(chat));
+
+// ── F3. chat.js — BD-CHAT-04 authorRole forward-compatible alias guard ──
+// `authorRole` is accepted as a forward-compatible alias for `senderRole`.
+// `senderRole` must keep precedence; both fields are gated on
+// 'driver'/'passenger' (anything else falls through to the legacy paths);
+// the explicit-role branch must run before the driver-auto-notice branch
+// and the legacy `dir` fallback.
+expect("directionForMessage reads msg.authorRole as a forward-compatible alias",
+  /String\(\s*msg\.authorRole\s*\|\|\s*''\s*\)\.trim\(\)/.test(chat));
+
+expect("directionForMessage authorRole branch only accepts 'driver' or 'passenger'",
+  /authorRole\s*===\s*'driver'\s*\|\|\s*authorRole\s*===\s*'passenger'/.test(chat)
+  || /authorRole\s*===\s*'passenger'\s*\|\|\s*authorRole\s*===\s*'driver'/.test(chat));
+
+expect("directionForMessage gives senderRole precedence over authorRole",
+  (() => {
+    const m = chat.match(/function\s+directionForMessage\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+    if (!m) return false;
+    const body = m[1];
+    const senderIdx = body.indexOf('senderRole');
+    const authorIdx = body.indexOf('authorRole');
+    return senderIdx >= 0 && authorIdx > senderIdx;
+  })());
+
+expect("directionForMessage explicit-role branch runs before driver-auto-notice and legacy dir fallback",
+  (() => {
+    const m = chat.match(/function\s+directionForMessage\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+    if (!m) return false;
+    const body = m[1];
+    const authorIdx = body.indexOf('authorRole');
+    const explicitIdx = body.indexOf('explicitRole');
+    const driverAuthoredIdx = body.indexOf('isDriverAuthoredMessage');
+    const dirIdx = body.indexOf('msg.dir');
+    return authorIdx >= 0
+      && explicitIdx > authorIdx
+      && driverAuthoredIdx > explicitIdx
+      && dirIdx > driverAuthoredIdx;
+  })());
+
+expect("directionForMessage routes resolved explicit role through a single viewer comparison",
+  /explicitRole\s*===\s*viewerRole\s*\?\s*'out'\s*:\s*'in'/.test(chat));
 
 // ── G0. respond.js — success chat CTA carries role=driver ────────
 expect("respond.js success chat CTA opens /chat?responseId=...&role=driver",
@@ -150,8 +219,8 @@ expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger
   /\/chat\?tripId=\$\{encodeURIComponent\(tripId\)\}&role=passenger/.test(passengerSheets));
 
 // ── J. sw.js — VERSION bumped because precached runtime files changed ──
-expect("public/sw.js VERSION is bumped to v94",
-  /const\s+VERSION\s*=\s*'v94'/.test(sw));
+expect("public/sw.js VERSION is bumped to v95",
+  /const\s+VERSION\s*=\s*'v95'/.test(sw));
 
 // ── M. ride_state.js — status tone + label exports (BD-CHAT-03) ──
 expect("ride_state.js exports RIDE_STATUS_TONE",
