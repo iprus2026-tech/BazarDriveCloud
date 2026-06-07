@@ -233,6 +233,80 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Preserved | BD-CHAT-01 confirmation CTA flow (`/chat?responseId=…` → `bazardrive.trip_confirmation.v1` → `/trip-confirmation`) unchanged. `/respond` write side unchanged. `/active-ride` driver/passenger flows unchanged apart from the appended `&role=` on chat deep-links. |
 | Acceptance | Round-trip `/active-ride?role=<r>&tripId=<id>` → `/chat?tripId=<id>&role=<r>` → back returns to the originating `/active-ride` view with `role`+`tripId` preserved; counterpart matches the role; trip route/price/status come from `bazardrive.active_ride.v1`. |
 
+#### Render-gate state contract
+
+##### 1. Shared thread shell
+
+One shell is rendered for both passenger and driver. Differences are role-scoped only:
+
+- **Header peer** — passenger view shows the driver; driver view shows the passenger.
+- **Quick actions** — call / safety / cancel chip sets differ by role.
+- **Lifecycle copy** — banner and sheet copy is role-anchored (e.g. «Водитель едет к вам» vs «Едете к пассажиру»).
+- **Back target** — passenger back returns to `/active-ride?role=passenger&tripId=<id>`; driver back returns to `/active-ride?role=driver&tripId=<id>`.
+
+Anatomy of the shell (top → bottom):
+
+1. **Header** — back button, counterpart avatar + name + online/status + rating, call button.
+2. **Route summary card** — pickup → dropoff, price, status pill.
+3. **Message list** — date separator + bubbles (`chat__msg--in` / `chat__msg--out`).
+4. **Quick actions** — chip strip (role-scoped quick replies).
+5. **Composer** — one of:
+   - **Default composer** — text input + send.
+   - **Locked composer** — input disabled, locked notice in place of input.
+   - **Degraded composer** — input enabled, send replaced by retry control and/or skeleton.
+
+##### 2. Main states
+
+1 · **Inbox — passenger** · `/chat` with no `tripId`/`responseId`, `role` resolves to passenger — list of the passenger's active and recent threads. Default composer hidden until a thread is opened.
+2 · **Inbox — driver** · `/chat` with no `tripId`/`responseId`, `role=driver` — list of the driver's responder threads. Default composer hidden until a thread is opened.
+3 · **Thread — passenger active ride** · `/chat?tripId=<id>&role=passenger` — full shell, default composer. Counterpart = `ride.driver`. Status pill from `ride.status`.
+4 · **Thread — driver active ride** · `/chat?tripId=<id>&role=driver` — full shell, default composer. Counterpart = `ride.passenger`. Status pill from `ride.status`.
+5 · **Thread — completed ride** · `/chat?tripId=<id>&role=<role>` when `ride.status === 'COMPLETED'` — read-only mode: composer hidden or locked, receipt/summary visible.
+6 · **Empty inbox** · `/chat` when no threads exist for the resolved role — illustration + copy + CTA back to `/feed`. No composer.
+7 · **Offline / failed message** · any thread state where `saveMessages` fails or storage is unavailable — failed bubble marker, composer offers explicit retry.
+
+  - 7b · **Loading skeleton / degraded composer** *(sub-state of 7, not a ninth required state)* — transient skeleton while `loadMessages` resolves and degraded composer while a retry is in flight.
+
+8 · **Canceled / no-show locked chat** · `ride.status === 'CANCELED'` or `'NO_SHOW'` — locked composer with explanatory notice; message list stays readable.
+
+> **Note.** 7b is presented as a sub-state of 7 (failure / degradation lifecycle), not a ninth required state. Implementations treat the loading skeleton and the degraded composer as transient overlays inside state 7.
+
+##### 3. Message types
+
+Renderers distinguish the following types via `msg.type` (with legacy inference falling back to a `text` bubble):
+
+- **text** — plain user-typed bubble.
+- **system event** — centered, full-width, non-bubble line; see canonical list below.
+- **route/order card** — inline trip summary (pickup → dropoff, ETA).
+- **price/offer card** — counter-offer or fare confirmation card.
+- **safety notice** — banner-style notice, non-dismissable.
+- **call action** — quick-action affordance rendered inside the thread.
+- **status update** — terse status line derived from a `ride.status` transition.
+
+##### 4. Canonical system events
+
+System-event bubbles use exactly these strings (Russian, no trailing punctuation):
+
+- `Заказ принят`
+- `Водитель едет к пассажиру`
+- `Водитель на месте`
+- `Поездка началась`
+- `Поездка завершена`
+- `Поездка отменена`
+- `Пассажир не вышел`
+
+##### 5. Acceptance checklist
+
+- [ ] `/chat` renders the role-appropriate inbox when no `tripId`/`responseId` is supplied.
+- [ ] `/chat?tripId=<id>&role=<role>` opens the role-aware thread (counterpart, back target, lifecycle copy all match `<role>`).
+- [ ] Passenger and driver share the same shell; only the role-scoped slots (header peer, quick actions, lifecycle copy, back target) differ.
+- [ ] Bubble side ("me" vs "them") is computed from `senderRole` vs `viewerRole`; legacy `dir`-only records fall back via `directionForMessage`.
+- [ ] Completed-ride thread renders in read-only mode (composer hidden or locked, receipt/summary visible).
+- [ ] Canceled / no-show thread locks the composer; the message list remains readable.
+- [ ] Offline / failed-message state supports an explicit retry; the loading skeleton and the degraded composer (7b) are transient overlays inside state 7.
+- [ ] Empty inbox state is reachable and offers a CTA back to `/feed`.
+- [ ] No WebSocket, no push, no backend, no Mapbox, and no media-upload work is introduced.
+
 ### BD-CONFIRM-01 - Trip confirmation handoff
 
 | Field | Contract |
