@@ -11,7 +11,7 @@ import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
 import { isDriverMode } from '../ride_actions.js';
-import { getSmokeRole } from '../smoke_role.js';
+import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
@@ -830,6 +830,19 @@ function renderPassenger(root, u, previewState) {
         </div>
       </div>
 
+      <!-- 9a. Switch tab mode (BD-ROLE-05) — per-tab role override via
+           sessionStorage. Does NOT mutate persisted user.role and does NOT
+           call performLocalLogout / user.reset; flips only this tab's view. -->
+      <div class="bd-card pfp-support-card">
+        <button type="button" class="pfp-menu-row" id="pfp-role-switch">
+          <span class="pfp-menu-icon" aria-hidden="true">${SVG_INFO}</span>
+          <span class="pfp-menu-text">
+            <span class="pfp-menu-title">Продолжить как водитель</span>
+          </span>
+          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
+        </button>
+      </div>
+
       <!-- 10. Support / logout -->
       <div class="bd-card pfp-support-card">
         <button type="button" class="pfp-menu-row" id="pfp-support">
@@ -893,6 +906,16 @@ function renderPassenger(root, u, previewState) {
   const goVerifyPhone = () => go('/onboarding?step=phone');
   root.querySelector('#pfp-verify-getcode')?.addEventListener('click', goVerifyPhone);
   root.querySelector('#pfp-verify-confirm')?.addEventListener('click', goVerifyPhone);
+
+  // BD-ROLE-05 — per-tab role view switch. sessionStorage-only via
+  // setSmokeRole; persisted user.role is NOT touched, user.reset is NOT
+  // called, and no other profile data (vehicle, documents, history) is
+  // mutated. go('/profile') re-runs the factory which picks the new
+  // effectiveRole from getSmokeRole() and renders the driver view.
+  root.querySelector('#pfp-role-switch')?.addEventListener('click', () => {
+    setSmokeRole('driver');
+    go('/profile');
+  });
 
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
@@ -1127,6 +1150,9 @@ function quickActionsHtml() {
         <button type="button" class="pf2-action-row" id="pf2-act-notif">
           <span class="pf2-action-row__label">Уведомления</span>${SVG_CHEVRON}
         </button>
+        <button type="button" class="pf2-action-row" id="pf2-act-role-switch">
+          <span class="pf2-action-row__label">Продолжить как пассажир</span>${SVG_CHEVRON}
+        </button>
         <button type="button" class="pf2-action-row pf2-action-row--danger" id="pf2-act-logout">
           <span class="pf2-action-row__label">Выйти</span>${SVG_CHEVRON}
         </button>
@@ -1347,7 +1373,11 @@ function myPostsSectionHtml() {
 }
 
 function wireMyPostsSection(root) {
-  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go(createIntentRoute(user.get())));
+  // BD-ROLE-05 — route the create CTA through the tab's effective role so a
+  // persisted driver who switched this tab to passenger view does not land on
+  // /new?type=driver_offer. applySmokeRole returns the shared user with the
+  // per-tab override layered on; it never persists.
+  root.querySelector('#pf-mypub-create')?.addEventListener('click', () => go(createIntentRoute(applySmokeRole(user.get()))));
 }
 
 // ── Ride history (BD-RIDE-HISTORY-01 / BD-RIDE-HISTORY-08) ────────────────────
@@ -1946,7 +1976,9 @@ function replaceHistorySection(root) {
 }
 
 function wireHistorySection(root) {
-  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go(createIntentRoute(user.get())));
+  // BD-ROLE-05 — same effective-role routing as wireMyPostsSection so the
+  // empty-history "Создать поездку" CTA respects the tab's smoke role.
+  root.querySelector('#profile-history-empty-new')?.addEventListener('click', () => go(createIntentRoute(applySmokeRole(user.get()))));
   root.querySelector('#profile-history-empty-feed')?.addEventListener('click', () => go('/feed'));
 
   // BD-RIDE-HISTORY-04/08 — section-level delegation handles three concerns:
@@ -3021,6 +3053,17 @@ function renderDriver(root, u) {
     const next = !current.notificationsEnabled;
     user.set({ notificationsEnabled: next });
     stubActionRow(notifBtn, next ? 'Уведомления включены' : 'Уведомления выключены');
+  });
+
+  // BD-ROLE-05 — per-tab role view switch (driver → passenger). Mirror of
+  // #pfp-role-switch in the passenger view: sessionStorage-only via
+  // setSmokeRole, never calls performLocalLogout / user.reset / user.set, and
+  // does not touch vehicle / documents / payouts / history. go('/profile')
+  // re-runs the profile factory which picks the new effectiveRole from
+  // getSmokeRole() and renders the passenger view.
+  root.querySelector('#pf2-act-role-switch')?.addEventListener('click', () => {
+    setSmokeRole('passenger');
+    go('/profile');
   });
 
   const logoutBtn = root.querySelector('#pf2-act-logout');

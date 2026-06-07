@@ -207,6 +207,19 @@ if (exists(profilePaneAliasSmoke)) {
   }
 }
 
+// BD-ROLE-05 — per-tab profile role isolation: setSmokeRole() must flip the
+// rendered view without mutating persisted user.role, so passenger and driver
+// tabs of the same onboarded user stay independent.
+const profileRoleIsolationSmoke = path.join(root, 'scripts', 'smoke-profile-role-isolation.mjs');
+if (exists(profileRoleIsolationSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileRoleIsolationSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-role-isolation.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-D-01 — no-drift guard for the driver completed-ride receipt
 // (issue #381): net computed once, persisted as one canonical receipt object,
 // and read (never recomputed) by ride history, Driver payouts and /receipt.
