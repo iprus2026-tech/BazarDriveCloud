@@ -220,6 +220,21 @@ if (exists(profileRoleIsolationSmoke)) {
   }
 }
 
+// BD-RIDE-ORDER-02 — passenger/driver order lifecycle smoke: order creation,
+// driver response, accept, handoff invariants, role-aware history filter.
+// Locks down the "same user, different jacket" bug class: order.passenger
+// must never collapse with response.driverSnapshot under acceptOrder, and
+// history must stay role-split under the BD-RIDE-ORDER-01 smoke filter.
+const rideOrder02Smoke = path.join(root, 'scripts', 'smoke-ride-order-02-passenger-driver-lifecycle.mjs');
+if (exists(rideOrder02Smoke)) {
+  try {
+    execFileSync(process.execPath, [rideOrder02Smoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-order-02-passenger-driver-lifecycle.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-HISTORY-D-01 — no-drift guard for the driver completed-ride receipt
 // (issue #381): net computed once, persisted as one canonical receipt object,
 // and read (never recomputed) by ride history, Driver payouts and /receipt.

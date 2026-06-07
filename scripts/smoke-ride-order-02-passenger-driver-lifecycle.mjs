@@ -1,0 +1,370 @@
+// BD-RIDE-ORDER-02 — Passenger/driver order lifecycle runtime smoke.
+//
+// First executable guard that walks the whole passenger→driver→active-ride
+// mock chain through the real modules and asserts the cross-role invariants
+// closed by BD-RIDE-ORDER-01 (#416) and BD-ROLE-05 (#417). The bug class to
+// lock down is "passenger and driver become one person in different jackets":
+// any code path that lets the order's passenger snapshot bleed into the
+// response's driverSnapshot (or vice versa), or that collapses a role-tagged
+// history into a single conflated record.
+//
+// Dependency-free: no jsdom, no Mapbox, no backend, no UI rendering. The
+// smoke imports the real mock_api / state / smoke_role / ride_history modules
+// behind Map-backed localStorage + sessionStorage stubs and a minimal window /
+// location stub. loadResponsesForOrder and mapResponseToDriverCard are
+// module-private in screens/responses.js; the smoke inlines the load logic
+// and asserts the persisted driverSnapshot shape directly (the contract
+// mapResponseToDriverCard's pickStr type-guard depends on).
+
+// ── localStorage stub ────────────────────────────────────────────────────────
+const local = new Map();
+globalThis.localStorage = {
+  getItem: (k) => (local.has(k) ? local.get(k) : null),
+  setItem: (k, v) => local.set(k, String(v)),
+  removeItem: (k) => local.delete(k),
+  clear: () => local.clear(),
+};
+
+// ── sessionStorage stub (smoke_role.js per-tab override lives here) ──────────
+const session = new Map();
+globalThis.sessionStorage = {
+  getItem: (k) => (session.has(k) ? session.get(k) : null),
+  setItem: (k, v) => session.set(k, String(v)),
+  removeItem: (k) => session.delete(k),
+  clear: () => session.clear(),
+};
+
+// ── window / location (some imported modules touch these at module load) ────
+let currentHash = '';
+const locationStub = {};
+Object.defineProperty(locationStub, 'hash', {
+  configurable: true,
+  get: () => currentHash,
+  set: (v) => {
+    currentHash = typeof v === 'string' && v.startsWith('#') ? v : '#' + String(v);
+  },
+});
+globalThis.window = { location: locationStub, addEventListener() {}, removeEventListener() {} };
+globalThis.location = locationStub;
+globalThis.document = { addEventListener() {}, removeEventListener() {} };
+
+// ── Imports (after stubs are in place) ───────────────────────────────────────
+const { user } = await import('../public/src/state.js');
+const {
+  LOCAL_USER_ID,
+  createRideOrder,
+  listNearbyOrders,
+  getOrderById,
+  acceptOrder,
+  clearRideOrdersStore,
+} = await import('../public/src/mock_api.js');
+const {
+  SMOKE_ROLE_KEY,
+  getSmokeRole,
+  setSmokeRole,
+  clearSmokeRole,
+} = await import('../public/src/smoke_role.js');
+const {
+  buildPassengerHistoryEntry,
+  buildDriverHistoryEntry,
+  saveRideHistoryEntry,
+  loadRideHistory,
+  readRideHistoryStatus,
+  clearRideHistory,
+} = await import('../public/src/ride_history.js');
+
+const RESPONSES_KEY = 'bazardrive.responses.v1';
+const USER_KEY = 'bazardrive.user.v1';
+
+// ── inlineLoadResponsesForOrder — mirrors responses.js:326-340 ───────────────
+// loadResponsesForOrder is module-private (no `export` keyword on the
+// function), so we duplicate its 10-line read here. This is the chosen
+// mitigation per the BD-RIDE-ORDER-02 plan: duplicating the logic in the
+// guard smoke makes any drift in storage shape or filter key fail loudly.
+function inlineLoadResponsesForOrder(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return [];
+  try {
+    const raw = localStorage.getItem(RESPONSES_KEY);
+    if (!raw) return [];
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
+    return Object.values(map).filter((r) =>
+      r && typeof r === 'object'
+      && r.kind === 'passenger_response'
+      && String(r.orderId || '') === id);
+  } catch {
+    return [];
+  }
+}
+
+// ── Test helpers ─────────────────────────────────────────────────────────────
+const issues = [];
+function expect(label, cond, detail = '') {
+  console.log((cond ? 'PASS' : 'FAIL') + ' — ' + label + (detail ? ' (' + detail + ')' : ''));
+  if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
+}
+
+function reset() {
+  local.clear();
+  session.clear();
+  user.reset();
+  currentHash = '';
+}
+
+function persistedRole() {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw).role; } catch { return null; }
+}
+
+function buildResponseFor(order, driverFields) {
+  return {
+    id: `resp_${order.id}`,
+    kind: 'passenger_response',
+    tripId: `trip_${order.id}`,
+    requestId: order.id,
+    orderId: order.id,
+    canonical: 'ride_order',
+    driverPrice: 1750,
+    pickupTiming: 'at_time',
+    message: 'Готов забрать',
+    vehicleId: 'veh-1',
+    driverSnapshot: {
+      name:     driverFields.name,
+      rating:   driverFields.rating ?? 4.8,
+      car:      'Camry · белый',
+      carModel: 'Camry',
+      carColor: 'белый',
+      plate:    'А ••• АА 77',
+    },
+    status: 'SENT',
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function writeResponseToStore(response) {
+  localStorage.setItem(RESPONSES_KEY, JSON.stringify({ [response.id]: response }));
+}
+
+// ── Scenario 1 — Passenger creates an order ──────────────────────────────────
+reset();
+user.set({
+  role: 'passenger',
+  firstName: 'Алия', lastName: 'К.',
+  phone: '+77001112233', phoneVerified: true,
+  onboarded: true,
+});
+const s1Order = createRideOrder({
+  type: 'ride_order',
+  pickup:  { id: 'p1', label: 'ТЦ Мега' },
+  dropoff: { id: 'p2', label: 'Аэропорт' },
+  distanceKm: 12, durationMin: 22,
+  estimatedPrice: 1700, estimatedPriceLabel: '1700 ₸',
+  scheduledMode: 'now', comment: 'к 18:00',
+  passenger: {
+    name: 'Алия К.',
+    initials: 'АК',
+    phoneMasked: '+7•••',
+    authorId: LOCAL_USER_ID,
+    isCurrentUser: true,
+  },
+});
+{
+  expect('S1: createRideOrder returns string id',
+    typeof s1Order.id === 'string' && s1Order.id.length > 0, String(s1Order.id));
+  expect('S1: order.status === "CREATED"',
+    s1Order.status === 'CREATED', String(s1Order.status));
+  expect('S1: order.passenger.name reflects passenger user',
+    s1Order.passenger?.name === 'Алия К.', String(s1Order.passenger?.name));
+  expect('S1: order.passenger.isCurrentUser true',
+    s1Order.passenger?.isCurrentUser === true, String(s1Order.passenger?.isCurrentUser));
+  expect('S1: order.passenger.authorId pinned to LOCAL_USER_ID',
+    s1Order.passenger?.authorId === LOCAL_USER_ID, String(s1Order.passenger?.authorId));
+  expect('S1: order appears in listNearbyOrders()',
+    listNearbyOrders().some((o) => o.id === s1Order.id));
+}
+
+// ── Scenario 2 — Driver sees the available order ─────────────────────────────
+// Same local user account, "different jacket". Flipping user.role does not
+// touch the persisted ride_orders store, so the passenger's order must remain
+// listable with its original passenger snapshot intact.
+user.set({ role: 'driver', firstName: 'Рустам', lastName: 'К.' });
+{
+  const nearby = listNearbyOrders();
+  const found = nearby.find((o) => o.id === s1Order.id);
+  expect('S2: driver lists the passenger\'s order',
+    !!found, found ? found.id : 'not found');
+  expect('S2: order.status still CREATED for driver view',
+    found?.status === 'CREATED', String(found?.status));
+  expect('S2: passenger snapshot unchanged after local role flip',
+    found?.passenger?.name === 'Алия К.', String(found?.passenger?.name));
+  expect('S2: order has no driver / driverSnapshot field yet',
+    found?.driver === undefined && found?.driverSnapshot === undefined,
+    JSON.stringify({ driver: found?.driver, driverSnapshot: found?.driverSnapshot }));
+}
+
+// ── Scenario 3 — Driver responds; snapshot lands on response (NOT order) ─────
+const s3Response = buildResponseFor(s1Order, { name: 'Рустам К.', rating: 4.8 });
+writeResponseToStore(s3Response);
+{
+  const list = inlineLoadResponsesForOrder(s1Order.id);
+  expect('S3: inlineLoadResponsesForOrder returns one response',
+    list.length === 1, String(list.length));
+  expect('S3: response.kind === "passenger_response"',
+    list[0]?.kind === 'passenger_response', String(list[0]?.kind));
+  expect('S3: response.orderId matches order',
+    list[0]?.orderId === s1Order.id, String(list[0]?.orderId));
+  expect('S3: driverSnapshot.name reflects driver user',
+    list[0]?.driverSnapshot?.name === 'Рустам К.', String(list[0]?.driverSnapshot?.name));
+  expect('S3: driverSnapshot.name !== order.passenger.name (anti-conflation)',
+    list[0]?.driverSnapshot?.name !== getOrderById(s1Order.id)?.passenger?.name);
+  const snap = list[0]?.driverSnapshot;
+  const allStrings = snap
+    && typeof snap.name     === 'string'
+    && typeof snap.car      === 'string'
+    && typeof snap.carModel === 'string'
+    && typeof snap.carColor === 'string'
+    && typeof snap.plate    === 'string';
+  expect('S3: driverSnapshot fields are strings (mapResponseToDriverCard pickStr contract)',
+    allStrings, snap ? JSON.stringify(Object.keys(snap)) : 'no snap');
+}
+
+// ── Scenario 4 — acceptOrder + cross-role invariants ─────────────────────────
+const s4Accepted = acceptOrder(s1Order.id);
+const s4Reread = getOrderById(s1Order.id);
+{
+  expect('S4: acceptOrder returns ACCEPTED status',
+    s4Accepted?.status === 'ACCEPTED', String(s4Accepted?.status));
+  expect('S4: accepted.acceptedAt is a string',
+    typeof s4Accepted?.acceptedAt === 'string' && s4Accepted.acceptedAt.length > 0,
+    String(s4Accepted?.acceptedAt));
+  expect('S4: order.passenger.name UNCHANGED after accept',
+    s4Reread?.passenger?.name === 'Алия К.', String(s4Reread?.passenger?.name));
+  expect('S4: no driver field leaked onto order after accept',
+    s4Reread?.driver === undefined && s4Reread?.driverSnapshot === undefined,
+    JSON.stringify({ driver: s4Reread?.driver, driverSnapshot: s4Reread?.driverSnapshot }));
+  expect('S4: responses survive acceptOrder',
+    inlineLoadResponsesForOrder(s1Order.id).length === 1);
+  expect('S4: ACCEPTED order drops from listNearbyOrders (CREATED filter)',
+    !listNearbyOrders().some((o) => o.id === s1Order.id));
+}
+
+// ── Scenario 5 — effectiveRole priority matrix (mirrors active_ride.js:322) ──
+// const role = query.get('role') || (resolveRole(user.get()) === 'driver'
+//                                      ? 'driver' : 'passenger');
+// Priority: URL > smoke override > persisted user.role > fallback passenger.
+reset();
+user.set({ role: 'driver', firstName: 'Рустам', onboarded: true });
+const effective = (queryRole) => queryRole || (getSmokeRole() || user.get()?.role || 'passenger');
+{
+  expect('S5: URL ?role=passenger wins over persisted driver',
+    effective('passenger') === 'passenger', String(effective('passenger')));
+  expect('S5: URL ?role=driver wins regardless',
+    effective('driver') === 'driver', String(effective('driver')));
+  expect('S5: persisted driver wins when no URL / no smoke',
+    effective(null) === 'driver', String(effective(null)));
+  setSmokeRole('passenger');
+  expect('S5: smoke=passenger beats persisted driver',
+    effective(null) === 'passenger', String(effective(null)));
+  expect('S5: smoke=passenger does NOT mutate persisted user.role',
+    persistedRole() === 'driver', String(persistedRole()));
+  clearSmokeRole();
+  expect('S5: after clearSmokeRole effective falls back to persisted driver',
+    effective(null) === 'driver', String(effective(null)));
+  expect('S5: sessionStorage smoke key removed by clearSmokeRole',
+    session.get(SMOKE_ROLE_KEY) === undefined, String(session.get(SMOKE_ROLE_KEY)));
+}
+
+// ── Scenario 6 — History role isolation: same user, both roles ───────────────
+// One ride, two role-tagged history entries. Asserts:
+//   • two records persisted under one tripId,
+//   • passenger entry has rating/tags/comment but NO receipt,
+//   • driver entry has receipt but NO rating/tags/comment,
+//   • smoke-role filter (BD-RIDE-ORDER-01 fix in ride_history.js:20-26)
+//     picks the right subset per tab.
+reset();
+user.set({ role: 'driver', firstName: 'Рустам', onboarded: true });
+clearRideHistory();
+const s6Ride = {
+  tripId: 'trip_test',
+  driver:    { name: 'Рустам К.', initials: 'РК', rating: 4.8 },
+  passenger: { name: 'Алия К.', initials: 'АК', rating: 5 },
+  vehicle:   { model: 'Camry', color: 'белый', plate: 'А 123 АА 77' },
+  route:     { pickupLabel: 'A', dropoffLabel: 'Б' },
+  payment:   { amount: '1700 ₸' },
+  timestamps:{ completedAt: '2026-06-07T10:00:00Z' },
+};
+saveRideHistoryEntry(buildPassengerHistoryEntry(s6Ride, { rating: 5, tags: ['ontime'], comment: 'ok' }));
+saveRideHistoryEntry(buildDriverHistoryEntry(s6Ride, {
+  receipt: { fare: 1700, commission: 170, tip: 0, net: 1530, paymentMode: 'cash' },
+}));
+{
+  const all = loadRideHistory();
+  expect('S6: two history entries persisted under one tripId',
+    all.length === 2, String(all.length));
+  expect('S6: both entries share tripId',
+    all.every((e) => e.tripId === 'trip_test'));
+  const pax = all.find((e) => e.role === 'passenger');
+  const drv = all.find((e) => e.role === 'driver');
+  expect('S6: roles split (passenger + driver both present)',
+    !!pax && !!drv);
+  expect('S6: passenger entry has NO driver-only `receipt` field',
+    pax?.receipt === undefined, JSON.stringify(Object.keys(pax || {})));
+  expect('S6: driver entry has NO passenger-only `rating`/`tags`/`comment`',
+    drv?.rating === undefined && drv?.tags === undefined && drv?.comment === undefined,
+    JSON.stringify({ rating: drv?.rating, tags: drv?.tags, comment: drv?.comment }));
+
+  // BD-RIDE-ORDER-01 contract: getSmokeRole() wins over persisted user.role
+  // in currentHistoryRole().
+  setSmokeRole('passenger');
+  const paxView = readRideHistoryStatus();
+  expect('S6: smoke=passenger filters history to passenger entry only',
+    paxView.entries.length === 1 && paxView.entries[0].role === 'passenger',
+    JSON.stringify({ n: paxView.entries.length, role: paxView.entries[0]?.role }));
+  setSmokeRole('driver');
+  const drvView = readRideHistoryStatus();
+  expect('S6: smoke=driver filters history to driver entry only',
+    drvView.entries.length === 1 && drvView.entries[0].role === 'driver',
+    JSON.stringify({ n: drvView.entries.length, role: drvView.entries[0]?.role }));
+  clearSmokeRole();
+}
+
+// ── Scenario 7 — Single user, two jackets (final guardrail) ──────────────────
+// One local user account drives both sides of the chain. Even with the same
+// LOCAL_USER_ID under the hood, the passenger snapshot and the driver
+// snapshot must remain identifiably distinct — the bug class this whole
+// audit pair (BD-RIDE-ORDER-01 + BD-ROLE-05 + this smoke) is locking down.
+reset();
+clearRideOrdersStore();
+user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
+const s7Order = createRideOrder({
+  type: 'ride_order',
+  pickup:  { id: 'p1', label: 'A' },
+  dropoff: { id: 'p2', label: 'Б' },
+  passenger: {
+    name: 'Алия К.', initials: 'АК',
+    authorId: LOCAL_USER_ID, isCurrentUser: true,
+  },
+});
+user.set({ role: 'driver', firstName: 'Рустам', lastName: 'К.' });
+writeResponseToStore(buildResponseFor(s7Order, { name: 'Рустам К.', rating: 4.8 }));
+{
+  const reread = getOrderById(s7Order.id);
+  const responses = inlineLoadResponsesForOrder(s7Order.id);
+  expect('S7: order.passenger.name !== response.driverSnapshot.name (identity does not collapse)',
+    reread?.passenger?.name !== responses[0]?.driverSnapshot?.name,
+    JSON.stringify({ pax: reread?.passenger?.name, drv: responses[0]?.driverSnapshot?.name }));
+  expect('S7: order.passenger.authorId still pinned to LOCAL_USER_ID',
+    reread?.passenger?.authorId === LOCAL_USER_ID, String(reread?.passenger?.authorId));
+  expect('S7: response.kind tags it as driver→passenger response (no role conflation)',
+    responses[0]?.kind === 'passenger_response', String(responses[0]?.kind));
+}
+
+// ── Result ───────────────────────────────────────────────────────────────────
+if (issues.length) {
+  console.error('\nSMOKE FAILED:');
+  for (const i of issues) console.error('  - ' + i);
+  process.exit(1);
+}
+console.log('\nAll ride-order-02 lifecycle smoke checks passed.');
