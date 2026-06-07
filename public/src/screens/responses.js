@@ -370,8 +370,16 @@ function mapResponseToDriverCard(response, request, index) {
   // any future write paths that omit the snapshot) keep the original neutral
   // placeholders unchanged — every key in the returned object stays defined
   // so escapeHtml never sees `undefined` (see comment above).
-  const snap     = response.driverSnapshot || null;
-  const snapName = (snap?.name || '').trim();
+  //
+  // localStorage is treated as untrusted: stale QA data, partially malformed
+  // payloads or schema drift may leave non-string values on the snapshot.
+  // Type-check each field before .trim() so one bad record cannot abort the
+  // whole responses render path.
+  const snap = (response && typeof response.driverSnapshot === 'object' && response.driverSnapshot !== null)
+    ? response.driverSnapshot
+    : null;
+  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+  const snapName = pickStr(snap?.name);
   const initials = snapName ? snapName.slice(0, 1).toUpperCase() : 'В';
   return {
     id:         responseId,
@@ -380,10 +388,10 @@ function mapResponseToDriverCard(response, request, index) {
     initials,
     avatarTone: 'mint',
     rating:     (snap && typeof snap.rating === 'number') ? snap.rating.toFixed(1) : '—',
-    car:        snap?.car      || '',
-    carModel:   snap?.carModel || '',
-    carColor:   snap?.carColor || '',
-    plate:      snap?.plate    || '',
+    car:        pickStr(snap?.car),
+    carModel:   pickStr(snap?.carModel),
+    carColor:   pickStr(snap?.carColor),
+    plate:      pickStr(snap?.plate),
     trips:      '',
     price,
     priceDelta: '',
