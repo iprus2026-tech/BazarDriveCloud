@@ -268,6 +268,14 @@
         "F": "/receipt?state=loading — receipt loading / syncing"
       },
       "note": "Read-only closed financial document for a completed driver ride. net is computed ONCE in the completed driver earnings flow (active_ride.js → buildDriverEarningsPayload) and persisted as one canonical receipt object via mock_api.saveDriverReceipt { tripId, completedAt, fare, commission, tip, net, paymentMode, status }. Ride history, Driver payouts and this screen only READ + FORMAT the stored receipt (fare 1540, commission -185, tip 120, net 1475 ₽) — no recalculation, no drift. Mock/UI only — no backend, no real payments, no tax / accounting math."
+    },
+    {
+      "id": "BD-CHAT-02",
+      "title": "Chat bridge (ride + response context)",
+      "route": "/chat",
+      "file": "public/src/screens/chat.js",
+      "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "note": "Screen/contract entry only — references the existing BD-RENDER-GATES-2026-06-03 render gate (no new standaloneExport is added). Bridge contract: chat hydrates header + trip bar from bazardrive.active_ride.v1 when tripId+role present, from bazardrive.responses.v1 (response.driverPrice + MOCK_DRIVER) when only responseId, MOCK_DRIVER/MOCK_TRIP fallback for demo. Back deep-link returns to /active-ride?role=&tripId= when both present, /respond?postId= when response has requestId, /feed otherwise. Outgoing send writes { senderRole: viewerRole, dir: 'out' }; readers prefer senderRole via directionForMessage. BD-CHAT-01 confirmation flow (/chat → trip_confirmation.v1 → /trip-confirmation) is preserved unchanged. No section pin — chat is not a render-gate section in the 2026-06-03 PDF."
     }
   ],
   "foundationModules": [

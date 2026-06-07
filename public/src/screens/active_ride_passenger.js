@@ -1210,7 +1210,7 @@ function renderPassengerRideComplete(ride, deps) {
     // Existing chat route is registered at /chat; if it isn't available
     // for any reason the toast keeps the UI silent instead of throwing.
     try {
-      navigate(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
+      navigate(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=passenger`);
     } catch {
       localToast('Чат пока недоступен');
     }
@@ -1541,7 +1541,7 @@ export default function activeRidePassenger(options = {}) {
   const topChatBtn = topCard.querySelector('#arp-top-chat');
   if (topChatBtn) {
     topChatBtn.addEventListener('click', () => {
-      go(`/chat?tripId=${encodeURIComponent(ride.tripId)}`);
+      go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=passenger`);
     });
   }
 

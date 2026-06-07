@@ -642,7 +642,11 @@ function renderPassengerRide(root, post) {
     saveResponse(response);
     saveResponseToMap(response);
 
-    const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}`;
+    // BD-CHAT-02 — /respond is a driver-side surface, so the success CTA
+    // opens chat with role=driver. Without this, /chat defaults viewerRole
+    // to 'passenger' and renders the driver's own outgoing bubble on the
+    // wrong side of the thread.
+    const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}&role=driver`;
     root.querySelector('#respond-success-chat')
       .addEventListener('click', () => go(chatHref));
 
