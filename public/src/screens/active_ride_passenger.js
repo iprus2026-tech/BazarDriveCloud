@@ -16,6 +16,7 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
+import { upgradeStoredActiveRideForOrder } from './responses.js';
 import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
@@ -153,6 +154,17 @@ function loadPassengerRideView(tripId, statusQuery) {
   // this only ensures the passenger view does not fork the trip
   // identity when only the other role has materialized data.
   let ride = loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  // BD-LIFE-05 (Codex P2) — direct entry to /active-ride must also pick up
+  // the latest real driverSnapshot so a stale demo seed (DriverMap accept
+  // legacy / createDemoActiveRide fallback) cannot render forever as
+  // "Рустам К." on reload. The orchestrator is a no-op when no ride exists
+  // at this tripId, when no real response is stored for the orderId, when
+  // the ride is terminal, or when the persisted ride already matches the
+  // pinned response. Mirrors what /responses runs through the same path.
+  if (ride && typeof tripId === 'string' && tripId.startsWith('trip_')) {
+    const upgraded = upgradeStoredActiveRideForOrder(tripId.slice(5));
+    if (upgraded && upgraded !== ride) ride = upgraded;
+  }
   if (!ride) {
     // BD-RIDE-D-10 — Mirror the driver fallback: when no canonical
     // record exists, use the same SIM_AUDIT demo + driver handoff
