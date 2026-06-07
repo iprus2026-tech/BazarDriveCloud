@@ -15,6 +15,7 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const chat               = read('../public/src/screens/chat.js');
+const respond            = read('../public/src/screens/respond.js');
 const activeRide         = read('../public/src/screens/active_ride.js');
 const activeRidePassenger= read('../public/src/screens/active_ride_passenger.js');
 const passengerSheets    = read('../public/src/screens/active_ride_passenger_sheets.js');
@@ -67,7 +68,13 @@ expect("chat.js defines resolveBackHref helper",
 expect("resolveBackHref returns /active-ride?role= when tripId + hasExplicitRole",
   /return\s+`\/active-ride\?role=\$\{viewerRole\}&tripId=/.test(chat));
 
-expect("resolveBackHref returns /respond?postId= when response.requestId is known",
+expect("chat.js reads `orderId` query param via getRouteParam",
+  /getRouteParam\(\s*'orderId'\s*\)/.test(chat));
+
+expect("resolveBackHref returns /responses?orderId= when responseId + orderId are present",
+  /return\s+`\/responses\?orderId=\$\{encodeURIComponent\(orderId\)/.test(chat));
+
+expect("resolveBackHref returns /respond?postId= when only response.requestId is known",
   /return\s+`\/respond\?postId=\$\{encodeURIComponent\(response\.requestId\)/.test(chat));
 
 expect("resolveBackHref falls back to '/feed' for demo / legacy URLs",
@@ -75,6 +82,9 @@ expect("resolveBackHref falls back to '/feed' for demo / legacy URLs",
 
 expect("chat.js back button dispatches via resolveBackHref",
   /#chat-back[\s\S]{0,400}resolveBackHref\(/.test(chat));
+
+expect("chat.js back button passes orderId into resolveBackHref",
+  /resolveBackHref\(\{[\s\S]{0,200}orderId/.test(chat));
 
 // ── D. chat.js — outgoing message stamps senderRole ───────────────
 expect("chat.js doSend writes senderRole: viewerRole on outgoing messages",
@@ -93,13 +103,28 @@ expect("chat.js still writes bazardrive.trip_confirmation.v1 (BD-CHAT-01 preserv
 expect("chat.js still defines resolveRideContext (BD-CHAT-01 CTA gate preserved)",
   /function\s+resolveRideContext\s*\(/.test(chat));
 
-// ── F. chat.js — message authorship reader unchanged ──────────────
+// ── F. chat.js — message authorship reader (role-aware) ───────────
 expect("chat.js still defines directionForMessage with senderRole-first precedence",
   /function\s+directionForMessage\s*\(/.test(chat) &&
   /isDriverAuthoredMessage\(msg\)/.test(chat));
 
+expect("directionForMessage takes viewerRole and compares senderRole === viewerRole",
+  /function\s+directionForMessage\s*\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat) &&
+  /senderRole\s*===\s*viewerRole/.test(chat));
+
+expect("createMsgEl threads viewerRole through to directionForMessage",
+  /function\s+createMsgEl\s*\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat) &&
+  /directionForMessage\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat));
+
+expect("chat.js call sites pass viewerRole into createMsgEl",
+  (chat.match(/createMsgEl\(\s*msg\s*,\s*viewerRole\s*\)/g) || []).length >= 2);
+
 expect("chat.js still falls back to legacy msg.dir for pre-senderRole records",
   /msg\.dir\s*===\s*'in'/.test(chat));
+
+// ── G0. respond.js — success chat CTA carries role=driver ────────
+expect("respond.js success chat CTA opens /chat?responseId=...&role=driver",
+  /\/chat\?responseId=\$\{encodeURIComponent\(responseId\)\}&role=driver/.test(respond));
 
 // ── G. active_ride.js — driver chat CTAs append &role=driver ──────
 const driverChatCtas = activeRide.match(/\/chat\?tripId=\$\{encodeURIComponent\(ride\.tripId\)\}[^`]*`/g) || [];

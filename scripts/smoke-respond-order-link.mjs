@@ -107,9 +107,12 @@ for (const fn of ['createRideOrder', 'acceptOrder', 'acceptNearbyOrder', 'update
     !new RegExp(`\\b${fn}\\s*\\(`).test(respond));
 }
 
-// ── Invariant 6 — respond → chat link unchanged (no &orderId=) ──
-expect('respond keeps the responseId-only chat link',
-  /chatHref\s*=\s*`\/chat\?responseId=\$\{encodeURIComponent\(responseId\)\}`/.test(respond));
+// ── Invariant 6 — respond → chat link carries responseId (+ role=driver
+// per BD-CHAT-02), never orderId. The role=driver suffix lets /chat render
+// the bubble on the right side of the thread for the responding driver; the
+// link still must NOT leak the canonical orderId (that is /responses' job).
+expect('respond keeps the responseId-only chat link (with BD-CHAT-02 role=driver)',
+  /chatHref\s*=\s*`\/chat\?responseId=\$\{encodeURIComponent\(responseId\)\}&role=driver`/.test(respond));
 expect('respond chat links never carry orderId',
   !/\/chat\?[^`'"\n]*orderId/.test(respond));
 

@@ -178,14 +178,23 @@ function resolveChatHydration({ tripId, responseId, viewerRole }) {
 }
 
 // BD-CHAT-02 — Back link respects the entry point. When the user arrives
-// from /active-ride (tripId + explicit role), return there; from /respond
-// (responseId with a known requestId), return to /respond; otherwise fall
-// back to /feed which matches the historical default for demo and legacy
-// chat URLs. The `hasExplicitRole` gate keeps bare /chat?tripId= links
-// (used by feed, post-detail, mock inbox) on the legacy /feed back path.
-function resolveBackHref({ tripId, responseId, viewerRole, hasExplicitRole, response }) {
+// from /active-ride (tripId + explicit role), return there. For respond/
+// responses entries the order of precedence is:
+//   1. responseId + orderId → /responses?orderId=<orderId>
+//      (driver opened the chat from the responses board; back must return
+//      to that same board so the canonical-order context is preserved).
+//   2. responseId + response.requestId → /respond?postId=<requestId>
+//      (chat was opened straight from /respond's success CTA, no orderId).
+// Otherwise fall back to /feed, which matches the historical default for
+// demo and legacy chat URLs. The `hasExplicitRole` gate keeps bare
+// /chat?tripId= links (feed, post-detail, mock inbox) on the legacy /feed
+// back path.
+function resolveBackHref({ tripId, responseId, orderId, viewerRole, hasExplicitRole, response }) {
   if (tripId && hasExplicitRole) {
     return `/active-ride?role=${viewerRole}&tripId=${encodeURIComponent(tripId)}`;
+  }
+  if (responseId && orderId) {
+    return `/responses?orderId=${encodeURIComponent(orderId)}`;
   }
   if (responseId && response && response.requestId) {
     return `/respond?postId=${encodeURIComponent(response.requestId)}`;
@@ -211,19 +220,27 @@ function isDriverAuthoredMessage(msg) {
     || LEGACY_DRIVER_AUTO_TEXTS.has(normalizedText);
 }
 
-// This chat surface is passenger-facing (the header is the driver), so an
-// incoming bubble is one authored by the driver. Prefer authorship over the
-// legacy `dir` so a driver-authored message (e.g. the "Подъезжаю к точке
-// подачи" auto-notice) is never mistaken for the passenger's own outgoing
-// bubble.
-function directionForMessage(msg) {
-  if (isDriverAuthoredMessage(msg)) return 'in';
-  if (String(msg.senderRole || '').trim() === 'passenger') return 'out';
+// BD-CHAT-02 — Bubble direction is computed relative to the viewer's role.
+// When `msg.senderRole` is set, outgoing = senderRole === viewerRole and
+// incoming = otherwise. For legacy records written before `senderRole` shipped
+// we keep two fallbacks: (a) the driver auto-notice text set, which is
+// outgoing on the driver side and incoming on the passenger side, and (b) the
+// raw `dir` field, which was always written from a passenger-facing chat
+// (so `dir: 'out'` was the passenger's own bubble). The `dir`-only fallback
+// stays passenger-anchored to match how those records were originally stored.
+function directionForMessage(msg, viewerRole) {
+  const senderRole = String(msg.senderRole || '').trim();
+  if (senderRole === 'driver' || senderRole === 'passenger') {
+    return senderRole === viewerRole ? 'out' : 'in';
+  }
+  if (isDriverAuthoredMessage(msg)) {
+    return viewerRole === 'driver' ? 'out' : 'in';
+  }
   return msg.dir === 'in' ? 'in' : 'out';
 }
 
-function createMsgEl(msg) {
-  const dir  = directionForMessage(msg);
+function createMsgEl(msg, viewerRole) {
+  const dir  = directionForMessage(msg, viewerRole);
   const wrap = document.createElement('div');
   wrap.className = `chat__msg chat__msg--${dir}`;
 
@@ -265,6 +282,11 @@ const SEND_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 export default function chat() {
   const tripId     = getRouteParam('tripId');
   const responseId = getRouteParam('responseId');
+  // BD-CHAT-02 — `orderId` is the canonical ride-order id when the chat
+  // was opened from /responses (the driver-side board) — back must return
+  // to /responses?orderId= so the board's context is preserved. /respond
+  // → chat does not carry orderId; that path falls back to /respond.
+  const orderId    = getRouteParam('orderId');
   // BD-CHAT-02 — `role` is the viewer's identity inside this chat. It picks
   // which side of the counterpart to show (driver-view → passenger, and
   // vice-versa) and stamps outgoing messages with the canonical authorship
@@ -374,7 +396,7 @@ export default function chat() {
 
   // ── Render initial messages ─────────────────────────────────────
   for (const msg of messages) {
-    messagesEl.appendChild(createMsgEl(msg));
+    messagesEl.appendChild(createMsgEl(msg, viewerRole));
   }
 
   function scrollBottom() {
@@ -427,7 +449,7 @@ export default function chat() {
     messages = [...messages, msg];
     saveMessages(chatId, messages);
 
-    messagesEl.appendChild(createMsgEl(msg));
+    messagesEl.appendChild(createMsgEl(msg, viewerRole));
     scrollBottom();
 
     inputEl.value = '';
@@ -465,6 +487,7 @@ export default function chat() {
     go(resolveBackHref({
       tripId,
       responseId,
+      orderId,
       viewerRole,
       hasExplicitRole,
       response: hydration.response,
