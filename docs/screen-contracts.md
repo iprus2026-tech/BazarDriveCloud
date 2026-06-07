@@ -295,6 +295,26 @@ System-event bubbles use exactly these strings (Russian, no trailing punctuation
 - `Поездка отменена`
 - `Пассажир не вышел`
 
+##### 4b. Status pill — ride.status → tone (BD-CHAT-03)
+
+| `ride.status`                | Tone CSS variant                  | Label (RU)               |
+|------------------------------|-----------------------------------|--------------------------|
+| `NEW_ORDER`                  | `--warning`                       | Новый заказ              |
+| `CONFIRMATION_PENDING`       | `--warning`                       | Ожидает подтверждения    |
+| `CONFIRMED`                  | `--warning`                       | Подтверждён              |
+| `CHAT_STARTED`               | `--warning`                       | Чат начат                |
+| `ACCEPTED`                   | `--info`                          | Принят                   |
+| `DRIVER_EN_ROUTE`            | `--info`                          | Водитель едет            |
+| `DRIVER_APPROACHING_PICKUP`  | `--info`                          | Подъезжает               |
+| `WAITING_PASSENGER`          | `--warning`                       | Ждёт пассажира           |
+| `IN_PROGRESS`                | `--success`                       | В пути                   |
+| `COMPLETED`                  | `--success`                       | Завершено                |
+| `CANCELED`                   | `--danger`                        | Отменено                 |
+| `NO_SHOW`                    | `--danger`                        | Не пришёл                |
+| unknown / non-enum string    | `--muted`                         | (raw string passthrough) |
+
+Source: `RIDE_STATUS_TONE` / `RIDE_STATUS_LABEL` in `public/src/ride_state.js`. CSS variants live in `public/styles/cloud.css` (existing `.inbox-item__status--*` palette — no new classes).
+
 ##### 5. Acceptance checklist
 
 - [ ] `/chat` renders the role-appropriate inbox when no `tripId`/`responseId` is supplied.
@@ -303,6 +323,7 @@ System-event bubbles use exactly these strings (Russian, no trailing punctuation
 - [ ] Bubble side ("me" vs "them") is computed from `senderRole` vs `viewerRole`; legacy `dir`-only records fall back via `directionForMessage`.
 - [ ] Completed-ride thread renders in read-only mode (composer hidden or locked, receipt/summary visible).
 - [ ] Canceled / no-show thread locks the composer; the message list remains readable.
+- [ ] Status pill colour follows `RIDE_STATUS_TONE` — CANCELED / NO_SHOW render as `--danger`, never `--success`.
 - [ ] Offline / failed-message state supports an explicit retry; the loading skeleton and the degraded composer (7b) are transient overlays inside state 7.
 - [ ] Empty inbox state is reachable and offers a CTA back to `/feed`.
 - [ ] No WebSocket, no push, no backend, no Mapbox, and no media-upload work is introduced.

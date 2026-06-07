@@ -20,6 +20,7 @@ const activeRide         = read('../public/src/screens/active_ride.js');
 const activeRidePassenger= read('../public/src/screens/active_ride_passenger.js');
 const passengerSheets    = read('../public/src/screens/active_ride_passenger_sheets.js');
 const sw                 = read('../public/sw.js');
+const rideState          = read('../public/src/ride_state.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -29,7 +30,7 @@ function expect(label, cond, detail = '') {
 
 // ── A. chat.js — bridge wiring ───────────────────────────────────
 expect("chat.js imports findActiveRide from '../ride_state.js'",
-  /import\s*\{\s*findActiveRide\s*\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
+  /import\s*\{[^}]*\bfindActiveRide\b[^}]*\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
 
 expect("chat.js reads `role` query param via getRouteParam",
   /getRouteParam\(\s*'role'\s*\)/.test(chat));
@@ -55,8 +56,8 @@ expect("chat.js trip bar binds to trip.from / trip.to / trip.price",
   /\$\{escapeHtml\(trip\.to\)/.test(chat) &&
   /\$\{escapeHtml\(String\(trip\.price/.test(chat));
 
-expect("chat.js trip bar binds status to trip.status",
-  /\$\{escapeHtml\(trip\.status/.test(chat));
+expect("chat.js trip bar still reads trip.status (via resolver-friendly raw extraction)",
+  /trip\.status\s*\|\|\s*''/.test(chat));
 
 expect("resolveChatHydration prefers ride.passenger when viewerRole === 'driver'",
   /viewerRole\s*===\s*'driver'[\s\S]{0,80}ride\.passenger/.test(chat));
@@ -149,8 +150,44 @@ expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger
   /\/chat\?tripId=\$\{encodeURIComponent\(tripId\)\}&role=passenger/.test(passengerSheets));
 
 // ── J. sw.js — VERSION bumped because precached runtime files changed ──
-expect("public/sw.js VERSION is bumped to v93",
-  /const\s+VERSION\s*=\s*'v93'/.test(sw));
+expect("public/sw.js VERSION is bumped to v94",
+  /const\s+VERSION\s*=\s*'v94'/.test(sw));
+
+// ── M. ride_state.js — status tone + label exports (BD-CHAT-03) ──
+expect("ride_state.js exports RIDE_STATUS_TONE",
+  /export\s+const\s+RIDE_STATUS_TONE\s*=/.test(rideState));
+expect("ride_state.js exports RIDE_STATUS_LABEL",
+  /export\s+const\s+RIDE_STATUS_LABEL\s*=/.test(rideState));
+expect("ride_state.js exports resolveRideStatusTone",
+  /export\s+function\s+resolveRideStatusTone\s*\(/.test(rideState));
+expect("ride_state.js exports resolveRideStatusLabel",
+  /export\s+function\s+resolveRideStatusLabel\s*\(/.test(rideState));
+
+// Spot checks: CANCELED/NO_SHOW must NOT map to success.
+expect("RIDE_STATUS_TONE.CANCELED === 'danger'",
+  /CANCELED:\s*'danger'/.test(rideState));
+expect("RIDE_STATUS_TONE.NO_SHOW === 'danger'",
+  /NO_SHOW:\s*'danger'/.test(rideState));
+expect("RIDE_STATUS_TONE.IN_PROGRESS === 'success'",
+  /IN_PROGRESS:\s*'success'/.test(rideState));
+expect("RIDE_STATUS_TONE.COMPLETED === 'success'",
+  /COMPLETED:\s*'success'/.test(rideState));
+expect("RIDE_STATUS_TONE.NEW_ORDER === 'warning'",
+  /NEW_ORDER:\s*'warning'/.test(rideState));
+
+// resolveRideStatusTone falls back to 'muted' for non-enum strings (legacy MOCK 'Принят')
+expect("resolveRideStatusTone falls back to 'muted'",
+  /return\s+RIDE_STATUS_TONE\[status\]\s*\|\|\s*'muted'/.test(rideState));
+
+// ── N. chat.js — dynamic tone, no longer hardcodes --success (BD-CHAT-03) ──
+expect("chat.js imports resolveRideStatusTone from ride_state.js",
+  /resolveRideStatusTone/.test(chat));
+expect("chat.js imports resolveRideStatusLabel from ride_state.js",
+  /resolveRideStatusLabel/.test(chat));
+expect("chat.js no longer hardcodes inbox-item__status--success on chat__trip-status",
+  !/inbox-item__status--success\s+chat__trip-status/.test(chat));
+expect("chat.js renders dynamic tone class for chat__trip-status",
+  /inbox-item__status--\$\{tone\}\s+chat__trip-status/.test(chat));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

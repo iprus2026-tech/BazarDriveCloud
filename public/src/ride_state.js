@@ -18,6 +18,52 @@ export const RIDE_STATUS = {
   NO_SHOW: 'NO_SHOW',
 };
 
+// BD-CHAT-03 — Status pill color and label vocabulary, single source of truth
+// for any screen that renders a ride-status chip. Tones map to the existing
+// .inbox-item__status--* palette in public/styles/cloud.css (no new classes).
+// Unknown / non-enum statuses degrade to muted + raw-string passthrough so
+// legacy callers that store a human label (e.g. MOCK_TRIP 'Принят') keep
+// rendering without throwing.
+export const RIDE_STATUS_TONE = {
+  NEW_ORDER: 'warning',
+  CONFIRMATION_PENDING: 'warning',
+  CONFIRMED: 'warning',
+  CHAT_STARTED: 'warning',
+  ACCEPTED: 'info',
+  DRIVER_EN_ROUTE: 'info',
+  DRIVER_APPROACHING_PICKUP: 'info',
+  WAITING_PASSENGER: 'warning',
+  IN_PROGRESS: 'success',
+  COMPLETED: 'success',
+  CANCELED: 'danger',
+  NO_SHOW: 'danger',
+};
+
+export const RIDE_STATUS_LABEL = {
+  NEW_ORDER: 'Новый заказ',
+  CONFIRMATION_PENDING: 'Ожидает подтверждения',
+  CONFIRMED: 'Подтверждён',
+  CHAT_STARTED: 'Чат начат',
+  ACCEPTED: 'Принят',
+  DRIVER_EN_ROUTE: 'Водитель едет',
+  DRIVER_APPROACHING_PICKUP: 'Подъезжает',
+  WAITING_PASSENGER: 'Ждёт пассажира',
+  IN_PROGRESS: 'В пути',
+  COMPLETED: 'Завершено',
+  CANCELED: 'Отменено',
+  NO_SHOW: 'Не пришёл',
+};
+
+export function resolveRideStatusTone(status) {
+  return RIDE_STATUS_TONE[status] || 'muted';
+}
+
+export function resolveRideStatusLabel(status) {
+  if (RIDE_STATUS_LABEL[status]) return RIDE_STATUS_LABEL[status];
+  if (typeof status === 'string' && status.trim()) return status;
+  return '';
+}
+
 export const DEMO_ACTIVE_RIDE_ID = 'trip_moscow_sheremetyevo_demo';
 
 // BD-RIDE-SIM-01 — Audit scenario for issue #101 / PR #102. Used by

@@ -1,6 +1,10 @@
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { findActiveRide } from '../ride_state.js';
+import {
+  findActiveRide,
+  resolveRideStatusTone,
+  resolveRideStatusLabel,
+} from '../ride_state.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -338,8 +342,13 @@ export default function chat() {
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
           <span>${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
-          <span class="inbox-item__status inbox-item__status--success chat__trip-status"
-                aria-label="Статус поездки">${escapeHtml(trip.status || 'Принят')}</span>
+          ${(() => {
+            const raw   = trip.status || '';
+            const tone  = resolveRideStatusTone(raw);
+            const label = resolveRideStatusLabel(raw) || 'Принят';
+            return `<span class="inbox-item__status inbox-item__status--${tone} chat__trip-status"
+                aria-label="Статус поездки: ${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+          })()}
         </div>
         <div class="chat__trip-meta">${escapeHtml(trip.when || '')} · ${trip.seats || ''} места</div>
       </div>
