@@ -455,6 +455,7 @@ function earningsRowsHtml(p) {
       <div class="de-earn__row" role="listitem"><span>Стоимость поездки</span><strong>${escapeHtml(p.fareLabel)}</strong></div>
       <div class="de-earn__row" role="listitem"><span>Комиссия сервиса · ${escapeHtml(p.commissionPctLabel || '')}</span><strong>${escapeHtml(p.commissionAmountLabel)}</strong></div>
       <div class="de-earn__row" role="listitem"><span>Чаевые / бонус</span><strong>${escapeHtml(p.tipLabel)}</strong></div>
+      <div class="de-earn__note" role="note">Доход = стоимость поездки − комиссия + чаевые</div>
       <div class="de-earn__divider" aria-hidden="true"></div>
       <div class="de-earn__row de-earn__row--total" role="listitem"><span>Итого водителю</span><strong class="de-earn__total">${escapeHtml(p.netLabel)}</strong></div>
     </div>`;
