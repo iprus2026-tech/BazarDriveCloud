@@ -365,17 +365,25 @@ function mapResponseToDriverCard(response, request, index) {
     ? formatRub(value)
     : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
   const note = typeof response.message === 'string' ? response.message.trim() : '';
+  // BD-RIDE-ORDER-01 — when respond.js attached a flat driverSnapshot to the
+  // stored response, render the driver card from it. Legacy responses (and
+  // any future write paths that omit the snapshot) keep the original neutral
+  // placeholders unchanged — every key in the returned object stays defined
+  // so escapeHtml never sees `undefined` (see comment above).
+  const snap     = response.driverSnapshot || null;
+  const snapName = (snap?.name || '').trim();
+  const initials = snapName ? snapName.slice(0, 1).toUpperCase() : 'В';
   return {
     id:         responseId,
     responseId,
-    name:       'Водитель',
-    initials:   'В',
+    name:       snapName || 'Водитель',
+    initials,
     avatarTone: 'mint',
-    rating:     '—',
-    car:        '',
-    carModel:   '',
-    carColor:   '',
-    plate:      '',
+    rating:     (snap && typeof snap.rating === 'number') ? snap.rating.toFixed(1) : '—',
+    car:        snap?.car      || '',
+    carModel:   snap?.carModel || '',
+    carColor:   snap?.carColor || '',
+    plate:      snap?.plate    || '',
     trips:      '',
     price,
     priceDelta: '',

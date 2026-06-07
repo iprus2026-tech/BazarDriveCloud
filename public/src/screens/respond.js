@@ -625,6 +625,20 @@ function renderPassengerRide(root, post) {
     //                separate field so the contract can evolve without
     //                conflating "what was published" with "which trip
     //                this response opens").
+    // BD-RIDE-ORDER-01 — capture a flat driver/vehicle snapshot at response
+    // time so /responses can render a populated card without a backend.
+    // Plate masking is inlined (no shared maskPlate helper exists). All fields
+    // are plain strings so the response round-trips through JSON.stringify in
+    // bazardrive.responses.v1 without a storage-version bump.
+    const plateRaw = String(vehicle?.plate || '').trim();
+    const driverSnapshot = {
+      name:     (u?.name || '').trim() || 'Водитель',
+      rating:   (typeof u?.rating === 'number') ? u.rating : null,
+      car:      vehicle?.name  || '',
+      carModel: vehicle?.name  || '',
+      carColor: vehicle?.color || '',
+      plate:    plateRaw ? `*** ${plateRaw.slice(-3)}` : '',
+    };
     const response = {
       id:           responseId,
       kind:         'passenger_response',
@@ -635,6 +649,7 @@ function renderPassengerRide(root, post) {
       pickupTiming: selectedTiming,
       message,
       vehicleId:    vehicle.id,
+      driverSnapshot,
       status:       'SENT',
       createdAt:    new Date().toISOString(),
     };

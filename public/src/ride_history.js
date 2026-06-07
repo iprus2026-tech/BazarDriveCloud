@@ -4,6 +4,7 @@
 // and driver views of the same ride live as two independent records.
 
 import { user } from './state.js';
+import { getSmokeRole } from './smoke_role.js';
 import {
   getActiveRideRouteSnapshot,
   ROUTE_SNAPSHOT_DEFAULTS,
@@ -18,7 +19,10 @@ function isPlainObject(value) {
 
 function currentHistoryRole() {
   try {
-    const role = user.get()?.role;
+    // BD-RIDE-ORDER-01: smoke override wins for the tab; falls back to
+    // persisted user.role. Mirrors profile.js view selection so the history
+    // filter cannot disagree with the chrome rendered around it.
+    const role = getSmokeRole() || user.get()?.role;
     return ROLE_SCOPED_HISTORY.has(role) ? role : null;
   } catch {
     return null;
