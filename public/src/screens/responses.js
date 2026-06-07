@@ -340,6 +340,153 @@ function loadResponsesForOrder(orderId) {
   }
 }
 
+// BD-LIFE-05 — Build a flat, type-guarded driverSnapshot view of one stored
+// passenger_response. Returns null when the response is missing, malformed,
+// or carries no usable `name`. localStorage is treated as untrusted at this
+// boundary so any drift in stored shape fails closed instead of rendering
+// "undefined" strings into the UI.
+function buildDriverSnapshotFromResponse(response) {
+  if (!response || typeof response !== 'object') return null;
+  const snap = response.driverSnapshot;
+  if (!snap || typeof snap !== 'object') return null;
+  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+  const name = pickStr(snap.name);
+  if (!name) return null;
+  return {
+    name,
+    rating:   (typeof snap.rating === 'number' && Number.isFinite(snap.rating)) ? snap.rating : null,
+    car:      pickStr(snap.car),
+    carModel: pickStr(snap.carModel),
+    carColor: pickStr(snap.carColor),
+    plate:    pickStr(snap.plate),
+    responseId: typeof response.id === 'string' ? response.id : null,
+  };
+}
+
+// BD-LIFE-05 — Latest passenger_response by createdAt for an order. Type-
+// guarded, returns null when no usable record exists.
+//
+// SAFETY NOTE (Codex P1): this helper is intentionally NOT called from the
+// live accepted-ride upgrade path anymore. Live rides that lack an explicit
+// responseId pinning could have been accepted via a path that does not pin
+// the response (DriverMap accept, ride_actions, future canonical accept) —
+// in that case the "latest" record may belong to a different driver, and
+// using it would silently rewrite the accepted driver's identity. The
+// resolveDriverSnapshotForRide chain below therefore returns null for
+// unpinned rides instead of guessing. This export is preserved as a helper
+// for unit tests and legacy/diagnostic surfaces only.
+export function resolveLatestDriverSnapshotForOrder(orderId) {
+  const responses = loadResponsesForOrder(orderId);
+  if (!Array.isArray(responses) || responses.length === 0) return null;
+  let latest = null;
+  let latestTs = -Infinity;
+  for (const r of responses) {
+    const snap = buildDriverSnapshotFromResponse(r);
+    if (!snap) continue;
+    const ts = Date.parse(typeof r.createdAt === 'string' ? r.createdAt : '');
+    const ord = Number.isFinite(ts) ? ts : 0;
+    if (ord <= latestTs) continue;
+    latestTs = ord;
+    latest = snap;
+  }
+  return latest;
+}
+
+// BD-LIFE-05 (Codex P2 + P1) — Resolve the snapshot that matches the driver
+// actually accepted on this ride. The only safe source of "this is the
+// accepted driver" is an explicit pinning written at the accept seam:
+// `ride.selectedDriver.responseId` (set today by buildPassengerActiveRide
+// when the passenger picks a driver from /responses). When that link is
+// present we look up THAT specific passenger_response and return its
+// snapshot.
+//
+// SAFETY > RECOVERY (Codex P1): when the ride has NO `selectedDriver.responseId`
+// — typical of DriverMap accept, acceptCanonicalRideOrder, or any other
+// path that produces an active ride without going through /responses — we
+// return null and the orchestrator above is a no-op. Falling back to "the
+// latest passenger_response for this order" would silently rewrite the
+// accepted driver to whichever responder happened to write the newest
+// record. The right fix for those accept paths is to set the responseId at
+// the accept seam, not to guess at the render seam.
+//
+// When pinnedId IS set but the matching response is missing/malformed in
+// localStorage we also return null (do not fall back to latest) for the
+// same reason: a corrupted record must never let an unrelated responder
+// take the accepted driver's slot.
+export function resolveDriverSnapshotForRide(ride, orderId) {
+  const pinnedId = typeof ride?.selectedDriver?.responseId === 'string'
+    ? ride.selectedDriver.responseId.trim() : '';
+  if (!pinnedId) return null;
+  const responses = loadResponsesForOrder(orderId);
+  const pinnedResponse = Array.isArray(responses)
+    ? responses.find((r) => r && r.id === pinnedId)
+    : null;
+  return buildDriverSnapshotFromResponse(pinnedResponse);
+}
+
+// BD-LIFE-05 (Codex P2) — Single-call orchestrator that loads the stored
+// active ride for an order, resolves the right driverSnapshot for it
+// (pinned-by-responseId first, latest fallback), upgrades the ride, and
+// persists the upgrade when one applied. Returns:
+//   • null            — no order id, or no ride at trip_<orderId>;
+//   • the stored ride — when no usable snapshot exists or no upgrade is
+//                       needed (terminal status, idempotent fast-path);
+//   • the new ride    — when an upgrade applied AND was persisted.
+// Used by both /responses (handoff render + buildPassengerActiveRide reuse)
+// and active_ride_passenger.js (direct-entry load) so the same data fix
+// fires regardless of how the passenger arrives at the ride.
+export function upgradeStoredActiveRideForOrder(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  const tripId = `trip_${id}`;
+  const ride = findActiveRide(tripId);
+  if (!ride) return null;
+  const snap = resolveDriverSnapshotForRide(ride, id);
+  if (!snap) return ride;
+  const upgraded = upgradeRideFromDriverSnapshot(ride, snap);
+  if (upgraded !== ride) saveActiveRide(upgraded);
+  return upgraded;
+}
+
+// BD-LIFE-05 — Upgrade a stored active ride from the latest real
+// driverSnapshot so a passenger handoff card and /active-ride render the
+// actual driver, not the "Рустам К." demo seed. Returns a NEW ride object
+// when an upgrade applies; returns the input ride unchanged when the
+// snapshot is missing/invalid, the ride is terminal, or the ride already
+// reflects the snapshot identity. The caller is responsible for persisting
+// the returned ride via saveActiveRide() when it differs by reference from
+// the input.
+const TERMINAL_RIDE_STATUSES = new Set([
+  RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW,
+]);
+
+export function upgradeRideFromDriverSnapshot(ride, snapshot) {
+  if (!ride || typeof ride !== 'object') return ride;
+  if (!snapshot || typeof snapshot !== 'object') return ride;
+  const name = typeof snapshot.name === 'string' ? snapshot.name.trim() : '';
+  if (!name) return ride;
+  if (TERMINAL_RIDE_STATUSES.has(ride.status)) return ride;
+  const incomingPlate = typeof snapshot.plate === 'string' ? snapshot.plate : '';
+  const currentName  = typeof ride.driver?.name   === 'string' ? ride.driver.name  : '';
+  const currentPlate = typeof ride.vehicle?.plate === 'string' ? ride.vehicle.plate : '';
+  // Idempotent fast-path: identity already matches → no upgrade needed.
+  if (currentName === name && currentPlate === incomingPlate) return ride;
+  const driver = { ...(ride.driver || {}), name, initials: name.charAt(0).toUpperCase() };
+  if (snapshot.rating !== null && snapshot.rating !== undefined) driver.rating = snapshot.rating;
+  const vehicle = { ...(ride.vehicle || {}) };
+  if (snapshot.carModel)       vehicle.model = snapshot.carModel;
+  else if (snapshot.car)       vehicle.model = snapshot.car;
+  if (snapshot.carColor)       vehicle.color = snapshot.carColor;
+  if (snapshot.plate)          vehicle.plate = snapshot.plate;
+  const selectedBase = (ride.selectedDriver && typeof ride.selectedDriver === 'object') ? ride.selectedDriver : {};
+  const selectedDriver = { ...selectedBase, name };
+  if (snapshot.responseId)               selectedDriver.responseId = snapshot.responseId;
+  if (snapshot.rating !== null && snapshot.rating !== undefined) selectedDriver.rating = snapshot.rating;
+  if (snapshot.car)                      selectedDriver.car   = snapshot.car;
+  if (snapshot.plate)                    selectedDriver.plate = snapshot.plate;
+  return { ...ride, driver, vehicle, selectedDriver };
+}
+
 // pickupTiming on the stored response is a coarse enum; map it to the short
 // "Подача" label the card already renders. Unknown / missing → em-dash.
 const PICKUP_TIMING_LABELS = {
@@ -836,7 +983,15 @@ function buildPassengerActiveRide(order, request, driver) {
   const tripId = `trip_${orderId}`;
   const existingRide = findActiveRide(tripId);
   if (existingRide) {
-    return { tripId, ride: existingRide, reused: true };
+    // BD-LIFE-05 — when a stale ride exists, apply the matching real
+    // driverSnapshot before reusing it so a previously-seeded "Рустам К."
+    // demo handoff cannot mask the actual driver. The orchestrator picks
+    // the pinned response when ride.selectedDriver.responseId is set
+    // (e.g. passenger already chose driver A) and only falls back to the
+    // latest response for truly unlinked handoffs. Terminal rides are
+    // preserved as-is by upgradeRideFromDriverSnapshot itself.
+    const upgraded = upgradeStoredActiveRideForOrder(orderId) || existingRide;
+    return { tripId, ride: upgraded, reused: true };
   }
 
   const accepted = order && order.status === 'CREATED' ? acceptOrder(order.id) : order;
@@ -930,7 +1085,7 @@ export default function responses() {
   // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
   // status fallback only applies when there is no linked terminal ride.
   const handoffTripId = request.orderId ? `trip_${request.orderId}` : '';
-  const handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
+  let handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
   const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
   const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
   const rideTerminal = !!handoffRide
@@ -938,6 +1093,20 @@ export default function responses() {
       || handoffRide.status === RIDE_STATUS.CANCELED
       || handoffRide.status === RIDE_STATUS.NO_SHOW);
   const rideLive = !!handoffRide && !rideTerminal;
+
+  // BD-LIFE-05 — if a stale handoff ride is sitting in localStorage with the
+  // demo "Рустам К." seed (legacy DriverMap accept or createDemoActiveRide
+  // fallback), upgrade it from the matching passenger_response driverSnapshot
+  // so renderAcceptedDriver below sees the actual driver. The orchestrator
+  // gates pinned-by-responseId first, latest fallback for unlinked handoffs,
+  // and skips terminal rides (COMPLETED / CANCELED / NO_SHOW) on its own
+  // through upgradeRideFromDriverSnapshot — the outer `!rideTerminal` check
+  // is kept as a perf gate so we do not even read the responses store on a
+  // ride that is already over.
+  if (handoffRide && !rideTerminal && request.orderId) {
+    const upgraded = upgradeStoredActiveRideForOrder(request.orderId);
+    if (upgraded && upgraded !== handoffRide) handoffRide = upgraded;
+  }
   const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
   const effectiveState = isAccepted ? 'accepted' : state;
 
