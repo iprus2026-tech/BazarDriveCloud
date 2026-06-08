@@ -348,6 +348,86 @@ export const user = {
   },
 };
 
+// BD-PROFILE-D-05G — Append a single new vehicle to the persisted garage
+// collection. Single safe save path used by the Driver Profile garage's
+// "Добавить авто" sheet — every other render/wire path in 05A–05F stays
+// strictly read-only against `driverGarage.vehicles`.
+//
+// Inputs are trimmed and gated:
+//   - `model` is REQUIRED (after trim). A blank model refuses to persist
+//     and returns null — the caller's sheet should surface a validation
+//     error and keep the draft on screen.
+//   - `color` / `plate` are optional and trimmed.
+//   - `source` is ALWAYS set to `'persisted'` here — never copied from
+//     user input. The whitelist guards future smoke source-distinction
+//     and prevents a tampered draft from claiming `source: 'legacy'`
+//     and earning the legacy-fallback semantics on read.
+//
+// Output:
+//   - Returns the new vehicle's id on success, null on validation
+//     refusal. The id is generated as `vehicle-${N}` where N starts at
+//     `vehicles.length + 1` and skips past any existing collision —
+//     never reusing an id already present on the record.
+//
+// Active selection:
+//   - `options.makeActive === true` patches `driverGarage.activeVehicleId`
+//     to the new id (single allowed writer for that field outside the
+//     05D make-active handler). Otherwise the existing `activeVehicleId`
+//     is preserved verbatim.
+//
+// Safety:
+//   - The existing `vehicles` array is preserved by reference-and-spread:
+//     `[...vehicles, newVehicle]`. No other field on the user record is
+//     touched — legacy `vehicleMake/Model/Plate/Color` stay intact, and
+//     no active-ride / history / receipt / response store is read or
+//     written.
+//   - `normalize()` runs as part of the existing `user.set` path
+//     (via `cache = normalize(...)`) so the post-save shape always
+//     satisfies `normalizeDriverGarage`'s invariants.
+export function appendGarageVehicle(rawVehicle, options = {}) {
+  const model = (rawVehicle && typeof rawVehicle.model === 'string')
+    ? rawVehicle.model.trim() : '';
+  if (!model) return null;
+  const color = (rawVehicle && typeof rawVehicle.color === 'string')
+    ? rawVehicle.color.trim() : '';
+  const plate = (rawVehicle && typeof rawVehicle.plate === 'string')
+    ? rawVehicle.plate.trim() : '';
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  // Generate a non-colliding id deterministically. Start past the
+  // current array length and walk forward until we find a free slot —
+  // this handles records where ids were synthesised earlier (e.g. via
+  // garage-N from `normalisePersistedVehicle`) without overwriting them.
+  const usedIds = new Set();
+  for (const v of vehicles) {
+    if (v && typeof v.id === 'string' && v.id.length > 0) usedIds.add(v.id);
+  }
+  let n = vehicles.length + 1;
+  let id = `vehicle-${n}`;
+  while (usedIds.has(id)) {
+    n++;
+    id = `vehicle-${n}`;
+  }
+
+  const newVehicle = { id, model, color, plate, source: 'persisted' };
+
+  const nextDriverGarage = {
+    activeVehicleId: options && options.makeActive === true
+      ? id
+      : dg.activeVehicleId,
+    vehicles: [...vehicles, newVehicle],
+  };
+
+  cache = normalize({ ...cache, driverGarage: nextDriverGarage });
+  persist();
+  return id;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't

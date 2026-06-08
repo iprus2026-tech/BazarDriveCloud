@@ -6,6 +6,7 @@ import {
   REQUIRED_DOCS,
   canShowReadyStatus,
   isDriverLineReady,
+  appendGarageVehicle,
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -2870,6 +2871,53 @@ function garageVehicleCardHtml(vehicle) {
       </article>`;
 }
 
+// BD-PROFILE-D-05G — Add-vehicle sheet template. Rendered inside every
+// garage section (empty and populated) so the Add CTA on either path
+// opens the same draft surface. The sheet starts `hidden` and carries
+// `data-garage-add-state="closed"`; opening flips both. The fields are
+// pure DOM inputs — typing does NOT touch storage until the explicit
+// save click. The submit-time write goes through `appendGarageVehicle`
+// from state.js (single safe writer). Cancel resets the draft and hides
+// the sheet without touching storage. The validation surface is a
+// single error paragraph (`#pf2-garage-add-error`) that shifts its
+// `data-garage-add-state` between `idle` / `invalid` so the smoke /
+// design tools can pin the flow without scraping copy.
+function garageAddSheetHtml() {
+  return `
+      <div class="pf2-garage-add-sheet" id="pf2-garage-add-sheet" role="dialog" aria-modal="true" aria-labelledby="pf2-garage-add-sheet-title" data-garage-add-state="closed" hidden>
+        <div class="pf2-garage-add-sheet__backdrop" id="pf2-garage-add-backdrop" data-garage-add-action="close-backdrop"></div>
+        <div class="pf2-garage-add-sheet__panel">
+          <header class="pf2-garage-add-sheet__head">
+            <h3 class="pf2-garage-add-sheet__title" id="pf2-garage-add-sheet-title">Добавить авто</h3>
+            <button type="button" class="pf2-garage-add-sheet__close" id="pf2-garage-add-close" data-garage-add-action="close" aria-label="Закрыть">×</button>
+          </header>
+          <div class="pf2-garage-add-sheet__body">
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Модель *</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-model" name="model" placeholder="Toyota Prius" autocomplete="off" required>
+            </label>
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Цвет</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-color" name="color" placeholder="белый" autocomplete="off">
+            </label>
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Номер</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-add-plate" name="plate" placeholder="А 123 ВС 77" autocomplete="off">
+            </label>
+            <label class="pf2-garage-add-sheet__active-toggle">
+              <input type="checkbox" id="pf2-garage-add-make-active" data-garage-add-action="make-active-toggle">
+              <span>Сделать активной</span>
+            </label>
+            <p class="pf2-garage-add-sheet__error" id="pf2-garage-add-error" data-garage-add-state="idle" hidden>Укажите модель, чтобы сохранить авто.</p>
+          </div>
+          <div class="pf2-garage-add-sheet__actions">
+            <button type="button" class="pf2-garage-add-sheet__cancel" id="pf2-garage-add-cancel" data-garage-add-action="cancel" data-garage-action="add-cancel" data-garage-state="add-cancel-local">Отмена</button>
+            <button type="button" class="pf2-garage-add-sheet__save bd-btn primary" id="pf2-garage-add-save" data-garage-add-action="save" data-garage-action="add-save" data-garage-state="add-save-local">Сохранить</button>
+          </div>
+        </div>
+      </div>`;
+}
+
 function garageSectionHtml(u, options = {}) {
   const vehicles = Array.isArray(options.vehicles)
     ? options.vehicles
@@ -2886,7 +2934,7 @@ function garageSectionHtml(u, options = {}) {
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
           <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
-        </div>
+        </div>${garageAddSheetHtml()}
       </section>`;
   }
 
@@ -2897,7 +2945,7 @@ function garageSectionHtml(u, options = {}) {
       <header class="pf2-garage__head">
         <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready" aria-label="Добавить авто">+ Добавить</button>
-      </header>${cardsHtml}
+      </header>${cardsHtml}${garageAddSheetHtml()}
     </section>`;
 }
 
@@ -2936,9 +2984,92 @@ function wireGarageActions(root, vehicles = []) {
     }, 1500);
   };
 
-  // Header / empty-state add CTA — single instance, unsuffixed id.
+  // BD-PROFILE-D-05G — Header / empty-state add CTA now opens the
+  // add-vehicle draft sheet. The sheet is rendered with `hidden`; the
+  // open handler flips it visible and resets the draft fields + error
+  // state so a previous unsaved draft (canceled or never submitted)
+  // cannot survive a navigation round-trip.
   const addBtn = root.querySelector('#pf2-garage-add');
-  addBtn?.addEventListener('click', () => flash(addBtn, 'Доступно в следующем шаге'));
+  const sheet  = root.querySelector('#pf2-garage-add-sheet');
+
+  const resetDraft = () => {
+    for (const sel of ['#pf2-garage-add-model', '#pf2-garage-add-color', '#pf2-garage-add-plate']) {
+      const el = root.querySelector(sel);
+      if (el) el.value = '';
+    }
+    const makeActiveEl = root.querySelector('#pf2-garage-add-make-active');
+    if (makeActiveEl) makeActiveEl.checked = false;
+    const errEl = root.querySelector('#pf2-garage-add-error');
+    if (errEl) {
+      errEl.hidden = true;
+      errEl.dataset.garageAddState = 'idle';
+    }
+  };
+
+  const openSheet = () => {
+    if (!sheet) return;
+    resetDraft();
+    sheet.hidden = false;
+    sheet.dataset.garageAddState = 'open';
+  };
+  const closeSheet = () => {
+    if (!sheet) return;
+    resetDraft();
+    sheet.hidden = true;
+    sheet.dataset.garageAddState = 'closed';
+  };
+
+  addBtn?.addEventListener('click', openSheet);
+
+  // Cancel surfaces: explicit "Отмена" button, header "×" close button,
+  // and backdrop click. All three reset the draft and hide the sheet —
+  // none touches storage.
+  for (const sel of ['#pf2-garage-add-cancel', '#pf2-garage-add-close', '#pf2-garage-add-backdrop']) {
+    const el = root.querySelector(sel);
+    el?.addEventListener('click', closeSheet);
+  }
+
+  // Save — single allowed write path for the add-vehicle draft. Validates
+  // model is non-empty, calls appendGarageVehicle (which trims fields,
+  // sets `source: 'persisted'`, generates a collision-free id, and
+  // patches activeVehicleId iff makeActive is checked), then closes the
+  // sheet and re-renders the garage section in place so the new card
+  // appears immediately.
+  const saveBtn = root.querySelector('#pf2-garage-add-save');
+  saveBtn?.addEventListener('click', () => {
+    const modelEl       = root.querySelector('#pf2-garage-add-model');
+    const colorEl       = root.querySelector('#pf2-garage-add-color');
+    const plateEl       = root.querySelector('#pf2-garage-add-plate');
+    const makeActiveEl  = root.querySelector('#pf2-garage-add-make-active');
+    const errEl         = root.querySelector('#pf2-garage-add-error');
+
+    const draft = {
+      model: modelEl?.value || '',
+      color: colorEl?.value || '',
+      plate: plateEl?.value || '',
+    };
+    const trimmedModel = typeof draft.model === 'string' ? draft.model.trim() : '';
+    if (!trimmedModel) {
+      if (errEl) {
+        errEl.hidden = false;
+        errEl.dataset.garageAddState = 'invalid';
+      }
+      return;
+    }
+    const id = appendGarageVehicle(draft, {
+      makeActive: makeActiveEl?.checked === true,
+    });
+    if (!id) {
+      // state.js refused the write (defensive — already gated above).
+      if (errEl) {
+        errEl.hidden = false;
+        errEl.dataset.garageAddState = 'invalid';
+      }
+      return;
+    }
+    closeSheet();
+    refreshGarageSection(root);
+  });
 
   for (const vehicle of vehicles) {
     const id = vehicle && vehicle.id;
