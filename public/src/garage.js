@@ -37,6 +37,9 @@
 // a missing id is synthesised from the index so a partial seed still
 // renders. A missing model would render an empty card, so those entries
 // are dropped entirely (caller falls back to the legacy-derived path).
+// 05I — the `archived` flag is preserved (boolean only) so the active-
+// list filter and archived-count helpers downstream agree on a single
+// source of truth.
 function normalisePersistedVehicle(raw, idx) {
   if (!raw || typeof raw !== 'object') return null;
   const idStr = typeof raw.id === 'string' ? raw.id.trim() : '';
@@ -46,7 +49,8 @@ function normalisePersistedVehicle(raw, idx) {
   const color = typeof raw.color === 'string' ? raw.color.trim() : '';
   const plate = typeof raw.plate === 'string' ? raw.plate.trim() : '';
   const source = typeof raw.source === 'string' && raw.source ? raw.source : 'persisted';
-  return { id, model, color, plate, source };
+  const archived = raw.archived === true;
+  return { id, model, color, plate, source, ...(archived ? { archived: true } : {}) };
 }
 
 // 05F — Read the persisted garage collection off the profile and return
@@ -81,6 +85,14 @@ export function buildGarageVehicles(u, options = {}) {
   if (force === 'empty') return [];
 
   let raw = readPersistedGarageVehicles(u);
+  // 05I — archived entries stay in the persisted record (no hard delete)
+  // but never reach the active list. The resolver, the snapshot
+  // consumers (respond.js / ride_actions.js), and the per-card render
+  // therefore never surface an archived vehicle as active or even as a
+  // make-active candidate.
+  if (raw.length > 0) {
+    raw = raw.filter((v) => v && v.archived !== true);
+  }
 
   if (raw.length === 0) {
     const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
@@ -153,4 +165,20 @@ export function resolveActiveGarageVehicle(u) {
   const id = resolveActiveGarageVehicleId(u, vehicles);
   if (!id) return null;
   return vehicles.find((v) => v && v.id === id) || null;
+}
+
+// BD-PROFILE-D-05I — Count archived persisted vehicles. Used by the
+// profile renderer to surface a small "В архиве: N" hint underneath the
+// active-list cards. Strictly read-only — walks the raw persisted
+// vehicles array without going through `normalisePersistedVehicle` so
+// the count is not affected by render-time dropping (e.g. an archived
+// entry with a missing model is still counted; it cannot show up as
+// active, and the hint signals the storage record still holds it).
+export function countArchivedGarageVehicles(u) {
+  if (!u || !u.driverGarage || !Array.isArray(u.driverGarage.vehicles)) return 0;
+  let count = 0;
+  for (const v of u.driverGarage.vehicles) {
+    if (v && typeof v === 'object' && v.archived === true) count++;
+  }
+  return count;
 }
