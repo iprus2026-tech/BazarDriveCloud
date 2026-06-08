@@ -366,6 +366,151 @@ user.set({
   }
 }
 
+// ── Scenario 10 — BD-PROFILE-D-05F: persisted real-2 vehicle surfaces
+// in /respond getUserVehicle. Legacy fields point at one car ("Hyundai
+// Solaris"); the persisted collection contains a DIFFERENT car
+// ("Toyota Prius"). With activeVehicleId='real-2', the response snapshot
+// must reflect the persisted real-2, NOT the legacy fields. ───────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // Legacy fields still set — but they are no longer the source of truth
+  // once a persisted collection exists.
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const u = user.get();
+  const v = getUserVehicle(u);
+  expect('S10: getUserVehicle returns the persisted vehicle, not the legacy one',
+    v?.name === 'Toyota Prius', String(v?.name));
+  expect('S10: getUserVehicle plate is the persisted plate (legacy plate suppressed)',
+    v?.plate === 'А 123 ВС 77', String(v?.plate));
+  expect('S10: getUserVehicle color is the persisted color',
+    v?.color === 'серебристый', String(v?.color));
+  // Legacy car must NOT leak into the snapshot.
+  expect('S10: getUserVehicle vehicle name is NOT the legacy "Hyundai Solaris"',
+    v?.name !== 'Hyundai Solaris');
+}
+
+// ── Scenario 11 — BD-PROFILE-D-05F: persisted real-2 vehicle surfaces in
+// ride_actions buildAcceptedDriverSnapshot. Same setup as S10 — the
+// handoff snapshot must read the persisted real-2 vehicle, and the
+// masked plate must be derived from the persisted plate. ──────────────────
+{
+  const snap = buildAcceptedDriverSnapshot(user.get());
+  expect('S11: handoff snapshot.vehicle.model is the persisted "Toyota Prius"',
+    snap?.vehicle?.model === 'Toyota Prius', String(snap?.vehicle?.model));
+  expect('S11: handoff snapshot.vehicle.color is the persisted color',
+    snap?.vehicle?.color === 'серебристый', String(snap?.vehicle?.color));
+  // Plate must be masked + derived from the persisted plate ("А 123 ВС 77"),
+  // not from the legacy plate ("А 482 МР 77"). The middle segment is
+  // replaced with bullets, so the plate must NOT contain "123" anymore.
+  expect('S11: handoff snapshot.vehicle.plate is masked',
+    /•/.test(snap?.vehicle?.plate || ''), String(snap?.vehicle?.plate));
+  expect('S11: masked plate prefix matches the PERSISTED plate (not the legacy one)',
+    (snap?.vehicle?.plate || '').startsWith('А') &&
+    !String(snap?.vehicle?.plate || '').includes('482'),
+    String(snap?.vehicle?.plate));
+}
+
+// ── Scenario 12 — BD-PROFILE-D-05F: empty persisted collection falls back
+// to the legacy-derived vehicle. The defaults shape includes
+// `vehicles: []`, so this is the common-case path right now. The
+// snapshot helpers must still return the legacy car so the existing
+// production flow keeps working unchanged. ─────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const u = user.get();
+  // Sanity: default driverGarage shape is what state.js normalises to.
+  expect('S12: default driverGarage.vehicles is an empty array',
+    Array.isArray(u.driverGarage?.vehicles) && u.driverGarage.vehicles.length === 0);
+  expect('S12: getUserVehicle falls back to legacy when persisted collection is empty',
+    getUserVehicle(u)?.name === 'Hyundai Solaris',
+    String(getUserVehicle(u)?.name));
+  expect('S12: handoff snapshot falls back to legacy when persisted collection is empty',
+    buildAcceptedDriverSnapshot(u)?.vehicle?.model === 'Hyundai Solaris',
+    String(buildAcceptedDriverSnapshot(u)?.vehicle?.model));
+}
+
+// ── Scenario 13 — BD-PROFILE-D-05F: snapshot reads do NOT mutate the
+// persisted collection. Calling either consumer with a persisted real-2
+// vehicle must leave `driverGarage.vehicles` byte-equal. The resolver
+// promised "strictly read-only" — this scenario locks that contract
+// against the new source. ─────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const beforeRaw = JSON.stringify(user.get().driverGarage);
+  for (let i = 0; i < 5; i++) {
+    getUserVehicle(user.get());
+    buildAcceptedDriverSnapshot(user.get());
+    resolveActiveGarageVehicle(user.get());
+    buildGarageVehicles(user.get());
+  }
+  const afterRaw = JSON.stringify(user.get().driverGarage);
+  expect('S13: driverGarage byte-equal after 5x snapshot reads against the persisted collection',
+    beforeRaw === afterRaw, `before=${beforeRaw.length}b after=${afterRaw.length}b`);
+}
+
+// ── Scenario 14 — BD-PROFILE-D-05F: stale `activeVehicleId` against the
+// persisted collection falls back to the first persisted vehicle (NOT to
+// the legacy car). The saved id stays intact so the previous selection
+// re-activates when the matching vehicle reappears. ──────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'ghost-99',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-3', model: 'Skoda Octavia', color: 'чёрный',     plate: 'В 456 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const u = user.get();
+  const v = getUserVehicle(u);
+  // Fallback: first valid persisted vehicle (real-2), NOT the legacy car.
+  expect('S14: stale activeVehicleId falls back to the FIRST persisted vehicle',
+    v?.name === 'Toyota Prius', String(v?.name));
+  expect('S14: stale activeVehicleId does NOT fall back to the legacy car',
+    v?.name !== 'Hyundai Solaris');
+  expect('S14: stale activeVehicleId is PRESERVED (resolver is read-only)',
+    user.get().driverGarage?.activeVehicleId === 'ghost-99');
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

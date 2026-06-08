@@ -1,4 +1,4 @@
-// BD-PROFILE-D-05A/B/C/D — Driver Garage smoke.
+// BD-PROFILE-D-05A/B/C/D/F — Driver Garage smoke.
 //
 // The Garage section is a driver-only profile surface. It derives its
 // view from the legacy fields on the user record (vehicleMake /
@@ -25,6 +25,14 @@
 //         stale; click → persist → re-render swaps the active badge;
 //         make-active touches ONLY `bazardrive.user.v1` (no responses,
 //         active_ride, ride_history, driver_receipts, respond key drift).
+//   05F — Persisted garage collection: `profile.driverGarage.vehicles`
+//         drives the builder when it holds a usable non-empty array
+//         (after per-entry normalisation); legacy `vehicleMake/Model/
+//         Color/Plate` becomes the fallback path. The render is strictly
+//         read-only against the persisted collection — no auto-init,
+//         no legacy-seed write, no rewrite on make-active. `?garage=multi`
+//         stays preview-only and overlays the demo card on whatever
+//         real source exists, without persisting.
 //
 // Mirrors the DOM-stub strategy used by smoke-profile-pane-alias.mjs and
 // smoke-profile-role-isolation.mjs: a permissive stub whose querySelector
@@ -1115,6 +1123,316 @@ user.set({
   expect('S28: default null activeVehicleId is left untouched by render',
     user.get().driverGarage?.activeVehicleId === null,
     String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── BD-PROFILE-D-05F — Persisted vehicle collection scenarios ──────────────
+// 05F lets `profile.driverGarage.vehicles` drive the garage collection
+// when it holds a usable non-empty array. The render path stays
+// strictly read-only against the persisted collection — the legacy
+// fallback never auto-initialises `driverGarage.vehicles`, and the
+// make-active handler still only writes `activeVehicleId`.
+
+// ── Scenario 29 — Default driverGarage shape includes vehicles: []. ────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const u = user.get();
+  expect('S29: driverGarage.vehicles defaults to an empty array',
+    Array.isArray(u.driverGarage?.vehicles) && u.driverGarage.vehicles.length === 0);
+  expect('S29: driverGarage.activeVehicleId defaults to null',
+    u.driverGarage?.activeVehicleId === null);
+  // Render still produces a legacy card (the existing fallback) — the
+  // persisted-collection feature must not break the legacy-only render.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S29: legacy-only profile still renders the single legacy card',
+    slice.includes('data-vehicle="legacy-1"') && slice.includes('Hyundai Solaris'));
+}
+
+// ── Scenario 30 — Persisted vehicles array overrides the legacy fields ─────
+// Legacy fields point at "Hyundai Solaris"; the persisted collection
+// contains a single DIFFERENT car ("Toyota Prius"). The render must
+// reflect the persisted vehicle — the legacy car must not leak into the
+// slice at all.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S30: section advertises data-garage-collection-size="1"',
+    slice.includes('data-garage-collection-size="1"'));
+  expect('S30: persisted real-2 card is rendered',
+    slice.includes('data-vehicle="real-2"'));
+  expect('S30: persisted vehicle model is rendered',
+    slice.includes('Toyota Prius'));
+  expect('S30: persisted vehicle plate is rendered',
+    slice.includes('А 123 ВС 77'));
+  // Legacy car must NOT leak into the slice.
+  expect('S30: legacy "Hyundai Solaris" model does NOT leak into the persisted render',
+    !slice.includes('Hyundai Solaris'));
+  expect('S30: legacy plate does NOT leak into the persisted render',
+    !slice.includes('А 482 МР 77'));
+  expect('S30: real-2 card is the ACTIVE one (activeVehicleId resolved)',
+    slice.includes('id="pf2-garage-active-real-2"'));
+  expect('S30: persisted card carries data-vehicle-source="persisted"',
+    slice.includes('data-vehicle-source="persisted"'));
+}
+
+// ── Scenario 31 — Multi-vehicle persisted collection: badge follows the
+// resolved activeVehicleId; the other card shows the make-active button. ──
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-1', model: 'Skoda Octavia', color: 'чёрный',     plate: 'В 456 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Toyota Prius',  color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S31: section advertises data-garage-collection-size="2"',
+    slice.includes('data-garage-collection-size="2"'));
+  expect('S31: pf2-garage--multi modifier set (multi-card layout)',
+    /pf2-garage--multi\b/.test(slice));
+  // real-2 active.
+  expect('S31: real-2 is the active card (#pf2-garage-active-real-2)',
+    slice.includes('id="pf2-garage-active-real-2"'));
+  expect('S31: real-2 does NOT render a make-active button',
+    !slice.includes('id="pf2-garage-make-active-real-2"'));
+  // real-1 non-active → make-active candidate.
+  expect('S31: real-1 renders make-active button (#pf2-garage-make-active-real-1)',
+    slice.includes('id="pf2-garage-make-active-real-1"'));
+  expect('S31: real-1 does NOT render an active-current span',
+    !slice.includes('id="pf2-garage-active-real-1"'));
+}
+
+// ── Scenario 32 — Stale activeVehicleId falls back to the FIRST persisted
+// vehicle (NOT to the legacy car). The saved id stays intact. ─────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'ghost-99',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius',  color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-3', model: 'Skoda Octavia', color: 'чёрный',     plate: 'В 456 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S32: stale id falls back to the FIRST persisted vehicle (real-2 active)',
+    slice.includes('id="pf2-garage-active-real-2"'));
+  expect('S32: stale id does NOT fall back to the legacy car',
+    !slice.includes('data-vehicle="legacy-1"'));
+  expect('S32: stale activeVehicleId is PRESERVED (resolver is read-only)',
+    user.get().driverGarage?.activeVehicleId === 'ghost-99',
+    String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── Scenario 33 — Malformed vehicles entries are dropped; the remaining
+// valid entries (if any) still render. ────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      'garbage',
+      null,
+      { weird: true },                                    // no model → dropped
+      { id: 'dup-1', model: 'X' },                        // first dup-1 → kept
+      { id: 'dup-1', model: 'Y' },                        // second dup-1 → dropped
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  // The two valid entries (`dup-1` and `real-2`) render; the malformed
+  // ones are dropped; the duplicate id is de-duped.
+  expect('S33: collection size after dropping malformed entries is 2',
+    slice.includes('data-garage-collection-size="2"'));
+  expect('S33: first valid entry (dup-1) is rendered',
+    slice.includes('data-vehicle="dup-1"'));
+  expect('S33: persisted real-2 is rendered',
+    slice.includes('data-vehicle="real-2"'));
+  // The dropped duplicate entry must not have introduced its model "Y".
+  expect('S33: dropped duplicate model "Y" did NOT render',
+    !slice.includes('>Y<'));
+  // The render did not crash and did NOT leak the legacy car.
+  expect('S33: malformed persisted collection does NOT leak the legacy car',
+    !slice.includes('Hyundai Solaris'));
+}
+
+// ── Scenario 34 — Empty persisted vehicles array falls back to legacy. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: { activeVehicleId: null, vehicles: [] },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S34: empty persisted collection falls back to legacy render',
+    slice.includes('data-vehicle="legacy-1"') && slice.includes('Hyundai Solaris'));
+  expect('S34: legacy-1 is active by fallback',
+    slice.includes('id="pf2-garage-active-legacy-1"'));
+}
+
+// ── Scenario 35 — Persistence guardrail: render does NOT auto-init
+// `driverGarage.vehicles` from the legacy fields. The collection stays
+// at whatever the user record carried before the render. ──────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const before = snapshotLocalStorage();
+  const beforeVehicles = JSON.stringify(user.get().driverGarage?.vehicles);
+  renderProfile('#/profile');
+  const after = snapshotLocalStorage();
+  const afterVehicles = JSON.stringify(user.get().driverGarage?.vehicles);
+  expect('S35: localStorage byte-equal after legacy-only render (no auto-init write)',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  expect('S35: driverGarage.vehicles stays empty after render (no legacy seed persisted)',
+    afterVehicles === '[]', String(afterVehicles));
+  expect('S35: vehicles snapshot unchanged between before/after render',
+    beforeVehicles === afterVehicles);
+}
+
+// ── Scenario 36 — make-active changes only activeVehicleId, NOT vehicles
+// (preserves the persisted collection across selection clicks). 05D
+// contract preserved under 05F: the make-active handler reads the
+// existing driverGarage and spreads it so the vehicles array survives. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-1', model: 'Skoda Octavia', color: 'чёрный',     plate: 'В 456 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Toyota Prius',  color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  const beforeVehicles = JSON.stringify(user.get().driverGarage.vehicles);
+  // real-2 is active by default; click make-active on real-1 to flip.
+  const fn = clickHandlers.get('#pf2-garage-make-active-real-1');
+  expect('S36: make-active handler captured for the non-active persisted card',
+    typeof fn === 'function');
+  fn && fn();
+  expect('S36: activeVehicleId was patched to real-1 by make-active',
+    user.get().driverGarage?.activeVehicleId === 'real-1',
+    String(user.get().driverGarage?.activeVehicleId));
+  const afterVehicles = JSON.stringify(user.get().driverGarage.vehicles);
+  expect('S36: vehicles array preserved byte-for-byte across make-active',
+    beforeVehicles === afterVehicles);
+  // Re-render and confirm the badge swap is reflected.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S36: re-render after make-active marks real-1 active',
+    slice.includes('id="pf2-garage-active-real-1"'));
+  expect('S36: re-render demotes real-2 to make-active candidate',
+    slice.includes('id="pf2-garage-make-active-real-2"'));
+}
+
+// ── Scenario 37 — ?garage=multi preview overlays the demo card ON TOP OF
+// the persisted collection. The preview must not persist; the saved
+// `driverGarage.vehicles` stays untouched and demo-2 is never written. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile?role=driver&garage=multi'));
+  expect('S37: multi preview overlays demo-2 on the persisted real-2',
+    slice.includes('data-vehicle="real-2"') && slice.includes('data-vehicle="demo-2"'));
+  expect('S37: collection size with preview overlay is 2',
+    slice.includes('data-garage-collection-size="2"'));
+  // Storage stays clean — the preview did not persist anything.
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S37: persisted vehicles still contain ONLY real-2 (preview NOT persisted)',
+    Array.isArray(persisted) && persisted.length === 1 && persisted[0]?.id === 'real-2');
+  expect('S37: no demo-2 leaked into the persisted vehicles array',
+    !JSON.stringify(persisted).includes('demo-2'));
+}
+
+// ── Scenario 38 — Passenger profile never reads OR writes driverGarage —
+// even when the persisted collection holds a real vehicle. ────────────────
+reset();
+user.set({
+  onboarded: true, role: 'passenger',
+  firstName: 'Алия', lastName: 'К.', displayName: 'Алия К.',
+  phone: '9007654321', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const before = snapshotLocalStorage();
+  const html = renderProfile('#/profile');
+  const after = snapshotLocalStorage();
+  expect('S38: passenger profile does NOT render the garage section',
+    !html.includes('id="pf2-garage"'));
+  expect('S38: passenger render does NOT mutate localStorage',
+    before === after);
+  expect('S38: passenger driverGarage.vehicles preserved byte-for-byte',
+    user.get().driverGarage?.vehicles?.[0]?.id === 'real-2');
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

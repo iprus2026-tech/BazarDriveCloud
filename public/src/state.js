@@ -87,13 +87,17 @@ function buildDefaults() {
     // телефон" handlers (no real SMS provider is wired).
     phoneVerified: false,
     // v10 — BD-PROFILE-D-05D Driver Garage active vehicle selection.
+    // v11 — BD-PROFILE-D-05F persisted garage vehicle collection.
     // Profile-local namespace: only the garage section reads or writes
-    // this. activeVehicleId persists the driver's last "Сделать активной"
-    // choice; resolver in profile.js falls back to the legacy/first
-    // available vehicle when null or stale. Not consumed by driver
-    // response snapshot (that's 05E), nor by active ride / lifecycle /
-    // history / receipts.
-    driverGarage: { activeVehicleId: null },
+    // this. `activeVehicleId` persists the driver's last "Сделать активной"
+    // choice; `vehicles` persists the garage collection itself when an
+    // explicit safe save path lands (05G+). 05F only READS this field —
+    // the render path never auto-initialises it from legacy fields.
+    // Resolver in `public/src/garage.js` falls back to the legacy-derived
+    // single-vehicle collection when `vehicles` is empty/missing, and
+    // never mutates the persisted shape on its own. Not consumed by the
+    // active ride / ride lifecycle / history / receipts.
+    driverGarage: { activeVehicleId: null, vehicles: [] },
   };
 }
 
@@ -187,6 +191,24 @@ function syncDerived(state) {
   return state;
 }
 
+// BD-PROFILE-D-05F — Normalise the `driverGarage` namespace shape on
+// every load / set so callers can rely on `{ activeVehicleId, vehicles }`
+// existing with the right types, even on records persisted before this
+// release. Lenient: a missing or malformed field falls back to the safe
+// default (null id, empty vehicles array) without dropping the other
+// field. Idempotent — running this on a well-shaped record is a no-op.
+function normalizeDriverGarage(state) {
+  const dg = (state.driverGarage && typeof state.driverGarage === 'object')
+    ? state.driverGarage
+    : {};
+  const activeVehicleId = (typeof dg.activeVehicleId === 'string' && dg.activeVehicleId.length > 0)
+    ? dg.activeVehicleId
+    : null;
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+  state.driverGarage = { activeVehicleId, vehicles };
+  return state;
+}
+
 // Shape normalization only: ensure driverDocuments contains every required
 // key with a valid object, then re-derive taxiPermit and documentsReady.
 // IMPORTANT: legacy migrations (lifting docs based on persisted taxiPermit /
@@ -209,6 +231,7 @@ function normalize(state) {
     }
   }
   state.driverDocuments = merged;
+  normalizeDriverGarage(state);
   return syncDerived(state);
 }
 

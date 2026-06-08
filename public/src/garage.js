@@ -4,53 +4,112 @@
 // the accept-handoff snapshot (ride_actions.js) can read the same active
 // garage vehicle the profile renders, without depending on a UI module.
 //
-// Strictly read-only: no side effects, no localStorage writes, no
-// driverGarage mutation. Persistence of the selection stays owned by
-// BD-PROFILE-D-05D (`wireGarageActions` make-active handler).
+// BD-PROFILE-D-05F — Persisted collection source. The builder now reads
+// `profile.driverGarage.vehicles` when it holds a usable non-empty array
+// (after per-entry normalisation) and only falls back to the legacy
+// `vehicleMake/Model/Color/Plate` user fields when the persisted
+// collection is missing, empty, or malformed.
 //
-// Resolution rules (mirror of the profile resolver):
-//   - If `profile.driverGarage.activeVehicleId` matches a vehicle in the
-//     rebuilt collection, that vehicle is active.
-//   - If the saved id is missing or stale, fall back to the legacy
-//     vehicle (`source === 'legacy'`), then the first vehicle, then null.
-//   - If the collection is empty (no usable legacy vehicle, or
-//     `force: 'empty'`), return null without crashing.
+// Strictly read-only across the board: no side effects, no localStorage
+// writes, no `driverGarage` mutation, no render-time auto-initialisation
+// of the persisted collection from legacy fields. Persistence of the
+// active selection stays owned by BD-PROFILE-D-05D
+// (`wireGarageActions` make-active handler); persistence of the
+// collection itself is left to a future safe save path (05G+).
+//
+// Resolution rules:
+//   - Collection source: persisted `driverGarage.vehicles` (normalised)
+//     when valid+non-empty, else the legacy-derived single-vehicle list,
+//     else `[]`.
+//   - Active id: `profile.driverGarage.activeVehicleId` when present in
+//     the rebuilt collection; otherwise fall back to the legacy vehicle
+//     (`source === 'legacy'`), then the first vehicle, then null.
+//   - `options.force === 'empty'` short-circuits to `[]`.
+//   - `options.force === 'multi'` is a profile-render preview that
+//     appends a single mock demo card to whatever real source exists.
+//     The two production consumers (respond.js, ride_actions.js) never
+//     pass any options, so the preview cannot leak into a real driver
+//     response or handoff snapshot.
 
-// Build the in-memory garage collection from the legacy user.* vehicle
-// fields. Pure derive — same inputs, same outputs. Status is set by
-// `resolveActiveGarageVehicleId` consumers; this builder only fills the
-// shape. `options.force === 'empty'` short-circuits to []; 'multi'
-// appends a single preview-only demo vehicle (only when the legacy
-// vehicle is present so the layout exercises an active+available pair).
+// 05F — Normalise one persisted vehicle entry. Drops entries that can't
+// reasonably render a card; coerces fields to safe types. An `id` is
+// required so per-vehicle DOM hooks and the resolver have a stable key;
+// a missing id is synthesised from the index so a partial seed still
+// renders. A missing model would render an empty card, so those entries
+// are dropped entirely (caller falls back to the legacy-derived path).
+function normalisePersistedVehicle(raw, idx) {
+  if (!raw || typeof raw !== 'object') return null;
+  const idStr = typeof raw.id === 'string' ? raw.id.trim() : '';
+  const id = idStr || `garage-${idx + 1}`;
+  const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+  if (!model) return null;
+  const color = typeof raw.color === 'string' ? raw.color.trim() : '';
+  const plate = typeof raw.plate === 'string' ? raw.plate.trim() : '';
+  const source = typeof raw.source === 'string' && raw.source ? raw.source : 'persisted';
+  return { id, model, color, plate, source };
+}
+
+// 05F — Read the persisted garage collection off the profile and return
+// the normalised, de-duplicated list. Returns `[]` for any malformed
+// shape (non-array, missing namespace, entries that fail
+// `normalisePersistedVehicle`) so the builder safely falls through to
+// the legacy-derived path.
+function readPersistedGarageVehicles(profile) {
+  if (!profile || !profile.driverGarage) return [];
+  const raw = profile.driverGarage.vehicles;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const v = normalisePersistedVehicle(raw[i], i);
+    if (!v) continue;
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push(v);
+  }
+  return out;
+}
+
+// Build the in-memory garage collection. Pure derive — no side effects.
+// 05F: prefer the persisted `driverGarage.vehicles` when it holds a
+// valid non-empty array; otherwise fall back to a single-entry legacy
+// list derived from the user.* vehicle fields. The legacy fallback is
+// in-memory only — it is NEVER written back to storage from this
+// function or its callers (the persistence guardrail of 05F).
 export function buildGarageVehicles(u, options = {}) {
   const force = typeof options.force === 'string' ? options.force : '';
   if (force === 'empty') return [];
 
-  const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
-  const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
-  const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
-  const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
-  const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+  let raw = readPersistedGarageVehicles(u);
 
-  const raw = [];
-  if (modelLine) {
-    raw.push({
-      id: 'legacy-1',
-      model: modelLine,
-      color,
-      plate,
-      source: 'legacy',
-    });
+  if (raw.length === 0) {
+    const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
+    const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
+    const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
+    const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
+    const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+    if (modelLine) {
+      raw = [{
+        id: 'legacy-1',
+        model: modelLine,
+        color,
+        plate,
+        source: 'legacy',
+      }];
+    }
   }
 
+  // `?garage=multi` — preview-only second vehicle, never touches storage.
+  // Requires at least one real vehicle (persisted OR legacy-derived) so
+  // the multi-card layout exercises an active+available pair.
   if (force === 'multi' && raw.length > 0) {
-    raw.push({
+    raw = [...raw, {
       id: 'demo-2',
       model: 'Kia Rio',
       color: 'белый',
       plate: '*** 125',
       source: 'mock',
-    });
+    }];
   }
 
   if (raw.length === 0) return [];
@@ -63,9 +122,11 @@ export function buildGarageVehicles(u, options = {}) {
 }
 
 // Resolve which vehicle in the rebuilt collection is "active right now".
-// Read-only against `profile.driverGarage.activeVehicleId`; never mutates
-// the persisted id (a stale id is silently ignored, not cleared, so the
-// previous selection re-activates when the matching vehicle reappears).
+// Read-only against `profile.driverGarage.activeVehicleId`; never
+// mutates the persisted id (a stale id is silently ignored, not
+// cleared, so the previous selection re-activates when the matching
+// vehicle reappears). Fallback chain on a stale or missing id: legacy
+// entry (`source === 'legacy'`), then the first vehicle, then null.
 export function resolveActiveGarageVehicleId(profile, vehicles) {
   if (!Array.isArray(vehicles) || vehicles.length === 0) return null;
   const saved = profile
@@ -84,8 +145,8 @@ export function resolveActiveGarageVehicleId(profile, vehicles) {
 // the accept-handoff snapshot (ride_actions.js). Builds the collection
 // with NO render-gate options (so the preview-only demo vehicle never
 // shows up in real snapshots) and returns the resolved active vehicle.
-// Returns null when the profile has no usable legacy vehicle — callers
-// then keep their existing fallback path. Strictly read-only.
+// Returns null when neither the persisted collection nor the legacy
+// fields produce a usable entry. Strictly read-only.
 export function resolveActiveGarageVehicle(u) {
   const vehicles = buildGarageVehicles(u);
   if (vehicles.length === 0) return null;
