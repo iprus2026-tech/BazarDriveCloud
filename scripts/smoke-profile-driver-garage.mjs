@@ -1,9 +1,9 @@
-// BD-PROFILE-D-05A/B/C — Driver Garage smoke.
+// BD-PROFILE-D-05A/B/C/D — Driver Garage smoke.
 //
 // The Garage section is a driver-only profile surface. It derives its
 // view from the legacy fields on the user record (vehicleMake /
 // vehicleModel / vehicleColor / vehiclePlate; state.js:50-54) without
-// a data migration. This smoke pins the surface contract across three
+// a data migration. This smoke pins the surface contract across four
 // slices:
 //
 //   05A — Render: driver profile with/without a vehicle, render-gate
@@ -14,10 +14,17 @@
 //         action handler (localStorage snapshot byte-equality).
 //   05C — Collection: `buildGarageVehicles(u, options)` returns
 //         `[{ id, model, color, plate, status, source }]`; per-vehicle
-//         DOM ids (`*-${vehicle.id}`); active flag is derived (NOT
-//         persisted activeVehicleId); `?garage=multi` adds a single
+//         DOM ids (`*-${vehicle.id}`); `?garage=multi` adds a single
 //         demo vehicle for preview without touching storage; multi-state
-//         no-mutation guarantee across every per-vehicle handler.
+//         no-mutation guarantee across every NON-make-active handler.
+//   05D — Active vehicle selection persistence: the "Сделать активной"
+//         button now writes `profile.driverGarage.activeVehicleId` via
+//         user.set (single allowed writer in wireGarageActions);
+//         resolver `resolveActiveGarageVehicleId` falls back to the
+//         legacy/first vehicle when the persisted id is missing or
+//         stale; click → persist → re-render swaps the active badge;
+//         make-active touches ONLY `bazardrive.user.v1` (no responses,
+//         active_ride, ride_history, driver_receipts, respond key drift).
 //
 // Mirrors the DOM-stub strategy used by smoke-profile-pane-alias.mjs and
 // smoke-profile-role-isolation.mjs: a permissive stub whose querySelector
@@ -558,12 +565,16 @@ user.set({
     beforeEmpty === afterEmpty);
 }
 
-// ── Scenario 16 — Static source guard on wireGarageActions + builder ────────
-// Belt-and-braces against a future refactor that introduces a real CRUD
-// write inside the garage helpers without updating the contract / docs.
-// The function bodies must not contain any storage-mutation calls and
-// must not introduce a persisted activeVehicleId / selectedVehicleId /
-// garageVehicles[] key.
+// ── Scenario 16 — Static source guards on garage helpers ────────────────────
+// Belt-and-braces against future refactors that introduce CRUD or
+// cross-surface writes inside the garage helpers without updating the
+// contract / docs.
+//
+// 05D split: `wireGarageActions` is allowed to call `user.set` and
+// reference `activeVehicleId` — but ONLY to patch the `driverGarage`
+// namespace. The derive helpers (resolver / builder / card / section)
+// must stay pure. None of them — wire or derive — may touch
+// responses / active-ride / ride-history / receipts / respond stores.
 {
   const { readFileSync } = await import('node:fs');
   const { dirname, join } = await import('node:path');
@@ -571,25 +582,41 @@ user.set({
   const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const profileSrc  = readFileSync(join(projectRoot, 'public/src/screens/profile.js'), 'utf8');
 
-  // wireGarageActions body (extracted up to the next top-level function).
-  const wireStart   = profileSrc.indexOf('function wireGarageActions(');
-  const wireEnd     = profileSrc.indexOf('function renderDriver(', wireStart);
-  const wireBody    = (wireStart >= 0 && wireEnd > wireStart)
-    ? profileSrc.slice(wireStart, wireEnd) : '';
-  expect('S16: wireGarageActions function body extracted',
-    wireBody.length > 0, String(wireBody.length));
+  // resolveActiveGarageVehicleId — pure derive (reads profile only).
+  const resolveStart = profileSrc.indexOf('function resolveActiveGarageVehicleId(');
+  const resolveEnd   = profileSrc.indexOf('function buildGarageVehicles(', resolveStart);
+  const resolveBody  = (resolveStart >= 0 && resolveEnd > resolveStart)
+    ? profileSrc.slice(resolveStart, resolveEnd) : '';
+  expect('S16: resolveActiveGarageVehicleId function body extracted',
+    resolveBody.length > 0, String(resolveBody.length));
 
-  // buildGarageVehicles body (collection builder, must derive only — no
-  // persistence reads/writes outside the legacy user.* fields).
-  const buildStart  = profileSrc.indexOf('function buildGarageVehicles(');
-  const buildEnd    = profileSrc.indexOf('function garageVehicleCardHtml(', buildStart);
-  const buildBody   = (buildStart >= 0 && buildEnd > buildStart)
+  // buildGarageVehicles — pure derive.
+  const buildStart   = profileSrc.indexOf('function buildGarageVehicles(');
+  const buildEnd     = profileSrc.indexOf('function garageVehicleCardHtml(', buildStart);
+  const buildBody    = (buildStart >= 0 && buildEnd > buildStart)
     ? profileSrc.slice(buildStart, buildEnd) : '';
   expect('S16: buildGarageVehicles function body extracted',
     buildBody.length > 0, String(buildBody.length));
 
-  const FORBIDDEN_RUNTIME = [
-    { name: 'user.set', regex: /\buser\.set\s*\(/ },
+  // wireGarageActions — single allowed writer (make-active → driverGarage).
+  const wireStart    = profileSrc.indexOf('function wireGarageActions(');
+  const wireEnd      = profileSrc.indexOf('function refreshGarageSection(', wireStart);
+  const wireBody     = (wireStart >= 0 && wireEnd > wireStart)
+    ? profileSrc.slice(wireStart, wireEnd) : '';
+  expect('S16: wireGarageActions function body extracted',
+    wireBody.length > 0, String(wireBody.length));
+
+  // refreshGarageSection — re-renders + re-wires; must not write itself.
+  const refreshStart = profileSrc.indexOf('function refreshGarageSection(');
+  const refreshEnd   = profileSrc.indexOf('function renderDriver(', refreshStart);
+  const refreshBody  = (refreshStart >= 0 && refreshEnd > refreshStart)
+    ? profileSrc.slice(refreshStart, refreshEnd) : '';
+  expect('S16: refreshGarageSection function body extracted',
+    refreshBody.length > 0, String(refreshBody.length));
+
+  // Universally forbidden cross-surface writes (every garage helper,
+  // including wireGarageActions, must avoid these).
+  const FORBIDDEN_ALL = [
     { name: 'user.reset', regex: /\buser\.reset\s*\(/ },
     { name: 'localStorage.setItem', regex: /\blocalStorage\.setItem\s*\(/ },
     { name: 'sessionStorage.setItem', regex: /\bsessionStorage\.setItem\s*\(/ },
@@ -600,26 +627,64 @@ user.set({
     { name: 'createRideOrder', regex: /\bcreateRideOrder\s*\(/ },
     { name: 'acceptCanonicalRideOrder', regex: /\bacceptCanonicalRideOrder\s*\(/ },
     { name: 'saveActiveVehicle', regex: /\bsaveActiveVehicle\s*\(/ },
-    { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
     { name: 'selectedVehicleId', regex: /\bselectedVehicleId\b/ },
-    { name: 'go(', regex: /\bgo\s*\(/ },  // router navigation is also out of scope for 05B/05C
+    { name: 'go(', regex: /\bgo\s*\(/ },  // no router navigation from garage helpers
+    // Cross-surface storage keys — must never appear as string literals
+    // anywhere in the garage helpers.
+    { name: '"bazardrive.responses.v1"', regex: /bazardrive\.responses\.v1/ },
+    { name: '"bazardrive.active_ride.v1"', regex: /bazardrive\.active_ride\.v1/ },
+    { name: '"bazardrive.ride_history.v1"', regex: /bazardrive\.ride_history\.v1/ },
+    { name: '"bazardrive.driver_receipts.v1"', regex: /bazardrive\.driver_receipts\.v1/ },
+    { name: '"bazardrive.respond.v1"', regex: /bazardrive\.respond\.v1/ },
   ];
-  for (const { name, regex } of FORBIDDEN_RUNTIME) {
-    expect(`S16: wireGarageActions does NOT call/reference ${name}`,
-      !regex.test(wireBody));
-    expect(`S16: buildGarageVehicles does NOT call/reference ${name}`,
-      !regex.test(buildBody));
-  }
-  // Positive contract: 05B confirm flow toggles the row's
-  // data-garage-confirm-state attribute as its single state surface, so
-  // it must appear in wire body.
-  expect('S16: wireGarageActions toggles data-garage-confirm-state (DOM-only)',
+
+  // Forbidden in derive helpers (resolver + builder) and refreshGarageSection
+  // — these must not call user.set or reference activeVehicleId as a
+  // mutation target. The resolver READS profile.driverGarage.activeVehicleId
+  // (legitimate), so it is exempt from the activeVehicleId guard.
+  const FORBIDDEN_DERIVE_ONLY = [
+    { name: 'user.set', regex: /\buser\.set\s*\(/ },
+  ];
+
+  const checkBody = (label, body, extra = []) => {
+    for (const { name, regex } of FORBIDDEN_ALL) {
+      expect(`S16: ${label} does NOT call/reference ${name}`,
+        !regex.test(body));
+    }
+    for (const { name, regex } of extra) {
+      expect(`S16: ${label} does NOT call/reference ${name}`,
+        !regex.test(body));
+    }
+  };
+
+  checkBody('resolveActiveGarageVehicleId', resolveBody, FORBIDDEN_DERIVE_ONLY);
+  // Resolver is allowed to reference activeVehicleId (it reads it).
+  // Builder must NOT use the literal token (it only consumes the resolver
+  // result via the `activeId` local).
+  checkBody('buildGarageVehicles', buildBody, [
+    ...FORBIDDEN_DERIVE_ONLY,
+    { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
+  ]);
+  // wireGarageActions is the single allowed writer — user.set + activeVehicleId
+  // are intentionally NOT in its forbidden list.
+  checkBody('wireGarageActions', wireBody);
+  // refreshGarageSection is a render/re-wire helper — no user.set, no
+  // activeVehicleId mutation, no cross-surface writes.
+  checkBody('refreshGarageSection', refreshBody, [
+    ...FORBIDDEN_DERIVE_ONLY,
+    { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
+  ]);
+
+  // Positive contracts.
+  expect('S16: wireGarageActions toggles data-garage-confirm-state (DOM-only archive)',
     /garageConfirmState/.test(wireBody));
-  // Builder reads only the four legacy user.* vehicle fields, no other
-  // persistence key.
-  expect('S16: buildGarageVehicles reads u.vehicleMake (derived from legacy fields)',
+  expect('S16: wireGarageActions patches the driverGarage namespace (single allowed writer)',
+    /\bdriverGarage\b/.test(wireBody) && /user\.set\s*\(/.test(wireBody));
+  expect('S16: resolveActiveGarageVehicleId reads profile.driverGarage.activeVehicleId',
+    /\bdriverGarage\b/.test(resolveBody) && /\bactiveVehicleId\b/.test(resolveBody));
+  expect('S16: buildGarageVehicles still reads u.vehicleMake (legacy bridge intact)',
     /\bu\.vehicleMake\b/.test(buildBody));
-  expect('S16: buildGarageVehicles reads u.vehicleModel (derived from legacy fields)',
+  expect('S16: buildGarageVehicles still reads u.vehicleModel (legacy bridge intact)',
     /\bu\.vehicleModel\b/.test(buildBody));
 }
 
@@ -715,9 +780,13 @@ user.set({
     slice.includes('id="pf2-garage-confirm-legacy-1"'));
   expect('S19: demo card has its own confirm row #pf2-garage-confirm-demo-2',
     slice.includes('id="pf2-garage-confirm-demo-2"'));
-  // Multi-render must not bleed into persisted state.
-  expect('S19: ?garage=multi did NOT introduce activeVehicleId in storage',
-    !local.has('bazardrive.user.v1') || !/activeVehicleId/.test(local.get('bazardrive.user.v1') || ''));
+  // Multi-render must not bleed into persisted state. 05D introduced a
+  // `driverGarage.activeVehicleId` field that defaults to null on every
+  // user record, so the right invariant is: the multi PREVIEW does not
+  // persist a selection — the resolved id stays the default null.
+  expect('S19: ?garage=multi did NOT persist an active vehicle selection',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
 }
 
 // ── Scenario 20 — Active card has no make-active button; non-active has no
@@ -738,8 +807,10 @@ user.set({
     !slice.includes('id="pf2-garage-active-demo-2"'));
 }
 
-// ── Scenario 21 — Multi-state no-mutation guarantee. Trigger every per-vehicle
-// handler across both cards and assert localStorage stays byte-equal. ──────
+// ── Scenario 21 — Multi-state no-mutation guarantee on NON-make-active
+// handlers. Trigger every non-make-active per-vehicle handler across both
+// cards and assert localStorage stays byte-equal. (make-active gets its own
+// dedicated scenario S22 because it IS the single allowed writer in 05D.) ─
 reset();
 user.set({
   onboarded: true, role: 'driver',
@@ -753,14 +824,13 @@ user.set({
   const before = snapshotLocalStorage();
   const triggers = [
     '#pf2-garage-add',
-    // Legacy (active) card — no make-active.
+    // Legacy (active) card — no make-active button on the active card.
     '#pf2-garage-edit-legacy-1',
     '#pf2-garage-archive-legacy-1',
     '#pf2-garage-archive-cancel-legacy-1',
     '#pf2-garage-archive-confirm-legacy-1',
-    // Demo (non-active) card — includes make-active.
+    // Demo (non-active) card — every handler EXCEPT make-active.
     '#pf2-garage-edit-demo-2',
-    '#pf2-garage-make-active-demo-2',
     '#pf2-garage-archive-demo-2',
     '#pf2-garage-archive-cancel-demo-2',
     '#pf2-garage-archive-confirm-demo-2',
@@ -783,9 +853,15 @@ user.set({
   expect('S21: active card does NOT capture an active-current click handler',
     !clickHandlers.has('#pf2-garage-active-legacy-1'));
   // Persisted vehicle fields untouched.
-  expect('S21: persisted vehicleMake preserved across multi-card mutations',
+  expect('S21: persisted vehicleMake preserved across non-make-active multi-card clicks',
     user.get().vehicleMake === 'Hyundai', String(user.get().vehicleMake));
-  expect('S21: no activeVehicleId leaked onto persisted user record',
+  // 05D: the namespace defaults to { activeVehicleId: null } — the
+  // non-make-active handlers never patch it, so it must still be null
+  // (NOT the freshly-clicked demo-2 id).
+  expect('S21: driverGarage.activeVehicleId stays null after non-make-active clicks',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+  expect('S21: no flat activeVehicleId leaked onto top-level user record',
     typeof user.get().activeVehicleId === 'undefined',
     String(user.get().activeVehicleId));
   expect('S21: no selectedVehicleId leaked onto persisted user record',
@@ -794,6 +870,240 @@ user.set({
   expect('S21: no garageVehicles array leaked onto persisted user record',
     typeof user.get().garageVehicles === 'undefined',
     String(user.get().garageVehicles));
+}
+
+// ── Helper: byte-equal snapshot per storage key (for 05D per-key diff) ──────
+function snapshotByKey() {
+  const out = {};
+  for (const [k, v] of local.entries()) out[k] = String(v);
+  return out;
+}
+
+// ── Scenario 22 — make-active persists into the driverGarage namespace ─────
+// 05D's load-bearing scenario: clicking "Сделать активной" on a non-active
+// vehicle calls user.set with a driverGarage patch, and ONLY that field
+// drifts in storage. No responses/active_ride/history/receipt key gets
+// written even as a side effect.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile?role=driver&garage=multi');
+  // Before click: default resolver → legacy-1 active, demo-2 available.
+  expect('S22 pre: driverGarage default activeVehicleId is null',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+
+  const beforeByKey = snapshotByKey();
+  const fn = clickHandlers.get('#pf2-garage-make-active-demo-2');
+  expect('S22: make-active handler captured for #pf2-garage-make-active-demo-2',
+    typeof fn === 'function');
+  try { fn && fn(); } catch (e) {
+    expect('S22: make-active handler did not throw', false, e.message || String(e));
+  }
+
+  // After click: driverGarage.activeVehicleId === 'demo-2' (persisted).
+  expect('S22: driverGarage.activeVehicleId === "demo-2" after click (persisted)',
+    user.get().driverGarage?.activeVehicleId === 'demo-2',
+    String(user.get().driverGarage?.activeVehicleId));
+  // No flat activeVehicleId on the user record (we use the namespace only).
+  expect('S22: no flat user.activeVehicleId field was introduced',
+    typeof user.get().activeVehicleId === 'undefined',
+    String(user.get().activeVehicleId));
+  // Legacy vehicle fields untouched (the make-active patch is scoped).
+  expect('S22: vehicleMake preserved across make-active click',
+    user.get().vehicleMake === 'Hyundai', String(user.get().vehicleMake));
+  expect('S22: vehiclePlate preserved across make-active click',
+    user.get().vehiclePlate === 'А 482 МР 77', String(user.get().vehiclePlate));
+
+  // Per-key diff: ONLY bazardrive.user.v1 changed, no other key was created
+  // or mutated. Forbidden cross-surface keys must not exist at all.
+  const afterByKey = snapshotByKey();
+  const allKeys = new Set([...Object.keys(beforeByKey), ...Object.keys(afterByKey)]);
+  for (const k of allKeys) {
+    if (k === 'bazardrive.user.v1') continue;
+    expect(`S22: storage key ${k} unchanged after make-active`,
+      beforeByKey[k] === afterByKey[k]);
+  }
+  const FORBIDDEN_KEYS = [
+    'bazardrive.responses.v1',
+    'bazardrive.active_ride.v1',
+    'bazardrive.ride_history.v1',
+    'bazardrive.driver_receipts.v1',
+    'bazardrive.respond.v1',
+  ];
+  for (const k of FORBIDDEN_KEYS) {
+    expect(`S22: cross-surface storage key ${k} was NOT written by make-active`,
+      !(k in afterByKey));
+  }
+}
+
+// ── Scenario 23 — Re-render after persist swaps the active badge ───────────
+// After the make-active click persists activeVehicleId='demo-2', a fresh
+// render must place the active badge / span on demo-2 and demote legacy-1
+// to a make-active candidate. We re-render through renderProfile because
+// the smoke's DOM stub no-ops `replaceWith` — the persistence path is what
+// the smoke actually verifies, not the in-place DOM mutation.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  // Set the persisted active id directly via user.set — bypasses the
+  // click handler to test the render→resolver path in isolation.
+  const cur = user.get().driverGarage || {};
+  user.set({ driverGarage: { ...cur, activeVehicleId: 'demo-2' } });
+  const slice = garageSlice(renderProfile('#/profile?role=driver&garage=multi'));
+
+  // demo-2 is now the active card.
+  expect('S23: demo-2 renders the active span #pf2-garage-active-demo-2',
+    slice.includes('id="pf2-garage-active-demo-2"'));
+  expect('S23: demo-2 card carries data-vehicle-status="active"',
+    /data-vehicle="demo-2"[^>]*data-vehicle-status="active"|data-vehicle-status="active"[^>]*data-vehicle="demo-2"/.test(slice));
+  expect('S23: demo-2 does NOT show a make-active button (it is the active one)',
+    !slice.includes('id="pf2-garage-make-active-demo-2"'));
+
+  // legacy-1 is demoted to a make-active candidate.
+  expect('S23: legacy-1 now renders #pf2-garage-make-active-legacy-1 (demoted)',
+    slice.includes('id="pf2-garage-make-active-legacy-1"'));
+  expect('S23: legacy-1 does NOT render an active-current span anymore',
+    !slice.includes('id="pf2-garage-active-legacy-1"'));
+  expect('S23: legacy-1 card carries data-vehicle-status="available"',
+    /data-vehicle="legacy-1"[^>]*data-vehicle-status="available"|data-vehicle-status="available"[^>]*data-vehicle="legacy-1"/.test(slice));
+}
+
+// ── Scenario 24 — Click-then-reload preserves the active selection ─────────
+// End-to-end on the persistence layer: drive the make-active click handler
+// (not a direct user.set), then re-render fresh. The persisted id must
+// survive the round trip.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile?role=driver&garage=multi');
+  const fn = clickHandlers.get('#pf2-garage-make-active-demo-2');
+  fn && fn();
+  // Simulate reload: render again from scratch.
+  const slice = garageSlice(renderProfile('#/profile?role=driver&garage=multi'));
+  expect('S24: post-click reload still has demo-2 as the active card',
+    slice.includes('id="pf2-garage-active-demo-2"'));
+  expect('S24: post-click reload demotes legacy-1 to make-active',
+    slice.includes('id="pf2-garage-make-active-legacy-1"'));
+  expect('S24: persisted driverGarage.activeVehicleId survived the reload',
+    user.get().driverGarage?.activeVehicleId === 'demo-2',
+    String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── Scenario 25 — Stale activeVehicleId falls back to legacy ───────────────
+// If the persisted activeVehicleId points to a vehicle that is no longer
+// in the rebuilt collection (e.g. ?garage=multi turned off, so demo-2 is
+// gone), the resolver must fall back to the legacy vehicle without
+// crashing and without mutating the persisted id (the saved selection
+// stays around for when the user comes back to the multi preview).
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const cur = user.get().driverGarage || {};
+  user.set({ driverGarage: { ...cur, activeVehicleId: 'demo-2' } });
+  // Render WITHOUT ?garage=multi — demo-2 is not in the collection now.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S25: single-card render after stale id still rendered (no crash)',
+    slice.length > 0);
+  expect('S25: legacy-1 falls back to active under a stale persisted id',
+    slice.includes('id="pf2-garage-active-legacy-1"'));
+  expect('S25: legacy-1 card carries data-vehicle-status="active"',
+    slice.includes('data-vehicle-status="active"'));
+  expect('S25: stale persisted activeVehicleId is PRESERVED (resolver is read-only)',
+    user.get().driverGarage?.activeVehicleId === 'demo-2',
+    String(user.get().driverGarage?.activeVehicleId));
+  // Restoring the multi preview brings demo-2 back as the active vehicle.
+  const sliceMulti = garageSlice(renderProfile('#/profile?role=driver&garage=multi'));
+  expect('S25: bringing ?garage=multi back restores demo-2 as the active card',
+    sliceMulti.includes('id="pf2-garage-active-demo-2"'));
+}
+
+// ── Scenario 26 — Empty garage never writes driverGarage ───────────────────
+// No make-active button is rendered in the empty state, so the add-CTA
+// click does NOT touch driverGarage at all. (Also re-confirms the empty
+// state's snapshot byte-equality from S15, but specifically pins the
+// driverGarage namespace stays default.)
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+});
+{
+  renderProfile('#/profile');
+  expect('S26: empty render does NOT expose a make-active button anywhere',
+    !clickHandlers.has('#pf2-garage-make-active-legacy-1') &&
+    !clickHandlers.has('#pf2-garage-make-active-demo-2'));
+  const addHandler = clickHandlers.get('#pf2-garage-add');
+  addHandler && addHandler();
+  expect('S26: driverGarage.activeVehicleId stays null after empty-add click',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── Scenario 27 — Passenger profile never writes driverGarage either ───────
+// The garage section is driver-only, so a passenger render must not even
+// expose the make-active selector — but as a belt-and-braces, also
+// confirm the namespace stays default.
+reset();
+user.set({
+  onboarded: true, role: 'passenger',
+  firstName: 'Алия', lastName: 'К.', displayName: 'Алия К.',
+  phone: '9007654321', phoneVerified: true,
+});
+{
+  renderProfile('#/profile');
+  expect('S27: passenger render does NOT capture any make-active handler',
+    !clickHandlers.has('#pf2-garage-make-active-legacy-1') &&
+    !clickHandlers.has('#pf2-garage-make-active-demo-2'));
+  expect('S27: passenger profile driverGarage.activeVehicleId stays default null',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── Scenario 28 — Default resolver: no persisted active → legacy is active ─
+// Belt-and-braces sanity check on the resolver fallback path: a profile
+// with no prior selection (the v10 default `driverGarage.activeVehicleId
+// = null`) still gets a legacy active card without ever writing.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S28: legacy-1 is the active card under default null persisted id',
+    slice.includes('id="pf2-garage-active-legacy-1"'));
+  expect('S28: default null activeVehicleId is left untouched by render',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

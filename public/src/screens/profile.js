@@ -2819,15 +2819,34 @@ function payoutsPaneHtml(previewEmpty = false) {
 //
 // BD-PROFILE-D-05C — Garage as a collection. `buildGarageVehicles` builds
 // the `[{id, model, color, plate, status, source}]` list that the render
-// + wire code consumes. The active flag is derived on the legacy vehicle
-// by construction (status: 'active'). `?garage=multi` is a render-gate
-// preview that appends a single demo vehicle so designers can see the
-// multi-card layout without injecting demo data into real driver views.
-// No `activeVehicleId`, no `selectedVehicleId`, no `garageVehicles[]`
-// reach localStorage — the collection is rebuilt on every render from
-// the legacy fields. `wireGarageActions` enforces the "no mutation"
-// property; the smoke captures the localStorage / active-ride snapshots
-// before invoking each handler and asserts byte-equality after.
+// + wire code consumes. `?garage=multi` is a render-gate preview that
+// appends a single demo vehicle so designers can see the multi-card
+// layout without injecting demo data into real driver views.
+//
+// BD-PROFILE-D-05D — Active vehicle selection persistence. The active
+// flag on each vehicle is no longer hard-coded onto the legacy entry;
+// `resolveActiveGarageVehicleId(profile, vehicles)` reads
+// `profile.driverGarage.activeVehicleId` and falls back to the legacy
+// vehicle (then the first vehicle, then null) when the persisted id is
+// missing or stale. Persistence is profile-local and scoped to the
+// `driverGarage` namespace on the user record — no driver response
+// snapshot mutation, no active-ride mutation, no ride lifecycle /
+// history / receipt write. The persisted id is consumed by the garage
+// resolver only; 05E will add the driver-response snapshot read.
+function resolveActiveGarageVehicleId(profile, vehicles) {
+  if (!Array.isArray(vehicles) || vehicles.length === 0) return null;
+  const saved = profile
+    && profile.driverGarage
+    && typeof profile.driverGarage.activeVehicleId === 'string'
+    && profile.driverGarage.activeVehicleId.length > 0
+    ? profile.driverGarage.activeVehicleId
+    : null;
+  if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
+  const legacy = vehicles.find((v) => v && v.source === 'legacy');
+  if (legacy) return legacy.id;
+  return (vehicles[0] && vehicles[0].id) || null;
+}
+
 function buildGarageVehicles(u, options = {}) {
   const force = typeof options.force === 'string' ? options.force : '';
   if (force === 'empty') return [];
@@ -2840,14 +2859,13 @@ function buildGarageVehicles(u, options = {}) {
   // the "Добавить авто" CTA prompts the driver to finish data entry.
   const modelLine = (make && model) ? `${make} ${model}` : (make || model);
 
-  const vehicles = [];
+  const raw = [];
   if (modelLine) {
-    vehicles.push({
+    raw.push({
       id: 'legacy-1',
       model: modelLine,
       color,
       plate,
-      status: 'active',
       source: 'legacy',
     });
   }
@@ -2855,18 +2873,27 @@ function buildGarageVehicles(u, options = {}) {
   // `?garage=multi` — preview-only second vehicle, never touches storage.
   // Requires the legacy vehicle to be present so the layout exercises the
   // active-plus-available pair the multi-card design is meant to show.
-  if (force === 'multi' && vehicles.length > 0) {
-    vehicles.push({
+  if (force === 'multi' && raw.length > 0) {
+    raw.push({
       id: 'demo-2',
       model: 'Kia Rio',
       color: 'белый',
       plate: '*** 125',
-      status: 'available',
       source: 'mock',
     });
   }
 
-  return vehicles;
+  if (raw.length === 0) return [];
+
+  // 05D — derive `status: 'active' | 'available'` from the resolved id.
+  // The resolver tolerates a stale persisted id (vehicle archived, or
+  // ?garage=multi off) by falling back to the legacy vehicle, so the
+  // render never crashes and the badge never goes missing.
+  const activeId = resolveActiveGarageVehicleId(u, raw);
+  return raw.map((v) => ({
+    ...v,
+    status: v.id === activeId ? 'active' : 'available',
+  }));
 }
 
 function garageVehicleCardHtml(vehicle) {
@@ -2933,24 +2960,30 @@ function garageSectionHtml(u, options = {}) {
     </section>`;
 }
 
-// BD-PROFILE-D-05B/05C — Driver Garage action wiring. STRICTLY DOM-only:
+// BD-PROFILE-D-05B/05C/05D — Driver Garage action wiring.
+// All handlers except `make-active` stay STRICTLY DOM-only:
 //   • no localStorage writes (no user.set, no saveActiveRide, no setItem)
 //   • no router navigation
-//   • no driverOnline / activeVehicleId / selectedVehicleId mutation
-// "Активна сейчас" is a non-button status pill (no handler attached);
-// "Сделать активной" (05C) flashes feedback only — the derived active
-// flag is rebuilt on each render. The archive flow is a 2-step inline
-// confirm that mutates only the confirm row's `data-garage-confirm-state`
-// attribute. The contract is locked by smoke-profile-driver-garage.mjs,
-// which captures a localStorage snapshot before invoking each handler
-// and asserts byte-equality after. The wiring iterates the vehicles
-// list directly (not the DOM) so per-vehicle IDs stay deterministic
-// under the smoke's stub.
+//   • no driverOnline mutation
+// `make-active` (05D) is the single persistence-touching handler in this
+// slice: it patches `profile.driverGarage.activeVehicleId` via the user
+// state API (scoped to the driverGarage namespace — no responses /
+// active-ride / lifecycle / history / receipt write) and re-renders the
+// garage section in place so the active badge moves to the selected
+// vehicle and the previous active card becomes a non-active make-active
+// candidate. "Активна сейчас" stays a non-button status pill (no handler
+// attached). The archive flow remains a DOM-only 2-step inline confirm.
+// The contract is locked by smoke-profile-driver-garage.mjs: every
+// non-make-active handler is asserted byte-equal against the localStorage
+// snapshot; the make-active handler is allowed to mutate ONLY the
+// `driverGarage` field on the user record. The wiring iterates the
+// vehicles list directly (not the DOM) so per-vehicle IDs stay
+// deterministic under the smoke's stub.
 function wireGarageActions(root, vehicles = []) {
-  // Local-feedback flash for the add / edit / make-active entry points.
-  // The label swap is purely transient and reverts in 1500ms — the
-  // underlying button is never marked permanent-disabled because future
-  // CRUD slices (05D+) will repurpose the same hooks.
+  // Local-feedback flash for the add / edit entry points. The label
+  // swap is purely transient and reverts in 1500ms — the underlying
+  // button is never marked permanent-disabled because future CRUD
+  // slices will repurpose the same hooks.
   const flash = (btn, text) => {
     if (!btn || btn.dataset.busy === '1') return;
     btn.dataset.busy = '1';
@@ -2975,10 +3008,17 @@ function wireGarageActions(root, vehicles = []) {
 
     // make-active-local — non-active card only. The active card renders
     // a span (no listener attached) so this querySelector returns null
-    // for the active vehicle and the listener is skipped.
+    // for the active vehicle and the listener is skipped. 05D: clicking
+    // persists the selection through user.set into the driverGarage
+    // namespace, then re-renders the section in place so the badge moves
+    // and the previously-active card becomes a make-active candidate.
     if (vehicle.status !== 'active') {
       const makeActiveBtn = root.querySelector(`#pf2-garage-make-active-${id}`);
-      makeActiveBtn?.addEventListener('click', () => flash(makeActiveBtn, 'Сменим, но позже'));
+      makeActiveBtn?.addEventListener('click', () => {
+        const current = user.get().driverGarage || {};
+        user.set({ driverGarage: { ...current, activeVehicleId: id } });
+        refreshGarageSection(root);
+      });
     }
 
     const archiveBtn   = root.querySelector(`#pf2-garage-archive-${id}`);
@@ -3004,14 +3044,35 @@ function wireGarageActions(root, vehicles = []) {
     confirmFinal?.addEventListener('click', () => {
       if (!confirmRow) return;
       // Mark a successful confirm in the local UI only. The persisted
-      // garage data does NOT change here — 05C is still the contract
-      // layer before any CRUD. A future slice will replace this branch
-      // with the real archive call.
+      // garage data does NOT change here — archive remains a contract
+      // surface before any real CRUD lands.
       confirmRow.dataset.garageConfirmState = 'scheduled-local';
       confirmFinal.disabled = true;
       confirmFinal.textContent = 'Запланировано (демо)';
     });
   }
+}
+
+// BD-PROFILE-D-05D — Re-render the garage section in place after a
+// make-active selection. Rebuilds the vehicles list from the just-
+// persisted user state (so the resolver picks up the new
+// activeVehicleId) and swaps the section element; then re-wires the
+// per-vehicle handlers so the new card layout is interactive. Other
+// surfaces on the page are untouched. The DOM stub in the smoke
+// no-ops `replaceWith`, so smoke-side verification re-renders the
+// whole profile to confirm the persisted change.
+function refreshGarageSection(root) {
+  const oldSection = root.querySelector('#pf2-garage');
+  if (!oldSection) return;
+  const u = user.get();
+  const force = getHashQuery().get('garage') || '';
+  const vehicles = buildGarageVehicles(u, { force });
+  const tmp = document.createElement('div');
+  tmp.innerHTML = garageSectionHtml(u, { force, vehicles });
+  const newSection = tmp.firstElementChild;
+  if (!newSection) return;
+  oldSection.replaceWith(newSection);
+  wireGarageActions(root, vehicles);
 }
 
 function renderDriver(root, u) {
