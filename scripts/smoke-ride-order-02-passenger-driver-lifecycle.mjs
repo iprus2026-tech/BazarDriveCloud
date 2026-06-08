@@ -1105,39 +1105,70 @@ const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { accepted
   expect('S15: profile.js historyVehicleText uses filter(Boolean) (drops empties)',
     /function\s+historyVehicleText[\s\S]{0,200}\.filter\(Boolean\)/.test(historyRendererSlice));
 
+  // ── (a2) Codex P2 #1 — Demo-fixture identifier guard on the renderer slice
+  // Beyond rejecting quoted demo literals, the slice must not wire itself to
+  // any explicit demo fixture (MOCK_ACTIVE_TRIP and friends) or any
+  // identifier whose name advertises it as mock/demo data. If a refactor
+  // ever points the production history renderer at a demo fixture for
+  // "convenience", this fails before a real user sees demo identity on a
+  // completed-ride card.
+  expect('S15: profile.js history renderer slice does NOT reference MOCK_ACTIVE_TRIP',
+    !/\bMOCK_ACTIVE_TRIP\b/.test(historyRendererSlice));
+  expect('S15: profile.js history renderer slice does NOT reference any MOCK_* identifier',
+    !/\bMOCK_[A-Z_][A-Z0-9_]*/.test(historyRendererSlice));
+  expect('S15: profile.js history renderer slice does NOT reference any DEMO_* identifier',
+    !/\bDEMO_[A-Z_][A-Z0-9_]*/.test(historyRendererSlice));
+
+  // ── (a3) Shared demo-identity field-chain regex used by the inbox / route
+  // surface guards below. Matches any `(driver|vehicle)(?.)?.{field}` chain —
+  // covers direct (`driver.name`), optional (`driver?.name`), nested
+  // (`entry?.driver?.name`, `ride?.vehicle?.plate`) and plateMasked
+  // synonyms. Fields: name, initials, rating, shiftDuration, model, color,
+  // plate, plateMasked.
+  const IDENTITY_FIELDS = '(?:name|initials|rating|shiftDuration|model|color|plate|plateMasked)';
+  const IDENTITY_CHAIN_RE = new RegExp(`\\b(?:driver|vehicle)\\??\\.${IDENTITY_FIELDS}\\b`);
+
   // ── (a) Static guards on the supporting data + receipt modules ────────────
-  // ride_history.js is pure data — must not embed any demo identity strings.
-  expect('S15: ride_history.js carries no demo "Рустам К." literal',
-    !/['"`]Рустам\s*К\.['"`]/.test(rideHistorySrc));
-  expect('S15: ride_history.js carries no demo "РК" literal',
-    !/['"`]РК['"`]/.test(rideHistorySrc));
-  expect('S15: ride_history.js carries no demo "4,92" literal',
-    !/['"`]4,92['"`]/.test(rideHistorySrc));
-  expect('S15: ride_history.js carries no demo "серый" literal',
-    !/['"`]серый['"`]/.test(rideHistorySrc));
-  expect('S15: ride_history.js carries no demo "5ч 12м" literal',
-    !/['"`]5ч 12м['"`]/.test(rideHistorySrc));
-  // trip_receipt.js is financial-only — must not start reading driver/vehicle
-  // identity fields (would open a fresh demo-leak surface).
-  expect('S15: trip_receipt.js does not read driver identity fields',
-    !/receipt\.driver|receipt\?\.driver/.test(tripReceiptSrc));
-  expect('S15: trip_receipt.js does not read vehicle fields',
-    !/receipt\.vehicle|receipt\?\.vehicle/.test(tripReceiptSrc));
+  // Codex P2 #2 — ride_history.js is pure data; apply the FULL
+  // DEMO_QUOTED_LITERALS loop (including 'Toyota Camry' and 'А 124 ВВ 77')
+  // so the contract is "data layer carries zero demo identity strings of
+  // any kind", not the previous selective subset.
+  for (const { name, regex } of DEMO_QUOTED_LITERALS) {
+    expect(`S15: ride_history.js carries no demo literal ${name}`,
+      !regex.test(rideHistorySrc));
+  }
+  // Codex P2 #4 — trip_receipt.js is financial-only; reject every shape an
+  // identity read could take, not just the direct `receipt.driver` /
+  // `receipt.vehicle` access:
+  //   • direct + optional-chain receipt.driver / receipt?.driver (kept)
+  //   • destructuring  const { driver, vehicle } = receipt
+  //   • flattened identity columns that some future schema might add to
+  //     the receipt object: receipt.driverName, receipt.vehiclePlate, etc.
+  expect('S15: trip_receipt.js does not read receipt.driver / receipt?.driver',
+    !/receipt\??\.driver\b/.test(tripReceiptSrc));
+  expect('S15: trip_receipt.js does not read receipt.vehicle / receipt?.vehicle',
+    !/receipt\??\.vehicle\b/.test(tripReceiptSrc));
+  expect('S15: trip_receipt.js does not destructure {driver|vehicle} from receipt',
+    !/const\s*\{[^}]*\b(?:driver|vehicle)\b[^}]*\}\s*=\s*receipt/.test(tripReceiptSrc));
+  expect('S15: trip_receipt.js does not read flattened identity fields on receipt',
+    !/receipt\??\.(?:driverName|driverInitials|driverRating|driverShiftDuration|vehicleModel|vehicleColor|vehiclePlate|vehiclePlateMasked|plateMasked)\b/.test(tripReceiptSrc));
+
   // Repeat/favorite route surfaces are route-only — confirm they didn't
-  // gain a driver/vehicle identity read path that could leak demo strings.
-  expect('S15: repeat_route.js stays clean of driver/vehicle identity reads',
-    !/driver\.name|vehicle\.color|vehicle\.plate/.test(repeatRouteSrc));
-  expect('S15: favorite_routes.js stays clean of driver/vehicle identity reads',
-    !/driver\.name|vehicle\.color|vehicle\.plate/.test(favoriteRoutesSrc));
-  // inbox.js is a status-card surface — confirm it carries no demo identity
-  // literals (no `|| 'Рустам К.'` / `|| '4,92'` / etc.) and does not yet
-  // read driver/vehicle identity fields that would open a fresh leak path.
+  // gain a driver/vehicle identity read path of any shape (covers
+  // optional chains and nested chains).
+  expect('S15: repeat_route.js stays clean of driver/vehicle identity reads (incl. ?. chains)',
+    !IDENTITY_CHAIN_RE.test(repeatRouteSrc));
+  expect('S15: favorite_routes.js stays clean of driver/vehicle identity reads (incl. ?. chains)',
+    !IDENTITY_CHAIN_RE.test(favoriteRoutesSrc));
+  // Codex P2 #3 — inbox.js identity-read guard now catches every chain
+  // shape (driver?.name, vehicle?.color, entry?.driver?.name,
+  // ride?.vehicle?.plate, plateMasked, …) across the full field set.
   for (const { name, regex } of DEMO_QUOTED_LITERALS) {
     expect(`S15: inbox.js carries no demo identity literal ${name}`,
       !regex.test(inboxSrc));
   }
-  expect('S15: inbox.js does not yet read driver/vehicle identity fields',
-    !/driver\.name|vehicle\.color|vehicle\.plate|driver\.initials|driver\.rating|driver\.shiftDuration/.test(inboxSrc));
+  expect('S15: inbox.js does not read any driver/vehicle identity field (incl. ?. chains)',
+    !IDENTITY_CHAIN_RE.test(inboxSrc));
 
   // ── (b) Data-flow guard: real ride → history entry carries the BD-LIFE-06/07
   // neutrals end-to-end. If anyone breaks the seed contract upstream the
