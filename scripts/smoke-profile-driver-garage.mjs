@@ -2325,6 +2325,146 @@ user.set({
   }
 }
 
+// ── Scenario 68 — Codex P2 (05H): synthesised-id round trip ───────────────
+// `normalisePersistedVehicle` (in garage.js) assigns `garage-${idx + 1}`
+// to persisted entries that landed without a usable string id. Before
+// this fix, the edit save would call patchGarageVehicle('garage-1', …)
+// and the strict-match findIndex against the raw stored array (whose
+// entry has no `.id`) would return -1, refusing the write.
+//
+// After the fix:
+//   - The render exposes `#pf2-garage-edit-garage-1` for an id-less
+//     persisted entry.
+//   - The edit sheet opens with the synthesised id stamped on
+//     `data-edit-vehicle-id`.
+//   - Save routes through the fallback: parse the synthesised id, find
+//     the raw slot at index N-1 IFF its `.id` is missing/blank, patch
+//     it, and persist `id: 'garage-1'` onto the slot so subsequent
+//     edits hit the strict path.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Raw stored entry with NO id field — the resolver synthesises
+      // `garage-1` on render.
+      { model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77' },
+    ],
+  },
+});
+{
+  // 1) Render reflects the synthesised id on the edit button.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S68: render exposes #pf2-garage-edit-garage-1 for the id-less persisted entry',
+    slice.includes('id="pf2-garage-edit-garage-1"'));
+  expect('S68: card carries data-vehicle="garage-1"',
+    slice.includes('data-vehicle="garage-1"'));
+  expect('S68: card carries data-vehicle-source="persisted"',
+    slice.includes('data-vehicle-source="persisted"'));
+
+  // 2) Pre-save, the raw stored entry still has NO id.
+  const beforeRaw = user.get().driverGarage?.vehicles?.[0];
+  expect('S68: pre-save raw entry has no id field',
+    !('id' in (beforeRaw || {})) || !beforeRaw.id);
+
+  // 3) Click edit → sheet opens with synthesised id stamped.
+  const section = captureSection('#/profile');
+  const beforeStorage = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-edit-garage-1')?.();
+  expect('S68: opening the edit sheet does NOT mutate localStorage',
+    snapshotLocalStorage() === beforeStorage);
+  const sheet = section.querySelector('#pf2-garage-edit-sheet');
+  expect('S68: sheet stamps data-edit-vehicle-id with the synthesised id',
+    sheet.dataset.editVehicleId === 'garage-1', String(sheet.dataset.editVehicleId));
+  expect('S68: sheet model is pre-filled from the id-less entry',
+    section.querySelector('#pf2-garage-edit-model').value === 'Toyota Prius');
+
+  // 4) Edit + save → fallback routes to the raw slot, patch applies.
+  setField(section, '#pf2-garage-edit-model', 'Toyota Prius 2018');
+  setField(section, '#pf2-garage-edit-color', 'белый');
+  setField(section, '#pf2-garage-edit-plate', 'А 123 ВС 77');
+  clickHandlers.get('#pf2-garage-edit-save')?.();
+
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S68: vehicles array still has exactly one entry after save',
+    Array.isArray(persisted) && persisted.length === 1, String(persisted?.length));
+  const patched = persisted?.[0];
+  expect('S68: patched entry now persists the synthesised id "garage-1"',
+    patched?.id === 'garage-1', String(patched?.id));
+  expect('S68: patched entry model trimmed',
+    patched?.model === 'Toyota Prius 2018', String(patched?.model));
+  expect('S68: patched entry color trimmed',
+    patched?.color === 'белый', String(patched?.color));
+  expect('S68: patched entry plate trimmed',
+    patched?.plate === 'А 123 ВС 77', String(patched?.plate));
+  expect('S68: patched entry source defaulted to "persisted" (no prev source to preserve)',
+    patched?.source === 'persisted', String(patched?.source));
+  expect('S68: activeVehicleId preserved at null across the synthesised-id edit',
+    user.get().driverGarage?.activeVehicleId === null);
+}
+
+// ── Scenario 69 — After the round-trip from S68, subsequent edits hit the
+// strict-match path (the synthesised id is now stored on the entry).
+// Defensive: editing the SAME synthesised id again still works. ───────────
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-edit-garage-1')?.();
+  setField(section, '#pf2-garage-edit-model', 'Toyota Prius 2020');
+  clickHandlers.get('#pf2-garage-edit-save')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S69: second edit of garage-1 keeps the array length at 1',
+    Array.isArray(persisted) && persisted.length === 1);
+  expect('S69: second edit patched the model',
+    persisted?.[0]?.model === 'Toyota Prius 2020', String(persisted?.[0]?.model));
+  expect('S69: id still garage-1',
+    persisted?.[0]?.id === 'garage-1');
+}
+
+// ── Scenario 70 — Synthesised-id fallback does NOT fire when the targeted
+// raw slot already has a non-blank id. Ensures the fallback only rescues
+// the genuinely id-less case and never overwrites a real entry. ───────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { patchGarageVehicle: patchFn } = await import('../public/src/state.js');
+  const r = patchFn('garage-1', { model: 'hijack attempt' });
+  expect('S70: patchGarageVehicle("garage-1", …) returns null when raw[0] has a real id',
+    r === null, String(r));
+  expect('S70: real-1 byte-for-byte preserved (no hijack via fallback)',
+    user.get().driverGarage?.vehicles?.[0]?.model === 'Toyota Prius');
+}
+
+// ── Scenario 71 — Synthesised-id fallback is bounded by the raw array
+// length: out-of-range indices are rejected. ──────────────────────────────
+{
+  reset();
+  user.set({
+    onboarded: true, role: 'driver',
+    driverGarage: {
+      activeVehicleId: null,
+      vehicles: [{ model: 'Only One' }], // id-less, synthesises garage-1
+    },
+  });
+  const { patchGarageVehicle: patchFn } = await import('../public/src/state.js');
+  expect('S71: out-of-range synthesised id (garage-99) returns null',
+    patchFn('garage-99', { model: 'X' }) === null);
+  expect('S71: malformed synthesised id (garage-abc) returns null',
+    patchFn('garage-abc', { model: 'X' }) === null);
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

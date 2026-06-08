@@ -475,7 +475,34 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
     ? cache.driverGarage
     : { activeVehicleId: null, vehicles: [] };
   const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
-  const idx = vehicles.findIndex((v) => v && v.id === vehicleId);
+
+  // Strict match against the raw stored id.
+  let idx = vehicles.findIndex((v) => v && v.id === vehicleId);
+
+  // Codex P2 (05H) — synthesised-id fallback. The resolver
+  // (`normalisePersistedVehicle` in `public/src/garage.js`) assigns
+  // `garage-${rawIndex + 1}` to persisted entries that landed without a
+  // usable string id; the render then exposes that synthesised id on the
+  // edit button and the sheet's `data-edit-vehicle-id`. Without this
+  // branch, saving the edit would call `patchGarageVehicle('garage-1', …)`
+  // and the strict match above would miss the raw slot (whose `.id` is
+  // missing/blank), refusing the write. Here we parse the synthesised id,
+  // verify the targeted raw slot is genuinely id-less, and route the
+  // patch to that slot. The save below persists the synthesised id onto
+  // the slot's `.id`, so subsequent edits hit the strict path.
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(vehicleId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
   if (idx < 0) return null;
 
   const prev = vehicles[idx] || {};
