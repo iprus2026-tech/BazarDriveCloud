@@ -700,8 +700,9 @@ writeResponseToStore(buildResponseFor(s11bOrder, { name: 'Wrong Driver', rating:
 // via createDemoActiveRide(...) without any driver/vehicle overrides, so
 // passengers landing on /responses?state=accepted or /active-ride saw the
 // "Рустам К." demo seed baked into ride_state.js:157-163 even when a real
-// driver had accepted. Fix: capture the current driver profile snapshot at
-// accept time and pass it as driver+vehicle overrides.
+// driver had accepted. Fix: replace ride.driver / ride.vehicle entirely
+// (mirroring buildAcceptedOrderPassenger's BD-ACTIVE-07 replace pattern) so
+// no demo fields can leak through deepMerge.
 reset();
 clearRideOrdersStore();
 user.set({
@@ -711,6 +712,7 @@ user.set({
   phone: '+77001234567', phoneVerified: true,
   vehicleMake: 'Toyota', vehicleModel: 'Camry',
   vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
+  rating: 4.95,  // exercise the ru-RU rating formatter
 });
 const s12Order = createRideOrder({
   type: 'ride_order',
@@ -719,7 +721,8 @@ const s12Order = createRideOrder({
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
 });
 const s12TripId = `trip_${s12Order.id}`;
-const s12Accepted = acceptCanonicalRideOrder(s12Order.id);
+// Explicit acceptedSource: 'driver_map' to simulate the DriverMap surface.
+const s12Accepted = acceptCanonicalRideOrder(s12Order.id, { acceptedSource: 'driver_map' });
 {
   expect('S12: acceptCanonicalRideOrder returns a ride bound to the order',
     s12Accepted?.tripId === s12TripId && s12Accepted?.order?.id === s12Order.id,
@@ -731,13 +734,32 @@ const s12Accepted = acceptCanonicalRideOrder(s12Order.id);
     !String(ride?.driver?.name || '').includes('Рустам'));
   expect('S12: seeded ride.driver.initials recomputed from real name',
     ride?.driver?.initials === 'И', String(ride?.driver?.initials));
+  // Codex P3 — rating must format in ru-RU locale ("4,95"), not en-US ("4.95"),
+  // and not leak the demo string "4,92" from buildDemoRide.driver.rating.
+  expect('S12: seeded ride.driver.rating formatted in ru-RU locale',
+    ride?.driver?.rating === '4,95', String(ride?.driver?.rating));
+  // Codex P2 #1 (the core review finding) — buildDemoRide().driver carries
+  // shiftDuration: '5ч 12м'; if seeding still used deepMerge that field
+  // would leak onto every real-driver ride and active_ride.js:405 would
+  // render it into the driver status pill.
+  expect('S12: ride.driver.shiftDuration is undefined (no demo leak)',
+    ride?.driver?.shiftDuration === undefined, String(ride?.driver?.shiftDuration));
+  expect('S12: ride.driver.onlineLabel is undefined (no demo leak)',
+    ride?.driver?.onlineLabel === undefined, String(ride?.driver?.onlineLabel));
   expect('S12: seeded ride.vehicle.model reflects current profile vehicle',
     ride?.vehicle?.model === 'Toyota Camry', String(ride?.vehicle?.model));
   expect('S12: seeded ride.vehicle.color reflects current profile vehicle',
     ride?.vehicle?.color === 'белый', String(ride?.vehicle?.color));
   expect('S12: seeded ride.vehicle.plate is masked (Russian-format middle)',
     ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
-  expect('S12: ride.acceptedSource === "driver_map" (informational marker)',
+  // Passenger snapshot must survive the new replace-driver flow (the
+  // existing BD-ACTIVE-07 contract should not regress).
+  expect('S12: ride.passenger.name pinned from the order snapshot',
+    ride?.passenger?.name === 'Алия К.', String(ride?.passenger?.name));
+  expect('S12: ride.passenger.luggage absent (no demo "1 чемодан" leak)',
+    ride?.passenger?.luggage === '' || ride?.passenger?.luggage === undefined,
+    String(ride?.passenger?.luggage));
+  expect('S12: ride.acceptedSource === "driver_map" (caller-provided)',
     ride?.acceptedSource === 'driver_map', String(ride?.acceptedSource));
   expect('S12: ride has NO selectedDriver.responseId (DriverMap accept is unpinned)',
     !ride?.selectedDriver?.responseId, String(ride?.selectedDriver?.responseId));
@@ -753,6 +775,9 @@ const s12Accepted = acceptCanonicalRideOrder(s12Order.id);
     reread?.driver?.name === 'Иван Драйвер', String(reread?.driver?.name));
   expect('S12: persisted ride re-read carries the real vehicle plate',
     reread?.vehicle?.plate === 'А ••• БВ 77', String(reread?.vehicle?.plate));
+  expect('S12: persisted ride re-read shows NO shiftDuration leak',
+    reread?.driver?.shiftDuration === undefined,
+    String(reread?.driver?.shiftDuration));
 }
 
 // ── Scenario 13 — BD-LIFE-05 safety still applies to DriverMap-accepted rides
@@ -787,6 +812,59 @@ const s12Accepted = acceptCanonicalRideOrder(s12Order.id);
     findActiveRide(s12TripId)?.acceptedSource === 'driver_map',
     String(findActiveRide(s12TripId)?.acceptedSource));
 }
+
+// ── Scenario 12B — acceptedSource label is accurate per caller (Codex P2 #2) ─
+// seedActiveRideFromAcceptedOrder is the shared seeder; before the fix it
+// hardcoded 'driver_map' regardless of which surface accepted, so Feed and
+// Post Detail accepts mislabelled their acceptedSource. The fix
+// parameterises acceptedSource through acceptCanonicalRideOrder.
+//
+// Each sub-case runs its own reset + createRideOrder + accept so the three
+// orders cannot collide on `order-${Date.now()}` (createRideOrder uses
+// millisecond-resolution ids; three back-to-back calls in the same ms
+// would produce the same id and a single accept would flip all of them
+// to ACCEPTED, masking the per-caller label assertion).
+function seedDriverProfile() {
+  user.set({
+    role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+    phone: '+77001234567', phoneVerified: true,
+    vehicleMake: 'Toyota', vehicleModel: 'Camry',
+    vehiclePlate: 'А 100 АА 77', vehicleColor: 'белый',
+  });
+}
+function freshOrder() {
+  return createRideOrder({
+    type: 'ride_order', pickup:{id:'p1',label:'A'}, dropoff:{id:'p2',label:'Б'},
+    passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+  });
+}
+
+// Feed accept → 'feed'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromFeed = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'feed' });
+expect('S12B: Feed accept tags ride.acceptedSource === "feed"',
+  acceptedFromFeed?.ride?.acceptedSource === 'feed',
+  String(acceptedFromFeed?.ride?.acceptedSource));
+expect('S12B: Feed accept does NOT mislabel as "driver_map"',
+  acceptedFromFeed?.ride?.acceptedSource !== 'driver_map');
+
+// Post Detail accept → 'post_detail'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromPost = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'post_detail' });
+expect('S12B: Post Detail accept tags ride.acceptedSource === "post_detail"',
+  acceptedFromPost?.ride?.acceptedSource === 'post_detail',
+  String(acceptedFromPost?.ride?.acceptedSource));
+expect('S12B: Post Detail accept does NOT mislabel as "driver_map"',
+  acceptedFromPost?.ride?.acceptedSource !== 'driver_map');
+
+// Default (no caller option) → neutral 'canonical_accept'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromDefault = acceptCanonicalRideOrder(freshOrder().id);
+expect('S12B: default (no caller option) tags neutral "canonical_accept"',
+  acceptedFromDefault?.ride?.acceptedSource === 'canonical_accept',
+  String(acceptedFromDefault?.ride?.acceptedSource));
+expect('S12B: default does NOT mislabel as "driver_map"',
+  acceptedFromDefault?.ride?.acceptedSource !== 'driver_map');
 
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {

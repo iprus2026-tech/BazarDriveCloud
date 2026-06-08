@@ -137,7 +137,9 @@ export default async function feed() {
         // accept through the shared store so the underlying order flips
         // CREATED → ACCEPTED and drops out of Feed + DriverMap.
         if (post.canonical === 'ride_order' && post.orderId) {
-          const accepted = acceptCanonicalRideOrder(post.orderId);
+          // BD-LIFE-06 — accurate accept-source label so the seeded ride
+          // does not claim it came from /driver-map.
+          const accepted = acceptCanonicalRideOrder(post.orderId, { acceptedSource: 'feed' });
           if (!accepted) {
             // Stale / already accepted in another surface — refetch
             // so the now-gone projection card disappears (local `posts`

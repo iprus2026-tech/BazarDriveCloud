@@ -265,7 +265,9 @@ function runCtaAction(spec, post, detailsHref) {
   if (spec.kind === 'accept') {
     if (!canAcceptPassengerRequest(fresh, post)) return;
     if (post.canonical === 'ride_order' && post.orderId) {
-      const accepted = acceptCanonicalRideOrder(post.orderId);
+      // BD-LIFE-06 — accurate accept-source label so the seeded ride
+      // does not claim it came from /driver-map.
+      const accepted = acceptCanonicalRideOrder(post.orderId, { acceptedSource: 'post_detail' });
       if (!accepted) return;
       go(`/active-ride?role=driver&tripId=${encodeURIComponent(accepted.tripId)}&status=ACCEPTED`);
       return;
