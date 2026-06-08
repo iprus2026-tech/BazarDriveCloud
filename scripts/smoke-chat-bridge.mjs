@@ -219,8 +219,10 @@ expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger
   /\/chat\?tripId=\$\{encodeURIComponent\(tripId\)\}&role=passenger/.test(passengerSheets));
 
 // ── J. sw.js — VERSION bumped because precached runtime files changed ──
-expect("public/sw.js VERSION is bumped to v95",
-  /const\s+VERSION\s*=\s*'v95'/.test(sw));
+// BD-LIFE-07 — v95 → v96 (active_ride.js, active_ride_passenger.js render
+// changes; GitHub Pages PWA needs a fresh cache name to pick them up).
+expect("public/sw.js VERSION is bumped to v96",
+  /const\s+VERSION\s*=\s*'v96'/.test(sw));
 
 // ── M. ride_state.js — status tone + label exports (BD-CHAT-03) ──
 expect("ride_state.js exports RIDE_STATUS_TONE",

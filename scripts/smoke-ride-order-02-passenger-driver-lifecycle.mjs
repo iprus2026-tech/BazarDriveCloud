@@ -951,6 +951,83 @@ const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { accepted
     ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
 }
 
+// ── Scenario 14 — Render layer no longer falls back to demo strings (BD-LIFE-07)
+// BD-LIFE-06 stopped writing demo values onto the ride data (shiftDuration
+// removed from the snapshot; missing rating → '—'; missing color → 'цвет
+// не указан'). But the render layer in active_ride.js and
+// active_ride_passenger.js still had `value || '5ч 12м'` / `|| '4,92'` /
+// `|| 'серый'` fallbacks that would resurrect the demo strings whenever
+// the data was undefined or empty. BD-LIFE-07 drops those render fallbacks
+// so the demo seed stays confined to legacy demo-only ride paths.
+//
+// Two layers of assertion:
+//   • Static source guard — the literal `… || 'demo'` patterns are gone
+//     from the in-scope renderers. Catches regressions if anyone re-adds
+//     them, without needing to mount the full Mapbox-aware render stack
+//     here.
+//   • Data-flow guard — re-verifies the BD-LIFE-06 contract that real
+//     accepted rides carry truthy neutrals so the now-absent demo
+//     fallbacks would never have fired for real rides anyway. Belt and
+//     braces against a future regression that re-introduces empty-string
+//     neutrals on the data side.
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const activeRideSrc = readFileSync(join(projectRoot, 'public/src/screens/active_ride.js'), 'utf8');
+  const passengerSrc  = readFileSync(join(projectRoot, 'public/src/screens/active_ride_passenger.js'), 'utf8');
+
+  // Static source guards: each demo-string fallback pattern must be gone.
+  expect('S14: active_ride.js no longer chains `shiftDuration || "5ч 12м"`',
+    !/shiftDuration\s*\|\|\s*['"`]5ч 12м['"`]/.test(activeRideSrc));
+  expect('S14: active_ride_passenger.js no longer chains `rating || "4,92"`',
+    !/rating\s*\|\|\s*['"`]4,92['"`]/.test(passengerSrc));
+  expect('S14: active_ride_passenger.js no longer chains `color || "серый"`',
+    !/\.color\s*\|\|\s*['"`]серый['"`]/.test(passengerSrc));
+
+  // Belt-and-braces data-flow guard: re-create a real accepted ride and
+  // confirm the data that the render layer would read carries truthy
+  // BD-LIFE-06 neutrals — so even an accidentally-restored demo fallback
+  // could not fire on a real accepted ride.
+  reset(); clearRideOrdersStore();
+  user.set({
+    role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+    phone: '+77001234567', phoneVerified: true,
+    vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 100 АА 77',
+    // intentionally no `rating`, no `vehicleColor`
+  });
+  const s14Order = createRideOrder({
+    type: 'ride_order', pickup:{id:'p1',label:'A'}, dropoff:{id:'p2',label:'Б'},
+    passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+  });
+  const s14Accepted = acceptCanonicalRideOrder(s14Order.id, { acceptedSource: 'driver_map' });
+  const s14Ride = s14Accepted?.ride;
+  // The render layer for the driver status pill reads ride.driver?.shiftDuration.
+  // BD-LIFE-06 omits the field entirely; the conditional sep+time block
+  // in active_ride.js renders nothing for it. The negative assertion
+  // confirms the demo string cannot reach the render path via data.
+  expect('S14: real accepted ride.driver.shiftDuration is undefined',
+    s14Ride?.driver?.shiftDuration === undefined,
+    String(s14Ride?.driver?.shiftDuration));
+  expect('S14: ride.driver.shiftDuration is NOT the demo "5ч 12м"',
+    s14Ride?.driver?.shiftDuration !== '5ч 12м');
+  // The render layer for the passenger top card reads ride.driver.rating.
+  // BD-LIFE-06 stores '—' (truthy) so the dropped `|| '4,92'` chain has
+  // nothing to substitute for.
+  expect('S14: real accepted ride.driver.rating === "—" (neutral, not "4,92")',
+    s14Ride?.driver?.rating === '—', String(s14Ride?.driver?.rating));
+  expect('S14: ride.driver.rating is NOT the demo "4,92"',
+    s14Ride?.driver?.rating !== '4,92');
+  // The render layer for the carLine reads ride.vehicle.color. BD-LIFE-06
+  // stores 'цвет не указан' (truthy) so the dropped `|| 'серый'` chain
+  // has nothing to substitute for.
+  expect('S14: real accepted ride.vehicle.color === "цвет не указан" (neutral, not "серый")',
+    s14Ride?.vehicle?.color === 'цвет не указан', String(s14Ride?.vehicle?.color));
+  expect('S14: ride.vehicle.color is NOT the demo "серый"',
+    s14Ride?.vehicle?.color !== 'серый');
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

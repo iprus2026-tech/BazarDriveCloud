@@ -254,7 +254,13 @@ function carLine(ride) {
   const parts = [];
   const model = v.model || 'Toyota Camry';
   parts.push(model);
-  parts.push(v.color || 'серый');
+  // BD-LIFE-07 — Drop the 'серый' demo fallback. BD-LIFE-06 writes either
+  // the real vehicle color or the neutral 'цвет не указан' onto real
+  // accepted rides, so the `|| 'серый'` chain only ever fired on
+  // legacy/demo paths and was overwriting the real "color not provided"
+  // signal with a fabricated grey. Omit the color slot when v.color is
+  // missing rather than padding it with demo data.
+  if (v.color) parts.push(v.color);
   parts.push(v.plate || 'А 124 ВВ 77');
   return parts.join(' · ');
 }
@@ -394,7 +400,12 @@ function topDriverCardEta(ride, phase) {
 function topDriverCardHtml(ride, options = {}) {
   const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
   const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
-  const driverRating = (ride.driver && ride.driver.rating) || '4,92';
+  // BD-LIFE-07 — Drop the '4,92' demo fallback. BD-LIFE-06 writes either
+  // the numeric ru-RU rating ("4,95") or the neutral '—' onto real
+  // accepted rides, so the `|| '4,92'` chain only ever fired on legacy
+  // paths and was substituting the demo rating for real drivers with no
+  // recorded value. Render whatever the data layer carries (or empty).
+  const driverRating = (ride.driver && ride.driver.rating) || '';
   const { unreadCount, label } = chatLabelFor(ride);
   const eta = topDriverCardEta(ride, options.phase);
   return `
@@ -785,7 +796,12 @@ function renderPassengerRideComplete(ride, deps) {
   const dropoff = route.dropoffLabel || 'Аэропорт Шереметьево, терминал В';
   const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
   const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
-  const driverRating = (ride.driver && ride.driver.rating) || '4,92';
+  // BD-LIFE-07 — Drop the '4,92' demo fallback. BD-LIFE-06 writes either
+  // the numeric ru-RU rating ("4,95") or the neutral '—' onto real
+  // accepted rides, so the `|| '4,92'` chain only ever fired on legacy
+  // paths and was substituting the demo rating for real drivers with no
+  // recorded value. Render whatever the data layer carries (or empty).
+  const driverRating = (ride.driver && ride.driver.rating) || '';
   const carText = carLine(ride);
 
   const root = document.createElement('section');
