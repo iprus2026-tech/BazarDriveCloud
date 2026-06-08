@@ -2794,19 +2794,41 @@ function payoutsPaneHtml(previewEmpty = false) {
 // invites the driver to add one. `?garage=empty` is a render-gate preview
 // affordance that forces the empty state without wiping persisted data,
 // mirroring the existing `?state=empty` payouts preview.
+//
+// BD-PROFILE-D-05B — Driver Garage action semantics. Each action carries
+// a stable `data-garage-action` (the action's name) and `data-garage-state`
+// (the contract state the action is currently in). The four contract
+// states are:
+//   • add-ready              — "Добавить авто". Future onboarding entry
+//                              point; current click is local feedback only.
+//   • edit-ready             — "Редактировать". Future per-vehicle edit
+//                              entry point; current click is local
+//                              feedback only.
+//   • active-current        — "Активна сейчас". The derived vehicle is
+//                              already active by construction (one legacy
+//                              vehicle = the active one), so this is a
+//                              disabled status pill, NOT an action.
+//   • archive-confirm-local — "Архивировать". Two-step inline confirm
+//                              with [Отмена] / [Подтвердить]; both steps
+//                              stay DOM-only — no localStorage write, no
+//                              activeVehicleId, no driverOnline change.
+// `wireGarageActions` enforces the "no mutation" property; the smoke
+// captures the localStorage / active-ride snapshots before invoking each
+// handler and asserts byte-equality after.
 function garageSectionHtml(u, options = {}) {
   const force = typeof options.force === 'string' ? options.force : '';
   const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
   const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
   const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
   const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
-  // Codex P2 — `vehiclePlate` is recorded on its own step in onboarding, so a
-  // partially-typed profile can carry a plate (and/or color) before any
-  // model is filled. The active garage card would have rendered an empty
-  // model line with a stranded "Активное" badge in that state. Gate the
-  // populated card on a usable model line — plate-only / color-only
-  // profiles slip to the empty state and the "Добавить авто" CTA prompts
-  // the driver to finish data entry instead of showing an unfinished card.
+  // Codex P2 (05A) — `vehiclePlate` is recorded on its own step in
+  // onboarding, so a partially-typed profile can carry a plate (and/or
+  // color) before any model is filled. The active garage card would have
+  // rendered an empty model line with a stranded "Активное" badge in that
+  // state. Gate the populated card on a usable model line — plate-only /
+  // color-only profiles slip to the empty state and the "Добавить авто"
+  // CTA prompts the driver to finish data entry instead of showing an
+  // unfinished card.
   const modelLine = (make && model) ? `${make} ${model}` : (make || model);
   const hasVehicle = force !== 'empty' && !!modelLine;
 
@@ -2820,7 +2842,7 @@ function garageSectionHtml(u, options = {}) {
           <span class="pf2-garage__empty-icon" aria-hidden="true">${SVG_CAR_FRONT}</span>
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
-          <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add">Добавить авто</button>
+          <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
         </div>
       </section>`;
   }
@@ -2830,7 +2852,7 @@ function garageSectionHtml(u, options = {}) {
     <section class="bd-card pf2-garage" id="pf2-garage" aria-labelledby="pf2-garage-title">
       <header class="pf2-garage__head">
         <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
-        <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" aria-label="Добавить авто">+ Добавить</button>
+        <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready" aria-label="Добавить авто">+ Добавить</button>
       </header>
       <article class="pf2-garage__car" data-vehicle="primary">
         <div class="pf2-garage__car-icon" aria-hidden="true">${SVG_CAR_FRONT}</div>
@@ -2840,26 +2862,35 @@ function garageSectionHtml(u, options = {}) {
         </div>
         <span class="bd-badge accent pf2-garage__badge">Активное</span>
         <div class="pf2-garage__actions">
-          <button type="button" class="pf2-garage__action" id="pf2-garage-edit" data-garage-action="edit">Редактировать</button>
-          <button type="button" class="pf2-garage__action" id="pf2-garage-activate" data-garage-action="activate" aria-pressed="true">Сделать активным</button>
-          <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive" data-garage-action="archive">Архивировать</button>
+          <button type="button" class="pf2-garage__action" id="pf2-garage-edit" data-garage-action="edit" data-garage-state="edit-ready">Редактировать</button>
+          <span class="pf2-garage__action pf2-garage__action--current" id="pf2-garage-active" data-garage-action="active" data-garage-state="active-current" aria-disabled="true">Активна сейчас</span>
+          <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive" data-garage-action="archive" data-garage-state="archive-confirm-local" aria-expanded="false" aria-controls="pf2-garage-confirm">Архивировать</button>
+        </div>
+        <div class="pf2-garage__confirm" id="pf2-garage-confirm" data-garage-confirm="archive" data-garage-confirm-state="idle" role="group" aria-label="Подтверждение архивирования" hidden>
+          <p class="pf2-garage__confirm-text">Подтвердить архивирование?</p>
+          <div class="pf2-garage__confirm-actions">
+            <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-archive-cancel" data-garage-action="archive-cancel">Отмена</button>
+            <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-archive-confirm" data-garage-action="archive-confirm">Подтвердить</button>
+          </div>
         </div>
       </article>
     </section>`;
 }
 
-// BD-PROFILE-D-05A — Mock action wiring. None of these touch the canonical
-// store, network or router: they only provide a transient on-card label so
-// the driver gets feedback while we ship the real CRUD in a later slice.
-// "Активное" stays the source of truth for now; the activate handler just
-// re-confirms the existing state.
+// BD-PROFILE-D-05B — Driver Garage action wiring. STRICTLY DOM-only:
+//   • no localStorage writes (no user.set, no saveActiveRide, no setItem)
+//   • no router navigation
+//   • no driverOnline / activeVehicleId mutation
+// "Активна сейчас" is a non-button status pill (no handler attached); the
+// archive flow is a 2-step inline confirm that mutates only the confirm
+// row's `data-garage-confirm-state` attribute. The contract is locked by
+// smoke-profile-driver-garage.mjs, which captures a localStorage snapshot
+// before invoking each handler and asserts byte-equality after.
 function wireGarageActions(root) {
-  const labelFor = (action) => {
-    if (action === 'edit')     return 'Скоро здесь';
-    if (action === 'activate') return 'Уже активное';
-    if (action === 'archive')  return 'Скоро здесь';
-    return '';
-  };
+  // Local-feedback flash for the add / edit entry points. The label swap
+  // is purely transient and reverts in 1500ms — the underlying button is
+  // never marked permanent-disabled because the future CRUD slice (05D)
+  // will repurpose the same hooks.
   const flash = (btn, text) => {
     if (!btn || btn.dataset.busy === '1') return;
     btn.dataset.busy = '1';
@@ -2870,17 +2901,43 @@ function wireGarageActions(root) {
       delete btn.dataset.busy;
     }, 1500);
   };
-  // "Добавить авто" / "+ Добавить" — driver onboarding will own the real
-  // add flow; for now keep the user inside profile with a transient hint.
   const addBtn = root.querySelector('#pf2-garage-add');
-  addBtn?.addEventListener('click', () => flash(addBtn, 'Скоро здесь'));
-  // Per-vehicle inline actions delegated through data-garage-action so
-  // future archive/activate slices can grow new actions without rewiring.
-  const card = root.querySelector('.pf2-garage__car');
-  card?.addEventListener('click', (e) => {
-    const btn = e.target instanceof Element ? e.target.closest('[data-garage-action]') : null;
-    if (!btn) return;
-    flash(btn, labelFor(btn.dataset.garageAction));
+  addBtn?.addEventListener('click', () => flash(addBtn, 'Доступно в следующем шаге'));
+  const editBtn = root.querySelector('#pf2-garage-edit');
+  editBtn?.addEventListener('click', () => flash(editBtn, 'Доступно в следующем шаге'));
+
+  // Archive — two-step inline confirm. Step 1 opens the row, step 2 marks
+  // it "scheduled-local" (still DOM-only). Cancel reverts to idle. The
+  // confirm row is rendered inert (hidden) on first paint.
+  const archiveBtn  = root.querySelector('#pf2-garage-archive');
+  const confirmRow  = root.querySelector('#pf2-garage-confirm');
+  const cancelBtn   = root.querySelector('#pf2-garage-archive-cancel');
+  const confirmFinal = root.querySelector('#pf2-garage-archive-confirm');
+  archiveBtn?.addEventListener('click', () => {
+    if (!confirmRow) return;
+    confirmRow.hidden = false;
+    confirmRow.dataset.garageConfirmState = 'open';
+    archiveBtn.setAttribute('aria-expanded', 'true');
+  });
+  cancelBtn?.addEventListener('click', () => {
+    if (!confirmRow) return;
+    confirmRow.hidden = true;
+    confirmRow.dataset.garageConfirmState = 'idle';
+    archiveBtn?.setAttribute('aria-expanded', 'false');
+    if (confirmFinal) {
+      confirmFinal.disabled = false;
+      confirmFinal.textContent = 'Подтвердить';
+    }
+  });
+  confirmFinal?.addEventListener('click', () => {
+    if (!confirmRow) return;
+    // Mark a successful confirm in the local UI only. The persisted
+    // garage data does NOT change here — 05B is the contract layer
+    // before any CRUD. A future slice will replace this branch with the
+    // real archive call.
+    confirmRow.dataset.garageConfirmState = 'scheduled-local';
+    confirmFinal.disabled = true;
+    confirmFinal.textContent = 'Запланировано (демо)';
   });
 }
 

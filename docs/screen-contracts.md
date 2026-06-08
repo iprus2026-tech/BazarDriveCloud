@@ -169,6 +169,22 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Online toggle, driver/passenger mode, readiness checklist, document mock updates. |
 | Acceptance | Driver readiness gates Feed/Post Detail accept CTAs and `/driver-map` (BD-DRIVER-02): all accept surfaces now enforce `isDriverLineReady()` via the shared rule in `state.js`. |
 
+### BD-PROFILE-D-05B - Driver Garage actions
+
+| Field | Contract |
+|---|---|
+| Route | `/profile?role=driver` (Garage section sits inside `renderDriver`'s overview pane between Readiness and Permit). |
+| File | `public/src/screens/profile.js` (`garageSectionHtml` + `wireGarageActions`). |
+| Source | Legacy driver vehicle fields on the user record: `vehicleMake`, `vehicleModel`, `vehicleColor`, `vehiclePlate` (`public/src/state.js:50-54`). No `garageVehicles[]`, no `activeVehicleId`. |
+| Derived view | Single garage card with `<article class="pf2-garage__car" data-vehicle="primary">`. Populated when `make+model` (or either alone) produce a non-empty model line; otherwise empty state ("Авто не добавлено" + `Добавить авто` CTA). |
+| Action contract states | Each interactive control carries `data-garage-action="<name>"` + `data-garage-state="<state>"`. The four states are: **`add-ready`** ("Добавить авто" header CTA and empty-state CTA), **`edit-ready`** ("Редактировать"), **`active-current`** ("Активна сейчас" — non-button `<span>` with `aria-disabled="true"`, no click handler), **`archive-confirm-local`** ("Архивировать" → two-step inline confirm inside `#pf2-garage-confirm` with `[Отмена]` / `[Подтвердить]`). |
+| Confirm row | `#pf2-garage-confirm` (`data-garage-confirm="archive"`) is rendered `hidden`; archive opens it (`data-garage-confirm-state="open"`), final confirm marks `data-garage-confirm-state="scheduled-local"` and disables the button with label "Запланировано (демо)". Cancel resets to `idle`. |
+| Persistence | **None.** `wireGarageActions` is strictly DOM-only — no `user.set`, no `localStorage.setItem`, no `saveActiveRide`, no `driverOnline` mutation, no `activeVehicleId`, no router navigation. The smoke (`scripts/smoke-profile-driver-garage.mjs`) captures a `localStorage` snapshot before invoking each handler and asserts byte-equality after, with a parallel guard on the active-ride key. |
+| Render-gate | `?garage=empty` forces the empty state for design preview without touching persisted vehicle fields (mirrors `?state=empty` for payouts in BD-PROFILE-D-03). |
+| Constraints | No backend, no multi-vehicle collection, no `garageVehicles[]`, no `activeVehicleId`, no real CRUD, no driver-response snapshot mutation, no active-ride mutation, no Mapbox, no CSP weakening, no inline script/style. |
+| Out of scope | Multi-vehicle list, real add/edit/archive endpoints, `activeVehicleId`, garage-driven driver-response snapshot, garage-driven active ride seed. Future slices (05D+) will own real CRUD; 05B locks the action surface contract before any data model lands. |
+| Acceptance | `node scripts/check.mjs` green; `scripts/smoke-profile-driver-garage.mjs` covers the state hooks, the contract labels, the confirm flow, and the no-mutation guarantee end-to-end (snapshot diff). |
+
 ### BD-PROFILE-D-03 - Driver dashboard profile polish
 
 | Field | Contract |

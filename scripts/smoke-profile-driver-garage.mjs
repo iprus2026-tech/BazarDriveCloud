@@ -35,10 +35,19 @@ globalThis.sessionStorage = {
   clear: () => session.clear(),
 };
 
-// ── Minimal DOM stub ─────────────────────────────────────────────────────────
-function makeEl() {
+// ── Minimal DOM stub (records click handlers by selector for BD-PROFILE-D-05B)
+// The 05A surface only needed `innerHTML` to be readable. BD-PROFILE-D-05B
+// adds a "no-mutation" guarantee on the action handlers, so the stub now
+// captures every `addEventListener('click', fn)` keyed by the selector that
+// produced the element. The smoke can then look up a handler by id and
+// invoke it directly, then assert localStorage / active-ride snapshots are
+// byte-equal. Pattern mirrors smoke-profile-role-isolation.mjs.
+const clickHandlers = new Map();
+
+function makeEl(selectorHint) {
   return {
     _html: '',
+    _selector: selectorHint || null,
     className: '', textContent: '', value: '', checked: false,
     hidden: false, disabled: false,
     dataset: {},
@@ -47,8 +56,13 @@ function makeEl() {
     set innerHTML(v) { this._html = String(v); },
     get innerHTML() { return this._html; },
     get firstElementChild() { return makeEl(); },
-    addEventListener() {}, removeEventListener() {},
-    querySelector() { return makeEl(); },
+    addEventListener(type, fn) {
+      if (type === 'click' && this._selector && typeof fn === 'function') {
+        clickHandlers.set(this._selector, fn);
+      }
+    },
+    removeEventListener() {},
+    querySelector(sel) { return makeEl(sel); },
     querySelectorAll() { return []; },
     closest() { return null; },
     contains() { return false; },
@@ -91,7 +105,18 @@ function reset() {
   local.clear();
   session.clear();
   user.reset();
+  clickHandlers.clear();
   currentHash = '';
+}
+
+// Serialize the localStorage Map's contents into a deterministic string so
+// "did anything change after a click?" becomes a byte-equality check. Keys
+// are sorted alphabetically so write order does not perturb the snapshot.
+function snapshotLocalStorage() {
+  const entries = [];
+  for (const [k, v] of local.entries()) entries.push([k, String(v)]);
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  return JSON.stringify(entries);
 }
 
 function renderProfile(hash) {
@@ -349,6 +374,216 @@ user.set({
     !slice.includes(GARAGE_EMPTY_MARKER));
   expect('S9: model-only garage shows "Solaris" as the model line',
     slice.includes('Solaris'));
+}
+
+// ── Scenario 10 — BD-PROFILE-D-05B action contract hooks present ─────────────
+// Each action carries a stable (action, state) pair so future CRUD slices
+// and the smoke can grow without renaming selectors.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  // The four action-state pairs from the BD-PROFILE-D-05B contract:
+  const STATES = [
+    { action: 'add',     state: 'add-ready' },
+    { action: 'edit',    state: 'edit-ready' },
+    { action: 'active',  state: 'active-current' },
+    { action: 'archive', state: 'archive-confirm-local' },
+  ];
+  for (const { action, state } of STATES) {
+    expect(`S10: garage exposes data-garage-action="${action}"`,
+      slice.includes(`data-garage-action="${action}"`));
+    expect(`S10: garage exposes data-garage-state="${state}"`,
+      slice.includes(`data-garage-state="${state}"`));
+  }
+}
+
+// ── Scenario 11 — BD-PROFILE-D-05B stable user-facing labels ────────────────
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S11: "Добавить авто" label present (add-ready)',
+    slice.includes('Добавить авто'));
+  expect('S11: "Редактировать" label present (edit-ready)',
+    slice.includes('Редактировать'));
+  expect('S11: "Активна сейчас" label present (active-current)',
+    slice.includes('Активна сейчас'));
+  expect('S11: "Архивировать" label present (archive-confirm-local)',
+    slice.includes('Архивировать'));
+  // The contract retired the throwaway "Скоро здесь" / "Уже активное"
+  // labels from 05A — they would surface stale copy on real renders.
+  expect('S11: stale "Скоро здесь" label is gone from the markup',
+    !slice.includes('Скоро здесь'));
+  expect('S11: stale "Уже активное" label is gone from the markup',
+    !slice.includes('Уже активное'));
+  expect('S11: stale "Сделать активным" button label is gone (now status pill)',
+    !slice.includes('Сделать активным'));
+}
+
+// ── Scenario 12 — "active-current" is a non-button status pill ──────────────
+// 05B turned the activate control from a button into a disabled status
+// pill. The smoke pins this: the markup uses an <span> (not <button>) with
+// aria-disabled="true", and no click handler is captured for the active
+// element id.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  // The active control is a <span>, not a <button>, so it has no
+  // click semantics by default.
+  expect('S12: active-current is rendered as a <span>, not a <button>',
+    /<span\b[^>]*data-garage-action="active"/.test(slice));
+  expect('S12: active-current carries aria-disabled="true"',
+    /data-garage-action="active"[^>]*aria-disabled="true"|aria-disabled="true"[^>]*data-garage-action="active"/.test(slice));
+  // wireGarageActions deliberately does NOT attach a click handler to
+  // #pf2-garage-active — capture confirms that.
+  expect('S12: no click handler captured for #pf2-garage-active',
+    !clickHandlers.has('#pf2-garage-active'));
+}
+
+// ── Scenario 13 — Archive confirm row is rendered hidden, with stable hooks ─
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S13: confirm row #pf2-garage-confirm rendered in markup',
+    slice.includes('id="pf2-garage-confirm"'));
+  expect('S13: confirm row carries data-garage-confirm="archive"',
+    slice.includes('data-garage-confirm="archive"'));
+  expect('S13: confirm row starts in data-garage-confirm-state="idle"',
+    slice.includes('data-garage-confirm-state="idle"'));
+  expect('S13: confirm row is hidden by default (no flash of confirm UI)',
+    /id="pf2-garage-confirm"[^>]*\bhidden\b/.test(slice));
+  expect('S13: confirm row exposes "Подтвердить архивирование?" prompt',
+    slice.includes('Подтвердить архивирование?'));
+  expect('S13: confirm row has cancel button id #pf2-garage-archive-cancel',
+    slice.includes('id="pf2-garage-archive-cancel"'));
+  expect('S13: confirm row has final button id #pf2-garage-archive-confirm',
+    slice.includes('id="pf2-garage-archive-confirm"'));
+  expect('S13: cancel button labelled "Отмена"',
+    slice.includes('>Отмена<'));
+  expect('S13: final confirm button labelled "Подтвердить"',
+    slice.includes('>Подтвердить<'));
+}
+
+// ── Scenario 14 — Invoking every action handler does NOT mutate storage ────
+// This is the load-bearing guarantee: 05B is the contract slice, not the
+// CRUD slice. We snapshot localStorage immediately after render, run every
+// click handler that wireGarageActions captures, then re-snapshot. Equal
+// strings == zero writes.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile');
+  const before = snapshotLocalStorage();
+  const triggers = [
+    '#pf2-garage-add',
+    '#pf2-garage-edit',
+    '#pf2-garage-archive',
+    '#pf2-garage-archive-cancel',
+    '#pf2-garage-archive-confirm',
+  ];
+  for (const sel of triggers) {
+    const fn = clickHandlers.get(sel);
+    expect(`S14 pre: captured click handler for ${sel}`,
+      typeof fn === 'function');
+    try { fn(); } catch (e) {
+      expect(`S14: handler for ${sel} did not throw`, false, e.message || String(e));
+    }
+    const after = snapshotLocalStorage();
+    expect(`S14: localStorage snapshot byte-equal after invoking ${sel}`,
+      before === after, `before=${before.length}b after=${after.length}b`);
+  }
+  // Also drop a parallel guard on the active-ride key specifically: a
+  // future regression that wrote into bazardrive.active_ride.v1 would
+  // be caught even if other unrelated keys happened to drift.
+  expect('S14: bazardrive.active_ride.v1 was never written',
+    !local.has('bazardrive.active_ride.v1'),
+    String(local.get('bazardrive.active_ride.v1')));
+  expect('S14: bazardrive.user.v1.vehicleMake preserved byte-for-byte',
+    user.get().vehicleMake === 'Hyundai', String(user.get().vehicleMake));
+  expect('S14: bazardrive.user.v1.vehiclePlate preserved byte-for-byte',
+    user.get().vehiclePlate === 'А 482 МР 77', String(user.get().vehiclePlate));
+}
+
+// ── Scenario 15 — Empty-state add button is captured AND inert too ─────────
+// The same no-mutation guarantee must hold on the empty-state CTA — that's
+// where the future onboarding-add flow will hook in, but until it does the
+// handler stays DOM-only.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // intentionally no vehicle — empty-state path
+});
+{
+  renderProfile('#/profile');
+  const beforeEmpty = snapshotLocalStorage();
+  const addHandler = clickHandlers.get('#pf2-garage-add');
+  expect('S15: empty-state add button has a captured handler',
+    typeof addHandler === 'function');
+  try { addHandler && addHandler(); } catch (e) {
+    expect('S15: empty add handler did not throw', false, e.message || String(e));
+  }
+  const afterEmpty = snapshotLocalStorage();
+  expect('S15: localStorage byte-equal after empty-state add click',
+    beforeEmpty === afterEmpty);
+}
+
+// ── Scenario 16 — Static source guard on wireGarageActions ──────────────────
+// Belt-and-braces against a future refactor that introduces a real CRUD
+// write inside wireGarageActions without updating the contract / docs.
+// The function body must not contain any of the storage-mutation calls.
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const profileSrc  = readFileSync(join(projectRoot, 'public/src/screens/profile.js'), 'utf8');
+  const wireStart   = profileSrc.indexOf('function wireGarageActions(');
+  const wireEnd     = profileSrc.indexOf('function renderDriver(', wireStart);
+  const wireBody    = (wireStart >= 0 && wireEnd > wireStart)
+    ? profileSrc.slice(wireStart, wireEnd) : '';
+  expect('S16: wireGarageActions function body extracted',
+    wireBody.length > 0, String(wireBody.length));
+  const FORBIDDEN = [
+    { name: 'user.set', regex: /\buser\.set\s*\(/ },
+    { name: 'user.reset', regex: /\buser\.reset\s*\(/ },
+    { name: 'localStorage.setItem', regex: /\blocalStorage\.setItem\s*\(/ },
+    { name: 'sessionStorage.setItem', regex: /\bsessionStorage\.setItem\s*\(/ },
+    { name: 'saveActiveRide', regex: /\bsaveActiveRide\s*\(/ },
+    { name: 'updateActiveRideStatus', regex: /\bupdateActiveRideStatus\s*\(/ },
+    { name: 'updateTripStatus', regex: /\bupdateTripStatus\s*\(/ },
+    { name: 'saveRideHistoryEntry', regex: /\bsaveRideHistoryEntry\s*\(/ },
+    { name: 'createRideOrder', regex: /\bcreateRideOrder\s*\(/ },
+    { name: 'acceptCanonicalRideOrder', regex: /\bacceptCanonicalRideOrder\s*\(/ },
+    { name: 'go(', regex: /\bgo\s*\(/ },  // router navigation is also out of scope for 05B
+  ];
+  for (const { name, regex } of FORBIDDEN) {
+    expect(`S16: wireGarageActions does NOT call ${name}`,
+      !regex.test(wireBody));
+  }
+  // Positive contract: 05B confirm flow toggles the row's
+  // data-garage-confirm-state attribute as its single state surface, so
+  // it must appear in the function body.
+  expect('S16: wireGarageActions toggles data-garage-confirm-state (DOM-only)',
+    /garageConfirmState/.test(wireBody));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

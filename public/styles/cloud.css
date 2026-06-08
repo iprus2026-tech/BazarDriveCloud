@@ -13044,6 +13044,66 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__action:hover { background: var(--bg-3); }
 .pf2-garage__action--muted { color: var(--text-2); }
 .pf2-garage__action[data-busy="1"] { color: var(--text-3); pointer-events: none; }
+/* BD-PROFILE-D-05B — "Активна сейчас" is a non-button status pill: no
+   hover, no pointer, distinct muted tone so the driver sees it is a
+   current-state indicator, not an action they need to invoke. */
+.pf2-garage__action--current {
+  color: var(--text-2);
+  background: var(--bg-3);
+  cursor: default;
+  pointer-events: none;
+}
+/* BD-PROFILE-D-05B — Archive confirm row. Hidden by default (`hidden`
+   attribute), opens inline when "Архивировать" is clicked, marks
+   `data-garage-confirm-state="scheduled-local"` on confirm. STRICTLY
+   render-only — no localStorage write. */
+.pf2-garage__confirm {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  grid-column: 1 / -1;
+}
+.pf2-garage__confirm[hidden] { display: none; }
+.pf2-garage__confirm-text {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text-1);
+}
+.pf2-garage__confirm-actions { display: flex; gap: 6px; }
+.pf2-garage__confirm-cancel,
+.pf2-garage__confirm-final {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 0;
+  cursor: pointer;
+}
+.pf2-garage__confirm-cancel {
+  color: var(--text-2);
+  background: transparent;
+}
+.pf2-garage__confirm-cancel:hover { background: var(--bg-2); }
+.pf2-garage__confirm-final {
+  color: #fff;
+  background: var(--danger, #d93b3b);
+}
+.pf2-garage__confirm-final:disabled {
+  background: var(--bg-2);
+  color: var(--text-2);
+  cursor: default;
+}
+.pf2-garage__confirm[data-garage-confirm-state="scheduled-local"] {
+  background: var(--bg-2);
+}
 .pf2-garage--empty .pf2-garage__empty-body {
   display: flex;
   flex-direction: column;
