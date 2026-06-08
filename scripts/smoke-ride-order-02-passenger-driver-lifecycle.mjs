@@ -1028,6 +1028,179 @@ const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { accepted
     s14Ride?.vehicle?.color !== 'серый');
 }
 
+// ── Scenario 15 — History / receipt downstream demo fallback audit (BD-LIFE-08)
+// BD-LIFE-06 cleaned the snapshot at accept time; BD-LIFE-07 dropped the
+// demo render fallbacks from active_ride / active_ride_passenger. BD-LIFE-08
+// extends the same guarantee downstream onto the completed-ride surfaces a
+// passenger reaches after the trip is over:
+//
+//   active ride → completed → ride history → trip receipt → repeat / favorite
+//
+// Audit outcome (codified below):
+//   • ride_history.js — pure data layer, zero demo string literals.
+//   • trip_receipt.js — pure financial document (fare/commission/tip/net);
+//     never reads driver.name, .initials, .rating, vehicle.color/plate/model.
+//   • profile.js history renderers — fall back to neutral 'Водитель' /
+//     'Пассажир' and `filter(Boolean)` car-line; no demo identity injection.
+//   • repeat_route.js / favorite_routes.js / inbox.js — route-only / no
+//     identity strings.
+//
+// Two-layer guard:
+//   (a) Static source guards — catch the regression if anyone re-adds a
+//       `|| 'Рустам К.'` / `|| '4,92'` / `|| 'серый'` / `|| 'Toyota Camry'` /
+//       `|| 'А 124 ВВ 77'` fallback to the downstream renderers.
+//   (b) Data-flow guards — drive a real BD-LIFE-06 accepted ride through
+//       buildPassengerHistoryEntry and assert the persisted entry carries
+//       the BD-LIFE-06/07 neutrals end-to-end, not the demo seed values.
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const profileSrc      = readFileSync(join(projectRoot, 'public/src/screens/profile.js'),     'utf8');
+  const tripReceiptSrc  = readFileSync(join(projectRoot, 'public/src/screens/trip_receipt.js'), 'utf8');
+  const rideHistorySrc  = readFileSync(join(projectRoot, 'public/src/ride_history.js'),         'utf8');
+  const repeatRouteSrc  = readFileSync(join(projectRoot, 'public/src/repeat_route.js'),         'utf8');
+  const favoriteRoutesSrc = readFileSync(join(projectRoot, 'public/src/favorite_routes.js'),    'utf8');
+
+  // ── (a) Static source guards on profile.js history renderers ──────────────
+  // The downstream renderer (passengerHistoryEntryHtml / passengerDetailRowsHtml
+  // / historyVehicleText) must not chain any of the demo-identity strings as a
+  // `value || 'demo'` fallback. Targeted regexes scope the search so the demo
+  // strings can still appear as data inside the unrelated MOCK_ACTIVE_TRIP
+  // active-card fixture (explicit demo-only) without false positives.
+  expect('S15: profile.js does NOT chain `name || "Рустам К."` anywhere',
+    !/name\s*\|\|\s*['"`]Рустам\s*К\.['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `initials || "РК"` anywhere',
+    !/initials\s*\|\|\s*['"`]РК['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `rating || "4,92"` anywhere',
+    !/rating\s*\|\|\s*['"`]4,92['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `shiftDuration || "5ч 12м"` anywhere',
+    !/shiftDuration\s*\|\|\s*['"`]5ч 12м['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `color || "серый"` anywhere',
+    !/\.color\s*\|\|\s*['"`]серый['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `model || "Toyota Camry"` anywhere',
+    !/\.model\s*\|\|\s*['"`]Toyota Camry['"`]/.test(profileSrc));
+  expect('S15: profile.js does NOT chain `plate || "А 124 ВВ 77"` anywhere',
+    !/\.plate\s*\|\|\s*['"`]А 124 ВВ 77['"`]/.test(profileSrc));
+  // Belt-and-braces: the passenger history row's neutral driver fallback
+  // must remain the generic 'Водитель' (not a demo identity).
+  expect('S15: profile.js passenger history row uses neutral `|| "Водитель"`',
+    /entry\?\.driver\?\.name\s*\|\|\s*['"`]Водитель['"`]/.test(profileSrc));
+  // historyVehicleText must use filter(Boolean) (no `|| 'серый'` injection).
+  expect('S15: profile.js historyVehicleText uses filter(Boolean) (drops empties)',
+    /function\s+historyVehicleText[\s\S]{0,200}\.filter\(Boolean\)/.test(profileSrc));
+
+  // ── (a) Static guards on the supporting data + receipt modules ────────────
+  // ride_history.js is pure data — must not embed any demo identity strings.
+  expect('S15: ride_history.js carries no demo "Рустам К." literal',
+    !/['"`]Рустам\s*К\.['"`]/.test(rideHistorySrc));
+  expect('S15: ride_history.js carries no demo "РК" literal',
+    !/['"`]РК['"`]/.test(rideHistorySrc));
+  expect('S15: ride_history.js carries no demo "4,92" literal',
+    !/['"`]4,92['"`]/.test(rideHistorySrc));
+  expect('S15: ride_history.js carries no demo "серый" literal',
+    !/['"`]серый['"`]/.test(rideHistorySrc));
+  expect('S15: ride_history.js carries no demo "5ч 12м" literal',
+    !/['"`]5ч 12м['"`]/.test(rideHistorySrc));
+  // trip_receipt.js is financial-only — must not start reading driver/vehicle
+  // identity fields (would open a fresh demo-leak surface).
+  expect('S15: trip_receipt.js does not read driver identity fields',
+    !/receipt\.driver|receipt\?\.driver/.test(tripReceiptSrc));
+  expect('S15: trip_receipt.js does not read vehicle fields',
+    !/receipt\.vehicle|receipt\?\.vehicle/.test(tripReceiptSrc));
+  // Repeat/favorite route surfaces are route-only — confirm they didn't
+  // gain a driver/vehicle identity read path that could leak demo strings.
+  expect('S15: repeat_route.js stays clean of driver/vehicle identity reads',
+    !/driver\.name|vehicle\.color|vehicle\.plate/.test(repeatRouteSrc));
+  expect('S15: favorite_routes.js stays clean of driver/vehicle identity reads',
+    !/driver\.name|vehicle\.color|vehicle\.plate/.test(favoriteRoutesSrc));
+
+  // ── (b) Data-flow guard: real ride → history entry carries the BD-LIFE-06/07
+  // neutrals end-to-end. If anyone breaks the seed contract upstream the
+  // entry would start surfacing demo values to the renderer; this catches it.
+  reset(); clearRideOrdersStore();
+  user.set({
+    role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+    phone: '+77001234567', phoneVerified: true,
+    vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 123 БВ 77',
+    // intentionally no rating / no vehicleColor — exercise the BD-LIFE-06
+    // neutrals (rating '—', color 'цвет не указан')
+  });
+  const s15Order = createRideOrder({
+    type: 'ride_order', pickup:{id:'p1',label:'Пушкина 5'}, dropoff:{id:'p2',label:'Аэропорт'},
+    estimatedPrice: 1700, distanceKm: 12, durationMin: 22,
+    passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+  });
+  const s15Accepted = acceptCanonicalRideOrder(s15Order.id, { acceptedSource: 'driver_map' });
+  const s15Ride = s15Accepted?.ride;
+  // Simulate completion: BD-LIFE-08 only covers the history/receipt content,
+  // not the lifecycle-status transition, so just decorate the ride with the
+  // fields buildPassengerHistoryEntry needs and feed it through directly.
+  const s15CompletedRide = {
+    ...s15Ride,
+    timestamps: { ...(s15Ride?.timestamps || {}), completedAt: '2026-06-08T11:00:00Z' },
+    fare: 1700, distance: 12, duration: 22,
+  };
+  const s15Entry = buildPassengerHistoryEntry(s15CompletedRide, { rating: 5, tags: [], comment: '' });
+  expect('S15 history-entry: entry.driver.name reflects real driver from BD-LIFE-06 seed',
+    s15Entry?.driver?.name === 'Иван Драйвер', String(s15Entry?.driver?.name));
+  expect('S15 history-entry: entry.driver.name does NOT contain "Рустам"',
+    !String(s15Entry?.driver?.name || '').includes('Рустам'));
+  expect('S15 history-entry: entry.driver.initials reflects real initial "И"',
+    s15Entry?.driver?.initials === 'И', String(s15Entry?.driver?.initials));
+  expect('S15 history-entry: entry.driver.initials !== demo "РК"',
+    s15Entry?.driver?.initials !== 'РК', String(s15Entry?.driver?.initials));
+  expect('S15 history-entry: entry.driver.rating carries BD-LIFE-06 neutral "—"',
+    s15Entry?.driver?.rating === '—', String(s15Entry?.driver?.rating));
+  expect('S15 history-entry: entry.driver.rating !== demo "4,92"',
+    s15Entry?.driver?.rating !== '4,92', String(s15Entry?.driver?.rating));
+  expect('S15 history-entry: entry.vehicle.model reflects real profile vehicle',
+    s15Entry?.vehicle?.model === 'Toyota Camry', String(s15Entry?.vehicle?.model));
+  expect('S15 history-entry: entry.vehicle.color carries BD-LIFE-06 neutral "цвет не указан"',
+    s15Entry?.vehicle?.color === 'цвет не указан', String(s15Entry?.vehicle?.color));
+  expect('S15 history-entry: entry.vehicle.color !== demo "серый"',
+    s15Entry?.vehicle?.color !== 'серый', String(s15Entry?.vehicle?.color));
+  expect('S15 history-entry: entry.vehicle.plate carries BD-LIFE-06 masked plate',
+    s15Entry?.vehicle?.plate === 'А ••• БВ 77', String(s15Entry?.vehicle?.plate));
+  expect('S15 history-entry: entry.vehicle.plate !== demo "А 124 ВВ 77"',
+    s15Entry?.vehicle?.plate !== 'А 124 ВВ 77', String(s15Entry?.vehicle?.plate));
+
+  // ── Rendered car-line: emulate historyVehicleText against the entry's
+  // vehicle block and assert the produced string for the real completed ride
+  // contains the BD-LIFE-06 neutrals — not the demo strings the active-ride
+  // renderer also stopped falling back to in BD-LIFE-07.
+  const renderedVehicleLine = [
+    s15Entry?.vehicle?.model,
+    s15Entry?.vehicle?.color,
+    s15Entry?.vehicle?.plate,
+  ].filter(Boolean).map((v) => String(v).trim()).filter(Boolean).join(' · ');
+  expect('S15 rendered: history car-line shows real model · neutral color · masked plate',
+    renderedVehicleLine === 'Toyota Camry · цвет не указан · А ••• БВ 77',
+    renderedVehicleLine);
+  expect('S15 rendered: history car-line does NOT contain demo "серый"',
+    !renderedVehicleLine.includes('серый'), renderedVehicleLine);
+  expect('S15 rendered: history car-line does NOT contain demo plate "А 124 ВВ 77"',
+    !renderedVehicleLine.includes('А 124 ВВ 77'), renderedVehicleLine);
+
+  // ── BD-LIFE-05 safety still applies to the completed-ride history row:
+  // an unrelated passenger_response in the store must NOT rewrite the
+  // entry's pinned driver identity. The history snapshot was taken from
+  // ride.driver, which the orchestrator already refuses to overwrite for
+  // unpinned rides — re-assert here for the downstream guarantee.
+  writeResponseToStore(buildResponseFor(s15Order, { name: 'Анна Чужая', rating: 4.5 }));
+  const s15PostResponseRide = findActiveRide(`trip_${s15Order.id}`);
+  const s15PostResponseEntry = buildPassengerHistoryEntry(
+    { ...s15PostResponseRide, timestamps: { completedAt: '2026-06-08T11:00:00Z' }, fare: 1700, distance: 12, duration: 22 },
+    { rating: 5, tags: [], comment: '' },
+  );
+  expect('S15: BD-LIFE-05 still holds — unrelated response does not rewrite history driver',
+    s15PostResponseEntry?.driver?.name === 'Иван Драйвер',
+    String(s15PostResponseEntry?.driver?.name));
+  expect('S15: history entry driver did NOT become the unrelated responder "Анна Чужая"',
+    s15PostResponseEntry?.driver?.name !== 'Анна Чужая');
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
