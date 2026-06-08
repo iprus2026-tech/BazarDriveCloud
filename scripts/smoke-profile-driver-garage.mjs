@@ -2465,6 +2465,151 @@ user.set({
     patchFn('garage-abc', { model: 'X' }) === null);
 }
 
+// ── Scenario 72 — Codex P2 follow-up: whitespace-id round trip ────────────
+// `normalisePersistedVehicle` (in garage.js) trims `raw.id` before
+// rendering, so a raw stored id of ` real-1 ` is exposed on the edit
+// button as `real-1` and the sheet stamps `data-edit-vehicle-id="real-1"`.
+// Before this fix, patchGarageVehicle's strict findIndex compared
+// `v.id === vehicleId` (strict), so the raw slot ` real-1 ` would never
+// match the trimmed save id `real-1`, and the save would return null.
+//
+// After the fix:
+//   - patchGarageVehicle trims its own input id.
+//   - Strict match trims both sides.
+//   - Patched entry persists the TRIMMED id, so the next render hits
+//     the strict path on the cleaned id.
+//   - rawPatch.id and rawPatch.source are still ignored.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      // Whitespace on both sides of the id — the resolver trims to
+      // 'real-1' for render, the edit sheet stamps 'real-1'.
+      { id: ' real-1 ', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2',   model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  // 1) Render exposes the TRIMMED id on the edit button.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S72: render exposes #pf2-garage-edit-real-1 (id trimmed for render)',
+    slice.includes('id="pf2-garage-edit-real-1"'));
+  expect('S72: render does NOT expose the raw whitespace id',
+    !slice.includes('id="pf2-garage-edit- real-1 "'));
+  // 2) activeVehicleId resolves through trim — the active card is real-1.
+  expect('S72: real-1 (trimmed) is the active card',
+    slice.includes('id="pf2-garage-active-real-1"'));
+
+  // 3) Pre-save, the raw stored id still has whitespace.
+  const beforeRawId = user.get().driverGarage?.vehicles?.[0]?.id;
+  expect('S72: pre-save raw id still has whitespace',
+    beforeRawId === ' real-1 ', String(beforeRawId));
+
+  // 4) Click edit → sheet opens prefilled, stamped with the trimmed id.
+  const section = captureSection('#/profile');
+  const beforeStorage = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-edit-real-1')?.();
+  expect('S72: opening edit sheet does NOT mutate localStorage',
+    snapshotLocalStorage() === beforeStorage);
+  const sheet = section.querySelector('#pf2-garage-edit-sheet');
+  expect('S72: sheet stamps data-edit-vehicle-id with the trimmed id "real-1"',
+    sheet.dataset.editVehicleId === 'real-1', String(sheet.dataset.editVehicleId));
+
+  // 5) Save → patch reaches the slot via the trim-aware strict match.
+  setField(section, '#pf2-garage-edit-model', 'Toyota Prius 2019');
+  setField(section, '#pf2-garage-edit-color', 'белый');
+  setField(section, '#pf2-garage-edit-plate', 'А 123 ВС 77');
+  clickHandlers.get('#pf2-garage-edit-save')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S72: vehicles array still has exactly 2 entries after save',
+    Array.isArray(persisted) && persisted.length === 2,
+    String(persisted?.length));
+  const patched = persisted?.[0];
+  expect('S72: patched slot id is now TRIMMED to "real-1"',
+    patched?.id === 'real-1', String(patched?.id));
+  expect('S72: patched model trimmed',
+    patched?.model === 'Toyota Prius 2019', String(patched?.model));
+  expect('S72: patched color trimmed',
+    patched?.color === 'белый');
+  expect('S72: patched source preserved as "persisted"',
+    patched?.source === 'persisted');
+  // 6) real-2 byte-for-byte unchanged.
+  expect('S72: real-2 byte-for-byte preserved across the whitespace-id edit',
+    JSON.stringify(persisted?.[1]) === JSON.stringify({
+      id: 'real-2', model: 'Kia Sportage', color: 'серый', plate: 'В 456 КМ 77', source: 'persisted',
+    }));
+  // 7) Array order preserved.
+  expect('S72: array order preserved (real-1 still at index 0)',
+    persisted?.[0]?.id === 'real-1' && persisted?.[1]?.id === 'real-2');
+  // 8) activeVehicleId preserved.
+  expect('S72: activeVehicleId preserved (still real-1)',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+}
+
+// ── Scenario 73 — Whitespace-id direct API call: defensive coverage on
+// patchGarageVehicle showing rawPatch.id / rawPatch.source still ignored
+// even when the matched slot was reached via the trim-aware strict path. ──
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: ' real-1 ', model: 'X', color: 'c', plate: 'p', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { patchGarageVehicle: patchFn } = await import('../public/src/state.js');
+  // Pass a trimmed id (`real-1`) AND a hijack `rawPatch.id` AND
+  // `rawPatch.source: 'legacy'`. Patch must succeed; rawPatch.id and
+  // rawPatch.source must be ignored.
+  const r = patchFn('real-1', { model: 'Patched', id: 'hijacked', source: 'legacy' });
+  expect('S73: trim-aware strict path matches and returns the cleaned id',
+    r === 'real-1', String(r));
+  const v = user.get().driverGarage?.vehicles?.[0];
+  expect('S73: stored id is the trimmed "real-1" (NOT hijacked)',
+    v?.id === 'real-1', String(v?.id));
+  expect('S73: model patched',
+    v?.model === 'Patched');
+  expect('S73: source stayed "persisted" (rawPatch.source ignored)',
+    v?.source === 'persisted', String(v?.source));
+  // activeVehicleId stays null (the slot wasn't promoted).
+  expect('S73: activeVehicleId preserved at null',
+    user.get().driverGarage?.activeVehicleId === null);
+}
+
+// ── Scenario 74 — Whitespace incoming id is also normalised by patch. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'X', color: 'c', plate: 'p', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { patchGarageVehicle: patchFn } = await import('../public/src/state.js');
+  // Caller passes the id with stray whitespace — the helper trims it
+  // before matching.
+  const r = patchFn('   real-1   ', { model: 'New' });
+  expect('S74: whitespace incoming id is trimmed and matches',
+    r === 'real-1', String(r));
+  expect('S74: model patched',
+    user.get().driverGarage?.vehicles?.[0]?.model === 'New');
+  // Whitespace-only incoming id refused.
+  const r2 = patchFn('   ', { model: 'X' });
+  expect('S74: whitespace-only id returns null',
+    r2 === null);
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

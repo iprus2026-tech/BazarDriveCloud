@@ -461,7 +461,15 @@ export function appendGarageVehicle(rawVehicle, options = {}) {
 //
 // Output: the patched id on success, null on validation refusal.
 export function patchGarageVehicle(vehicleId, rawPatch) {
-  if (typeof vehicleId !== 'string' || vehicleId.length === 0) return null;
+  // Codex P2 follow-up (05H) — normalise the incoming id the same way the
+  // resolver does (`normalisePersistedVehicle` trims `raw.id` before
+  // rendering), so a raw stored id like ` real-1 ` (with whitespace) is
+  // exposed by the render as `real-1`, the edit sheet stamps `real-1`,
+  // and the strict lookup below can match the trimmed candidate without
+  // missing. The patched entry stores the trimmed `targetId` so the next
+  // render hits the strict path on the cleaned id.
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
   const model = (rawPatch && typeof rawPatch.model === 'string')
     ? rawPatch.model.trim() : '';
   if (!model) return null;
@@ -476,8 +484,15 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
     : { activeVehicleId: null, vehicles: [] };
   const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
 
-  // Strict match against the raw stored id.
-  let idx = vehicles.findIndex((v) => v && v.id === vehicleId);
+  // Strict match — trim both sides to mirror the resolver's
+  // normalisation. A raw slot stored as `{ id: ' real-1 ' }` resolves to
+  // `real-1` on render; saving with `vehicleId === 'real-1'` must land on
+  // that same slot.
+  let idx = vehicles.findIndex((v) => {
+    if (!v) return false;
+    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+    return rawId.length > 0 && rawId === targetId;
+  });
 
   // Codex P2 (05H) — synthesised-id fallback. The resolver
   // (`normalisePersistedVehicle` in `public/src/garage.js`) assigns
@@ -491,7 +506,7 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
   // patch to that slot. The save below persists the synthesised id onto
   // the slot's `.id`, so subsequent edits hit the strict path.
   if (idx < 0) {
-    const synth = /^garage-(\d+)$/.exec(vehicleId);
+    const synth = /^garage-(\d+)$/.exec(targetId);
     if (synth) {
       const rawIdx = parseInt(synth[1], 10) - 1;
       if (rawIdx >= 0 && rawIdx < vehicles.length) {
@@ -517,7 +532,7 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
 
   const patched = {
     ...prev,
-    id: vehicleId,
+    id: targetId,
     model,
     color,
     plate,
@@ -534,7 +549,7 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
 
   cache = normalize({ ...cache, driverGarage: nextDriverGarage });
   persist();
-  return vehicleId;
+  return targetId;
 }
 
 // Convenience helper for Profile → Documents tab.
