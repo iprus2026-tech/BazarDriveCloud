@@ -399,10 +399,22 @@ export default function activeRide() {
   mapWrap.appendChild(mapShell);
   root.appendChild(mapWrap);
 
+  // BD-LIFE-07 — Drop the '5ч 12м' demo fallback from the driver status
+  // pill. BD-LIFE-06 stops writing shiftDuration onto real accepted rides
+  // (the snapshot from buildAcceptedDriverSnapshot omits it entirely
+  // because profiles don't track shift duration), so a `|| '5ч 12м'`
+  // chain here would leak the demo seed onto every real DriverMap accept.
+  // Render the separator + time only when shiftDuration is actually
+  // present; legacy demo paths still carry the field on ride.driver from
+  // buildDemoRide() so they keep showing "На линии | 5ч 12м" unchanged.
+  const shiftDuration = ride.driver?.shiftDuration || '';
+  const shiftPillSuffix = shiftDuration
+    ? `<span class="active-ride__status-sep" aria-hidden="true">|</span><span class="active-ride__status-time">${escapeHtml(shiftDuration)}</span>`
+    : '';
   const top = document.createElement('div');
   top.className = 'active-ride__top';
   top.innerHTML = `
-    <div class="active-ride__status-row"><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-gear" aria-label="Настройки смены">⚙</button><div class="active-ride__status-pill" role="status" aria-live="polite"><span class="active-ride__status-dot" aria-hidden="true"></span><span class="active-ride__status-text">${escapeHtml(ride.driver?.onlineLabel || 'На линии')}</span><span class="active-ride__status-sep" aria-hidden="true">|</span><span class="active-ride__status-time">${escapeHtml(ride.driver?.shiftDuration || '5ч 12м')}</span></div><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-shield" aria-label="Безопасность">🛡</button></div>
+    <div class="active-ride__status-row"><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-gear" aria-label="Настройки смены">⚙</button><div class="active-ride__status-pill" role="status" aria-live="polite"><span class="active-ride__status-dot" aria-hidden="true"></span><span class="active-ride__status-text">${escapeHtml(ride.driver?.onlineLabel || 'На линии')}</span>${shiftPillSuffix}</div><button type="button" class="bd-iconbtn active-ride__icon-btn" id="ar-shield" aria-label="Безопасность">🛡</button></div>
     <div class="active-ride__stats" role="group" aria-label="Статистика смены"><div class="active-ride__stat"><div class="active-ride__stat-value">${escapeHtml(ride.ride?.todayEarnings || '0 ₽')}</div><div class="active-ride__stat-label">сегодня</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">${escapeHtml(String(ride.ride?.tripsToday ?? 0))}</div><div class="active-ride__stat-label">поездок</div></div><div class="active-ride__stat"><div class="active-ride__stat-value">★ ${escapeHtml(ride.ride?.rating || '—')}</div><div class="active-ride__stat-label">рейтинг</div></div></div>
     <div class="active-ride__map-banner" id="ar-map-banner" hidden><span class="active-ride__map-banner-dot" aria-hidden="true"></span><span class="active-ride__map-banner-text"></span></div>
   `;
