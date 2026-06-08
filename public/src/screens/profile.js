@@ -7,6 +7,7 @@ import {
   canShowReadyStatus,
   isDriverLineReady,
   appendGarageVehicle,
+  patchGarageVehicle,
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -2918,6 +2919,46 @@ function garageAddSheetHtml() {
       </div>`;
 }
 
+// BD-PROFILE-D-05H — Edit-vehicle sheet template. Mirrors the 05G add
+// sheet — same shell, same DOM-only invariants — but uses an `edit-`
+// hook namespace so the smoke can pin add and edit independently. The
+// sheet's `data-edit-vehicle-id` attribute is populated by the open
+// handler with the id of the card being edited; on save the handler
+// reads it back and hands it to `patchGarageVehicle`. There is no
+// "Сделать активной" toggle: per 05H scope, edit never changes the
+// active selection.
+function garageEditSheetHtml() {
+  return `
+      <div class="pf2-garage-add-sheet pf2-garage-edit-sheet" id="pf2-garage-edit-sheet" role="dialog" aria-modal="true" aria-labelledby="pf2-garage-edit-sheet-title" data-garage-edit-state="closed" hidden>
+        <div class="pf2-garage-add-sheet__backdrop" id="pf2-garage-edit-backdrop" data-garage-edit-action="close-backdrop"></div>
+        <div class="pf2-garage-add-sheet__panel">
+          <header class="pf2-garage-add-sheet__head">
+            <h3 class="pf2-garage-add-sheet__title" id="pf2-garage-edit-sheet-title">Редактировать авто</h3>
+            <button type="button" class="pf2-garage-add-sheet__close" id="pf2-garage-edit-close" data-garage-edit-action="close" aria-label="Закрыть">×</button>
+          </header>
+          <div class="pf2-garage-add-sheet__body">
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Модель *</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-model" name="edit-model" placeholder="Toyota Prius" autocomplete="off" required>
+            </label>
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Цвет</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-color" name="edit-color" placeholder="белый" autocomplete="off">
+            </label>
+            <label class="pf2-garage-add-sheet__field">
+              <span class="pf2-garage-add-sheet__label">Номер</span>
+              <input type="text" class="pf2-garage-add-sheet__input" id="pf2-garage-edit-plate" name="edit-plate" placeholder="А 123 ВС 77" autocomplete="off">
+            </label>
+            <p class="pf2-garage-add-sheet__error" id="pf2-garage-edit-error" data-garage-edit-state="idle" hidden>Укажите модель, чтобы сохранить авто.</p>
+          </div>
+          <div class="pf2-garage-add-sheet__actions">
+            <button type="button" class="pf2-garage-add-sheet__cancel" id="pf2-garage-edit-cancel" data-garage-edit-action="cancel" data-garage-action="edit-cancel" data-garage-state="edit-cancel-local">Отмена</button>
+            <button type="button" class="pf2-garage-add-sheet__save bd-btn primary" id="pf2-garage-edit-save" data-garage-edit-action="save" data-garage-action="edit-save" data-garage-state="edit-save-local">Сохранить</button>
+          </div>
+        </div>
+      </div>`;
+}
+
 function garageSectionHtml(u, options = {}) {
   const vehicles = Array.isArray(options.vehicles)
     ? options.vehicles
@@ -2934,7 +2975,7 @@ function garageSectionHtml(u, options = {}) {
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
           <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
-        </div>${garageAddSheetHtml()}
+        </div>${garageAddSheetHtml()}${garageEditSheetHtml()}
       </section>`;
   }
 
@@ -2945,7 +2986,7 @@ function garageSectionHtml(u, options = {}) {
       <header class="pf2-garage__head">
         <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready" aria-label="Добавить авто">+ Добавить</button>
-      </header>${cardsHtml}${garageAddSheetHtml()}
+      </header>${cardsHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
     </section>`;
 }
 
@@ -3071,12 +3112,103 @@ function wireGarageActions(root, vehicles = []) {
     refreshGarageSection(root);
   });
 
+  // BD-PROFILE-D-05H — Edit-vehicle sheet wiring. The sheet shell is
+  // always rendered inside the garage section (hidden by default); the
+  // per-vehicle edit button (handled below in the per-vehicle loop)
+  // calls `openEditSheet(vehicle)` which prefills the draft from the
+  // selected card and stamps `data-edit-vehicle-id` so the save handler
+  // knows which entry to patch. The handlers themselves stay STRICTLY
+  // local: typing / cancel / × / backdrop never touch storage; only the
+  // save click — and only after a non-empty trimmed model — invokes
+  // `patchGarageVehicle` from state.js, then closes the sheet and
+  // re-renders the garage section so the updated card appears
+  // immediately. `activeVehicleId` is preserved by `patchGarageVehicle`
+  // regardless of which vehicle was edited.
+  const editSheet = root.querySelector('#pf2-garage-edit-sheet');
+  const resetEditDraft = () => {
+    for (const sel of ['#pf2-garage-edit-model', '#pf2-garage-edit-color', '#pf2-garage-edit-plate']) {
+      const el = root.querySelector(sel);
+      if (el) el.value = '';
+    }
+    const errEl = root.querySelector('#pf2-garage-edit-error');
+    if (errEl) {
+      errEl.hidden = true;
+      errEl.dataset.garageEditState = 'idle';
+    }
+  };
+  const openEditSheet = (vehicle) => {
+    if (!editSheet || !vehicle || typeof vehicle.id !== 'string') return;
+    resetEditDraft();
+    const modelEl = root.querySelector('#pf2-garage-edit-model');
+    if (modelEl) modelEl.value = (typeof vehicle.model === 'string') ? vehicle.model : '';
+    const colorEl = root.querySelector('#pf2-garage-edit-color');
+    if (colorEl) colorEl.value = (typeof vehicle.color === 'string') ? vehicle.color : '';
+    const plateEl = root.querySelector('#pf2-garage-edit-plate');
+    if (plateEl) plateEl.value = (typeof vehicle.plate === 'string') ? vehicle.plate : '';
+    editSheet.dataset.editVehicleId = vehicle.id;
+    editSheet.hidden = false;
+    editSheet.dataset.garageEditState = 'open';
+  };
+  const closeEditSheet = () => {
+    if (!editSheet) return;
+    resetEditDraft();
+    delete editSheet.dataset.editVehicleId;
+    editSheet.hidden = true;
+    editSheet.dataset.garageEditState = 'closed';
+  };
+  for (const sel of ['#pf2-garage-edit-cancel', '#pf2-garage-edit-close', '#pf2-garage-edit-backdrop']) {
+    const el = root.querySelector(sel);
+    el?.addEventListener('click', closeEditSheet);
+  }
+  const editSaveBtn = root.querySelector('#pf2-garage-edit-save');
+  editSaveBtn?.addEventListener('click', () => {
+    if (!editSheet) return;
+    const vehicleId = editSheet.dataset.editVehicleId;
+    const modelEl = root.querySelector('#pf2-garage-edit-model');
+    const colorEl = root.querySelector('#pf2-garage-edit-color');
+    const plateEl = root.querySelector('#pf2-garage-edit-plate');
+    const errEl   = root.querySelector('#pf2-garage-edit-error');
+    const draft = {
+      model: modelEl?.value || '',
+      color: colorEl?.value || '',
+      plate: plateEl?.value || '',
+    };
+    const trimmedModel = typeof draft.model === 'string' ? draft.model.trim() : '';
+    if (!trimmedModel) {
+      if (errEl) {
+        errEl.hidden = false;
+        errEl.dataset.garageEditState = 'invalid';
+      }
+      return;
+    }
+    const id = patchGarageVehicle(vehicleId, draft);
+    if (!id) {
+      if (errEl) {
+        errEl.hidden = false;
+        errEl.dataset.garageEditState = 'invalid';
+      }
+      return;
+    }
+    closeEditSheet();
+    refreshGarageSection(root);
+  });
+
   for (const vehicle of vehicles) {
     const id = vehicle && vehicle.id;
     if (!id) continue;
 
+    // BD-PROFILE-D-05H — Edit button opens the persisted-vehicle edit
+    // sheet pre-filled from this card. Legacy-fallback cards
+    // (source === 'legacy') keep the local-feedback flash because
+    // editing them would write a fabricated entry into the persisted
+    // collection — that's an explicit 05H out-of-scope ("do not
+    // auto-migrate legacy vehicle fields into driverGarage.vehicles").
     const editBtn = root.querySelector(`#pf2-garage-edit-${id}`);
-    editBtn?.addEventListener('click', () => flash(editBtn, 'Доступно в следующем шаге'));
+    if (vehicle.source === 'legacy') {
+      editBtn?.addEventListener('click', () => flash(editBtn, 'Доступно в следующем шаге'));
+    } else {
+      editBtn?.addEventListener('click', () => openEditSheet(vehicle));
+    }
 
     // make-active-local — non-active card only. The active card renders
     // a span (no listener attached) so this querySelector returns null

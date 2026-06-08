@@ -428,6 +428,130 @@ export function appendGarageVehicle(rawVehicle, options = {}) {
   return id;
 }
 
+// BD-PROFILE-D-05H — Patch a single existing vehicle in the persisted
+// garage collection. Single safe write path for the Driver Profile
+// garage's "Редактировать авто" sheet — every other render/wire path
+// stays strictly read-only against `driverGarage.vehicles`.
+//
+// Inputs are trimmed and gated the same way as `appendGarageVehicle`:
+//   - `vehicleId` MUST be a non-empty string. A missing or unknown id
+//     refuses to persist and returns null — the caller's sheet should
+//     fail gracefully (the per-vehicle wiring already gates against
+//     legacy-source cards, so this is a defensive belt).
+//   - `rawPatch.model` is REQUIRED (after trim). A blank model refuses
+//     to persist and returns null.
+//   - `rawPatch.color` / `rawPatch.plate` are optional and trimmed.
+//
+// Field-write contract:
+//   - `id` is PRESERVED from the existing record and is never copied
+//     from `rawPatch` (caller cannot rename a vehicle via edit).
+//   - `source` is PRESERVED when the existing value is in the resolver's
+//     known whitelist (`persisted`/`legacy`/`mock`); otherwise it is
+//     normalised to `'persisted'`. Never copied from `rawPatch` — the
+//     caller cannot promote a vehicle to `'legacy'` semantics via edit.
+//   - Unknown / future fields on the existing record are PRESERVED via
+//     `...prev` spread before the canonical fields land.
+//   - `activeVehicleId` is PRESERVED verbatim — edit never changes the
+//     active selection (that stays owned by 05D's make-active handler
+//     and 05G's `appendGarageVehicle({ makeActive: true })`).
+//   - The vehicles array order is preserved: the patched entry replaces
+//     the existing slot at the same index.
+//   - Other vehicles in the array are preserved by reference-and-spread
+//     in `[...vehicles]` and indexed assignment.
+//
+// Output: the patched id on success, null on validation refusal.
+export function patchGarageVehicle(vehicleId, rawPatch) {
+  // Codex P2 follow-up (05H) — normalise the incoming id the same way the
+  // resolver does (`normalisePersistedVehicle` trims `raw.id` before
+  // rendering), so a raw stored id like ` real-1 ` (with whitespace) is
+  // exposed by the render as `real-1`, the edit sheet stamps `real-1`,
+  // and the strict lookup below can match the trimmed candidate without
+  // missing. The patched entry stores the trimmed `targetId` so the next
+  // render hits the strict path on the cleaned id.
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
+  const model = (rawPatch && typeof rawPatch.model === 'string')
+    ? rawPatch.model.trim() : '';
+  if (!model) return null;
+  const color = (rawPatch && typeof rawPatch.color === 'string')
+    ? rawPatch.color.trim() : '';
+  const plate = (rawPatch && typeof rawPatch.plate === 'string')
+    ? rawPatch.plate.trim() : '';
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  // Strict match — trim both sides to mirror the resolver's
+  // normalisation. A raw slot stored as `{ id: ' real-1 ' }` resolves to
+  // `real-1` on render; saving with `vehicleId === 'real-1'` must land on
+  // that same slot.
+  let idx = vehicles.findIndex((v) => {
+    if (!v) return false;
+    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+    return rawId.length > 0 && rawId === targetId;
+  });
+
+  // Codex P2 (05H) — synthesised-id fallback. The resolver
+  // (`normalisePersistedVehicle` in `public/src/garage.js`) assigns
+  // `garage-${rawIndex + 1}` to persisted entries that landed without a
+  // usable string id; the render then exposes that synthesised id on the
+  // edit button and the sheet's `data-edit-vehicle-id`. Without this
+  // branch, saving the edit would call `patchGarageVehicle('garage-1', …)`
+  // and the strict match above would miss the raw slot (whose `.id` is
+  // missing/blank), refusing the write. Here we parse the synthesised id,
+  // verify the targeted raw slot is genuinely id-less, and route the
+  // patch to that slot. The save below persists the synthesised id onto
+  // the slot's `.id`, so subsequent edits hit the strict path.
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(targetId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
+  if (idx < 0) return null;
+
+  const prev = vehicles[idx] || {};
+  // Source is preserved when the existing value is recognised by the
+  // resolver; otherwise normalised to 'persisted'. NEVER copied from
+  // `rawPatch` — the resolver fallback chain treats 'legacy' specially
+  // and only the legacy-bridge codepath should produce a 'legacy' entry.
+  const KNOWN_SOURCES = new Set(['persisted', 'legacy', 'mock']);
+  const source = (typeof prev.source === 'string' && KNOWN_SOURCES.has(prev.source))
+    ? prev.source
+    : 'persisted';
+
+  const patched = {
+    ...prev,
+    id: targetId,
+    model,
+    color,
+    plate,
+    source,
+  };
+
+  const nextVehicles = [...vehicles];
+  nextVehicles[idx] = patched;
+
+  const nextDriverGarage = {
+    activeVehicleId: dg.activeVehicleId,
+    vehicles: nextVehicles,
+  };
+
+  cache = normalize({ ...cache, driverGarage: nextDriverGarage });
+  persist();
+  return targetId;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't
