@@ -13145,3 +13145,119 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__empty-title { font-size: 14px; font-weight: 600; margin: 0; }
 .pf2-garage__empty-text  { font-size: 13px; color: var(--text-2); margin: 0; text-align: center; }
 .pf2-garage__cta { margin-top: 8px; }
+
+/* BD-PROFILE-D-05G — Add-vehicle sheet. Bottom-sheet style on small
+   screens; centered modal on wider viewports. Rendered hidden by
+   default; opening flips the `hidden` attribute. The backdrop catches
+   click-outside as an alternate close path. */
+.pf2-garage-add-sheet[hidden] { display: none; }
+.pf2-garage-add-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.pf2-garage-add-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+.pf2-garage-add-sheet__panel {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-1);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.pf2-garage-add-sheet__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.pf2-garage-add-sheet__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.pf2-garage-add-sheet__close {
+  background: transparent;
+  border: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.pf2-garage-add-sheet__close:hover { background: var(--bg-3); }
+.pf2-garage-add-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pf2-garage-add-sheet__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf2-garage-add-sheet__label {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pf2-garage-add-sheet__input {
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.pf2-garage-add-sheet__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pf2-garage-add-sheet__active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-1);
+  margin-top: 2px;
+  cursor: pointer;
+}
+.pf2-garage-add-sheet__error {
+  font-size: 13px;
+  color: var(--danger, #d93b3b);
+  margin: 0;
+}
+.pf2-garage-add-sheet__error[data-garage-add-state="idle"] { display: none; }
+.pf2-garage-add-sheet__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.pf2-garage-add-sheet__cancel {
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.pf2-garage-add-sheet__cancel:hover { background: var(--bg-3); }
+.pf2-garage-add-sheet__save {
+  min-width: 120px;
+}

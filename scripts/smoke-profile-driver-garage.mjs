@@ -66,12 +66,23 @@ globalThis.sessionStorage = {
 // produced the element. The smoke can then look up a handler by id and
 // invoke it directly, then assert localStorage / active-ride snapshots are
 // byte-equal. Pattern mirrors smoke-profile-role-isolation.mjs.
+//
+// BD-PROFILE-D-05G — querySelector now memoises results by selector so
+// a smoke scenario can:
+//   1) capture an input element via `section.querySelector('#x')`,
+//   2) set `.value` / `.checked` on it, and
+//   3) trigger a handler that re-queries the same selector and reads
+//      the value back.
+// In production each querySelector call hits the real DOM and returns
+// the same node; the stub now mirrors that semantics within a single
+// element so the add-sheet draft fields behave deterministically.
 const clickHandlers = new Map();
 
 function makeEl(selectorHint) {
-  return {
+  const el = {
     _html: '',
     _selector: selectorHint || null,
+    _cache: null,
     className: '', textContent: '', value: '', checked: false,
     hidden: false, disabled: false,
     dataset: {},
@@ -86,7 +97,11 @@ function makeEl(selectorHint) {
       }
     },
     removeEventListener() {},
-    querySelector(sel) { return makeEl(sel); },
+    querySelector(sel) {
+      if (!this._cache) this._cache = new Map();
+      if (!this._cache.has(sel)) this._cache.set(sel, makeEl(sel));
+      return this._cache.get(sel);
+    },
     querySelectorAll() { return []; },
     closest() { return null; },
     contains() { return false; },
@@ -95,6 +110,7 @@ function makeEl(selectorHint) {
     scrollIntoView() {}, focus() {}, blur() {},
     click() {},
   };
+  return el;
 }
 
 let currentHash = '';
@@ -1433,6 +1449,472 @@ user.set({
     before === after);
   expect('S38: passenger driverGarage.vehicles preserved byte-for-byte',
     user.get().driverGarage?.vehicles?.[0]?.id === 'real-2');
+}
+
+// ── BD-PROFILE-D-05G — Add-vehicle sheet / local draft only ────────────────
+// The "Добавить авто" CTA now opens a draft sheet. Typing, canceling,
+// and closing the sheet must never write to storage; only the explicit
+// save path (with a non-empty trimmed `model`) calls
+// `appendGarageVehicle` and grows `profile.driverGarage.vehicles` by
+// exactly one record with `source: 'persisted'`.
+
+// Helper: render and return the section element directly so the sheet
+// fields can be read/written via the cached querySelector stub.
+function captureSection(hash) {
+  currentHash = hash || '#/profile';
+  return profile();
+}
+
+function setField(section, id, value) {
+  const el = section.querySelector(id);
+  el.value = value;
+  return el;
+}
+
+function setChecked(section, id, checked) {
+  const el = section.querySelector(id);
+  el.checked = checked;
+  return el;
+}
+
+// ── Scenario 39 — Sheet markup is rendered with the right hooks. ──────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  const html = renderProfile('#/profile');
+  const slice = garageSlice(html);
+  expect('S39: sheet container #pf2-garage-add-sheet rendered in garage section',
+    slice.includes('id="pf2-garage-add-sheet"'));
+  expect('S39: sheet starts with data-garage-add-state="closed"',
+    slice.includes('data-garage-add-state="closed"'));
+  expect('S39: sheet is hidden by default',
+    /id="pf2-garage-add-sheet"[^>]*\bhidden\b/.test(slice));
+  expect('S39: sheet model input #pf2-garage-add-model rendered',
+    slice.includes('id="pf2-garage-add-model"'));
+  expect('S39: sheet color input #pf2-garage-add-color rendered',
+    slice.includes('id="pf2-garage-add-color"'));
+  expect('S39: sheet plate input #pf2-garage-add-plate rendered',
+    slice.includes('id="pf2-garage-add-plate"'));
+  expect('S39: sheet make-active toggle #pf2-garage-add-make-active rendered',
+    slice.includes('id="pf2-garage-add-make-active"'));
+  expect('S39: sheet save button carries data-garage-state="add-save-local"',
+    slice.includes('data-garage-state="add-save-local"'));
+  expect('S39: sheet cancel button carries data-garage-state="add-cancel-local"',
+    slice.includes('data-garage-state="add-cancel-local"'));
+  expect('S39: sheet error paragraph starts in data-garage-add-state="idle"',
+    /id="pf2-garage-add-error"[^>]*data-garage-add-state="idle"/.test(slice));
+}
+
+// ── Scenario 40 — Opening the sheet does NOT mutate localStorage. ─────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-add')?.();
+  const after = snapshotLocalStorage();
+  expect('S40: opening the sheet does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+}
+
+// ── Scenario 41 — Typing the draft fields does NOT mutate storage or the
+// persisted vehicles array. ─────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  const before = snapshotLocalStorage();
+  const beforeVehicles = JSON.stringify(user.get().driverGarage?.vehicles);
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  setField(section, '#pf2-garage-add-color', 'серый');
+  setField(section, '#pf2-garage-add-plate', 'А 999 ВС 77');
+  setChecked(section, '#pf2-garage-add-make-active', true);
+  const after = snapshotLocalStorage();
+  const afterVehicles = JSON.stringify(user.get().driverGarage?.vehicles);
+  expect('S41: typing into draft fields does NOT mutate localStorage',
+    before === after);
+  expect('S41: typing does NOT touch driverGarage.vehicles',
+    beforeVehicles === afterVehicles);
+  expect('S41: typing does NOT touch driverGarage.activeVehicleId',
+    user.get().driverGarage?.activeVehicleId === null);
+}
+
+// ── Scenario 42 — Cancel resets draft and hides sheet without writing. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  setField(section, '#pf2-garage-add-color', 'серый');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-add-cancel')?.();
+  const after = snapshotLocalStorage();
+  expect('S42: cancel does NOT mutate localStorage',
+    before === after);
+  // Draft is wiped + sheet hidden via the cached elements.
+  const modelEl = section.querySelector('#pf2-garage-add-model');
+  expect('S42: cancel cleared the model draft field',
+    modelEl.value === '', String(modelEl.value));
+  const sheet = section.querySelector('#pf2-garage-add-sheet');
+  expect('S42: cancel hid the sheet',
+    sheet.hidden === true && sheet.dataset.garageAddState === 'closed');
+  // Close (×) and backdrop are wired to the same close path.
+  expect('S42: header × close button captured',
+    typeof clickHandlers.get('#pf2-garage-add-close') === 'function');
+  expect('S42: backdrop close handler captured',
+    typeof clickHandlers.get('#pf2-garage-add-backdrop') === 'function');
+}
+
+// ── Scenario 43 — Blank model save is blocked: error surfaces, vehicles
+// stay empty, sheet does NOT close. ────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  // Leave model empty; set color to something so we know it was ignored.
+  setField(section, '#pf2-garage-add-color', 'серый');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const after = snapshotLocalStorage();
+  expect('S43: blank-model save does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  expect('S43: blank-model save does NOT append to driverGarage.vehicles',
+    user.get().driverGarage?.vehicles?.length === 0);
+  const errEl = section.querySelector('#pf2-garage-add-error');
+  expect('S43: blank-model save flips error to data-garage-add-state="invalid"',
+    errEl.dataset.garageAddState === 'invalid');
+  expect('S43: error paragraph becomes visible',
+    errEl.hidden === false);
+  // Sheet stays open so the driver can finish the form.
+  const sheet = section.querySelector('#pf2-garage-add-sheet');
+  expect('S43: sheet remains open after a blocked save',
+    sheet.hidden === false && sheet.dataset.garageAddState === 'open');
+}
+
+// ── Scenario 44 — Whitespace-only model is also blocked. ──────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', '   ');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const after = snapshotLocalStorage();
+  expect('S44: whitespace-only model is rejected (no write)',
+    before === after);
+  expect('S44: whitespace-only model does NOT append to vehicles',
+    user.get().driverGarage?.vehicles?.length === 0);
+}
+
+// ── Scenario 45 — Valid save appends exactly one persisted vehicle to the
+// driverGarage.vehicles array with source: 'persisted' and a fresh id. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', '  Kia Sportage  ');
+  setField(section, '#pf2-garage-add-color', '  серый  ');
+  setField(section, '#pf2-garage-add-plate', '  А 999 ВС 77  ');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S45: persisted vehicles array length is now 1 after save',
+    Array.isArray(persisted) && persisted.length === 1);
+  const v = persisted[0];
+  expect('S45: appended vehicle model is trimmed',
+    v?.model === 'Kia Sportage', String(v?.model));
+  expect('S45: appended vehicle color is trimmed',
+    v?.color === 'серый', String(v?.color));
+  expect('S45: appended vehicle plate is trimmed',
+    v?.plate === 'А 999 ВС 77', String(v?.plate));
+  expect('S45: appended vehicle source is the controlled "persisted" value',
+    v?.source === 'persisted', String(v?.source));
+  expect('S45: appended vehicle id starts with the "vehicle-" prefix',
+    typeof v?.id === 'string' && v.id.startsWith('vehicle-'), String(v?.id));
+  // activeVehicleId stays at its pre-save value (no makeActive on this save).
+  expect('S45: activeVehicleId preserved by default save (no makeActive)',
+    user.get().driverGarage?.activeVehicleId === null);
+  // Legacy fields untouched.
+  expect('S45: legacy vehicleMake preserved across save',
+    user.get().vehicleMake === 'Hyundai');
+  expect('S45: legacy vehiclePlate preserved across save',
+    user.get().vehiclePlate === 'А 482 МР 77');
+}
+
+// ── Scenario 46 — Post-save render reflects the persisted collection.
+// Per 05F semantics, once `driverGarage.vehicles` is non-empty it
+// becomes the source of truth and the legacy fallback no longer fires —
+// the new Kia Sportage card is the only card on the section. The
+// legacy Hyundai Solaris model line falls out of the slice. ──────────────
+{
+  const section = captureSection('#/profile');
+  expect('S46: section advertises data-garage-collection-size="1" (persisted-only)',
+    section._html.includes('data-garage-collection-size="1"'));
+  expect('S46: post-save render shows the newly persisted Kia Sportage card',
+    section._html.includes('Kia Sportage'));
+  // 05F contract: persisted overrides legacy; the legacy "Hyundai
+  // Solaris" line no longer renders in the garage section.
+  const slice = garageSlice(section._html);
+  expect('S46: legacy "Hyundai Solaris" model NOT in the garage slice once persisted is non-empty',
+    !slice.includes('Hyundai Solaris'));
+}
+
+// ── Scenario 47 — Saving with the make-active toggle on patches
+// activeVehicleId to the new id. ──────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  setChecked(section, '#pf2-garage-add-make-active', true);
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const newId = user.get().driverGarage?.vehicles?.[0]?.id;
+  expect('S47: new vehicle persisted',
+    typeof newId === 'string' && newId.length > 0);
+  expect('S47: activeVehicleId is now the new id (make-active honoured)',
+    user.get().driverGarage?.activeVehicleId === newId,
+    String(user.get().driverGarage?.activeVehicleId));
+}
+
+// ── Scenario 48 — Sequential saves grow the array; ids stay unique. ───────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section1 = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section1, '#pf2-garage-add-model', 'Kia Sportage');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+
+  const section2 = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section2, '#pf2-garage-add-model', 'Skoda Octavia');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S48: after two saves, vehicles array has length 2',
+    Array.isArray(persisted) && persisted.length === 2,
+    String(persisted?.length));
+  expect('S48: vehicle 1 model is Kia Sportage',
+    persisted?.[0]?.model === 'Kia Sportage');
+  expect('S48: vehicle 2 model is Skoda Octavia',
+    persisted?.[1]?.model === 'Skoda Octavia');
+  expect('S48: vehicle ids are unique',
+    persisted?.[0]?.id && persisted?.[1]?.id && persisted[0].id !== persisted[1].id,
+    `${persisted?.[0]?.id} vs ${persisted?.[1]?.id}`);
+}
+
+// ── Scenario 49 — ID collision: a saved vehicle is appended with a fresh
+// id even when the same id pattern is already present (defensive against
+// pre-existing seeds). ────────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+  // Pre-seed an existing entry whose id collides with the naive
+  // length-based generation. The generator must skip past it.
+  driverGarage: {
+    activeVehicleId: 'pre-1',
+    vehicles: [
+      { id: 'vehicle-1', model: 'Pre-Existing', source: 'persisted' },
+    ],
+  },
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S49: pre-existing vehicle preserved at index 0',
+    persisted?.[0]?.model === 'Pre-Existing');
+  expect('S49: new id is NOT the colliding "vehicle-1"',
+    persisted?.[1]?.id !== 'vehicle-1', String(persisted?.[1]?.id));
+  // Both ids unique.
+  expect('S49: both ids unique after collision avoidance',
+    persisted?.[0]?.id !== persisted?.[1]?.id);
+}
+
+// ── Scenario 50 — Save does NOT touch cross-surface storage keys. ─────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const FORBIDDEN_KEYS = [
+    'bazardrive.responses.v1',
+    'bazardrive.active_ride.v1',
+    'bazardrive.ride_history.v1',
+    'bazardrive.driver_receipts.v1',
+    'bazardrive.respond.v1',
+  ];
+  for (const k of FORBIDDEN_KEYS) {
+    expect(`S50: ${k} not written by add-vehicle save`,
+      !local.has(k), String(local.get(k)));
+  }
+  // Only the user.v1 record drifted.
+  const present = [];
+  for (const k of local.keys()) present.push(k);
+  expect('S50: only bazardrive.user.v1 was written by the save',
+    present.length === 1 && present[0] === 'bazardrive.user.v1',
+    present.join(','));
+}
+
+// ── Scenario 51 — Preserving existing persisted vehicles across save. ────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const beforeFirst = JSON.stringify(user.get().driverGarage.vehicles[0]);
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-add')?.();
+  setField(section, '#pf2-garage-add-model', 'Kia Sportage');
+  clickHandlers.get('#pf2-garage-add-save')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S51: existing real-2 vehicle survived byte-for-byte at index 0',
+    JSON.stringify(persisted?.[0]) === beforeFirst);
+  expect('S51: vehicles array length is 2 after one save',
+    persisted?.length === 2);
+  expect('S51: activeVehicleId preserved (no makeActive on this save)',
+    user.get().driverGarage?.activeVehicleId === 'real-2');
+}
+
+// ── Scenario 52 — Passenger profile does NOT render the sheet. ────────────
+reset();
+user.set({
+  onboarded: true, role: 'passenger',
+  firstName: 'Алия', lastName: 'К.',
+  phone: '9007654321', phoneVerified: true,
+});
+{
+  const html = renderProfile('#/profile');
+  expect('S52: passenger profile does NOT include the add-vehicle sheet',
+    !html.includes('id="pf2-garage-add-sheet"'));
+  expect('S52: passenger profile does NOT include the save button',
+    !html.includes('id="pf2-garage-add-save"'));
+}
+
+// ── Scenario 53 — Static source guard: appendGarageVehicle exported from
+// state.js sets source: 'persisted' (controlled) and never copies an
+// incoming `source` from arbitrary user input. ─────────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const stateSrc = readFileSync(join(projectRoot, 'public/src/state.js'), 'utf8');
+
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const body = sliceFn(stateSrc, 'export function appendGarageVehicle(');
+  expect('S53: appendGarageVehicle body extracted from state.js',
+    body.length > 0, String(body.length));
+  // Positive: persisted source is hard-coded.
+  expect('S53: appendGarageVehicle hard-codes source: "persisted"',
+    /source\s*:\s*['"]persisted['"]/.test(body));
+  // Positive: a non-empty trimmed model is the gate.
+  expect('S53: appendGarageVehicle gates on a trimmed model',
+    /\.model\.trim\s*\(\s*\)/.test(body));
+  // Forbidden cross-surface writes inside the helper.
+  const FORBIDDEN = [
+    { name: 'saveActiveRide', regex: /\bsaveActiveRide\s*\(/ },
+    { name: 'saveRideHistoryEntry', regex: /\bsaveRideHistoryEntry\s*\(/ },
+    { name: 'createRideOrder', regex: /\bcreateRideOrder\s*\(/ },
+    { name: 'acceptCanonicalRideOrder', regex: /\bacceptCanonicalRideOrder\s*\(/ },
+    { name: '"bazardrive.responses.v1"', regex: /bazardrive\.responses\.v1/ },
+    { name: '"bazardrive.active_ride.v1"', regex: /bazardrive\.active_ride\.v1/ },
+    { name: '"bazardrive.ride_history.v1"', regex: /bazardrive\.ride_history\.v1/ },
+    { name: '"bazardrive.driver_receipts.v1"', regex: /bazardrive\.driver_receipts\.v1/ },
+    { name: '"bazardrive.respond.v1"', regex: /bazardrive\.respond\.v1/ },
+  ];
+  for (const { name, regex } of FORBIDDEN) {
+    expect(`S53: appendGarageVehicle does NOT touch ${name}`, !regex.test(body));
+  }
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
