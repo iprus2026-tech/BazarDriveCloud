@@ -86,6 +86,14 @@ function buildDefaults() {
     // localStorage. Set to true by the mock "Получить код" / "Подтвердить
     // телефон" handlers (no real SMS provider is wired).
     phoneVerified: false,
+    // v10 — BD-PROFILE-D-05D Driver Garage active vehicle selection.
+    // Profile-local namespace: only the garage section reads or writes
+    // this. activeVehicleId persists the driver's last "Сделать активной"
+    // choice; resolver in profile.js falls back to the legacy/first
+    // available vehicle when null or stale. Not consumed by driver
+    // response snapshot (that's 05E), nor by active ride / lifecycle /
+    // history / receipts.
+    driverGarage: { activeVehicleId: null },
   };
 }
 
