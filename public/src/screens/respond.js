@@ -2,6 +2,7 @@ import { user } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listFeedPosts } from '../mock_api.js';
+import { resolveActiveGarageVehicle } from '../garage.js';
 
 const RESPOND_KEY    = 'bazardrive.respond.v1';
 const RESPONSES_KEY  = 'bazardrive.responses.v1';
@@ -52,13 +53,23 @@ function getDefaultMessage(vehicle) {
   return `Здравствуйте! Готов забрать к указанному времени, авто ${vehicle.name}, есть место для чемодана.`;
 }
 
-function getUserVehicle(u) {
-  if (!u.vehicleMake || !u.vehicleModel || !u.vehiclePlate) return null;
+// BD-PROFILE-D-05E — Read the active garage vehicle via the shared
+// resolver so the response snapshot reflects whatever the driver
+// selected on /profile (driverGarage.activeVehicleId). Strictly
+// read-only: no localStorage writes, no driverGarage mutation, no
+// lifecycle change. The legacy `vehicleMake/Model/Plate` guard is
+// preserved so partially-onboarded drivers still bail to the demo
+// fallback path — the only change is the source of the populated
+// fields.
+export function getUserVehicle(u) {
+  if (!u || !u.vehicleMake || !u.vehicleModel || !u.vehiclePlate) return null;
+  const active = resolveActiveGarageVehicle(u);
+  if (!active) return null;
   return {
     id:       'user_vehicle',
-    name:     `${u.vehicleMake} ${u.vehicleModel}`,
-    plate:    u.vehiclePlate,
-    color:    u.vehicleColor || 'Цвет не указан',
+    name:     active.model,
+    plate:    active.plate,
+    color:    active.color || 'Цвет не указан',
     seats:    4,
     features: 'кондиционер',
   };
