@@ -220,6 +220,19 @@ if (exists(profileRoleIsolationSmoke)) {
   }
 }
 
+// BD-PROFILE-D-05A — Driver Garage section: derives a single-vehicle card
+// from the legacy fields on the user record; driver-only; ?garage=empty is
+// a render-gate preview that forces the empty state without wiping data.
+const profileDriverGarageSmoke = path.join(root, 'scripts', 'smoke-profile-driver-garage.mjs');
+if (exists(profileDriverGarageSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileDriverGarageSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-driver-garage.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-ORDER-02 — passenger/driver order lifecycle smoke: order creation,
 // driver response, accept, handoff invariants, role-aware history filter.
 // Locks down the "same user, different jacket" bug class: order.passenger

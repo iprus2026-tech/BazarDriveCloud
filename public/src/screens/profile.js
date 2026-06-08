@@ -2786,6 +2786,104 @@ function payoutsPaneHtml(previewEmpty = false) {
     </div>`;
 }
 
+// BD-PROFILE-D-05A — Driver Garage section. Derives a single-vehicle card
+// from the legacy vehicle fields already living on the user record
+// (vehicleMake / vehicleModel / vehicleColor / vehiclePlate; state.js:50-54)
+// without forcing a data migration. Driver-only — renderPassenger never
+// calls this helper. When the profile has no vehicle yet, an empty state
+// invites the driver to add one. `?garage=empty` is a render-gate preview
+// affordance that forces the empty state without wiping persisted data,
+// mirroring the existing `?state=empty` payouts preview.
+function garageSectionHtml(u, options = {}) {
+  const force = typeof options.force === 'string' ? options.force : '';
+  const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
+  const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
+  const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
+  const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
+  // Codex P2 — `vehiclePlate` is recorded on its own step in onboarding, so a
+  // partially-typed profile can carry a plate (and/or color) before any
+  // model is filled. The active garage card would have rendered an empty
+  // model line with a stranded "Активное" badge in that state. Gate the
+  // populated card on a usable model line — plate-only / color-only
+  // profiles slip to the empty state and the "Добавить авто" CTA prompts
+  // the driver to finish data entry instead of showing an unfinished card.
+  const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+  const hasVehicle = force !== 'empty' && !!modelLine;
+
+  if (!hasVehicle) {
+    return `
+      <section class="bd-card pf2-garage pf2-garage--empty" id="pf2-garage" aria-labelledby="pf2-garage-title">
+        <header class="pf2-garage__head">
+          <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
+        </header>
+        <div class="pf2-garage__empty-body">
+          <span class="pf2-garage__empty-icon" aria-hidden="true">${SVG_CAR_FRONT}</span>
+          <p class="pf2-garage__empty-title">Авто не добавлено</p>
+          <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
+          <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add">Добавить авто</button>
+        </div>
+      </section>`;
+  }
+
+  const metaParts = [color, plate].filter(Boolean);
+  return `
+    <section class="bd-card pf2-garage" id="pf2-garage" aria-labelledby="pf2-garage-title">
+      <header class="pf2-garage__head">
+        <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
+        <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" aria-label="Добавить авто">+ Добавить</button>
+      </header>
+      <article class="pf2-garage__car" data-vehicle="primary">
+        <div class="pf2-garage__car-icon" aria-hidden="true">${SVG_CAR_FRONT}</div>
+        <div class="pf2-garage__car-info">
+          <p class="pf2-garage__car-model">${escapeHtml(modelLine)}</p>
+          ${metaParts.length ? `<p class="pf2-garage__car-meta">${escapeHtml(metaParts.join(' · '))}</p>` : ''}
+        </div>
+        <span class="bd-badge accent pf2-garage__badge">Активное</span>
+        <div class="pf2-garage__actions">
+          <button type="button" class="pf2-garage__action" id="pf2-garage-edit" data-garage-action="edit">Редактировать</button>
+          <button type="button" class="pf2-garage__action" id="pf2-garage-activate" data-garage-action="activate" aria-pressed="true">Сделать активным</button>
+          <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive" data-garage-action="archive">Архивировать</button>
+        </div>
+      </article>
+    </section>`;
+}
+
+// BD-PROFILE-D-05A — Mock action wiring. None of these touch the canonical
+// store, network or router: they only provide a transient on-card label so
+// the driver gets feedback while we ship the real CRUD in a later slice.
+// "Активное" stays the source of truth for now; the activate handler just
+// re-confirms the existing state.
+function wireGarageActions(root) {
+  const labelFor = (action) => {
+    if (action === 'edit')     return 'Скоро здесь';
+    if (action === 'activate') return 'Уже активное';
+    if (action === 'archive')  return 'Скоро здесь';
+    return '';
+  };
+  const flash = (btn, text) => {
+    if (!btn || btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const original = btn.textContent;
+    btn.textContent = text;
+    setTimeout(() => {
+      btn.textContent = original;
+      delete btn.dataset.busy;
+    }, 1500);
+  };
+  // "Добавить авто" / "+ Добавить" — driver onboarding will own the real
+  // add flow; for now keep the user inside profile with a transient hint.
+  const addBtn = root.querySelector('#pf2-garage-add');
+  addBtn?.addEventListener('click', () => flash(addBtn, 'Скоро здесь'));
+  // Per-vehicle inline actions delegated through data-garage-action so
+  // future archive/activate slices can grow new actions without rewiring.
+  const card = root.querySelector('.pf2-garage__car');
+  card?.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-garage-action]') : null;
+    if (!btn) return;
+    flash(btn, labelFor(btn.dataset.garageAction));
+  });
+}
+
 function renderDriver(root, u) {
   // Render-time guard: if persisted driverOnline=true but readiness is no
   // longer satisfied (e.g. docs expired between sessions), demote to offline
@@ -2801,6 +2899,11 @@ function renderDriver(root, u) {
   // panes are unaffected by the flag.
   const payoutsEmpty = getHashQuery().get('state') === 'empty';
 
+  // BD-PROFILE-D-05A — garage preview. ?garage=empty forces the empty-state
+  // card without wiping the persisted vehicle so designers can see the
+  // "Авто не добавлено" state on a populated profile.
+  const garageForce = getHashQuery().get('garage') || '';
+
   root.innerHTML = `
     <div class="pf2-topbar">
       <h1 class="pf2-topbar__title">Профиль</h1>
@@ -2814,6 +2917,7 @@ function renderDriver(root, u) {
         ${driverCreateActionsHtml()}
         ${driverStatsHtml()}
         ${readinessHtml(items)}
+        ${garageSectionHtml(u, { force: garageForce })}
         ${taxiPermitPanelHtml(u)}
         ${myPostsSectionHtml()}
         ${historySectionHtml()}
@@ -2827,6 +2931,8 @@ function renderDriver(root, u) {
 
   wireMyPostsSection(root);
   wireHistorySection(root);
+  // BD-PROFILE-D-05A — garage card click handlers (mock UI feedback only).
+  wireGarageActions(root);
 
   // Tab switching
   const tabBtns = root.querySelectorAll('.pf2-tab');

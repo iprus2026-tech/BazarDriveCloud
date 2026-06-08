@@ -12966,3 +12966,99 @@ button.pfp-menu-row:active { opacity: 0.7; }
 @media (prefers-reduced-motion: reduce) {
   .trip-receipt__sk { animation: none; }
 }
+
+/* ── BD-PROFILE-D-05A — Driver Garage section ────────────────────────────── */
+.pf2-garage {
+  padding: 16px;
+  margin-bottom: 10px;
+}
+.pf2-garage__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.pf2-garage__title { font-size: 15px; font-weight: 600; margin: 0; }
+.pf2-garage__add-btn {
+  font-size: 13px;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pf2-garage__add-btn:hover { background: var(--bg-3); }
+.pf2-garage__car {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "icon info badge"
+    "actions actions actions";
+  gap: 8px 12px;
+  align-items: center;
+}
+.pf2-garage__car-icon {
+  grid-area: icon;
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: var(--bg-3);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-1);
+}
+.pf2-garage__car-info { grid-area: info; min-width: 0; }
+.pf2-garage__car-model {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pf2-garage__car-meta {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 2px 0 0;
+}
+.pf2-garage__badge { grid-area: badge; justify-self: end; }
+.pf2-garage__actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.pf2-garage__action {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pf2-garage__action:hover { background: var(--bg-3); }
+.pf2-garage__action--muted { color: var(--text-2); }
+.pf2-garage__action[data-busy="1"] { color: var(--text-3); pointer-events: none; }
+.pf2-garage--empty .pf2-garage__empty-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px 6px;
+}
+.pf2-garage__empty-icon {
+  width: 48px; height: 48px;
+  border-radius: 16px;
+  background: var(--bg-3);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.pf2-garage__empty-title { font-size: 14px; font-weight: 600; margin: 0; }
+.pf2-garage__empty-text  { font-size: 13px; color: var(--text-2); margin: 0; text-align: center; }
+.pf2-garage__cta { margin-top: 8px; }
