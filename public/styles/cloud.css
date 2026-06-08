@@ -13104,6 +13104,29 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__confirm[data-garage-confirm-state="scheduled-local"] {
   background: var(--bg-2);
 }
+/* BD-PROFILE-D-05C — multi-card layout. Sibling vehicle cards stack
+   vertically with a divider; the second-and-later cards inherit a muted
+   accent so the active card stays visually anchored at the top. */
+.pf2-garage__car + .pf2-garage__car {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.pf2-garage__car--available .pf2-garage__car-model { color: var(--text-1); }
+.pf2-garage__car--available .pf2-garage__car-icon { color: var(--text-2); }
+.pf2-garage__badge--muted {
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+/* BD-PROFILE-D-05C — "Сделать активной" reuses the accent button shape
+   from `.pf2-garage__action` but stays slightly emphasised to read as
+   the primary action on a non-active card. The click is local-feedback
+   only — no localStorage / activeVehicleId write. */
+.pf2-garage__action--make-active {
+  color: var(--accent);
+  background: var(--bg-3);
+}
+.pf2-garage__action--make-active:hover { background: var(--bg-2); }
 .pf2-garage--empty .pf2-garage__empty-body {
   display: flex;
   flex-direction: column;
