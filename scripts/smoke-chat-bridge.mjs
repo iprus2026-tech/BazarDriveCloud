@@ -218,11 +218,27 @@ for (let i = 0; i < passengerChatCtas.length; i++) {
 expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger",
   /\/chat\?tripId=\$\{encodeURIComponent\(tripId\)\}&role=passenger/.test(passengerSheets));
 
-// ── J. sw.js — VERSION bumped because precached runtime files changed ──
-// BD-LIFE-07 — v95 → v96 (active_ride.js, active_ride_passenger.js render
-// changes; GitHub Pages PWA needs a fresh cache name to pick them up).
-expect("public/sw.js VERSION is bumped to v96",
-  /const\s+VERSION\s*=\s*'v96'/.test(sw));
+// ── J. sw.js — VERSION shape + CACHE_NAME linkage ──
+// BD-SW-01 — Pin the SHAPE of the cache contract, not the literal number.
+// Every BD-LIFE-XX / BD-CHAT-XX PR that touches a precached file has to
+// bump `VERSION` so GitHub Pages picks the new runtime up, and we used to
+// pin the exact number here (v95, then v96, …). That made every bump cost
+// an extra smoke fix-up and tied a chat-domain smoke to an SW-domain
+// version string. Instead, lock the two invariants that actually matter:
+//
+//   1. VERSION literal matches /^v\d+$/   (`'v123'` shape — the only
+//      thing GitHub Pages / sw activate() needs to differ across builds).
+//   2. CACHE_NAME derives from VERSION via the `bazardrive-${VERSION}`
+//      template literal so the cache name auto-tracks any bump.
+//
+// Capture the raw VERSION value once and re-use it in the CACHE_NAME
+// assertion so the two are checked as a pair, not in isolation.
+const swVersionMatch = sw.match(/const\s+VERSION\s*=\s*'(v\d+)'/);
+const swVersionValue = swVersionMatch ? swVersionMatch[1] : '';
+expect("public/sw.js VERSION has v-number format",
+  /^v\d+$/.test(swVersionValue));
+expect("public/sw.js CACHE_NAME derives from VERSION",
+  /const\s+CACHE_NAME\s*=\s*`bazardrive-\$\{VERSION\}`/.test(sw));
 
 // ── M. ride_state.js — status tone + label exports (BD-CHAT-03) ──
 expect("ride_state.js exports RIDE_STATUS_TONE",
