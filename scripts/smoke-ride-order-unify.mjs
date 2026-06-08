@@ -123,8 +123,13 @@ expect('listNearbyOrders only offers CREATED orders',
 // underlying order flips CREATED→ACCEPTED once and seeds one active ride.
 expect('feed imports acceptCanonicalRideOrder from ride_actions',
   /import\s*\{[^}]*acceptCanonicalRideOrder[^}]*\}\s*from\s*'\.\.\/ride_actions\.js'/s.test(feed));
-expect('feed canonical accept branch calls acceptCanonicalRideOrder(post.orderId)',
-  /post\.canonical\s*===\s*'ride_order'\s*&&\s*post\.orderId[\s\S]{0,160}acceptCanonicalRideOrder\(\s*post\.orderId\s*\)/.test(feed));
+expect('feed canonical accept branch calls acceptCanonicalRideOrder(post.orderId, …)',
+  // BD-LIFE-06 — the second argument (acceptedSource options) is optional;
+  // accept either `acceptCanonicalRideOrder(post.orderId)` (legacy shape)
+  // or `acceptCanonicalRideOrder(post.orderId, { acceptedSource: 'feed' })`
+  // (post-fix shape) without losing the contract guard that the canonical
+  // branch routes the order id, not a stale post field.
+  /post\.canonical\s*===\s*'ride_order'\s*&&\s*post\.orderId[\s\S]{0,200}acceptCanonicalRideOrder\(\s*post\.orderId\s*[,)]/.test(feed));
 expect('driver_map imports acceptCanonicalRideOrder from ride_actions',
   /import\s*\{[^}]*acceptCanonicalRideOrder[^}]*\}\s*from\s*'\.\.\/ride_actions\.js'/s.test(driverMap));
 expect('driver_map accept branch calls acceptCanonicalRideOrder()',

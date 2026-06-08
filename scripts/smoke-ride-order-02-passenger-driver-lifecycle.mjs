@@ -83,6 +83,9 @@ const {
   upgradeRideFromDriverSnapshot,
   upgradeStoredActiveRideForOrder,
 } = await import('../public/src/screens/responses.js');
+const {
+  acceptCanonicalRideOrder,
+} = await import('../public/src/ride_actions.js');
 
 const RESPONSES_KEY = 'bazardrive.responses.v1';
 const USER_KEY = 'bazardrive.user.v1';
@@ -689,6 +692,263 @@ writeResponseToStore(buildResponseFor(s11bOrder, { name: 'Wrong Driver', rating:
     upgradeStoredActiveRideForOrder('') === null);
   expect('S11: orchestrator with unknown orderId returns null',
     upgradeStoredActiveRideForOrder('does-not-exist') === null);
+}
+
+// ── Scenario 12 — DriverMap accept seeds current driver profile (BD-LIFE-06) ─
+// acceptCanonicalRideOrder is the shared accept seam for Feed, Post Detail,
+// and DriverMap direct-accept. Before BD-LIFE-06 it created the active ride
+// via createDemoActiveRide(...) without any driver/vehicle overrides, so
+// passengers landing on /responses?state=accepted or /active-ride saw the
+// "Рустам К." demo seed baked into ride_state.js:157-163 even when a real
+// driver had accepted. Fix: replace ride.driver / ride.vehicle entirely
+// (mirroring buildAcceptedOrderPassenger's BD-ACTIVE-07 replace pattern) so
+// no demo fields can leak through deepMerge.
+reset();
+clearRideOrdersStore();
+user.set({
+  role: 'driver',
+  onboarded: true,
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
+  rating: 4.95,  // exercise the ru-RU rating formatter
+});
+const s12Order = createRideOrder({
+  type: 'ride_order',
+  pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
+  estimatedPrice: 1700, distanceKm: 12, durationMin: 22,
+  passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+});
+const s12TripId = `trip_${s12Order.id}`;
+// Explicit acceptedSource: 'driver_map' to simulate the DriverMap surface.
+const s12Accepted = acceptCanonicalRideOrder(s12Order.id, { acceptedSource: 'driver_map' });
+{
+  expect('S12: acceptCanonicalRideOrder returns a ride bound to the order',
+    s12Accepted?.tripId === s12TripId && s12Accepted?.order?.id === s12Order.id,
+    JSON.stringify({ tripId: s12Accepted?.tripId, orderId: s12Accepted?.order?.id }));
+  const ride = s12Accepted?.ride;
+  expect('S12: seeded ride.driver.name === current driver profile name',
+    ride?.driver?.name === 'Иван Драйвер', String(ride?.driver?.name));
+  expect('S12: seeded ride.driver.name does NOT contain "Рустам"',
+    !String(ride?.driver?.name || '').includes('Рустам'));
+  expect('S12: seeded ride.driver.initials recomputed from real name',
+    ride?.driver?.initials === 'И', String(ride?.driver?.initials));
+  // Codex P3 — rating must format in ru-RU locale ("4,95"), not en-US ("4.95"),
+  // and not leak the demo string "4,92" from buildDemoRide.driver.rating.
+  expect('S12: seeded ride.driver.rating formatted in ru-RU locale',
+    ride?.driver?.rating === '4,95', String(ride?.driver?.rating));
+  // Codex P2 #1 (the core review finding) — buildDemoRide().driver carries
+  // shiftDuration: '5ч 12м'; if seeding still used deepMerge that field
+  // would leak onto every real-driver ride and active_ride.js:405 would
+  // render it into the driver status pill.
+  expect('S12: ride.driver.shiftDuration is undefined (no demo leak)',
+    ride?.driver?.shiftDuration === undefined, String(ride?.driver?.shiftDuration));
+  expect('S12: ride.driver.onlineLabel is undefined (no demo leak)',
+    ride?.driver?.onlineLabel === undefined, String(ride?.driver?.onlineLabel));
+  expect('S12: seeded ride.vehicle.model reflects current profile vehicle',
+    ride?.vehicle?.model === 'Toyota Camry', String(ride?.vehicle?.model));
+  expect('S12: seeded ride.vehicle.color reflects current profile vehicle',
+    ride?.vehicle?.color === 'белый', String(ride?.vehicle?.color));
+  expect('S12: seeded ride.vehicle.plate is masked (Russian-format middle)',
+    ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
+  // Passenger snapshot must survive the new replace-driver flow (the
+  // existing BD-ACTIVE-07 contract should not regress).
+  expect('S12: ride.passenger.name pinned from the order snapshot',
+    ride?.passenger?.name === 'Алия К.', String(ride?.passenger?.name));
+  expect('S12: ride.passenger.luggage absent (no demo "1 чемодан" leak)',
+    ride?.passenger?.luggage === '' || ride?.passenger?.luggage === undefined,
+    String(ride?.passenger?.luggage));
+  expect('S12: ride.acceptedSource === "driver_map" (caller-provided)',
+    ride?.acceptedSource === 'driver_map', String(ride?.acceptedSource));
+  expect('S12: ride has NO selectedDriver.responseId (DriverMap accept is unpinned)',
+    !ride?.selectedDriver?.responseId, String(ride?.selectedDriver?.responseId));
+  expect('S12: order status flipped to ACCEPTED',
+    getOrderById(s12Order.id)?.status === 'ACCEPTED',
+    String(getOrderById(s12Order.id)?.status));
+  expect('S12: ride.status === ACCEPTED',
+    ride?.status === RIDE_STATUS.ACCEPTED, String(ride?.status));
+  // Passenger surfaces read from this same persisted record — verify the
+  // re-read survives JSON round-trip.
+  const reread = findActiveRide(s12TripId);
+  expect('S12: persisted ride re-read carries the real driver',
+    reread?.driver?.name === 'Иван Драйвер', String(reread?.driver?.name));
+  expect('S12: persisted ride re-read carries the real vehicle plate',
+    reread?.vehicle?.plate === 'А ••• БВ 77', String(reread?.vehicle?.plate));
+  expect('S12: persisted ride re-read shows NO shiftDuration leak',
+    reread?.driver?.shiftDuration === undefined,
+    String(reread?.driver?.shiftDuration));
+}
+
+// ── Scenario 13 — BD-LIFE-05 safety still applies to DriverMap-accepted rides
+// An unrelated passenger_response from a different driver arrives AFTER the
+// DriverMap accept. The orchestrator (resolveDriverSnapshotForRide) refuses
+// to upgrade because the ride has no selectedDriver.responseId pinning —
+// the DriverMap-accepted driver's identity stays intact.
+{
+  // Write an unrelated response from "Анна Чужая".
+  writeResponseToStore(buildResponseFor(s12Order, { name: 'Анна Чужая', rating: 4.5 }));
+  expect('S13 pre: an unrelated response exists for the order',
+    inlineLoadResponsesForOrder(s12Order.id).length === 1);
+  expect('S13 pre: resolveLatestDriverSnapshotForOrder surfaces "Анна Чужая"',
+    resolveLatestDriverSnapshotForOrder(s12Order.id)?.name === 'Анна Чужая',
+    String(resolveLatestDriverSnapshotForOrder(s12Order.id)?.name));
+
+  // The smart resolver returns null because the ride has no responseId pin.
+  const rideBefore = findActiveRide(s12TripId);
+  expect('S13: resolveDriverSnapshotForRide returns null for DriverMap-accepted ride',
+    resolveDriverSnapshotForRide(rideBefore, s12Order.id) === null);
+
+  // Therefore the orchestrator does NOT overwrite the DriverMap driver.
+  const orchestrated = upgradeStoredActiveRideForOrder(s12Order.id);
+  expect('S13: orchestrator preserves DriverMap-accepted driver name',
+    orchestrated?.driver?.name === 'Иван Драйвер', String(orchestrated?.driver?.name));
+  expect('S13: unrelated responder "Анна Чужая" did NOT leak in',
+    orchestrated?.driver?.name !== 'Анна Чужая', String(orchestrated?.driver?.name));
+  expect('S13: persisted ride byte-stable after orchestrator',
+    findActiveRide(s12TripId)?.driver?.name === 'Иван Драйвер',
+    String(findActiveRide(s12TripId)?.driver?.name));
+  expect('S13: ride.acceptedSource still === "driver_map" after orchestrator',
+    findActiveRide(s12TripId)?.acceptedSource === 'driver_map',
+    String(findActiveRide(s12TripId)?.acceptedSource));
+}
+
+// ── Scenario 12B — acceptedSource label is accurate per caller (Codex P2 #2) ─
+// seedActiveRideFromAcceptedOrder is the shared seeder; before the fix it
+// hardcoded 'driver_map' regardless of which surface accepted, so Feed and
+// Post Detail accepts mislabelled their acceptedSource. The fix
+// parameterises acceptedSource through acceptCanonicalRideOrder.
+//
+// Each sub-case runs its own reset + createRideOrder + accept so the three
+// orders cannot collide on `order-${Date.now()}` (createRideOrder uses
+// millisecond-resolution ids; three back-to-back calls in the same ms
+// would produce the same id and a single accept would flip all of them
+// to ACCEPTED, masking the per-caller label assertion).
+function seedDriverProfile() {
+  user.set({
+    role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+    phone: '+77001234567', phoneVerified: true,
+    vehicleMake: 'Toyota', vehicleModel: 'Camry',
+    vehiclePlate: 'А 100 АА 77', vehicleColor: 'белый',
+  });
+}
+function freshOrder() {
+  return createRideOrder({
+    type: 'ride_order', pickup:{id:'p1',label:'A'}, dropoff:{id:'p2',label:'Б'},
+    passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+  });
+}
+
+// Feed accept → 'feed'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromFeed = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'feed' });
+expect('S12B: Feed accept tags ride.acceptedSource === "feed"',
+  acceptedFromFeed?.ride?.acceptedSource === 'feed',
+  String(acceptedFromFeed?.ride?.acceptedSource));
+expect('S12B: Feed accept does NOT mislabel as "driver_map"',
+  acceptedFromFeed?.ride?.acceptedSource !== 'driver_map');
+
+// Post Detail accept → 'post_detail'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromPost = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'post_detail' });
+expect('S12B: Post Detail accept tags ride.acceptedSource === "post_detail"',
+  acceptedFromPost?.ride?.acceptedSource === 'post_detail',
+  String(acceptedFromPost?.ride?.acceptedSource));
+expect('S12B: Post Detail accept does NOT mislabel as "driver_map"',
+  acceptedFromPost?.ride?.acceptedSource !== 'driver_map');
+
+// Default (no caller option) → neutral 'canonical_accept'
+reset(); clearRideOrdersStore(); seedDriverProfile();
+const acceptedFromDefault = acceptCanonicalRideOrder(freshOrder().id);
+expect('S12B: default (no caller option) tags neutral "canonical_accept"',
+  acceptedFromDefault?.ride?.acceptedSource === 'canonical_accept',
+  String(acceptedFromDefault?.ride?.acceptedSource));
+expect('S12B: default does NOT mislabel as "driver_map"',
+  acceptedFromDefault?.ride?.acceptedSource !== 'driver_map');
+
+// ── Scenario 12C — Missing optional profile fields fall back to non-demo  ────
+// Codex P2 — A line-ready driver profile may lack a numeric `rating` and/or a
+// `vehicleColor`. Storing '' for either field lets passenger surfaces apply
+// their hardcoded `|| '4,92'` / `|| 'серый'` fallbacks, surfacing demo data
+// for a real accepted ride. The snapshot now persists non-falsy neutrals:
+// '—' for rating and 'цвет не указан' for color.
+
+// Case A — rating missing on profile (no `user.rating` field set).
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
+  // intentionally no `rating`
+});
+const acceptedNoRating = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedNoRating?.ride;
+  expect('S12C: missing rating stored as non-falsy neutral "—"',
+    ride?.driver?.rating === '—', String(ride?.driver?.rating));
+  expect('S12C: missing rating is NOT empty string (would trigger demo fallback)',
+    ride?.driver?.rating !== '');
+  expect('S12C: missing rating is NOT the demo "4,92"',
+    ride?.driver?.rating !== '4,92', String(ride?.driver?.rating));
+  // Belt-and-braces against any surface that does `rating || fallback`:
+  // truthy neutral defeats the chain.
+  expect('S12C: rating neutral is truthy (defeats `|| "4,92"` chains)',
+    Boolean(ride?.driver?.rating));
+  // Color was specified on this profile → passes through unchanged.
+  expect('S12C: provided vehicle color passes through unchanged',
+    ride?.vehicle?.color === 'белый', String(ride?.vehicle?.color));
+}
+
+// Case B — vehicleColor missing on profile (line-ready requires only
+// make/model/plate, color is optional).
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehiclePlate: 'А 123 БВ 77',
+  // intentionally no `vehicleColor`
+  rating: 4.95,
+});
+const acceptedNoColor = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedNoColor?.ride;
+  expect('S12C: missing color stored as non-falsy neutral "цвет не указан"',
+    ride?.vehicle?.color === 'цвет не указан', String(ride?.vehicle?.color));
+  expect('S12C: missing color is NOT empty string (would trigger "серый" fallback)',
+    ride?.vehicle?.color !== '');
+  expect('S12C: missing color is NOT the demo "серый"',
+    ride?.vehicle?.color !== 'серый', String(ride?.vehicle?.color));
+  expect('S12C: color neutral is truthy (defeats `|| "серый"` chains)',
+    Boolean(ride?.vehicle?.color));
+  // Numeric rating still formats in ru-RU locale.
+  expect('S12C: numeric rating still formats in ru-RU ("4,95")',
+    ride?.driver?.rating === '4,95', String(ride?.driver?.rating));
+}
+
+// Case C — both missing simultaneously, both fall back correctly.
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 123 БВ 77',
+  // no rating, no vehicleColor
+});
+const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedBothMissing?.ride;
+  expect('S12C: both-missing case — rating === "—"',
+    ride?.driver?.rating === '—', String(ride?.driver?.rating));
+  expect('S12C: both-missing case — color === "цвет не указан"',
+    ride?.vehicle?.color === 'цвет не указан', String(ride?.vehicle?.color));
+  // Driver name + vehicle model + plate are still populated normally.
+  expect('S12C: both-missing case — driver.name still populated',
+    ride?.driver?.name === 'Иван Драйвер', String(ride?.driver?.name));
+  expect('S12C: both-missing case — vehicle.model still populated',
+    ride?.vehicle?.model === 'Toyota Camry', String(ride?.vehicle?.model));
+  expect('S12C: both-missing case — vehicle.plate still masked',
+    ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

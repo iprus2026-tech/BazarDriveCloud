@@ -9,7 +9,7 @@ import {
   RIDE_STATUS,
 } from './ride_state.js';
 import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
-import { isDriverLineReady } from './state.js';
+import { isDriverLineReady, user } from './state.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -170,9 +170,85 @@ function buildAcceptedOrderPassenger(order) {
   };
 }
 
-export function seedActiveRideFromAcceptedOrder(order) {
+// BD-LIFE-06 — Capture the accepting driver's current profile so the
+// shared accept seeder below (driven by Feed / Post Detail / DriverMap
+// canonical accept paths) does not fall back to the "Рустам К." demo
+// driver baked into buildDemoRide (ride_state.js:157-163).
+//
+// Mirrors the snapshot shape that respond.js writes onto
+// passenger_response.driverSnapshot (BD-RIDE-ORDER-01) so passenger
+// surfaces (renderAcceptedDriver, active_ride_passenger topDriverCard)
+// see the same identity whether the driver came in via /responses
+// pinning or via direct canonical accept.
+//
+// Returns null when the user has no driver-readiness data at all so the
+// caller can fall through to createDemoActiveRide demo defaults (legacy
+// path). In practice canAcceptOrder gates this behind isDriverLineReady
+// (state.js), which already requires phone + vehicleMake + vehicleModel
+// + vehiclePlate, so the null branch is unreachable for real accepts.
+function pickStr(v) { return typeof v === 'string' ? v.trim() : ''; }
+
+function maskDriverPlate(raw) {
+  const s = pickStr(raw);
+  if (!s) return '';
+  const parts = s.split(/\s+/);
+  if (parts.length >= 3) {
+    parts[1] = '•'.repeat(Math.max(parts[1].length, 3));
+    return parts.join(' ');
+  }
+  if (s.length > 3) return s.slice(0, 1) + '•'.repeat(Math.max(s.length - 3, 1)) + s.slice(-2);
+  return s;
+}
+
+function buildAcceptedDriverSnapshot(u) {
+  if (!u || typeof u !== 'object') return null;
+  const composedName = [pickStr(u.firstName), pickStr(u.lastName)].filter(Boolean).join(' ');
+  const rawName = pickStr(u.displayName) || composedName || pickStr(u.name);
+  const make  = pickStr(u.vehicleMake);
+  const model = pickStr(u.vehicleModel);
+  const vehicleModel = (make && model) ? `${make} ${model}` : (make || model);
+  const rawVehicleColor = pickStr(u.vehicleColor);
+  const vehiclePlate = maskDriverPlate(u.vehiclePlate);
+  // Nothing usable on the profile → let the caller keep the demo fallback.
+  // Use the RAW vehicleColor (pre-fallback) so an entirely empty profile
+  // still returns null and does not synthesise a "цвет не указан"-only ride.
+  if (!rawName && !vehicleModel && !vehiclePlate && !rawVehicleColor) return null;
+  const name = rawName || 'Водитель';
+  // Codex P2 — Persist non-falsy neutral placeholders for the two
+  // optional profile fields so the passenger surfaces' `|| '4,92'` /
+  // `|| 'серый'` fallback chains cannot replace a real driver's missing
+  // value with the demo rating / colour. Numeric rating still formats in
+  // the ru-RU locale ("4,95"); a provided colour ("белый") passes
+  // through unchanged.
+  const rating = (typeof u.rating === 'number' && Number.isFinite(u.rating))
+    ? u.rating.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—';
+  const vehicleColor = rawVehicleColor || 'цвет не указан';
+  return {
+    // Codex P2 (initial review) — Only the fields the profile actually
+    // owns are written here. shiftDuration is INTENTIONALLY absent:
+    // profiles do not track shift duration, and including a placeholder
+    // would either show "0ч" (wrong) or trigger active_ride.js's
+    // "5ч 12м" fallback regardless. Replace-not-merge in
+    // seedActiveRideFromAcceptedOrder ensures the buildDemoRide()
+    // "5ч 12м" demo seed cannot leak through deepMerge.
+    driver: {
+      name,
+      initials: name.charAt(0).toUpperCase(),
+      rating,
+    },
+    vehicle: {
+      model: vehicleModel,
+      color: vehicleColor,
+      plate: vehiclePlate,
+    },
+  };
+}
+
+export function seedActiveRideFromAcceptedOrder(order, options = {}) {
   const snapshot = buildRouteSnapshotFromOrder(order);
   if (!snapshot) return null;
+  const acceptedSource = pickStr(options.acceptedSource) || 'canonical_accept';
   const ride = createDemoActiveRide({
     tripId: snapshot.tripId,
     role: 'driver',
@@ -198,7 +274,27 @@ export function seedActiveRideFromAcceptedOrder(order) {
   // createDemoActiveRide would otherwise keep stray demo fields
   // (rating, luggage, phoneMasked) from buildDemoRide().
   ride.passenger = buildAcceptedOrderPassenger(order);
+  // BD-LIFE-06 (Codex P2 #1) — Same replace-not-merge pattern for the
+  // driver+vehicle blocks so leftover demo fields (driver.shiftDuration,
+  // driver.onlineLabel, …) baked into buildDemoRide() cannot leak through
+  // deepMerge into a real driver's accepted ride. When no profile snapshot
+  // is available the caller stays on the demo seed (unreachable in
+  // practice — canAcceptOrder gates this behind isDriverLineReady).
+  const driverSnap = buildAcceptedDriverSnapshot(user.get());
+  if (driverSnap) {
+    ride.driver  = driverSnap.driver;
+    ride.vehicle = driverSnap.vehicle;
+  }
   ride.orderId = order && typeof order.id === 'string' ? order.id : null;
+  // BD-LIFE-06 (Codex P2 #2) — Source-of-accept marker. The caller passes
+  // its own label so the marker stays accurate across the three call
+  // sites of acceptCanonicalRideOrder: driver_map.js → 'driver_map',
+  // feed.js → 'feed', post_detail.js → 'post_detail'. Defaults to a
+  // neutral 'canonical_accept' if the caller did not specify. The
+  // BD-LIFE-05 orchestrator does not consume this — it already returns
+  // null for any ride with no responseId — but it makes the data path
+  // legible for future analytics / debug filters.
+  ride.acceptedSource = acceptedSource;
   saveActiveRide(ride);
   return { tripId: snapshot.tripId, ride };
 }
@@ -207,10 +303,15 @@ export function seedActiveRideFromAcceptedOrder(order) {
 // Feed (and reused by DriverMap). Flips CREATED → ACCEPTED in the shared
 // store and seeds an active ride with a stable trip id. Returns null if
 // the order id is stale / already accepted so callers can fail safely.
-export function acceptCanonicalRideOrder(orderId) {
+//
+// BD-LIFE-06 (Codex P2 #2) — `options.acceptedSource` threads the caller's
+// surface name ('driver_map' / 'feed' / 'post_detail') onto the seeded
+// active ride. Optional; falls back to 'canonical_accept' so callers that
+// haven't been updated do not silently mislabel their accept path.
+export function acceptCanonicalRideOrder(orderId, options = {}) {
   const accepted = acceptNearbyOrder(orderId);
   if (!accepted) return null;
-  const seeded = seedActiveRideFromAcceptedOrder(accepted);
+  const seeded = seedActiveRideFromAcceptedOrder(accepted, options);
   if (!seeded) return null;
   return { tripId: seeded.tripId, order: accepted, ride: seeded.ride };
 }

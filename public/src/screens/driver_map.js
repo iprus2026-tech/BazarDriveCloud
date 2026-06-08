@@ -552,7 +552,10 @@ export default function driverMapScreen() {
         return;
       }
       const id = btn.dataset.orderId;
-      const result = acceptCanonicalRideOrder(id);
+      // BD-LIFE-06 — tag the seeded ride with the actual accept surface so
+      // ride.acceptedSource is accurate, not the misleading 'driver_map'
+      // default that previously labelled every canonical accept.
+      const result = acceptCanonicalRideOrder(id, { acceptedSource: 'driver_map' });
       if (result) {
         renderAccepted(result.order, result.tripId);
       } else {
