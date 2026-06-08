@@ -866,6 +866,91 @@ expect('S12B: default (no caller option) tags neutral "canonical_accept"',
 expect('S12B: default does NOT mislabel as "driver_map"',
   acceptedFromDefault?.ride?.acceptedSource !== 'driver_map');
 
+// ── Scenario 12C — Missing optional profile fields fall back to non-demo  ────
+// Codex P2 — A line-ready driver profile may lack a numeric `rating` and/or a
+// `vehicleColor`. Storing '' for either field lets passenger surfaces apply
+// their hardcoded `|| '4,92'` / `|| 'серый'` fallbacks, surfacing demo data
+// for a real accepted ride. The snapshot now persists non-falsy neutrals:
+// '—' for rating and 'цвет не указан' for color.
+
+// Case A — rating missing on profile (no `user.rating` field set).
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
+  // intentionally no `rating`
+});
+const acceptedNoRating = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedNoRating?.ride;
+  expect('S12C: missing rating stored as non-falsy neutral "—"',
+    ride?.driver?.rating === '—', String(ride?.driver?.rating));
+  expect('S12C: missing rating is NOT empty string (would trigger demo fallback)',
+    ride?.driver?.rating !== '');
+  expect('S12C: missing rating is NOT the demo "4,92"',
+    ride?.driver?.rating !== '4,92', String(ride?.driver?.rating));
+  // Belt-and-braces against any surface that does `rating || fallback`:
+  // truthy neutral defeats the chain.
+  expect('S12C: rating neutral is truthy (defeats `|| "4,92"` chains)',
+    Boolean(ride?.driver?.rating));
+  // Color was specified on this profile → passes through unchanged.
+  expect('S12C: provided vehicle color passes through unchanged',
+    ride?.vehicle?.color === 'белый', String(ride?.vehicle?.color));
+}
+
+// Case B — vehicleColor missing on profile (line-ready requires only
+// make/model/plate, color is optional).
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehiclePlate: 'А 123 БВ 77',
+  // intentionally no `vehicleColor`
+  rating: 4.95,
+});
+const acceptedNoColor = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedNoColor?.ride;
+  expect('S12C: missing color stored as non-falsy neutral "цвет не указан"',
+    ride?.vehicle?.color === 'цвет не указан', String(ride?.vehicle?.color));
+  expect('S12C: missing color is NOT empty string (would trigger "серый" fallback)',
+    ride?.vehicle?.color !== '');
+  expect('S12C: missing color is NOT the demo "серый"',
+    ride?.vehicle?.color !== 'серый', String(ride?.vehicle?.color));
+  expect('S12C: color neutral is truthy (defeats `|| "серый"` chains)',
+    Boolean(ride?.vehicle?.color));
+  // Numeric rating still formats in ru-RU locale.
+  expect('S12C: numeric rating still formats in ru-RU ("4,95")',
+    ride?.driver?.rating === '4,95', String(ride?.driver?.rating));
+}
+
+// Case C — both missing simultaneously, both fall back correctly.
+reset(); clearRideOrdersStore();
+user.set({
+  role: 'driver', onboarded: true, displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 123 БВ 77',
+  // no rating, no vehicleColor
+});
+const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+{
+  const ride = acceptedBothMissing?.ride;
+  expect('S12C: both-missing case — rating === "—"',
+    ride?.driver?.rating === '—', String(ride?.driver?.rating));
+  expect('S12C: both-missing case — color === "цвет не указан"',
+    ride?.vehicle?.color === 'цвет не указан', String(ride?.vehicle?.color));
+  // Driver name + vehicle model + plate are still populated normally.
+  expect('S12C: both-missing case — driver.name still populated',
+    ride?.driver?.name === 'Иван Драйвер', String(ride?.driver?.name));
+  expect('S12C: both-missing case — vehicle.model still populated',
+    ride?.vehicle?.model === 'Toyota Camry', String(ride?.vehicle?.model));
+  expect('S12C: both-missing case — vehicle.plate still masked',
+    ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

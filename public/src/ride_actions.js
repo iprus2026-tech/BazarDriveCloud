@@ -207,25 +207,31 @@ function buildAcceptedDriverSnapshot(u) {
   const make  = pickStr(u.vehicleMake);
   const model = pickStr(u.vehicleModel);
   const vehicleModel = (make && model) ? `${make} ${model}` : (make || model);
-  const vehicleColor = pickStr(u.vehicleColor);
+  const rawVehicleColor = pickStr(u.vehicleColor);
   const vehiclePlate = maskDriverPlate(u.vehiclePlate);
   // Nothing usable on the profile → let the caller keep the demo fallback.
-  if (!rawName && !vehicleModel && !vehiclePlate && !vehicleColor) return null;
+  // Use the RAW vehicleColor (pre-fallback) so an entirely empty profile
+  // still returns null and does not synthesise a "цвет не указан"-only ride.
+  if (!rawName && !vehicleModel && !vehiclePlate && !rawVehicleColor) return null;
   const name = rawName || 'Водитель';
-  // Format rating in the ru-RU locale ("4,95") to match the demo seed's
-  // string convention. Profiles without a numeric rating fall through to
-  // an empty string so renderAcceptedDriver / topDriverCard can apply
-  // their own neutral fallbacks ("—") without ever reading "undefined".
+  // Codex P2 — Persist non-falsy neutral placeholders for the two
+  // optional profile fields so the passenger surfaces' `|| '4,92'` /
+  // `|| 'серый'` fallback chains cannot replace a real driver's missing
+  // value with the demo rating / colour. Numeric rating still formats in
+  // the ru-RU locale ("4,95"); a provided colour ("белый") passes
+  // through unchanged.
   const rating = (typeof u.rating === 'number' && Number.isFinite(u.rating))
     ? u.rating.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '';
+    : '—';
+  const vehicleColor = rawVehicleColor || 'цвет не указан';
   return {
-    // Codex P2 #1 — Only the fields the profile actually owns are written
-    // here. shiftDuration is INTENTIONALLY absent: profiles do not track
-    // shift duration, and including a placeholder would either show "0ч"
-    // (wrong) or trigger active_ride.js's "5ч 12м" fallback regardless.
-    // Replace-not-merge in seedActiveRideFromAcceptedOrder ensures the
-    // buildDemoRide() "5ч 12м" demo seed cannot leak through deepMerge.
+    // Codex P2 (initial review) — Only the fields the profile actually
+    // owns are written here. shiftDuration is INTENTIONALLY absent:
+    // profiles do not track shift duration, and including a placeholder
+    // would either show "0ч" (wrong) or trigger active_ride.js's
+    // "5ч 12м" fallback regardless. Replace-not-merge in
+    // seedActiveRideFromAcceptedOrder ensures the buildDemoRide()
+    // "5ч 12м" demo seed cannot leak through deepMerge.
     driver: {
       name,
       initials: name.charAt(0).toUpperCase(),
