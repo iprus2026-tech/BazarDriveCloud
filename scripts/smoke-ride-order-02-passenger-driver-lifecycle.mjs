@@ -83,6 +83,9 @@ const {
   upgradeRideFromDriverSnapshot,
   upgradeStoredActiveRideForOrder,
 } = await import('../public/src/screens/responses.js');
+const {
+  acceptCanonicalRideOrder,
+} = await import('../public/src/ride_actions.js');
 
 const RESPONSES_KEY = 'bazardrive.responses.v1';
 const USER_KEY = 'bazardrive.user.v1';
@@ -689,6 +692,100 @@ writeResponseToStore(buildResponseFor(s11bOrder, { name: 'Wrong Driver', rating:
     upgradeStoredActiveRideForOrder('') === null);
   expect('S11: orchestrator with unknown orderId returns null',
     upgradeStoredActiveRideForOrder('does-not-exist') === null);
+}
+
+// ── Scenario 12 — DriverMap accept seeds current driver profile (BD-LIFE-06) ─
+// acceptCanonicalRideOrder is the shared accept seam for Feed, Post Detail,
+// and DriverMap direct-accept. Before BD-LIFE-06 it created the active ride
+// via createDemoActiveRide(...) without any driver/vehicle overrides, so
+// passengers landing on /responses?state=accepted or /active-ride saw the
+// "Рустам К." demo seed baked into ride_state.js:157-163 even when a real
+// driver had accepted. Fix: capture the current driver profile snapshot at
+// accept time and pass it as driver+vehicle overrides.
+reset();
+clearRideOrdersStore();
+user.set({
+  role: 'driver',
+  onboarded: true,
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '+77001234567', phoneVerified: true,
+  vehicleMake: 'Toyota', vehicleModel: 'Camry',
+  vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
+});
+const s12Order = createRideOrder({
+  type: 'ride_order',
+  pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
+  estimatedPrice: 1700, distanceKm: 12, durationMin: 22,
+  passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
+});
+const s12TripId = `trip_${s12Order.id}`;
+const s12Accepted = acceptCanonicalRideOrder(s12Order.id);
+{
+  expect('S12: acceptCanonicalRideOrder returns a ride bound to the order',
+    s12Accepted?.tripId === s12TripId && s12Accepted?.order?.id === s12Order.id,
+    JSON.stringify({ tripId: s12Accepted?.tripId, orderId: s12Accepted?.order?.id }));
+  const ride = s12Accepted?.ride;
+  expect('S12: seeded ride.driver.name === current driver profile name',
+    ride?.driver?.name === 'Иван Драйвер', String(ride?.driver?.name));
+  expect('S12: seeded ride.driver.name does NOT contain "Рустам"',
+    !String(ride?.driver?.name || '').includes('Рустам'));
+  expect('S12: seeded ride.driver.initials recomputed from real name',
+    ride?.driver?.initials === 'И', String(ride?.driver?.initials));
+  expect('S12: seeded ride.vehicle.model reflects current profile vehicle',
+    ride?.vehicle?.model === 'Toyota Camry', String(ride?.vehicle?.model));
+  expect('S12: seeded ride.vehicle.color reflects current profile vehicle',
+    ride?.vehicle?.color === 'белый', String(ride?.vehicle?.color));
+  expect('S12: seeded ride.vehicle.plate is masked (Russian-format middle)',
+    ride?.vehicle?.plate === 'А ••• БВ 77', String(ride?.vehicle?.plate));
+  expect('S12: ride.acceptedSource === "driver_map" (informational marker)',
+    ride?.acceptedSource === 'driver_map', String(ride?.acceptedSource));
+  expect('S12: ride has NO selectedDriver.responseId (DriverMap accept is unpinned)',
+    !ride?.selectedDriver?.responseId, String(ride?.selectedDriver?.responseId));
+  expect('S12: order status flipped to ACCEPTED',
+    getOrderById(s12Order.id)?.status === 'ACCEPTED',
+    String(getOrderById(s12Order.id)?.status));
+  expect('S12: ride.status === ACCEPTED',
+    ride?.status === RIDE_STATUS.ACCEPTED, String(ride?.status));
+  // Passenger surfaces read from this same persisted record — verify the
+  // re-read survives JSON round-trip.
+  const reread = findActiveRide(s12TripId);
+  expect('S12: persisted ride re-read carries the real driver',
+    reread?.driver?.name === 'Иван Драйвер', String(reread?.driver?.name));
+  expect('S12: persisted ride re-read carries the real vehicle plate',
+    reread?.vehicle?.plate === 'А ••• БВ 77', String(reread?.vehicle?.plate));
+}
+
+// ── Scenario 13 — BD-LIFE-05 safety still applies to DriverMap-accepted rides
+// An unrelated passenger_response from a different driver arrives AFTER the
+// DriverMap accept. The orchestrator (resolveDriverSnapshotForRide) refuses
+// to upgrade because the ride has no selectedDriver.responseId pinning —
+// the DriverMap-accepted driver's identity stays intact.
+{
+  // Write an unrelated response from "Анна Чужая".
+  writeResponseToStore(buildResponseFor(s12Order, { name: 'Анна Чужая', rating: 4.5 }));
+  expect('S13 pre: an unrelated response exists for the order',
+    inlineLoadResponsesForOrder(s12Order.id).length === 1);
+  expect('S13 pre: resolveLatestDriverSnapshotForOrder surfaces "Анна Чужая"',
+    resolveLatestDriverSnapshotForOrder(s12Order.id)?.name === 'Анна Чужая',
+    String(resolveLatestDriverSnapshotForOrder(s12Order.id)?.name));
+
+  // The smart resolver returns null because the ride has no responseId pin.
+  const rideBefore = findActiveRide(s12TripId);
+  expect('S13: resolveDriverSnapshotForRide returns null for DriverMap-accepted ride',
+    resolveDriverSnapshotForRide(rideBefore, s12Order.id) === null);
+
+  // Therefore the orchestrator does NOT overwrite the DriverMap driver.
+  const orchestrated = upgradeStoredActiveRideForOrder(s12Order.id);
+  expect('S13: orchestrator preserves DriverMap-accepted driver name',
+    orchestrated?.driver?.name === 'Иван Драйвер', String(orchestrated?.driver?.name));
+  expect('S13: unrelated responder "Анна Чужая" did NOT leak in',
+    orchestrated?.driver?.name !== 'Анна Чужая', String(orchestrated?.driver?.name));
+  expect('S13: persisted ride byte-stable after orchestrator',
+    findActiveRide(s12TripId)?.driver?.name === 'Иван Драйвер',
+    String(findActiveRide(s12TripId)?.driver?.name));
+  expect('S13: ride.acceptedSource still === "driver_map" after orchestrator',
+    findActiveRide(s12TripId)?.acceptedSource === 'driver_map',
+    String(findActiveRide(s12TripId)?.acceptedSource));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

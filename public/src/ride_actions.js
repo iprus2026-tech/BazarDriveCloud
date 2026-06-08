@@ -9,7 +9,7 @@ import {
   RIDE_STATUS,
 } from './ride_state.js';
 import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
-import { isDriverLineReady } from './state.js';
+import { isDriverLineReady, user } from './state.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -170,9 +170,77 @@ function buildAcceptedOrderPassenger(order) {
   };
 }
 
+// BD-LIFE-06 — Capture the accepting driver's current profile so the
+// shared accept seeder below (driven by Feed / Post Detail / DriverMap
+// canonical accept paths) does not fall back to the "Рустам К." demo
+// driver baked into buildDemoRide (ride_state.js:157-163).
+//
+// Mirrors the snapshot shape that respond.js writes onto
+// passenger_response.driverSnapshot (BD-RIDE-ORDER-01) so passenger
+// surfaces (renderAcceptedDriver, active_ride_passenger topDriverCard)
+// see the same identity whether the driver came in via /responses
+// pinning or via direct canonical accept.
+//
+// Returns null when the user has no driver-readiness data at all so the
+// caller can fall through to createDemoActiveRide demo defaults (legacy
+// path). In practice canAcceptOrder gates this behind isDriverLineReady
+// (state.js), which already requires phone + vehicleMake + vehicleModel
+// + vehiclePlate, so the null branch is unreachable for real accepts.
+function pickStr(v) { return typeof v === 'string' ? v.trim() : ''; }
+
+function maskDriverPlate(raw) {
+  const s = pickStr(raw);
+  if (!s) return '';
+  const parts = s.split(/\s+/);
+  if (parts.length >= 3) {
+    parts[1] = '•'.repeat(Math.max(parts[1].length, 3));
+    return parts.join(' ');
+  }
+  if (s.length > 3) return s.slice(0, 1) + '•'.repeat(Math.max(s.length - 3, 1)) + s.slice(-2);
+  return s;
+}
+
+function buildAcceptedDriverSnapshot(u) {
+  if (!u || typeof u !== 'object') return null;
+  const composedName = [pickStr(u.firstName), pickStr(u.lastName)].filter(Boolean).join(' ');
+  const rawName = pickStr(u.displayName) || composedName || pickStr(u.name);
+  const make  = pickStr(u.vehicleMake);
+  const model = pickStr(u.vehicleModel);
+  const vehicleModel = (make && model) ? `${make} ${model}` : (make || model);
+  const vehicleColor = pickStr(u.vehicleColor);
+  const vehiclePlate = maskDriverPlate(u.vehiclePlate);
+  // Nothing usable on the profile → let the caller keep the demo fallback.
+  if (!rawName && !vehicleModel && !vehiclePlate && !vehicleColor) return null;
+  const name = rawName || 'Водитель';
+  return {
+    driver: {
+      name,
+      initials: name.charAt(0).toUpperCase(),
+      rating: (typeof u.rating === 'number' && Number.isFinite(u.rating)) ? u.rating : '',
+      phoneMasked: '',
+      onlineLabel: 'На линии',
+    },
+    vehicle: {
+      model: vehicleModel,
+      color: vehicleColor,
+      plate: vehiclePlate,
+    },
+  };
+}
+
 export function seedActiveRideFromAcceptedOrder(order) {
   const snapshot = buildRouteSnapshotFromOrder(order);
   if (!snapshot) return null;
+  // BD-LIFE-06 — pin the accepting driver's profile snapshot into the ride
+  // so DriverMap / Feed / PostDetail direct-accept paths do not render
+  // "Рустам К." (createDemoActiveRide demo seed). Independent of
+  // bazardrive.responses.v1 — the BD-LIFE-05 orchestrator already refuses
+  // to overwrite an unpinned ride from passenger_responses, so the seeded
+  // driver identity stays put even if an unrelated response arrives later.
+  const driverSnap = buildAcceptedDriverSnapshot(user.get());
+  const driverOverrides = driverSnap
+    ? { driver: driverSnap.driver, vehicle: driverSnap.vehicle }
+    : {};
   const ride = createDemoActiveRide({
     tripId: snapshot.tripId,
     role: 'driver',
@@ -193,12 +261,19 @@ export function seedActiveRideFromAcceptedOrder(order) {
     timestamps: {
       acceptedAt: snapshot.acceptedAt,
     },
+    ...driverOverrides,
   });
   // BD-ACTIVE-07 — Replace the demo passenger entirely. deepMerge in
   // createDemoActiveRide would otherwise keep stray demo fields
   // (rating, luggage, phoneMasked) from buildDemoRide().
   ride.passenger = buildAcceptedOrderPassenger(order);
   ride.orderId = order && typeof order.id === 'string' ? order.id : null;
+  // BD-LIFE-06 — informational marker so future code can distinguish a
+  // direct canonical accept (no selectedDriver.responseId pin) from a
+  // passenger /responses pick (which sets selectedDriver.responseId). The
+  // BD-LIFE-05 orchestrator does not need this — it already returns null
+  // for any ride with no responseId — but it makes the data path legible.
+  ride.acceptedSource = 'driver_map';
   saveActiveRide(ride);
   return { tripId: snapshot.tripId, ride };
 }
