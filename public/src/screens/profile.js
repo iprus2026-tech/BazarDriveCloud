@@ -2800,7 +2800,15 @@ function garageSectionHtml(u, options = {}) {
   const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
   const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
   const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
-  const hasVehicle = force !== 'empty' && !!(make || model || plate);
+  // Codex P2 — `vehiclePlate` is recorded on its own step in onboarding, so a
+  // partially-typed profile can carry a plate (and/or color) before any
+  // model is filled. The active garage card would have rendered an empty
+  // model line with a stranded "Активное" badge in that state. Gate the
+  // populated card on a usable model line — plate-only / color-only
+  // profiles slip to the empty state and the "Добавить авто" CTA prompts
+  // the driver to finish data entry instead of showing an unfinished card.
+  const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+  const hasVehicle = force !== 'empty' && !!modelLine;
 
   if (!hasVehicle) {
     return `
@@ -2817,7 +2825,6 @@ function garageSectionHtml(u, options = {}) {
       </section>`;
   }
 
-  const modelLine = (make && model) ? `${make} ${model}` : (make || model);
   const metaParts = [color, plate].filter(Boolean);
   return `
     <section class="bd-card pf2-garage" id="pf2-garage" aria-labelledby="pf2-garage-title">

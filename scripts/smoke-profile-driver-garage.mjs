@@ -258,6 +258,99 @@ user.set({
     html.includes('Hyundai Solaris'));
 }
 
+// ── Scenario 7 — Plate-only profile falls back to empty state (Codex P2) ────
+// Onboarding records `vehiclePlate` on its own step, so a partially-filled
+// profile can carry a plate (or color) before any make/model is entered.
+// The active garage card requires a usable model line — plate-only and
+// color-only profiles must slip to the empty state so the "Добавить авто"
+// CTA prompts the driver to finish data entry instead of showing a
+// stranded "Активное" badge on an empty model line.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // intentionally only plate — no make, no model, no color
+  vehiclePlate: 'А 482 МР 77',
+});
+{
+  const html = renderProfile('#/profile');
+  const slice = garageSlice(html);
+  expect('S7: plate-only profile still renders the garage section',
+    slice.length > 0);
+  expect('S7: plate-only garage falls back to the empty-state class',
+    slice.includes(GARAGE_EMPTY_MARKER));
+  expect('S7: plate-only garage shows the "Авто не добавлено" placeholder',
+    slice.includes(EMPTY_STATE_TEXT));
+  expect('S7: plate-only garage does NOT show the "Активное" badge',
+    !slice.includes(ACTIVE_BADGE_TEXT));
+  expect('S7: plate-only garage does NOT render the populated `pf2-garage__car` article',
+    !slice.includes('pf2-garage__car'));
+  expect('S7: plate-only garage does NOT echo the stranded plate inside the empty card',
+    !slice.includes('А 482 МР 77'));
+  expect('S7: persisted vehiclePlate is preserved (preview never wipes data)',
+    user.get().vehiclePlate === 'А 482 МР 77', String(user.get().vehiclePlate));
+}
+
+// ── Scenario 8 — Color-only profile also falls back to empty state ──────────
+// Same contract — any single non-model field is not enough to justify
+// rendering the populated card.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // intentionally only color
+  vehicleColor: 'белый',
+});
+{
+  const html = renderProfile('#/profile');
+  const slice = garageSlice(html);
+  expect('S8: color-only profile falls back to the empty-state class',
+    slice.includes(GARAGE_EMPTY_MARKER));
+  expect('S8: color-only garage does NOT show the "Активное" badge',
+    !slice.includes(ACTIVE_BADGE_TEXT));
+  expect('S8: color-only garage does NOT render the populated `pf2-garage__car` article',
+    !slice.includes('pf2-garage__car'));
+}
+
+// ── Scenario 9 — Make-only OR model-only profile renders the active card ────
+// A single half of the model line is still informative ("Hyundai" or
+// "Solaris" alone) so we keep the populated state. This guards against
+// the fix over-tightening into "needs BOTH make and model".
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai',
+});
+{
+  const html = renderProfile('#/profile');
+  const slice = garageSlice(html);
+  expect('S9: make-only profile renders the populated garage card',
+    !slice.includes(GARAGE_EMPTY_MARKER));
+  expect('S9: make-only garage shows "Hyundai" as the model line',
+    slice.includes('Hyundai'));
+  expect('S9: make-only garage shows the "Активное" badge',
+    slice.includes(ACTIVE_BADGE_TEXT));
+}
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleModel: 'Solaris',
+});
+{
+  const html = renderProfile('#/profile');
+  const slice = garageSlice(html);
+  expect('S9: model-only profile renders the populated garage card',
+    !slice.includes(GARAGE_EMPTY_MARKER));
+  expect('S9: model-only garage shows "Solaris" as the model line',
+    slice.includes('Solaris'));
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
