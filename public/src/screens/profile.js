@@ -15,6 +15,10 @@ import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
 import { buildRepeatRouteDraft, writeRepeatRouteDraft } from '../repeat_route.js';
 import { performLocalLogout } from '../mock_auth.js';
+import {
+  buildGarageVehicles,
+  resolveActiveGarageVehicleId,
+} from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
 
@@ -2817,84 +2821,21 @@ function payoutsPaneHtml(previewEmpty = false) {
 //                              stay DOM-only — no localStorage write, no
 //                              activeVehicleId, no driverOnline change.
 //
-// BD-PROFILE-D-05C — Garage as a collection. `buildGarageVehicles` builds
-// the `[{id, model, color, plate, status, source}]` list that the render
-// + wire code consumes. `?garage=multi` is a render-gate preview that
-// appends a single demo vehicle so designers can see the multi-card
-// layout without injecting demo data into real driver views.
-//
-// BD-PROFILE-D-05D — Active vehicle selection persistence. The active
-// flag on each vehicle is no longer hard-coded onto the legacy entry;
-// `resolveActiveGarageVehicleId(profile, vehicles)` reads
-// `profile.driverGarage.activeVehicleId` and falls back to the legacy
-// vehicle (then the first vehicle, then null) when the persisted id is
-// missing or stale. Persistence is profile-local and scoped to the
-// `driverGarage` namespace on the user record — no driver response
-// snapshot mutation, no active-ride mutation, no ride lifecycle /
-// history / receipt write. The persisted id is consumed by the garage
-// resolver only; 05E will add the driver-response snapshot read.
-function resolveActiveGarageVehicleId(profile, vehicles) {
-  if (!Array.isArray(vehicles) || vehicles.length === 0) return null;
-  const saved = profile
-    && profile.driverGarage
-    && typeof profile.driverGarage.activeVehicleId === 'string'
-    && profile.driverGarage.activeVehicleId.length > 0
-    ? profile.driverGarage.activeVehicleId
-    : null;
-  if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
-  const legacy = vehicles.find((v) => v && v.source === 'legacy');
-  if (legacy) return legacy.id;
-  return (vehicles[0] && vehicles[0].id) || null;
-}
-
-function buildGarageVehicles(u, options = {}) {
-  const force = typeof options.force === 'string' ? options.force : '';
-  if (force === 'empty') return [];
-
-  const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
-  const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
-  const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
-  const plate = (u && typeof u.vehiclePlate === 'string') ? u.vehiclePlate.trim() : '';
-  // Codex P2 (05A) — plate-only / color-only profiles slip to empty so
-  // the "Добавить авто" CTA prompts the driver to finish data entry.
-  const modelLine = (make && model) ? `${make} ${model}` : (make || model);
-
-  const raw = [];
-  if (modelLine) {
-    raw.push({
-      id: 'legacy-1',
-      model: modelLine,
-      color,
-      plate,
-      source: 'legacy',
-    });
-  }
-
-  // `?garage=multi` — preview-only second vehicle, never touches storage.
-  // Requires the legacy vehicle to be present so the layout exercises the
-  // active-plus-available pair the multi-card design is meant to show.
-  if (force === 'multi' && raw.length > 0) {
-    raw.push({
-      id: 'demo-2',
-      model: 'Kia Rio',
-      color: 'белый',
-      plate: '*** 125',
-      source: 'mock',
-    });
-  }
-
-  if (raw.length === 0) return [];
-
-  // 05D — derive `status: 'active' | 'available'` from the resolved id.
-  // The resolver tolerates a stale persisted id (vehicle archived, or
-  // ?garage=multi off) by falling back to the legacy vehicle, so the
-  // render never crashes and the badge never goes missing.
-  const activeId = resolveActiveGarageVehicleId(u, raw);
-  return raw.map((v) => ({
-    ...v,
-    status: v.id === activeId ? 'active' : 'available',
-  }));
-}
+// BD-PROFILE-D-05C/05D/05E — Garage as a collection (05C) + active
+// selection persistence (05D) + shared resolver (05E). The collection
+// builder and resolver moved to `public/src/garage.js` so the driver-
+// response snapshot (respond.js) and accept-handoff snapshot
+// (ride_actions.js) can read the same active vehicle the profile
+// renders, without depending on a UI module.
+// `buildGarageVehicles` returns the `[{id, model, color, plate, status,
+// source}]` list (status stamped via the resolver), and
+// `resolveActiveGarageVehicleId` reads `profile.driverGarage.activeVehicleId`
+// with a legacy/first/null fallback chain. Persistence remains scoped
+// to the `driverGarage` namespace on the user record (05D); the
+// resolver is strictly read-only — no driver-response snapshot
+// mutation, no active-ride mutation, no ride lifecycle / history /
+// receipt write. Both are imported from `../garage.js` at the top
+// of this file.
 
 function garageVehicleCardHtml(vehicle) {
   const { id, model, color, plate, status } = vehicle;

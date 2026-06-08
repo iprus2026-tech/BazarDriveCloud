@@ -10,6 +10,7 @@ import {
 } from './ride_state.js';
 import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
 import { isDriverLineReady, user } from './state.js';
+import { resolveActiveGarageVehicle } from './garage.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -200,15 +201,27 @@ function maskDriverPlate(raw) {
   return s;
 }
 
-function buildAcceptedDriverSnapshot(u) {
+// BD-PROFILE-D-05E — Read the vehicle subfield via the shared garage
+// resolver so the accept-handoff snapshot reflects the driver's
+// selected active garage vehicle. Strictly read-only: the driver
+// identity (name / rating) still flows from legacy profile fields, and
+// no localStorage / driverGarage / active-ride / history / receipt
+// mutation happens here. The null-bail (rawName / model / plate / color
+// all empty) is preserved so partially-onboarded drivers still fall
+// through to the demo fallback path.
+export function buildAcceptedDriverSnapshot(u) {
   if (!u || typeof u !== 'object') return null;
   const composedName = [pickStr(u.firstName), pickStr(u.lastName)].filter(Boolean).join(' ');
   const rawName = pickStr(u.displayName) || composedName || pickStr(u.name);
+  const activeVehicle = resolveActiveGarageVehicle(u);
   const make  = pickStr(u.vehicleMake);
   const model = pickStr(u.vehicleModel);
-  const vehicleModel = (make && model) ? `${make} ${model}` : (make || model);
-  const rawVehicleColor = pickStr(u.vehicleColor);
-  const vehiclePlate = maskDriverPlate(u.vehiclePlate);
+  const legacyVehicleModel = (make && model) ? `${make} ${model}` : (make || model);
+  const vehicleModel    = pickStr(activeVehicle?.model) || legacyVehicleModel;
+  const rawVehicleColor = pickStr(activeVehicle?.color) || pickStr(u.vehicleColor);
+  const vehiclePlate    = activeVehicle
+    ? maskDriverPlate(activeVehicle.plate)
+    : maskDriverPlate(u.vehiclePlate);
   // Nothing usable on the profile → let the caller keep the demo fallback.
   // Use the RAW vehicleColor (pre-fallback) so an entirely empty profile
   // still returns null and does not synthesise a "цвет не указан"-only ride.

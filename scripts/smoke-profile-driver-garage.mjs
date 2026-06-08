@@ -581,37 +581,41 @@ user.set({
   const { fileURLToPath } = await import('node:url');
   const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const profileSrc  = readFileSync(join(projectRoot, 'public/src/screens/profile.js'), 'utf8');
+  // 05E — resolver + builder live in public/src/garage.js so respond.js
+  // and ride_actions.js can share them without depending on a UI module.
+  const garageSrc   = readFileSync(join(projectRoot, 'public/src/garage.js'), 'utf8');
 
-  // resolveActiveGarageVehicleId — pure derive (reads profile only).
-  const resolveStart = profileSrc.indexOf('function resolveActiveGarageVehicleId(');
-  const resolveEnd   = profileSrc.indexOf('function buildGarageVehicles(', resolveStart);
-  const resolveBody  = (resolveStart >= 0 && resolveEnd > resolveStart)
-    ? profileSrc.slice(resolveStart, resolveEnd) : '';
-  expect('S16: resolveActiveGarageVehicleId function body extracted',
+  // Precise function-body extraction: from `marker` (the declaration
+  // line) through the function's OWN closing brace (a bare `\n}\n`).
+  // This avoids sweeping the next function's header comment into the
+  // body, which would leak forbidden tokens that legitimately live in
+  // the *next* function's doc block.
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+
+  const resolveBody = sliceFn(garageSrc, 'export function resolveActiveGarageVehicleId(');
+  expect('S16: resolveActiveGarageVehicleId function body extracted (from garage.js)',
     resolveBody.length > 0, String(resolveBody.length));
 
-  // buildGarageVehicles — pure derive.
-  const buildStart   = profileSrc.indexOf('function buildGarageVehicles(');
-  const buildEnd     = profileSrc.indexOf('function garageVehicleCardHtml(', buildStart);
-  const buildBody    = (buildStart >= 0 && buildEnd > buildStart)
-    ? profileSrc.slice(buildStart, buildEnd) : '';
-  expect('S16: buildGarageVehicles function body extracted',
+  const buildBody = sliceFn(garageSrc, 'export function buildGarageVehicles(');
+  expect('S16: buildGarageVehicles function body extracted (from garage.js)',
     buildBody.length > 0, String(buildBody.length));
 
-  // wireGarageActions — single allowed writer (make-active → driverGarage).
-  const wireStart    = profileSrc.indexOf('function wireGarageActions(');
-  const wireEnd      = profileSrc.indexOf('function refreshGarageSection(', wireStart);
-  const wireBody     = (wireStart >= 0 && wireEnd > wireStart)
-    ? profileSrc.slice(wireStart, wireEnd) : '';
-  expect('S16: wireGarageActions function body extracted',
+  const convBody = sliceFn(garageSrc, 'export function resolveActiveGarageVehicle(');
+  expect('S16: resolveActiveGarageVehicle function body extracted (from garage.js)',
+    convBody.length > 0, String(convBody.length));
+
+  const wireBody = sliceFn(profileSrc, 'function wireGarageActions(');
+  expect('S16: wireGarageActions function body extracted (from profile.js)',
     wireBody.length > 0, String(wireBody.length));
 
-  // refreshGarageSection — re-renders + re-wires; must not write itself.
-  const refreshStart = profileSrc.indexOf('function refreshGarageSection(');
-  const refreshEnd   = profileSrc.indexOf('function renderDriver(', refreshStart);
-  const refreshBody  = (refreshStart >= 0 && refreshEnd > refreshStart)
-    ? profileSrc.slice(refreshStart, refreshEnd) : '';
-  expect('S16: refreshGarageSection function body extracted',
+  const refreshBody = sliceFn(profileSrc, 'function refreshGarageSection(');
+  expect('S16: refreshGarageSection function body extracted (from profile.js)',
     refreshBody.length > 0, String(refreshBody.length));
 
   // Universally forbidden cross-surface writes (every garage helper,
@@ -662,6 +666,13 @@ user.set({
   // Builder must NOT use the literal token (it only consumes the resolver
   // result via the `activeId` local).
   checkBody('buildGarageVehicles', buildBody, [
+    ...FORBIDDEN_DERIVE_ONLY,
+    { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
+  ]);
+  // 05E — resolveActiveGarageVehicle is the convenience consumed by
+  // respond.js and ride_actions.js. Strictly read-only; no writes, no
+  // activeVehicleId mutation (it only forwards what the resolver returns).
+  checkBody('resolveActiveGarageVehicle', convBody, [
     ...FORBIDDEN_DERIVE_ONLY,
     { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
   ]);

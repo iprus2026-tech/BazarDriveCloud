@@ -233,6 +233,20 @@ if (exists(profileDriverGarageSmoke)) {
   }
 }
 
+// BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
+// Both /respond (getUserVehicle) and the accept-handoff
+// (buildAcceptedDriverSnapshot) consume the shared resolver from
+// garage.js; neither writes storage or triggers a lifecycle transition.
+const driverSnapshotActiveGarageSmoke = path.join(root, 'scripts', 'smoke-driver-snapshot-active-garage.mjs');
+if (exists(driverSnapshotActiveGarageSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverSnapshotActiveGarageSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-snapshot-active-garage.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-ORDER-02 — passenger/driver order lifecycle smoke: order creation,
 // driver response, accept, handoff invariants, role-aware history filter.
 // Locks down the "same user, different jacket" bug class: order.passenger
