@@ -428,6 +428,88 @@ export function appendGarageVehicle(rawVehicle, options = {}) {
   return id;
 }
 
+// BD-PROFILE-D-05H — Patch a single existing vehicle in the persisted
+// garage collection. Single safe write path for the Driver Profile
+// garage's "Редактировать авто" sheet — every other render/wire path
+// stays strictly read-only against `driverGarage.vehicles`.
+//
+// Inputs are trimmed and gated the same way as `appendGarageVehicle`:
+//   - `vehicleId` MUST be a non-empty string. A missing or unknown id
+//     refuses to persist and returns null — the caller's sheet should
+//     fail gracefully (the per-vehicle wiring already gates against
+//     legacy-source cards, so this is a defensive belt).
+//   - `rawPatch.model` is REQUIRED (after trim). A blank model refuses
+//     to persist and returns null.
+//   - `rawPatch.color` / `rawPatch.plate` are optional and trimmed.
+//
+// Field-write contract:
+//   - `id` is PRESERVED from the existing record and is never copied
+//     from `rawPatch` (caller cannot rename a vehicle via edit).
+//   - `source` is PRESERVED when the existing value is in the resolver's
+//     known whitelist (`persisted`/`legacy`/`mock`); otherwise it is
+//     normalised to `'persisted'`. Never copied from `rawPatch` — the
+//     caller cannot promote a vehicle to `'legacy'` semantics via edit.
+//   - Unknown / future fields on the existing record are PRESERVED via
+//     `...prev` spread before the canonical fields land.
+//   - `activeVehicleId` is PRESERVED verbatim — edit never changes the
+//     active selection (that stays owned by 05D's make-active handler
+//     and 05G's `appendGarageVehicle({ makeActive: true })`).
+//   - The vehicles array order is preserved: the patched entry replaces
+//     the existing slot at the same index.
+//   - Other vehicles in the array are preserved by reference-and-spread
+//     in `[...vehicles]` and indexed assignment.
+//
+// Output: the patched id on success, null on validation refusal.
+export function patchGarageVehicle(vehicleId, rawPatch) {
+  if (typeof vehicleId !== 'string' || vehicleId.length === 0) return null;
+  const model = (rawPatch && typeof rawPatch.model === 'string')
+    ? rawPatch.model.trim() : '';
+  if (!model) return null;
+  const color = (rawPatch && typeof rawPatch.color === 'string')
+    ? rawPatch.color.trim() : '';
+  const plate = (rawPatch && typeof rawPatch.plate === 'string')
+    ? rawPatch.plate.trim() : '';
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+  const idx = vehicles.findIndex((v) => v && v.id === vehicleId);
+  if (idx < 0) return null;
+
+  const prev = vehicles[idx] || {};
+  // Source is preserved when the existing value is recognised by the
+  // resolver; otherwise normalised to 'persisted'. NEVER copied from
+  // `rawPatch` — the resolver fallback chain treats 'legacy' specially
+  // and only the legacy-bridge codepath should produce a 'legacy' entry.
+  const KNOWN_SOURCES = new Set(['persisted', 'legacy', 'mock']);
+  const source = (typeof prev.source === 'string' && KNOWN_SOURCES.has(prev.source))
+    ? prev.source
+    : 'persisted';
+
+  const patched = {
+    ...prev,
+    id: vehicleId,
+    model,
+    color,
+    plate,
+    source,
+  };
+
+  const nextVehicles = [...vehicles];
+  nextVehicles[idx] = patched;
+
+  const nextDriverGarage = {
+    activeVehicleId: dg.activeVehicleId,
+    vehicles: nextVehicles,
+  };
+
+  cache = normalize({ ...cache, driverGarage: nextDriverGarage });
+  persist();
+  return vehicleId;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't
