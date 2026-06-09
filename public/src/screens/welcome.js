@@ -265,9 +265,21 @@ export default function welcome() {
     // UI-only transition. No backend call.
     if (loadingTimer) clearTimeout(loadingTimer);
     loadingTimer = setTimeout(() => {
-      // Persist role + welcomeSeen; consume any pending action; route.
+      // Persist role + welcomeSeen.
       user.set({ welcomeSeen: true, role: selectedRole || 'passenger' });
-      consumePendingAction();
+      // BD-ONBOARDING-01 Codex P2 #1 — honour any pending router action
+      // that was set by `requireOnboarding(after)` (or similar callers
+      // upstream). When a pending action exists, run it INSTEAD of the
+      // default role routing so the user returns to whatever they were
+      // doing before the gate took over (e.g. tapping Create on the
+      // feed before being bounced through welcome). When no pending
+      // action exists, fall back to the documented role routing
+      // (passenger → /feed, driver → /driver-map).
+      const pending = consumePendingAction();
+      if (typeof pending === 'function') {
+        pending();
+        return;
+      }
       go(selectedRole === 'driver' ? '/driver-map' : '/feed');
     }, 1200);
   }
@@ -298,14 +310,22 @@ export default function welcome() {
       });
     } else if (step === 'permissions') {
       root.querySelector('#ob-perm-continue')?.addEventListener('click', () => {
-        // 05K — Permissions are UI-only preferences in this slice
-        // (no real geolocation API call, no real notification API
-        // request). Both actions advance to loading; only the explicit
-        // continue stamps the optional preference.
+        // BD-ONBOARDING-01 — Permissions are UI-only preferences in
+        // this slice (no real geolocation API call, no real
+        // notification API request). The two actions diverge here at
+        // the user-record level: Продолжить stamps the optional
+        // preference on; Разрешить позже stamps it OFF (Codex P2 #2 —
+        // the default user state has `notificationsEnabled: true`, so
+        // a silent advance would leave the user record reading as
+        // "enabled" even though the driver explicitly deferred).
         user.set({ notificationsEnabled: true });
         startLoading();
       });
       root.querySelector('#ob-perm-later')?.addEventListener('click', () => {
+        // Codex P2 #2 — explicitly stamp `notificationsEnabled: false`
+        // so the "deferred" choice is reflected in the persisted user
+        // record. The driver can re-enable later from /profile.
+        user.set({ notificationsEnabled: false });
         startLoading();
       });
     } else if (step === 'loading') {
