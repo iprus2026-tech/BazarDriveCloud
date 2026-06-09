@@ -3607,6 +3607,173 @@ user.set({
   }
 }
 
+// ── Scenario 106 — BD-PROFILE-D-05J Codex P2 #1: duplicate-id restore
+// prefers the ARCHIVED match. Without this, the first matching entry
+// (which may already be non-archived) would short-circuit the helper
+// to a no-op and leave a later archived sibling trapped forever. ────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Two entries share the id 'dup' — the first is already restored,
+      // the second is archived. restoreGarageVehicle('dup') must
+      // unarchive the second one, not no-op on the first.
+      { id: 'dup', model: 'first',  source: 'persisted' },
+      { id: 'dup', model: 'second', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const r = restoreFn('dup');
+  expect('S106: restore returns the canonical id even with duplicate matches',
+    r === 'dup', String(r));
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S106: first matching entry (non-archived) preserved byte-for-byte',
+    JSON.stringify(persisted?.[0]) === JSON.stringify({
+      id: 'dup', model: 'first', source: 'persisted',
+    }));
+  expect('S106: archived sibling at index 1 now has archived flag stripped',
+    !('archived' in (persisted?.[1] || {})));
+  expect('S106: archived sibling model preserved',
+    persisted?.[1]?.model === 'second');
+  expect('S106: array order preserved (no swap)',
+    persisted?.[0]?.model === 'first' && persisted?.[1]?.model === 'second');
+  expect('S106: archived sibling source preserved',
+    persisted?.[1]?.source === 'persisted');
+}
+
+// ── Scenario 107 — BD-PROFILE-D-05J Codex P2 #2: one-car active archive
+// → restore must NOT auto-select the restored car. The resolver's
+// `_synthesized` marker now grants the null-saved fallback ONLY to the
+// inline-synthesised legacy entry; persisted entries (including a
+// just-restored one) must wait for an explicit `Сделать активной`. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  // Pre-state: real-1 is active by explicit selection.
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  expect('S107 pre: real-1 has active badge (active by activeVehicleId match)',
+    sliceBefore.includes('id="pf2-garage-active-real-1"'));
+
+  // Archive the only car (active). activeVehicleId cleared to null.
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('real-1');
+  expect('S107: archive cleared activeVehicleId to null',
+    user.get().driverGarage?.activeVehicleId === null);
+
+  // Restore. activeVehicleId stays null.
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  restoreFn('real-1');
+  expect('S107: restore preserved activeVehicleId at null',
+    user.get().driverGarage?.activeVehicleId === null);
+
+  // Render: real-1 is back in the active list but NO active badge.
+  const sliceAfter = garageSlice(renderProfile('#/profile'));
+  expect('S107: post-restore render shows real-1 as a CARD (not in archived list)',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-1"/.test(sliceAfter));
+  expect('S107: post-restore render does NOT give real-1 the active-current span',
+    !sliceAfter.includes('id="pf2-garage-active-real-1"'));
+  expect('S107: post-restore render gives real-1 the make-active button instead',
+    sliceAfter.includes('id="pf2-garage-make-active-real-1"'));
+
+  // Resolver-level: resolveActiveGarageVehicle returns null until the
+  // user explicitly clicks `Сделать активной`.
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S107: resolveActiveGarageVehicle returns null after archive+restore',
+    resolveFn(user.get()) === null,
+    String(resolveFn(user.get())?.id));
+
+  // Explicit make-active click flow: clicking the make-active button
+  // for real-1 sets activeVehicleId='real-1' (via the existing 05D
+  // handler) and the next render gives real-1 the active badge.
+  clickHandlers.get('#pf2-garage-make-active-real-1')?.();
+  expect('S107: make-active set activeVehicleId to "real-1"',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+  const sliceActive = garageSlice(renderProfile('#/profile'));
+  expect('S107: after explicit make-active, real-1 gets the active-current span',
+    sliceActive.includes('id="pf2-garage-active-real-1"'));
+  expect('S107: resolveActiveGarageVehicle returns real-1 after explicit make-active',
+    resolveFn(user.get())?.id === 'real-1');
+}
+
+// ── Scenario 108 — BD-PROFILE-D-05J Codex P2 #2 continued: fresh user
+// with legacy fields still gets the synthesised-legacy active fallback.
+// This locks down that the new resolver semantic only suppressed the
+// first-vehicle fallback for null saved — the `_synthesized` legacy
+// path is preserved so fresh users don't lose their auto-active. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // no driverGarage.vehicles — pure legacy fallback render
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S108: fresh-user legacy fallback gives legacy-1 the active-current span',
+    slice.includes('id="pf2-garage-active-legacy-1"'));
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S108: resolveActiveGarageVehicle returns the synthesised legacy entry',
+    resolveFn(user.get())?.id === 'legacy-1');
+}
+
+// ── Scenario 109 — BD-PROFILE-D-05J Codex P2 #3: archived ids with CSS
+// special characters do not crash the restore wiring. The escapeCssId
+// helper runs each archived id through CSS.escape (or the Node
+// fallback regex) before interpolating into a querySelector. ───────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Id with whitespace, colon, bracket — all of which would
+      // SyntaxError inside an unescaped `#id` selector.
+      { id: 'has:colon space', model: 'Pathological', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  // The render must not throw. captureSection wraps `profile()` which
+  // calls wireGarageActions internally.
+  let renderError = null;
+  let section = null;
+  try { section = captureSection('#/profile'); } catch (e) { renderError = e; }
+  expect('S109: render + wire does NOT throw on a CSS-special-char archived id',
+    renderError === null, renderError ? renderError.message : '');
+
+  // HTML carries the literal id (the production page renders the
+  // unescaped id in the `id` attribute — only the SELECTOR string is
+  // escaped).
+  const slice = garageSlice(section._html);
+  expect('S109: archived item article has the literal id in the HTML',
+    slice.includes('id="pf2-garage-archived-has:colon space"'));
+  // The escaped selector path is what the wire calls. Node's stub
+  // memoises by selector string; the escaped key is the one that gets
+  // a captured handler.
+  expect('S109: restore handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-has\\:colon\\ space') === 'function');
+  expect('S109: cancel handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-cancel-has\\:colon\\ space') === 'function');
+  expect('S109: confirm handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-confirm-has\\:colon\\ space') === 'function');
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

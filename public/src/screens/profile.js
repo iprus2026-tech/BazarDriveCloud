@@ -2964,6 +2964,22 @@ function garageEditSheetHtml() {
       </div>`;
 }
 
+// BD-PROFILE-D-05J Codex P2 #3 — Escape a vehicle id for safe use
+// inside an `#id` CSS selector. Production browsers expose `CSS.escape`
+// (since ~2015); Node (the smoke runtime) does not, so the fallback
+// regex covers the same special characters CSS.escape would. Used by
+// the archived restore wiring because archived ids can carry
+// whitespace / colons / brackets — `normalisePersistedVehicle` only
+// trims them.
+function escapeCssId(s) {
+  const str = String(s);
+  if (typeof globalThis.CSS !== 'undefined'
+      && typeof globalThis.CSS.escape === 'function') {
+    return globalThis.CSS.escape(str);
+  }
+  return str.replace(/[\s!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+}
+
 // BD-PROFILE-D-05J — Archived garage list. Renders one item per
 // archived vehicle (after `normalisePersistedVehicle`); each item
 // carries a "Вернуть" button that opens a per-item 2-step inline
@@ -3336,15 +3352,23 @@ function wireGarageActions(root, vehicles = []) {
   // cancel → reset row + button label; confirm → restoreGarageVehicle
   // + refreshGarageSection. Restore writes only the matched entry's
   // `archived` flag in `state.js`; activeVehicleId is preserved.
+  // 05J Codex P2 #3 — archived ids can contain CSS-special characters
+  // (spaces, colons, brackets, etc.) because `normalisePersistedVehicle`
+  // only trims them; raw interpolation into `querySelector` would
+  // throw `SyntaxError` on the first weird char and leave the restore
+  // wiring orphaned. `escapeCssId` runs each id through `CSS.escape`
+  // when available, falling back to a manual replace for the smoke's
+  // Node environment.
   const archivedVehiclesForWire = listArchivedGarageVehicles(user.get());
   for (const archived of archivedVehiclesForWire) {
     const aid = archived && archived.id;
     if (!aid) continue;
+    const eid = escapeCssId(aid);
 
-    const restoreBtn = root.querySelector(`#pf2-garage-restore-${aid}`);
-    const restoreConfirmRow = root.querySelector(`#pf2-garage-restore-confirm-row-${aid}`);
-    const restoreCancelBtn = root.querySelector(`#pf2-garage-restore-cancel-${aid}`);
-    const restoreConfirmFinal = root.querySelector(`#pf2-garage-restore-confirm-${aid}`);
+    const restoreBtn = root.querySelector(`#pf2-garage-restore-${eid}`);
+    const restoreConfirmRow = root.querySelector(`#pf2-garage-restore-confirm-row-${eid}`);
+    const restoreCancelBtn = root.querySelector(`#pf2-garage-restore-cancel-${eid}`);
+    const restoreConfirmFinal = root.querySelector(`#pf2-garage-restore-confirm-${eid}`);
 
     restoreBtn?.addEventListener('click', () => {
       if (!restoreConfirmRow) return;

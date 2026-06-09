@@ -117,6 +117,13 @@ export function buildGarageVehicles(u, options = {}) {
         color,
         plate,
         source: 'legacy',
+        // 05J Codex P2 #2 — the synthesised legacy entry carries a
+        // `_synthesized: true` marker so the resolver can distinguish
+        // "auto-derived from legacy fields" from "persisted (possibly
+        // restored)" entries. Only the synthesised entry grants the
+        // null-saved active fallback; persisted entries (including
+        // restored ones) must wait for explicit `Сделать активной`.
+        _synthesized: true,
       }];
     }
   }
@@ -158,9 +165,18 @@ export function resolveActiveGarageVehicleId(profile, vehicles) {
     ? profile.driverGarage.activeVehicleId
     : null;
   if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
-  const legacy = vehicles.find((v) => v && v.source === 'legacy');
-  if (legacy) return legacy.id;
-  return (vehicles[0] && vehicles[0].id) || null;
+  // 05J Codex P2 #2 — only the synthesised legacy fallback entry grants
+  // the null-saved auto-active. Persisted entries (including a vehicle
+  // that was just restored from archive) must wait for an explicit
+  // `Сделать активной` click. This prevents the brief's case where a
+  // restored one-car garage silently re-activates via first-vehicle
+  // fallback. Stale-saved still falls back to the first vehicle so a
+  // mis-set saved id doesn't leave the card list completely
+  // badge-less (05F S32 semantic preserved).
+  const synthesised = vehicles.find((v) => v && v._synthesized === true);
+  if (synthesised) return synthesised.id;
+  if (saved) return (vehicles[0] && vehicles[0].id) || null;
+  return null;
 }
 
 // Convenience read used by the driver-response snapshot (respond.js) and

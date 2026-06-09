@@ -727,11 +727,23 @@ export function restoreGarageVehicle(vehicleId) {
     : { activeVehicleId: null, vehicles: [] };
   const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
 
+  // 05J Codex P2 #1 — prefer an ARCHIVED match first so a duplicate id
+  // collision (one entry restored, a later sibling still archived)
+  // doesn't trap the later one in the archive forever. Falls back to
+  // any matching entry afterwards for the idempotent non-archived
+  // restore (no-op write).
   let idx = vehicles.findIndex((v) => {
     if (!v) return false;
     const rawId = typeof v.id === 'string' ? v.id.trim() : '';
-    return rawId.length > 0 && rawId === targetId;
+    return rawId.length > 0 && rawId === targetId && v.archived === true;
   });
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId;
+    });
+  }
   if (idx < 0) {
     const synth = /^garage-(\d+)$/.exec(targetId);
     if (synth) {
