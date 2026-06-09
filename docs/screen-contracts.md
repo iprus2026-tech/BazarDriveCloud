@@ -147,6 +147,24 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Actions | Begin, guest entry, role pick, phone mock, profile save, vehicle/docs save, finish. |
 | Acceptance | Pending action survives onboarding; driver lands where the pending action expects. |
 
+### BD-ONBOARDING-01 - Welcome render gate
+
+| Field | Contract |
+|---|---|
+| Route | `/welcome` (router fallback for empty hash) |
+| File | `public/src/screens/welcome.js` |
+| Storage | `bazardrive.user.v1` — `welcomeSeen`, `role`, optional `notificationsEnabled`. No new persistence key. |
+| Render-gate states | `welcome` (01A) → `role` (01B) → `permissions` (01C) → `loading` (01D) → routes by role; `error` (01E) reachable via the retry path from loading or via the `?step=error` preview. |
+| State machine | Internal `step` variable rebuilds the section's `innerHTML` on each transition. The five steps share a single `.screen--ob` shell and the `.ob-state[data-ob-step="…"]` markup; hooks are stable across transitions. |
+| Persistence rules | Only the explicit `Начать` → `Продолжить` flow stamps `welcomeSeen: true` and the chosen `role`. The `Войти` button stamps `welcomeSeen: true` only (defers role selection to the existing `/onboarding` screen). The `Разрешить позже` button takes the user past permissions without stamping `notificationsEnabled`; `Продолжить` on permissions stamps `notificationsEnabled: true`. No real geolocation / notification API is called. |
+| Loading transition | Pure UI-only setTimeout (1200ms). No backend call, no fetch, no Mapbox preload. On timer fire: stamp `welcomeSeen` + `role`, consume any pending router action, then `go('/feed')` for passenger / `go('/driver-map')` for driver. |
+| Returning user | When `user.get().onboarded === true`, the screen short-circuits before any render — `Promise.resolve().then(() => go(…))` routes the driver to `/driver-map` and everyone else to `/feed`. The deferred `go()` lets the router's current render pass complete before the next hashchange fires. |
+| Render-gate preview | `?step=welcome\|role\|permissions\|loading\|error` forces a specific step without persisting any state. The `onboarded`-skip is also bypassed by the preview so designers can review each state on any account. Mirrors the `?state=…` and `?garage=…` preview conventions used by Profile. |
+| DOM hooks | `[data-ob-step]` on the per-state root; `[data-ob-action]` on each button (`start`, `login`, `role-continue`, `perm-continue`, `perm-later`, `retry`); `[data-ob-role]` on each role card. The `Продолжить` button on the role step carries `disabled` + `aria-disabled="true"` until a role is picked. |
+| CSS namespace | `.ob-*` (e.g. `.ob-state`, `.ob-brand-mark`, `.ob-role-card`, `.ob-benefit-row`, `.ob-permission-row`, `.ob-loading-mark`, `.ob-retry-state`, `.ob-actions`). Reuses the existing `--accent` / `--bg-*` / `--text-*` design tokens and the `.bd-btn` button shapes. `max-width: 430px`, safe-area-aware bottom action dock. |
+| Out of scope | SMS / Telegram auth, real auth, backend verification, Mapbox preload, push notifications API call, payment, APK / Android packaging, moderation, driver document upload, large router rewrite, redesign of `/feed` / `/composer` / `/profile` / `/chat` / `/respond` / `/active-ride` / `/map`. The legacy `BD-ONBOARDING-01 Welcome + Onboarding V2` row above continues to cover the post-`Войти` `/onboarding` screen unchanged. |
+| Acceptance | `node scripts/check.mjs` green; `node scripts/dispatcher.mjs` clean. Manual: `/welcome` lands on 01A; `Начать` → 01B; `Продолжить` disabled until role; passenger → `/feed` after `01D`; driver → `/driver-map` after `01D`; `Разрешить позже` still continues; retry from `01E` re-enters `01D`; returning users (`onboarded === true`) skip to `/feed` / `/driver-map`. No inline script/style; CSP unchanged. |
+
 ### BD-PROFILE-01 - Passenger profile
 
 | Field | Contract |
