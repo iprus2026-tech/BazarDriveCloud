@@ -439,6 +439,279 @@ body {
 }
 .welcome__hint { color: var(--text-3); font-size: 13px; text-align: center; }
 
+/* ── BD-ONBOARDING-01 Welcome render gate (ob-* namespace) ───────────── */
+/* Five render states share the same shell; each `.ob-state` is a flex
+   column with hero on top, body in the middle, actions pinned to a
+   safe-area-aware bottom. The screen-level `.screen--ob` modifier just
+   keeps the welcome flow's centered layout under both the old and new
+   render code paths. */
+.screen--ob {
+  min-height: 100dvh;
+  position: relative;
+}
+.ob-state {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 100dvh;
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 0 var(--pad);
+}
+.ob-state[data-ob-step="welcome"] { justify-content: space-between; }
+.ob-state[data-ob-step="role"],
+.ob-state[data-ob-step="permissions"] { gap: 18px; padding-top: 6vh; }
+.ob-state[data-ob-step="loading"],
+.ob-state[data-ob-step="error"] {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 18px;
+}
+
+/* Brand mark — hero variant on welcome, compact variant on subsequent
+   steps so the brand stays present without dominating the layout. */
+.ob-brand-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+.ob-brand-mark--hero { margin-top: 14vh; }
+.ob-brand-mark--compact { margin-top: 8px; }
+.ob-brand-mark__logo {
+  width: 88px; height: 88px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 40px rgba(255, 107, 53, 0.22);
+}
+.ob-brand-mark--compact .ob-brand-mark__logo {
+  width: 56px; height: 56px;
+  border-radius: 18px;
+}
+.ob-brand-mark__logo svg { width: 52px; height: 52px; display: block; }
+.ob-brand-mark--compact .ob-brand-mark__logo svg { width: 34px; height: 34px; }
+.ob-brand-mark__title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0;
+}
+.ob-brand-mark__title--compact { font-size: 22px; }
+.ob-brand-mark__tagline {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.ob-lead {
+  font-size: 16px;
+  color: var(--text-2);
+  line-height: 1.55;
+  text-align: center;
+  margin: 0 auto;
+  max-width: 300px;
+}
+
+/* Value strip (welcome step) — three quiet benefit rows under the lead. */
+.ob-value-strip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ob-benefit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+.ob-benefit-row__icon { color: var(--accent); display: inline-flex; }
+.ob-benefit-row__text { font-weight: 500; }
+
+/* Role grid (role step) — two large radio-like cards. */
+.ob-role-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ob-role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ob-role-card:hover { background: var(--bg-3); }
+.ob-role-card__icon {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px; height: 40px;
+  background: rgba(255, 107, 53, 0.10);
+  border-radius: 12px;
+}
+.ob-role-card__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.ob-role-card__desc {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.4;
+}
+.ob-role-card--selected {
+  border-color: var(--accent);
+  background: rgba(255, 107, 53, 0.08);
+}
+
+/* Permissions step — two rationale rows + privacy note. */
+.ob-permission-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ob-permission-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.ob-permission-row__icon {
+  color: var(--accent);
+  display: inline-flex;
+  margin-top: 2px;
+}
+.ob-permission-row__body { flex: 1; min-width: 0; }
+.ob-permission-row__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  color: var(--text-1);
+}
+.ob-permission-row__desc {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.4;
+}
+.ob-privacy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0;
+  line-height: 1.4;
+}
+.ob-privacy-note__icon { display: inline-flex; margin-top: 1px; flex-shrink: 0; }
+
+/* Loading step — brand mark + three-dot spinner + role-aware copy. */
+.ob-loading-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.ob-loading-mark__logo {
+  width: 72px; height: 72px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 32px rgba(255, 107, 53, 0.20);
+}
+.ob-loading-mark__logo svg { width: 42px; height: 42px; display: block; }
+.ob-loading-mark__spinner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ob-loading-mark__spinner-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.4;
+  animation: ob-pulse 1.0s ease-in-out infinite;
+}
+.ob-loading-mark__spinner-dot:nth-child(2) { animation-delay: 0.15s; }
+.ob-loading-mark__spinner-dot:nth-child(3) { animation-delay: 0.30s; }
+@keyframes ob-pulse {
+  0%, 80%, 100% { opacity: 0.4; transform: scale(0.85); }
+  40%           { opacity: 1.0; transform: scale(1.0); }
+}
+.ob-loading-message {
+  font-size: 15px;
+  color: var(--text-2);
+  margin: 0;
+}
+
+/* Error step — friendly retry card. */
+.ob-retry-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ob-retry-state__icon {
+  color: var(--danger, #d93b3b);
+  display: inline-flex;
+  margin-bottom: 4px;
+}
+.ob-retry-state__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+.ob-retry-state__desc {
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+/* Actions bar — safe-area-aware bottom dock shared by all steps. */
+.ob-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 0 calc(env(safe-area-inset-bottom, 0px) + 36px);
+  margin-top: auto;
+}
+.ob-action[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── Onboarding ───────────────────────────────────────────── */
 .screen--onboarding {
   overflow-y: auto;
