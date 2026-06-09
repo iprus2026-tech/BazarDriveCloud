@@ -13104,6 +13104,27 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__confirm[data-garage-confirm-state="scheduled-local"] {
   background: var(--bg-2);
 }
+.pf2-garage__confirm[data-garage-confirm-state="archived-local"] {
+  background: var(--bg-2);
+}
+/* BD-PROFILE-D-05I — Confirm row gains a separate title above the
+   helper text. Keeps the secondary copy quiet and the primary action
+   read as the prominent button. */
+.pf2-garage__confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  width: 100%;
+  color: var(--text-1);
+}
+/* BD-PROFILE-D-05I — Archived count hint sits under the active-list
+   cards. Strictly informational; the archived entries themselves are
+   filtered out of the active list by the resolver. */
+.pf2-garage__archived-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
 /* BD-PROFILE-D-05C — multi-card layout. Sibling vehicle cards stack
    vertically with a divider; the second-and-later cards inherit a muted
    accent so the active card stays visually anchored at the top. */

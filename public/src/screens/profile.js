@@ -8,6 +8,7 @@ import {
   isDriverLineReady,
   appendGarageVehicle,
   patchGarageVehicle,
+  archiveGarageVehicle,
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -20,6 +21,7 @@ import { performLocalLogout } from '../mock_auth.js';
 import {
   buildGarageVehicles,
   resolveActiveGarageVehicleId,
+  countArchivedGarageVehicles,
 } from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -2862,11 +2864,12 @@ function garageVehicleCardHtml(vehicle) {
           ${stateControl}
           <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive-${id}" data-garage-action="archive" data-garage-state="archive-confirm-local" data-vehicle-id="${id}" aria-expanded="false" aria-controls="pf2-garage-confirm-${id}">Архивировать</button>
         </div>
-        <div class="pf2-garage__confirm" id="pf2-garage-confirm-${id}" data-garage-confirm="archive" data-garage-confirm-state="idle" data-vehicle-id="${id}" role="group" aria-label="Подтверждение архивирования" hidden>
-          <p class="pf2-garage__confirm-text">Подтвердить архивирование?</p>
+        <div class="pf2-garage__confirm" id="pf2-garage-confirm-${id}" data-garage-confirm="archive" data-garage-confirm-state="idle" data-vehicle-id="${id}" role="group" aria-labelledby="pf2-garage-confirm-title-${id}" hidden>
+          <p class="pf2-garage__confirm-title" id="pf2-garage-confirm-title-${id}">Архивировать авто?</p>
+          <p class="pf2-garage__confirm-text">Авто останется в гараже, но не будет использоваться для заказов.</p>
           <div class="pf2-garage__confirm-actions">
             <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-archive-cancel-${id}" data-garage-action="archive-cancel" data-vehicle-id="${id}">Отмена</button>
-            <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-archive-confirm-${id}" data-garage-action="archive-confirm" data-vehicle-id="${id}">Подтвердить</button>
+            <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-archive-confirm-${id}" data-garage-action="archive-confirm" data-vehicle-id="${id}">Архивировать</button>
           </div>
         </div>
       </article>`;
@@ -2964,9 +2967,21 @@ function garageSectionHtml(u, options = {}) {
     ? options.vehicles
     : buildGarageVehicles(u, options);
 
+  // BD-PROFILE-D-05I — small archived-count hint. Archived entries stay
+  // in storage (soft-delete) but are filtered out of the active list by
+  // `buildGarageVehicles`; the hint surfaces the count so the driver
+  // knows they still exist.
+  // 05I Codex P2 — compute the archived count BEFORE the empty branch
+  // so it can also surface when the user just archived their last
+  // active vehicle and the active list is now empty.
+  const archivedCount = countArchivedGarageVehicles(u);
+  const archivedHintHtml = archivedCount > 0
+    ? `<p class="pf2-garage__archived-hint" id="pf2-garage-archived-hint" data-garage-archived-count="${archivedCount}">В архиве: ${archivedCount}</p>`
+    : '';
+
   if (vehicles.length === 0) {
     return `
-      <section class="bd-card pf2-garage pf2-garage--empty" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="0">
+      <section class="bd-card pf2-garage pf2-garage--empty" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="0" data-garage-archived-count="${archivedCount}">
         <header class="pf2-garage__head">
           <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         </header>
@@ -2975,18 +2990,18 @@ function garageSectionHtml(u, options = {}) {
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
           <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
-        </div>${garageAddSheetHtml()}${garageEditSheetHtml()}
+        </div>${archivedHintHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
       </section>`;
   }
 
   const multiClass = vehicles.length > 1 ? ' pf2-garage--multi' : '';
   const cardsHtml = vehicles.map(garageVehicleCardHtml).join('');
   return `
-    <section class="bd-card pf2-garage${multiClass}" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="${vehicles.length}">
+    <section class="bd-card pf2-garage${multiClass}" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="${vehicles.length}" data-garage-archived-count="${archivedCount}">
       <header class="pf2-garage__head">
         <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready" aria-label="Добавить авто">+ Добавить</button>
-      </header>${cardsHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
+      </header>${cardsHtml}${archivedHintHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
     </section>`;
 }
 
@@ -3242,17 +3257,28 @@ function wireGarageActions(root, vehicles = []) {
       archiveBtn?.setAttribute('aria-expanded', 'false');
       if (confirmFinal) {
         confirmFinal.disabled = false;
-        confirmFinal.textContent = 'Подтвердить';
+        // BD-PROFILE-D-05I Codex P3 — restore the 05I primary action
+        // label ("Архивировать"), not the pre-05I "Подтвердить", so
+        // re-opening the confirm row after a cancel still reads as the
+        // current archive copy. No re-render happens on cancel, so the
+        // text must be reset to the canonical 05I label here.
+        confirmFinal.textContent = 'Архивировать';
       }
     });
     confirmFinal?.addEventListener('click', () => {
       if (!confirmRow) return;
-      // Mark a successful confirm in the local UI only. The persisted
-      // garage data does NOT change here — archive remains a contract
-      // surface before any real CRUD lands.
-      confirmRow.dataset.garageConfirmState = 'scheduled-local';
+      // BD-PROFILE-D-05I — Real archive. `archiveGarageVehicle` flips
+      // `archived: true` on the matched persisted entry (soft-delete),
+      // and clears `driverGarage.activeVehicleId` when the archived id
+      // was the active one. The render-time builder then drops the
+      // entry from the active list, the badge moves off, and the
+      // archived-count hint reflects the change. `refreshGarageSection`
+      // rebuilds the section in place.
+      confirmRow.dataset.garageConfirmState = 'archived-local';
       confirmFinal.disabled = true;
-      confirmFinal.textContent = 'Запланировано (демо)';
+      confirmFinal.textContent = 'Архивировано';
+      archiveGarageVehicle(id);
+      refreshGarageSection(root);
     });
   }
 }

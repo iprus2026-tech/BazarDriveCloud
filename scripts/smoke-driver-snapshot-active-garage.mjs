@@ -511,6 +511,81 @@ user.set({
     user.get().driverGarage?.activeVehicleId === 'ghost-99');
 }
 
+// ── Scenario 15 — BD-PROFILE-D-05I: archived vehicles are invisible to
+// the snapshot consumers. An archived vehicle (`archived: true`) is
+// filtered out of `buildGarageVehicles`, so neither `getUserVehicle` nor
+// `buildAcceptedDriverSnapshot` can surface it. When the only persisted
+// vehicle is archived, the resolver falls back to the legacy car. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-2',  // pre-archive selection
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const u = user.get();
+  // resolver excludes the archived entry → null collection → legacy fallback.
+  const active = resolveActiveGarageVehicle(u);
+  expect('S15: resolver falls back to legacy when the only persisted vehicle is archived',
+    active?.id === 'legacy-1', String(active?.id));
+  const v = getUserVehicle(u);
+  expect('S15: /respond getUserVehicle returns the legacy car (archived persisted is invisible)',
+    v?.name === 'Hyundai Solaris', String(v?.name));
+  expect('S15: /respond getUserVehicle plate is the legacy plate',
+    v?.plate === 'А 482 МР 77', String(v?.plate));
+  const snap = buildAcceptedDriverSnapshot(u);
+  expect('S15: handoff snapshot vehicle.model is the legacy "Hyundai Solaris"',
+    snap?.vehicle?.model === 'Hyundai Solaris', String(snap?.vehicle?.model));
+  // builder helper also excludes the archived entry from the active list.
+  const list = buildGarageVehicles(u);
+  expect('S15: buildGarageVehicles does NOT include the archived persisted entry',
+    !list.some((x) => x.id === 'real-2'));
+  expect('S15: buildGarageVehicles falls back to the single legacy entry',
+    list.length === 1 && list[0]?.id === 'legacy-1');
+}
+
+// ── Scenario 16 — Mixed persisted collection with one archived: the
+// snapshot consumers only see the non-archived entries. ─────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // Legacy fields keep `/respond getUserVehicle`'s pass-through guard
+  // satisfied so it doesn't bail early; the resolver still picks the
+  // non-archived persisted entry over the legacy car under 05F.
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-3',
+    vehicles: [
+      { id: 'real-2', model: 'Toyota Prius',  color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted', archived: true },
+      { id: 'real-3', model: 'Skoda Octavia', color: 'чёрный',     plate: 'В 456 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const v = getUserVehicle(user.get());
+  expect('S16: /respond getUserVehicle returns the non-archived real-3',
+    v?.name === 'Skoda Octavia', String(v?.name));
+  const snap = buildAcceptedDriverSnapshot(user.get());
+  expect('S16: handoff snapshot vehicle is the non-archived real-3',
+    snap?.vehicle?.model === 'Skoda Octavia', String(snap?.vehicle?.model));
+  // Archived real-2 must not leak into either snapshot.
+  expect('S16: /respond does NOT show the archived Toyota Prius',
+    v?.name !== 'Toyota Prius');
+  expect('S16: handoff does NOT show the archived Toyota Prius',
+    snap?.vehicle?.model !== 'Toyota Prius');
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

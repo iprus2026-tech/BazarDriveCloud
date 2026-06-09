@@ -552,6 +552,143 @@ export function patchGarageVehicle(vehicleId, rawPatch) {
   return targetId;
 }
 
+// BD-PROFILE-D-05I — Archive a single existing vehicle in the persisted
+// garage collection. Single safe write path for the Driver Profile
+// garage's archive confirm flow. Strictly soft-delete semantics:
+//   - The entry stays in `driverGarage.vehicles` (no hard delete, no
+//     array splice), keeping ids stable and preserving its data so a
+//     future restore-from-archive surface (out of scope for 05I) can
+//     reverse the operation by clearing `archived`.
+//   - `archived: true` is the only field added to the matched entry;
+//     all other fields (model / color / plate / source / unknown
+//     future fields) are preserved verbatim via `...prev` spread.
+//   - The vehicles array order is preserved.
+//   - If the archived id is currently the active selection, the helper
+//     clears `activeVehicleId` to null. It does NOT promote another
+//     vehicle to active automatically; the render-time resolver may
+//     pick the first non-archived candidate for display purposes, but
+//     storage stays explicit.
+//   - Idempotent: archiving an already-archived id is a no-op write
+//     (still clears `activeVehicleId` if it pointed at the now-archived
+//     id, as a belt-and-braces against earlier writers that missed
+//     this branch).
+//
+// Lookup safety (mirrors `patchGarageVehicle`):
+//   - `vehicleId` is trimmed; whitespace-only id returns null.
+//   - Strict match trims both sides so a raw stored id like ` real-1 `
+//     can be archived via `real-1`.
+//   - Synthesised-id fallback: a `garage-${rawIdx + 1}` id maps back to
+//     the raw id-less slot at index N-1, mirroring the resolver
+//     contract. Bounded by array length and never hijacks a real id.
+//
+// Returns the canonical (trimmed) id on success; null on validation
+// refusal (empty/unknown id) or missing collection.
+export function archiveGarageVehicle(vehicleId) {
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  let idx = vehicles.findIndex((v) => {
+    if (!v) return false;
+    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+    return rawId.length > 0 && rawId === targetId;
+  });
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(targetId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
+  if (idx < 0) {
+    // BD-PROFILE-D-05I Codex P2 — legacy-fallback materialisation.
+    // When the user has no persisted vehicles but the resolver
+    // synthesised a `legacy-1` card from the legacy `vehicleMake /
+    // Model / Color / Plate` user fields, an archive click on that
+    // card would otherwise return null and the next render would
+    // resurrect the same card from the legacy fields. Materialise the
+    // legacy entry into `driverGarage.vehicles` as an archived record
+    // so the builder's "is the persisted collection empty?" check
+    // suppresses the legacy fallback on subsequent renders. The
+    // original legacy `vehicleMake / Model / Color / Plate` fields
+    // stay intact — never wiped, never migrated outside the archive
+    // entry.
+    if (targetId === 'legacy-1') {
+      const make = typeof cache.vehicleMake === 'string' ? cache.vehicleMake.trim() : '';
+      const model = typeof cache.vehicleModel === 'string' ? cache.vehicleModel.trim() : '';
+      const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+      if (modelLine) {
+        const color = typeof cache.vehicleColor === 'string' ? cache.vehicleColor.trim() : '';
+        const plate = typeof cache.vehiclePlate === 'string' ? cache.vehiclePlate.trim() : '';
+        const legacyEntry = {
+          id: 'legacy-1',
+          model: modelLine,
+          color,
+          plate,
+          source: 'legacy',
+          archived: true,
+        };
+        const dgActiveTrim = typeof dg.activeVehicleId === 'string'
+          ? dg.activeVehicleId.trim() : '';
+        const isActiveTarget = dgActiveTrim === 'legacy-1';
+        cache = normalize({ ...cache, driverGarage: {
+          activeVehicleId: isActiveTarget ? null : dg.activeVehicleId,
+          vehicles: [...vehicles, legacyEntry],
+        }});
+        persist();
+        return targetId;
+      }
+    }
+    return null;
+  }
+
+  const prev = vehicles[idx] || {};
+  const dgActiveTrim = typeof dg.activeVehicleId === 'string'
+    ? dg.activeVehicleId.trim() : '';
+  const prevIdTrim = typeof prev.id === 'string' ? prev.id.trim() : '';
+  const isActiveTarget = dgActiveTrim.length > 0
+    && (dgActiveTrim === targetId || (prevIdTrim && dgActiveTrim === prevIdTrim));
+
+  // Idempotent: already archived → only re-run the active-clear branch.
+  if (prev.archived === true) {
+    if (isActiveTarget) {
+      cache = normalize({ ...cache, driverGarage: {
+        ...dg,
+        activeVehicleId: null,
+      }});
+      persist();
+    }
+    return targetId;
+  }
+
+  const archivedEntry = {
+    ...prev,
+    id: targetId,
+    archived: true,
+  };
+
+  const nextVehicles = [...vehicles];
+  nextVehicles[idx] = archivedEntry;
+
+  cache = normalize({ ...cache, driverGarage: {
+    activeVehicleId: isActiveTarget ? null : dg.activeVehicleId,
+    vehicles: nextVehicles,
+  }});
+  persist();
+  return targetId;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't
