@@ -4089,6 +4089,123 @@ user.set({
     typeof clickHandlers.get('#pf2-garage-archive-wild\\:id\\ space') === 'function');
 }
 
+// ── Scenario 117 — BD-PROFILE-D-05J Codex P2 #1 (round 4): the
+// markGarageVehicleActive lookup is now marker-preferring, so the
+// duplicate-id case where ONE of the matching entries carries the
+// `restoredFromArchive` marker still gets its marker cleared.
+// Without the marker preference, the strict-only findIndex would
+// lock onto the first matching entry (raw[0]) and leave raw[1]'s
+// marker stranded. ───────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // raw[0] — id 'dup', NO marker. Without marker preference, the
+      // strict-only lookup would find this entry first and skip the
+      // marker-clear branch.
+      { id: 'dup', model: 'Clean', source: 'persisted' },
+      // raw[1] — id 'dup' WITH marker. The marker-preferring strict
+      // must find this entry and clear the marker.
+      { id: 'dup', model: 'Restored', source: 'persisted', restoredFromArchive: true },
+    ],
+  },
+});
+{
+  const { markGarageVehicleActive: markFn } = await import('../public/src/state.js');
+  markFn('dup');
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S117: marker-preferring lookup cleared the marker on raw[1]',
+    !('restoredFromArchive' in (persisted?.[1] || {})));
+  expect('S117: raw[0] (no-marker duplicate) preserved byte-for-byte',
+    JSON.stringify(persisted?.[0]) === JSON.stringify({
+      id: 'dup', model: 'Clean', source: 'persisted',
+    }));
+  expect('S117: activeVehicleId set to "dup"',
+    user.get().driverGarage?.activeVehicleId === 'dup');
+}
+
+// ── Scenario 118 — Round 4 strengthening of S115: after restoring the
+// visible duplicate via _rawIdx, the post-restore render surfaces the
+// restored entry as an active-list "available" card (NOT active —
+// restoredFromArchive marker still blocks the null-saved fallback). ─────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'dup', archived: true, source: 'persisted' },  // invisible (no model)
+      { id: 'dup', model: 'Visible', color: 'серый', plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  const slice = garageSlice(renderProfile('#/profile'));
+  // The visible card is now in the active list as an "available" card
+  // (no active badge — restoredFromArchive marker blocks the
+  // null-saved first-eligible fallback).
+  expect('S118: post-restore render shows the Visible card as an active-list card',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="dup"/.test(slice));
+  expect('S118: Visible card does NOT carry the active-current span (marker blocks fallback)',
+    !slice.includes('id="pf2-garage-active-dup"'));
+  expect('S118: Visible card renders the make-active button (status: available)',
+    slice.includes('id="pf2-garage-make-active-dup"'));
+  // raw[0] (modelless invisible) still archived → archived section
+  // remains rendered with one entry (the invisible one is dropped from
+  // the visible list but the count hint still sees it).
+  expect('S118: archived section gone (no renderable archived entries left)',
+    !slice.includes('id="pf2-garage-archived-section"'));
+  expect('S118: archived COUNT hint still reflects raw[0] storage truth',
+    slice.includes('В архиве: 1'));
+}
+
+// ── Scenario 119 — Round 4 strengthening of S116: every active-card
+// per-vehicle selector survives a CSS-special-char id after restore.
+// Covers edit / make-active / archive / confirm row / cancel / final
+// confirm — the brief's audit list. ─────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'a:b?x]', model: 'AuditAll', color: 'белый', plate: 'А 999 ВВ 99', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-a\\:b\\?x\\]')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-a\\:b\\?x\\]')?.();
+  let renderError = null;
+  try { renderProfile('#/profile'); } catch (e) { renderError = e; }
+  expect('S119: post-restore active-card render did NOT throw on "a:b?x]"',
+    renderError === null, renderError ? renderError.message : '');
+  // Audit every per-vehicle active-card selector from the brief.
+  const escaped = 'a\\:b\\?x\\]';
+  expect('S119: edit selector wired',
+    typeof clickHandlers.get(`#pf2-garage-edit-${escaped}`) === 'function');
+  expect('S119: make-active selector wired',
+    typeof clickHandlers.get(`#pf2-garage-make-active-${escaped}`) === 'function');
+  expect('S119: archive selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-${escaped}`) === 'function');
+  expect('S119: archive-cancel selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-cancel-${escaped}`) === 'function');
+  expect('S119: archive-confirm (final) selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-confirm-${escaped}`) === 'function');
+  // The confirm row itself isn't a click target but should still be
+  // queryable without a SyntaxError — proven by the no-throw render
+  // above (wireGarageActions assigns it via querySelector during the
+  // active-card iteration).
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

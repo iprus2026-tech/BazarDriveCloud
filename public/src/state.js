@@ -869,12 +869,49 @@ export function markGarageVehicleActive(vehicleId) {
     : { activeVehicleId: null, vehicles: [] };
   const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
 
-  let nextVehicles = vehicles;
-  const idx = vehicles.findIndex((v) => {
+  // 05J Codex P2 #1 (round 4) — lookup style mirrors
+  // `restoreGarageVehicle` / `archiveGarageVehicle`:
+  //   1. Marker-preferring strict — analog of restore's
+  //      "archived-preferring strict": when duplicate ids exist and
+  //      ONE of them carries the `restoredFromArchive` marker, prefer
+  //      that slot so the explicit activation actually clears the
+  //      marker. Without this, the strict findIndex would lock onto
+  //      the first matching entry (which may not be the marked one)
+  //      and the marker would stay on the duplicate forever.
+  //   2. Any-match strict — fallback when no marker-bearing entry
+  //      exists (the common case: the user just picks an existing
+  //      vehicle, no marker drama).
+  //   3. Synthesised-id fallback — for the id-less raw slot path,
+  //      mirrors restore. Matters when a future caller is given a
+  //      `garage-N` synth id from the resolver before the slot has
+  //      been stamped with a real id.
+  let idx = vehicles.findIndex((v) => {
     if (!v) return false;
     const rawId = typeof v.id === 'string' ? v.id.trim() : '';
-    return rawId.length > 0 && rawId === targetId;
+    return rawId.length > 0 && rawId === targetId && v.restoredFromArchive === true;
   });
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId;
+    });
+  }
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(targetId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
+
+  let nextVehicles = vehicles;
   if (idx >= 0) {
     const prev = vehicles[idx];
     if (prev && prev.restoredFromArchive === true) {
