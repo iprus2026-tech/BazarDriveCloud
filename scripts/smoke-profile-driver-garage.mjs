@@ -3774,6 +3774,176 @@ user.set({
     typeof clickHandlers.get('#pf2-garage-restore-confirm-has\\:colon\\ space') === 'function');
 }
 
+// ── Scenario 110 — BD-PROFILE-D-05J Codex P2 #1 (round 2): normal
+// persisted garage with `activeVehicleId: null` still resolves the
+// first eligible (non-restored) vehicle. The previous round's
+// _synthesized-only fallback broke this — every add-without-makeActive
+// landed without an active badge. This scenario locks down the
+// recovered first-fallback for the add-flow. ─────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // No legacy vehicleMake/Model fields → no synthesised legacy entry
+  // can grant the fallback. The first-eligible filter must do it.
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S110: normal persisted (no makeActive) gets the active-current span via first-eligible fallback',
+    slice.includes('id="pf2-garage-active-real-1"'));
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S110: resolveActiveGarageVehicle returns the first eligible non-restored vehicle',
+    resolveFn(user.get())?.id === 'real-1', String(resolveFn(user.get())?.id));
+}
+
+// ── Scenario 111 — BD-PROFILE-D-05J Codex P2 #2 (round 2): synthesised
+// `garage-N` restore prefers the raw id-less ARCHIVED slot over a real
+// non-archived entry that happens to carry the colliding id. Without
+// the prefix, the any-match strict path would lock onto the real entry
+// and return idempotently, trapping the raw archived slot forever. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // raw[0] — id-less archived slot. The resolver materialises it as
+      // `garage-1`. The new prefix must restore THIS slot.
+      { model: 'Solo', color: 'белый', plate: 'А 111 АА 11', source: 'persisted', archived: true },
+      // raw[1] — real entry whose id collides with `garage-1`. Strict
+      // matching would lock onto this entry first.
+      { id: 'garage-1', model: 'Collider', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const r = restoreFn('garage-1');
+  expect('S111: restoreGarageVehicle("garage-1") returns the canonical id',
+    r === 'garage-1', String(r));
+  const persisted = user.get().driverGarage?.vehicles;
+  // raw[0] (the id-less archived slot) is the one that got restored:
+  // archived flag stripped, id stamped, restoredFromArchive marker set.
+  expect('S111: raw[0] (id-less archived) now has id "garage-1"',
+    persisted?.[0]?.id === 'garage-1');
+  expect('S111: raw[0] is no longer archived',
+    !('archived' in (persisted?.[0] || {})));
+  expect('S111: raw[0] carries restoredFromArchive: true',
+    persisted?.[0]?.restoredFromArchive === true);
+  expect('S111: raw[0] preserves its original model "Solo"',
+    persisted?.[0]?.model === 'Solo');
+  // raw[1] (the real collider) is untouched — its model stays "Collider"
+  // and it never gets a restored marker.
+  expect('S111: raw[1] (the real "garage-1" collider) preserved byte-for-byte',
+    JSON.stringify(persisted?.[1]) === JSON.stringify({
+      id: 'garage-1', model: 'Collider', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted',
+    }));
+}
+
+// ── Scenario 112 — BD-PROFILE-D-05J Codex P3 #1: duplicate archived ids
+// are de-duped in `listArchivedGarageVehicles` so the rendered list
+// always has unique DOM hooks. The first archived match renders;
+// after the user restores it, the next archived sibling surfaces on
+// the next render. Sequential clicks restore each duplicate. ─────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Two archived entries share id 'dup'. The list must de-dupe
+      // and surface only one DOM button at a time.
+      { id: 'dup', model: 'First',  color: 'белый',   plate: 'А 111 АА 11', source: 'persisted', archived: true },
+      { id: 'dup', model: 'Second', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { listArchivedGarageVehicles: listFn } = await import('../public/src/garage.js');
+  const listBefore = listFn(user.get());
+  expect('S112: archived list is de-duped to length 1 (first archived "dup")',
+    Array.isArray(listBefore) && listBefore.length === 1, String(listBefore.length));
+  expect('S112: de-duped list keeps the FIRST archived entry (model "First")',
+    listBefore[0]?.model === 'First');
+
+  // Render — only one restore button is wired (no duplicate DOM ids).
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  // Count occurrences of the restore-dup id in the markup; should be
+  // exactly 1 (otherwise the button hook is shared and the wire is
+  // racy).
+  const restoreIdMatches = (sliceBefore.match(/id="pf2-garage-restore-dup"/g) || []).length;
+  expect('S112: only ONE #pf2-garage-restore-dup id rendered (no duplicate DOM)',
+    restoreIdMatches === 1, `count=${restoreIdMatches}`);
+  expect('S112: archived hint reports raw count 2 (storage truth)',
+    sliceBefore.includes('В архиве: 2'));
+
+  // First click restores the FIRST archived 'dup' (raw[0]).
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  expect('S112: after first restore, raw[0] is no longer archived',
+    user.get().driverGarage?.vehicles?.[0]?.archived !== true);
+  expect('S112: after first restore, raw[1] still archived',
+    user.get().driverGarage?.vehicles?.[1]?.archived === true);
+
+  // Next render now surfaces raw[1] (the second 'dup') for restoration.
+  const listAfter1 = listFn(user.get());
+  expect('S112: after first restore, list length is still 1 (now the second "dup")',
+    listAfter1.length === 1);
+  expect('S112: surfaced entry is the previously-second archived (model "Second")',
+    listAfter1[0]?.model === 'Second');
+
+  // Second click flow restores raw[1].
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  expect('S112: after second restore, raw[1] is no longer archived',
+    user.get().driverGarage?.vehicles?.[1]?.archived !== true);
+  // No archived entries remain → list empty.
+  const listAfter2 = listFn(user.get());
+  expect('S112: after both restores, archived list is empty',
+    listAfter2.length === 0);
+}
+
+// ── Scenario 113 — BD-PROFILE-D-05J Codex P3 #2: archived id with HTML
+// special characters is escaped in attribute contexts. The id can
+// contain quotes / angle brackets because `normalisePersistedVehicle`
+// only trims it; raw interpolation would break the markup and expose
+// an injection surface. ─────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Pathological id with quote + angle bracket.
+      { id: '<bad>"id"', model: 'Pathological', color: 'белый', plate: 'А 123 ВС 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const html = renderProfile('#/profile');
+  // The raw `<bad>"id"` form must NOT appear literally — escaping must
+  // have transformed it before interpolation.
+  expect('S113: raw `<bad>"id"` is NOT in the rendered HTML literally',
+    !html.includes('<bad>"id"'));
+  // The escaped form WHEN injected into an attribute context.
+  expect('S113: HTML-escaped form `&lt;bad&gt;&quot;id&quot;` is present in attribute slots',
+    html.includes('&lt;bad&gt;&quot;id&quot;'),
+    'expected escaped form to appear in id/data attributes');
+  // Render didn't crash. The archived section is rendered.
+  expect('S113: archived section was rendered',
+    html.includes('id="pf2-garage-archived-section"'));
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');

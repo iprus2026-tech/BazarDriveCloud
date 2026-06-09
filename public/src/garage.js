@@ -50,7 +50,15 @@ function normalisePersistedVehicle(raw, idx) {
   const plate = typeof raw.plate === 'string' ? raw.plate.trim() : '';
   const source = typeof raw.source === 'string' && raw.source ? raw.source : 'persisted';
   const archived = raw.archived === true;
-  return { id, model, color, plate, source, ...(archived ? { archived: true } : {}) };
+  // 05J Codex P2 #1 (round 2) — preserve the `restoredFromArchive`
+  // marker the helper set so the resolver's `firstEligible` filter
+  // can see it. Strict boolean — anything else is dropped.
+  const restoredFromArchive = raw.restoredFromArchive === true;
+  return {
+    id, model, color, plate, source,
+    ...(archived ? { archived: true } : {}),
+    ...(restoredFromArchive ? { restoredFromArchive: true } : {}),
+  };
 }
 
 // 05F — Read the persisted garage collection off the profile and return
@@ -165,17 +173,18 @@ export function resolveActiveGarageVehicleId(profile, vehicles) {
     ? profile.driverGarage.activeVehicleId
     : null;
   if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
-  // 05J Codex P2 #2 — only the synthesised legacy fallback entry grants
-  // the null-saved auto-active. Persisted entries (including a vehicle
-  // that was just restored from archive) must wait for an explicit
-  // `Сделать активной` click. This prevents the brief's case where a
-  // restored one-car garage silently re-activates via first-vehicle
-  // fallback. Stale-saved still falls back to the first vehicle so a
-  // mis-set saved id doesn't leave the card list completely
-  // badge-less (05F S32 semantic preserved).
+  // 05J Codex P2 #1 (round 2) — restore the normal resolver fallback
+  // chain: saved match → synthesised legacy → first eligible persisted
+  // vehicle → null. Eligibility filters out entries that were just
+  // unarchived by `restoreGarageVehicle` (marker
+  // `restoredFromArchive: true`) so a restored vehicle never
+  // auto-activates; the user must explicitly click `Сделать активной`
+  // and the saved-match branch above will then return its id.
   const synthesised = vehicles.find((v) => v && v._synthesized === true);
   if (synthesised) return synthesised.id;
-  if (saved) return (vehicles[0] && vehicles[0].id) || null;
+  const firstEligible = vehicles.find((v) =>
+    v && v.restoredFromArchive !== true);
+  if (firstEligible) return firstEligible.id;
   return null;
 }
 
@@ -221,10 +230,20 @@ export function listArchivedGarageVehicles(u) {
   if (!u || !u.driverGarage || !Array.isArray(u.driverGarage.vehicles)) return [];
   const raw = u.driverGarage.vehicles;
   const out = [];
+  // 05J Codex P3 #1 — de-dupe archived entries by id so the rendered
+  // archived list always carries unique DOM hooks and every restore
+  // button is actionable. When duplicate archived ids exist in
+  // storage, the first archived match is rendered; on restore, the
+  // helper's archived-preferring strict lookup unarchives the first
+  // raw match; a subsequent render then surfaces the next archived
+  // sibling. Sequential clicks restore each duplicate in turn.
+  const seenIds = new Set();
   for (let i = 0; i < raw.length; i++) {
     const v = normalisePersistedVehicle(raw[i], i);
     if (!v) continue;
     if (v.archived !== true) continue;
+    if (seenIds.has(v.id)) continue;
+    seenIds.add(v.id);
     out.push(v);
   }
   return out;

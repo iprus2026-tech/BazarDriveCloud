@@ -2993,19 +2993,25 @@ function escapeCssId(s) {
 function garageArchivedItemHtml(vehicle) {
   const { id, model, color, plate } = vehicle;
   const metaParts = [color, plate].filter(Boolean);
+  // 05J Codex P3 #2 — `id` is persisted user data and may contain HTML
+  // special characters (quotes, angle brackets). Escape it before
+  // interpolating into any attribute context so the markup stays
+  // well-formed and CSS selectors continue to find the element via
+  // querySelector + escapeCssId (kept as defence-in-depth).
+  const safeId = escapeHtml(id);
   return `
-        <article class="pf2-garage__archived-item" id="pf2-garage-archived-${id}" data-vehicle="${id}" data-vehicle-archived="true">
+        <article class="pf2-garage__archived-item" id="pf2-garage-archived-${safeId}" data-vehicle="${safeId}" data-vehicle-archived="true">
           <div class="pf2-garage__archived-info">
             <p class="pf2-garage__archived-model">${escapeHtml(model)}</p>
             ${metaParts.length ? `<p class="pf2-garage__archived-meta">${escapeHtml(metaParts.join(' · '))}</p>` : ''}
           </div>
-          <button type="button" class="pf2-garage__archived-restore" id="pf2-garage-restore-${id}" data-garage-action="restore" data-garage-state="restore-ready" data-vehicle-id="${id}" aria-expanded="false" aria-controls="pf2-garage-restore-confirm-row-${id}">Вернуть</button>
-          <div class="pf2-garage__confirm pf2-garage__restore-confirm" id="pf2-garage-restore-confirm-row-${id}" data-garage-restore-confirm="restore" data-garage-restore-confirm-state="idle" data-vehicle-id="${id}" role="group" aria-labelledby="pf2-garage-restore-title-${id}" hidden>
-            <p class="pf2-garage__confirm-title" id="pf2-garage-restore-title-${id}">Вернуть авто?</p>
+          <button type="button" class="pf2-garage__archived-restore" id="pf2-garage-restore-${safeId}" data-garage-action="restore" data-garage-state="restore-ready" data-vehicle-id="${safeId}" aria-expanded="false" aria-controls="pf2-garage-restore-confirm-row-${safeId}">Вернуть</button>
+          <div class="pf2-garage__confirm pf2-garage__restore-confirm" id="pf2-garage-restore-confirm-row-${safeId}" data-garage-restore-confirm="restore" data-garage-restore-confirm-state="idle" data-vehicle-id="${safeId}" role="group" aria-labelledby="pf2-garage-restore-title-${safeId}" hidden>
+            <p class="pf2-garage__confirm-title" id="pf2-garage-restore-title-${safeId}">Вернуть авто?</p>
             <p class="pf2-garage__confirm-text">Авто снова появится в гараже, но не станет активным автоматически.</p>
             <div class="pf2-garage__confirm-actions">
-              <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-restore-cancel-${id}" data-garage-action="restore-cancel" data-vehicle-id="${id}">Отмена</button>
-              <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-restore-confirm-${id}" data-garage-action="restore-confirm" data-garage-state="restore-confirm-local" data-vehicle-id="${id}">Вернуть</button>
+              <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-restore-cancel-${safeId}" data-garage-action="restore-cancel" data-vehicle-id="${safeId}">Отмена</button>
+              <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-restore-confirm-${safeId}" data-garage-action="restore-confirm" data-garage-state="restore-confirm-local" data-vehicle-id="${safeId}">Вернуть</button>
             </div>
           </div>
         </article>`;

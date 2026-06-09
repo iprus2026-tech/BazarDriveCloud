@@ -727,16 +727,37 @@ export function restoreGarageVehicle(vehicleId) {
     : { activeVehicleId: null, vehicles: [] };
   const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
 
-  // 05J Codex P2 #1 — prefer an ARCHIVED match first so a duplicate id
-  // collision (one entry restored, a later sibling still archived)
-  // doesn't trap the later one in the archive forever. Falls back to
-  // any matching entry afterwards for the idempotent non-archived
-  // restore (no-op write).
-  let idx = vehicles.findIndex((v) => {
-    if (!v) return false;
-    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
-    return rawId.length > 0 && rawId === targetId && v.archived === true;
-  });
+  let idx = -1;
+  const synth = /^garage-(\d+)$/.exec(targetId);
+
+  // 05J Codex P2 #2 (round 2) — when `targetId` is a synthesised
+  // `garage-N` id, the resolver materialised it from a raw id-less
+  // slot at index N-1. If THAT slot is archived, restore it first —
+  // before any strict id lookup. Otherwise a real entry with the
+  // colliding id `garage-N` would shadow the raw slot and trap the
+  // intended archived entry in the archive forever.
+  if (synth) {
+    const rawIdx = parseInt(synth[1], 10) - 1;
+    if (rawIdx >= 0 && rawIdx < vehicles.length) {
+      const candidate = vehicles[rawIdx];
+      if (candidate && typeof candidate === 'object') {
+        const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+        if (!candidateId && candidate.archived === true) idx = rawIdx;
+      }
+    }
+  }
+
+  // 05J Codex P2 #1 (round 1) — prefer an ARCHIVED match first so a
+  // duplicate id collision (one entry restored, a later sibling still
+  // archived) doesn't trap the later one in the archive forever.
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId && v.archived === true;
+    });
+  }
+  // Any-match strict (for the idempotent non-archived restore path).
   if (idx < 0) {
     idx = vehicles.findIndex((v) => {
       if (!v) return false;
@@ -744,16 +765,17 @@ export function restoreGarageVehicle(vehicleId) {
       return rawId.length > 0 && rawId === targetId;
     });
   }
-  if (idx < 0) {
-    const synth = /^garage-(\d+)$/.exec(targetId);
-    if (synth) {
-      const rawIdx = parseInt(synth[1], 10) - 1;
-      if (rawIdx >= 0 && rawIdx < vehicles.length) {
-        const candidate = vehicles[rawIdx];
-        if (candidate && typeof candidate === 'object') {
-          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
-          if (!candidateId) idx = rawIdx;
-        }
+  // Synthesised-id fallback for restoring an id-less NON-archived raw
+  // slot (idempotent — the post-match branch returns canonical id
+  // without writing). Only fires when the prefix branch above was a
+  // no-match.
+  if (idx < 0 && synth) {
+    const rawIdx = parseInt(synth[1], 10) - 1;
+    if (rawIdx >= 0 && rawIdx < vehicles.length) {
+      const candidate = vehicles[rawIdx];
+      if (candidate && typeof candidate === 'object') {
+        const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+        if (!candidateId) idx = rawIdx;
       }
     }
   }
@@ -767,9 +789,16 @@ export function restoreGarageVehicle(vehicleId) {
   }
 
   // Strip the archived flag; preserve every other field via spread.
+  // 05J Codex P2 #1 (round 2) — stamp a `restoredFromArchive: true`
+  // marker so the resolver's null-saved fallback can skip the
+  // restored entry. Saved-match still wins (the marker is irrelevant
+  // when `activeVehicleId` matches), so the marker only blocks the
+  // auto-active path. The marker persists until the user explicitly
+  // picks a new active selection.
   const restored = { ...prev };
   delete restored.archived;
   restored.id = targetId;
+  restored.restoredFromArchive = true;
 
   const nextVehicles = [...vehicles];
   nextVehicles[idx] = restored;
