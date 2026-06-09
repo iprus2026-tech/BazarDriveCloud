@@ -3257,7 +3257,12 @@ function wireGarageActions(root, vehicles = []) {
       archiveBtn?.setAttribute('aria-expanded', 'false');
       if (confirmFinal) {
         confirmFinal.disabled = false;
-        confirmFinal.textContent = 'Подтвердить';
+        // BD-PROFILE-D-05I Codex P3 — restore the 05I primary action
+        // label ("Архивировать"), not the pre-05I "Подтвердить", so
+        // re-opening the confirm row after a cancel still reads as the
+        // current archive copy. No re-render happens on cancel, so the
+        // text must be reset to the canonical 05I label here.
+        confirmFinal.textContent = 'Архивировать';
       }
     });
     confirmFinal?.addEventListener('click', () => {

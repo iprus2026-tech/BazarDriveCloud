@@ -3159,6 +3159,57 @@ user.set({
     slice.includes('id="pf2-garage-add"'));
 }
 
+// ── Scenario 93 — Codex P3 (05I): cancel restores the 05I primary
+// action label ("Архивировать") on the confirm button, NOT the pre-05I
+// "Подтвердить". The cancel handler does not re-render the section, so
+// the button text must be reset to the canonical 05I copy in place. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-archive-real-1')?.();
+  const confirmFinal = section.querySelector('#pf2-garage-archive-confirm-real-1');
+
+  // Sentinel — write a recognisable value into the button so we can
+  // prove the cancel handler explicitly overwrites with "Архивировать"
+  // (not just that the default happened to match). The smoke's DOM
+  // stub starts elements with empty `textContent`, so this also
+  // guarantees we are testing the handler's assignment, not the
+  // template-parsed value.
+  confirmFinal.textContent = '__sentinel_pre_cancel__';
+  confirmFinal.disabled = true;
+
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-archive-cancel-real-1')?.();
+  const after = snapshotLocalStorage();
+  expect('S93: cancel does NOT mutate localStorage',
+    before === after);
+
+  // After cancel, the confirm button text must be "Архивировать"
+  // (NOT the pre-05I "Подтвердить") and re-enabled. This catches a
+  // regression of the cancel handler reverting to the obsolete copy.
+  expect('S93: cancel handler overwrites the confirm label with "Архивировать" (Codex P3)',
+    confirmFinal.textContent === 'Архивировать',
+    String(confirmFinal.textContent));
+  expect('S93: cancel handler does NOT restore the pre-05I "Подтвердить" label',
+    confirmFinal.textContent !== 'Подтвердить');
+  expect('S93: confirm button is re-enabled after cancel',
+    confirmFinal.disabled === false);
+  // Vehicle stays not-archived.
+  expect('S93: vehicle stays not-archived after cancel',
+    user.get().driverGarage?.vehicles?.[0]?.archived !== true);
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
