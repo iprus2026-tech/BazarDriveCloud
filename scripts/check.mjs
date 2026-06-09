@@ -122,6 +122,18 @@ for (const f of walk(path.join(root, 'public'), ['.js'])) {
   }
 }
 
+// BD-ONBOARDING-02 — static/behavioural smoke for the Welcome render gate
+// and the loading timer stale-navigation guard.
+const welcomeLoadingTimerSmoke = path.join(root, 'scripts', 'smoke-welcome-loading-timer.mjs');
+if (exists(welcomeLoadingTimerSmoke)) {
+  try {
+    execFileSync(process.execPath, [welcomeLoadingTimerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-welcome-loading-timer.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-01 — static regression smoke for the driver-map role guard.
 const driverMapGuardSmoke = path.join(root, 'scripts', 'smoke-driver-map-guard.mjs');
 if (exists(driverMapGuardSmoke)) {
