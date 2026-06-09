@@ -9,6 +9,8 @@ import {
   appendGarageVehicle,
   patchGarageVehicle,
   archiveGarageVehicle,
+  restoreGarageVehicle,
+  markGarageVehicleActive,
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
@@ -22,6 +24,7 @@ import {
   buildGarageVehicles,
   resolveActiveGarageVehicleId,
   countArchivedGarageVehicles,
+  listArchivedGarageVehicles,
 } from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -2845,14 +2848,21 @@ function garageVehicleCardHtml(vehicle) {
   const { id, model, color, plate, status } = vehicle;
   const isActive = status === 'active';
   const metaParts = [color, plate].filter(Boolean);
+  // 05J Codex P2 #3 (round 3) — `id` is persisted user data and may
+  // contain HTML special characters (quote / angle bracket). Escape it
+  // before interpolating into any attribute slot on the active card.
+  // This mirrors the same fix on the archived card and prevents a
+  // restored entry with a hostile id from breaking the markup or the
+  // confirm row's aria-controls/aria-labelledby wiring.
+  const safeId = escapeHtml(id);
   const badge = isActive
     ? `<span class="bd-badge accent pf2-garage__badge" data-vehicle-status="active">Активное</span>`
     : `<span class="bd-badge pf2-garage__badge pf2-garage__badge--muted" data-vehicle-status="available">Доступно</span>`;
   const stateControl = isActive
-    ? `<span class="pf2-garage__action pf2-garage__action--current" id="pf2-garage-active-${id}" data-garage-action="active" data-garage-state="active-current" data-vehicle-id="${id}" aria-disabled="true">Активна сейчас</span>`
-    : `<button type="button" class="pf2-garage__action pf2-garage__action--make-active" id="pf2-garage-make-active-${id}" data-garage-action="make-active" data-garage-state="make-active-local" data-vehicle-id="${id}">Сделать активной</button>`;
+    ? `<span class="pf2-garage__action pf2-garage__action--current" id="pf2-garage-active-${safeId}" data-garage-action="active" data-garage-state="active-current" data-vehicle-id="${safeId}" aria-disabled="true">Активна сейчас</span>`
+    : `<button type="button" class="pf2-garage__action pf2-garage__action--make-active" id="pf2-garage-make-active-${safeId}" data-garage-action="make-active" data-garage-state="make-active-local" data-vehicle-id="${safeId}">Сделать активной</button>`;
   return `
-      <article class="pf2-garage__car pf2-garage__car--${status}" data-vehicle="${id}" data-vehicle-status="${status}" data-vehicle-source="${vehicle.source}">
+      <article class="pf2-garage__car pf2-garage__car--${status}" data-vehicle="${safeId}" data-vehicle-status="${status}" data-vehicle-source="${vehicle.source}">
         <div class="pf2-garage__car-icon" aria-hidden="true">${SVG_CAR_FRONT}</div>
         <div class="pf2-garage__car-info">
           <p class="pf2-garage__car-model">${escapeHtml(model)}</p>
@@ -2860,16 +2870,16 @@ function garageVehicleCardHtml(vehicle) {
         </div>
         ${badge}
         <div class="pf2-garage__actions">
-          <button type="button" class="pf2-garage__action" id="pf2-garage-edit-${id}" data-garage-action="edit" data-garage-state="edit-ready" data-vehicle-id="${id}">Редактировать</button>
+          <button type="button" class="pf2-garage__action" id="pf2-garage-edit-${safeId}" data-garage-action="edit" data-garage-state="edit-ready" data-vehicle-id="${safeId}">Редактировать</button>
           ${stateControl}
-          <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive-${id}" data-garage-action="archive" data-garage-state="archive-confirm-local" data-vehicle-id="${id}" aria-expanded="false" aria-controls="pf2-garage-confirm-${id}">Архивировать</button>
+          <button type="button" class="pf2-garage__action pf2-garage__action--muted" id="pf2-garage-archive-${safeId}" data-garage-action="archive" data-garage-state="archive-confirm-local" data-vehicle-id="${safeId}" aria-expanded="false" aria-controls="pf2-garage-confirm-${safeId}">Архивировать</button>
         </div>
-        <div class="pf2-garage__confirm" id="pf2-garage-confirm-${id}" data-garage-confirm="archive" data-garage-confirm-state="idle" data-vehicle-id="${id}" role="group" aria-labelledby="pf2-garage-confirm-title-${id}" hidden>
-          <p class="pf2-garage__confirm-title" id="pf2-garage-confirm-title-${id}">Архивировать авто?</p>
+        <div class="pf2-garage__confirm" id="pf2-garage-confirm-${safeId}" data-garage-confirm="archive" data-garage-confirm-state="idle" data-vehicle-id="${safeId}" role="group" aria-labelledby="pf2-garage-confirm-title-${safeId}" hidden>
+          <p class="pf2-garage__confirm-title" id="pf2-garage-confirm-title-${safeId}">Архивировать авто?</p>
           <p class="pf2-garage__confirm-text">Авто останется в гараже, но не будет использоваться для заказов.</p>
           <div class="pf2-garage__confirm-actions">
-            <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-archive-cancel-${id}" data-garage-action="archive-cancel" data-vehicle-id="${id}">Отмена</button>
-            <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-archive-confirm-${id}" data-garage-action="archive-confirm" data-vehicle-id="${id}">Архивировать</button>
+            <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-archive-cancel-${safeId}" data-garage-action="archive-cancel" data-vehicle-id="${safeId}">Отмена</button>
+            <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-archive-confirm-${safeId}" data-garage-action="archive-confirm" data-vehicle-id="${safeId}">Архивировать</button>
           </div>
         </div>
       </article>`;
@@ -2962,6 +2972,68 @@ function garageEditSheetHtml() {
       </div>`;
 }
 
+// BD-PROFILE-D-05J Codex P2 #3 — Escape a vehicle id for safe use
+// inside an `#id` CSS selector. Production browsers expose `CSS.escape`
+// (since ~2015); Node (the smoke runtime) does not, so the fallback
+// regex covers the same special characters CSS.escape would. Used by
+// the archived restore wiring because archived ids can carry
+// whitespace / colons / brackets — `normalisePersistedVehicle` only
+// trims them.
+function escapeCssId(s) {
+  const str = String(s);
+  if (typeof globalThis.CSS !== 'undefined'
+      && typeof globalThis.CSS.escape === 'function') {
+    return globalThis.CSS.escape(str);
+  }
+  return str.replace(/[\s!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+}
+
+// BD-PROFILE-D-05J — Archived garage list. Renders one item per
+// archived vehicle (after `normalisePersistedVehicle`); each item
+// carries a "Вернуть" button that opens a per-item 2-step inline
+// confirm (matching the 05I archive pattern). Hooks namespace:
+//   - `#pf2-garage-archived-${id}` — item container
+//   - `#pf2-garage-restore-${id}` — primary restore action button
+//   - `#pf2-garage-restore-confirm-row-${id}` — inline confirm row
+//   - `#pf2-garage-restore-cancel-${id}` / `#pf2-garage-restore-confirm-${id}` — confirm buttons
+// `data-garage-restore-confirm-state` shifts between idle/open/
+// restored-local. The section root carries `data-garage-archived-list-size`.
+function garageArchivedItemHtml(vehicle) {
+  const { id, model, color, plate } = vehicle;
+  const metaParts = [color, plate].filter(Boolean);
+  // 05J Codex P3 #2 — `id` is persisted user data and may contain HTML
+  // special characters (quotes, angle brackets). Escape it before
+  // interpolating into any attribute context so the markup stays
+  // well-formed and CSS selectors continue to find the element via
+  // querySelector + escapeCssId (kept as defence-in-depth).
+  const safeId = escapeHtml(id);
+  return `
+        <article class="pf2-garage__archived-item" id="pf2-garage-archived-${safeId}" data-vehicle="${safeId}" data-vehicle-archived="true">
+          <div class="pf2-garage__archived-info">
+            <p class="pf2-garage__archived-model">${escapeHtml(model)}</p>
+            ${metaParts.length ? `<p class="pf2-garage__archived-meta">${escapeHtml(metaParts.join(' · '))}</p>` : ''}
+          </div>
+          <button type="button" class="pf2-garage__archived-restore" id="pf2-garage-restore-${safeId}" data-garage-action="restore" data-garage-state="restore-ready" data-vehicle-id="${safeId}" aria-expanded="false" aria-controls="pf2-garage-restore-confirm-row-${safeId}">Вернуть</button>
+          <div class="pf2-garage__confirm pf2-garage__restore-confirm" id="pf2-garage-restore-confirm-row-${safeId}" data-garage-restore-confirm="restore" data-garage-restore-confirm-state="idle" data-vehicle-id="${safeId}" role="group" aria-labelledby="pf2-garage-restore-title-${safeId}" hidden>
+            <p class="pf2-garage__confirm-title" id="pf2-garage-restore-title-${safeId}">Вернуть авто?</p>
+            <p class="pf2-garage__confirm-text">Авто снова появится в гараже, но не станет активным автоматически.</p>
+            <div class="pf2-garage__confirm-actions">
+              <button type="button" class="pf2-garage__confirm-cancel" id="pf2-garage-restore-cancel-${safeId}" data-garage-action="restore-cancel" data-vehicle-id="${safeId}">Отмена</button>
+              <button type="button" class="pf2-garage__confirm-final" id="pf2-garage-restore-confirm-${safeId}" data-garage-action="restore-confirm" data-garage-state="restore-confirm-local" data-vehicle-id="${safeId}">Вернуть</button>
+            </div>
+          </div>
+        </article>`;
+}
+
+function garageArchivedSectionHtml(archivedList) {
+  if (!archivedList || archivedList.length === 0) return '';
+  const items = archivedList.map(garageArchivedItemHtml).join('');
+  return `
+      <section class="pf2-garage__archived-section" id="pf2-garage-archived-section" data-garage-archived-list-size="${archivedList.length}">
+        <h3 class="pf2-garage__archived-section-title">Архив</h3>${items}
+      </section>`;
+}
+
 function garageSectionHtml(u, options = {}) {
   const vehicles = Array.isArray(options.vehicles)
     ? options.vehicles
@@ -2978,6 +3050,11 @@ function garageSectionHtml(u, options = {}) {
   const archivedHintHtml = archivedCount > 0
     ? `<p class="pf2-garage__archived-hint" id="pf2-garage-archived-hint" data-garage-archived-count="${archivedCount}">В архиве: ${archivedCount}</p>`
     : '';
+  // 05J — archived list rendered alongside the hint when storage holds
+  // at least one renderable archived entry (`normalisePersistedVehicle`
+  // drops modelless ones, so list length can be < archivedCount).
+  const archivedList = listArchivedGarageVehicles(u);
+  const archivedListHtml = garageArchivedSectionHtml(archivedList);
 
   if (vehicles.length === 0) {
     return `
@@ -2990,7 +3067,7 @@ function garageSectionHtml(u, options = {}) {
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
           <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
-        </div>${archivedHintHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
+        </div>${archivedHintHtml}${archivedListHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
       </section>`;
   }
 
@@ -3001,7 +3078,7 @@ function garageSectionHtml(u, options = {}) {
       <header class="pf2-garage__head">
         <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         <button type="button" class="pf2-garage__add-btn" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready" aria-label="Добавить авто">+ Добавить</button>
-      </header>${cardsHtml}${archivedHintHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
+      </header>${cardsHtml}${archivedHintHtml}${archivedListHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
     </section>`;
 }
 
@@ -3218,7 +3295,14 @@ function wireGarageActions(root, vehicles = []) {
     // editing them would write a fabricated entry into the persisted
     // collection — that's an explicit 05H out-of-scope ("do not
     // auto-migrate legacy vehicle fields into driverGarage.vehicles").
-    const editBtn = root.querySelector(`#pf2-garage-edit-${id}`);
+    // 05J Codex P2 #3 (round 3) — escape `id` for every selector below.
+    // A restored entry can carry CSS-special characters in its id
+    // (persisted user data; `normalisePersistedVehicle` only trims it).
+    // Without escaping, the very first `querySelector` call would
+    // throw `SyntaxError` and leave the entire active-card wiring
+    // orphaned for that card.
+    const eid = escapeCssId(id);
+    const editBtn = root.querySelector(`#pf2-garage-edit-${eid}`);
     if (vehicle.source === 'legacy') {
       editBtn?.addEventListener('click', () => flash(editBtn, 'Доступно в следующем шаге'));
     } else {
@@ -3231,19 +3315,23 @@ function wireGarageActions(root, vehicles = []) {
     // persists the selection through user.set into the driverGarage
     // namespace, then re-renders the section in place so the badge moves
     // and the previously-active card becomes a make-active candidate.
+    // 05J Codex P2 #1 (round 3) — call `markGarageVehicleActive` rather
+    // than mutating `driverGarage` inline so the `restoredFromArchive`
+    // marker is cleared on explicit activation. Without this, a
+    // restored entry would never be eligible for the null-saved
+    // fallback again, even after the user has explicitly picked it.
     if (vehicle.status !== 'active') {
-      const makeActiveBtn = root.querySelector(`#pf2-garage-make-active-${id}`);
+      const makeActiveBtn = root.querySelector(`#pf2-garage-make-active-${eid}`);
       makeActiveBtn?.addEventListener('click', () => {
-        const current = user.get().driverGarage || {};
-        user.set({ driverGarage: { ...current, activeVehicleId: id } });
+        markGarageVehicleActive(id);
         refreshGarageSection(root);
       });
     }
 
-    const archiveBtn   = root.querySelector(`#pf2-garage-archive-${id}`);
-    const confirmRow   = root.querySelector(`#pf2-garage-confirm-${id}`);
-    const cancelBtn    = root.querySelector(`#pf2-garage-archive-cancel-${id}`);
-    const confirmFinal = root.querySelector(`#pf2-garage-archive-confirm-${id}`);
+    const archiveBtn   = root.querySelector(`#pf2-garage-archive-${eid}`);
+    const confirmRow   = root.querySelector(`#pf2-garage-confirm-${eid}`);
+    const cancelBtn    = root.querySelector(`#pf2-garage-archive-cancel-${eid}`);
+    const confirmFinal = root.querySelector(`#pf2-garage-archive-confirm-${eid}`);
     archiveBtn?.addEventListener('click', () => {
       if (!confirmRow) return;
       confirmRow.hidden = false;
@@ -3278,6 +3366,70 @@ function wireGarageActions(root, vehicles = []) {
       confirmFinal.disabled = true;
       confirmFinal.textContent = 'Архивировано';
       archiveGarageVehicle(id);
+      refreshGarageSection(root);
+    });
+  }
+
+  // BD-PROFILE-D-05J — Restore wiring. Iterates the archived list
+  // (read straight from `user.get()` so the wire is decoupled from the
+  // active-list iterator above) and attaches the same 2-step inline
+  // confirm UX as archive: open → flip confirm row + aria-expanded;
+  // cancel → reset row + button label; confirm → restoreGarageVehicle
+  // + refreshGarageSection. Restore writes only the matched entry's
+  // `archived` flag in `state.js`; activeVehicleId is preserved.
+  // 05J Codex P2 #3 — archived ids can contain CSS-special characters
+  // (spaces, colons, brackets, etc.) because `normalisePersistedVehicle`
+  // only trims them; raw interpolation into `querySelector` would
+  // throw `SyntaxError` on the first weird char and leave the restore
+  // wiring orphaned. `escapeCssId` runs each id through `CSS.escape`
+  // when available, falling back to a manual replace for the smoke's
+  // Node environment.
+  const archivedVehiclesForWire = listArchivedGarageVehicles(user.get());
+  for (const archived of archivedVehiclesForWire) {
+    const aid = archived && archived.id;
+    if (!aid) continue;
+    const eid = escapeCssId(aid);
+    // 05J Codex P2 #2 (round 3) — capture the source raw-array index so
+    // the restore call can target the exact slot the user just clicked.
+    // Without this, two archived entries that share an id (and one was
+    // dropped from the visible list because it had no model) would
+    // both resolve to the same `archived-preferring strict` match in
+    // `restoreGarageVehicle`, restoring the invisible slot and leaving
+    // the visible card archived.
+    const rawIdx = archived._rawIdx;
+
+    const restoreBtn = root.querySelector(`#pf2-garage-restore-${eid}`);
+    const restoreConfirmRow = root.querySelector(`#pf2-garage-restore-confirm-row-${eid}`);
+    const restoreCancelBtn = root.querySelector(`#pf2-garage-restore-cancel-${eid}`);
+    const restoreConfirmFinal = root.querySelector(`#pf2-garage-restore-confirm-${eid}`);
+
+    restoreBtn?.addEventListener('click', () => {
+      if (!restoreConfirmRow) return;
+      restoreConfirmRow.hidden = false;
+      restoreConfirmRow.dataset.garageRestoreConfirmState = 'open';
+      restoreBtn.setAttribute('aria-expanded', 'true');
+    });
+    restoreCancelBtn?.addEventListener('click', () => {
+      if (!restoreConfirmRow) return;
+      restoreConfirmRow.hidden = true;
+      restoreConfirmRow.dataset.garageRestoreConfirmState = 'idle';
+      restoreBtn?.setAttribute('aria-expanded', 'false');
+      if (restoreConfirmFinal) {
+        restoreConfirmFinal.disabled = false;
+        restoreConfirmFinal.textContent = 'Вернуть';
+      }
+    });
+    restoreConfirmFinal?.addEventListener('click', () => {
+      if (!restoreConfirmRow) return;
+      // 05J — actual restore write. Flips the visible button copy + state
+      // first so the smoke can pin the state attribute, then calls
+      // `restoreGarageVehicle(aid, { rawIdx })` (which strips the archived
+      // flag, stamps `restoredFromArchive: true`, and leaves
+      // activeVehicleId verbatim) and refreshes the section.
+      restoreConfirmRow.dataset.garageRestoreConfirmState = 'restored-local';
+      restoreConfirmFinal.disabled = true;
+      restoreConfirmFinal.textContent = 'Восстановлено';
+      restoreGarageVehicle(aid, typeof rawIdx === 'number' ? { rawIdx } : undefined);
       refreshGarageSection(root);
     });
   }

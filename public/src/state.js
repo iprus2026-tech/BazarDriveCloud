@@ -689,6 +689,247 @@ export function archiveGarageVehicle(vehicleId) {
   return targetId;
 }
 
+// BD-PROFILE-D-05J — Restore a soft-archived vehicle in the persisted
+// garage collection. Mirror of `archiveGarageVehicle`: same lookup
+// safety (trim-aware strict match + synthesised-id fallback), same
+// soft-handling of unknown ids. Strips the `archived` flag and
+// preserves every other field via spread; the vehicles array order is
+// preserved; `activeVehicleId` is NEVER promoted by a restore.
+//
+//   - Trim incoming `vehicleId`; whitespace-only id returns null.
+//   - Strict match trims both sides so a raw stored id like ` real-1 `
+//     can be restored via `real-1`.
+//   - Synthesised-id fallback mirrors `archiveGarageVehicle` /
+//     `patchGarageVehicle`: `garage-${rawIdx + 1}` maps back to the
+//     raw id-less slot at index N-1. Bounded by array length and
+//     never hijacks a real id.
+//   - When the matched entry's `archived !== true` (already restored
+//     or never archived), this is a no-op write — returns the
+//     canonical id without persisting (idempotent restore).
+//   - When archived, replaces the slot with `{ ...prev, id: targetId }`
+//     and drops the `archived` field (every other field — model /
+//     color / plate / source / unknown future fields — survives).
+//   - `activeVehicleId` is preserved verbatim. Restore does NOT
+//     auto-promote the restored vehicle to active; the render-time
+//     resolver may still pick a non-archived candidate for display
+//     when `activeVehicleId` is null (existing 05D semantic), but
+//     this helper itself stays explicit.
+//
+// Returns the canonical (trimmed) id on success; null on validation
+// refusal (empty id) or unknown id.
+export function restoreGarageVehicle(vehicleId, options = {}) {
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  let idx = -1;
+  const synth = /^garage-(\d+)$/.exec(targetId);
+
+  // 05J Codex P2 #2 (round 3) — explicit raw-slot prefer. The archived
+  // list passes the source raw index back through `options.rawIdx` so
+  // the helper restores the slot the user actually saw, even when an
+  // EARLIER raw entry shares the same id but was dropped from the
+  // visible list (e.g., no model → `normalisePersistedVehicle` returns
+  // null). Validates: bounds, slot is an object, slot is archived,
+  // and either (a) the slot's id matches the target after trimming, or
+  // (b) the slot is id-less AND the target is the synth form for that
+  // raw index. Wins over the strict-match branches below.
+  if (typeof options.rawIdx === 'number'
+      && Number.isInteger(options.rawIdx)
+      && options.rawIdx >= 0
+      && options.rawIdx < vehicles.length) {
+    const candidate = vehicles[options.rawIdx];
+    if (candidate && typeof candidate === 'object' && candidate.archived === true) {
+      const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+      const synthOk = synth
+        && parseInt(synth[1], 10) - 1 === options.rawIdx
+        && !candidateId;
+      const strictOk = candidateId.length > 0 && candidateId === targetId;
+      if (strictOk || synthOk) idx = options.rawIdx;
+    }
+  }
+
+  // 05J Codex P2 #2 (round 2) — when `targetId` is a synthesised
+  // `garage-N` id, the resolver materialised it from a raw id-less
+  // slot at index N-1. If THAT slot is archived, restore it first —
+  // before any strict id lookup. Otherwise a real entry with the
+  // colliding id `garage-N` would shadow the raw slot and trap the
+  // intended archived entry in the archive forever.
+  if (idx < 0 && synth) {
+    const rawIdx = parseInt(synth[1], 10) - 1;
+    if (rawIdx >= 0 && rawIdx < vehicles.length) {
+      const candidate = vehicles[rawIdx];
+      if (candidate && typeof candidate === 'object') {
+        const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+        if (!candidateId && candidate.archived === true) idx = rawIdx;
+      }
+    }
+  }
+
+  // 05J Codex P2 #1 (round 1) — prefer an ARCHIVED match first so a
+  // duplicate id collision (one entry restored, a later sibling still
+  // archived) doesn't trap the later one in the archive forever.
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId && v.archived === true;
+    });
+  }
+  // Any-match strict (for the idempotent non-archived restore path).
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId;
+    });
+  }
+  // Synthesised-id fallback for restoring an id-less NON-archived raw
+  // slot (idempotent — the post-match branch returns canonical id
+  // without writing). Only fires when the prefix branch above was a
+  // no-match.
+  if (idx < 0 && synth) {
+    const rawIdx = parseInt(synth[1], 10) - 1;
+    if (rawIdx >= 0 && rawIdx < vehicles.length) {
+      const candidate = vehicles[rawIdx];
+      if (candidate && typeof candidate === 'object') {
+        const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+        if (!candidateId) idx = rawIdx;
+      }
+    }
+  }
+  if (idx < 0) return null;
+
+  const prev = vehicles[idx] || {};
+
+  // Idempotent: already not archived → no-op write. Return canonical id.
+  if (prev.archived !== true) {
+    return targetId;
+  }
+
+  // Strip the archived flag; preserve every other field via spread.
+  // 05J Codex P2 #1 (round 2) — stamp a `restoredFromArchive: true`
+  // marker so the resolver's null-saved fallback can skip the
+  // restored entry. Saved-match still wins (the marker is irrelevant
+  // when `activeVehicleId` matches), so the marker only blocks the
+  // auto-active path. The marker persists until the user explicitly
+  // picks a new active selection.
+  const restored = { ...prev };
+  delete restored.archived;
+  restored.id = targetId;
+  restored.restoredFromArchive = true;
+
+  const nextVehicles = [...vehicles];
+  nextVehicles[idx] = restored;
+
+  cache = normalize({ ...cache, driverGarage: {
+    activeVehicleId: dg.activeVehicleId,
+    vehicles: nextVehicles,
+  }});
+  persist();
+  return targetId;
+}
+
+// BD-PROFILE-D-05J Codex P2 #1 (round 3) — Mark a garage vehicle as the
+// active selection AND clear its `restoredFromArchive` marker. This is
+// the single state.js helper for the 05D make-active path:
+//   - Sets `driverGarage.activeVehicleId` to the trimmed target id (no
+//     existence check — preserves the existing 05D semantic where the
+//     resolver tolerates a stale saved id).
+//   - When the matched vehicle carries `restoredFromArchive: true`,
+//     strips the marker via `{ ...prev }` + `delete next.restoredFromArchive`.
+//     The marker is now lazily transient: set on restore, cleared on
+//     explicit activation. Without this branch, the resolver's
+//     `firstEligible` filter would keep skipping the vehicle on
+//     subsequent null-saved renders (e.g., after archiving the active
+//     and restoring it again later).
+//   - All other fields on the matched entry are preserved verbatim via
+//     spread; unknown future fields survive.
+//   - The vehicles array order is preserved (`[...vehicles]` + indexed
+//     assignment).
+//
+// Lookup uses trim-aware strict match only. Synth-id and archived-
+// preferring branches are not needed here — make-active operates on
+// the visible active list, where ids are deterministic.
+//
+// Returns the canonical (trimmed) id on success; null on validation
+// refusal (empty / whitespace id).
+export function markGarageVehicleActive(vehicleId) {
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  // 05J Codex P2 #1 (round 4) — lookup style mirrors
+  // `restoreGarageVehicle` / `archiveGarageVehicle`:
+  //   1. Marker-preferring strict — analog of restore's
+  //      "archived-preferring strict": when duplicate ids exist and
+  //      ONE of them carries the `restoredFromArchive` marker, prefer
+  //      that slot so the explicit activation actually clears the
+  //      marker. Without this, the strict findIndex would lock onto
+  //      the first matching entry (which may not be the marked one)
+  //      and the marker would stay on the duplicate forever.
+  //   2. Any-match strict — fallback when no marker-bearing entry
+  //      exists (the common case: the user just picks an existing
+  //      vehicle, no marker drama).
+  //   3. Synthesised-id fallback — for the id-less raw slot path,
+  //      mirrors restore. Matters when a future caller is given a
+  //      `garage-N` synth id from the resolver before the slot has
+  //      been stamped with a real id.
+  let idx = vehicles.findIndex((v) => {
+    if (!v) return false;
+    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+    return rawId.length > 0 && rawId === targetId && v.restoredFromArchive === true;
+  });
+  if (idx < 0) {
+    idx = vehicles.findIndex((v) => {
+      if (!v) return false;
+      const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+      return rawId.length > 0 && rawId === targetId;
+    });
+  }
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(targetId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
+
+  let nextVehicles = vehicles;
+  if (idx >= 0) {
+    const prev = vehicles[idx];
+    if (prev && prev.restoredFromArchive === true) {
+      const updated = { ...prev };
+      delete updated.restoredFromArchive;
+      nextVehicles = [...vehicles];
+      nextVehicles[idx] = updated;
+    }
+  }
+
+  cache = normalize({ ...cache, driverGarage: {
+    activeVehicleId: targetId,
+    vehicles: nextVehicles,
+  }});
+  persist();
+  return targetId;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't

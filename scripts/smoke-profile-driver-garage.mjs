@@ -720,8 +720,13 @@ user.set({
   // Positive contracts.
   expect('S16: wireGarageActions toggles data-garage-confirm-state (DOM-only archive)',
     /garageConfirmState/.test(wireBody));
-  expect('S16: wireGarageActions patches the driverGarage namespace (single allowed writer)',
-    /\bdriverGarage\b/.test(wireBody) && /user\.set\s*\(/.test(wireBody));
+  // 05J Codex P2 #1 (round 3) — the make-active handler now routes
+  // through `markGarageVehicleActive` (single state.js writer that
+  // also clears the `restoredFromArchive` marker). The `user.set` /
+  // `driverGarage` literals no longer appear in wireGarageActions body
+  // for the make-active path; instead the helper name must be present.
+  expect('S16: wireGarageActions routes make-active through markGarageVehicleActive',
+    /\bmarkGarageVehicleActive\s*\(/.test(wireBody));
   expect('S16: resolveActiveGarageVehicleId reads profile.driverGarage.activeVehicleId',
     /\bdriverGarage\b/.test(resolveBody) && /\bactiveVehicleId\b/.test(resolveBody));
   expect('S16: buildGarageVehicles still reads u.vehicleMake (legacy bridge intact)',
@@ -2680,8 +2685,10 @@ user.set({
     slice.includes('data-garage-collection-size="1"'));
   expect('S76: real-1 card rendered',
     slice.includes('data-vehicle="real-1"'));
-  expect('S76: archived real-2 card NOT rendered in active list',
-    !slice.includes('data-vehicle="real-2"'));
+  // 05J — archived real-2 is now rendered in the dedicated archived
+  // section, but it must NOT appear as an active garage card.
+  expect('S76: archived real-2 NOT rendered as an active garage card',
+    !/<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-2"/.test(slice));
   expect('S76: archived-count hint rendered with "В архиве: 1"',
     slice.includes('В архиве: 1'));
   expect('S76: section advertises data-garage-archived-count="1"',
@@ -2767,8 +2774,10 @@ user.set({
     user.get().driverGarage?.activeVehicleId === null);
   // Re-render reflects the new state.
   const slice = garageSlice(renderProfile('#/profile'));
+  // 05J — archived real-1 is now visible in the dedicated archived
+  // section; the active-card render must drop it.
   expect('S79: post-archive render drops the archived card from the active list',
-    !slice.includes('data-vehicle="real-1"'));
+    !/<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-1"/.test(slice));
   expect('S79: real-2 still rendered in the active list',
     slice.includes('data-vehicle="real-2"'));
   expect('S79: post-archive render carries data-garage-archived-count="1"',
@@ -3052,8 +3061,10 @@ user.set({
   expect('S88: post-archive render surfaces "В архиве: 1" hint in the empty state',
     slice.includes('В архиве: 1'));
   // No legacy-1 card on the active list.
-  expect('S88: archived legacy-1 is NOT rendered in the active list',
-    !slice.includes('data-vehicle="legacy-1"'));
+  // 05J — archived legacy-1 is now visible in the dedicated archived
+  // section, but never as an active card.
+  expect('S88: archived legacy-1 is NOT rendered as an active garage card',
+    !/<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="legacy-1"/.test(slice));
   // Add CTA still present so the driver can add a fresh vehicle.
   expect('S88: empty-state Add CTA still present',
     slice.includes('id="pf2-garage-add"'));
@@ -3208,6 +3219,991 @@ user.set({
   // Vehicle stays not-archived.
   expect('S93: vehicle stays not-archived after cancel',
     user.get().driverGarage?.vehicles?.[0]?.archived !== true);
+}
+
+// ── BD-PROFILE-D-05J — Restore archived garage vehicle ────────────────────
+// 05I made `archiveGarageVehicle` the soft-delete writer; 05J adds its
+// inverse `restoreGarageVehicle` (strip the `archived` flag without
+// hard-deleting the entry) and surfaces a per-archived-vehicle Restore
+// confirm UI under the active list. Restore writes ONLY the matched
+// entry's `archived` flag; `activeVehicleId` is preserved verbatim —
+// restore never auto-promotes a vehicle to active.
+
+// ── Scenario 94 — restoreGarageVehicle clears archived + preserves
+// every other field + array order + activeVehicleId. ─────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const r = restoreFn('real-2');
+  expect('S94: restoreGarageVehicle returns the trimmed id on success',
+    r === 'real-2', String(r));
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S94: vehicles array still has 2 entries (no hard delete on restore)',
+    Array.isArray(persisted) && persisted.length === 2);
+  const restored = persisted?.[1];
+  expect('S94: archived flag is stripped from the restored entry',
+    !('archived' in (restored || {})));
+  expect('S94: restored model preserved',
+    restored?.model === 'Kia Sportage');
+  expect('S94: restored color preserved',
+    restored?.color === 'серый');
+  expect('S94: restored plate preserved',
+    restored?.plate === 'В 456 КМ 77');
+  expect('S94: restored source preserved',
+    restored?.source === 'persisted');
+  expect('S94: real-1 byte-for-byte unchanged after restoring real-2',
+    JSON.stringify(persisted?.[0]) === JSON.stringify({
+      id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted',
+    }));
+  expect('S94: array order preserved (real-1 still index 0, real-2 index 1)',
+    persisted?.[0]?.id === 'real-1' && persisted?.[1]?.id === 'real-2');
+  expect('S94: activeVehicleId preserved across restore (still real-1)',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+}
+
+// ── Scenario 95 — Restore preserves unknown / future fields via spread. ─
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', archived: true, source: 'persisted', futureNote: 'хранить' },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  restoreFn('real-1');
+  const v = user.get().driverGarage?.vehicles?.[0];
+  expect('S95: restore preserved unknown future field `futureNote` via spread',
+    v?.futureNote === 'хранить', String(v?.futureNote));
+}
+
+// ── Scenario 96 — Idempotent: restoring a non-archived id is a no-op
+// write but still returns the canonical id. ──────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', source: 'persisted' },  // NOT archived
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const before = snapshotLocalStorage();
+  const r = restoreFn('real-1');
+  const after = snapshotLocalStorage();
+  expect('S96: idempotent restore returns the canonical id',
+    r === 'real-1', String(r));
+  expect('S96: idempotent restore does NOT mutate localStorage',
+    before === after);
+}
+
+// ── Scenario 97 — Render: archived section appears with the restore
+// confirm row hooks; archived vehicle does NOT render as an active card. ─
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S97: archived section #pf2-garage-archived-section rendered',
+    slice.includes('id="pf2-garage-archived-section"'));
+  expect('S97: archived section advertises data-garage-archived-list-size="1"',
+    slice.includes('data-garage-archived-list-size="1"'));
+  expect('S97: archived item carries data-vehicle-archived="true"',
+    slice.includes('data-vehicle-archived="true"'));
+  expect('S97: archived item model "Kia Sportage" rendered',
+    slice.includes('Kia Sportage'));
+  expect('S97: restore button #pf2-garage-restore-real-2 rendered',
+    slice.includes('id="pf2-garage-restore-real-2"'));
+  expect('S97: restore confirm row #pf2-garage-restore-confirm-row-real-2 rendered',
+    slice.includes('id="pf2-garage-restore-confirm-row-real-2"'));
+  expect('S97: restore confirm row starts data-garage-restore-confirm-state="idle"',
+    slice.includes('data-garage-restore-confirm-state="idle"'));
+  expect('S97: restore confirm title "Вернуть авто?" rendered',
+    slice.includes('Вернуть авто?'));
+  expect('S97: restore confirm helper text rendered',
+    slice.includes('Авто снова появится в гараже'));
+  expect('S97: restore primary "Вернуть" button id rendered',
+    slice.includes('id="pf2-garage-restore-confirm-real-2"'));
+  // Archived must NOT be in the active-card list.
+  expect('S97: archived real-2 NOT rendered as an active garage card',
+    !/<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-2"/.test(slice));
+}
+
+// ── Scenario 98 — Open + cancel restore: no storage write, button label
+// restored to "Вернуть", confirm row hidden. ─────────────────────────────
+{
+  const section = captureSection('#/profile');
+  // Open the restore confirm row.
+  clickHandlers.get('#pf2-garage-restore-real-2')?.();
+  const confirmRow = section.querySelector('#pf2-garage-restore-confirm-row-real-2');
+  const confirmFinal = section.querySelector('#pf2-garage-restore-confirm-real-2');
+  expect('S98: restore confirm row opens (data-garage-restore-confirm-state="open")',
+    confirmRow.dataset.garageRestoreConfirmState === 'open');
+  // Sentinel to prove cancel handler explicitly resets the label.
+  confirmFinal.textContent = '__sentinel__';
+  confirmFinal.disabled = true;
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-restore-cancel-real-2')?.();
+  const after = snapshotLocalStorage();
+  expect('S98: cancel does NOT mutate localStorage',
+    before === after);
+  expect('S98: cancel hides the confirm row',
+    confirmRow.hidden === true && confirmRow.dataset.garageRestoreConfirmState === 'idle');
+  expect('S98: cancel restores the "Вернуть" label on the confirm button',
+    confirmFinal.textContent === 'Вернуть');
+  expect('S98: cancel re-enables the confirm button',
+    confirmFinal.disabled === false);
+  // Vehicle stays archived.
+  expect('S98: vehicle stays archived after cancel',
+    user.get().driverGarage?.vehicles?.[1]?.archived === true);
+}
+
+// ── Scenario 99 — Full restore-flow click path: open → confirm → real
+// write, archived flag stripped, archivedCount decreases. ────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-real-2')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-real-2')?.();
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S99: real-2 archived flag stripped via click flow',
+    !('archived' in (persisted?.[1] || {})));
+  expect('S99: activeVehicleId preserved across restore click flow (still real-1)',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+  const slice = garageSlice(renderProfile('#/profile'));
+  // Post-restore: active list has both real-1 and real-2.
+  expect('S99: post-restore render has 2 vehicles in the active list',
+    slice.includes('data-garage-collection-size="2"'));
+  expect('S99: real-2 now appears as an active garage card',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-2"/.test(slice));
+  // Archived section + hint disappear when no archived vehicles remain.
+  expect('S99: archived section gone after the only archived was restored',
+    !slice.includes('id="pf2-garage-archived-section"'));
+  expect('S99: archived hint gone after the only archived was restored',
+    !slice.includes('В архиве:'));
+  expect('S99: data-garage-archived-count="0" on the section root',
+    slice.includes('data-garage-archived-count="0"'));
+}
+
+// ── Scenario 100 — Active badge stays on activeVehicleId throughout
+// restore — restore never promotes a vehicle to active. ─────────────────
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S100: real-1 still has the active badge (activeVehicleId pinned)',
+    slice.includes('id="pf2-garage-active-real-1"'));
+  expect('S100: real-2 renders as a make-active candidate (NOT active)',
+    slice.includes('id="pf2-garage-make-active-real-2"'));
+  expect('S100: real-2 does NOT have the active-current span',
+    !slice.includes('id="pf2-garage-active-real-2"'));
+}
+
+// ── Scenario 101 — Defensive helper coverage: unknown / whitespace /
+// null id rejected. Synthesised-id fallback. ─────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { model: 'Solo', archived: true },  // id-less raw entry; resolver synthesises garage-1
+      { id: ' real-2 ', model: 'Padded', archived: true },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  expect('S101: unknown id returns null',
+    restoreFn('does-not-exist') === null);
+  expect('S101: whitespace-only id returns null',
+    restoreFn('   ') === null);
+  expect('S101: null id returns null',
+    restoreFn(null) === null);
+  // Whitespace-padded incoming id matches the trimmed slot.
+  const r1 = restoreFn('  real-2  ');
+  expect('S101: trim-aware strict match restores the whitespace-padded slot',
+    r1 === 'real-2');
+  expect('S101: real-2 archived flag stripped',
+    user.get().driverGarage?.vehicles?.[1]?.archived !== true);
+  // Synthesised-id fallback routes to the raw id-less slot.
+  const r2 = restoreFn('garage-1');
+  expect('S101: synthesised-id fallback restores the id-less slot',
+    r2 === 'garage-1');
+  expect('S101: restored id-less slot now stores id "garage-1"',
+    user.get().driverGarage?.vehicles?.[0]?.id === 'garage-1');
+  expect('S101: out-of-range garage-99 returns null',
+    restoreFn('garage-99') === null);
+}
+
+// ── Scenario 102 — Restore the materialised legacy-1 (from 05I Codex P2
+// legacy materialisation): the legacy fallback no longer suppresses and
+// legacy-1 reappears in the active list. ─────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'legacy-1', model: 'Hyundai Solaris', color: 'белый', plate: 'А 482 МР 77', source: 'legacy', archived: true },
+    ],
+  },
+});
+{
+  // Pre-restore: legacy fallback is suppressed by hasArchivedLegacy.
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  expect('S102 pre: pre-restore render is empty (legacy fallback suppressed)',
+    sliceBefore.includes('pf2-garage--empty'));
+  expect('S102 pre: archived hint shows "В архиве: 1"',
+    sliceBefore.includes('В архиве: 1'));
+
+  // Restore.
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  restoreFn('legacy-1');
+  const v = user.get().driverGarage?.vehicles?.[0];
+  expect('S102: legacy-1 archived flag stripped',
+    v?.archived !== true);
+  expect('S102: legacy-1 source preserved as "legacy"',
+    v?.source === 'legacy');
+
+  // Post-restore render: legacy-1 reappears as an active card.
+  const sliceAfter = garageSlice(renderProfile('#/profile'));
+  expect('S102: post-restore render shows legacy-1 as an active card',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="legacy-1"/.test(sliceAfter));
+  expect('S102: archived section gone',
+    !sliceAfter.includes('id="pf2-garage-archived-section"'));
+}
+
+// ── Scenario 103 — Passenger profile guard: archived list / restore
+// hooks never render for a passenger. ──────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'passenger',
+  firstName: 'Алия', lastName: 'К.',
+  phone: '9007654321', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', archived: true, source: 'persisted' },
+    ],
+  },
+});
+{
+  const html = renderProfile('#/profile');
+  expect('S103: passenger profile does NOT render the archived section',
+    !html.includes('id="pf2-garage-archived-section"'));
+  expect('S103: passenger profile does NOT expose the restore button',
+    !html.includes('id="pf2-garage-restore-'));
+}
+
+// ── Scenario 104 — Cross-surface guards: restore writes only to
+// bazardrive.user.v1; nothing else drifts. ─────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', archived: true, source: 'persisted' },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  restoreFn('real-1');
+  const FORBIDDEN_KEYS = [
+    'bazardrive.responses.v1',
+    'bazardrive.active_ride.v1',
+    'bazardrive.ride_history.v1',
+    'bazardrive.driver_receipts.v1',
+    'bazardrive.respond.v1',
+  ];
+  for (const k of FORBIDDEN_KEYS) {
+    expect(`S104: ${k} not written by restore`,
+      !local.has(k));
+  }
+  const present = [];
+  for (const k of local.keys()) present.push(k);
+  expect('S104: only bazardrive.user.v1 was written by restore',
+    present.length === 1 && present[0] === 'bazardrive.user.v1',
+    present.join(','));
+}
+
+// ── Scenario 105 — Static source guard on restoreGarageVehicle body. ───
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const stateSrc = readFileSync(join(projectRoot, 'public/src/state.js'), 'utf8');
+
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const body = sliceFn(stateSrc, 'export function restoreGarageVehicle(');
+  expect('S105: restoreGarageVehicle body extracted',
+    body.length > 0, String(body.length));
+  // Positive: drops archived field.
+  expect('S105: restoreGarageVehicle deletes the archived flag',
+    /delete\s+\w+\.archived/.test(body));
+  // Positive: preserves activeVehicleId verbatim.
+  expect('S105: restoreGarageVehicle preserves activeVehicleId verbatim',
+    /activeVehicleId\s*:\s*dg\.activeVehicleId/.test(body));
+  // Forbidden cross-surface writes.
+  const FORBIDDEN = [
+    { name: 'saveActiveRide', regex: /\bsaveActiveRide\s*\(/ },
+    { name: 'saveRideHistoryEntry', regex: /\bsaveRideHistoryEntry\s*\(/ },
+    { name: 'createRideOrder', regex: /\bcreateRideOrder\s*\(/ },
+    { name: 'acceptCanonicalRideOrder', regex: /\bacceptCanonicalRideOrder\s*\(/ },
+    { name: '"bazardrive.responses.v1"', regex: /bazardrive\.responses\.v1/ },
+    { name: '"bazardrive.active_ride.v1"', regex: /bazardrive\.active_ride\.v1/ },
+    { name: '"bazardrive.ride_history.v1"', regex: /bazardrive\.ride_history\.v1/ },
+    { name: '"bazardrive.driver_receipts.v1"', regex: /bazardrive\.driver_receipts\.v1/ },
+    { name: '"bazardrive.respond.v1"', regex: /bazardrive\.respond\.v1/ },
+  ];
+  for (const { name, regex } of FORBIDDEN) {
+    expect(`S105: restoreGarageVehicle does NOT touch ${name}`, !regex.test(body));
+  }
+}
+
+// ── Scenario 106 — BD-PROFILE-D-05J Codex P2 #1: duplicate-id restore
+// prefers the ARCHIVED match. Without this, the first matching entry
+// (which may already be non-archived) would short-circuit the helper
+// to a no-op and leave a later archived sibling trapped forever. ────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Two entries share the id 'dup' — the first is already restored,
+      // the second is archived. restoreGarageVehicle('dup') must
+      // unarchive the second one, not no-op on the first.
+      { id: 'dup', model: 'first',  source: 'persisted' },
+      { id: 'dup', model: 'second', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const r = restoreFn('dup');
+  expect('S106: restore returns the canonical id even with duplicate matches',
+    r === 'dup', String(r));
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S106: first matching entry (non-archived) preserved byte-for-byte',
+    JSON.stringify(persisted?.[0]) === JSON.stringify({
+      id: 'dup', model: 'first', source: 'persisted',
+    }));
+  expect('S106: archived sibling at index 1 now has archived flag stripped',
+    !('archived' in (persisted?.[1] || {})));
+  expect('S106: archived sibling model preserved',
+    persisted?.[1]?.model === 'second');
+  expect('S106: array order preserved (no swap)',
+    persisted?.[0]?.model === 'first' && persisted?.[1]?.model === 'second');
+  expect('S106: archived sibling source preserved',
+    persisted?.[1]?.source === 'persisted');
+}
+
+// ── Scenario 107 — BD-PROFILE-D-05J Codex P2 #2: one-car active archive
+// → restore must NOT auto-select the restored car. The resolver's
+// `_synthesized` marker now grants the null-saved fallback ONLY to the
+// inline-synthesised legacy entry; persisted entries (including a
+// just-restored one) must wait for an explicit `Сделать активной`. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  // Pre-state: real-1 is active by explicit selection.
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  expect('S107 pre: real-1 has active badge (active by activeVehicleId match)',
+    sliceBefore.includes('id="pf2-garage-active-real-1"'));
+
+  // Archive the only car (active). activeVehicleId cleared to null.
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('real-1');
+  expect('S107: archive cleared activeVehicleId to null',
+    user.get().driverGarage?.activeVehicleId === null);
+
+  // Restore. activeVehicleId stays null.
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  restoreFn('real-1');
+  expect('S107: restore preserved activeVehicleId at null',
+    user.get().driverGarage?.activeVehicleId === null);
+
+  // Render: real-1 is back in the active list but NO active badge.
+  const sliceAfter = garageSlice(renderProfile('#/profile'));
+  expect('S107: post-restore render shows real-1 as a CARD (not in archived list)',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-1"/.test(sliceAfter));
+  expect('S107: post-restore render does NOT give real-1 the active-current span',
+    !sliceAfter.includes('id="pf2-garage-active-real-1"'));
+  expect('S107: post-restore render gives real-1 the make-active button instead',
+    sliceAfter.includes('id="pf2-garage-make-active-real-1"'));
+
+  // Resolver-level: resolveActiveGarageVehicle returns null until the
+  // user explicitly clicks `Сделать активной`.
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S107: resolveActiveGarageVehicle returns null after archive+restore',
+    resolveFn(user.get()) === null,
+    String(resolveFn(user.get())?.id));
+
+  // Explicit make-active click flow: clicking the make-active button
+  // for real-1 sets activeVehicleId='real-1' (via the existing 05D
+  // handler) and the next render gives real-1 the active badge.
+  clickHandlers.get('#pf2-garage-make-active-real-1')?.();
+  expect('S107: make-active set activeVehicleId to "real-1"',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+  const sliceActive = garageSlice(renderProfile('#/profile'));
+  expect('S107: after explicit make-active, real-1 gets the active-current span',
+    sliceActive.includes('id="pf2-garage-active-real-1"'));
+  expect('S107: resolveActiveGarageVehicle returns real-1 after explicit make-active',
+    resolveFn(user.get())?.id === 'real-1');
+}
+
+// ── Scenario 108 — BD-PROFILE-D-05J Codex P2 #2 continued: fresh user
+// with legacy fields still gets the synthesised-legacy active fallback.
+// This locks down that the new resolver semantic only suppressed the
+// first-vehicle fallback for null saved — the `_synthesized` legacy
+// path is preserved so fresh users don't lose their auto-active. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // no driverGarage.vehicles — pure legacy fallback render
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S108: fresh-user legacy fallback gives legacy-1 the active-current span',
+    slice.includes('id="pf2-garage-active-legacy-1"'));
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S108: resolveActiveGarageVehicle returns the synthesised legacy entry',
+    resolveFn(user.get())?.id === 'legacy-1');
+}
+
+// ── Scenario 109 — BD-PROFILE-D-05J Codex P2 #3: archived ids with CSS
+// special characters do not crash the restore wiring. The escapeCssId
+// helper runs each archived id through CSS.escape (or the Node
+// fallback regex) before interpolating into a querySelector. ───────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Id with whitespace, colon, bracket — all of which would
+      // SyntaxError inside an unescaped `#id` selector.
+      { id: 'has:colon space', model: 'Pathological', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  // The render must not throw. captureSection wraps `profile()` which
+  // calls wireGarageActions internally.
+  let renderError = null;
+  let section = null;
+  try { section = captureSection('#/profile'); } catch (e) { renderError = e; }
+  expect('S109: render + wire does NOT throw on a CSS-special-char archived id',
+    renderError === null, renderError ? renderError.message : '');
+
+  // HTML carries the literal id (the production page renders the
+  // unescaped id in the `id` attribute — only the SELECTOR string is
+  // escaped).
+  const slice = garageSlice(section._html);
+  expect('S109: archived item article has the literal id in the HTML',
+    slice.includes('id="pf2-garage-archived-has:colon space"'));
+  // The escaped selector path is what the wire calls. Node's stub
+  // memoises by selector string; the escaped key is the one that gets
+  // a captured handler.
+  expect('S109: restore handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-has\\:colon\\ space') === 'function');
+  expect('S109: cancel handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-cancel-has\\:colon\\ space') === 'function');
+  expect('S109: confirm handler captured under the CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-restore-confirm-has\\:colon\\ space') === 'function');
+}
+
+// ── Scenario 110 — BD-PROFILE-D-05J Codex P2 #1 (round 2): normal
+// persisted garage with `activeVehicleId: null` still resolves the
+// first eligible (non-restored) vehicle. The previous round's
+// _synthesized-only fallback broke this — every add-without-makeActive
+// landed without an active badge. This scenario locks down the
+// recovered first-fallback for the add-flow. ─────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // No legacy vehicleMake/Model fields → no synthesised legacy entry
+  // can grant the fallback. The first-eligible filter must do it.
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S110: normal persisted (no makeActive) gets the active-current span via first-eligible fallback',
+    slice.includes('id="pf2-garage-active-real-1"'));
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S110: resolveActiveGarageVehicle returns the first eligible non-restored vehicle',
+    resolveFn(user.get())?.id === 'real-1', String(resolveFn(user.get())?.id));
+}
+
+// ── Scenario 111 — BD-PROFILE-D-05J Codex P2 #2 (round 2): synthesised
+// `garage-N` restore prefers the raw id-less ARCHIVED slot over a real
+// non-archived entry that happens to carry the colliding id. Without
+// the prefix, the any-match strict path would lock onto the real entry
+// and return idempotently, trapping the raw archived slot forever. ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // raw[0] — id-less archived slot. The resolver materialises it as
+      // `garage-1`. The new prefix must restore THIS slot.
+      { model: 'Solo', color: 'белый', plate: 'А 111 АА 11', source: 'persisted', archived: true },
+      // raw[1] — real entry whose id collides with `garage-1`. Strict
+      // matching would lock onto this entry first.
+      { id: 'garage-1', model: 'Collider', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const r = restoreFn('garage-1');
+  expect('S111: restoreGarageVehicle("garage-1") returns the canonical id',
+    r === 'garage-1', String(r));
+  const persisted = user.get().driverGarage?.vehicles;
+  // raw[0] (the id-less archived slot) is the one that got restored:
+  // archived flag stripped, id stamped, restoredFromArchive marker set.
+  expect('S111: raw[0] (id-less archived) now has id "garage-1"',
+    persisted?.[0]?.id === 'garage-1');
+  expect('S111: raw[0] is no longer archived',
+    !('archived' in (persisted?.[0] || {})));
+  expect('S111: raw[0] carries restoredFromArchive: true',
+    persisted?.[0]?.restoredFromArchive === true);
+  expect('S111: raw[0] preserves its original model "Solo"',
+    persisted?.[0]?.model === 'Solo');
+  // raw[1] (the real collider) is untouched — its model stays "Collider"
+  // and it never gets a restored marker.
+  expect('S111: raw[1] (the real "garage-1" collider) preserved byte-for-byte',
+    JSON.stringify(persisted?.[1]) === JSON.stringify({
+      id: 'garage-1', model: 'Collider', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted',
+    }));
+}
+
+// ── Scenario 112 — BD-PROFILE-D-05J Codex P3 #1: duplicate archived ids
+// are de-duped in `listArchivedGarageVehicles` so the rendered list
+// always has unique DOM hooks. The first archived match renders;
+// after the user restores it, the next archived sibling surfaces on
+// the next render. Sequential clicks restore each duplicate. ─────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Two archived entries share id 'dup'. The list must de-dupe
+      // and surface only one DOM button at a time.
+      { id: 'dup', model: 'First',  color: 'белый',   plate: 'А 111 АА 11', source: 'persisted', archived: true },
+      { id: 'dup', model: 'Second', color: 'чёрный', plate: 'В 222 ВВ 22', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { listArchivedGarageVehicles: listFn } = await import('../public/src/garage.js');
+  const listBefore = listFn(user.get());
+  expect('S112: archived list is de-duped to length 1 (first archived "dup")',
+    Array.isArray(listBefore) && listBefore.length === 1, String(listBefore.length));
+  expect('S112: de-duped list keeps the FIRST archived entry (model "First")',
+    listBefore[0]?.model === 'First');
+
+  // Render — only one restore button is wired (no duplicate DOM ids).
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  // Count occurrences of the restore-dup id in the markup; should be
+  // exactly 1 (otherwise the button hook is shared and the wire is
+  // racy).
+  const restoreIdMatches = (sliceBefore.match(/id="pf2-garage-restore-dup"/g) || []).length;
+  expect('S112: only ONE #pf2-garage-restore-dup id rendered (no duplicate DOM)',
+    restoreIdMatches === 1, `count=${restoreIdMatches}`);
+  expect('S112: archived hint reports raw count 2 (storage truth)',
+    sliceBefore.includes('В архиве: 2'));
+
+  // First click restores the FIRST archived 'dup' (raw[0]).
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  expect('S112: after first restore, raw[0] is no longer archived',
+    user.get().driverGarage?.vehicles?.[0]?.archived !== true);
+  expect('S112: after first restore, raw[1] still archived',
+    user.get().driverGarage?.vehicles?.[1]?.archived === true);
+
+  // Next render now surfaces raw[1] (the second 'dup') for restoration.
+  const listAfter1 = listFn(user.get());
+  expect('S112: after first restore, list length is still 1 (now the second "dup")',
+    listAfter1.length === 1);
+  expect('S112: surfaced entry is the previously-second archived (model "Second")',
+    listAfter1[0]?.model === 'Second');
+
+  // Second click flow restores raw[1].
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  expect('S112: after second restore, raw[1] is no longer archived',
+    user.get().driverGarage?.vehicles?.[1]?.archived !== true);
+  // No archived entries remain → list empty.
+  const listAfter2 = listFn(user.get());
+  expect('S112: after both restores, archived list is empty',
+    listAfter2.length === 0);
+}
+
+// ── Scenario 113 — BD-PROFILE-D-05J Codex P3 #2: archived id with HTML
+// special characters is escaped in attribute contexts. The id can
+// contain quotes / angle brackets because `normalisePersistedVehicle`
+// only trims it; raw interpolation would break the markup and expose
+// an injection surface. ─────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // Pathological id with quote + angle bracket.
+      { id: '<bad>"id"', model: 'Pathological', color: 'белый', plate: 'А 123 ВС 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const html = renderProfile('#/profile');
+  // The raw `<bad>"id"` form must NOT appear literally — escaping must
+  // have transformed it before interpolation.
+  expect('S113: raw `<bad>"id"` is NOT in the rendered HTML literally',
+    !html.includes('<bad>"id"'));
+  // The escaped form WHEN injected into an attribute context.
+  expect('S113: HTML-escaped form `&lt;bad&gt;&quot;id&quot;` is present in attribute slots',
+    html.includes('&lt;bad&gt;&quot;id&quot;'),
+    'expected escaped form to appear in id/data attributes');
+  // Render didn't crash. The archived section is rendered.
+  expect('S113: archived section was rendered',
+    html.includes('id="pf2-garage-archived-section"'));
+}
+
+// ── Scenario 114 — BD-PROFILE-D-05J Codex P2 #1 (round 3): the
+// `restoredFromArchive` marker is fully transient. Restore stamps it;
+// explicit `markGarageVehicleActive` clears it. Without this, a later
+// null/stale activeVehicleId would silently skip the restored vehicle
+// even after the user had explicitly picked it. ────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  const { restoreGarageVehicle: restoreFn } = await import('../public/src/state.js');
+  const { markGarageVehicleActive: markFn } = await import('../public/src/state.js');
+  archiveFn('real-1');
+  restoreFn('real-1');
+  expect('S114: restore stamped the restoredFromArchive marker',
+    user.get().driverGarage?.vehicles?.[0]?.restoredFromArchive === true);
+
+  // Explicit activation clears the marker.
+  markFn('real-1');
+  expect('S114: markGarageVehicleActive set activeVehicleId',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+  expect('S114: markGarageVehicleActive stripped the restoredFromArchive marker',
+    !('restoredFromArchive' in (user.get().driverGarage?.vehicles?.[0] || {})));
+
+  // Simulate a later null saved id (e.g., archive of a different
+  // vehicle elsewhere clearing the active selection) — the resolver's
+  // first-eligible fallback must now SELECT real-1 because the marker
+  // is gone.
+  const cur = user.get().driverGarage || {};
+  user.set({ driverGarage: { ...cur, activeVehicleId: null } });
+  const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
+  expect('S114: post-clear marker, null-saved fallback picks real-1 again',
+    resolveFn(user.get())?.id === 'real-1',
+    String(resolveFn(user.get())?.id));
+}
+
+// ── Scenario 115 — BD-PROFILE-D-05J Codex P2 #2 (round 3): restore via
+// the archived list's `_rawIdx` targets the SLOT the user saw, even
+// when an earlier raw entry shares the id but was dropped from the
+// visible list (no model → `normalisePersistedVehicle` returns null). ──
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // raw[0] — id 'dup', but no model → dropped from the visible
+      // archived list. Without the rawIdx prefer, archived-preferring
+      // strict would lock onto THIS slot first.
+      { id: 'dup', archived: true, source: 'persisted' },
+      // raw[1] — id 'dup' WITH a model → the only entry the user
+      // sees in the archived list. The restore must target this one.
+      { id: 'dup', model: 'Visible', color: 'серый', plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { listArchivedGarageVehicles: listFn } = await import('../public/src/garage.js');
+  const visible = listFn(user.get());
+  expect('S115: archived list has 1 visible entry (modelless raw[0] dropped)',
+    visible.length === 1 && visible[0]?.model === 'Visible',
+    `length=${visible.length} model=${visible[0]?.model}`);
+  expect('S115: visible entry carries _rawIdx=1 (its source raw index)',
+    visible[0]?._rawIdx === 1, String(visible[0]?._rawIdx));
+
+  // Click the rendered restore button → handler passes `_rawIdx: 1`.
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+
+  const persisted = user.get().driverGarage?.vehicles;
+  // raw[1] (the visible one) is what got restored.
+  expect('S115: raw[1] (visible) is no longer archived',
+    persisted?.[1]?.archived !== true);
+  expect('S115: raw[1] carries the restoredFromArchive marker',
+    persisted?.[1]?.restoredFromArchive === true);
+  expect('S115: raw[1] preserved the model "Visible"',
+    persisted?.[1]?.model === 'Visible');
+  // raw[0] (invisible, modelless) is left alone.
+  expect('S115: raw[0] (invisible) is STILL archived (untouched)',
+    persisted?.[0]?.archived === true);
+  expect('S115: raw[0] did NOT receive a restoredFromArchive marker',
+    !('restoredFromArchive' in (persisted?.[0] || {})));
+}
+
+// ── Scenario 116 — BD-PROFILE-D-05J Codex P2 #3 (round 3): after a
+// restore, the active-card render of a CSS-special-char id wires
+// every action control through `escapeCssId`. Without escaping, the
+// very first `querySelector` in `wireGarageActions` would throw and
+// orphan the rest of the active-card handlers for that vehicle. ────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'wild:id space', model: 'Pathological', color: 'белый', plate: 'А 999 ВВ 99', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  // Restore it via the rendered confirm flow. The post-restore active
+  // card has an id with CSS-special chars; wiring must not throw.
+  renderProfile('#/profile');
+  let restoreError = null;
+  try {
+    clickHandlers.get('#pf2-garage-restore-wild\\:id\\ space')?.();
+    clickHandlers.get('#pf2-garage-restore-confirm-wild\\:id\\ space')?.();
+  } catch (e) { restoreError = e; }
+  expect('S116: restore click flow did NOT throw on CSS-special id',
+    restoreError === null, restoreError ? restoreError.message : '');
+  expect('S116: archived flag stripped on the CSS-special-id vehicle',
+    !('archived' in (user.get().driverGarage?.vehicles?.[0] || {})));
+
+  // Re-render: the entry is now an active card. wireGarageActions
+  // queries each per-vehicle selector through escapeCssId, so the
+  // handlers land on the right elements and the smoke's stub
+  // captures them under the escaped selector strings.
+  let renderError = null;
+  try { renderProfile('#/profile'); } catch (e) { renderError = e; }
+  expect('S116: post-restore active-card render did NOT throw',
+    renderError === null, renderError ? renderError.message : '');
+  expect('S116: edit handler captured under CSS-escaped selector for the restored vehicle',
+    typeof clickHandlers.get('#pf2-garage-edit-wild\\:id\\ space') === 'function');
+  expect('S116: make-active handler captured under CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-make-active-wild\\:id\\ space') === 'function');
+  expect('S116: archive handler captured under CSS-escaped selector',
+    typeof clickHandlers.get('#pf2-garage-archive-wild\\:id\\ space') === 'function');
+}
+
+// ── Scenario 117 — BD-PROFILE-D-05J Codex P2 #1 (round 4): the
+// markGarageVehicleActive lookup is now marker-preferring, so the
+// duplicate-id case where ONE of the matching entries carries the
+// `restoredFromArchive` marker still gets its marker cleared.
+// Without the marker preference, the strict-only findIndex would
+// lock onto the first matching entry (raw[0]) and leave raw[1]'s
+// marker stranded. ───────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      // raw[0] — id 'dup', NO marker. Without marker preference, the
+      // strict-only lookup would find this entry first and skip the
+      // marker-clear branch.
+      { id: 'dup', model: 'Clean', source: 'persisted' },
+      // raw[1] — id 'dup' WITH marker. The marker-preferring strict
+      // must find this entry and clear the marker.
+      { id: 'dup', model: 'Restored', source: 'persisted', restoredFromArchive: true },
+    ],
+  },
+});
+{
+  const { markGarageVehicleActive: markFn } = await import('../public/src/state.js');
+  markFn('dup');
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S117: marker-preferring lookup cleared the marker on raw[1]',
+    !('restoredFromArchive' in (persisted?.[1] || {})));
+  expect('S117: raw[0] (no-marker duplicate) preserved byte-for-byte',
+    JSON.stringify(persisted?.[0]) === JSON.stringify({
+      id: 'dup', model: 'Clean', source: 'persisted',
+    }));
+  expect('S117: activeVehicleId set to "dup"',
+    user.get().driverGarage?.activeVehicleId === 'dup');
+}
+
+// ── Scenario 118 — Round 4 strengthening of S115: after restoring the
+// visible duplicate via _rawIdx, the post-restore render surfaces the
+// restored entry as an active-list "available" card (NOT active —
+// restoredFromArchive marker still blocks the null-saved fallback). ─────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'dup', archived: true, source: 'persisted' },  // invisible (no model)
+      { id: 'dup', model: 'Visible', color: 'серый', plate: 'В 456 КМ 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-dup')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-dup')?.();
+  const slice = garageSlice(renderProfile('#/profile'));
+  // The visible card is now in the active list as an "available" card
+  // (no active badge — restoredFromArchive marker blocks the
+  // null-saved first-eligible fallback).
+  expect('S118: post-restore render shows the Visible card as an active-list card',
+    /<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="dup"/.test(slice));
+  expect('S118: Visible card does NOT carry the active-current span (marker blocks fallback)',
+    !slice.includes('id="pf2-garage-active-dup"'));
+  expect('S118: Visible card renders the make-active button (status: available)',
+    slice.includes('id="pf2-garage-make-active-dup"'));
+  // raw[0] (modelless invisible) still archived → archived section
+  // remains rendered with one entry (the invisible one is dropped from
+  // the visible list but the count hint still sees it).
+  expect('S118: archived section gone (no renderable archived entries left)',
+    !slice.includes('id="pf2-garage-archived-section"'));
+  expect('S118: archived COUNT hint still reflects raw[0] storage truth',
+    slice.includes('В архиве: 1'));
+}
+
+// ── Scenario 119 — Round 4 strengthening of S116: every active-card
+// per-vehicle selector survives a CSS-special-char id after restore.
+// Covers edit / make-active / archive / confirm row / cancel / final
+// confirm — the brief's audit list. ─────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'a:b?x]', model: 'AuditAll', color: 'белый', plate: 'А 999 ВВ 99', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-restore-a\\:b\\?x\\]')?.();
+  clickHandlers.get('#pf2-garage-restore-confirm-a\\:b\\?x\\]')?.();
+  let renderError = null;
+  try { renderProfile('#/profile'); } catch (e) { renderError = e; }
+  expect('S119: post-restore active-card render did NOT throw on "a:b?x]"',
+    renderError === null, renderError ? renderError.message : '');
+  // Audit every per-vehicle active-card selector from the brief.
+  const escaped = 'a\\:b\\?x\\]';
+  expect('S119: edit selector wired',
+    typeof clickHandlers.get(`#pf2-garage-edit-${escaped}`) === 'function');
+  expect('S119: make-active selector wired',
+    typeof clickHandlers.get(`#pf2-garage-make-active-${escaped}`) === 'function');
+  expect('S119: archive selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-${escaped}`) === 'function');
+  expect('S119: archive-cancel selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-cancel-${escaped}`) === 'function');
+  expect('S119: archive-confirm (final) selector wired',
+    typeof clickHandlers.get(`#pf2-garage-archive-confirm-${escaped}`) === 'function');
+  // The confirm row itself isn't a click target but should still be
+  // queryable without a SyntaxError — proven by the no-throw render
+  // above (wireGarageActions assigns it via querySelector during the
+  // active-card iteration).
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

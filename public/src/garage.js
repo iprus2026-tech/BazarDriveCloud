@@ -50,7 +50,15 @@ function normalisePersistedVehicle(raw, idx) {
   const plate = typeof raw.plate === 'string' ? raw.plate.trim() : '';
   const source = typeof raw.source === 'string' && raw.source ? raw.source : 'persisted';
   const archived = raw.archived === true;
-  return { id, model, color, plate, source, ...(archived ? { archived: true } : {}) };
+  // 05J Codex P2 #1 (round 2) — preserve the `restoredFromArchive`
+  // marker the helper set so the resolver's `firstEligible` filter
+  // can see it. Strict boolean — anything else is dropped.
+  const restoredFromArchive = raw.restoredFromArchive === true;
+  return {
+    id, model, color, plate, source,
+    ...(archived ? { archived: true } : {}),
+    ...(restoredFromArchive ? { restoredFromArchive: true } : {}),
+  };
 }
 
 // 05F — Read the persisted garage collection off the profile and return
@@ -117,6 +125,13 @@ export function buildGarageVehicles(u, options = {}) {
         color,
         plate,
         source: 'legacy',
+        // 05J Codex P2 #2 — the synthesised legacy entry carries a
+        // `_synthesized: true` marker so the resolver can distinguish
+        // "auto-derived from legacy fields" from "persisted (possibly
+        // restored)" entries. Only the synthesised entry grants the
+        // null-saved active fallback; persisted entries (including
+        // restored ones) must wait for explicit `Сделать активной`.
+        _synthesized: true,
       }];
     }
   }
@@ -158,9 +173,19 @@ export function resolveActiveGarageVehicleId(profile, vehicles) {
     ? profile.driverGarage.activeVehicleId
     : null;
   if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
-  const legacy = vehicles.find((v) => v && v.source === 'legacy');
-  if (legacy) return legacy.id;
-  return (vehicles[0] && vehicles[0].id) || null;
+  // 05J Codex P2 #1 (round 2) — restore the normal resolver fallback
+  // chain: saved match → synthesised legacy → first eligible persisted
+  // vehicle → null. Eligibility filters out entries that were just
+  // unarchived by `restoreGarageVehicle` (marker
+  // `restoredFromArchive: true`) so a restored vehicle never
+  // auto-activates; the user must explicitly click `Сделать активной`
+  // and the saved-match branch above will then return its id.
+  const synthesised = vehicles.find((v) => v && v._synthesized === true);
+  if (synthesised) return synthesised.id;
+  const firstEligible = vehicles.find((v) =>
+    v && v.restoredFromArchive !== true);
+  if (firstEligible) return firstEligible.id;
+  return null;
 }
 
 // Convenience read used by the driver-response snapshot (respond.js) and
@@ -191,4 +216,41 @@ export function countArchivedGarageVehicles(u) {
     if (v && typeof v === 'object' && v.archived === true) count++;
   }
   return count;
+}
+
+// BD-PROFILE-D-05J — Snapshot of archived persisted vehicles, ready for
+// the profile's archived section render. Runs every entry through the
+// same `normalisePersistedVehicle` pipeline as `buildGarageVehicles`,
+// so archived items only show in the list when they can render a card
+// (missing model is dropped). `countArchivedGarageVehicles` continues
+// to walk the RAW array and may report a higher count than this list's
+// length when storage holds a malformed archived entry — the hint is
+// storage truth, the list is render truth. Strictly read-only.
+export function listArchivedGarageVehicles(u) {
+  if (!u || !u.driverGarage || !Array.isArray(u.driverGarage.vehicles)) return [];
+  const raw = u.driverGarage.vehicles;
+  const out = [];
+  // 05J Codex P3 #1 — de-dupe archived entries by id so the rendered
+  // archived list always carries unique DOM hooks and every restore
+  // button is actionable. When duplicate archived ids exist in
+  // storage, the first archived match is rendered; on restore, the
+  // helper's archived-preferring strict lookup unarchives the first
+  // raw match; a subsequent render then surfaces the next archived
+  // sibling. Sequential clicks restore each duplicate in turn.
+  // 05J Codex P2 #2 (round 3) — `_rawIdx` is the source raw-array
+  // index for each surfaced entry. The render passes it back through
+  // `restoreGarageVehicle(id, { rawIdx })` so the right slot is
+  // unarchived even when an earlier raw entry shares the id but
+  // failed normalisation (e.g., missing model → dropped from this
+  // visible list).
+  const seenIds = new Set();
+  for (let i = 0; i < raw.length; i++) {
+    const v = normalisePersistedVehicle(raw[i], i);
+    if (!v) continue;
+    if (v.archived !== true) continue;
+    if (seenIds.has(v.id)) continue;
+    seenIds.add(v.id);
+    out.push({ ...v, _rawIdx: i });
+  }
+  return out;
 }
