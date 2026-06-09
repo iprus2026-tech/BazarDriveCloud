@@ -237,6 +237,12 @@ export function listArchivedGarageVehicles(u) {
   // helper's archived-preferring strict lookup unarchives the first
   // raw match; a subsequent render then surfaces the next archived
   // sibling. Sequential clicks restore each duplicate in turn.
+  // 05J Codex P2 #2 (round 3) — `_rawIdx` is the source raw-array
+  // index for each surfaced entry. The render passes it back through
+  // `restoreGarageVehicle(id, { rawIdx })` so the right slot is
+  // unarchived even when an earlier raw entry shares the id but
+  // failed normalisation (e.g., missing model → dropped from this
+  // visible list).
   const seenIds = new Set();
   for (let i = 0; i < raw.length; i++) {
     const v = normalisePersistedVehicle(raw[i], i);
@@ -244,7 +250,7 @@ export function listArchivedGarageVehicles(u) {
     if (v.archived !== true) continue;
     if (seenIds.has(v.id)) continue;
     seenIds.add(v.id);
-    out.push(v);
+    out.push({ ...v, _rawIdx: i });
   }
   return out;
 }
