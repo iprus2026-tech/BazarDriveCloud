@@ -192,3 +192,24 @@ export function countArchivedGarageVehicles(u) {
   }
   return count;
 }
+
+// BD-PROFILE-D-05J — Snapshot of archived persisted vehicles, ready for
+// the profile's archived section render. Runs every entry through the
+// same `normalisePersistedVehicle` pipeline as `buildGarageVehicles`,
+// so archived items only show in the list when they can render a card
+// (missing model is dropped). `countArchivedGarageVehicles` continues
+// to walk the RAW array and may report a higher count than this list's
+// length when storage holds a malformed archived entry — the hint is
+// storage truth, the list is render truth. Strictly read-only.
+export function listArchivedGarageVehicles(u) {
+  if (!u || !u.driverGarage || !Array.isArray(u.driverGarage.vehicles)) return [];
+  const raw = u.driverGarage.vehicles;
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const v = normalisePersistedVehicle(raw[i], i);
+    if (!v) continue;
+    if (v.archived !== true) continue;
+    out.push(v);
+  }
+  return out;
+}

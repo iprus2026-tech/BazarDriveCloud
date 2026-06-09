@@ -13125,6 +13125,64 @@ button.pfp-menu-row:active { opacity: 0.7; }
   font-size: 12px;
   color: var(--text-3);
 }
+/* BD-PROFILE-D-05J — Archived list lives in its own section under the
+   active cards / archived hint. Stays visually quieter than the active
+   list so the active vehicles remain the primary surface. */
+.pf2-garage__archived-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pf2-garage__archived-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0;
+}
+.pf2-garage__archived-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "info action"
+    "confirm confirm";
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 0;
+}
+.pf2-garage__archived-info { grid-area: info; min-width: 0; }
+.pf2-garage__archived-model {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pf2-garage__archived-meta {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 2px 0 0;
+}
+.pf2-garage__archived-restore {
+  grid-area: action;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pf2-garage__archived-restore:hover { background: var(--bg-3); }
+.pf2-garage__restore-confirm { grid-area: confirm; }
+.pf2-garage__restore-confirm[data-garage-restore-confirm-state="restored-local"] {
+  background: var(--bg-2);
+}
 /* BD-PROFILE-D-05C — multi-card layout. Sibling vehicle cards stack
    vertically with a divider; the second-and-later cards inherit a muted
    accent so the active card stays visually anchored at the top. */

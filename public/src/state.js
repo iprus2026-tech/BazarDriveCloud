@@ -689,6 +689,87 @@ export function archiveGarageVehicle(vehicleId) {
   return targetId;
 }
 
+// BD-PROFILE-D-05J — Restore a soft-archived vehicle in the persisted
+// garage collection. Mirror of `archiveGarageVehicle`: same lookup
+// safety (trim-aware strict match + synthesised-id fallback), same
+// soft-handling of unknown ids. Strips the `archived` flag and
+// preserves every other field via spread; the vehicles array order is
+// preserved; `activeVehicleId` is NEVER promoted by a restore.
+//
+//   - Trim incoming `vehicleId`; whitespace-only id returns null.
+//   - Strict match trims both sides so a raw stored id like ` real-1 `
+//     can be restored via `real-1`.
+//   - Synthesised-id fallback mirrors `archiveGarageVehicle` /
+//     `patchGarageVehicle`: `garage-${rawIdx + 1}` maps back to the
+//     raw id-less slot at index N-1. Bounded by array length and
+//     never hijacks a real id.
+//   - When the matched entry's `archived !== true` (already restored
+//     or never archived), this is a no-op write — returns the
+//     canonical id without persisting (idempotent restore).
+//   - When archived, replaces the slot with `{ ...prev, id: targetId }`
+//     and drops the `archived` field (every other field — model /
+//     color / plate / source / unknown future fields — survives).
+//   - `activeVehicleId` is preserved verbatim. Restore does NOT
+//     auto-promote the restored vehicle to active; the render-time
+//     resolver may still pick a non-archived candidate for display
+//     when `activeVehicleId` is null (existing 05D semantic), but
+//     this helper itself stays explicit.
+//
+// Returns the canonical (trimmed) id on success; null on validation
+// refusal (empty id) or unknown id.
+export function restoreGarageVehicle(vehicleId) {
+  const targetId = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+  if (!targetId) return null;
+
+  load();
+  const dg = (cache.driverGarage && typeof cache.driverGarage === 'object')
+    ? cache.driverGarage
+    : { activeVehicleId: null, vehicles: [] };
+  const vehicles = Array.isArray(dg.vehicles) ? dg.vehicles : [];
+
+  let idx = vehicles.findIndex((v) => {
+    if (!v) return false;
+    const rawId = typeof v.id === 'string' ? v.id.trim() : '';
+    return rawId.length > 0 && rawId === targetId;
+  });
+  if (idx < 0) {
+    const synth = /^garage-(\d+)$/.exec(targetId);
+    if (synth) {
+      const rawIdx = parseInt(synth[1], 10) - 1;
+      if (rawIdx >= 0 && rawIdx < vehicles.length) {
+        const candidate = vehicles[rawIdx];
+        if (candidate && typeof candidate === 'object') {
+          const candidateId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+          if (!candidateId) idx = rawIdx;
+        }
+      }
+    }
+  }
+  if (idx < 0) return null;
+
+  const prev = vehicles[idx] || {};
+
+  // Idempotent: already not archived → no-op write. Return canonical id.
+  if (prev.archived !== true) {
+    return targetId;
+  }
+
+  // Strip the archived flag; preserve every other field via spread.
+  const restored = { ...prev };
+  delete restored.archived;
+  restored.id = targetId;
+
+  const nextVehicles = [...vehicles];
+  nextVehicles[idx] = restored;
+
+  cache = normalize({ ...cache, driverGarage: {
+    activeVehicleId: dg.activeVehicleId,
+    vehicles: nextVehicles,
+  }});
+  persist();
+  return targetId;
+}
+
 // Convenience helper for Profile → Documents tab.
 // Updates a single document's status and re-syncs derived fields. Unknown
 // keys or statuses outside the supported enum are rejected so callers can't
