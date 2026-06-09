@@ -539,12 +539,14 @@ user.set({
 {
   renderProfile('#/profile');
   const before = snapshotLocalStorage();
+  // 05I — `#pf2-garage-archive-confirm-*` is no longer a DOM-only flash;
+  // it is the archive write path and is intentionally EXCLUDED from the
+  // byte-equality triggers below (its writes are covered by S79/S87+).
   const triggers = [
     '#pf2-garage-add',
     '#pf2-garage-edit-legacy-1',
     '#pf2-garage-archive-legacy-1',
     '#pf2-garage-archive-cancel-legacy-1',
-    '#pf2-garage-archive-confirm-legacy-1',
   ];
   for (const sel of triggers) {
     const fn = clickHandlers.get(sel);
@@ -862,18 +864,22 @@ user.set({
 {
   renderProfile('#/profile?role=driver&garage=multi');
   const before = snapshotLocalStorage();
+  // 05I — `#pf2-garage-archive-confirm-*` is now the archive writer
+  // (DOM-only flash retired); excluded from the byte-equality triggers
+  // here. For legacy-1 specifically, confirm materialises the legacy
+  // record; for demo-2 (preview-only, no storage backing) it still
+  // doesn't write, but we drop both for consistency with S14.
   const triggers = [
     '#pf2-garage-add',
     // Legacy (active) card — no make-active button on the active card.
     '#pf2-garage-edit-legacy-1',
     '#pf2-garage-archive-legacy-1',
     '#pf2-garage-archive-cancel-legacy-1',
-    '#pf2-garage-archive-confirm-legacy-1',
-    // Demo (non-active) card — every handler EXCEPT make-active.
+    // Demo (non-active) card — every handler EXCEPT make-active and
+    // archive-confirm.
     '#pf2-garage-edit-demo-2',
     '#pf2-garage-archive-demo-2',
     '#pf2-garage-archive-cancel-demo-2',
-    '#pf2-garage-archive-confirm-demo-2',
   ];
   for (const sel of triggers) {
     const fn = clickHandlers.get(sel);
@@ -2967,6 +2973,190 @@ user.set({
   for (const { name, regex } of FORBIDDEN) {
     expect(`S86: archiveGarageVehicle does NOT touch ${name}`, !regex.test(body));
   }
+}
+
+// ── BD-PROFILE-D-05I Codex P2 — Legacy fallback archive + empty-state
+// archived hint ─────────────────────────────────────────────────────────
+// Two interlocking fixes:
+//   • Fix 1 — archiving the legacy fallback card materialises a
+//     `{ id: 'legacy-1', archived: true }` entry into
+//     `driverGarage.vehicles` so the legacy card does NOT resurrect on
+//     the next render. The legacy `vehicleMake / Model / Color / Plate`
+//     fields stay intact (no hard delete, no migration outside the
+//     archive entry).
+//   • Fix 2 — `garageSectionHtml` computes the archived count BEFORE
+//     the empty branch so "В архиве: N" surfaces even when the user has
+//     just archived their last active vehicle and the section renders
+//     empty.
+
+// ── Scenario 87 — Legacy fallback archive materialises the legacy entry. ─
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // intentionally no driverGarage.vehicles — pure legacy fallback render
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  // Pre-archive: persisted collection is empty; render resolves the
+  // legacy fallback card.
+  expect('S87 pre: driverGarage.vehicles defaults to []',
+    user.get().driverGarage?.vehicles?.length === 0);
+  const sliceBefore = garageSlice(renderProfile('#/profile'));
+  expect('S87 pre: render shows the legacy-1 card from u.vehicleMake/Model',
+    sliceBefore.includes('data-vehicle="legacy-1"')
+    && sliceBefore.includes('Hyundai Solaris'));
+
+  // Archive the legacy card.
+  const r = archiveFn('legacy-1');
+  expect('S87: archiveGarageVehicle("legacy-1") returns the canonical id',
+    r === 'legacy-1', String(r));
+
+  // Persisted vehicles now has the materialised legacy entry, marked
+  // archived. Legacy user fields are NOT wiped.
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S87: driverGarage.vehicles now has the materialised legacy entry',
+    Array.isArray(persisted) && persisted.length === 1, String(persisted?.length));
+  const entry = persisted?.[0];
+  expect('S87: materialised entry id is "legacy-1"',
+    entry?.id === 'legacy-1');
+  expect('S87: materialised entry preserves the legacy model line',
+    entry?.model === 'Hyundai Solaris', String(entry?.model));
+  expect('S87: materialised entry preserves the legacy color',
+    entry?.color === 'белый');
+  expect('S87: materialised entry preserves the legacy plate',
+    entry?.plate === 'А 482 МР 77');
+  expect('S87: materialised entry carries source: "legacy"',
+    entry?.source === 'legacy', String(entry?.source));
+  expect('S87: materialised entry is archived: true',
+    entry?.archived === true);
+  expect('S87: legacy user.vehicleMake preserved (NOT wiped)',
+    user.get().vehicleMake === 'Hyundai');
+  expect('S87: legacy user.vehiclePlate preserved (NOT wiped)',
+    user.get().vehiclePlate === 'А 482 МР 77');
+}
+
+// ── Scenario 88 — Next render: the archived legacy does NOT resurrect.
+// The active list is empty and the archived hint surfaces "В архиве: 1". ─
+{
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S88: post-archive render shows the empty-state modifier',
+    slice.includes('pf2-garage--empty'));
+  expect('S88: post-archive render advertises data-garage-collection-size="0"',
+    slice.includes('data-garage-collection-size="0"'));
+  expect('S88: post-archive render advertises data-garage-archived-count="1"',
+    slice.includes('data-garage-archived-count="1"'));
+  expect('S88: post-archive render surfaces "В архиве: 1" hint in the empty state',
+    slice.includes('В архиве: 1'));
+  // No legacy-1 card on the active list.
+  expect('S88: archived legacy-1 is NOT rendered in the active list',
+    !slice.includes('data-vehicle="legacy-1"'));
+  // Add CTA still present so the driver can add a fresh vehicle.
+  expect('S88: empty-state Add CTA still present',
+    slice.includes('id="pf2-garage-add"'));
+}
+
+// ── Scenario 89 — Archiving the legacy card when it was the active one
+// clears `activeVehicleId`. ───────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: { activeVehicleId: 'legacy-1', vehicles: [] },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('legacy-1');
+  expect('S89: activeVehicleId cleared to null after archiving the active legacy card',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+  expect('S89: materialised legacy entry has archived: true',
+    user.get().driverGarage?.vehicles?.[0]?.archived === true);
+}
+
+// ── Scenario 90 — End-to-end confirm-flow click path on the legacy card:
+// open confirm row → click "Архивировать" → materialised entry + active
+// cleared + empty render with hint. ───────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: { activeVehicleId: 'legacy-1', vehicles: [] },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-archive-legacy-1')?.();
+  clickHandlers.get('#pf2-garage-archive-confirm-legacy-1')?.();
+  expect('S90: legacy materialised + archived via click flow',
+    user.get().driverGarage?.vehicles?.[0]?.archived === true);
+  expect('S90: activeVehicleId cleared by the legacy-archive click flow',
+    user.get().driverGarage?.activeVehicleId === null);
+  // Re-render reflects the empty state with the archived hint.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S90: re-render is the empty state',
+    slice.includes('pf2-garage--empty'));
+  expect('S90: re-render carries data-garage-archived-count="1"',
+    slice.includes('data-garage-archived-count="1"'));
+  expect('S90: re-render shows "В архиве: 1" hint',
+    slice.includes('В архиве: 1'));
+}
+
+// ── Scenario 91 — Defensive: archiveGarageVehicle('legacy-1') returns
+// null when there are no legacy user fields to materialise from (no
+// resurrection target). ──────────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // intentionally no legacy vehicleMake/Model
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  const r = archiveFn('legacy-1');
+  expect('S91: archiveGarageVehicle("legacy-1") returns null when legacy fields are empty',
+    r === null, String(r));
+  expect('S91: no materialisation when legacy fields are empty',
+    user.get().driverGarage?.vehicles?.length === 0);
+}
+
+// ── Scenario 92 — Fix 2: archiving the last persisted vehicle still
+// surfaces "В архиве: N" in the empty state. ─────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // no legacy fields so the legacy fallback does not re-fire
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  renderProfile('#/profile');
+  clickHandlers.get('#pf2-garage-archive-real-1')?.();
+  clickHandlers.get('#pf2-garage-archive-confirm-real-1')?.();
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S92: post-archive empty render shows pf2-garage--empty',
+    slice.includes('pf2-garage--empty'));
+  expect('S92: post-archive empty render advertises data-garage-archived-count="1"',
+    slice.includes('data-garage-archived-count="1"'));
+  expect('S92: post-archive empty render renders "В архиве: 1" hint',
+    slice.includes('В архиве: 1'));
+  expect('S92: post-archive empty render still exposes the Add CTA',
+    slice.includes('id="pf2-garage-add"'));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

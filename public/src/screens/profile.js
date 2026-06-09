@@ -2967,9 +2967,21 @@ function garageSectionHtml(u, options = {}) {
     ? options.vehicles
     : buildGarageVehicles(u, options);
 
+  // BD-PROFILE-D-05I — small archived-count hint. Archived entries stay
+  // in storage (soft-delete) but are filtered out of the active list by
+  // `buildGarageVehicles`; the hint surfaces the count so the driver
+  // knows they still exist.
+  // 05I Codex P2 — compute the archived count BEFORE the empty branch
+  // so it can also surface when the user just archived their last
+  // active vehicle and the active list is now empty.
+  const archivedCount = countArchivedGarageVehicles(u);
+  const archivedHintHtml = archivedCount > 0
+    ? `<p class="pf2-garage__archived-hint" id="pf2-garage-archived-hint" data-garage-archived-count="${archivedCount}">В архиве: ${archivedCount}</p>`
+    : '';
+
   if (vehicles.length === 0) {
     return `
-      <section class="bd-card pf2-garage pf2-garage--empty" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="0">
+      <section class="bd-card pf2-garage pf2-garage--empty" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="0" data-garage-archived-count="${archivedCount}">
         <header class="pf2-garage__head">
           <h2 class="pf2-garage__title" id="pf2-garage-title">Гараж</h2>
         </header>
@@ -2978,20 +2990,12 @@ function garageSectionHtml(u, options = {}) {
           <p class="pf2-garage__empty-title">Авто не добавлено</p>
           <p class="pf2-garage__empty-text">Добавьте автомобиль, чтобы принимать заказы.</p>
           <button type="button" class="bd-btn primary pf2-garage__cta" id="pf2-garage-add" data-garage-action="add" data-garage-state="add-ready">Добавить авто</button>
-        </div>${garageAddSheetHtml()}${garageEditSheetHtml()}
+        </div>${archivedHintHtml}${garageAddSheetHtml()}${garageEditSheetHtml()}
       </section>`;
   }
 
   const multiClass = vehicles.length > 1 ? ' pf2-garage--multi' : '';
   const cardsHtml = vehicles.map(garageVehicleCardHtml).join('');
-  // BD-PROFILE-D-05I — small archived-count hint. Archived entries stay
-  // in storage (soft-delete) but are filtered out of the active list by
-  // `buildGarageVehicles`; the hint surfaces the count so the driver
-  // knows they still exist.
-  const archivedCount = countArchivedGarageVehicles(u);
-  const archivedHintHtml = archivedCount > 0
-    ? `<p class="pf2-garage__archived-hint" id="pf2-garage-archived-hint" data-garage-archived-count="${archivedCount}">В архиве: ${archivedCount}</p>`
-    : '';
   return `
     <section class="bd-card pf2-garage${multiClass}" id="pf2-garage" aria-labelledby="pf2-garage-title" data-garage-collection-size="${vehicles.length}" data-garage-archived-count="${archivedCount}">
       <header class="pf2-garage__head">

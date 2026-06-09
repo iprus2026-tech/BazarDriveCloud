@@ -84,17 +84,27 @@ export function buildGarageVehicles(u, options = {}) {
   const force = typeof options.force === 'string' ? options.force : '';
   if (force === 'empty') return [];
 
-  let raw = readPersistedGarageVehicles(u);
+  const rawAll = readPersistedGarageVehicles(u);
   // 05I — archived entries stay in the persisted record (no hard delete)
   // but never reach the active list. The resolver, the snapshot
   // consumers (respond.js / ride_actions.js), and the per-card render
   // therefore never surface an archived vehicle as active or even as a
   // make-active candidate.
-  if (raw.length > 0) {
-    raw = raw.filter((v) => v && v.archived !== true);
-  }
+  let raw = rawAll.filter((v) => v && v.archived !== true);
 
-  if (raw.length === 0) {
+  // 05I Codex P2 — the legacy fallback below fires when the active list
+  // is empty AND there is no archived `legacy-1` materialised by
+  // `archiveGarageVehicle` already. That prevents an archived legacy
+  // card from being re-synthesised from the legacy `vehicleMake / Model
+  // / Color / Plate` user fields on the next render. Archived NON-
+  // legacy entries (e.g. an archived persisted `real-2`) keep the
+  // legacy fallback semantics intact for the snapshot consumers and the
+  // garage render — only the explicit "I archived my legacy" gesture
+  // suppresses the fallback.
+  const hasArchivedLegacy = rawAll.some((v) =>
+    v && v.id === 'legacy-1' && v.archived === true);
+
+  if (raw.length === 0 && !hasArchivedLegacy) {
     const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
     const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
     const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';

@@ -611,7 +611,47 @@ export function archiveGarageVehicle(vehicleId) {
       }
     }
   }
-  if (idx < 0) return null;
+  if (idx < 0) {
+    // BD-PROFILE-D-05I Codex P2 — legacy-fallback materialisation.
+    // When the user has no persisted vehicles but the resolver
+    // synthesised a `legacy-1` card from the legacy `vehicleMake /
+    // Model / Color / Plate` user fields, an archive click on that
+    // card would otherwise return null and the next render would
+    // resurrect the same card from the legacy fields. Materialise the
+    // legacy entry into `driverGarage.vehicles` as an archived record
+    // so the builder's "is the persisted collection empty?" check
+    // suppresses the legacy fallback on subsequent renders. The
+    // original legacy `vehicleMake / Model / Color / Plate` fields
+    // stay intact — never wiped, never migrated outside the archive
+    // entry.
+    if (targetId === 'legacy-1') {
+      const make = typeof cache.vehicleMake === 'string' ? cache.vehicleMake.trim() : '';
+      const model = typeof cache.vehicleModel === 'string' ? cache.vehicleModel.trim() : '';
+      const modelLine = (make && model) ? `${make} ${model}` : (make || model);
+      if (modelLine) {
+        const color = typeof cache.vehicleColor === 'string' ? cache.vehicleColor.trim() : '';
+        const plate = typeof cache.vehiclePlate === 'string' ? cache.vehiclePlate.trim() : '';
+        const legacyEntry = {
+          id: 'legacy-1',
+          model: modelLine,
+          color,
+          plate,
+          source: 'legacy',
+          archived: true,
+        };
+        const dgActiveTrim = typeof dg.activeVehicleId === 'string'
+          ? dg.activeVehicleId.trim() : '';
+        const isActiveTarget = dgActiveTrim === 'legacy-1';
+        cache = normalize({ ...cache, driverGarage: {
+          activeVehicleId: isActiveTarget ? null : dg.activeVehicleId,
+          vehicles: [...vehicles, legacyEntry],
+        }});
+        persist();
+        return targetId;
+      }
+    }
+    return null;
+  }
 
   const prev = vehicles[idx] || {};
   const dgActiveTrim = typeof dg.activeVehicleId === 'string'
