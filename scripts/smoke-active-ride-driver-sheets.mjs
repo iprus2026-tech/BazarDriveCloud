@@ -345,8 +345,22 @@ expect('dispatcher maps payment=cash to the cash entry stage',
   || /paymentQuery\s*===\s*'cash'\s*\|\|\s*paymentQuery\s*===\s*'noncash'\s*\?\s*paymentQuery/.test(screen));
 expect('dispatcher only maps cash / noncash (other payment values are ignored)',
   !/paymentQuery\s*===\s*'(auto|paid|pending)'/.test(screen));
-expect('renderCompleted wires onHistory into the earnings sheet',
-  /onHistory:\s*\(\s*\)\s*=>\s*go\('\/profile'\)/.test(completedRenderer));
+expect('renderCompleted wires onHistory into the earnings sheet via /profile?section=history',
+  /onHistory:\s*\(\s*\)\s*=>\s*go\('\/profile\?section=history'\)/.test(completedRenderer));
+
+// Profile screen recognises the deep-link and scrolls the history section
+// into view. The driver overview tab and the passenger main view both
+// render the same #profile-history-section anchor, so no per-role branch
+// is needed.
+const profile = read('../public/src/screens/profile.js');
+expect('profile.js reads ?section= off the hash query',
+  /q\.get\(\s*'section'\s*\)/.test(profile));
+expect('profile.js handles section=history',
+  /sectionParam\s*===\s*'history'/.test(profile));
+expect('profile.js scrolls #profile-history-section into view for section=history',
+  /sectionParam\s*===\s*'history'[\s\S]{0,800}#profile-history-section[\s\S]{0,400}scrollIntoView\s*\(/.test(profile));
+expect('profile.js still renders the history anchor in both views',
+  (profile.match(/id="profile-history-section"/g) || []).length >= 1);
 
 // Earnings sheet shows the "В историю поездок" button id wired by the
 // sheets module's bind helper, and the click handler hits onHistory /
@@ -365,10 +379,10 @@ const bindEarningsBody = functionBody(sheets, 'bindEarningsEvents') || '';
 expect('bindEarningsEvents() body resolved', bindEarningsBody.length > 0);
 const historyHandler = clickHandlerBody(bindEarningsBody, 'driver-earnings-history');
 expect('#driver-earnings-history click handler resolved', !!historyHandler);
-expect('history handler calls options.onHistory or falls back to /profile',
+expect('history handler calls options.onHistory or falls back to /profile?section=history',
   !!historyHandler
   && /options\.onHistory/.test(historyHandler)
-  && /go\('\/profile'\)/.test(historyHandler));
+  && /go\('\/profile\?section=history'\)/.test(historyHandler));
 expect('history handler never persists ride state',
   !!historyHandler && !/persistDriver(?:RideStatus|Cancel)\b/.test(historyHandler));
 

@@ -636,9 +636,12 @@ export default function activeRide() {
       onOrders:  () => go('/driver-map'),
       onFeed:    () => go('/feed'),
       // BD-RIDE-D-09 polish — explicit "В историю поездок" exit, mirroring
-      // the passenger COMPLETED handoff (BD-RIDE-P-08). /profile hosts the
-      // ride history menu; no new screen is created here.
-      onHistory: () => go('/profile'),
+      // the passenger COMPLETED handoff (BD-RIDE-P-08). The history section
+      // lives inside the profile (passenger main view + driver overview pane,
+      // both anchored as #profile-history-section), so deep-link via
+      // ?section=history so the profile screen scrolls the history into view
+      // instead of dropping the driver at the top of the overview.
+      onHistory: () => go('/profile?section=history'),
     });
   }
 

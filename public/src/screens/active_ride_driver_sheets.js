@@ -682,14 +682,15 @@ function bindEarningsEvents(overlay, options) {
     });
   }
   // BD-RIDE-D-09 polish — "В историю поездок" exit, parity with passenger
-  // BD-RIDE-P-08. Fallback to /profile so the button is never a dead end
-  // when the driver screen forgets to wire the callback.
+  // BD-RIDE-P-08. Fallback to /profile?section=history so the button lands
+  // on the ride history section (not the profile overview) when the driver
+  // screen forgets to wire the callback.
   const historyBtn = overlay.querySelector('#driver-earnings-history');
   if (historyBtn) {
     historyBtn.addEventListener('click', () => {
       if (overlay.__closeSheet) overlay.__closeSheet();
       if (typeof options.onHistory === 'function') options.onHistory();
-      else go('/profile');
+      else go('/profile?section=history');
     });
   }
 
