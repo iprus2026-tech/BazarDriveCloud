@@ -30,6 +30,41 @@ function arrayBody(source, name) {
   return m ? m[1] : null;
 }
 
+// Extract a function body by name via brace matching. Works for both
+// top-level `function NAME(...)` and nested `function NAME(...)` declared
+// inside another function — the driver dispatcher's renderers all live
+// inside the activeRide() default export but `source.indexOf` still finds
+// them by exact name match.
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start === -1) return null;
+  const paren = source.indexOf('(', start);
+  if (paren === -1) return null;
+  let pdepth = 0;
+  let afterParams = -1;
+  for (let i = paren; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '(') pdepth++;
+    else if (ch === ')') {
+      pdepth--;
+      if (pdepth === 0) { afterParams = i + 1; break; }
+    }
+  }
+  if (afterParams === -1) return null;
+  const open = source.indexOf('{', afterParams);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
 // ── A. Module exports (the API active_ride.js + this guard rely on) ──
 for (const fn of [
   'openDriverCancelSheet',
@@ -145,6 +180,81 @@ expect('problem-type click is ignored while stage is loading/sent',
   && /dataset\.stage === 'sent'/.test(problemTypeHandler[1]));
 expect('submit freezes the type buttons while loading',
   /typeBtns\.forEach\(\(btn\) => \{\s*btn\.disabled = true;?\s*\}\);/.test(sheets));
+
+// ── J. Terminal renderers never expose cancel / problem triggers (BD-RIDE-D-SHEETS-02) ──
+// renderCanceledStub() handles both CANCELED and NO_SHOW, and renderCompleted()
+// mounts only the earnings sheet — neither must re-expose the cancel/no-show/
+// problem entry points, otherwise a finished or closed ride could reopen the
+// cancel sheet and trip a second persistDriverCancel() call.
+const dispatchBody = functionBody(screen, 'renderSheet') || '';
+expect('renderSheet() body resolved', dispatchBody.length > 0);
+expect('CANCELED routes to renderCanceledStub()',
+  /RIDE_STATUS\.CANCELED[\s\S]{0,80}renderCanceledStub\(\)/.test(dispatchBody));
+expect('NO_SHOW routes to renderCanceledStub()',
+  /RIDE_STATUS\.NO_SHOW[\s\S]{0,80}renderCanceledStub\(\)/.test(dispatchBody));
+const canceledStub = functionBody(screen, 'renderCanceledStub') || '';
+expect('renderCanceledStub() body resolved', canceledStub.length > 0);
+expect('terminal stub never mounts the cancel button (#ar-cancel*)',
+  !/['"]#?ar-cancel(?:-accepted)?['"]/.test(canceledStub)
+  && !/\bar-cancel(?:-accepted)?\b/.test(canceledStub.replace(/ar-cancel-route\b/g, '')));
+expect('terminal stub never mounts the no-show button (#ar-no-show)',
+  !/ar-no-show\b/.test(canceledStub));
+expect('terminal stub never mounts the problem button (#ar-issue)',
+  !/ar-issue\b/.test(canceledStub));
+expect('terminal stub never reopens openDriverCancelSheet',
+  !/openDriverCancelSheet\s*\(/.test(canceledStub));
+expect('terminal stub never reopens openDriverProblemSheet',
+  !/openDriverProblemSheet\s*\(/.test(canceledStub));
+const completedRenderer = functionBody(screen, 'renderCompleted') || '';
+expect('renderCompleted() body resolved', completedRenderer.length > 0);
+expect('completed renderer never mounts the cancel button',
+  !/ar-cancel(?:-accepted)?\b/.test(completedRenderer));
+expect('completed renderer never mounts the no-show / problem buttons',
+  !/ar-no-show\b/.test(completedRenderer) && !/ar-issue\b/.test(completedRenderer));
+expect('completed renderer never reopens the cancel/problem sheets',
+  !/openDriverCancelSheet\s*\(/.test(completedRenderer)
+  && !/openDriverProblemSheet\s*\(/.test(completedRenderer));
+
+// ── K. Per-stage cancel / problem affordance reach (BD-RIDE-D-SHEETS-02) ──
+// Cancel sheet is reachable from ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP
+// and WAITING_PASSENGER (no-show preset). Problem sheet is reachable from
+// IN_PROGRESS only — and goes through `onAction: showNotice` so the issue
+// path stays a UI-only toast that never persists ride state.
+const accepted = functionBody(screen, 'renderAccepted') || '';
+expect('renderAccepted() body resolved', accepted.length > 0);
+expect('ACCEPTED stage opens the cancel sheet via #ar-cancel-accepted',
+  /ar-cancel-accepted['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(accepted));
+const enRoute = functionBody(screen, 'renderEnRoute') || '';
+expect('renderEnRoute() body resolved', enRoute.length > 0);
+expect('DRIVER_EN_ROUTE stage opens the cancel sheet via #ar-cancel',
+  /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(enRoute));
+const approaching = functionBody(screen, 'renderApproaching') || '';
+expect('renderApproaching() body resolved', approaching.length > 0);
+expect('DRIVER_APPROACHING_PICKUP stage opens the cancel sheet via #ar-cancel',
+  /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(approaching));
+const waiting = functionBody(screen, 'renderWaiting') || '';
+expect('renderWaiting() body resolved', waiting.length > 0);
+expect('WAITING_PASSENGER #ar-no-show opens cancel sheet with passenger_no_show preset',
+  /ar-no-show['"]\)[\s\S]{0,400}openDriverCancelSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}reason:\s*'passenger_no_show'/.test(waiting));
+expect('WAITING_PASSENGER no-show persists RIDE_STATUS.NO_SHOW',
+  /ar-no-show[\s\S]{0,800}RIDE_STATUS\.NO_SHOW/.test(waiting));
+const inProgress = functionBody(screen, 'renderInProgress') || '';
+expect('renderInProgress() body resolved', inProgress.length > 0);
+expect('IN_PROGRESS stage opens the problem sheet via #ar-issue',
+  /ar-issue['"]\)[\s\S]{0,300}openDriverProblemSheet\s*\(/.test(inProgress));
+expect('IN_PROGRESS problem-sheet call uses onAction (toast-only), not onConfirm',
+  /openDriverProblemSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}onAction:\s*showNotice/.test(inProgress)
+  && !/openDriverProblemSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}onConfirm/.test(inProgress));
+// `ar-issue` first appears in the renderer's innerHTML template; the rest of
+// the function below still references persistDriverRideStatus from the
+// #ar-finish completion path. Scope the assertion to the #ar-issue click
+// handler so the finish path's COMPLETED persistence doesn't cause a false
+// positive — the issue button itself must be UI-only.
+const issueHandlerMatch = inProgress.match(
+  /ar-issue['"]\)\.addEventListener\(\s*'click'\s*,\s*\(\s*\)\s*=>\s*([^;]+);/);
+expect('IN_PROGRESS #ar-issue click handler is resolved', !!issueHandlerMatch);
+expect('IN_PROGRESS problem path does not persist ride state from the issue handler',
+  !!issueHandlerMatch && !/persistDriver(?:RideStatus|Cancel)/.test(issueHandlerMatch[1]));
 
 // ── I. Service worker precaches the driver sheets module ──
 // active_ride.js statically imports active_ride_driver_sheets.js; if the SW
