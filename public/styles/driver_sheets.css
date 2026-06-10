@@ -312,16 +312,21 @@
   white-space: nowrap;
 }
 
-/* BD-RIDE-D-11 — secondary nav row under the primary CTA. Two ghost buttons
-   side-by-side (Открыть заказы / В ленту) — uses the existing ghost button
+/* BD-RIDE-D-11 — secondary nav row under the primary CTA. Three ghost
+   buttons side-by-side (Открыть заказы / В историю поездок / В ленту, the
+   middle one added in BD-RIDE-D-09 polish) — uses the existing ghost button
    token from cloud.css. */
 .de-earn__secondary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
   margin-top: 8px;
 }
-.de-earn__secondary .active-ride-driver-sheet__btn { height: 44px; font-size: 14px; }
+.de-earn__secondary .active-ride-driver-sheet__btn {
+  height: 44px;
+  font-size: 13px;
+  padding: 0 10px;
+}
 
 /* Cash confirm row — gates the primary "Закрыть поездку" until checked. */
 .de-confirm {

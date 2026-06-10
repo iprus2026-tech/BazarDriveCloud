@@ -4003,5 +4003,29 @@ export default function profile() {
     renderPassenger(root, applyPassengerStatePreview(u, stateParam), stateParam);
   }
 
+  // BD-RIDE-D-09 follow-up — deep-link into the ride history section.
+  // /profile?section=history is the canonical "В историю поездок" target
+  // for both the driver earnings terminal and the passenger COMPLETED
+  // handoff. The history section is rendered inline by both views (anchor
+  // #profile-history-section), so the deep-link only needs to scroll it
+  // into view once the freshly-built root is attached to the document.
+  // overview / ip / docs / payouts / security tabs stay untouched: the
+  // driver overview tab is already the default active pane and hosts the
+  // history section, so no tab switch is needed for `section=history`.
+  const sectionParam = q.get('section');
+  if (sectionParam === 'history') {
+    const scrollToHistory = () => {
+      const target = root.querySelector('#profile-history-section');
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(scrollToHistory));
+    } else {
+      setTimeout(scrollToHistory, 0);
+    }
+  }
+
   return root;
 }
