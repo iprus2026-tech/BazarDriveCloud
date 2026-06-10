@@ -154,8 +154,36 @@ expect('contract spells out that «Заказ принят» is UI display/chip 
   && /«Заказ принят»\s+is\s+UI\s+(display|chip)/i.test(section));
 expect('committing flips selected offer.status to "accepted"',
   !!section && /offer\.status\s*=\s*'accepted'/.test(section));
-expect('committing flips competing offers.status to "rejected"',
-  !!section && /offers\.status\s*=\s*'rejected'/.test(section));
+// The previous wording was `offers.status = 'rejected'` for *all*
+// competing offers; Codex review #458 narrowed this to "only sent
+// competing offers flip to status='rejected'". Allow either the bulk
+// form or the scoped form so the contract owns the precise semantics
+// while the smoke just pins that rejection is part of the commit.
+expect('committing flips competing sent offers to status=\'rejected\'',
+  !!section
+  && (/offers\.status\s*=\s*'rejected'/.test(section)
+      || /flip[\s\S]{0,200}status='rejected'/i.test(section)));
+
+// Codex review #458 — stored-status leak. The contract must never
+// write the Russian UI label into Order.status. Scan the whole section
+// for any `Order.status = '…Заказ принят…'` form — guillemets, straight
+// quotes, backticks. Allowed: `Order.status = 'ACCEPTED'` plus the
+// separate sentence that explicitly calls «Заказ принят» a UI chip.
+expect('contract never stores the Russian UI label as Order.status',
+  !!section && !/Order\.status\s*=\s*['"`«][^'"`»]*Заказ принят/.test(section));
+
+// Codex review #458 — passenger commit preserves terminal offers.
+// Only competing offers with status='sent' flip to rejected. Offers
+// already in status='withdrawn' or status='expired' are preserved.
+expect('passenger commit rule scopes competing-offer rejection to status=\'sent\'',
+  !!section
+  && /only\s+active\s+competing\s+offers\s+with\s+`?status='sent'`?[\s\S]{0,400}rejected/i.test(section));
+expect('passenger commit rule preserves status=\'withdrawn\' offers',
+  !!section
+  && /(preserved|verbatim|untouched|stays?)[\s\S]{0,400}status='withdrawn'/i.test(section));
+expect('passenger commit rule preserves status=\'expired\' offers',
+  !!section
+  && /(preserved|verbatim|untouched|stays?)[\s\S]{0,400}status='expired'/i.test(section));
 
 // Active-ride seed — the passenger commit must seed
 // bazardrive.active_ride.v1 with the resulting tripId so the P3
@@ -249,10 +277,16 @@ expect('over-budget rule: badge «Выше бюджета» when offer.price > o
 expect('post-accept rule: Order Detail stays accessible and primary becomes «Открыть поездку»',
   !!section
   && /remains\s+accessible[\s\S]{0,400}«Открыть поездку»/i.test(section));
-expect('DriverOffer.expiresAt requirement with min() default',
+// Codex review #458 — the default must tolerate Order.expiresAt being
+// absent in current mock orders. Allow either the bare `min(...)` form
+// (legacy) or the nullish-fallback `?? Infinity` form (new).
+expect('DriverOffer.expiresAt requirement with min(... ?? Infinity, createdAt + 15) fallback',
   !!section
   && /DriverOffer[\s\S]{0,200}expiresAt/.test(section)
-  && /min\(\s*Order\.expiresAt\s*,\s*createdAt\s*\+\s*15/.test(section));
+  && /min\(\s*Order\.expiresAt\s*\?\?\s*Infinity\s*,\s*createdAt\s*\+\s*15/.test(section));
+expect('contract states Order.expiresAt is optional in current mock orders',
+  !!section
+  && /Order\.expiresAt[\s\S]{0,400}(optional|absent)/i.test(section));
 
 // ── D7. Shared fallback states (S1 Loading, S2 Error / Not Found) ──
 // Codex review #458 — the original draft enumerated Loading and Error /
@@ -335,10 +369,27 @@ expect('contract documents the stored-order-shape compatibility section',
   orderShapeAnchor);
 expect('compatibility section maps time ← scheduledAt',
   !!section && /scheduledAt/.test(section) && /\btime\b[\s\S]{0,200}scheduledAt/.test(section));
-expect('compatibility section maps price / budget ← estimatedPrice',
+// Codex review #458 — budget must derive from the NUMERIC estimatedPrice,
+// not from estimatedPriceLabel (which is presentation-only and can't be
+// safely parsed back into a number for «Выше бюджета» comparison).
+expect('compatibility section maps price / budget ← numeric estimatedPrice',
   !!section
-  && /estimatedPrice/.test(section)
-  && /(price|budget)[\s\S]{0,200}estimatedPrice/.test(section));
+  && /\bprice\b[\s\S]{0,80}\bbudget\b[\s\S]{0,200}estimatedPrice/.test(section));
+expect('compatibility section calls estimatedPrice numeric',
+  !!section
+  && /estimatedPrice[\s\S]{0,80}\(\s*numeric\s*\)|numeric\s+`?estimatedPrice/i.test(section));
+expect('compatibility section marks estimatedPriceLabel as presentation-only',
+  !!section
+  && /estimatedPriceLabel[\s\S]{0,300}(presentation-only|display-only|display\s+string)/i.test(section));
+expect('compatibility section pins estimatedPriceLabel must NOT be parsed back into a number',
+  !!section
+  && /(must\s+not|never)\s+(?:be\s+)?parse(?:d)?[\s\S]{0,200}number/i.test(section));
+// Codex review #458 — Order.expiresAt is optional in the current mock
+// store; the compatibility table must call that out so the offer expiry
+// fallback (createdAt + 15 min) isn't a surprise.
+expect('compatibility section marks expiresAt as optional / absent in current mock orders',
+  !!section
+  && /\bexpiresAt\b[\s\S]{0,400}(absent|optional)[\s\S]{0,400}(mock|current)/i.test(section));
 expect('compatibility section maps passengerId ← passenger.authorId',
   !!section && /passenger\.authorId/.test(section));
 expect('compatibility section pins createdAt as a same-name field',
@@ -359,6 +410,53 @@ expect('driver «Откликнуться на заказ» writes NONE on the o
 expect('passenger «Выбрать водителя» writes Order.selectedDriverId + Order.status',
   !!section
   && /Passenger[\s\S]{0,400}«Выбрать водителя»[\s\S]{0,400}Order\.selectedDriverId[\s\S]{0,200}Order\.status/.test(section));
+
+// Codex review #458 — document writes for every mutating CTA the screen
+// surfaces, not just the happy commit path. Each block here pins one
+// CTA's effect: scope to the row in the Order-store writes table so the
+// pins can't drift onto a neighbouring actor.
+const cancelOrderRow = section.match(
+  /\|\s*Passenger\s*\|\s*taps\s+«Отменить заказ»[^\n]*/);
+expect('passenger «Отменить заказ» row resolved', !!cancelOrderRow);
+if (cancelOrderRow) {
+  const row = cancelOrderRow[0];
+  expect('passenger «Отменить заказ» writes Order.status = \'CANCELED\'',
+    /Order\.status\s*=\s*['"`]CANCELED['"`]/.test(row));
+  expect('passenger «Отменить заказ» only rejects active sent offers',
+    /only\s+active[\s\S]{0,200}status='sent'[\s\S]{0,200}rejected/i.test(row));
+  expect('passenger «Отменить заказ» preserves terminal (withdrawn/expired) offers',
+    /(preserved|verbatim)[\s\S]{0,200}withdrawn[\s\S]{0,80}expired/i.test(row)
+    || /withdrawn[\s\S]{0,80}expired[\s\S]{0,200}preserved/i.test(row));
+}
+const rejectOfferRow = section.match(
+  /\|\s*Passenger\s*\|\s*taps\s+«Отклонить»[^\n]*/);
+expect('passenger «Отклонить» row resolved', !!rejectOfferRow);
+if (rejectOfferRow) {
+  const row = rejectOfferRow[0];
+  expect('passenger «Отклонить» writes NONE on the order store',
+    /\bNone\b/.test(row));
+  expect('passenger «Отклонить» flips only that single offer from sent → rejected',
+    /(only\s+that|single)[\s\S]{0,200}status='sent'[\s\S]{0,80}status='rejected'/i.test(row));
+  expect('passenger «Отклонить» does not touch selectedDriverId / Order.status',
+    !/Order\.status\s*=/.test(row) && !/selectedDriverId\s*=/.test(row));
+}
+const driverD3CancelRow = section.match(
+  /\|\s*Driver\s*\|\s*taps\s+«Отменить»\s+on\s+D3[^\n]*/);
+expect('driver D3 «Отменить» row resolved', !!driverD3CancelRow);
+if (driverD3CancelRow) {
+  const row = driverD3CancelRow[0];
+  // The D3 cancel is documented as a delegated handoff to the active-ride
+  // cancellation flow, NOT a silent Order-Detail-side write.
+  expect('driver D3 «Отменить» delegates to active-ride cancellation handoff',
+    /(delegate|hand[- ]?off|cancellation\s+handoff|active-ride[\s\S]{0,200}cancel)/i.test(row));
+  expect('driver D3 «Отменить» does NOT prescribe a direct Order.status mutation in this row',
+    !/Order\.status\s*=\s*['"`][A-Z_]+['"`]/.test(row));
+  // …and the row must explicitly name backend / active-ride policy as
+  // the owner of the terminal write so a future implementation can't
+  // assume silent undefined behaviour.
+  expect('driver D3 «Отменить» row names active-ride / backend policy as the cancellation owner',
+    /(active-ride[\s\S]{0,200}(cancel|policy)|backend\s+policy)/i.test(row));
+}
 
 // ── G. Gate invariants — no runtime route / screen file shipped ───
 // If either lands before the screen is actually implemented and the
