@@ -54,7 +54,18 @@ async function render() {
     return;
   }
 
-  const loader = routes.get(path) ?? routes.get('/feed');
+  // BD-ORDER-DETAIL-01C — minimal dynamic-route support for /order/<id>.
+  // The exact-match registry stays the source of truth; only paths that
+  // start with the dynamic prefix below and have no exact registration
+  // fall through to the registered prefix loader (`/order`). All other
+  // unknown paths still fall back to /feed unchanged, so the router's
+  // existing fallback semantics are preserved end-to-end. The Order
+  // Detail screen reads its id off `location.hash` itself.
+  let lookupPath = path;
+  if (!routes.has(lookupPath) && lookupPath.startsWith('/order/')) {
+    lookupPath = '/order';
+  }
+  const loader = routes.get(lookupPath) ?? routes.get('/feed');
 
   const root    = document.getElementById('app');
   const tabbar  = document.getElementById('tabbar');

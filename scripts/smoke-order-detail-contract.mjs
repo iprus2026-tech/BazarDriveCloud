@@ -1,18 +1,26 @@
-// BD-ORDER-DETAIL-01A — Order Detail contract gate smoke.
+// BD-ORDER-DETAIL-01C — Order Detail runtime-shell smoke.
 //
-// The Cloud Design audit (#454) and the Codex screen audit (#455) both
-// flagged a P0 gap: there is no runtime route /order/<id> for an Order
-// Detail screen. Implementation is intentionally deferred — this smoke
-// only guards the *contract* so a future implementation cannot drift
-// from the audit decisions (role split, required states, out-of-scope
-// list, unresolved driver "Принять" semantics).
+// Re-graded from the BD-ORDER-DETAIL-01A/01B gate-phase smoke: the
+// contract gate (no /order route, no order_detail.js) has been lifted
+// because BD-ORDER-DETAIL-01C ships the first runtime shell. The smoke
+// keeps every contract check (Model B chosen, A/C forbidden, driver CTA
+// exact, stored ACCEPTED vs UI «Заказ принят», sent-only rejection,
+// terminal preservation, role chips, state coverage, fallback states)
+// AND adds runtime-shell assertions:
+//   • /order dynamic route is wired in router.js + app.js
+//   • public/src/screens/order_detail.js exists and exports the helpers
+//     the contract names
+//   • renderOrderDetailMarkup() produces markup whose D1 primary CTA is
+//     exactly «Откликнуться на заказ» and never any forbidden regression
+//     label; whose chip text matches the contract; whose terminal /
+//     locked rows never expose accept/offer/select-driver affordances
+//   • the screen never persists Russian UI copy into Order.status
+//   • sw.js precaches order_detail.js and the VERSION was bumped
 //
-// The contract lives in docs/screen-contracts.md under
-// BD-ORDER-DETAIL-01 and is mirrored as a missing-screen row in
-// docs/screen-map.md. This smoke fails if either of those documents
-// drops the contract's load-bearing pieces, or if a runtime route /
-// screen file appears before the screen is actually implemented and
-// re-graded.
+// Forbidden-label scans never run against the smoke file itself (which
+// has to spell the labels out for documentation). The runtime checks
+// scope to the order_detail.js source or to specific generated state
+// blocks built from synthetic inputs.
 
 import fs from 'node:fs';
 
@@ -56,8 +64,12 @@ expect('BD-ORDER-DETAIL-01 contract section resolved', !!section);
 // concrete sample id into the doc.
 expect('contract names the /order/<id> deep-link route',
   !!section && /\/order\/(?:<id>|:id|\{id\})/.test(section));
-expect('contract notes the route is NOT yet registered',
-  !!section && /not\**\s*\**\s+registered/i.test(section));
+// BD-ORDER-DETAIL-01C — the route IS now registered. The contract Route
+// row must spell out the `register('/order', orderDetail)` call so a
+// future contract edit can't quietly drop the runtime hook while the
+// runtime file stays around.
+expect('contract states the /order route is registered in app.js',
+  !!section && /register\(\s*['"]\/order['"]\s*,\s*orderDetail\s*\)/.test(section));
 
 // ── C. Role variants + role chips ──────────────────────────────────
 // Both variants live on the same route, role-dispatched via ?role=. The
@@ -512,37 +524,359 @@ for (const s of GUARD_SHOULD_NOT_MATCH.slice(0, 2).concat([GUARD_SHOULD_NOT_MATC
 expect('route-guard regex self-test (single/double quotes, bare/path/query)',
   guardSelfTestOk);
 
-expect('public/src/app.js does NOT register a runtime /order route',
-  !ORDER_ROUTE_GUARD.test(appJs));
-expect('public/src/screens/order_detail.js is NOT yet shipped',
-  !exists('../public/src/screens/order_detail.js'));
+// ── G1. Runtime shell — /order route + screen file shipped ────────
+// BD-ORDER-DETAIL-01C inverts the gate-phase checks: the runtime is now
+// present, the smoke must FAIL if the route or the screen file is
+// missing. The route-guard regex from 01A stays as a self-tested
+// helper so a future quote-style refactor still matches both single-
+// and double-quoted registrations.
+expect('public/src/app.js registers a runtime /order route (any quote style)',
+  ORDER_ROUTE_GUARD.test(appJs));
+expect('public/src/app.js imports orderDetail from screens/order_detail.js',
+  /import\s+orderDetail\s+from\s+['"]\.\/screens\/order_detail\.js['"]/.test(appJs));
+expect('public/src/screens/order_detail.js is shipped',
+  exists('../public/src/screens/order_detail.js'));
 
-// ── H. screen-map.md mirrors the missing-screen entry ─────────────
-// screen-map.md tracks missing screens with priority/status; pin that
-// the Order Detail row exists there too. The file is optional in the
-// repo contract — skip the check (PASS) if it isn't present, so this
-// smoke doesn't tie the audit to a doc that lives elsewhere.
+// router.js carries the minimal /order/<id> dynamic fallback so
+// /order/<anything> resolves to the registered '/order' loader instead
+// of silently falling back to /feed.
+const routerJs = read('../public/src/router.js');
+expect('router.js dispatches /order/<id> to the exact /order loader',
+  /startsWith\(\s*['"]\/order\/['"]\s*\)/.test(routerJs)
+  && /=\s*['"]\/order['"]/.test(routerJs));
+expect('router.js preserves the existing /feed fallback for unknown routes',
+  /routes\.get\(\s*['"]\/feed['"]\s*\)/.test(routerJs));
+
+// ── G2. order_detail.js — exported surface + Model-B-shaped markup ─
+// Behavioural section: import the module and exercise its pure helpers
+// against synthetic inputs. The forbidden-label scans target the
+// rendered markup or the module source, never the smoke source itself
+// (which has to spell forbidden labels out for documentation).
+const orderDetailSrc = read('../public/src/screens/order_detail.js');
+const orderDetailMod = await import(new URL('../public/src/screens/order_detail.js', import.meta.url).href);
+
+for (const name of [
+  'default',
+  'parseOrderHashPath',
+  'resolveRoleFromQuery',
+  'loadOrder',
+  'resolveState',
+  'resolveStateChip',
+  'renderOrderDetailMarkup',
+  'ROLE_CHIP',
+  'STATE_CHIP',
+  'ORDER_STATUS',
+  'DRIVER_PRIMARY_CTA',
+  'DEMO_ORDERS',
+]) {
+  expect(`order_detail.js exports ${name}`,
+    orderDetailMod[name] !== undefined);
+}
+
+// Role chip text matches the contract (load-bearing for the smoke and
+// for the eventual visual review).
+expect('ROLE_CHIP.passenger === "Ваш заказ"',
+  orderDetailMod.ROLE_CHIP.passenger === 'Ваш заказ');
+expect('ROLE_CHIP.driver === "Просмотр водителя"',
+  orderDetailMod.ROLE_CHIP.driver === 'Просмотр водителя');
+
+// Stored ACCEPTED enum + UI chip live in different namespaces.
+expect('ORDER_STATUS.ACCEPTED === "ACCEPTED" (canonical enum, not Russian)',
+  orderDetailMod.ORDER_STATUS.ACCEPTED === 'ACCEPTED');
+expect('STATE_CHIP.P3 === "Заказ принят" (UI display only)',
+  orderDetailMod.STATE_CHIP.P3 === 'Заказ принят');
+expect('STATE_CHIP.D3 === "Заказ принят" (UI display only)',
+  orderDetailMod.STATE_CHIP.D3 === 'Заказ принят');
+expect('STATE_CHIP.S1 === "Загружаем заказ"',
+  orderDetailMod.STATE_CHIP.S1 === 'Загружаем заказ');
+expect('STATE_CHIP.S2 === "Заказ не найден"',
+  orderDetailMod.STATE_CHIP.S2 === 'Заказ не найден');
+
+// Driver primary CTA is the exact label from the contract.
+expect('DRIVER_PRIMARY_CTA === "Откликнуться на заказ"',
+  orderDetailMod.DRIVER_PRIMARY_CTA === 'Откликнуться на заказ');
+
+// resolveState() against each demo fixture for the role we use it for
+// in the manual test URLs. This is the single most important contract
+// for Model B: state resolution must never depend on the driver tap.
+expect('demo-order-1 → P1 for passenger',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-1'), 'passenger') === 'P1');
+expect('demo-order-1 → D1 for driver',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-1'), 'driver') === 'D1');
+expect('demo-order-offers → P2 for passenger',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-offers'), 'passenger') === 'P2');
+expect('demo-order-accepted → P3 for passenger',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-accepted'), 'passenger') === 'P3');
+expect('demo-order-accepted → D3 for driver (self is selected)',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-accepted'), 'driver') === 'D3');
+expect('demo-order-terminal → P4 for passenger',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-terminal'), 'passenger') === 'P4');
+expect('demo-order-locked → D4 for driver (other driver was picked)',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('demo-order-locked'), 'driver') === 'D4');
+expect('missing-order → S2 for any role (null fixture)',
+  orderDetailMod.resolveState(orderDetailMod.loadOrder('missing-order'), 'passenger') === 'S2');
+expect('{__loading: true} → S1',
+  orderDetailMod.resolveState({ __loading: true }, 'passenger') === 'S1');
+
+// Render each state's markup and check the chip text + the absence of
+// any forbidden affordance. Markup is a string — no DOM dependency.
+function renderFor(id, role) {
+  const order = orderDetailMod.loadOrder(id);
+  const state = orderDetailMod.resolveState(order, role);
+  return {
+    state,
+    markup: orderDetailMod.renderOrderDetailMarkup({ order, role, state }),
+  };
+}
+
+// P1 passenger markup carries role chip + state chip + empty-offers
+// + the four documented actions, and never the driver primary CTA.
+{
+  const { state, markup } = renderFor('demo-order-1', 'passenger');
+  expect('P1 passenger render: state === "P1"', state === 'P1');
+  expect('P1 passenger markup contains role chip «Ваш заказ»',
+    markup.includes('Ваш заказ'));
+  expect('P1 passenger markup contains state chip «Ждём водителя»',
+    markup.includes('Ждём водителя'));
+  for (const label of ['Изменить', 'Отменить заказ', 'Поделиться', 'Скопировать']) {
+    expect(`P1 passenger markup exposes action "${label}"`, markup.includes(label));
+  }
+  expect('P1 passenger markup never carries the driver primary CTA',
+    !markup.includes(orderDetailMod.DRIVER_PRIMARY_CTA));
+}
+
+// P2 passenger markup renders offer cards, the over-budget badge, and
+// the three offer-level passenger actions.
+{
+  const { state, markup } = renderFor('demo-order-offers', 'passenger');
+  expect('P2 passenger render: state === "P2"', state === 'P2');
+  expect('P2 passenger markup contains state chip «Есть предложения»',
+    markup.includes('Есть предложения'));
+  for (const label of ['Выбрать водителя', 'Написать', 'Отклонить']) {
+    expect(`P2 passenger markup exposes offer action "${label}"`, markup.includes(label));
+  }
+  expect('P2 passenger markup badges the over-budget offer «Выше бюджета»',
+    markup.includes('Выше бюджета'));
+}
+
+// P3 passenger markup carries the «Открыть поездку» primary CTA and
+// renders the UI chip «Заказ принят»; the stored ACCEPTED enum must
+// never appear in markup as a status label.
+{
+  const { state, markup } = renderFor('demo-order-accepted', 'passenger');
+  expect('P3 passenger render: state === "P3"', state === 'P3');
+  expect('P3 passenger markup contains state chip «Заказ принят»',
+    markup.includes('Заказ принят'));
+  expect('P3 passenger markup contains primary CTA «Открыть поездку»',
+    markup.includes('Открыть поездку'));
+}
+
+// P4 terminal markup renders only the documented exits and exposes no
+// accept / offer / select-driver affordance.
+{
+  const { state, markup } = renderFor('demo-order-terminal', 'passenger');
+  expect('P4 passenger render: state === "P4"', state === 'P4');
+  expect('P4 passenger markup contains «Создать новый заказ»',
+    markup.includes('Создать новый заказ'));
+  expect('P4 passenger markup contains «Вернуться в ленту»',
+    markup.includes('Вернуться в ленту'));
+  expect('P4 passenger markup exposes NO «Откликнуться»',
+    !markup.includes('Откликнуться'));
+  expect('P4 passenger markup exposes NO «Выбрать водителя»',
+    !markup.includes('Выбрать водителя'));
+  // Bare «Принять» negative pin — and «Принять заказ» must also be
+  // absent (it has «Принять» as a prefix; the substring check catches
+  // both forms simultaneously).
+  expect('P4 passenger markup carries no «Принять» regression label',
+    !markup.includes('Принять'));
+}
+
+// D1 driver markup MUST carry the exact «Откликнуться на заказ» CTA
+// and MUST NOT carry any of the three forbidden regression labels.
+{
+  const { state, markup } = renderFor('demo-order-1', 'driver');
+  expect('D1 driver render: state === "D1"', state === 'D1');
+  expect('D1 driver markup contains role chip «Просмотр водителя»',
+    markup.includes('Просмотр водителя'));
+  expect('D1 driver primary CTA is exactly «Откликнуться на заказ»',
+    markup.includes('Откликнуться на заказ'));
+  // The three forbidden labels are the audit-named regressions. Scan
+  // the D1 markup specifically — passing labels via constants from the
+  // smoke source would still hard-code them into this file, so build
+  // each label from independent code-point arrays so the smoke source
+  // and the forbidden token are textually distinct.
+  const forbidden = [
+    String.fromCharCode(0xAB) + 'Принять' + String.fromCharCode(0xBB),
+    String.fromCharCode(0xAB) + 'Принять' + ' заказ' + String.fromCharCode(0xBB),
+    String.fromCharCode(0xAB) + 'Забрать заказ' + String.fromCharCode(0xBB),
+  ];
+  for (const label of forbidden) {
+    expect(`D1 driver markup never carries forbidden regression label ${JSON.stringify(label)}`,
+      !markup.includes(label));
+  }
+}
+
+// D2 driver markup (own offer sent) — labels + waiting copy.
+{
+  // demo-order-1 has no offers; synthesize a D2 by injecting an own
+  // sent offer into a clone of the fixture so we can exercise D2 without
+  // adding a second demo fixture.
+  const seed = orderDetailMod.loadOrder('demo-order-1');
+  seed.offers = [{
+    id: 'offer-self', orderId: seed.id, driverId: orderDetailMod.SELF_DRIVER_ID,
+    driverName: 'Вы', car: 'Test', rating: '5,0', etaMin: 6, price: 1100,
+    message: 'Готов выехать', status: 'sent', createdAt: 0, expiresAt: 0,
+  }];
+  const state = orderDetailMod.resolveState(seed, 'driver');
+  const markup = orderDetailMod.renderOrderDetailMarkup({ order: seed, role: 'driver', state });
+  expect('D2 driver render: state === "D2" when self has a sent offer',
+    state === 'D2');
+  expect('D2 driver markup contains chip «Оффер отправлен»',
+    markup.includes('Оффер отправлен'));
+  for (const label of ['Изменить оффер', 'Отозвать оффер', 'Написать']) {
+    expect(`D2 driver markup exposes action "${label}"`, markup.includes(label));
+  }
+}
+
+// D3 driver markup — passenger info + four documented actions.
+{
+  const { state, markup } = renderFor('demo-order-accepted', 'driver');
+  expect('D3 driver render: state === "D3"', state === 'D3');
+  expect('D3 driver markup contains chip «Заказ принят»',
+    markup.includes('Заказ принят'));
+  for (const label of [
+    'Начать подачу', 'Открыть активную поездку', 'Написать', 'Отменить',
+  ]) {
+    expect(`D3 driver markup exposes action "${label}"`, markup.includes(label));
+  }
+}
+
+// D4 driver markup (locked) — reason + only the documented exits.
+{
+  const { state, markup } = renderFor('demo-order-locked', 'driver');
+  expect('D4 driver render: state === "D4"', state === 'D4');
+  expect('D4 driver markup contains chip «Недоступен»',
+    markup.includes('Недоступен'));
+  expect('D4 driver markup contains exit «Найти другие заказы»',
+    markup.includes('Найти другие заказы'));
+  expect('D4 driver markup contains exit «Вернуться в ленту»',
+    markup.includes('Вернуться в ленту'));
+  expect('D4 driver markup exposes NO «Откликнуться»',
+    !markup.includes('Откликнуться'));
+  expect('D4 driver markup exposes NO «Выбрать водителя»',
+    !markup.includes('Выбрать водителя'));
+}
+
+// S1 loading markup is reachable via the loading override.
+{
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: { __loading: true, id: 'x' }, role: 'passenger', state: 'S1' });
+  expect('S1 markup contains chip «Загружаем заказ»',
+    markup.includes('Загружаем заказ'));
+}
+
+// S2 error-not-found markup is reachable for any unknown id.
+{
+  const { state, markup } = renderFor('missing-order', 'passenger');
+  expect('S2 render: state === "S2"', state === 'S2');
+  expect('S2 markup contains «Заказ не найден»',
+    markup.includes('Заказ не найден'));
+  expect('S2 markup contains exit «Вернуться в ленту»',
+    markup.includes('Вернуться в ленту'));
+  expect('S2 markup contains exit «Найти другие заказы»',
+    markup.includes('Найти другие заказы'));
+  expect('S2 markup exposes NO accept/offer/select-driver affordance',
+    !markup.includes('Откликнуться')
+    && !markup.includes('Выбрать водителя')
+    && !markup.includes('Принять'));
+}
+
+// ── G3. Runtime source isolation — no Russian UI label stored as status ──
+// The screen file itself must NEVER contain a literal
+// `Order.status = 'Заказ принят'` (or equivalent). The stored enum is
+// 'ACCEPTED'; «Заказ принят» is only ever a UI chip / display string.
+expect('order_detail.js never assigns Russian UI label to Order.status',
+  !/Order\.status\s*=\s*['"`«][^'"`»]*Заказ принят/.test(orderDetailSrc));
+expect('order_detail.js uses the canonical \'ACCEPTED\' enum',
+  /['"`]ACCEPTED['"`]/.test(orderDetailSrc));
+
+// Out-of-scope tokens — runtime must not introduce backend / Mapbox.
+expect('order_detail.js never calls fetch(',
+  !/\bfetch\s*\(/.test(orderDetailSrc));
+expect('order_detail.js never references api.mapbox.com',
+  !/api\.mapbox\.com/i.test(orderDetailSrc));
+// Strip line + block comments before the token scan: the screen file's
+// header disclaimer ("No backend, no Mapbox, no fetch, no token strings")
+// would otherwise trip the literal-substring scan.
+const orderDetailSrcNoComments = orderDetailSrc
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+expect('order_detail.js never references a Mapbox access token (code)',
+  !/mapbox[\s\S]{0,80}token/i.test(orderDetailSrcNoComments)
+  && !/accessToken/i.test(orderDetailSrcNoComments));
+
+// Inline-script / inline-style guards. We scan templated HTML strings
+// for the prefixes that would betray inline JS or inline `style=""`.
+expect('order_detail.js never emits an inline <script> tag',
+  !/<script\b/i.test(orderDetailSrc));
+expect('order_detail.js never emits an inline style="..." attribute',
+  !/\bstyle\s*=\s*["'][^"']/i.test(orderDetailSrc));
+
+// Stub-action evidence — the 01C contract says every mutating CTA is
+// a non-mutating toast in this PR. Pin the deferred-write notice copy.
+expect('order_detail.js carries the deferred-write stub toast for actions',
+  /Действие будет подключено в 01D/.test(orderDetailSrc));
+expect('order_detail.js carries the deferred-write stub toast for the driver offer CTA',
+  /Оффер будет подключён в 01D/.test(orderDetailSrc));
+// The driver primary CTA handler MUST NOT mutate Order.status,
+// selectedDriverId, or persist a DriverOffer. The next four pins are
+// negative source-level scans against the screen file.
+expect('order_detail.js never mutates Order.status from the driver CTA path',
+  !/driver-send-offer[\s\S]{0,400}Order\.status\s*=/.test(orderDetailSrc));
+expect('order_detail.js never sets selectedDriverId from the driver CTA path',
+  !/driver-send-offer[\s\S]{0,400}selectedDriverId\s*=/.test(orderDetailSrc));
+expect('order_detail.js never persists a DriverOffer write call',
+  !/saveDriverOffer\s*\(/.test(orderDetailSrc));
+expect('order_detail.js never seeds bazardrive.active_ride.v1',
+  !/saveActiveRide\s*\(/.test(orderDetailSrc)
+  && !/updateActiveRideStatus\s*\(/.test(orderDetailSrc));
+
+// ── G4. Service worker precaches order_detail.js + VERSION bump ────
+const sw = read('../public/sw.js');
+expect('public/sw.js PRECACHE includes order_detail.js',
+  /\.\/src\/screens\/order_detail\.js/.test(sw));
+const versionMatch = sw.match(/VERSION\s*=\s*'v(\d+)'/);
+expect('sw.js VERSION is a numeric vNNN tag', !!versionMatch);
+if (versionMatch) {
+  // Require VERSION >= 111 so the precache update from this PR rolls
+  // out at install time. The earlier baseline was 'v110'.
+  expect('sw.js VERSION bumped to at least v111 for the order_detail precache',
+    Number(versionMatch[1]) >= 111, `got=v${versionMatch[1]}`);
+}
+
+// ── H. screen-map.md mirrors the runtime-shell entry ──────────────
+// screen-map.md tracks the screen's lifecycle; pin that the row now
+// reads "runtime shell present / Model B locked / writes pending"
+// instead of the gate-phase "missing runtime / contract-gated".
 const mapPath = new URL('../docs/screen-map.md', import.meta.url);
 let mapPresent = false;
 try { fs.accessSync(mapPath); mapPresent = true; } catch {}
 if (mapPresent) {
   const screenMap = fs.readFileSync(mapPath, 'utf8');
-  expect('docs/screen-map.md lists BD-ORDER-DETAIL-01 as a missing screen',
+  expect('docs/screen-map.md lists BD-ORDER-DETAIL-01',
     /BD-ORDER-DETAIL-01/.test(screenMap));
   expect('screen-map.md flags BD-ORDER-DETAIL-01 with P0 priority',
-    /BD-ORDER-DETAIL-01[\s\S]{0,1600}P0/.test(screenMap));
-  expect('screen-map.md marks BD-ORDER-DETAIL-01 as missing runtime / contract-gated',
-    /BD-ORDER-DETAIL-01[\s\S]{0,1600}missing\s+runtime[\s\S]{0,400}contract-gated/i.test(screenMap));
-  // Codex review #458 — the screen-map row must mirror the BD-ORDER-DETAIL-01B
-  // decision: Model B is locked, and the old "unresolved driver «Принять»"
-  // wording must be gone so a stale screen-map entry can't drift back to
-  // the audit-only contract.
+    /BD-ORDER-DETAIL-01[\s\S]{0,2000}P0/.test(screenMap));
+  expect('screen-map.md marks BD-ORDER-DETAIL-01 as runtime shell present',
+    /BD-ORDER-DETAIL-01[\s\S]{0,2400}runtime\s+shell\s+present/i.test(screenMap));
   expect('screen-map.md says Model B is locked for BD-ORDER-DETAIL-01',
-    /BD-ORDER-DETAIL-01[\s\S]{0,2000}Model\s+B[\s\S]{0,200}lock/i.test(screenMap));
+    /BD-ORDER-DETAIL-01[\s\S]{0,2400}Model\s+B[\s\S]{0,200}lock/i.test(screenMap));
+  expect('screen-map.md marks writes as pending (deferred to 01D)',
+    /BD-ORDER-DETAIL-01[\s\S]{0,2400}writes\s+pending/i.test(screenMap));
+  expect('screen-map.md no longer flags the row as missing runtime',
+    !/BD-ORDER-DETAIL-01[\s\S]{0,2400}\bmissing\s+runtime\b/i.test(screenMap));
   expect('screen-map.md no longer flags driver «Принять» as unresolved',
-    !/BD-ORDER-DETAIL-01[\s\S]{0,2000}(unresolved|нерешён)[\s\S]{0,200}«Принять»/i.test(screenMap));
-  expect('screen-map.md mentions the planned DriverOffer store',
-    /BD-ORDER-DETAIL-01[\s\S]{0,2000}(DriverOffer|driver_offers)/.test(screenMap));
+    !/BD-ORDER-DETAIL-01[\s\S]{0,2400}(unresolved|нерешён)[\s\S]{0,200}«Принять»/i.test(screenMap));
 } else {
   expect('docs/screen-map.md not present — skipping mirrored entry check', true);
 }

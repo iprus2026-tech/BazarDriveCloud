@@ -532,10 +532,18 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
-**Status:** contract-gated · P0 · runtime missing. This entry locks the
-Cloud Design / Codex audit decisions captured in #454 / #455 plus the
-BD-ORDER-DETAIL-01B Model B product call. No runtime route is registered
-until the screen ships and the contract is re-graded.
+**Status:** runtime shell · Model B guarded · writes pending (BD-ORDER-DETAIL-01C).
+This entry locks the Cloud Design / Codex audit decisions captured in
+#454 / #455 plus the BD-ORDER-DETAIL-01B Model B product call.
+BD-ORDER-DETAIL-01C ships the first read/render runtime — `/order/<id>` is
+now a registered route resolving to `public/src/screens/order_detail.js`,
+with every Model-B mutating action stubbed as a non-mutating toast.
+Mutating writes (driver-offer create, passenger commit, terminal-offer
+preservation, active-ride seed, cancel/reject) are deferred to
+**BD-ORDER-DETAIL-01D**; the full write contract below stays authoritative
+for that follow-up. Smoke is re-graded from gate-phase to runtime-shell
+phase: it now asserts the route is supported, the screen module exports
+the contracted helpers, and rendered markup conforms to Model B.
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate
@@ -550,8 +558,8 @@ either):
 
 | Field | Contract |
 |---|---|
-| Route | `/order/<id>` — canonical deep-link, role-split via the same `?role=` query the active ride uses (`passenger` / `driver`). The route is **not** registered in `public/src/app.js`. |
-| File | `public/src/screens/order_detail.js` (planned, **not yet shipped**). |
+| Route | `/order/<id>` — canonical deep-link, role-split via the same `?role=` query the active ride uses (`passenger` / `driver`). Registered in `public/src/app.js` via `register('/order', orderDetail)`; the router resolves any `/order/<anything>` path to the exact `/order` loader via a minimal dynamic-route fallback added in BD-ORDER-DETAIL-01C. The Order Detail screen reads its id off `location.hash` directly. |
+| File | `public/src/screens/order_detail.js` — shipped in BD-ORDER-DETAIL-01C as the runtime shell (read/render only). Exports `default function orderDetail()` (loader) plus the pure helpers `parseOrderHashPath`, `resolveRoleFromQuery`, `loadOrder`, `resolveState`, `resolveStateChip`, `renderOrderDetailMarkup`, the `ROLE_CHIP` / `STATE_CHIP` / `ORDER_STATUS` constants, the `DRIVER_PRIMARY_CTA` label, and the `DEMO_ORDERS` fixtures used by the manual test URLs. |
 | Role variants | **passenger** ("Ваш заказ") and **driver** ("Просмотр водителя"). Same route, role-dispatched. `roleView ∈ {passenger, driver}` is the canonical role discriminator. |
 | Driver primary CTA | **«Откликнуться на заказ»** — exact label. Forbidden regressions (smoke pins each): «Принять», «Принять заказ», «Забрать заказ». |
 | P0 transition rule | Driver CTA creates `DriverOffer(status='sent')`; it **does not** set `Order.status='ACCEPTED'`. Only the passenger action **«Выбрать водителя»** commits acceptance — atomically: `Order.selectedDriverId = offer.driverId`, `Order.status = 'ACCEPTED'`, selected `offer.status = 'accepted'`, **only active competing offers with `status='sent'`** flip to `status='rejected'` (terminal offers with `status='withdrawn'` or `status='expired'` are preserved verbatim), and `bazardrive.active_ride.v1` is seeded with `tripId = trip_${order.id}`, `status = 'ACCEPTED'`. The Russian «Заказ принят» is UI display/chip only; the stored `Order.status` stays on the canonical enum used by `ride_state.js` / `mock_api.js`. |
