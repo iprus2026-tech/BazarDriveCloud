@@ -554,8 +554,9 @@ either):
 | File | `public/src/screens/order_detail.js` (planned, **not yet shipped**). |
 | Role variants | **passenger** ("Ваш заказ") and **driver** ("Просмотр водителя"). Same route, role-dispatched. `roleView ∈ {passenger, driver}` is the canonical role discriminator. |
 | Driver primary CTA | **«Откликнуться на заказ»** — exact label. Forbidden regressions (smoke pins each): «Принять», «Принять заказ», «Забрать заказ». |
-| P0 transition rule | Driver CTA creates `DriverOffer(status='sent')`; it **does not** set `Order.status='Заказ принят'`. Only the passenger action **«Выбрать водителя»** commits acceptance — atomically: `Order.selectedDriverId = offer.driverId`, `Order.status = 'Заказ принят'`, selected `offer.status = 'accepted'`, all competing `offers.status = 'rejected'`. |
-| Data | Read-only over `bazardrive.ride_orders.v1` (`mock_api.getOrderById`), the planned `bazardrive.driver_offers.v1` (Model B store, owned by the future implementation), `bazardrive.active_ride.v1` (after trip seed), and user-scoped favorite/history stores. The gate phase never writes; the future implementation owns the offer-store writes. |
+| P0 transition rule | Driver CTA creates `DriverOffer(status='sent')`; it **does not** set `Order.status='ACCEPTED'`. Only the passenger action **«Выбрать водителя»** commits acceptance — atomically: `Order.selectedDriverId = offer.driverId`, `Order.status = 'ACCEPTED'`, selected `offer.status = 'accepted'`, all competing `offers.status = 'rejected'`, and `bazardrive.active_ride.v1` is seeded with `tripId = trip_${order.id}`, `status = 'ACCEPTED'`. The Russian «Заказ принят» is UI display/chip only; the stored `Order.status` stays on the canonical enum used by `ride_state.js` / `mock_api.js`. |
+| Data (gate phase) | **Read-only** in this PR because no runtime is shipped. The contract does not register a route, does not create `order_detail.js`, and does not write to any store. All Order-Detail-side writes documented below take effect only once the future implementation lands. |
+| Data (future runtime, Model B) | **Reads:** `bazardrive.ride_orders.v1` (`mock_api.getOrderById`), planned `bazardrive.driver_offers.v1` (Model B store), `bazardrive.active_ride.v1` (after trip seed), user-scoped favorite/history stores. **Writes:** (a) the driver CTA «Откликнуться на заказ» writes **only** `DriverOffer(status='sent')` into `bazardrive.driver_offers.v1` — never the Order; (b) the passenger commit «Выбрать водителя» writes `Order.selectedDriverId` + `Order.status='ACCEPTED'` into `bazardrive.ride_orders.v1`, flips the selected offer to `status='accepted'` and competing offers to `status='rejected'` in `bazardrive.driver_offers.v1`, AND seeds `bazardrive.active_ride.v1` for the resulting `tripId`. No other actor on this screen writes to any store. |
 
 #### Passenger states
 
@@ -574,6 +575,21 @@ either):
 | D2 | **Driver Offer Sent** | «Оффер отправлен» | Изменить оффер · Отозвать оффер · Написать |
 | D3 | **Driver Accepted / Assigned** | «Заказ принят» | Начать подачу · Открыть активную поездку · Написать · Отменить |
 | D4 | **Driver Locked / Unavailable** | «Недоступен» (reasons: заказ уже принят / пассажир выбрал другого водителя / заказ отменён) | Найти другие заказы · Вернуться в ленту |
+
+#### Shared fallback states
+
+These states are role-agnostic — they cover the rendering surface before
+the role split applies and when the order cannot be resolved at all.
+
+| # | State | UI status / chip | Renders | Actions |
+|---|---|---|---|---|
+| S1 | **Loading** | «Загружаем заказ» | spinner / skeleton card | (none — transient) |
+| S2 | **Error / Not Found** | «Заказ не найден» | empty illustration / explanation copy | Вернуться в ленту · Найти другие заказы |
+
+`S1` is the first paint while `mock_api.getOrderById()` resolves; `S2` is
+the terminal "we can't find this order" surface (malformed deep-link id,
+`getOrderById()` returns `null`, or backing store unavailable). Neither
+state exposes accept / offer / select-driver affordances.
 
 #### Data contract
 
@@ -611,12 +627,15 @@ shape outright.
 
 #### Order-store writes (Model B)
 
-| Actor | Action | Order-store write | DriverOffer-store write |
-|---|---|---|---|
-| Driver | taps «Откликнуться на заказ» | **None.** `Order.status` and `Order.selectedDriverId` are never written by the driver tap. | Creates `DriverOffer(status='sent')` against `orderId` + `driverId`. |
-| Passenger | taps «Выбрать водителя» on a `DriverOffer` | Writes `Order.selectedDriverId = offer.driverId` and `Order.status = 'Заказ принят'` atomically. | Selected offer flips to `status='accepted'`; every competing offer for the same `orderId` flips to `status='rejected'`. |
-| Driver | taps «Отозвать оффер» (D2) | None. | Own offer flips to `status='withdrawn'`. |
-| System / TTL | offer's `expiresAt` passes | None. | Offer flips to `status='expired'` and stops counting as a candidate. |
+These writes are the **future runtime** behaviour. The gate-phase PR is
+docs + smoke only and does not perform any of them.
+
+| Actor | Action | Order-store write | DriverOffer-store write | active_ride seed |
+|---|---|---|---|---|
+| Driver | taps «Откликнуться на заказ» | **None.** `Order.status` and `Order.selectedDriverId` are never written by the driver tap. | Creates `DriverOffer(status='sent')` against `orderId` + `driverId`. | None. |
+| Passenger | taps «Выбрать водителя» on a `DriverOffer` | Writes `Order.selectedDriverId = offer.driverId` and `Order.status = 'ACCEPTED'` atomically. (`'ACCEPTED'` is the canonical enum value from `ride_state.js`; the UI chip text «Заказ принят» is rendered, not stored.) | Selected offer flips to `status='accepted'`; every competing offer for the same `orderId` flips to `status='rejected'`. | Seeds `bazardrive.active_ride.v1` for `tripId = trip_${order.id}` with `status = 'ACCEPTED'` and the selected driver / vehicle snapshot. The P3 «Открыть поездку» CTA hands off to `/active-ride?role=passenger&tripId=trip_${order.id}` using that seed. |
+| Driver | taps «Отозвать оффер» (D2) | None. | Own offer flips to `status='withdrawn'`. | None. |
+| System / TTL | offer's `expiresAt` passes | None. | Offer flips to `status='expired'` and stops counting as a candidate. | None. |
 
 #### P0 product rules
 

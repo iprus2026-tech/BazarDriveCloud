@@ -132,21 +132,43 @@ expect('contract Forbidden list explicitly names «Забрать заказ»',
 // ── D2. P0 transition rule — driver tap creates offer, only passenger commits ─
 expect('driver CTA creates DriverOffer(status=\'sent\')',
   !!section && /DriverOffer\(\s*status\s*=\s*'sent'\s*\)/.test(section));
-expect('driver CTA does NOT mutate Order.status to «Заказ принят»',
+expect('driver CTA does NOT mutate Order.status to canonical ACCEPTED',
   !!section
   // Markdown bold around "does not" introduces `**`, so allow asterisks
   // between the words. Same trick used for `not registered` above.
-  && /(does[\s*]+not|не[\s*]+должен)[\s*]+(mutate|set|менять)[\s\S]{0,200}Order\.status[\s\S]{0,120}Заказ принят/i.test(section));
+  && /(does[\s*]+not|не[\s*]+должен)[\s*]+(mutate|set|менять)[\s\S]{0,200}Order\.status[\s\S]{0,120}'?ACCEPTED'?/i.test(section));
 expect('passenger «Выбрать водителя» commits acceptance',
   !!section && /«Выбрать водителя»[\s\S]{0,200}commits/i.test(section));
 expect('committing sets Order.selectedDriverId = offer.driverId',
   !!section && /Order\.selectedDriverId\s*=\s*offer\.driverId/.test(section));
-expect('committing sets Order.status = «Заказ принят»',
-  !!section && /Order\.status\s*=\s*['"«]Заказ принят/.test(section));
+
+// Codex review #458 — stored `Order.status` must use the canonical enum
+// value 'ACCEPTED' (from ride_state.js / mock_api.js), NOT the Russian
+// UI label «Заказ принят». The Russian text stays on the UI chips for P3
+// and D3, but the contract must spell out the storage shape so a future
+// implementation can't mix display copy into the data layer.
+expect('committing sets Order.status = \'ACCEPTED\' (canonical enum)',
+  !!section && /Order\.status\s*=\s*['"`]ACCEPTED['"`]/.test(section));
+expect('contract spells out that «Заказ принят» is UI display/chip only',
+  !!section
+  && /«Заказ принят»\s+is\s+UI\s+(display|chip)/i.test(section));
 expect('committing flips selected offer.status to "accepted"',
   !!section && /offer\.status\s*=\s*'accepted'/.test(section));
 expect('committing flips competing offers.status to "rejected"',
   !!section && /offers\.status\s*=\s*'rejected'/.test(section));
+
+// Active-ride seed — the passenger commit must seed
+// bazardrive.active_ride.v1 with the resulting tripId so the P3
+// «Открыть поездку» CTA has a canonical handoff target.
+expect('passenger commit seeds bazardrive.active_ride.v1',
+  !!section && /bazardrive\.active_ride\.v1/.test(section));
+expect('active_ride seed uses tripId = trip_${order.id}',
+  !!section && /tripId\s*=\s*trip_\$\{order\.id\}/.test(section));
+expect('active_ride seed records status = \'ACCEPTED\'',
+  !!section && /seed[\s\S]{0,300}status\s*=?\s*['"`]ACCEPTED['"`]/i.test(section));
+expect('P3 «Открыть поездку» hands off using the seeded tripId',
+  !!section
+  && /«Открыть поездку»[\s\S]{0,400}\/active-ride\?role=passenger[\s\S]{0,80}tripId/.test(section));
 
 // ── D3. Passenger + driver state coverage (8 states with chips) ─────
 const requiredStates = [
@@ -231,6 +253,37 @@ expect('DriverOffer.expiresAt requirement with min() default',
   !!section
   && /DriverOffer[\s\S]{0,200}expiresAt/.test(section)
   && /min\(\s*Order\.expiresAt\s*,\s*createdAt\s*\+\s*15/.test(section));
+
+// ── D7. Shared fallback states (S1 Loading, S2 Error / Not Found) ──
+// Codex review #458 — the original draft enumerated Loading and Error /
+// Not Found shared states; the Model-B rewrite dropped them. Restore the
+// pins so a future contract that ships only the role-split surface but
+// leaves no fallback for an unresolved order can't pass.
+const sharedFallbackAnchor = /Shared\s+fallback\s+states/i.test(section);
+expect('contract documents the Shared fallback states subsection',
+  sharedFallbackAnchor);
+const s1Row = extractRow(section, 'S1');
+expect('S1 Loading row resolved', s1Row.length > 0);
+if (s1Row) {
+  expect('S1 row labels the state as Loading',
+    /Loading/i.test(s1Row));
+  expect('S1 row pins the Russian chip «Загружаем заказ»',
+    s1Row.includes('«Загружаем заказ»'));
+}
+const s2Row = extractRow(section, 'S2');
+expect('S2 Error / Not Found row resolved', s2Row.length > 0);
+if (s2Row) {
+  expect('S2 row labels the state as Error / Not Found',
+    /Error\s*\/\s*Not\s+Found/i.test(s2Row));
+  expect('S2 row pins the Russian chip «Заказ не найден»',
+    s2Row.includes('«Заказ не найден»'));
+  expect('S2 actions are Вернуться в ленту + Найти другие заказы',
+    /Вернуться\s+в\s+ленту/.test(s2Row) && /Найти\s+другие\s+заказы/.test(s2Row));
+  expect('S2 row exposes NO accept/offer/select-driver affordance',
+    !/Откликнуться/.test(s2Row)
+    && !/Выбрать\s+водителя/.test(s2Row)
+    && !/Принять/.test(s2Row));
+}
 
 // ── E. Explicit out-of-scope list ─────────────────────────────────
 expect('contract explicitly rules out backend',
@@ -379,9 +432,19 @@ if (mapPresent) {
   expect('docs/screen-map.md lists BD-ORDER-DETAIL-01 as a missing screen',
     /BD-ORDER-DETAIL-01/.test(screenMap));
   expect('screen-map.md flags BD-ORDER-DETAIL-01 with P0 priority',
-    /BD-ORDER-DETAIL-01[\s\S]{0,1200}P0/.test(screenMap));
-  expect('screen-map.md marks BD-ORDER-DETAIL-01 as missing / contract-gated',
-    /BD-ORDER-DETAIL-01[\s\S]{0,1200}missing[\s\S]{0,200}contract-gated/i.test(screenMap));
+    /BD-ORDER-DETAIL-01[\s\S]{0,1600}P0/.test(screenMap));
+  expect('screen-map.md marks BD-ORDER-DETAIL-01 as missing runtime / contract-gated',
+    /BD-ORDER-DETAIL-01[\s\S]{0,1600}missing\s+runtime[\s\S]{0,400}contract-gated/i.test(screenMap));
+  // Codex review #458 — the screen-map row must mirror the BD-ORDER-DETAIL-01B
+  // decision: Model B is locked, and the old "unresolved driver «Принять»"
+  // wording must be gone so a stale screen-map entry can't drift back to
+  // the audit-only contract.
+  expect('screen-map.md says Model B is locked for BD-ORDER-DETAIL-01',
+    /BD-ORDER-DETAIL-01[\s\S]{0,2000}Model\s+B[\s\S]{0,200}lock/i.test(screenMap));
+  expect('screen-map.md no longer flags driver «Принять» as unresolved',
+    !/BD-ORDER-DETAIL-01[\s\S]{0,2000}(unresolved|нерешён)[\s\S]{0,200}«Принять»/i.test(screenMap));
+  expect('screen-map.md mentions the planned DriverOffer store',
+    /BD-ORDER-DETAIL-01[\s\S]{0,2000}(DriverOffer|driver_offers)/.test(screenMap));
 } else {
   expect('docs/screen-map.md not present — skipping mirrored entry check', true);
 }
