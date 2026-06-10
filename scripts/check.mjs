@@ -387,6 +387,23 @@ if (exists(chatHandoffSmoke)) {
   }
 }
 
+// BD-ORDER-DETAIL-01A — Order Detail contract gate. Cloud Design (#454) and
+// the Codex screen audit (#455) flagged a P0 gap: no runtime route for an
+// Order Detail screen. Implementation is deferred; this smoke guards the
+// contract in docs/screen-contracts.md (route, role split, required states,
+// out-of-scope list, unresolved driver "Принять" decision) so a future
+// implementation cannot drift, and so no runtime route / screen file ships
+// before the contract is re-graded.
+const orderDetailContractSmoke = path.join(root, 'scripts', 'smoke-order-detail-contract.mjs');
+if (exists(orderDetailContractSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderDetailContractSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-detail-contract.mjs failed\n${msg}`);
+  }
+}
+
 // BD-LIFECYCLE-01 — headless lifecycle smoke. Exercises mock_api.js +
 // ride_state.js + ride_actions.js + trip_confirmation_handoff.js against an
 // in-memory localStorage shim and walks COMPLETED / NO_SHOW / CANCELED
