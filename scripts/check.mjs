@@ -287,6 +287,21 @@ if (exists(driverReceiptNoDriftSmoke)) {
   }
 }
 
+// BD-CONFIRM-01 — confirm/chat → active-ride handoff guard. Behavioural
+// round-trip over the /trip-confirmation handoff store (CONFIRMED record →
+// loadCanonicalActiveRide → seeded active ride) plus a static contract pin
+// on the dispatcher's role gate, the handoff module's exported surface,
+// and the BD-LIFE-07 demo-fallback cleanup.
+const confirmHandoffSmoke = path.join(root, 'scripts', 'smoke-confirm-handoff-active-ride.mjs');
+if (exists(confirmHandoffSmoke)) {
+  try {
+    execFileSync(process.execPath, [confirmHandoffSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-confirm-handoff-active-ride.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).
