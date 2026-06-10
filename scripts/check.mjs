@@ -387,6 +387,35 @@ if (exists(chatHandoffSmoke)) {
   }
 }
 
+// BD-LIFECYCLE-01 — headless lifecycle smoke. Exercises mock_api.js +
+// ride_state.js + ride_actions.js + trip_confirmation_handoff.js against an
+// in-memory localStorage shim and walks COMPLETED / NO_SHOW / CANCELED
+// transitions, role-canonical convergence, and the "no demo passenger leak"
+// guarantee on accepted orders.
+const lifecycleSmoke = path.join(root, 'scripts', 'smoke-lifecycle.mjs');
+if (exists(lifecycleSmoke)) {
+  try {
+    execFileSync(process.execPath, [lifecycleSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-lifecycle.mjs failed\n${msg}`);
+  }
+}
+
+// BD-CHAT-BRIDGE-01 — chat → trip-confirmation handoff bridge smoke. Pins
+// the message-thread → confirmation row link so a refactor of chat.js or
+// trip_confirmation.js can't silently drop the responseId / tripId mapping
+// the confirmation seed depends on.
+const chatBridgeSmoke = path.join(root, 'scripts', 'smoke-chat-bridge.mjs');
+if (exists(chatBridgeSmoke)) {
+  try {
+    execFileSync(process.execPath, [chatBridgeSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-chat-bridge.mjs failed\n${msg}`);
+  }
+}
+
 // BD-MAP-FOUND-03 / BD-MAP-FOUND-04 — static regression smoke for the Mapbox
 // foundation stubs (driver_markers + trip_status_layer): export contract,
 // no real Mapbox SDK / network / CDN / dynamic import, RIDE_STATUS coverage,
