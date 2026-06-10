@@ -59,45 +59,144 @@ expect('contract names the /order/<id> deep-link route',
 expect('contract notes the route is NOT yet registered',
   !!section && /not\**\s*\**\s+registered/i.test(section));
 
-// ── C. Role variants ───────────────────────────────────────────────
+// ── C. Role variants + role chips ──────────────────────────────────
+// Both variants live on the same route, role-dispatched via ?role=. The
+// passenger chip text contains «Ваш заказ» and the driver chip text
+// contains «Просмотр водителя» so a future implementation can't ship
+// mirror-image copy and silently look passenger-only or driver-only.
 expect('contract declares the passenger role variant',
   !!section && /\bpassenger\b/i.test(section));
 expect('contract declares the driver role variant',
   !!section && /\bdriver\b/i.test(section));
 expect('contract pins both variants live on the SAME route (role-split)',
   !!section && /role-split|role-dispatched|\?role=/.test(section));
+expect('contract names roleView ∈ {passenger, driver}',
+  !!section && /roleView[\s\S]{0,80}passenger[\s\S]{0,40}driver/.test(section));
+expect('contract pins the passenger role chip text «Ваш заказ»',
+  !!section && /Ваш\s+заказ/.test(section));
+expect('contract pins the driver role chip text «Просмотр водителя»',
+  !!section && /Просмотр\s+водителя/.test(section));
 
-// ── D. Required states ─────────────────────────────────────────────
-// Each item below maps to one of the ten states the audit named. The
-// regex deliberately matches a phrase the contract uses, not just a
-// keyword, so a half-finished refactor that drops e.g. the "responses
-// available" passenger state can't pass.
+// ── D. Model B chosen semantics + Models A/C forbidden ─────────────
+// The single most load-bearing audit decision: driver offers ≠ order
+// acceptance. The contract MUST name Model B as chosen and explicitly
+// forbid Models A (one-tap accept) and C (passenger-invitation-only).
+expect('contract names Model B as the chosen semantics (offer + passenger confirm)',
+  !!section && /Model\s+B[\s\S]{0,120}(offer|оффер)[\s\S]{0,120}(confirm|подтверж)/i.test(section));
+expect('contract forbids Model A (driver instant accept)',
+  !!section && /Model\s+A[\s\S]{0,200}(instant|instantly|one-tap|single-tap)/i.test(section));
+expect('contract forbids Model C (passenger-invitation-only)',
+  !!section && /Model\s+C[\s\S]{0,200}(invitation|invitation-only|passenger\s+invitation)/i.test(section));
+expect('contract states "a single driver tap must never assign the ride"',
+  !!section && /single\s+driver\s+tap[\s\S]{0,80}(never|not)[\s\S]{0,40}assign/i.test(section));
+
+// ── D1. Driver primary CTA «Откликнуться на заказ» + forbidden labels ─
+// The driver CTA copy is the most visible Model-B signal; anchor it
+// exactly and ban the three regression labels the audit named.
+expect('driver primary CTA is exactly «Откликнуться на заказ»',
+  !!section && /«Откликнуться на заказ»/.test(section));
+expect('contract explicitly forbids regression CTA «Принять» (bare)',
+  !!section
+  && /Forbidden[\s\S]{0,400}«Принять»/.test(section)
+  // Negative pin: «Принять» must not appear as a *prescribed* CTA.
+  && !/primary[\s\S]{0,40}CTA[\s\S]{0,40}«Принять»\s*$/i.test(section));
+expect('contract explicitly forbids regression CTA «Принять заказ»',
+  !!section && /Forbidden[\s\S]{0,400}«Принять заказ»/.test(section));
+expect('contract explicitly forbids regression CTA «Забрать заказ»',
+  !!section && /Forbidden[\s\S]{0,400}«Забрать заказ»/.test(section));
+
+// ── D2. P0 transition rule — driver tap creates offer, only passenger commits ─
+expect('driver CTA creates DriverOffer(status=\'sent\')',
+  !!section && /DriverOffer\(\s*status\s*=\s*'sent'\s*\)/.test(section));
+expect('driver CTA does NOT mutate Order.status to «Заказ принят»',
+  !!section
+  // Markdown bold around "does not" introduces `**`, so allow asterisks
+  // between the words. Same trick used for `not registered` above.
+  && /(does[\s*]+not|не[\s*]+должен)[\s*]+(mutate|set|менять)[\s\S]{0,200}Order\.status[\s\S]{0,120}Заказ принят/i.test(section));
+expect('passenger «Выбрать водителя» commits acceptance',
+  !!section && /«Выбрать водителя»[\s\S]{0,200}commits/i.test(section));
+expect('committing sets Order.selectedDriverId = offer.driverId',
+  !!section && /Order\.selectedDriverId\s*=\s*offer\.driverId/.test(section));
+expect('committing sets Order.status = «Заказ принят»',
+  !!section && /Order\.status\s*=\s*['"«]Заказ принят/.test(section));
+expect('committing flips selected offer.status to "accepted"',
+  !!section && /offer\.status\s*=\s*'accepted'/.test(section));
+expect('committing flips competing offers.status to "rejected"',
+  !!section && /offers\.status\s*=\s*'rejected'/.test(section));
+
+// ── D3. Passenger + driver state coverage (8 states with chips) ─────
 const requiredStates = [
-  ['passenger: open order',
-    /Open\s+order[\s\S]{0,200}CREATED|passenger[\s\S]{0,40}open\s+order/i],
-  ['passenger: responses available',
-    /Responses\s+available[\s\S]{0,200}passenger_response/i],
-  ['passenger: driver selected / confirmation ready',
-    /Driver\s+selected[\s\S]{0,80}confirmation\s+ready/i],
-  ['passenger: active ride handoff ready',
-    /Active\s+ride\s+handoff\s+ready/i],
-  ['driver: open order / can respond',
-    /Open\s+order\s*\/\s*can\s+respond/i],
-  ['driver: response sent',
-    /Response\s+sent/i],
-  ['driver: accepted / continue',
-    /Accepted\s*\/\s*continue/i],
-  ['shared: canceled / expired',
-    /Canceled\s*\/\s*expired/i],
-  ['shared: loading',
-    /Loading\b/i],
-  ['shared: error / not found',
-    /Error\s*\/\s*not\s+found/i],
+  ['passenger P1: Passenger Own Order Created · «Ждём водителя»',
+    /Passenger\s+Own\s+Order\s+Created[\s\S]{0,400}«Ждём водителя»/i],
+  ['passenger P2: Passenger Has Driver Offers · «Есть предложения»',
+    /Passenger\s+Has\s+Driver\s+Offers[\s\S]{0,400}«Есть предложения»/i],
+  ['passenger P3: Passenger Driver Selected · «Заказ принят» + «Открыть поездку»',
+    /Passenger\s+Driver\s+Selected[\s\S]{0,600}«Заказ принят»[\s\S]{0,600}«Открыть поездку»/i],
+  ['passenger P4: Passenger Terminal State · «Отменён» or «Истёк»',
+    /Passenger\s+Terminal\s+State[\s\S]{0,400}«Отменён»[\s\S]{0,120}«Истёк»/i],
+  ['driver D1: Driver Available Order · «Откликнуться на заказ»',
+    /Driver\s+Available\s+Order[\s\S]{0,400}«Откликнуться на заказ»/i],
+  ['driver D2: Driver Offer Sent · «Оффер отправлен»',
+    /Driver\s+Offer\s+Sent[\s\S]{0,400}«Оффер отправлен»/i],
+  ['driver D3: Driver Accepted / Assigned · «Заказ принят»',
+    /Driver\s+Accepted\s*\/\s*Assigned[\s\S]{0,400}«Заказ принят»/i],
+  ['driver D4: Driver Locked / Unavailable · «Недоступен»',
+    /Driver\s+Locked\s*\/\s*Unavailable[\s\S]{0,400}«Недоступен»/i],
 ];
 for (const [name, re] of requiredStates) {
   expect(`contract enumerates required state — ${name}`,
     !!section && re.test(section));
 }
+
+// ── D4. Terminal states expose no accept/offer affordance ──────────
+// Extract the full P4 / D4 markdown table row (everything between the
+// row's leading `|` and the next `\n|`-or-blank-line) so the actions
+// check stays scoped to that row and can't leak into a neighbouring
+// state. Markdown tables have 5 cells here (id · state · chip · renders ·
+// actions), so a fixed cell-count regex would be brittle — capture the
+// whole line instead.
+function extractRow(src, idToken) {
+  const re = new RegExp(`\\|\\s*${idToken}\\s*\\|[^\\n]*`, 'i');
+  const m = src.match(re);
+  return m ? m[0] : '';
+}
+const p4Row = extractRow(section, 'P4');
+expect('P4 terminal row resolved', p4Row.length > 0);
+if (p4Row) {
+  expect('P4 terminal actions expose Создать новый заказ + Вернуться в ленту',
+    /Создать\s+новый\s+заказ/.test(p4Row) && /Вернуться\s+в\s+ленту/.test(p4Row));
+  expect('P4 terminal actions DO NOT expose «Откликнуться»',
+    !/Откликнуться/.test(p4Row));
+  expect('P4 terminal actions DO NOT expose «Выбрать водителя»',
+    !/Выбрать\s+водителя/.test(p4Row));
+}
+const d4Row = extractRow(section, 'D4');
+expect('D4 driver-locked row resolved', d4Row.length > 0);
+if (d4Row) {
+  expect('D4 driver-locked actions are Найти другие заказы + Вернуться в ленту',
+    /Найти\s+другие\s+заказы/.test(d4Row) && /Вернуться\s+в\s+ленту/.test(d4Row));
+  expect('D4 driver-locked actions DO NOT expose «Откликнуться»',
+    !/Откликнуться/.test(d4Row));
+}
+
+// ── D5. Offer list rendering + empty-offers state ──────────────────
+expect('contract requires DriverOffer[] to render in P2',
+  !!section && /DriverOffer\[\]/.test(section));
+expect('contract pins the empty offers state copy «Ждём водителя»',
+  !!section && /empty\s+offers\s+state|«Ждём водителя»/i.test(section));
+
+// ── D6. Over-budget badge + post-accept «Открыть поездку» + offer expiry ─
+expect('over-budget rule: badge «Выше бюджета» when offer.price > order.budget',
+  !!section
+  && /offer\.price\s*>\s*order\.budget/.test(section)
+  && /«Выше бюджета»/.test(section));
+expect('post-accept rule: Order Detail stays accessible and primary becomes «Открыть поездку»',
+  !!section
+  && /remains\s+accessible[\s\S]{0,400}«Открыть поездку»/i.test(section));
+expect('DriverOffer.expiresAt requirement with min() default',
+  !!section
+  && /DriverOffer[\s\S]{0,200}expiresAt/.test(section)
+  && /min\(\s*Order\.expiresAt\s*,\s*createdAt\s*\+\s*15/.test(section));
 
 // ── E. Explicit out-of-scope list ─────────────────────────────────
 expect('contract explicitly rules out backend',
@@ -106,10 +205,25 @@ expect('contract explicitly rules out Mapbox',
   !!section && /No\s+Mapbox\b/i.test(section));
 expect('contract explicitly rules out payment',
   !!section && /No\s+payment\b/i.test(section));
+expect('contract explicitly bans fetch( in the gate phase',
+  !!section && /fetch\(/.test(section));
+expect('contract explicitly bans access tokens / api.mapbox.com',
+  !!section && /api\.mapbox\.com/.test(section) && /token/i.test(section));
+expect('contract explicitly bans inline script / inline style',
+  !!section && /inline\s+(?:<script>|`?<script>`?|script|style)/i.test(section));
 
-// ── F. Unresolved product decision: driver "Принять" semantics ────
-expect('contract flags the driver "Принять" semantics as unresolved',
-  !!section && /Unresolved\s+product\s+decision[\s\S]{0,400}Принять/i.test(section));
+// ── F. Data contract surface (Order + DriverOffer) ────────────────
+expect('Order data contract is enumerated',
+  !!section
+  && /\bOrder\b[\s\S]{0,400}selectedDriverId/.test(section)
+  && /\bpassengerId\b/.test(section)
+  && /\bbudget\b/.test(section));
+expect('DriverOffer data contract is enumerated',
+  !!section
+  && /\bDriverOffer\b[\s\S]{0,600}orderId[\s\S]{0,400}driverId/.test(section)
+  && /\betaMin\b/.test(section));
+expect('DriverOffer status set includes sent / accepted / rejected',
+  !!section && /['`]sent['`][\s\S]{0,80}['`]accepted['`][\s\S]{0,80}['`]rejected['`]/.test(section));
 
 // ── G. Gate invariants — no runtime route / screen file shipped ───
 // If either lands before the screen is actually implemented and the
