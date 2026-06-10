@@ -532,23 +532,136 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
-**Status:** contract-gated · P0 · not implemented. This entry exists so a future
-implementation cannot drift from the Cloud Design and Codex audit decisions
-captured in #454 / #455. No runtime route is registered until the screen ships.
+**Status:** contract-gated · P0 · runtime missing. This entry locks the
+Cloud Design / Codex audit decisions captured in #454 / #455 plus the
+BD-ORDER-DETAIL-01B Model B product call. No runtime route is registered
+until the screen ships and the contract is re-graded.
+
+**Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
+`DriverOffer(status='sent')`. The driver tap **does not** mutate
+`Order.status`. The order only becomes `«Заказ принят»` after the passenger
+selects a driver via `«Выбрать водителя»`. A single driver tap must never
+assign the ride.
+
+**Forbidden P0 semantics** (smoke must fail if a future contract drifts to
+either):
+- **Model A** — driver instantly accepts the order (single-tap commits).
+- **Model C** — driver can only accept after a passenger invitation.
 
 | Field | Contract |
 |---|---|
-| Route | `/order/<id>` — single canonical deep-link to a ride order, role-split by the same `?role=` query the active ride uses (passenger / driver). Until the screen ships, the route is **not** registered in `public/src/app.js`. |
-| File | `public/src/screens/order_detail.js` (planned). The audit smoke does not require the file to exist yet; it only guards the contract. |
-| Role variants | **passenger** and **driver**. Same route, role-dispatched. The passenger view shows the order's lifecycle from the requester side; the driver view shows the same order from the responder side. |
-| Data | Read-only over `bazardrive.ride_orders.v1` (`mock_api.getOrderById`), `bazardrive.responses.v1` (`passenger_response` rows for the order), `bazardrive.active_ride.v1` (when a trip has been seeded), and the user-scoped favorite / history stores as needed. No writes from this screen in the gate. |
-| Main states (passenger) | (1) **Open order** — order is `CREATED`, no responses yet. (2) **Responses available** — at least one `passenger_response` exists for this `orderId`. (3) **Driver selected / confirmation ready** — passenger picked a driver, `bazardrive.trip_confirmation.v1` carries a CONFIRMED record. (4) **Active ride handoff ready** — `bazardrive.active_ride.v1` exists for the resulting `tripId`; CTA hands off to `/active-ride?role=passenger`. |
-| Main states (driver) | (5) **Open order / can respond** — driver sees the order from `/driver-map` without having sent a response yet. (6) **Response sent** — driver's `passenger_response` is persisted; awaiting passenger pick. (7) **Accepted / continue** — driver was selected; CTA hands off to `/active-ride?role=driver` via the existing canonical handoff. |
-| Shared states | (8) **Canceled / expired** — order is `CANCELED` or its trip is terminal (`CANCELED` / `NO_SHOW` / `COMPLETED`); no actionable CTAs. (9) **Loading** — first paint while reading from storage. (10) **Error / not found** — `getOrderById()` returns `null` or the deep-link id is malformed. |
-| Actions | Open chat (`/chat?responseId=...` or `?tripId=...`), open active ride (`/active-ride?role=...&tripId=...`), open trip confirmation, back to feed / driver-map. No writes; all transitions reuse existing canonical flows. |
-| Out of scope | **No backend.** No real-time updates / sockets. **No Mapbox.** No map render on this screen — map preview stays a `createMapShell()` placeholder if needed at all. **No payment.** No card / charge UI here; payment lives on the COMPLETED handoff. No new storage keys; no migration of existing keys. |
-| Unresolved product decision | Driver **"Принять"** semantics. Today's `/driver-map` accept is a one-tap canonical-order accept (handed straight to `/active-ride?role=driver`). The Order Detail driver view's "Принять" CTA may either (a) reuse that one-tap accept, (b) require an explicit response submission via `/respond` first, or (c) introduce a new "express accept" semantics that bypasses `/respond`. **The audit does not resolve this** — implementation must explicitly pick one before route registration. The smoke pins that the contract names this open decision. |
-| Acceptance (gate phase) | No runtime route in `public/src/app.js`. No `public/src/screens/order_detail.js` shipped. `scripts/smoke-order-detail-contract.mjs` reads this contract and pins (a) the screen id, (b) the route shape, (c) both role variants, (d) every required state above, (e) the explicit out-of-scope list, (f) the open driver-"Принять" decision. |
+| Route | `/order/<id>` — canonical deep-link, role-split via the same `?role=` query the active ride uses (`passenger` / `driver`). The route is **not** registered in `public/src/app.js`. |
+| File | `public/src/screens/order_detail.js` (planned, **not yet shipped**). |
+| Role variants | **passenger** ("Ваш заказ") and **driver** ("Просмотр водителя"). Same route, role-dispatched. `roleView ∈ {passenger, driver}` is the canonical role discriminator. |
+| Driver primary CTA | **«Откликнуться на заказ»** — exact label. Forbidden regressions (smoke pins each): «Принять», «Принять заказ», «Забрать заказ». |
+| P0 transition rule | Driver CTA creates `DriverOffer(status='sent')`; it **does not** set `Order.status='ACCEPTED'`. Only the passenger action **«Выбрать водителя»** commits acceptance — atomically: `Order.selectedDriverId = offer.driverId`, `Order.status = 'ACCEPTED'`, selected `offer.status = 'accepted'`, **only active competing offers with `status='sent'`** flip to `status='rejected'` (terminal offers with `status='withdrawn'` or `status='expired'` are preserved verbatim), and `bazardrive.active_ride.v1` is seeded with `tripId = trip_${order.id}`, `status = 'ACCEPTED'`. The Russian «Заказ принят» is UI display/chip only; the stored `Order.status` stays on the canonical enum used by `ride_state.js` / `mock_api.js`. |
+| Data (gate phase) | **Read-only** in this PR because no runtime is shipped. The contract does not register a route, does not create `order_detail.js`, and does not write to any store. All Order-Detail-side writes documented below take effect only once the future implementation lands. |
+| Data (future runtime, Model B) | **Reads:** `bazardrive.ride_orders.v1` (`mock_api.getOrderById`), planned `bazardrive.driver_offers.v1` (Model B store), `bazardrive.active_ride.v1` (after trip seed), user-scoped favorite/history stores. **Writes:** the full enumeration lives in the "Order-store writes" table below — driver «Откликнуться» only creates `DriverOffer(status='sent')`; passenger «Выбрать водителя» commits acceptance (Order + selected offer + only active sent competing offers → rejected + active-ride seed); passenger «Отменить заказ» writes `Order.status = 'CANCELED'` + flips only active sent offers; passenger «Отклонить» on a `DriverOffer` flips only that one offer from `sent` → `rejected` and never touches the Order; driver D3 «Отменить» delegates to the canonical active-ride cancellation handoff. Terminal offers (`status='withdrawn'` / `status='expired'`) are preserved verbatim by every write above. No other actor on this screen writes to any store. |
+
+#### Passenger states
+
+| # | State | UI status / chip | Renders | Actions |
+|---|---|---|---|---|
+| P1 | **Passenger Own Order Created** | «Ждём водителя» · empty offers state | order summary, route, price, comment | Изменить · Отменить заказ · Поделиться · Скопировать |
+| P2 | **Passenger Has Driver Offers** | «Есть предложения» | `DriverOffer[]` cards: driver name · car · rating · ETA · offered price · message | Выбрать водителя · Написать · Отклонить |
+| P3 | **Passenger Driver Selected** | «Заказ принят» | assigned driver card · timeline | **«Открыть поездку»** (primary, hands off to `/active-ride?role=passenger`) |
+| P4 | **Passenger Terminal State** | «Отменён» **or** «Истёк» | terminal copy | Создать новый заказ · Вернуться в ленту |
+
+#### Driver states
+
+| # | State | UI status / chip | Actions |
+|---|---|---|---|
+| D1 | **Driver Available Order** | (active order) | **«Откликнуться на заказ»** (primary) · Написать · Скрыть · Пожаловаться |
+| D2 | **Driver Offer Sent** | «Оффер отправлен» | Изменить оффер · Отозвать оффер · Написать |
+| D3 | **Driver Accepted / Assigned** | «Заказ принят» | Начать подачу · Открыть активную поездку · Написать · Отменить |
+| D4 | **Driver Locked / Unavailable** | «Недоступен» (reasons: заказ уже принят / пассажир выбрал другого водителя / заказ отменён) | Найти другие заказы · Вернуться в ленту |
+
+#### Shared fallback states
+
+These states are role-agnostic — they cover the rendering surface before
+the role split applies and when the order cannot be resolved at all.
+
+| # | State | UI status / chip | Renders | Actions |
+|---|---|---|---|---|
+| S1 | **Loading** | «Загружаем заказ» | spinner / skeleton card | (none — transient) |
+| S2 | **Error / Not Found** | «Заказ не найден» | empty illustration / explanation copy | Вернуться в ленту · Найти другие заказы |
+
+`S1` is the first paint while `mock_api.getOrderById()` resolves; `S2` is
+the terminal "we can't find this order" surface (malformed deep-link id,
+`getOrderById()` returns `null`, or backing store unavailable). Neither
+state exposes accept / offer / select-driver affordances.
+
+#### Data contract
+
+`Order`:
+- `id`, `status`, `roleView`, `passengerId`, `selectedDriverId`
+- `pickup`, `dropoff`, `time`, `price`, `budget`, `comment`
+- `createdAt`, `expiresAt`
+
+`DriverOffer`:
+- `id`, `orderId`, `driverId`
+- `driverName`, `car`, `rating`, `etaMin`, `price`, `message`
+- `status` ∈ {`sent`, `accepted`, `rejected`, `withdrawn`, `expired`}
+- `createdAt`, `expiresAt`
+
+#### Stored order shape compatibility (current mock data)
+
+The contract above is the **target** shape. Until a backend schema exists,
+the canonical store `bazardrive.ride_orders.v1` (owned by `mock_api.js`)
+persists today's mock-order shape, which uses different field names. Order
+Detail derives / maps the contract fields from the stored shape so a
+future migration changes the store, not the contract:
+
+| Contract field | Source in current mock store | Notes |
+|---|---|---|
+| `passengerId` | `passenger.authorId` (or `passenger.id` if present) | The mock store keeps the requester under a nested `passenger` object. |
+| `time` | `scheduledAt` | The stored `scheduledAt` is the trip's scheduled timestamp; `time` is the rendered form. |
+| `price` / `budget` | `estimatedPrice` (numeric) | **Both `price` and `budget` derive from the numeric `estimatedPrice` field.** `estimatedPriceLabel` is the pre-formatted display string ("1 500 ₽") used by today's renderers and is **presentation-only** — it must not be parsed back into a number for the «Выше бюджета» comparison (which needs a numeric anchor). The future implementation reads `estimatedPrice`. |
+| `createdAt` | `createdAt` | Same name in both shapes. |
+| `expiresAt` | _(absent in current mock orders — optional)_ | Today's `bazardrive.ride_orders.v1` rows do **not** carry an `expiresAt`. The Order Detail contract treats it as optional: when reading, missing values fall through to `Infinity` for offer-expiry computations (see P0 product rule #3); the future implementation may start populating it without contract drift. |
+| `roleView` | **Derived from `?role=` / session, NOT stored.** | `roleView ∈ {passenger, driver}` is a render-time discriminator off the URL/session — never persisted on the order record, never written by Order Detail. |
+
+`DriverOffer` is a **new** entity owned by the future implementation in
+the planned `bazardrive.driver_offers.v1` store. There is no current
+mapping for it in `bazardrive.ride_orders.v1` — the contract owns the
+shape outright.
+
+#### Order-store writes (Model B)
+
+These writes are the **future runtime** behaviour. The gate-phase PR is
+docs + smoke only and does not perform any of them.
+
+| Actor | Action | Order-store write | DriverOffer-store write | active_ride seed |
+|---|---|---|---|---|
+| Driver | taps «Откликнуться на заказ» | **None.** `Order.status` and `Order.selectedDriverId` are never written by the driver tap. | Creates `DriverOffer(status='sent')` against `orderId` + `driverId`. | None. |
+| Passenger | taps «Выбрать водителя» on a `DriverOffer` | Writes `Order.selectedDriverId = offer.driverId` and `Order.status = 'ACCEPTED'` atomically. (`'ACCEPTED'` is the canonical enum value from `ride_state.js`; the UI chip text «Заказ принят» is rendered, not stored.) | Selected offer flips to `status='accepted'`. **Only active competing offers for the same `orderId` with `status='sent'`** flip to `status='rejected'`. Terminal offers (`status='withdrawn'`, `status='expired'`) are **preserved verbatim** — never overwritten. | Seeds `bazardrive.active_ride.v1` for `tripId = trip_${order.id}` with `status = 'ACCEPTED'` and the selected driver / vehicle snapshot. The P3 «Открыть поездку» CTA hands off to `/active-ride?role=passenger&tripId=trip_${order.id}` using that seed. |
+| Passenger | taps «Отменить заказ» (P1) | Writes `Order.status = 'CANCELED'`. `selectedDriverId` stays unchanged (may still be `null`). | **Only active offers for the order with `status='sent'`** flip to `status='rejected'`. Terminal offers (`withdrawn`, `expired`) preserved verbatim. | None — no trip was seeded yet. |
+| Passenger | taps «Отклонить» on a single `DriverOffer` (P2) | **None.** The order keeps its current status (typically `CREATED`); `selectedDriverId` stays untouched — rejecting one offer does not pick a winner. | Only that single offer flips from `status='sent'` → `status='rejected'`. Other offers, including other sent ones, stay untouched and remain selectable. | None. |
+| Driver | taps «Отозвать оффер» (D2) | None. | Own offer flips to `status='withdrawn'`. | None. |
+| Driver | taps «Отменить» on D3 (active assignment) | **Delegated to the canonical active-ride cancellation handoff.** This row does not directly mutate `Order.status` — the active-ride flow (`renderCanceledStub` / `persistDriverCancel` in `active_ride.js`) owns the terminal write into `bazardrive.active_ride.v1` and the canonical `ride_orders.v1` mirror, per BD-RIDE-D-SHEETS-02. Whether the underlying `Order.status` flips to `'CANCELED'` is the active-ride / backend policy decision, **not** an Order-Detail-side write. | None directly. The active-ride cancel flow may sync the assigned offer's status; the contract does not prescribe that here. | None — the seed already exists; the active-ride lifecycle owns it. |
+| System / TTL | offer's `expiresAt` passes | None. | Offer flips to `status='expired'` and stops counting as a candidate. | None. |
+
+#### P0 product rules
+
+1. **Over-budget offers are allowed.** If `offer.price > order.budget`, the offer card MUST render the badge `«Выше бюджета»`. The passenger still picks the winner; budget is informational.
+2. **Order Detail remains accessible after accept.** Once `Order.status = 'ACCEPTED'` (rendered as the UI chip «Заказ принят»), the screen does NOT redirect to active ride. The primary action becomes **«Открыть поездку»**; the canonical active-ride runtime (`/active-ride`) stays the source of truth for the trip lifecycle.
+3. **`DriverOffer` carries its own `expiresAt`.** Suggested default: `expiresAt = min(Order.expiresAt ?? Infinity, createdAt + 15 minutes)`. `Order.expiresAt` is optional in today's mock orders; when absent, the offer falls back to `createdAt + 15 minutes`. Expired offers transition to `status='expired'` and stop counting as candidates.
+
+#### Status language (canonical Russian)
+
+`Новый заказ` · `Ждём водителя` · `Есть предложения` · `Оффер отправлен` · `Водитель выбран` · `Заказ принят` · `Водитель едет` · `В пути` · `Завершён` · `Отменён` · `Истёк` · `Недоступен`
+
+#### Out of scope (gate phase)
+
+- **No backend.** No sockets, no realtime push. The future implementation persists offers in `bazardrive.driver_offers.v1` only.
+- **No Mapbox.** Map preview stays a `createMapShell()` placeholder. No SDK, no token, no `api.mapbox.com`, no `fetch(`.
+- **No payment.** Card / charge UI lives on the COMPLETED handoff, not here.
+- **No inline `<script>` / inline `style=""`** (CSP-clean assumption); markup-only.
+- **No CSP / service worker / package changes** in the gate phase.
+
+#### Acceptance (gate phase)
+
+No runtime route in `public/src/app.js`. No `public/src/screens/order_detail.js` shipped. `scripts/smoke-order-detail-contract.mjs` pins (a) Model B chosen + Models A/C forbidden, (b) the route shape and role split (`roleView ∈ {passenger, driver}`, "Ваш заказ" / "Просмотр водителя" chips), (c) the exact driver CTA «Откликнуться на заказ» + forbidden regressions, (d) the transition rule (driver tap creates `DriverOffer(status='sent')` only; passenger «Выбрать водителя» commits acceptance + sets `selectedDriverId` + flips competing offers to `rejected`), (e) every passenger + driver state above and their UI status chips, (f) terminal states expose no accept/offer affordance, (g) offer-list rendering + empty-offers state, (h) over-budget badge rule, (i) post-accept «Открыть поездку» rule, (j) `DriverOffer.expiresAt` requirement, (k) no `fetch(` / `mapbox` / access-token / `api.mapbox.com`, (l) no inline script/style.
 
 ### BD-RULES-01 - Rules
 
