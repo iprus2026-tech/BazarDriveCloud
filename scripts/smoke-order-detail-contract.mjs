@@ -91,18 +91,42 @@ expect('contract states "a single driver tap must never assign the ride"',
   !!section && /single\s+driver\s+tap[\s\S]{0,80}(never|not)[\s\S]{0,40}assign/i.test(section));
 
 // ── D1. Driver primary CTA «Откликнуться на заказ» + forbidden labels ─
-// The driver CTA copy is the most visible Model-B signal; anchor it
-// exactly and ban the three regression labels the audit named.
-expect('driver primary CTA is exactly «Откликнуться на заказ»',
-  !!section && /«Откликнуться на заказ»/.test(section));
-expect('contract explicitly forbids regression CTA «Принять» (bare)',
-  !!section
-  && /Forbidden[\s\S]{0,400}«Принять»/.test(section)
-  // Negative pin: «Принять» must not appear as a *prescribed* CTA.
-  && !/primary[\s\S]{0,40}CTA[\s\S]{0,40}«Принять»\s*$/i.test(section));
-expect('contract explicitly forbids regression CTA «Принять заказ»',
+// The driver CTA copy is the most visible Model-B signal. Scope the
+// exact-label check to the D1 row itself so a future contract that
+// drops the CTA from D1 but keeps a stray mention elsewhere can't pass.
+// The forbidden-labels check stays section-wide so a regression label
+// is banned no matter where it would appear, but we also assert the
+// D1 row is clean of all three.
+//
+// `extractRow` is defined below in the terminal-row block — pull the
+// helper up so D1 / P1 can reuse it too.
+function extractRow(src, idToken) {
+  const re = new RegExp(`\\|\\s*${idToken}\\s*\\|[^\\n]*`, 'i');
+  const m = src.match(re);
+  return m ? m[0] : '';
+}
+const d1Row = extractRow(section, 'D1');
+expect('D1 driver-available row resolved', d1Row.length > 0);
+expect('D1 row carries the EXACT primary CTA «Откликнуться на заказ»',
+  d1Row.includes('«Откликнуться на заказ»'));
+expect('D1 row marks the CTA as primary',
+  /\(primary\)/i.test(d1Row));
+expect('D1 row DOES NOT carry the regression label «Принять заказ»',
+  !d1Row.includes('«Принять заказ»'));
+expect('D1 row DOES NOT carry the regression label «Забрать заказ»',
+  !d1Row.includes('«Забрать заказ»'));
+// `«Принять»` (bare) — match the word with no trailing token (заказ /
+// оффер /etc.) so the forbidden bare form is rejected without false-
+// flagging «Принять заказ» (which has its own line above).
+expect('D1 row DOES NOT carry the regression label «Принять» (bare)',
+  !/«Принять»/.test(d1Row));
+// Section-wide forbidden-list pin (kept) — the audit's explicit "do
+// not regress to" list must name all three labels.
+expect('contract Forbidden list explicitly names «Принять»',
+  !!section && /Forbidden[\s\S]{0,400}«Принять»/.test(section));
+expect('contract Forbidden list explicitly names «Принять заказ»',
   !!section && /Forbidden[\s\S]{0,400}«Принять заказ»/.test(section));
-expect('contract explicitly forbids regression CTA «Забрать заказ»',
+expect('contract Forbidden list explicitly names «Забрать заказ»',
   !!section && /Forbidden[\s\S]{0,400}«Забрать заказ»/.test(section));
 
 // ── D2. P0 transition rule — driver tap creates offer, only passenger commits ─
@@ -150,16 +174,9 @@ for (const [name, re] of requiredStates) {
 
 // ── D4. Terminal states expose no accept/offer affordance ──────────
 // Extract the full P4 / D4 markdown table row (everything between the
-// row's leading `|` and the next `\n|`-or-blank-line) so the actions
-// check stays scoped to that row and can't leak into a neighbouring
-// state. Markdown tables have 5 cells here (id · state · chip · renders ·
-// actions), so a fixed cell-count regex would be brittle — capture the
-// whole line instead.
-function extractRow(src, idToken) {
-  const re = new RegExp(`\\|\\s*${idToken}\\s*\\|[^\\n]*`, 'i');
-  const m = src.match(re);
-  return m ? m[0] : '';
-}
+// row's leading `|` and the end of line) so the actions check stays
+// scoped to that row and can't leak into a neighbouring state. The
+// `extractRow` helper is defined above the D1 block.
 const p4Row = extractRow(section, 'P4');
 expect('P4 terminal row resolved', p4Row.length > 0);
 if (p4Row) {
@@ -177,13 +194,30 @@ if (d4Row) {
     /Найти\s+другие\s+заказы/.test(d4Row) && /Вернуться\s+в\s+ленту/.test(d4Row));
   expect('D4 driver-locked actions DO NOT expose «Откликнуться»',
     !/Откликнуться/.test(d4Row));
+  // Codex review #458 — D4 also must not surface the passenger-side
+  // commit affordance. A future contract drift could otherwise leave a
+  // stray «Выбрать водителя» on the driver-locked row and pretend the
+  // driver can still self-rescue from a passenger-rejected order.
+  expect('D4 driver-locked actions DO NOT expose «Выбрать водителя»',
+    !/Выбрать\s+водителя/.test(d4Row));
 }
 
 // ── D5. Offer list rendering + empty-offers state ──────────────────
+// Scope the empty-offers check to the P1 row (Passenger Own Order
+// Created · «Ждём водителя» · empty offers state) instead of an
+// section-wide A|B match — a section-wide regex would also pass when
+// «Ждём водителя» leaks into a different state's chip and the actual
+// P1 empty-state copy quietly disappears.
 expect('contract requires DriverOffer[] to render in P2',
   !!section && /DriverOffer\[\]/.test(section));
-expect('contract pins the empty offers state copy «Ждём водителя»',
-  !!section && /empty\s+offers\s+state|«Ждём водителя»/i.test(section));
+const p1Row = extractRow(section, 'P1');
+expect('P1 own-order row resolved', p1Row.length > 0);
+if (p1Row) {
+  expect('P1 row pins the «Ждём водителя» status chip',
+    p1Row.includes('«Ждём водителя»'));
+  expect('P1 row pins the empty offers state',
+    /empty\s+offers\s+state/i.test(p1Row));
+}
 
 // ── D6. Over-budget badge + post-accept «Открыть поездку» + offer expiry ─
 expect('over-budget rule: badge «Выше бюджета» when offer.price > order.budget',
@@ -222,8 +256,56 @@ expect('DriverOffer data contract is enumerated',
   !!section
   && /\bDriverOffer\b[\s\S]{0,600}orderId[\s\S]{0,400}driverId/.test(section)
   && /\betaMin\b/.test(section));
-expect('DriverOffer status set includes sent / accepted / rejected',
-  !!section && /['`]sent['`][\s\S]{0,80}['`]accepted['`][\s\S]{0,80}['`]rejected['`]/.test(section));
+// Require every member of the canonical DriverOffer status set named in
+// the data contract — independently asserted so a future contract drop
+// of e.g. `withdrawn` (Codex review #458 P2) is caught even if the
+// remaining four are still present.
+for (const member of ['sent', 'accepted', 'rejected', 'withdrawn', 'expired']) {
+  expect(`DriverOffer status set includes '${member}'`,
+    !!section && new RegExp(`['\`]${member}['\`]`).test(section));
+}
+
+// ── F1. Status language must include the «Истёк» terminal label ────
+// Codex review #458 — the canonical Russian status list previously
+// omitted «Истёк» even though P4 expects it. Pin it explicitly so a
+// future trim of the list can't drop it again.
+expect('status language list includes "Истёк"',
+  !!section && /Status\s+language[\s\S]{0,800}[«`"']Истёк[`»"']/i.test(section));
+
+// ── F2. Stored order shape compatibility (mock_api shape mapping) ──
+// Order Detail must declare how its target fields map onto the current
+// mock store's field names — otherwise an implementation could ship
+// against the target shape and silently fail to render a real persisted
+// order. Pin each named source field the audit called out.
+const orderShapeAnchor = /Stored\s+order\s+shape\s+compatibility/i.test(section);
+expect('contract documents the stored-order-shape compatibility section',
+  orderShapeAnchor);
+expect('compatibility section maps time ← scheduledAt',
+  !!section && /scheduledAt/.test(section) && /\btime\b[\s\S]{0,200}scheduledAt/.test(section));
+expect('compatibility section maps price / budget ← estimatedPrice',
+  !!section
+  && /estimatedPrice/.test(section)
+  && /(price|budget)[\s\S]{0,200}estimatedPrice/.test(section));
+expect('compatibility section maps passengerId ← passenger.authorId',
+  !!section && /passenger\.authorId/.test(section));
+expect('compatibility section pins createdAt as a same-name field',
+  !!section && /createdAt[\s\S]{0,200}(same\s+name|createdAt)/i.test(section));
+expect('compatibility section pins roleView as DERIVED (NOT stored)',
+  !!section
+  && /roleView[\s\S]{0,400}(derived|not\s+stored|never\s+persisted|render-?time)/i.test(section));
+
+// ── F3. Order-store writes contract (driver no-write / passenger commit) ─
+// The Model B transition rule is split between the driver and the
+// passenger; pin the write asymmetry explicitly so a future contract
+// can't silently grant the driver tap a `selectedDriverId` write.
+expect('contract documents the order-store writes table',
+  !!section && /Order-store\s+writes/i.test(section));
+expect('driver «Откликнуться на заказ» writes NONE on the order store',
+  !!section
+  && /Driver[\s\S]{0,400}«Откликнуться на заказ»[\s\S]{0,400}\bNone\b/.test(section));
+expect('passenger «Выбрать водителя» writes Order.selectedDriverId + Order.status',
+  !!section
+  && /Passenger[\s\S]{0,400}«Выбрать водителя»[\s\S]{0,400}Order\.selectedDriverId[\s\S]{0,200}Order\.status/.test(section));
 
 // ── G. Gate invariants — no runtime route / screen file shipped ───
 // If either lands before the screen is actually implemented and the

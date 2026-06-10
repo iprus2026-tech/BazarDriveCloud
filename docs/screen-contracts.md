@@ -588,6 +588,36 @@ either):
 - `status` ∈ {`sent`, `accepted`, `rejected`, `withdrawn`, `expired`}
 - `createdAt`, `expiresAt`
 
+#### Stored order shape compatibility (current mock data)
+
+The contract above is the **target** shape. Until a backend schema exists,
+the canonical store `bazardrive.ride_orders.v1` (owned by `mock_api.js`)
+persists today's mock-order shape, which uses different field names. Order
+Detail derives / maps the contract fields from the stored shape so a
+future migration changes the store, not the contract:
+
+| Contract field | Source in current mock store | Notes |
+|---|---|---|
+| `passengerId` | `passenger.authorId` (or `passenger.id` if present) | The mock store keeps the requester under a nested `passenger` object. |
+| `time` | `scheduledAt` | The stored `scheduledAt` is the trip's scheduled timestamp; `time` is the rendered form. |
+| `price` / `budget` | `estimatedPrice` / `estimatedPriceLabel` | The mock store has one price column; `price` is the rendered amount and `budget` is the same value treated as the comparison anchor for «Выше бюджета». |
+| `createdAt` | `createdAt` | Same name in both shapes. |
+| `roleView` | **Derived from `?role=` / session, NOT stored.** | `roleView ∈ {passenger, driver}` is a render-time discriminator off the URL/session — never persisted on the order record, never written by Order Detail. |
+
+`DriverOffer` is a **new** entity owned by the future implementation in
+the planned `bazardrive.driver_offers.v1` store. There is no current
+mapping for it in `bazardrive.ride_orders.v1` — the contract owns the
+shape outright.
+
+#### Order-store writes (Model B)
+
+| Actor | Action | Order-store write | DriverOffer-store write |
+|---|---|---|---|
+| Driver | taps «Откликнуться на заказ» | **None.** `Order.status` and `Order.selectedDriverId` are never written by the driver tap. | Creates `DriverOffer(status='sent')` against `orderId` + `driverId`. |
+| Passenger | taps «Выбрать водителя» on a `DriverOffer` | Writes `Order.selectedDriverId = offer.driverId` and `Order.status = 'Заказ принят'` atomically. | Selected offer flips to `status='accepted'`; every competing offer for the same `orderId` flips to `status='rejected'`. |
+| Driver | taps «Отозвать оффер» (D2) | None. | Own offer flips to `status='withdrawn'`. |
+| System / TTL | offer's `expiresAt` passes | None. | Offer flips to `status='expired'` and stops counting as a candidate. |
+
 #### P0 product rules
 
 1. **Over-budget offers are allowed.** If `offer.price > order.budget`, the offer card MUST render the badge `«Выше бюджета»`. The passenger still picks the winner; budget is informational.
@@ -596,7 +626,7 @@ either):
 
 #### Status language (canonical Russian)
 
-`Новый заказ` · `Ждём водителя` · `Есть предложения` · `Оффер отправлен` · `Водитель выбран` · `Заказ принят` · `Водитель едет` · `В пути` · `Завершён` · `Отменён` · `Недоступен`
+`Новый заказ` · `Ждём водителя` · `Есть предложения` · `Оффер отправлен` · `Водитель выбран` · `Заказ принят` · `Водитель едет` · `В пути` · `Завершён` · `Отменён` · `Истёк` · `Недоступен`
 
 #### Out of scope (gate phase)
 
