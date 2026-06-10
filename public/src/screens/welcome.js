@@ -86,6 +86,16 @@ function getStepOverride() {
   return step && STEPS.has(step) ? step : null;
 }
 
+function getCurrentHashRoute() {
+  const hash = window.location.hash || '#/welcome';
+  const fullPath = hash.startsWith('#') ? hash.slice(1) : hash;
+  return (fullPath.split('?')[0] || '/welcome');
+}
+
+function isWelcomeRouteActive() {
+  return getCurrentHashRoute() === '/welcome';
+}
+
 // ── Step renderers ───────────────────────────────────────────────────────────
 function welcomeStepHtml() {
   return `
@@ -238,6 +248,7 @@ export default function welcome() {
   let step = stepOverride || 'welcome';
   let selectedRole = null;
   let loadingTimer = null;
+  let loadingRunId = 0;
 
   function rerender() {
     root.innerHTML = htmlForStep();
@@ -261,10 +272,16 @@ export default function welcome() {
   }
 
   function startLoading() {
+    const runId = ++loadingRunId;
     goStep('loading');
     // UI-only transition. No backend call.
     if (loadingTimer) clearTimeout(loadingTimer);
     loadingTimer = setTimeout(() => {
+      // BD-ONBOARDING-02 — Stale timer guard. If the user leaves /welcome
+      // before the UI-only timer fires, the old callback must not persist
+      // state, consume a pending router action, or override the new route.
+      if (runId !== loadingRunId || !isWelcomeRouteActive()) return;
+
       // Persist role + welcomeSeen.
       user.set({ welcomeSeen: true, role: selectedRole || 'passenger' });
       // BD-ONBOARDING-01 Codex P2 #1 — honour any pending router action
