@@ -415,6 +415,108 @@ expect('sheets module does not dial tel: links',
 expect('sheets module does not import any driver-side module',
   !/from\s+['"][^'"]*driver[^'"]*['"]/i.test(sheets.replace(/loadDriverHandoffSnapshot|applyDriverHandoffSnapshotToRide/g, '')));
 
+// ── E5. COMPLETED payment terminal (BD-RIDE-P-08 polish) ──────────
+// ?payment= drives a presentation-only axis on the COMPLETED screen:
+// auto | pending | paid, with anything else collapsing to the safe
+// 'auto' default instead of throwing or leaking an unknown value into
+// the data-payment attribute.
+const payStatesMatch = passenger.match(/PAYMENT_STATES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
+expect('PAYMENT_STATES set resolved', !!payStatesMatch);
+const payStates = payStatesMatch
+  ? (payStatesMatch[1].match(/'(\w+)'/g) || []).map((t) => t.replace(/'/g, ''))
+  : [];
+expect('PAYMENT_STATES equals exactly {auto, pending, paid}',
+  JSON.stringify([...payStates].sort()) === JSON.stringify(['auto', 'paid', 'pending']),
+  'got=' + JSON.stringify(payStates));
+const normalizePaymentBody = functionBody(passenger, 'normalizePayment') || '';
+expect('normalizePayment body resolved', normalizePaymentBody.length > 0);
+expect('normalizePayment guards non-string input with the auto default',
+  /typeof\s+value\s*!==\s*'string'\s*\)\s*return\s*'auto'/.test(normalizePaymentBody));
+expect('normalizePayment collapses unknown values to the auto default',
+  /PAYMENT_STATES\.has\(\s*v\s*\)\s*\?\s*v\s*:\s*'auto'/.test(normalizePaymentBody));
+expect('normalizePayment trims + lowercases before matching',
+  /\.trim\(\)\.toLowerCase\(\)/.test(normalizePaymentBody));
+// Query → renderer wiring: /active-ride reads ?payment=, the passenger
+// dispatch forwards it as paymentStatus, and the COMPLETED renderer
+// normalizes it into the data-payment presentation axis.
+expect('active_ride.js dispatcher forwards ?payment= as paymentQuery',
+  /paymentQuery:\s*query\.get\('payment'\)/.test(dispatcher));
+expect('activeRidePassenger forwards paymentQuery into renderPassengerRideComplete',
+  /renderPassengerRideComplete\(\s*ride\s*,\s*\{[\s\S]{0,200}paymentStatus:\s*paymentQuery/.test(dispatchBody));
+expect('COMPLETED renderer normalizes the payment query',
+  /initialPayment\s*=\s*normalizePayment\(\s*paymentStatus\s*\)/.test(completeBody));
+expect('COMPLETED renderer writes data-payment from the normalized value',
+  /dataset\.payment\s*=\s*initialPayment/.test(completeBody));
+
+// Terminal copy + per-variant payment presentation. All three variants
+// live in the same markup and CSS toggles them via data-pay-show, so a
+// static check that each variant's copy is present is equivalent to
+// "payment=auto/pending/paid render".
+expect('COMPLETED hero title reads "Поездка завершена"',
+  completeBody.includes('Поездка завершена'));
+expect('COMPLETED fare total comes from the mock payment info (pay.total)',
+  /completedPaymentInfo\(\s*ride\s*\)/.test(completeBody)
+  && /\$\{escapeHtml\(pay\.total\)\}/.test(completeBody));
+expect('auto variant shows the Авто-оплата badge',
+  completeBody.includes('data-pay-show="auto"') && completeBody.includes('Авто-оплата'));
+expect('pending variant shows the in-flight charge badge',
+  completeBody.includes('data-pay-show="pending"') && /Списание/.test(completeBody));
+expect('pending variant carries the confirmation soft warning',
+  /passenger-complete__pay-warning"\s+data-pay-show="pending"/.test(completeBody)
+  && completeBody.includes('Ожидается подтверждение оплаты'));
+expect('paid variant shows the Оплачено badge',
+  completeBody.includes('data-pay-show="paid"') && completeBody.includes('Оплачено'));
+
+// Receipt CTA — "Посмотреть чек" is UI-only (no passenger receipt
+// screen exists; /receipt is the DRIVER financial document). Paid gets
+// the live stub button, auto/pending get a disabled mock + note.
+expect('paid variant exposes the "Посмотреть чек" CTA (#arp-receipt-view)',
+  /id="arp-receipt-view"\s+data-action="view-receipt"/.test(completeBody)
+  && completeBody.includes('Посмотреть чек'));
+expect('auto/pending variants show a disabled "Посмотреть чек" mock',
+  /data-action="view-receipt"\s+disabled/.test(completeBody)
+  && completeBody.includes('Чек будет доступен после оплаты'));
+expect('receipt CTA stays a toast stub (no navigation, no fetch)',
+  !/receiptViewBtn[\s\S]{0,300}navigate\(/.test(completeBody)
+  && !/receiptViewBtn[\s\S]{0,300}fetch\(/.test(completeBody));
+expect('legacy "Скачать" receipt button is gone',
+  !/arp-receipt-download/.test(passenger) && !completeBody.includes('Скачать чек'));
+
+// Handoff CTAs are existing-route navigations only.
+expect('COMPLETED exposes the "В историю поездок" CTA',
+  completeBody.includes('В историю поездок') && completeBody.includes('arp-to-history'));
+expect('"В историю поездок" navigates to the existing /profile route',
+  /arp-to-history[\s\S]{0,400}navigate\('\/profile'\)/.test(completeBody));
+expect('"На главную" navigates to the existing /feed route',
+  /arp-to-home[\s\S]{0,300}navigate\('\/feed'\)/.test(completeBody));
+expect('rating CTA stays reachable on COMPLETED (#arp-submit-rating)',
+  completeBody.includes('arp-submit-rating'));
+expect('COMPLETED never opens the cancel sheet',
+  !/openPassengerCancelSheet/.test(completeBody));
+
+// CSS side of the variant toggle: data-payment drives data-pay-show
+// visibility for all three states, and the pending warning is styled.
+const css = read('../public/styles/cloud.css');
+for (const state of ['auto', 'pending', 'paid']) {
+  expect(`cloud.css toggles [data-pay-show] for data-payment="${state}"`,
+    new RegExp(`\\[data-payment="${state}"\\]`).test(css));
+}
+expect('cloud.css styles the pending pay warning',
+  /\.passenger-complete__pay-warning\s*\{/.test(css));
+expect('cloud.css styles the disabled receipt action',
+  /\.passenger-complete__receipt-action:disabled/.test(css));
+
+// Driver COMPLETED route untouched: the dispatcher still gates by role,
+// keeps its own renderCompleted and persists COMPLETED via the finish CTA.
+expect('dispatcher still routes non-driver roles to renderPassenger()',
+  /if\s*\(role\s*!==\s*'driver'\)\s*return\s+renderPassenger\(\)/.test(dispatcher));
+expect('driver branch still defines renderCompleted()',
+  /function\s+renderCompleted\s*\(/.test(dispatcher));
+expect('driver branch still dispatches COMPLETED to renderCompleted()',
+  /RIDE_STATUS\.COMPLETED\)\s*renderCompleted\(\)/.test(dispatcher));
+expect('driver finish CTA still persists COMPLETED',
+  /persistDriverRideStatus\(RIDE_STATUS\.COMPLETED\)/.test(dispatcher));
+
 // ── F. Cross-check vs ride_state.js ──────────────────────────
 // Guard against the RIDE_STATUS enum drifting from what the passenger
 // screen pins above. Every status the contract names must still be a
