@@ -332,6 +332,78 @@ const precache = (sw.match(/PRECACHE\s*=\s*\[([\s\S]*?)\]/) || [])[1] || '';
 expect('public/sw.js PRECACHE includes active_ride_driver_sheets.js',
   /active_ride_driver_sheets\.js/.test(precache));
 
+// ── L. BD-RIDE-D-09 polish — earnings terminal payment alias + history exit ──
+// The driver COMPLETED dispatch reads either ?state= (the internal entry
+// stage) or ?payment=cash|noncash (the documented manual URL). Both routes
+// must land on the same cash/noncash variant, and the secondary nav row
+// must expose the "В историю поездок" exit to /profile so the driver
+// terminal mirrors the passenger handoff from BD-RIDE-P-08.
+expect('dispatcher reads the ?payment= query alongside ?state=',
+  /query\.get\('payment'\)/.test(screen));
+expect('dispatcher maps payment=cash to the cash entry stage',
+  /paymentQuery\s*===\s*'cash'[\s\S]{0,80}paymentQuery/.test(screen)
+  || /paymentQuery\s*===\s*'cash'\s*\|\|\s*paymentQuery\s*===\s*'noncash'\s*\?\s*paymentQuery/.test(screen));
+expect('dispatcher only maps cash / noncash (other payment values are ignored)',
+  !/paymentQuery\s*===\s*'(auto|paid|pending)'/.test(screen));
+expect('renderCompleted wires onHistory into the earnings sheet',
+  /onHistory:\s*\(\s*\)\s*=>\s*go\('\/profile'\)/.test(completedRenderer));
+
+// Earnings sheet shows the "В историю поездок" button id wired by the
+// sheets module's bind helper, and the click handler hits onHistory /
+// /profile (the safe fallback when no callback is wired). The button HTML
+// is composed inside earningsSecondaryHtml() — a separate helper called
+// from renderDriverEarningsSheet — so scope these checks to the whole
+// sheets module (the renderer body itself only contains the loading /
+// closed / empty templates around an `${earnBlock}` placeholder).
+const earningsSecondaryBody = functionBody(sheets, 'earningsSecondaryHtml') || '';
+expect('earningsSecondaryHtml() body resolved', earningsSecondaryBody.length > 0);
+expect('earnings secondary row includes #driver-earnings-history',
+  /id="driver-earnings-history"/.test(earningsSecondaryBody));
+expect('earnings secondary row labels the new button "В историю поездок"',
+  earningsSecondaryBody.includes('В историю поездок'));
+const bindEarningsBody = functionBody(sheets, 'bindEarningsEvents') || '';
+expect('bindEarningsEvents() body resolved', bindEarningsBody.length > 0);
+const historyHandler = clickHandlerBody(bindEarningsBody, 'driver-earnings-history');
+expect('#driver-earnings-history click handler resolved', !!historyHandler);
+expect('history handler calls options.onHistory or falls back to /profile',
+  !!historyHandler
+  && /options\.onHistory/.test(historyHandler)
+  && /go\('\/profile'\)/.test(historyHandler));
+expect('history handler never persists ride state',
+  !!historyHandler && !/persistDriver(?:RideStatus|Cancel)\b/.test(historyHandler));
+
+// Cash / noncash variants stay fully wired in the sheets module (badge
+// helper, cash gate in bindEarningsEvents, balance preview helper). Empty
+// fallback stays calm. These templates live in helper functions, not in
+// renderDriverEarningsSheet itself — scope each check to the helper or
+// the module.
+const earningsBadgeBody = functionBody(sheets, 'earningsBadgeHtml') || '';
+expect('earningsBadgeHtml() body resolved', earningsBadgeBody.length > 0);
+expect('earnings sheet exposes the cash badge',
+  /de-pay-badge cash/.test(earningsBadgeBody) && earningsBadgeBody.includes('Оплата наличными'));
+expect('earnings sheet exposes the noncash badge',
+  /de-pay-badge noncash/.test(earningsBadgeBody) && earningsBadgeBody.includes('Безналичный расчёт'));
+expect('cash variant gates the primary close button with the confirm row',
+  /id="driver-earnings-confirm"/.test(sheets)
+  && /primary\.disabled\s*=\s*!cashConfirmed/.test(bindEarningsBody));
+expect('noncash variant renders the demo balance preview',
+  /earningsBalanceHtml\(/.test(sheets)
+  && /de-balance__value/.test(sheets));
+expect('earnings sheet keeps a calm empty fallback for missing payload',
+  /de-empty__title/.test(sheets) && /Нет данных о доходе/.test(sheets));
+const resolveStateBody = functionBody(sheets, 'resolveEarningsState') || '';
+expect('resolveEarningsState resolves to empty when the payload is missing',
+  /normalizeEarningsPayload\(\s*payload\s*\)\)\s*return\s*'empty'/.test(resolveStateBody));
+expect('earnings sheet keeps a calm closed state for the optimistic finish',
+  /de-closed__title/.test(sheets) && /Вы снова на линии/.test(sheets));
+
+// Lifecycle isolation: the earnings sheet must never persist a terminal
+// status from a confirm/close handler. CANCELED / NO_SHOW transitions
+// stay owned by the cancel sheet via the screen's persistDriverCancel().
+expect('earnings sheet module never persists CANCELED / NO_SHOW',
+  !/RIDE_STATUS\.(?:CANCELED|NO_SHOW)/.test(sheets)
+  && !/persistDriver/.test(sheets));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

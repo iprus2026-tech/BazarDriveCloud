@@ -506,6 +506,7 @@ function earningsSecondaryHtml() {
   return `
     <div class="de-earn__secondary">
       <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" id="driver-earnings-orders">Открыть заказы</button>
+      <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" id="driver-earnings-history">В историю поездок</button>
       <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" id="driver-earnings-feed">В ленту</button>
     </div>`;
 }
@@ -678,6 +679,17 @@ function bindEarningsEvents(overlay, options) {
       if (overlay.__closeSheet) overlay.__closeSheet();
       if (typeof options.onFeed === 'function') options.onFeed();
       else go('/feed');
+    });
+  }
+  // BD-RIDE-D-09 polish — "В историю поездок" exit, parity with passenger
+  // BD-RIDE-P-08. Fallback to /profile so the button is never a dead end
+  // when the driver screen forgets to wire the callback.
+  const historyBtn = overlay.querySelector('#driver-earnings-history');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', () => {
+      if (overlay.__closeSheet) overlay.__closeSheet();
+      if (typeof options.onHistory === 'function') options.onHistory();
+      else go('/profile');
     });
   }
 

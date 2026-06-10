@@ -335,7 +335,15 @@ export default function activeRide() {
   // BD-RIDE-D-09 — entry stage for the driver completion sheet
   // (?state=summary|cash|noncash|shift|loading|closed|empty). Ignored by
   // every other status; the sheet itself falls back to "summary".
-  const earningsState = query.get('state');
+  //
+  // BD-RIDE-D-09 polish — `?payment=cash|noncash` is the documented
+  // manual-test URL for the cash / noncash earnings variants. When `?state`
+  // is absent we map the payment query onto the equivalent entry stage so
+  // operators don't need to know about the internal state name. Unknown
+  // payment values fall through to the sheet's own "summary" default.
+  const paymentQuery = (query.get('payment') || '').toLowerCase();
+  const earningsState = query.get('state')
+    || (paymentQuery === 'cash' || paymentQuery === 'noncash' ? paymentQuery : null);
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
   // handoff for either role so driver and passenger converge on one
@@ -624,9 +632,13 @@ export default function activeRide() {
     openDriverEarningsSheet(root, {
       state: earningsState,
       payload,
-      onClose:  () => go('/driver-map'),
-      onOrders: () => go('/driver-map'),
-      onFeed:   () => go('/feed'),
+      onClose:   () => go('/driver-map'),
+      onOrders:  () => go('/driver-map'),
+      onFeed:    () => go('/feed'),
+      // BD-RIDE-D-09 polish — explicit "В историю поездок" exit, mirroring
+      // the passenger COMPLETED handoff (BD-RIDE-P-08). /profile hosts the
+      // ride history menu; no new screen is created here.
+      onHistory: () => go('/profile'),
     });
   }
 
