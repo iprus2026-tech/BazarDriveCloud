@@ -67,6 +67,13 @@ const HEART_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l8.84 8.84 8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>
 </svg>`;
 
+const HEADSET_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
+  <path d="M3 14v-2a9 9 0 0 1 18 0v2"/>
+  <path d="M21 14a2 2 0 0 1-2 2h-1v-5h1a2 2 0 0 1 2 2z"/>
+  <path d="M3 14a2 2 0 0 0 2 2h1v-5H5a2 2 0 0 0-2 2z"/>
+  <path d="M18 16a4 4 0 0 1-4 4h-2"/>
+</svg>`;
+
 const CHECK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="22" height="22">
   <polyline points="20 6 9 17 4 12"/>
 </svg>`;
@@ -124,12 +131,18 @@ function rideCard(ride, tripLabel) {
 //   "report"    — "Пожаловаться" reasons → submitted confirmation
 //   "emergency" — SOS demo (112 / contacts / hold) — no real dispatch
 // Report sub-state lives in overlay.dataset.report: idle | selected | submitted.
+// BD-RIDE-P-07 polish — fresh Cloud Design audit order. The action group
+// is reordered (chat → call → share → support → report → sos) and the
+// support row is promoted to a top-level support card with subcopy
+// "8 800 · круглосуточно · UI-заглушка". No tel:, no fetch — every
+// safety action stays a safe UI stub.
 const SAFETY_ACTIONS = [
-  { id: 'call',   label: 'Позвонить водителю', icon: PHONE_SVG },
-  { id: 'chat',   label: 'Написать в чат',     icon: MESSAGE_SVG },
-  { id: 'report', label: 'Пожаловаться',       icon: FLAG_SVG },
-  { id: 'sos',    label: 'SOS',                icon: ALERT_TRI_SVG },
-  { id: 'share',  label: 'Поделиться поездкой', icon: SHARE_SVG },
+  { id: 'chat',    label: 'Написать водителю',     icon: MESSAGE_SVG },
+  { id: 'call',    label: 'Позвонить водителю',    icon: PHONE_SVG },
+  { id: 'share',   label: 'Поделиться поездкой',   icon: SHARE_SVG },
+  { id: 'support', label: 'Связаться с поддержкой', icon: HEADSET_SVG, subcopy: '8 800 · круглосуточно · UI-заглушка', topLevel: true },
+  { id: 'report',  label: 'Сообщить о проблеме',   icon: FLAG_SVG },
+  { id: 'sos',     label: 'Экстренная помощь',     icon: ALERT_TRI_SVG },
 ];
 
 const SAFETY_REPORT_REASONS = [
@@ -141,17 +154,26 @@ const SAFETY_REPORT_REASONS = [
 ];
 
 function safetyActionsHtml() {
-  return SAFETY_ACTIONS.map((a) => `
-    <li>
-      <button type="button"
-        class="passenger-safety-sheet__row"
-        data-safety-action="${escAttr(a.id)}">
-        <span class="passenger-safety-sheet__row-ic" aria-hidden="true">${a.icon}</span>
-        <span class="passenger-safety-sheet__row-text">${escapeHtml(a.label)}</span>
-        <span class="passenger-safety-sheet__row-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
-      </button>
-    </li>
-  `).join('');
+  return SAFETY_ACTIONS.map((a) => {
+    const rowMods = a.topLevel ? ' passenger-safety-sheet__row--top' : '';
+    const subcopyHtml = a.subcopy
+      ? `<span class="passenger-safety-sheet__row-sub">${escapeHtml(a.subcopy)}</span>`
+      : '';
+    return `
+      <li>
+        <button type="button"
+          class="passenger-safety-sheet__row${rowMods}"
+          data-safety-action="${escAttr(a.id)}">
+          <span class="passenger-safety-sheet__row-ic" aria-hidden="true">${a.icon}</span>
+          <span class="passenger-safety-sheet__row-body">
+            <span class="passenger-safety-sheet__row-text">${escapeHtml(a.label)}</span>
+            ${subcopyHtml}
+          </span>
+          <span class="passenger-safety-sheet__row-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+        </button>
+      </li>
+    `;
+  }).join('');
 }
 
 function safetyReasonsHtml() {
@@ -311,7 +333,9 @@ export function openPassengerSafetySheet(root, options = {}) {
   overlay.querySelector('#arp-safety-back').addEventListener('click', showDefault);
   overlay.querySelector('#arp-safety-emergency-back').addEventListener('click', showDefault);
 
-  // Default action list.
+  // Default action list. Every branch is a safe demo stub or in-sheet
+  // view switch — none of them mutates the ride status, dials a real
+  // number, or calls a backend.
   overlay.querySelectorAll('[data-safety-action]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-safety-action');
@@ -321,6 +345,12 @@ export function openPassengerSafetySheet(root, options = {}) {
         const tripId = ride && ride.tripId;
         close();
         go(tripId ? `/chat?tripId=${encodeURIComponent(tripId)}&role=passenger` : '/chat');
+      } else if (id === 'share') {
+        safeToast('Поделиться поездкой пока заглушка');
+      } else if (id === 'support') {
+        // Top-level "Связаться с поддержкой" row — no tel:, no fetch,
+        // mirrors the "8 800 · круглосуточно · UI-заглушка" subcopy.
+        safeToast('Связаться с поддержкой пока заглушка · 8 800 · круглосуточно');
       } else if (id === 'report') {
         overlay.dataset.report = 'idle';
         reportReason = null;
@@ -330,8 +360,6 @@ export function openPassengerSafetySheet(root, options = {}) {
         overlay.dataset.view = 'report';
       } else if (id === 'sos') {
         overlay.dataset.view = 'emergency';
-      } else if (id === 'share') {
-        safeToast('Поделиться поездкой пока заглушка');
       }
     });
   });
@@ -396,16 +424,23 @@ export function openPassengerSafetySheet(root, options = {}) {
 //   "default"          — reasons unselected
 //   "reason_selected"  — a reason is chosen → comment field revealed
 //   "validation_error" — confirm pressed with no reason → inline error
-//   "loading"          — "Отменяем…" while the cancel is persisted
+//   "confirm"          — "Точно отменить?" confirmation gate; the first
+//                        red tap after a reason lands here, NOT in
+//                        loading. Only "Да, отменить поездку" commits.
+//   "loading"          — "Отменяем…" while the cancel is persisted; all
+//                        controls including the close-X are locked.
 //   "canceled"         — terminal confirmation card (in-sheet)
 // onConfirm(reasonId, comment) is the data-layer hook owned by the
 // passenger screen: it persists CANCELED + syncs the canonical order and
 // returns { tripLabel, timeLabel } for the canceled card.
+// BD-RIDE-P-06 polish — canonical 5 reasons from the fresh Cloud Design
+// audit. Replaces the legacy "Ошибка в адресе" / "Нашёл другой способ"
+// pair with the truer-to-flow "Ошибка в маршруте" / "Не могу выйти" pair.
 const CANCEL_REASONS = [
-  { id: 'changed_mind',  label: 'Передумал' },
   { id: 'driver_far',    label: 'Водитель далеко' },
-  { id: 'address_error', label: 'Ошибка в адресе' },
-  { id: 'other_way',     label: 'Нашёл другой способ' },
+  { id: 'changed_mind',  label: 'Передумал' },
+  { id: 'route_error',   label: 'Ошибка в маршруте' },
+  { id: 'cannot_leave',  label: 'Не могу выйти' },
   { id: 'other',         label: 'Другая причина' },
 ];
 
@@ -497,6 +532,27 @@ export function openPassengerCancelSheet(root, options = {}) {
         </div>
       </div>
 
+      <!-- CONFIRM gate ("Точно отменить?") -->
+      <div class="passenger-cancel-sheet__confirm" role="alertdialog" aria-labelledby="arp-cancel-confirm-title">
+        <div class="passenger-cancel-sheet__confirm-icon" aria-hidden="true">${ALERT_TRI_SVG}</div>
+        <div id="arp-cancel-confirm-title" class="passenger-cancel-sheet__confirm-title">Точно отменить?</div>
+        <div class="passenger-cancel-sheet__confirm-body">
+          Водитель уже в пути. Частые отмены могут влиять на рейтинг.
+        </div>
+        <div class="passenger-cancel-sheet__confirm-actions">
+          <button type="button" class="passenger-cancel-sheet__btn-back" id="arp-cancel-confirm-no">
+            Не отменять
+          </button>
+          <button type="button" class="passenger-cancel-sheet__btn-confirm" id="arp-cancel-confirm-yes">
+            <span class="passenger-cancel-sheet__btn-confirm-default">Да, отменить поездку</span>
+            <span class="passenger-cancel-sheet__btn-confirm-loading">
+              <span class="passenger-cancel-sheet__spinner" aria-hidden="true">${SPINNER_SVG}</span>
+              Отменяем…
+            </span>
+          </button>
+        </div>
+      </div>
+
       <!-- DONE (canceled) -->
       <div class="passenger-cancel-sheet__done" role="status" aria-live="polite">
         <div class="passenger-cancel-sheet__done-icon" aria-hidden="true">${CHECK_SVG}</div>
@@ -508,7 +564,7 @@ export function openPassengerCancelSheet(root, options = {}) {
             Создать новую поездку
           </button>
           <button type="button" class="passenger-cancel-sheet__done-secondary" id="arp-cancel-feed">
-            Вернуться в ленту
+            Вернуться на главную
           </button>
         </div>
       </div>
@@ -519,6 +575,10 @@ export function openPassengerCancelSheet(root, options = {}) {
   let cancelTimer = null;
   const reasonBtns = Array.from(overlay.querySelectorAll('.passenger-cancel-sheet__reason'));
   const confirmBtn = overlay.querySelector('#arp-cancel-confirm');
+  const confirmYesBtn = overlay.querySelector('#arp-cancel-confirm-yes');
+  const confirmNoBtn = overlay.querySelector('#arp-cancel-confirm-no');
+  const backBtn = overlay.querySelector('#arp-cancel-back');
+  const closeBtn = overlay.querySelector('#arp-cancel-close');
   const commentInput = overlay.querySelector('#arp-cancel-comment');
   const doneMeta = overlay.querySelector('#arp-cancel-done-meta');
 
@@ -528,35 +588,54 @@ export function openPassengerCancelSheet(root, options = {}) {
     overlay.remove();
   }
 
+  // The loading stage must lock every dismissal path AND every action
+  // control so the in-flight cancel cannot be interrupted by an
+  // accidental tap on close-X, Escape, the backdrop, "Не отменять", or
+  // a second "Да, отменить поездку". The canceled terminal is also
+  // non-dismissible from inside the sheet (use the done CTAs).
+  function isDismissalLocked() {
+    return overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'canceled';
+  }
+
   function onKey(ev) {
     if (ev.key !== 'Escape') return;
     ev.preventDefault();
-    // Don't allow Escape to dismiss the terminal canceled card or interrupt
-    // the in-flight loading transition — only the form stages are dismissible.
-    if (overlay.dataset.stage === 'canceled' || overlay.dataset.stage === 'loading') return;
+    if (isDismissalLocked()) return;
+    // Step back from the confirm gate instead of dismissing the whole
+    // sheet — matches the "Не отменять" affordance for keyboard users.
+    if (overlay.dataset.stage === 'confirm') {
+      overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
+      return;
+    }
     close();
   }
   document.addEventListener('keydown', onKey);
 
   reasonBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (overlay.dataset.stage === 'loading') return;
       selectedReason = btn.dataset.reasonId || null;
       reasonBtns.forEach((b) => b.setAttribute('aria-checked', b === btn ? 'true' : 'false'));
       overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
     });
   });
 
-  overlay.querySelector('#arp-cancel-back').addEventListener('click', close);
-  overlay.querySelector('#arp-cancel-close').addEventListener('click', close);
+  backBtn.addEventListener('click', () => {
+    if (isDismissalLocked()) return;
+    close();
+  });
+  closeBtn.addEventListener('click', () => {
+    if (isDismissalLocked()) return;
+    close();
+  });
 
-  confirmBtn.addEventListener('click', () => {
+  function commitCancel() {
     if (overlay.dataset.stage === 'loading') return;
-    if (!selectedReason) {
-      overlay.dataset.stage = 'validation_error';
-      return;
-    }
     overlay.dataset.stage = 'loading';
     confirmBtn.disabled = true;
+    if (confirmYesBtn) confirmYesBtn.disabled = true;
+    if (confirmNoBtn) confirmNoBtn.disabled = true;
+    if (closeBtn) closeBtn.disabled = true;
     const comment = commentInput ? commentInput.value.trim() : '';
     // Persist immediately so the cancel is durable even if the brief
     // loading delay is interrupted; the screen returns the display meta.
@@ -570,7 +649,31 @@ export function openPassengerCancelSheet(root, options = {}) {
       }
       overlay.dataset.stage = 'canceled';
     }, 600);
+  }
+
+  // First red tap (from reason_selected) lands in the confirm gate, not
+  // straight in loading — only the inner "Да, отменить поездку" commits.
+  confirmBtn.addEventListener('click', () => {
+    if (overlay.dataset.stage === 'loading') return;
+    if (!selectedReason) {
+      overlay.dataset.stage = 'validation_error';
+      return;
+    }
+    overlay.dataset.stage = 'confirm';
   });
+
+  if (confirmNoBtn) {
+    confirmNoBtn.addEventListener('click', () => {
+      if (overlay.dataset.stage === 'loading') return;
+      overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
+    });
+  }
+  if (confirmYesBtn) {
+    confirmYesBtn.addEventListener('click', () => {
+      if (!selectedReason) return;
+      commitCancel();
+    });
+  }
 
   overlay.querySelector('#arp-cancel-new').addEventListener('click', () => {
     close();
@@ -582,7 +685,11 @@ export function openPassengerCancelSheet(root, options = {}) {
   });
 
   overlay.querySelector('.passenger-cancel-overlay__backdrop').addEventListener('click', () => {
-    if (overlay.dataset.stage === 'canceled' || overlay.dataset.stage === 'loading') return;
+    if (isDismissalLocked()) return;
+    if (overlay.dataset.stage === 'confirm') {
+      overlay.dataset.stage = selectedReason ? 'reason_selected' : 'default';
+      return;
+    }
     close();
   });
 

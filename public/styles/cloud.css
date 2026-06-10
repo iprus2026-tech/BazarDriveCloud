@@ -6230,6 +6230,12 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+/* BD-RIDE-P-06 polish — WAITING_PASSENGER carries the cancel
+   affordance alone (the boarded CTA sits in its own primary row
+   above), so collapse to a single column. */
+.active-ride-passenger__primary-actions--cancel-only {
+  grid-template-columns: 1fr;
+}
 .bd-btn.active-ride-passenger__btn-sec,
 .bd-btn.active-ride-passenger__btn-cancel,
 .bd-btn.active-ride-passenger__btn-sos,
@@ -8993,6 +8999,14 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .passenger-cancel-overlay[data-stage="canceled"] .passenger-cancel-sheet__form { display: none; }
 .passenger-cancel-overlay[data-stage="canceled"] .passenger-cancel-sheet__done { display: flex; }
 
+/* BD-RIDE-P-06 polish — "Точно отменить?" confirmation gate. The form
+   stays mounted (so its selected reason / comment survive a back tap)
+   but is hidden in favor of the confirm card. Only the inner
+   "Да, отменить поездку" advances to loading. */
+.passenger-cancel-sheet__confirm { display: none; }
+.passenger-cancel-overlay[data-stage="confirm"] .passenger-cancel-sheet__form { display: none; }
+.passenger-cancel-overlay[data-stage="confirm"] .passenger-cancel-sheet__confirm { display: flex; }
+
 .passenger-cancel-sheet__handle {
   width: 36px;
   height: 4px;
@@ -9037,6 +9051,15 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 0;
 }
 .passenger-cancel-sheet__close:active { opacity: 0.7; }
+/* BD-RIDE-P-06 polish — loading must lock every dismissal control,
+   including the close-X. JS also short-circuits the click, but the
+   visual + pointer-events lock makes the locked state legible. */
+.passenger-cancel-overlay[data-stage="loading"] .passenger-cancel-sheet__close,
+.passenger-cancel-overlay[data-stage="canceled"] .passenger-cancel-sheet__close {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 .passenger-cancel-sheet__title {
   font-size: 20px;
@@ -9321,6 +9344,51 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .passenger-cancel-sheet__done-secondary:active { transform: scale(0.98); }
 .passenger-cancel-sheet__done-ic { display: inline-flex; }
+
+/* BD-RIDE-P-06 polish — confirm gate ("Точно отменить?"). Stacked
+   layout with a soft warning icon, copy, and the two-button row
+   reusing the form's back/confirm visual styles. */
+.passenger-cancel-sheet__confirm {
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 8px 4px 4px;
+}
+.passenger-cancel-sheet__confirm-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(251, 191, 36, 0.16);
+  color: var(--warning);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.passenger-cancel-sheet__confirm-icon svg {
+  width: 28px;
+  height: 28px;
+}
+.passenger-cancel-sheet__confirm-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.15;
+}
+.passenger-cancel-sheet__confirm-body {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.4;
+  max-width: 320px;
+}
+.passenger-cancel-sheet__confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
 
 /* ── Canceled fallback screen (state D) ─────────────────── */
 .passenger-cancel-fallback {
@@ -9685,16 +9753,35 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .passenger-safety-sheet__row[data-safety-action="report"] .passenger-safety-sheet__row-ic { color: var(--warning); }
 .passenger-safety-sheet__row[data-safety-action="sos"] .passenger-safety-sheet__row-ic { color: var(--danger); }
 .passenger-safety-sheet__row[data-safety-action="share"] .passenger-safety-sheet__row-ic { color: var(--accent); }
+.passenger-safety-sheet__row[data-safety-action="support"] .passenger-safety-sheet__row-ic { color: var(--success, #34d399); }
+/* BD-RIDE-P-07 polish — promoted "top-level" support row: a slightly
+   heavier border + tinted background so the 8 800 subcopy reads as
+   a primary entry point even within the standard action list. */
+.passenger-safety-sheet__row--top {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.32);
+}
 .passenger-safety-sheet__row-ic {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+.passenger-safety-sheet__row-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .passenger-safety-sheet__row-text {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
   min-width: 0;
+}
+.passenger-safety-sheet__row-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.35;
 }
 .passenger-safety-sheet__row-chev {
   display: inline-flex;
