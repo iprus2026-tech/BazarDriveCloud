@@ -911,14 +911,19 @@ function renderPassengerRideComplete(ride, deps) {
         <div class="passenger-complete__pay-method-chevron" aria-hidden="true">${CHEVRON_RIGHT_SVG}</div>
       </div>
       <div class="passenger-complete__pay-disclosure">Итог к оплате — без учёта комиссии сервиса</div>
+      <div class="passenger-complete__pay-warning" data-pay-show="pending" role="status">
+        <span class="passenger-complete__pay-warning-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
+        Ожидается подтверждение оплаты — обычно занимает меньше минуты
+      </div>
       <div class="passenger-complete__receipt-note" data-pay-show="auto pending">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
-        Чек будет доступен после оплаты
+        <span class="passenger-complete__receipt-note-text">Чек будет доступен после оплаты</span>
+        <button type="button" class="passenger-complete__receipt-action" data-action="view-receipt" disabled>Посмотреть чек</button>
       </div>
       <div class="passenger-complete__receipt-ready" data-pay-show="paid">
         <span class="passenger-complete__receipt-ic" aria-hidden="true">${RECEIPT_SVG}</span>
-        <span class="passenger-complete__receipt-ready-text">Чек готов · можно скачать</span>
-        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-download" aria-label="Скачать чек">Скачать</button>
+        <span class="passenger-complete__receipt-ready-text">Чек готов</span>
+        <button type="button" class="passenger-complete__receipt-action" id="arp-receipt-view" data-action="view-receipt" aria-label="Посмотреть чек">Посмотреть чек</button>
       </div>
     </div>
 
@@ -1074,7 +1079,7 @@ function renderPassengerRideComplete(ride, deps) {
       <div class="passenger-complete__history-actions">
         <button type="button" class="bd-btn passenger-complete__bottom-btn" id="arp-to-history">
           <span class="passenger-complete__bottom-btn-ic" aria-hidden="true">${RECEIPT_SVG}</span>
-          В историю
+          В историю поездок
         </button>
         <button type="button" class="bd-btn passenger-complete__bottom-btn" id="arp-to-home">
           <span class="passenger-complete__bottom-btn-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
@@ -1231,11 +1236,12 @@ function renderPassengerRideComplete(ride, deps) {
     });
   }
 
-  const receiptDownloadBtn = content.querySelector('#arp-receipt-download');
-  if (receiptDownloadBtn) {
-    receiptDownloadBtn.addEventListener('click', () => {
-      // Receipt download isn't wired to a backend yet — safe stub.
-      localToast('Скачивание чека будет доступно позже');
+  const receiptViewBtn = content.querySelector('#arp-receipt-view');
+  if (receiptViewBtn) {
+    receiptViewBtn.addEventListener('click', () => {
+      // No passenger receipt screen exists yet — the /receipt route is the
+      // driver financial document (net/commission), so keep this UI-only.
+      localToast('Просмотр чека будет доступен позже');
     });
   }
 
