@@ -566,6 +566,13 @@ function renderWaitingSheet(sheet, ride) {
       Я в машине — поехали
     </button>
 
+    <!-- BD-RIDE-P-06 polish — cancel affordance is allowed during
+         WAITING_PASSENGER so the passenger can still bail out before
+         boarding without bouncing back to the en-route sheet. -->
+    <div class="active-ride-passenger__primary-actions active-ride-passenger__primary-actions--cancel-only">
+      <button type="button" class="bd-btn ghost active-ride-passenger__btn-cancel" id="arp-cancel">Отменить</button>
+    </div>
+
     <div class="active-ride-passenger__secondary-actions">
       <button type="button" class="bd-btn ghost active-ride-passenger__btn-sos" id="arp-sos">
         <span class="active-ride-passenger__btn-ic" aria-hidden="true">${SOS_SVG}</span>
@@ -1385,21 +1392,32 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   const byDriver = cancel.by === 'driver';
   const byPassenger = cancel.by === 'passenger';
 
-  const title = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
-  const badgeLabel = isNoShow ? 'Поездка не состоялась' : 'Поездка отменена';
-  const badgeText = isNoShow ? 'Не состоялась' : 'Отменена';
+  // BD-RIDE-P-06/07 polish — NO_SHOW carries a neutral "Поездка закрыта"
+  // copy with a literal NO_SHOW badge and a single "Вернуться на главную"
+  // CTA so it doesn't pretend the user manually canceled. CANCELED keeps
+  // its two CTAs but the secondary now reads "Вернуться на главную" to
+  // match the fresh Cloud Design contract.
+  const title = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
+  const badgeLabel = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
+  const badgeText = isNoShow ? 'NO_SHOW' : 'Отменена';
   const description = isNoShow
-    ? 'Водитель не смог дождаться вас на точке подачи. Закройте экран и закажите новую поездку, когда будете готовы.'
+    ? 'Водитель отметил, что не дождался вас.'
     : (byPassenger
-      ? 'Вы отменили эту поездку. Вернитесь в ленту или создайте новую заявку.'
+      ? 'Вы отменили эту поездку. Вернитесь на главную или создайте новую заявку.'
       : (byDriver
-        ? 'Водитель отменил эту поездку. Вы можете вернуться в ленту или создать новую заявку.'
-        : 'Мы закрыли эту поездку. Вы можете вернуться в ленту или создать новую заявку.'));
+        ? 'Водитель отменил эту поездку. Вы можете вернуться на главную или создать новую заявку.'
+        : 'Мы закрыли эту поездку. Вы можете вернуться на главную или создать новую заявку.'));
   const metaVerb = isNoShow ? 'закрыто в' : 'отменено в';
+  const primaryHtml = isNoShow
+    ? ''
+    : `<button type="button" class="passenger-cancel-fallback__btn-primary" id="arp-canceled-new">
+         <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PLUS_SVG}</span>
+         Создать новую поездку
+       </button>`;
 
   root.innerHTML = `
     <div class="passenger-cancel-fallback__top">
-      <button type="button" class="passenger-cancel-fallback__top-back" id="arp-canceled-top-back" aria-label="Вернуться в ленту">
+      <button type="button" class="passenger-cancel-fallback__top-back" id="arp-canceled-top-back" aria-label="Вернуться на главную">
         ${CHEVRON_UP_SVG}
       </button>
       <div class="passenger-cancel-fallback__trip">Поездка ${escapeHtml(tripLabel)}</div>
@@ -1418,25 +1436,25 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
     </div>
 
     <div class="passenger-cancel-fallback__actions">
-      <button type="button" class="passenger-cancel-fallback__btn-primary" id="arp-canceled-new">
-        <span class="active-ride-passenger__btn-ic" aria-hidden="true">${PLUS_SVG}</span>
-        Создать новую поездку
-      </button>
+      ${primaryHtml}
       <button type="button" class="passenger-cancel-fallback__btn-secondary" id="arp-canceled-feed">
-        Вернуться в ленту
+        Вернуться на главную
       </button>
     </div>
   `;
 
-  const goFeed = () => { go('/feed'); };
-  root.querySelector('#arp-canceled-top-back').addEventListener('click', goFeed);
-  root.querySelector('#arp-canceled-feed').addEventListener('click', goFeed);
-  root.querySelector('#arp-canceled-new').addEventListener('click', () => {
-    // Composer is the canonical "new trip" entry on the passenger
-    // side; no real backend call — same stub story as the rest of the
-    // passenger flow.
-    go('/new');
-  });
+  const goHome = () => { go('/feed'); };
+  root.querySelector('#arp-canceled-top-back').addEventListener('click', goHome);
+  root.querySelector('#arp-canceled-feed').addEventListener('click', goHome);
+  const newBtn = root.querySelector('#arp-canceled-new');
+  if (newBtn) {
+    newBtn.addEventListener('click', () => {
+      // Composer is the canonical "new trip" entry on the passenger
+      // side; no real backend call — same stub story as the rest of the
+      // passenger flow.
+      go('/new');
+    });
+  }
   return root;
 }
 
@@ -1598,6 +1616,61 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
+  // BD-RIDE-P-06 polish — shared binder for the cancel affordance.
+  // Used by both the en-route family (ACCEPTED, DRIVER_EN_ROUTE,
+  // DRIVER_APPROACHING_PICKUP) and the WAITING_PASSENGER sheet so a
+  // refactor cannot accidentally drop the cancel button from one of
+  // them. Terminal states (COMPLETED, CANCELED, NO_SHOW) never reach
+  // this code path because they branch out earlier.
+  function bindCancelAffordance() {
+    const cancelBtn = sheet.querySelector('#arp-cancel');
+    if (!cancelBtn) return;
+    cancelBtn.addEventListener('click', () => {
+      openPassengerCancelSheet(root, {
+        ride,
+        tripLabel,
+        onConfirm: (reasonId, comment) => {
+          // BD-RIDE-SIM-01 — passenger cancels after the driver has
+          // already accepted. Persist the current view first so the
+          // ride's passenger identity (sim overrides — Алексей,
+          // route, note, price) is written to localStorage before
+          // the status transition; otherwise updateActiveRideStatus
+          // would materialize a bare demo via getActiveRide and the
+          // driver-side canceled sheet would not see the audit
+          // scenario.
+          saveActiveRide(ride);
+          const canceledRide = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
+            cancel: {
+              by: 'passenger',
+              reason: reasonId || 'passenger_cancel_after_accept',
+              comment: comment || '',
+            },
+          });
+          // BD-RIDE-P-10 — mirror the cancellation into canonical
+          // bazardrive.ride_orders.v1 so Feed / DriverMap /
+          // findLatestHandedOffOrderTripId stop treating the trip as
+          // live. Matches the driver branch syncCanonicalOrderStatus
+          // pattern in active_ride.js; CANCELED is a legal transition
+          // from CREATED, ACCEPTED and IN_PROGRESS so no defensive
+          // bridge is needed.
+          const orderForSync = canceledRide || ride;
+          const canonicalOrderId = (orderForSync && typeof orderForSync.orderId === 'string' && orderForSync.orderId)
+            || (typeof ride.tripId === 'string' && ride.tripId.startsWith('trip_order-')
+                ? ride.tripId.slice('trip_'.length)
+                : null);
+          if (canonicalOrderId) updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
+          // Hand the canceled-state copy back to the sheet. The
+          // ?status=CANCELED fallback screen still renders on direct
+          // entry / reload via renderPassengerCanceledFallback.
+          return {
+            tripLabel,
+            timeLabel: formatCanceledAt(canceledRide || ride),
+          };
+        },
+      });
+    });
+  }
+
   function renderSheet() {
     sheet.dataset.status = ride.status;
     // Drop any stale phase from a previous render — only branches that
@@ -1606,6 +1679,7 @@ export default function activeRidePassenger(options = {}) {
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
       renderWaitingSheet(sheet, ride);
       bindCommonSheetHandlers();
+      bindCancelAffordance();
       const boardedBtn = sheet.querySelector('#arp-boarded');
       if (boardedBtn) {
         boardedBtn.addEventListener('click', () => {
@@ -1654,61 +1728,11 @@ export default function activeRidePassenger(options = {}) {
     // ACCEPTED / DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP
     renderEnRouteSheet(sheet, ride);
     bindCommonSheetHandlers();
+    bindCancelAffordance();
     const refineBtn = sheet.querySelector('#arp-refine');
     if (refineBtn) {
       refineBtn.addEventListener('click', () => {
         toast('Уточнение места подачи будет добавлено позже');
-      });
-    }
-    const cancelBtn = sheet.querySelector('#arp-cancel');
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', () => {
-        // BD-RIDE-P-06 — open the redesigned cancel sheet. Persistence
-        // fires once the user confirms inside the sheet; the sheet then
-        // renders its in-sheet canceled state (loading → canceled) and
-        // owns the follow-up navigation (new ride / feed).
-        openPassengerCancelSheet(root, {
-          ride,
-          tripLabel,
-          onConfirm: (reasonId, comment) => {
-            // BD-RIDE-SIM-01 — passenger cancels after the driver has
-            // already accepted. Persist the current view first so the
-            // ride's passenger identity (sim overrides — Алексей,
-            // route, note, price) is written to localStorage before
-            // the status transition; otherwise updateActiveRideStatus
-            // would materialize a bare demo via getActiveRide and the
-            // driver-side canceled sheet would not see the audit
-            // scenario.
-            saveActiveRide(ride);
-            const canceledRide = updateActiveRideStatus(ride.tripId, RIDE_STATUS.CANCELED, {
-              cancel: {
-                by: 'passenger',
-                reason: reasonId || 'passenger_cancel_after_accept',
-                comment: comment || '',
-              },
-            });
-            // BD-RIDE-P-10 — mirror the cancellation into canonical
-            // bazardrive.ride_orders.v1 so Feed / DriverMap /
-            // findLatestHandedOffOrderTripId stop treating the trip as
-            // live. Matches the driver branch syncCanonicalOrderStatus
-            // pattern in active_ride.js; CANCELED is a legal transition
-            // from CREATED, ACCEPTED and IN_PROGRESS so no defensive
-            // bridge is needed.
-            const orderForSync = canceledRide || ride;
-            const canonicalOrderId = (orderForSync && typeof orderForSync.orderId === 'string' && orderForSync.orderId)
-              || (typeof ride.tripId === 'string' && ride.tripId.startsWith('trip_order-')
-                  ? ride.tripId.slice('trip_'.length)
-                  : null);
-            if (canonicalOrderId) updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
-            // Hand the canceled-state copy back to the sheet. The
-            // ?status=CANCELED fallback screen still renders on direct
-            // entry / reload via renderPassengerCanceledFallback.
-            return {
-              tripLabel,
-              timeLabel: formatCanceledAt(canceledRide || ride),
-            };
-          },
-        });
       });
     }
   }

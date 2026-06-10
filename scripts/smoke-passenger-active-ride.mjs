@@ -136,17 +136,38 @@ const cancelReasons = arrayBody(sheets, 'CANCEL_REASONS');
 expect('CANCEL_REASONS array resolved', !!cancelReasons);
 const cancelReasonCount = cancelReasons ? (cancelReasons.match(/\bid:/g) || []).length : 0;
 expect('CANCEL_REASONS has exactly 5 reasons', cancelReasonCount === 5, 'count=' + cancelReasonCount);
-for (const id of ['changed_mind', 'driver_far', 'address_error', 'other_way', 'other']) {
+// BD-RIDE-P-06 polish — canonical 5 reasons from the fresh Cloud Design
+// audit. The old "Ошибка в адресе" / "Нашёл другой способ" pair was
+// replaced by "Ошибка в маршруте" / "Не могу выйти" — drop the old IDs
+// and verify the new ones (label + id).
+for (const id of ['driver_far', 'changed_mind', 'route_error', 'cannot_leave', 'other']) {
   expect(`CANCEL_REASONS includes id '${id}'`,
     new RegExp(`id:\\s*'${id}'`).test(cancelReasons || ''));
 }
-// State machine: default → reason_selected → validation_error → loading → canceled.
-for (const stage of ['default', 'reason_selected', 'validation_error', 'loading', 'canceled']) {
+for (const id of ['address_error', 'other_way']) {
+  expect(`CANCEL_REASONS drops legacy id '${id}'`,
+    !new RegExp(`id:\\s*'${id}'`).test(cancelReasons || ''));
+}
+for (const label of ['Водитель далеко', 'Передумал', 'Ошибка в маршруте', 'Не могу выйти', 'Другая причина']) {
+  expect(`CANCEL_REASONS exposes canonical label "${label}"`,
+    (cancelReasons || '').includes(label));
+}
+for (const oldLabel of ['Ошибка в адресе', 'Нашёл другой способ']) {
+  expect(`CANCEL_REASONS drops legacy label "${oldLabel}"`,
+    !(cancelReasons || '').includes(oldLabel));
+}
+// BD-RIDE-P-06 polish — new state machine: default → reason_selected
+// → validation_error → confirm → loading → canceled. The first red tap
+// after a reason lands in confirm, NOT loading; only "Да, отменить
+// поездку" commits.
+for (const stage of ['default', 'reason_selected', 'validation_error', 'confirm', 'loading', 'canceled']) {
   expect(`cancel sheet knows the '${stage}' stage`,
     new RegExp(`'${stage}'`).test(sheets));
 }
 expect('cancel sheet actually transitions into loading then the canceled state',
   /dataset\.stage\s*=\s*'loading'/.test(sheets) && /dataset\.stage\s*=\s*'canceled'/.test(sheets));
+expect('cancel sheet transitions into the confirm stage before loading',
+  /dataset\.stage\s*=\s*'confirm'/.test(sheets));
 expect('cancel sheet shows the "водитель в пути" rating warning',
   sheets.includes('Отмена может повлиять на рейтинг'));
 expect('cancel sheet shows the validation copy',
@@ -155,6 +176,39 @@ expect('cancel sheet shows the loading copy "Отменяем…"',
   sheets.includes('Отменяем…'));
 expect('cancel sheet shows the canceled-state title "Поездка отменена"',
   sheets.includes('Поездка отменена'));
+// Confirm gate copy + buttons.
+expect('cancel confirm gate shows "Точно отменить?" title',
+  sheets.includes('Точно отменить?'));
+expect('cancel confirm gate shows "Водитель уже в пути" subcopy',
+  sheets.includes('Водитель уже в пути. Частые отмены могут влиять на рейтинг.'));
+expect('cancel confirm gate shows "Не отменять" button',
+  sheets.includes('Не отменять'));
+expect('cancel confirm gate shows "Да, отменить поездку" button',
+  sheets.includes('Да, отменить поездку'));
+// First red tap (#arp-cancel-confirm) advances to 'confirm', not 'loading'.
+expect('first confirm tap routes to the confirm stage, never to loading',
+  /confirmBtn\.addEventListener[\s\S]*?dataset\.stage\s*=\s*'confirm'/.test(sheets));
+// Only the inner "Да, отменить поездку" commits — the commit must happen
+// inside the yes-button click handler, not the outer red button. The
+// outer confirmBtn handler scope ends at the next `});` after its
+// addEventListener — assert no commitCancel() appears in that window.
+expect('the inner #arp-cancel-confirm-yes button commits the cancel',
+  /confirmYesBtn[\s\S]{0,400}commitCancel\(/.test(sheets));
+const outerConfirmMatch = sheets.match(/confirmBtn\.addEventListener\(\s*'click'\s*,\s*\(\s*\)\s*=>\s*\{([\s\S]*?)\n\s*\}\s*\)\s*;/);
+expect('outer red "Отменить поездку" button does NOT commit cancel directly',
+  outerConfirmMatch && !/commitCancel\s*\(/.test(outerConfirmMatch[1] || ''),
+  outerConfirmMatch ? 'matched outer handler' : 'outer handler not located');
+expect('outer red "Отменить поездку" button only routes to the confirm stage',
+  outerConfirmMatch && /dataset\.stage\s*=\s*'confirm'/.test(outerConfirmMatch[1] || ''));
+// Loading must lock the close-X (it cannot fire close() while loading).
+expect('cancel close-X is locked while loading',
+  /closeBtn[\s\S]{0,200}isDismissalLocked\(\)/.test(sheets)
+  || /isDismissalLocked\(\)[\s\S]{0,200}close\(\)/.test(sheets));
+expect('cancel loading also disables the close button',
+  /closeBtn\.disabled\s*=\s*true/.test(sheets));
+// Canceled terminal CTA — fresh Cloud Design copy: "Вернуться на главную".
+expect('cancel sheet canceled terminal shows "Вернуться на главную"',
+  sheets.includes('Вернуться на главную'));
 
 // ── D. Safety sheet (BD-RIDE-P-07 — fresh Cloud Design contract) ──
 // PassengerSafetySheet now lives in the sheets module with a default /
@@ -168,11 +222,54 @@ expect('safety sheet has the SOS label', /\bSOS\b/.test(sheets));
 const safetyActions = arrayBody(sheets, 'SAFETY_ACTIONS');
 expect('SAFETY_ACTIONS array resolved', !!safetyActions);
 const safetyActionCount = safetyActions ? (safetyActions.match(/\bid:/g) || []).length : 0;
-expect('SAFETY_ACTIONS has exactly 5 actions', safetyActionCount === 5, 'count=' + safetyActionCount);
-for (const id of ['call', 'chat', 'report', 'sos', 'share']) {
+// BD-RIDE-P-07 polish — reordered action group + top-level support row
+// adds a 6th entry ('support') with the 8 800 subcopy. The order is
+// chat → call → share → support → report → sos and must be exact:
+// support's "top-level" promotion is only meaningful with the other 5
+// in their new positions around it.
+expect('SAFETY_ACTIONS has exactly 6 actions', safetyActionCount === 6, 'count=' + safetyActionCount);
+for (const id of ['chat', 'call', 'share', 'support', 'report', 'sos']) {
   expect(`SAFETY_ACTIONS includes action '${id}'`,
     new RegExp(`id:\\s*'${id}'`).test(safetyActions || ''));
 }
+const safetyIdOrder = (safetyActions || '').match(/id:\s*'([a-z_]+)'/g) || [];
+const safetyIds = safetyIdOrder.map((s) => s.replace(/.*'([a-z_]+)'.*/, '$1'));
+expect('SAFETY_ACTIONS order is chat → call → share → support → report → sos',
+  JSON.stringify(safetyIds) === JSON.stringify(['chat', 'call', 'share', 'support', 'report', 'sos']),
+  'got=' + JSON.stringify(safetyIds));
+// Top-level support row — title + 8 800 subcopy + UI-заглушка marker.
+expect('SAFETY_ACTIONS support row carries "Связаться с поддержкой" label',
+  /id:\s*'support'[\s\S]*?label:\s*'Связаться с поддержкой'/.test(safetyActions || ''));
+expect('SAFETY_ACTIONS support row carries the 8 800 subcopy',
+  /id:\s*'support'[\s\S]*?subcopy:\s*'8 800 · круглосуточно · UI-заглушка'/.test(safetyActions || ''));
+expect('SAFETY_ACTIONS support row is flagged top-level',
+  /id:\s*'support'[\s\S]*?topLevel:\s*true/.test(safetyActions || ''));
+expect('safety sheet has top-level «Связаться с поддержкой»',
+  (safetyActions || '').includes('Связаться с поддержкой')
+  && sheets.includes('Связаться с поддержкой'));
+// Labels for the reordered five must read in the canonical fresh-design
+// copy (not the legacy short labels).
+for (const label of [
+  'Написать водителю',
+  'Позвонить водителю',
+  'Поделиться поездкой',
+  'Сообщить о проблеме',
+  'Экстренная помощь',
+]) {
+  expect(`SAFETY_ACTIONS exposes label "${label}"`,
+    (safetyActions || '').includes(label));
+}
+// Legacy short labels must be retired.
+for (const oldLabel of ['Написать в чат', 'Пожаловаться']) {
+  expect(`SAFETY_ACTIONS drops legacy label "${oldLabel}"`,
+    !(safetyActions || '').includes(oldLabel));
+}
+// "SOS" as a bare row label is the legacy copy — the new entry is
+// "Экстренная помощь". The string "SOS" still appears inside the
+// emergency view (tile + a11y labels), so scope the check to the
+// SAFETY_ACTIONS literal only.
+expect('SAFETY_ACTIONS does not expose the legacy bare "SOS" row label',
+  !/label:\s*'SOS'/.test(safetyActions || ''));
 const safetyReportReasons = arrayBody(sheets, 'SAFETY_REPORT_REASONS');
 expect('SAFETY_REPORT_REASONS array resolved', !!safetyReportReasons);
 const safetyReasonCount = safetyReportReasons ? (safetyReportReasons.match(/\bid:/g) || []).length : 0;
@@ -229,6 +326,94 @@ for (const id of ['persistDriverRideStatus', 'persistDriverCancel', 'ensureDrive
   expect(`passenger file does not define driver handler ${id}`,
     !new RegExp(id).test(passenger));
 }
+
+// ── E2. Cancel affordance gating (BD-RIDE-P-06 polish) ────────────
+// Cancel button must be REACHABLE on WAITING_PASSENGER (new) and the
+// en-route family (ACCEPTED / DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP)
+// — and ABSENT from the terminal states (COMPLETED / CANCELED / NO_SHOW).
+// The bind goes through a shared helper so both renderers stay wired up.
+expect('passenger screen has a shared bindCancelAffordance helper',
+  /function\s+bindCancelAffordance\s*\(/.test(passenger));
+expect('bindCancelAffordance opens the cancel sheet via openPassengerCancelSheet',
+  /function\s+bindCancelAffordance[\s\S]{0,1200}openPassengerCancelSheet\s*\(/.test(passenger));
+const waitingBody = functionBody(passenger, 'renderWaitingSheet') || '';
+expect('renderWaitingSheet body resolved', waitingBody.length > 0);
+expect('WAITING_PASSENGER sheet exposes the cancel button (#arp-cancel)',
+  waitingBody.includes('arp-cancel'));
+const enRouteBody = functionBody(passenger, 'renderEnRouteSheet') || '';
+expect('renderEnRouteSheet body resolved', enRouteBody.length > 0);
+expect('en-route sheet exposes the cancel button (#arp-cancel)',
+  enRouteBody.includes('arp-cancel'));
+const renderSheetBody = functionBody(passenger, 'renderSheet') || '';
+expect('renderSheet WAITING_PASSENGER branch binds the cancel affordance',
+  /WAITING_PASSENGER[\s\S]{0,600}bindCancelAffordance\(\)/.test(renderSheetBody));
+expect('renderSheet en-route branch binds the cancel affordance',
+  /renderEnRouteSheet\([\s\S]{0,200}bindCancelAffordance\(\)/.test(renderSheetBody));
+// Terminal renderers must NOT mount the cancel button.
+const canceledFallbackBody = functionBody(passenger, 'renderPassengerCanceledFallback') || '';
+expect('renderPassengerCanceledFallback body resolved', canceledFallbackBody.length > 0);
+expect('CANCELED / NO_SHOW fallback never mounts #arp-cancel',
+  !/arp-cancel\b/.test(canceledFallbackBody));
+const completeBody = functionBody(passenger, 'renderPassengerRideComplete') || '';
+expect('renderPassengerRideComplete body resolved', completeBody.length > 0);
+expect('COMPLETED screen does not expose the active-ride cancel button',
+  !/['"]#?arp-cancel['"]/.test(completeBody)
+  && !/\barp-cancel\b/.test(completeBody.replace(/arp-cancel-[a-z-]+/g, '')));
+// In-progress renderers don't get a cancel either — keep them off.
+const inProgressBody = functionBody(passenger, 'renderInProgressSheet') || '';
+expect('renderInProgressSheet body resolved', inProgressBody.length > 0);
+expect('IN_PROGRESS sheet does not expose the cancel button',
+  !/['"]#?arp-cancel['"]/.test(inProgressBody)
+  && !/\barp-cancel\b/.test(inProgressBody.replace(/arp-cancel-[a-z-]+/g, '')));
+
+// ── E3. NO_SHOW terminal — fresh Cloud Design copy ────────────────
+// Badge: NO_SHOW (literal tech label, "neutral copy"), title:
+// "Поездка закрыта", body: "Водитель отметил, что не дождался вас.",
+// single CTA: "Вернуться на главную".
+expect('NO_SHOW terminal badge reads "NO_SHOW"',
+  /isNoShow\s*\?\s*'NO_SHOW'/.test(canceledFallbackBody));
+expect('NO_SHOW terminal title reads "Поездка закрыта"',
+  /isNoShow\s*\?\s*'Поездка закрыта'/.test(canceledFallbackBody));
+expect('NO_SHOW terminal body reads "Водитель отметил, что не дождался вас."',
+  canceledFallbackBody.includes('Водитель отметил, что не дождался вас.'));
+expect('NO_SHOW terminal CTA reads "Вернуться на главную"',
+  canceledFallbackBody.includes('Вернуться на главную'));
+expect('NO_SHOW terminal drops the "Создать новую поездку" primary CTA',
+  /isNoShow\s*\n?\s*\?\s*''\s*\n?\s*:/.test(canceledFallbackBody));
+// CANCELED terminal keeps the dual CTA but the secondary now reads
+// "Вернуться на главную" (not "Вернуться в ленту").
+expect('CANCELED terminal exposes "Вернуться на главную" CTA',
+  canceledFallbackBody.includes('Вернуться на главную'));
+expect('CANCELED terminal drops legacy "Вернуться в ленту" CTA from the fallback',
+  !canceledFallbackBody.includes('Вернуться в ленту'));
+
+// ── E4. Safety sheet must not mutate ride status ────────────────
+// Open / close / every action handler in the sheets module is a UI-only
+// affordance. Persistence (CANCELED, IN_PROGRESS, COMPLETED) is owned by
+// the passenger screen; the sheets module must never touch the ride
+// state store directly.
+expect('safety/cancel sheets module does not import the ride state store',
+  !/from\s+['"]\.\.\/ride_state\.js['"]/.test(sheets));
+expect('safety/cancel sheets module does not call updateActiveRideStatus',
+  !/updateActiveRideStatus\s*\(/.test(sheets));
+expect('safety/cancel sheets module does not call saveActiveRide',
+  !/saveActiveRide\s*\(/.test(sheets));
+expect('safety/cancel sheets module does not call updateTripStatus',
+  !/updateTripStatus\s*\(/.test(sheets));
+// "Safety must not mutate ride status" — pin no fetch / Mapbox / notify /
+// tel: dialer leak from the sheets module.
+expect('sheets module does not call fetch / XHR',
+  !/\bfetch\s*\(/.test(sheets) && !/XMLHttpRequest/.test(sheets));
+expect('sheets module does not pull in Mapbox',
+  !/mapbox/i.test(sheets));
+expect('sheets module does not use the Notification API',
+  !/new\s+Notification\s*\(/.test(sheets));
+expect('sheets module does not dial tel: links',
+  !/href\s*=\s*["']tel:/.test(sheets) && !/window\.location[\s\S]{0,40}tel:/.test(sheets));
+// Driver files must stay untouched (the sheets module talks only to the
+// passenger screen + util + router).
+expect('sheets module does not import any driver-side module',
+  !/from\s+['"][^'"]*driver[^'"]*['"]/i.test(sheets.replace(/loadDriverHandoffSnapshot|applyDriverHandoffSnapshotToRide/g, '')));
 
 // ── F. Cross-check vs ride_state.js ──────────────────────────
 // Guard against the RIDE_STATUS enum drifting from what the passenger
