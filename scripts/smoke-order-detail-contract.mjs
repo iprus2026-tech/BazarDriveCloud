@@ -115,8 +115,58 @@ expect('contract flags the driver "Принять" semantics as unresolved',
 // If either lands before the screen is actually implemented and the
 // contract is re-graded, the smoke must fail so the audit can't be
 // silently bypassed.
+//
+// The route guard accepts BOTH single- and double-quoted register()
+// calls and BOTH `/order` (bare) and `/order/<param>` shapes so the
+// guard can't be sidestepped by a `register("/order", …)` or
+// `register('/order/:id', …)` form. Patterns matched:
+//   register('/order',  …)   register("/order",  …)
+//   register('/order/:id', …) register("/order/:id", …)
+//   register('/order?…', …)  register("/order?…", …)
+const ORDER_ROUTE_GUARD = /register\(\s*['"]\/order(?:\/|['"]|\?)/;
+
+// Self-test the guard against synthetic inputs so a regex regression
+// surfaces in CI even when public/src/app.js carries no /order line at
+// all (the empty-positive case is otherwise unobservable). Failing any
+// of these means the broadened regex from the BD-ORDER-DETAIL-01A
+// follow-up review (#457) has been silently weakened.
+const GUARD_SHOULD_MATCH = [
+  `register('/order', orderDetail);`,
+  `register("/order", orderDetail);`,
+  `register('/order/:id', orderDetail);`,
+  `register("/order/:id", orderDetail);`,
+  `register( '/order', orderDetail );`,
+  `register(  "/order?role=passenger", orderDetail);`,
+];
+const GUARD_SHOULD_NOT_MATCH = [
+  `register('/orders', ordersList);`,           // different route family
+  `register('/order-map-draft', orderMap);`,    // existing related route
+  `// register('/order', orderDetail);`,        // commented-out — limit: still flags; pin we accept that
+  `register('/feed', feed);`,                   // unrelated route
+];
+let guardSelfTestOk = true;
+for (const s of GUARD_SHOULD_MATCH) {
+  if (!ORDER_ROUTE_GUARD.test(s)) {
+    console.log(`FAIL — route-guard self-test should MATCH: ${s}`);
+    issues.push(`route-guard self-test missed: ${s}`);
+    guardSelfTestOk = false;
+  }
+}
+// The "should-not-match" list is intentionally short — the guard is meant
+// to be conservative (false positives are safer than misses here). We
+// still pin two surrounding routes that must not trip it.
+for (const s of GUARD_SHOULD_NOT_MATCH.slice(0, 2).concat([GUARD_SHOULD_NOT_MATCH[3]])) {
+  if (ORDER_ROUTE_GUARD.test(s)) {
+    console.log(`FAIL — route-guard self-test false positive: ${s}`);
+    issues.push(`route-guard self-test false positive: ${s}`);
+    guardSelfTestOk = false;
+  }
+}
+expect('route-guard regex self-test (single/double quotes, bare/path/query)',
+  guardSelfTestOk);
+
 expect('public/src/app.js does NOT register a runtime /order route',
-  !/register\(\s*'\/order(?:\/|'|"|\?)/.test(appJs));
+  !ORDER_ROUTE_GUARD.test(appJs));
 expect('public/src/screens/order_detail.js is NOT yet shipped',
   !exists('../public/src/screens/order_detail.js'));
 
