@@ -65,6 +65,44 @@ function functionBody(source, name) {
   return null;
 }
 
+// Extract the args-string of a call like `foo(...)`. `startIdx` must point
+// at the opening `(`. Returns everything between that `(` and its matching
+// `)` (parens-balanced; ignores parens inside the args' nested calls).
+function callArgsAt(source, startIdx) {
+  if (source[startIdx] !== '(') return null;
+  let depth = 0;
+  for (let i = startIdx; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return source.slice(startIdx + 1, i);
+    }
+  }
+  return null;
+}
+
+// Extract the body of an `addEventListener('click', () => …)` registered on
+// a specific selector token (e.g. "ar-issue"). Returns the part after the
+// `() =>` arrow inside the listener args — which is either an expression
+// (e.g. `openDriverProblemSheet(root, { ... })`) or a `{ … }` block, both
+// captured fully via parens-balance, so semicolons inside the body are NOT
+// truncation points.
+function clickHandlerBody(source, selectorToken) {
+  const anchor = source.indexOf(`${selectorToken}'`);
+  if (anchor === -1) return null;
+  const listener = source.indexOf('.addEventListener', anchor);
+  if (listener === -1) return null;
+  const callOpen = source.indexOf('(', listener);
+  if (callOpen === -1) return null;
+  const args = callArgsAt(source, callOpen);
+  if (args == null) return null;
+  // args looks like `'click', () => <body>`; lock onto the arrow.
+  const arrow = args.indexOf('=>');
+  if (arrow === -1) return null;
+  return args.slice(arrow + 2).trim();
+}
+
 // ── A. Module exports (the API active_ride.js + this guard rely on) ──
 for (const fn of [
   'openDriverCancelSheet',
@@ -188,10 +226,15 @@ expect('submit freezes the type buttons while loading',
 // cancel sheet and trip a second persistDriverCancel() call.
 const dispatchBody = functionBody(screen, 'renderSheet') || '';
 expect('renderSheet() body resolved', dispatchBody.length > 0);
-expect('CANCELED routes to renderCanceledStub()',
-  /RIDE_STATUS\.CANCELED[\s\S]{0,80}renderCanceledStub\(\)/.test(dispatchBody));
-expect('NO_SHOW routes to renderCanceledStub()',
-  /RIDE_STATUS\.NO_SHOW[\s\S]{0,80}renderCanceledStub\(\)/.test(dispatchBody));
+// Exact branch assertions — keep the regex inside the SAME `else if (...)`
+// condition (no `)` until the branch closing paren) before requiring
+// renderCanceledStub() as that branch's action. This prevents a passing
+// signal when CANCELED / NO_SHOW lives in an unrelated branch and
+// renderCanceledStub() just happens to appear nearby in the source.
+expect('CANCELED branch routes to renderCanceledStub() (exact branch)',
+  /ride\.status\s*===\s*RIDE_STATUS\.CANCELED[^)]*\)\s*renderCanceledStub\(\)/.test(dispatchBody));
+expect('NO_SHOW branch routes to renderCanceledStub() (exact branch)',
+  /ride\.status\s*===\s*RIDE_STATUS\.NO_SHOW[^)]*\)\s*renderCanceledStub\(\)/.test(dispatchBody));
 const canceledStub = functionBody(screen, 'renderCanceledStub') || '';
 expect('renderCanceledStub() body resolved', canceledStub.length > 0);
 expect('terminal stub never mounts the cancel button (#ar-cancel*)',
@@ -214,6 +257,28 @@ expect('completed renderer never mounts the no-show / problem buttons',
 expect('completed renderer never reopens the cancel/problem sheets',
   !/openDriverCancelSheet\s*\(/.test(completedRenderer)
   && !/openDriverProblemSheet\s*\(/.test(completedRenderer));
+
+// renderCompleted() delegates to openDriverEarningsSheet() (defined in the
+// sheets module, which itself calls renderDriverEarningsSheet for markup).
+// Both must be free of any cancel / no-show / problem entry point and must
+// never persist CANCELED / NO_SHOW from the completed terminal — a refactor
+// that mounted a "report problem" or "cancel ride" CTA into the earnings
+// terminal would otherwise pass section J unnoticed.
+const earningsSheetOpener = functionBody(sheets, 'openDriverEarningsSheet') || '';
+expect('openDriverEarningsSheet() body resolved', earningsSheetOpener.length > 0);
+const earningsSheetRenderer = functionBody(sheets, 'renderDriverEarningsSheet') || '';
+expect('renderDriverEarningsSheet() body resolved', earningsSheetRenderer.length > 0);
+const earningsTerminal = earningsSheetOpener + '\n' + earningsSheetRenderer;
+for (const token of ['ar-cancel-accepted', 'ar-cancel', 'ar-no-show', 'ar-issue']) {
+  expect(`earnings terminal never mounts #${token}`,
+    !new RegExp(`\\b${token.replace(/-/g, '\\-')}\\b`).test(earningsTerminal));
+}
+expect('earnings terminal never reopens openDriverCancelSheet',
+  !/openDriverCancelSheet\s*\(/.test(earningsTerminal));
+expect('earnings terminal never reopens openDriverProblemSheet',
+  !/openDriverProblemSheet\s*\(/.test(earningsTerminal));
+expect('earnings terminal never persists CANCELED / NO_SHOW from the completed sheet',
+  !/persistDriver(?:RideStatus|Cancel)\s*\([^)]*RIDE_STATUS\.(?:CANCELED|NO_SHOW)/.test(earningsTerminal));
 
 // ── K. Per-stage cancel / problem affordance reach (BD-RIDE-D-SHEETS-02) ──
 // Cancel sheet is reachable from ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP
@@ -242,19 +307,21 @@ const inProgress = functionBody(screen, 'renderInProgress') || '';
 expect('renderInProgress() body resolved', inProgress.length > 0);
 expect('IN_PROGRESS stage opens the problem sheet via #ar-issue',
   /ar-issue['"]\)[\s\S]{0,300}openDriverProblemSheet\s*\(/.test(inProgress));
-expect('IN_PROGRESS problem-sheet call uses onAction (toast-only), not onConfirm',
-  /openDriverProblemSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}onAction:\s*showNotice/.test(inProgress)
-  && !/openDriverProblemSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}onConfirm/.test(inProgress));
-// `ar-issue` first appears in the renderer's innerHTML template; the rest of
-// the function below still references persistDriverRideStatus from the
-// #ar-finish completion path. Scope the assertion to the #ar-issue click
-// handler so the finish path's COMPLETED persistence doesn't cause a false
-// positive — the issue button itself must be UI-only.
-const issueHandlerMatch = inProgress.match(
-  /ar-issue['"]\)\.addEventListener\(\s*'click'\s*,\s*\(\s*\)\s*=>\s*([^;]+);/);
-expect('IN_PROGRESS #ar-issue click handler is resolved', !!issueHandlerMatch);
-expect('IN_PROGRESS problem path does not persist ride state from the issue handler',
-  !!issueHandlerMatch && !/persistDriver(?:RideStatus|Cancel)/.test(issueHandlerMatch[1]));
+// Scope every #ar-issue assertion to the click handler body extracted via
+// parens balance — semicolons inside the handler (e.g. a future `{ a; b; }`
+// block form) don't truncate the capture the way a `[^;]+;` regex would,
+// and the `#ar-finish` persistDriverRideStatus call above the issue
+// listener can't bleed into the check.
+const issueHandler = clickHandlerBody(inProgress, 'ar-issue');
+expect('IN_PROGRESS #ar-issue click handler body resolved', !!issueHandler);
+expect('IN_PROGRESS #ar-issue handler calls openDriverProblemSheet(...)',
+  !!issueHandler && /openDriverProblemSheet\s*\(/.test(issueHandler));
+expect('IN_PROGRESS #ar-issue handler passes onAction: showNotice (toast-only)',
+  !!issueHandler && /onAction:\s*showNotice\b/.test(issueHandler));
+expect('IN_PROGRESS #ar-issue handler never persists ride state',
+  !!issueHandler && !/persistDriver(?:RideStatus|Cancel)\b/.test(issueHandler));
+expect('IN_PROGRESS #ar-issue handler never passes onConfirm',
+  !!issueHandler && !/\bonConfirm\b/.test(issueHandler));
 
 // ── I. Service worker precaches the driver sheets module ──
 // active_ride.js statically imports active_ride_driver_sheets.js; if the SW
