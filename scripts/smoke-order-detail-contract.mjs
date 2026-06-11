@@ -659,6 +659,171 @@ driverOfferStore.clearDriverOfferStore();
     after2.tripId === base.tripId);
 }
 
+// ── F2a. Fresh DriverOffer hydrates renderable D2 fields + driver label ─
+// BD-ORDER-DETAIL-01D-1 CI fixup: sendDriverOffer must persist a
+// renderable offer so D2/P2 cards aren't empty. The store's hydration
+// fields (driverName, car, rating, etaMin, price, message) plus the
+// click-handler's order-derived `details.price` together guarantee no
+// missing core fields. Test by sending without a `details` override
+// (store-only defaults) and inspecting the offer.
+{
+  driverOfferStore.clearDriverOfferStore();
+  const fresh = driverOfferStore.sendDriverOffer({
+    orderId: 'render-hydrate-test',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('fresh offer hydrates a non-empty driverName',
+    !!fresh && typeof fresh.driverName === 'string' && fresh.driverName.length > 0);
+  expect('fresh offer hydrates a non-empty car string',
+    !!fresh && typeof fresh.car === 'string' && fresh.car.length > 0);
+  expect('fresh offer hydrates a non-empty rating',
+    !!fresh && typeof fresh.rating === 'string' && fresh.rating.length > 0);
+  expect('fresh offer hydrates a positive numeric etaMin',
+    !!fresh && typeof fresh.etaMin === 'number' && fresh.etaMin > 0);
+  expect('fresh offer hydrates a positive numeric price',
+    !!fresh && typeof fresh.price === 'number' && fresh.price > 0);
+}
+
+// ── F2b. After D1 send, D2 markup renders non-empty price / ETA / driver
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    details: { price: 1500 }, // mirrors what the click handler passes
+  });
+  const order = orderDetailMod.loadOrder('demo-order-1');
+  const state = orderDetailMod.resolveState(order, 'driver');
+  expect('D1 → D2 after send transitions correctly', state === 'D2');
+  const markup = orderDetailMod.renderOrderDetailMarkup({ order, role: 'driver', state });
+  expect('D2 markup includes the «Оффер отправлен» chip',
+    markup.includes('Оффер отправлен'));
+  // The D2 summary panel must show the self driver label, a non-empty
+  // formatted price, and a non-empty ETA — never bare "  мин" or "★ ".
+  expect('D2 markup shows a non-empty self driver label',
+    /<strong>[^<]{1,40}<\/strong>/.test(markup) && /Водитель/.test(markup));
+  expect('D2 markup shows a formatted price (non-empty)',
+    /<strong>[^<]*₽<\/strong>/.test(markup));
+  expect('D2 markup shows a non-empty ETA (digit + " мин")',
+    /<strong>\d+\s*мин<\/strong>/.test(markup));
+}
+
+// ── F2c. Cross-role P2 card for a stored sent offer has safe fields ─
+{
+  driverOfferStore.clearDriverOfferStore();
+  // A peer driver (NOT self) sends an offer → passenger sees P2 with
+  // that offer card. The fields must all render with safe non-empty
+  // copy or recognised dash fallbacks.
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: 'peer-driver-1',
+  });
+  const order = orderDetailMod.loadOrder('demo-order-1');
+  expect('peer offer resolves passenger to P2',
+    orderDetailMod.resolveState(order, 'passenger') === 'P2');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order, role: 'passenger', state: 'P2' });
+  // No empty rating ("★ " with no value), no empty ETA fragment.
+  expect('P2 card has no empty rating glyph',
+    !/<div class="od-offer__rating">★ <\/div>/.test(markup));
+  expect('P2 card has no empty ETA cell',
+    !/<span><\/span><span class="od-offer__price">/.test(markup));
+  expect('P2 card exposes the «Выбрать водителя» CTA for the peer offer',
+    markup.includes('Выбрать водителя'));
+}
+
+// ── F2d. Malformed bucket recovery — stale primitive doesn't crash ─
+{
+  // Pre-seed the store with a malformed bucket — the kind of value a
+  // future writer (or a corrupted upgrade) might leave behind. The
+  // helpers must recover instead of throwing.
+  _bdofs.clear();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'demo-order-1': 'stale',
+    'another-order': 42,
+    'array-bucket': [1, 2, 3],
+  }));
+  let threw = false;
+  let result = null;
+  try {
+    result = driverOfferStore.sendDriverOffer({
+      orderId: 'demo-order-1',
+      driverId: orderDetailMod.SELF_DRIVER_ID,
+    });
+  } catch { threw = true; }
+  expect('sendDriverOffer does not throw on a malformed string bucket', !threw);
+  expect('sendDriverOffer succeeds on a malformed bucket',
+    !!result && result.status === 'sent');
+  expect('after recovery, listDriverOffersForOrder finds exactly one offer',
+    driverOfferStore.listDriverOffersForOrder('demo-order-1').length === 1);
+  // Same for a numeric bucket.
+  let threw2 = false;
+  try {
+    driverOfferStore.sendDriverOffer({
+      orderId: 'another-order',
+      driverId: 'd',
+    });
+  } catch { threw2 = true; }
+  expect('sendDriverOffer does not throw on a malformed numeric bucket', !threw2);
+}
+
+// ── F2e. updatedAt is strictly monotonic across send → withdraw ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  const s = driverOfferStore.sendDriverOffer({
+    orderId: 'monotonic-test', driverId: 'drv-m',
+  });
+  const w = driverOfferStore.withdrawDriverOffer({
+    orderId: 'monotonic-test', driverId: 'drv-m',
+  });
+  // Lexicographic compare on ISO 8601 is equivalent to chronological
+  // compare. The store must guarantee strict monotonicity even when
+  // both calls land in the same millisecond.
+  expect('withdraw updatedAt is strictly greater than send updatedAt',
+    !!w && w.updatedAt > s.updatedAt);
+  // createdAt is preserved verbatim.
+  expect('withdraw preserves the original createdAt',
+    !!w && w.createdAt === s.createdAt);
+}
+
+// ── F2f. Dedup — no duplicate sent offers per (order, driver) ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.sendDriverOffer({ orderId: 'dedup-test', driverId: 'drv-dup' });
+  driverOfferStore.sendDriverOffer({ orderId: 'dedup-test', driverId: 'drv-dup' });
+  driverOfferStore.sendDriverOffer({ orderId: 'dedup-test', driverId: 'drv-dup' });
+  const list = driverOfferStore.listDriverOffersForOrder('dedup-test');
+  expect('repeated sendDriverOffer does not create duplicate offers',
+    list.length === 1 && list[0].status === 'sent');
+}
+
+// ── F2g. Invariants — no Order.status / selectedDriverId / active_ride
+{
+  driverOfferStore.clearDriverOfferStore();
+  const base = orderDetailMod.loadOrder('demo-order-1');
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  driverOfferStore.withdrawDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const after = orderDetailMod.loadOrder('demo-order-1');
+  expect('Order.status unchanged across send/withdraw/re-send', after.status === base.status);
+  expect('selectedDriverId unchanged across send/withdraw/re-send',
+    after.selectedDriverId === base.selectedDriverId);
+  // active_ride store is not seeded — the underlying offer store never
+  // writes the key.
+  const ar = _bdofs.get('bazardrive.active_ride.v1');
+  expect('bazardrive.active_ride.v1 is NOT seeded by the offer store',
+    ar === undefined || ar === null);
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();

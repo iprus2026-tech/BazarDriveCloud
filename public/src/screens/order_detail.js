@@ -351,11 +351,22 @@ function offerCard(off, order) {
   const overBudget = typeof off.price === 'number'
     && typeof order.budget === 'number'
     && off.price > order.budget;
+  // Defensive UI fallbacks (BD-ORDER-DETAIL-01D-1): the store now
+  // hydrates fresh offers with renderable demo fields, but the screen
+  // also guards against legacy / future minimal offers so an empty
+  // string never produces a broken "★ " or "  мин" surface.
+  const driverName = off.driverName || 'Водитель';
+  const rating     = off.rating || '—';
+  const car        = off.car || '';
+  const etaText    = off.etaMin != null && off.etaMin !== ''
+    ? `${off.etaMin} мин`
+    : '—';
+  const priceText  = formatRub(off.price) || '—';
   return `
     <article class="od-offer" data-offer-id="${escapeHtml(off.id)}" role="listitem">
-      <header class="od-offer__head"><div class="od-offer__name">${escapeHtml(off.driverName || '')}</div><div class="od-offer__rating">★ ${escapeHtml(off.rating || '')}</div></header>
-      <div class="od-offer__car">${escapeHtml(off.car || '')}</div>
-      <div class="od-offer__meta"><span>${escapeHtml(off.etaMin != null ? off.etaMin + ' мин' : '')}</span><span class="od-offer__price">${escapeHtml(formatRub(off.price))}</span>${overBudget ? '<span class="od-chip od-chip--warn">Выше бюджета</span>' : ''}</div>
+      <header class="od-offer__head"><div class="od-offer__name">${escapeHtml(driverName)}</div><div class="od-offer__rating">★ ${escapeHtml(rating)}</div></header>
+      ${car ? `<div class="od-offer__car">${escapeHtml(car)}</div>` : ''}
+      <div class="od-offer__meta"><span>${escapeHtml(etaText)}</span><span class="od-offer__price">${escapeHtml(priceText)}</span>${overBudget ? '<span class="od-chip od-chip--warn">Выше бюджета</span>' : ''}</div>
       ${off.message ? `<div class="od-offer__msg">${escapeHtml(off.message)}</div>` : ''}
       ${actionsRow([
         { label: 'Выбрать водителя', dataAction: 'select-driver', offerId: off.id, variant: 'primary' },
@@ -435,10 +446,16 @@ function bodyD1(order) {
 
 function bodyD2(order) {
   const ownOffer = (order.offers || []).find((o) => o.driverId === SELF_DRIVER_ID)
-    || { price: 1000, etaMin: 5, message: '' };
+    || { price: 1000, etaMin: 5, message: '', driverName: 'Вы (демо)' };
+  // Defensive UI fallbacks for the own-offer summary panel.
+  const priceText = formatRub(ownOffer.price) || '—';
+  const etaText   = ownOffer.etaMin != null && ownOffer.etaMin !== ''
+    ? `${ownOffer.etaMin} мин`
+    : '—';
+  const driverLabel = ownOffer.driverName || 'Вы (демо)';
   return `
     ${routeSummary(order)}
-    <div class="od-offer-summary"><div class="od-offer-summary__row"><span>Ваша цена</span><strong>${escapeHtml(formatRub(ownOffer.price))}</strong></div><div class="od-offer-summary__row"><span>ETA</span><strong>${escapeHtml(String(ownOffer.etaMin || ''))} мин</strong></div>${ownOffer.message ? `<div class="od-offer-summary__msg">${escapeHtml(ownOffer.message)}</div>` : ''}</div>
+    <div class="od-offer-summary"><div class="od-offer-summary__row"><span>Водитель</span><strong>${escapeHtml(driverLabel)}</strong></div><div class="od-offer-summary__row"><span>Ваша цена</span><strong>${escapeHtml(priceText)}</strong></div><div class="od-offer-summary__row"><span>ETA</span><strong>${escapeHtml(etaText)}</strong></div>${ownOffer.message ? `<div class="od-offer-summary__msg">${escapeHtml(ownOffer.message)}</div>` : ''}</div>
     <div class="od-waiting" role="status" aria-live="polite">Ждём, когда пассажир выберет водителя.</div>
     ${actionsRow([
       { label: 'Изменить оффер', dataAction: 'edit-offer' },
@@ -602,7 +619,18 @@ function bindEvents(rootEl, initialCtx) {
         showNotice(rootEl, 'Оффер уже отправлен');
         return;
       }
-      const result = sendDriverOffer({ orderId: id, driverId: SELF_DRIVER_ID });
+      // Hydrate the fresh offer with order-derived defaults so the
+      // resulting D2 summary and any cross-role P2 card carry sensible
+      // price / ETA / route context. The store still backfills demo
+      // defaults if these are missing.
+      const budget = ctx.order && typeof ctx.order.budget === 'number'
+        ? ctx.order.budget
+        : null;
+      const result = sendDriverOffer({
+        orderId: id,
+        driverId: SELF_DRIVER_ID,
+        details: budget != null ? { price: budget } : null,
+      });
       if (!result) { showNotice(rootEl, STUB_TOAST_OFFER); return; }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Оффер отправлен');
