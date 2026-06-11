@@ -404,6 +404,24 @@ if (exists(orderDetailContractSmoke)) {
   }
 }
 
+// BD-ORDER-DETAIL-01D-2B-F — audit smoke for the passenger active-ride
+// seed consumption path. Pins the data-side invariant: a 01D-2B seed
+// built from a unique order survives the saveActiveRide ->
+// findActiveRide / loadCanonicalActiveRide round-trip intact, the
+// passenger renderer reads from the exact seed keys, and every banned
+// demo fallback string in active_ride_passenger.js is either absent
+// (BD-LIFE-07 cleanup) or a positional `||` fallback that the seed
+// short-circuits.
+const orderDetailSeedConsumptionSmoke = path.join(root, 'scripts', 'smoke-order-detail-active-ride-passenger-seed.mjs');
+if (exists(orderDetailSeedConsumptionSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderDetailSeedConsumptionSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-detail-active-ride-passenger-seed.mjs failed\n${msg}`);
+  }
+}
+
 // BD-LIFECYCLE-01 — headless lifecycle smoke. Exercises mock_api.js +
 // ride_state.js + ride_actions.js + trip_confirmation_handoff.js against an
 // in-memory localStorage shim and walks COMPLETED / NO_SHOW / CANCELED
