@@ -9,14 +9,34 @@
 //   {
 //     [orderId]: {
 //       [driverId]: {
-//         id, orderId, driverId, status, createdAt, updatedAt
+//         id, orderId, driverId, status,
+//         driverName, car, rating, etaMin, price, message,
+//         createdAt, updatedAt, expiresAt
 //       }
 //     }
 //   }
 //
-// This slice (01D-1) supports only `status: 'sent' | 'withdrawn'`. The
+// This slice (01D-1) writes `status: 'sent' | 'withdrawn'` only. The
 // remaining Model B statuses (`accepted`, `rejected`, `expired`) are
-// owned by later 01D sub-slices and the future system/TTL job.
+// owned by later 01D sub-slices and the future system/TTL job. The
+// store still recognises those statuses defensively: withdraw refuses
+// to overwrite them, and unknown statuses are returned verbatim.
+//
+// BD-ORDER-DETAIL-01D-1F Codex hardening:
+//   • `expiresAt` is stamped on every fresh sent offer (createdAt +
+//     `DEFAULT_OFFER_TTL_MIN` minutes); re-sending a withdrawn offer
+//     either preserves its previous `expiresAt` or backfills one.
+//   • Special keys (`__proto__`, `constructor`, `prototype`) are
+//     rejected by `isSafeStoreKey()` before they can reach any
+//     bracket-write — the store also reads buckets through
+//     `Object.prototype.hasOwnProperty` so a polluted prototype chain
+//     cannot leak into the result.
+//   • `withdrawDriverOffer` mutates only when the existing status is
+//     `'sent'`. Terminal / unknown statuses are returned unchanged.
+//   • The `details` overlay is filtered through `pickOfferDetails()`,
+//     a strict whitelist of render/edit fields with type validation —
+//     a caller cannot overwrite canonical `id`, `orderId`, `driverId`,
+//     `status`, `createdAt`, `updatedAt`, or `expiresAt`.
 //
 // No backend, no Mapbox, no fetch. The store is a pure-JS abstraction
 // over localStorage with safe fallbacks (parse errors → empty store, no
@@ -53,14 +73,43 @@ function writeRaw(value) {
   _memoryStore.value = value;
 }
 
+// Null-prototype map factory. Using `Object.create(null)` for in-memory
+// store rebuilds keeps assignments off `Object.prototype`'s lookup
+// path so a polluted bucket can never leak through prototype chain
+// reads. Combined with `isSafeStoreKey()` below this gives belt-and-
+// suspenders against `__proto__` / `constructor` / `prototype` keys.
+function createMap() {
+  return Object.create(null);
+}
+
+// Own-property check that ignores anything inherited from
+// Object.prototype. We always pair this with `isSafeStoreKey()` before
+// a bracket write, but `hasOwn()` is still the read-side guarantee.
+function hasOwn(obj, key) {
+  return obj !== null && typeof obj === 'object'
+    && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function loadStore() {
   const raw = readRaw();
-  if (!raw) return {};
+  if (!raw) return createMap();
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createMap();
+    }
+    // Copy own properties only into a fresh null-prototype map. This
+    // strips any inherited junk and any literal `__proto__` setter
+    // payload a hostile JSON might try to smuggle (JSON.parse does NOT
+    // honour `__proto__` as a setter, but copying to a null-proto map
+    // is the explicit defense).
+    const out = createMap();
+    for (const k of Object.keys(parsed)) {
+      if (isSafeStoreKey(k)) out[k] = parsed[k];
+    }
+    return out;
   } catch {
-    return {};
+    return createMap();
   }
 }
 
@@ -89,6 +138,58 @@ function isString(v) {
 
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// BD-ORDER-DETAIL-01D-1F — keys that must NEVER be used as orderId or
+// driverId. Using these as bracket-write targets would mutate
+// `Object.prototype`'s lookup path on a plain `{}` map, which is the
+// canonical prototype-pollution vector. We reject the value before any
+// store read or write.
+const BLOCKED_STORE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isSafeStoreKey(v) {
+  return isString(v) && !BLOCKED_STORE_KEYS.has(v);
+}
+
+// Default TTL for a freshly created sent offer (Model B's
+// `DriverOffer.expiresAt` rule, 15 min from createdAt). Kept here as a
+// named constant so the smoke can pin both the value and the formula.
+const DEFAULT_OFFER_TTL_MIN = 15;
+
+// Returns an ISO timestamp `minutes` minutes after `baseIso`. Falls
+// back to `Date.now()` if the input is unparseable so the result is
+// always a finite forward-dated ISO string.
+function addMinutesIso(baseIso, minutes) {
+  const base = new Date(baseIso).getTime();
+  const safe = Number.isFinite(base) ? base : Date.now();
+  return new Date(safe + minutes * 60_000).toISOString();
+}
+
+// BD-ORDER-DETAIL-01D-1F — whitelist for caller-supplied `details`.
+// The store accepts only render/edit fields; canonical identity and
+// timeline fields (id, orderId, driverId, status, createdAt,
+// updatedAt, expiresAt) are owned by the store itself and can never
+// be overridden by a `details` overlay. Strings must be strings;
+// `etaMin` must be a finite positive number; `price` must be a finite
+// non-negative number. Anything else is silently dropped.
+function pickOfferDetails(details) {
+  const out = {};
+  if (!isPlainObject(details)) return out;
+  if (typeof details.driverName === 'string') out.driverName = details.driverName;
+  if (typeof details.car        === 'string') out.car        = details.car;
+  if (typeof details.rating     === 'string') out.rating     = details.rating;
+  if (typeof details.message    === 'string') out.message    = details.message;
+  if (typeof details.etaMin === 'number'
+      && Number.isFinite(details.etaMin)
+      && details.etaMin > 0) {
+    out.etaMin = details.etaMin;
+  }
+  if (typeof details.price === 'number'
+      && Number.isFinite(details.price)
+      && details.price >= 0) {
+    out.price = details.price;
+  }
+  return out;
 }
 
 // Hydrate a freshly-created own DriverOffer with renderable demo fields
@@ -124,12 +225,15 @@ function buildOfferId(orderId, driverId) {
 
 // Return the offer for (orderId, driverId) or null. Reads on every
 // call so callers see the freshest store; the cost is one JSON parse
-// per read which is fine for the read/render path.
+// per read which is fine for the read/render path. Reads go through
+// `hasOwn()` so a polluted prototype chain on the underlying parsed
+// object cannot leak a fake bucket / fake offer through.
 export function getDriverOffer(orderId, driverId) {
-  if (!isString(orderId) || !isString(driverId)) return null;
+  if (!isSafeStoreKey(orderId) || !isSafeStoreKey(driverId)) return null;
   const store = loadStore();
+  if (!hasOwn(store, orderId)) return null;
   const bucket = store[orderId];
-  if (!isPlainObject(bucket)) return null;
+  if (!isPlainObject(bucket) || !hasOwn(bucket, driverId)) return null;
   const off = bucket[driverId];
   return isPlainObject(off) ? off : null;
 }
@@ -139,82 +243,133 @@ export function getDriverOffer(orderId, driverId) {
 // (`withdrawn`) are included — Order Detail filters selectable
 // candidates with activeSentOffers() at the render layer.
 export function listDriverOffersForOrder(orderId) {
-  if (!isString(orderId)) return [];
+  if (!isSafeStoreKey(orderId)) return [];
   const store = loadStore();
+  if (!hasOwn(store, orderId)) return [];
   const bucket = store[orderId];
   if (!isPlainObject(bucket)) return [];
-  return Object.values(bucket).filter(isPlainObject);
+  // Only enumerate own properties — Object.values walks own keys but
+  // we still filter through hasOwn() for symmetry with getDriverOffer.
+  return Object.keys(bucket)
+    .filter((k) => hasOwn(bucket, k))
+    .map((k) => bucket[k])
+    .filter(isPlainObject);
 }
 
 // Idempotent send. The (orderId, driverId) key guarantees we never
 // create a duplicate sent offer for the same driver/order. The four
 // states callers care about:
 //   • no existing offer            → create with status='sent' +
-//                                    hydrated renderable defaults
+//                                    hydrated renderable defaults +
+//                                    expiresAt = createdAt + 15 min
 //   • existing with status='sent'  → no-op (return existing). The
 //     screen surface toasts "уже отправлен" in this case.
 //   • existing with status='withdrawn' → re-send: flip to 'sent',
 //     bump updatedAt monotonically, keep createdAt + previously
-//     hydrated render fields.
-//   • caller-supplied driverId/orderId malformed → null
+//     hydrated render fields. Preserves existing `expiresAt` if it
+//     was already pinned (and still parseable); backfills
+//     `createdAt + 15 min` otherwise.
+//   • existing with terminal/unknown status (`accepted`, `rejected`,
+//     `expired`, or any future value)                → return existing
+//     UNCHANGED. 01D-1 never overwrites a terminal status; later sub-
+//     slices own those transitions.
+//   • caller-supplied driverId/orderId malformed or blocked → null
 //
 // A malformed bucket (e.g. someone seeded `store[orderId] = "stale"`
-// into localStorage) is reset to `{}` so the write can land without
-// throwing — this matches the fail-soft posture the rest of the store
-// uses for malformed JSON.
+// into localStorage) is reset to a fresh null-prototype map so the
+// write can land without throwing — this matches the fail-soft posture
+// the rest of the store uses for malformed JSON.
 //
 // `details` is an optional overlay for caller-supplied renderable
-// fields (price, etaMin, message, driverName, car, rating). It wins
-// over the hydrated demo defaults but is ignored for already-existing
-// offers (preserving the offer's pinned values on re-send).
+// fields. It is filtered through `pickOfferDetails()` — only the
+// whitelisted render/edit fields are accepted, and identity / timeline
+// fields are silently dropped. Applies only to brand-new offers; a
+// re-send of an existing withdrawn offer preserves the offer's pinned
+// render fields (passing details on a re-send is a no-op).
 //
 // Returns the offer object on success, null on bad input.
 export function sendDriverOffer({ orderId, driverId, details } = {}) {
-  if (!isString(orderId) || !isString(driverId)) return null;
+  if (!isSafeStoreKey(orderId) || !isSafeStoreKey(driverId)) return null;
   const store = loadStore();
   // Recover a malformed bucket — a primitive (string/number) or an
-  // array would throw on the assignment below. Resetting to `{}` is
-  // the same fail-soft behaviour the JSON parser uses for malformed
-  // top-level storage.
-  let bucket = store[orderId];
+  // array would throw on the assignment below. Resetting to a fresh
+  // null-prototype map is the same fail-soft behaviour the JSON
+  // parser uses for malformed top-level storage.
+  let bucket = hasOwn(store, orderId) ? store[orderId] : null;
   if (!isPlainObject(bucket)) {
-    bucket = {};
+    bucket = createMap();
     store[orderId] = bucket;
   }
-  const existing = isPlainObject(bucket[driverId]) ? bucket[driverId] : null;
+  const existing = hasOwn(bucket, driverId) && isPlainObject(bucket[driverId])
+    ? bucket[driverId]
+    : null;
   if (existing && existing.status === DRIVER_OFFER_STATUS.SENT) {
     return existing;
   }
+  // BD-ORDER-DETAIL-01D-1F — terminal / unknown statuses are not
+  // overridable from 01D-1. Anything that isn't `sent` or `withdrawn`
+  // is owned by a future sub-slice; return verbatim instead of
+  // silently rewriting it back to 'sent'.
+  if (existing
+      && existing.status !== DRIVER_OFFER_STATUS.WITHDRAWN
+      && existing.status !== DRIVER_OFFER_STATUS.SENT) {
+    return existing;
+  }
   const stamp = bumpedIso(existing && existing.updatedAt);
-  const overlay = isPlainObject(details) ? details : null;
-  const next = existing
-    ? { ...existing, status: DRIVER_OFFER_STATUS.SENT, updatedAt: stamp }
-    : {
-        id: buildOfferId(orderId, driverId),
-        orderId,
-        driverId,
-        ...NEW_OFFER_DEFAULTS,
-        ...(overlay || {}),
-        status: DRIVER_OFFER_STATUS.SENT,
-        createdAt: stamp,
-        updatedAt: stamp,
-      };
+  const overlay = pickOfferDetails(details);
+  let next;
+  if (existing) {
+    // Re-send of a withdrawn offer. Preserve identity, createdAt, the
+    // previously hydrated render fields, and the original expiresAt
+    // when it parses; otherwise backfill expiresAt from createdAt +
+    // TTL (the safer of the two options — the offer's lifetime stays
+    // anchored to its original creation time, not to the re-send).
+    const prevExpiry = typeof existing.expiresAt === 'string'
+      && Number.isFinite(new Date(existing.expiresAt).getTime())
+      ? existing.expiresAt
+      : addMinutesIso(existing.createdAt || stamp, DEFAULT_OFFER_TTL_MIN);
+    next = {
+      ...existing,
+      status: DRIVER_OFFER_STATUS.SENT,
+      updatedAt: stamp,
+      expiresAt: prevExpiry,
+    };
+  } else {
+    next = {
+      id: buildOfferId(orderId, driverId),
+      orderId,
+      driverId,
+      ...NEW_OFFER_DEFAULTS,
+      ...overlay,
+      status: DRIVER_OFFER_STATUS.SENT,
+      createdAt: stamp,
+      updatedAt: stamp,
+      expiresAt: addMinutesIso(stamp, DEFAULT_OFFER_TTL_MIN),
+    };
+  }
   bucket[driverId] = next;
   saveStore(store);
   return next;
 }
 
-// Idempotent withdraw. Only acts on an existing `sent` offer; flips
-// to `withdrawn` and bumps `updatedAt`. Already-withdrawn offers are
-// returned unchanged. Missing offers return null (nothing to withdraw).
+// Idempotent withdraw. Only acts on an existing offer whose status is
+// EXACTLY `'sent'`; flips to `'withdrawn'` and bumps `updatedAt`.
+//   • status='withdrawn' / 'accepted' / 'rejected' / 'expired' / unknown
+//     → return existing UNCHANGED (terminal/unknown statuses are owned
+//     by later 01D sub-slices; 01D-1 never overwrites them).
+//   • no existing offer / malformed bucket / blocked key → null.
 export function withdrawDriverOffer({ orderId, driverId } = {}) {
-  if (!isString(orderId) || !isString(driverId)) return null;
+  if (!isSafeStoreKey(orderId) || !isSafeStoreKey(driverId)) return null;
   const store = loadStore();
+  if (!hasOwn(store, orderId)) return null;
   const bucket = store[orderId];
-  if (!isPlainObject(bucket)) return null;
+  if (!isPlainObject(bucket) || !hasOwn(bucket, driverId)) return null;
   const existing = bucket[driverId];
   if (!isPlainObject(existing)) return null;
-  if (existing.status === DRIVER_OFFER_STATUS.WITHDRAWN) return existing;
+  // BD-ORDER-DETAIL-01D-1F — only 'sent' is overridable. Every other
+  // status (including the implicit 'unknown' that a future or
+  // corrupted writer might leave) is returned verbatim.
+  if (existing.status !== DRIVER_OFFER_STATUS.SENT) return existing;
   const next = {
     ...existing,
     status: DRIVER_OFFER_STATUS.WITHDRAWN,
