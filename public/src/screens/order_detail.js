@@ -194,6 +194,18 @@ const LOCK_REASON_LABEL = Object.freeze({
   order_expired:         'Заказ истёк',
 });
 
+// BD-ORDER-DETAIL-01C Codex P2 — guard decodeURIComponent against
+// malformed percent-encoded ids (e.g. `/order/%E0%A4%A`). The raw
+// decode throws URIError, which would propagate out of the loader and
+// blank the screen instead of letting the resolver fall through to S2.
+function safeDecodeOrderId(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 export function parseOrderHashPath(rawHash) {
   const hash = (rawHash || '').replace(/^#/, '');
   const queryAt = hash.indexOf('?');
@@ -201,9 +213,18 @@ export function parseOrderHashPath(rawHash) {
   const query = queryAt === -1 ? '' : hash.slice(queryAt + 1);
   const m = path.match(/^\/order\/([^/?#]+)/);
   return {
-    id: m ? decodeURIComponent(m[1]) : null,
+    id: m ? safeDecodeOrderId(m[1]) : null,
     query: new URLSearchParams(query),
   };
+}
+
+// BD-ORDER-DETAIL-01C Codex P2 — Model B's P2 ("Passenger Has Driver
+// Offers") must trigger on *active sent* offers only. Terminal offers
+// (`rejected`, `withdrawn`, `expired`) stay in the order's `offers`
+// array for history / write-side preservation in 01D, but they do NOT
+// count as selectable candidates and must not trip P2.
+export function activeSentOffers(order) {
+  return (order?.offers || []).filter((o) => o?.status === 'sent');
 }
 
 export function resolveRoleFromQuery(query, currentUser) {
@@ -236,7 +257,7 @@ export function resolveState(order, role) {
 
   if (status === ORDER_STATUS.CANCELED || status === ORDER_STATUS.EXPIRED) return 'P4';
   if (status === ORDER_STATUS.ACCEPTED) return 'P3';
-  return (order.offers || []).length > 0 ? 'P2' : 'P1';
+  return activeSentOffers(order).length > 0 ? 'P2' : 'P1';
 }
 
 export function resolveStateChip(state, order) {
@@ -331,7 +352,10 @@ function bodyP1(order) {
 }
 
 function bodyP2(order) {
-  const offers = (order.offers || []).map((o) => offerCard(o, order)).join('');
+  // Render only active sent candidates. Terminal offers (rejected /
+  // withdrawn / expired) stay in `order.offers` but don't surface as
+  // selectable cards — see activeSentOffers().
+  const offers = activeSentOffers(order).map((o) => offerCard(o, order)).join('');
   return `
     ${routeSummary(order)}
     ${priceLine(order)}
@@ -340,8 +364,12 @@ function bodyP2(order) {
 }
 
 function bodyP3(order) {
+  // Only an offer that has actually been `accepted` may pose as the
+  // assigned driver. Codex P2 #458: do not fall back to the first
+  // offer — a historical rejected / expired / withdrawn offer must
+  // never be displayed as the assigned driver. The neutral fallback
+  // (no offer at all) is the safe default.
   const assigned = (order.offers || []).find((o) => o.status === 'accepted')
-    || (order.offers || [])[0]
     || { driverName: 'Назначенный водитель', car: '', rating: '', price: order.budget };
   return `
     ${routeSummary(order)}

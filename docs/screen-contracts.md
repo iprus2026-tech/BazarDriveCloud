@@ -574,7 +574,7 @@ either):
 | # | State | UI status / chip | Renders | Actions |
 |---|---|---|---|---|
 | P1 | **Passenger Own Order Created** | «Ждём водителя» · empty offers state | order summary, route, price, comment | Изменить · Отменить заказ · Поделиться · Скопировать |
-| P2 | **Passenger Has Driver Offers** | «Есть предложения» | `DriverOffer[]` cards: driver name · car · rating · ETA · offered price · message | Выбрать водителя · Написать · Отклонить |
+| P2 | **Passenger Has Driver Offers** | «Есть предложения» | `DriverOffer[]` cards: driver name · car · rating · ETA · offered price · message. **P2 renders active `DriverOffer(status='sent')` candidates only.** Terminal offers (`rejected`, `withdrawn`, `expired`) remain preserved in data for write-side history (BD-ORDER-DETAIL-01D) but do not expose «Выбрать водителя» and do not trigger P2 on their own. | Выбрать водителя · Написать · Отклонить |
 | P3 | **Passenger Driver Selected** | «Заказ принят» | assigned driver card · timeline | **«Открыть поездку»** (primary, hands off to `/active-ride?role=passenger`) |
 | P4 | **Passenger Terminal State** | «Отменён» **or** «Истёк» | terminal copy | Создать новый заказ · Вернуться в ленту |
 

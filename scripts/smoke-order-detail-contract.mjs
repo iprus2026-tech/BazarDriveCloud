@@ -254,6 +254,7 @@ for (const name of [
   'resolveState',
   'resolveStateChip',
   'renderOrderDetailMarkup',
+  'activeSentOffers',
   'ROLE_CHIP',
   'STATE_CHIP',
   'ORDER_STATUS',
@@ -263,6 +264,8 @@ for (const name of [
 ]) {
   expect(`order_detail.js exports ${name}`, orderDetailMod[name] !== undefined);
 }
+expect('activeSentOffers is exported as a function',
+  typeof orderDetailMod.activeSentOffers === 'function');
 expect('default export is a screen loader function', typeof orderDetailMod.default === 'function');
 expect('role chips match contract',
   orderDetailMod.ROLE_CHIP.passenger === 'Ваш заказ'
@@ -306,6 +309,115 @@ expect('demo-order-expired resolves to P4 passenger and D4 driver',
 expect('missing order and loading state resolve to S2 / S1',
   orderDetailMod.resolveState(orderDetailMod.loadOrder('missing-order'), 'passenger') === 'S2'
   && orderDetailMod.resolveState({ __loading: true }, 'passenger') === 'S1');
+
+// ── E1. Malformed /order/<id> deep-link must not crash ──────────────
+// `#/order/%E0%A4%A` is a syntactically-valid hash path with an
+// invalid percent-encoded id. Raw `decodeURIComponent` throws URIError
+// for that token; the runtime must catch and fall through to S2.
+{
+  const malformedHash = '#/order/%E0%A4%A?role=passenger';
+  let malformed = null;
+  let threw = false;
+  try { malformed = orderDetailMod.parseOrderHashPath(malformedHash); }
+  catch { threw = true; }
+  expect('parseOrderHashPath does not throw on a malformed id', !threw);
+  expect('malformed order id decodes to null instead of throwing',
+    !!malformed && malformed.id === null);
+  expect('malformed order id query is still parsed',
+    !!malformed && malformed.query.get('role') === 'passenger');
+  const malformedState = orderDetailMod.resolveState(
+    orderDetailMod.loadOrder(malformed && malformed.id),
+    'passenger');
+  expect('malformed order id resolves to S2', malformedState === 'S2');
+  const malformedMarkup = orderDetailMod.renderOrderDetailMarkup({
+    order: orderDetailMod.loadOrder(malformed && malformed.id),
+    role: 'passenger',
+    state: malformedState,
+  });
+  expect('malformed order id renders S2 «Заказ не найден»',
+    malformedMarkup.includes('Заказ не найден'));
+  expect('malformed order id S2 markup carries no select-driver CTA',
+    !malformedMarkup.includes('Выбрать водителя')
+    && !malformedMarkup.includes('Откликнуться'));
+}
+
+// ── E2. Active-sent-only P2 — terminal offers don't count as candidates ──
+// Codex P2 #459: a passenger order whose only offers are
+// `rejected`/`withdrawn`/`expired` must NOT enter P2. Terminal offers
+// stay in the data shape (write-side preservation in 01D) but never
+// surface as selectable candidates.
+{
+  const terminalOnly = {
+    ...orderDetailMod.loadOrder('demo-order-1'),
+    offers: [
+      { id: 'expired-offer',   orderId: 'demo-order-1', driverId: 'driver-expired',
+        driverName: 'Истёкший водитель', car: 'Test', rating: '4,8',
+        etaMin: 5, price: 1000, message: 'expired',
+        status: 'expired',   createdAt: 0, expiresAt: 1 },
+      { id: 'withdrawn-offer', orderId: 'demo-order-1', driverId: 'driver-withdrawn',
+        driverName: 'Отозванный водитель', car: 'Test', rating: '4,7',
+        etaMin: 6, price: 900, message: 'withdrawn',
+        status: 'withdrawn', createdAt: 0, expiresAt: 1 },
+      { id: 'rejected-offer',  orderId: 'demo-order-1', driverId: 'driver-rejected',
+        driverName: 'Отклонённый водитель', car: 'Test', rating: '4,6',
+        etaMin: 7, price: 950, message: 'rejected',
+        status: 'rejected',  createdAt: 0, expiresAt: 1 },
+    ],
+  };
+  expect('terminal-only offers count via activeSentOffers === 0',
+    orderDetailMod.activeSentOffers(terminalOnly).length === 0);
+  const state = orderDetailMod.resolveState(terminalOnly, 'passenger');
+  expect('terminal-only passenger offers resolve to P1, not P2', state === 'P1');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: terminalOnly, role: 'passenger', state });
+  expect('terminal-only passenger render exposes no «Выбрать водителя»',
+    !markup.includes('Выбрать водителя'));
+  expect('terminal-only passenger render shows the empty-offers panel',
+    markup.includes('Пока нет предложений'));
+  // Terminal driver names must not surface as selectable candidates.
+  for (const name of ['Истёкший водитель', 'Отозванный водитель', 'Отклонённый водитель']) {
+    expect(`terminal-only passenger render hides terminal candidate "${name}"`,
+      !markup.includes(name));
+  }
+  // Underlying data is still preserved (write-side 01D contract).
+  expect('terminal offers are preserved in the order object',
+    terminalOnly.offers.length === 3
+    && terminalOnly.offers.some((o) => o.status === 'expired')
+    && terminalOnly.offers.some((o) => o.status === 'withdrawn')
+    && terminalOnly.offers.some((o) => o.status === 'rejected'));
+}
+
+// ── E3. Mixed sent + terminal — P2 renders only the sent candidate ──
+{
+  const mixed = {
+    ...orderDetailMod.loadOrder('demo-order-1'),
+    offers: [
+      { id: 'sent-offer',    orderId: 'demo-order-1', driverId: 'driver-active',
+        driverName: 'Активный водитель', car: 'BMW · чёрный', rating: '4,9',
+        etaMin: 3, price: 1450, message: 'live',
+        status: 'sent',    createdAt: 0, expiresAt: Date.now() + 60_000 },
+      { id: 'expired-offer', orderId: 'demo-order-1', driverId: 'driver-expired',
+        driverName: 'Истёкший водитель', car: 'Test', rating: '4,8',
+        etaMin: 5, price: 1000, message: 'expired',
+        status: 'expired', createdAt: 0, expiresAt: 1 },
+    ],
+  };
+  expect('mixed offers: activeSentOffers === 1',
+    orderDetailMod.activeSentOffers(mixed).length === 1);
+  const state = orderDetailMod.resolveState(mixed, 'passenger');
+  expect('mixed offers resolve to P2', state === 'P2');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: mixed, role: 'passenger', state });
+  expect('mixed P2 markup includes the live sent driver name',
+    markup.includes('Активный водитель'));
+  expect('mixed P2 markup does NOT include the expired driver name',
+    !markup.includes('Истёкший водитель'));
+  expect('mixed P2 markup exposes the «Выбрать водителя» CTA for the sent candidate',
+    markup.includes('Выбрать водителя'));
+  // Both offer objects stay in the data — only render is filtered.
+  expect('mixed data preserves the expired offer for 01D write-side',
+    mixed.offers.some((o) => o.id === 'expired-offer' && o.status === 'expired'));
+}
 
 {
   const { state, markup } = renderState(orderDetailMod, 'demo-order-1', 'passenger');
