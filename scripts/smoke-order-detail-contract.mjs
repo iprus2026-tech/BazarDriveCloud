@@ -554,10 +554,20 @@ expect('withdraw-offer path uses withdrawDriverOffer (no Order/selectedDriverId 
   /withdraw-offer[\s\S]{0,800}withdrawDriverOffer\s*\(/.test(orderDetailSrc)
   && !/withdraw-offer[\s\S]{0,800}Order\.status\s*=/.test(orderDetailSrc)
   && !/withdraw-offer[\s\S]{0,800}selectedDriverId\s*=/.test(orderDetailSrc));
-expect('order_detail.js still never seeds active_ride in 01D-1',
-  !/saveActiveRide\s*\(/.test(orderDetailSrc)
-  && !/updateActiveRideStatus\s*\(/.test(orderDetailSrc)
-  && !/active_ride\.v1/.test(orderDetailSrc));
+// BD-ORDER-DETAIL-01D-2B — `saveActiveRide` is now legitimately called
+// from the open-trip handoff. The 01D-1 ban relaxes to:
+//   • driver-send-offer path never calls saveActiveRide
+//   • withdraw-offer path never calls saveActiveRide
+//   • select-driver (01D-2A commit) path never calls saveActiveRide
+//   • The only saveActiveRide call site is the open-trip handler
+//     (gated by canOpenTrip + role === 'passenger', see F4).
+expect('driver/withdraw/select-driver paths never seed active_ride (01D-1 + 01D-2A)',
+  !/driver-send-offer[\s\S]{0,1000}saveActiveRide\s*\(/.test(orderDetailSrc)
+  && !/withdraw-offer[\s\S]{0,1000}saveActiveRide\s*\(/.test(orderDetailSrc)
+  && !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}saveActiveRide\s*\(/.test(orderDetailSrc)
+  && !/driver-send-offer[\s\S]{0,1000}updateActiveRideStatus\s*\(/.test(orderDetailSrc)
+  && !/withdraw-offer[\s\S]{0,1000}updateActiveRideStatus\s*\(/.test(orderDetailSrc)
+  && !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}updateActiveRideStatus\s*\(/.test(orderDetailSrc));
 
 // ── F1. DriverOffer local store (BD-ORDER-DETAIL-01D-1) ─────────────
 // Behavioral round-trip over the new local store: an in-memory
@@ -1367,10 +1377,14 @@ function mkOffer(orderId, driverId, status, extra = {}) {
   // Source-level guard on order_detail.js: the select-driver handler
   // path must never call saveActiveRide / updateActiveRideStatus, and
   // must never write the active_ride.v1 key.
-  expect('F3j — order_detail.js select-driver path never seeds active_ride',
-    !/select-driver[\s\S]{0,2000}saveActiveRide\s*\(/.test(orderDetailSrc)
-    && !/select-driver[\s\S]{0,2000}updateActiveRideStatus\s*\(/.test(orderDetailSrc)
-    && !/select-driver[\s\S]{0,2000}active_ride\.v1/.test(orderDetailSrc));
+  // BD-ORDER-DETAIL-01D-2B — anchor the scan on the click-handler
+  // `action === 'select-driver'` check so the offerCard markup
+  // mention of the action token doesn't drag in the unrelated
+  // open-trip saveActiveRide call elsewhere in the file.
+  expect('F3j — order_detail.js select-driver handler path never seeds active_ride',
+    !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}saveActiveRide\s*\(/.test(orderDetailSrc)
+    && !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}updateActiveRideStatus\s*\(/.test(orderDetailSrc)
+    && !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}active_ride\.v1/.test(orderDetailSrc));
   const offerStoreSrcInline = read('../public/src/driver_offer_store.js');
   // Strip comments before the active_ride scan so the "deliberately
   // does NOT seed bazardrive.active_ride.v1" disclaimer in the
@@ -1480,6 +1494,287 @@ for (const terminalStatus of ['withdrawn', 'rejected', 'expired']) {
     driverOfferStore.getDriverOffer(orderId, 'drv-l-peer-rejected')?.status === 'rejected');
   expect('F3l peer — order overlay still writes for the legitimate commit',
     driverOfferStore.getOrderOverlay(orderId)?.status === 'ACCEPTED');
+}
+
+// ── F4a–F4j. Passenger active-ride handoff (BD-ORDER-DETAIL-01D-2B) ──
+// «Открыть поездку» on P3 builds an active_ride seed and writes it to
+// `bazardrive.active_ride.v1` BEFORE navigating to /active-ride. Until
+// the CTA is tapped no active-ride write happens — the 01D-2A select
+// commit alone NEVER seeds active_ride.
+
+const rideState = await import(new URL('../public/src/ride_state.js', import.meta.url).href);
+const ACTIVE_RIDE_STORE_KEY = 'bazardrive.active_ride.v1';
+
+expect('order_detail.js exports canOpenTrip',
+  typeof orderDetailMod.canOpenTrip === 'function');
+expect('order_detail.js exports buildPassengerActiveRideSeed',
+  typeof orderDetailMod.buildPassengerActiveRideSeed === 'function');
+
+// Helper to build a synthetic accepted order with an `accepted` offer
+// matching `selectedDriverId`. Mirrors what loadOrder() returns after a
+// successful 01D-2A commit + overlay merge.
+function mkAcceptedOrder(orderId, selectedDriverId, overrides = {}) {
+  return {
+    id: orderId,
+    status: 'ACCEPTED',
+    selectedDriverId,
+    pickup: 'ул. Тестовая, 1',
+    dropoff: 'Аэропорт',
+    time: 'Сегодня, 15:00',
+    passengerName: 'Иван П.',
+    budget: 1200,
+    comment: 'Test',
+    offers: [
+      mkOffer(orderId, selectedDriverId, 'accepted', { price: 1100 }),
+    ],
+    ...overrides,
+  };
+}
+
+// ── F4a — select driver alone NEVER writes active_ride.v1 ───────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('handoff-test-a', [mkOffer('handoff-test-a', 'drv-a', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'handoff-test-a',
+    selectedDriverId: 'drv-a',
+    allOffers: driverOfferStore.listDriverOffersForOrder('handoff-test-a'),
+  });
+  expect('F4a — 01D-2A commit alone NEVER writes bazardrive.active_ride.v1',
+    !_bdofs.has(ACTIVE_RIDE_STORE_KEY));
+}
+
+// ── F4b — canOpenTrip = true ONLY when post-commit state is reached ──
+{
+  expect('F4b — accepted order with accepted self-offer satisfies canOpenTrip',
+    orderDetailMod.canOpenTrip(mkAcceptedOrder('o', 'drv-x')) === true);
+  expect('F4b — accepted order with sent self-offer also satisfies canOpenTrip',
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-x'),
+      offers: [mkOffer('o', 'drv-x', 'sent')],
+    }) === true);
+}
+
+// ── F4c — CTA disabled when selectedDriverId is missing ─────────────
+{
+  expect('F4c — order with status=ACCEPTED but no selectedDriverId fails canOpenTrip',
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-x'),
+      selectedDriverId: null,
+    }) === false);
+  expect('F4c — order with empty-string selectedDriverId fails canOpenTrip',
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-x'),
+      selectedDriverId: '',
+    }) === false);
+}
+
+// ── F4d — CTA disabled when selected offer is missing ───────────────
+{
+  expect('F4d — order with selectedDriverId pointing at no offer fails canOpenTrip',
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-target'),
+      offers: [mkOffer('o', 'drv-other', 'accepted')],
+    }) === false);
+  expect('F4d — order with no offers at all fails canOpenTrip',
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-target'),
+      offers: [],
+    }) === false);
+}
+
+// ── F4e — CTA disabled when selected offer is stale (terminal) ──────
+for (const stale of ['withdrawn', 'expired', 'rejected']) {
+  expect(`F4e — selected offer with status='${stale}' fails canOpenTrip`,
+    orderDetailMod.canOpenTrip({
+      ...mkAcceptedOrder('o', 'drv-x'),
+      offers: [mkOffer('o', 'drv-x', stale)],
+    }) === false);
+}
+// Non-accepted order is also a fail regardless of the selected offer.
+expect('F4e — order.status != ACCEPTED fails canOpenTrip',
+  orderDetailMod.canOpenTrip({
+    ...mkAcceptedOrder('o', 'drv-x'),
+    status: 'CREATED',
+  }) === false);
+
+// ── F4f — building the seed does not mutate terminal offers ─────────
+{
+  driverOfferStore.clearDriverOfferStore();
+  // Pre-seed an order whose merged offers include the selected accepted
+  // offer plus a withdrawn peer. The seed builder must read but never
+  // write — terminal offers stay exactly as they were before / after.
+  const orderId = 'handoff-test-f';
+  seedOrderWithOffers(orderId, [
+    mkOffer(orderId, 'drv-target',        'accepted'),
+    mkOffer(orderId, 'drv-peer-withdrawn','withdrawn'),
+    mkOffer(orderId, 'drv-peer-expired',  'expired'),
+  ]);
+  // Plant an overlay so the merged order reports status=ACCEPTED +
+  // selectedDriverId — same shape loadOrder() produces.
+  _bdofs.set('bazardrive.order_overlay.v1', JSON.stringify({
+    [orderId]: { status: 'ACCEPTED', selectedDriverId: 'drv-target',
+      updatedAt: '2026-06-11T08:00:00.000Z' },
+  }));
+  const merged = {
+    id: orderId,
+    status: 'ACCEPTED',
+    selectedDriverId: 'drv-target',
+    passengerName: 'Test',
+    pickup: 'A', dropoff: 'B', time: 'now',
+    budget: 1000, comment: '',
+    offers: driverOfferStore.listDriverOffersForOrder(orderId),
+  };
+  const seed = orderDetailMod.buildPassengerActiveRideSeed(merged);
+  expect('F4f — seed builder returns a non-null seed for a valid order',
+    !!seed);
+  expect('F4f — terminal withdrawn peer still withdrawn after seed build',
+    driverOfferStore.getDriverOffer(orderId, 'drv-peer-withdrawn')?.status === 'withdrawn');
+  expect('F4f — terminal expired peer still expired after seed build',
+    driverOfferStore.getDriverOffer(orderId, 'drv-peer-expired')?.status === 'expired');
+}
+
+// ── F4g — seed snapshot carries every required field ────────────────
+{
+  const orderId = 'handoff-test-g';
+  const order = mkAcceptedOrder(orderId, 'drv-g', {
+    passengerName: 'Анна М.',
+    pickup: 'ул. Малая Бронная, 28',
+    dropoff: 'Шереметьево',
+    budget: 1500,
+  });
+  // Inject driver / price fields onto the accepted offer.
+  order.offers = [mkOffer(orderId, 'drv-g', 'accepted', {
+    driverName: 'Рустам К.',
+    car: 'Toyota Camry · серый',
+    rating: '4,92',
+    etaMin: 5,
+    price: 1450,
+  })];
+  const seed = orderDetailMod.buildPassengerActiveRideSeed(order);
+  expect('F4g — seed.tripId is derived from orderId when not set',
+    !!seed && seed.tripId === `trip_${orderId}`);
+  expect('F4g — seed.orderId carries the source order id',
+    !!seed && seed.orderId === orderId);
+  expect('F4g — seed.role === "passenger"', !!seed && seed.role === 'passenger');
+  expect('F4g — seed.selectedDriverId mirrors the chosen offer driverId',
+    !!seed && seed.selectedDriverId === 'drv-g');
+  expect('F4g — seed.selectedOfferId mirrors the chosen offer id',
+    !!seed && seed.selectedOfferId === order.offers[0].id);
+  expect('F4g — seed.status is a passenger-supported RIDE_STATUS',
+    !!seed && (seed.status === rideState.RIDE_STATUS.ACCEPTED
+            || seed.status === rideState.RIDE_STATUS.DRIVER_EN_ROUTE));
+  expect('F4g — seed.passenger.name comes from order.passengerName',
+    !!seed && seed.passenger.name === 'Анна М.');
+  expect('F4g — seed.driver.name comes from the chosen offer.driverName',
+    !!seed && seed.driver.name === 'Рустам К.');
+  expect('F4g — seed.driver.car comes from the chosen offer.car',
+    !!seed && seed.driver.car === 'Toyota Camry · серый');
+  expect('F4g — seed.vehicle is present (model from offer.car)',
+    !!seed && typeof seed.vehicle === 'object'
+    && seed.vehicle.model === 'Toyota Camry · серый');
+  expect('F4g — seed.route carries pickup/dropoff from the order',
+    !!seed && seed.route.pickupLabel === 'ул. Малая Бронная, 28'
+    && seed.route.dropoffLabel === 'Шереметьево');
+  expect('F4g — seed.order.offerPrice is formatted from the chosen offer price',
+    !!seed && typeof seed.order.offerPrice === 'string'
+    && seed.order.offerPrice.length > 0);
+  expect('F4g — seed.payment.amount is formatted from the order budget / offer price',
+    !!seed && typeof seed.payment.amount === 'string'
+    && seed.payment.amount.length > 0);
+  expect('F4g — seed.seededFrom marks the Order Detail handoff source',
+    !!seed && seed.seededFrom === 'order_detail_passenger_handoff');
+}
+
+// ── F4h — seed round-trip via ride_state.saveActiveRide ─────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const orderId = 'handoff-test-h';
+  const order = mkAcceptedOrder(orderId, 'drv-h');
+  const seed = orderDetailMod.buildPassengerActiveRideSeed(order);
+  // Simulate the click-handler path: idempotent saveActiveRide.
+  rideState.saveActiveRide(seed);
+  const persisted = rideState.findActiveRide(seed.tripId);
+  expect('F4h — saveActiveRide round-trip surfaces the seeded ride',
+    !!persisted
+    && persisted.tripId === seed.tripId
+    && persisted.orderId === orderId
+    && persisted.selectedDriverId === 'drv-h');
+  // bazardrive.active_ride.v1 is now written — this is the ONLY place
+  // 01D-2B touches that key.
+  expect('F4h — bazardrive.active_ride.v1 is written by the handoff seed',
+    _bdofs.has(ACTIVE_RIDE_STORE_KEY));
+}
+
+// ── F4i — click handler routes to /active-ride?role=passenger&tripId= ─
+expect('F4i — open-trip handler navigates to /active-ride?role=passenger&tripId=',
+  /open-trip[\s\S]{0,2500}go\(`\/active-ride\?role=passenger&tripId=\$\{encodeURIComponent\(seed\.tripId\)\}`\)/.test(orderDetailSrc));
+
+// ── F4j — open-trip handler is gated and never seeds without canOpenTrip ─
+// Source-level guards: handler must check role === 'passenger', call
+// canOpenTrip, build seed, persist via saveActiveRide, then navigate.
+expect('F4j — open-trip handler gates on role === passenger',
+  /open-trip[\s\S]{0,1500}role\s*!==\s*['"]passenger['"]/.test(orderDetailSrc));
+expect('F4j — open-trip handler calls canOpenTrip before building the seed',
+  /open-trip[\s\S]{0,1500}canOpenTrip\(/.test(orderDetailSrc));
+expect('F4j — open-trip handler calls buildPassengerActiveRideSeed',
+  /open-trip[\s\S]{0,1500}buildPassengerActiveRideSeed\(/.test(orderDetailSrc));
+expect('F4j — open-trip handler is the only place saveActiveRide is called',
+  /open-trip[\s\S]{0,2000}saveActiveRide\(/.test(orderDetailSrc));
+expect('F4j — open-trip handler is idempotent via findActiveRide guard',
+  /findActiveRide\(\s*seed\.tripId\s*\)/.test(orderDetailSrc));
+// Defensive: open-trip handler must NOT call commitPassengerSelection
+// or any of the 01D-2A overlay mutators.
+expect('F4j — open-trip handler never calls commitPassengerSelection',
+  !/open-trip[\s\S]{0,2000}commitPassengerSelection\(/.test(orderDetailSrc));
+// driver-send-offer / withdraw-offer / select-driver paths never call
+// saveActiveRide.
+expect('F4j — driver-send-offer path never calls saveActiveRide',
+  !/driver-send-offer[\s\S]{0,1000}saveActiveRide\(/.test(orderDetailSrc));
+expect('F4j — withdraw-offer path never calls saveActiveRide',
+  !/withdraw-offer[\s\S]{0,1000}saveActiveRide\(/.test(orderDetailSrc));
+expect('F4j — select-driver handler path never calls saveActiveRide',
+  !/action\s*===\s*['"]select-driver['"][\s\S]{0,2500}saveActiveRide\(/.test(orderDetailSrc));
+
+// ── F4k — no new Mapbox / backend / payment strings introduced ──────
+{
+  const orderDetailNoComments = stripComments(orderDetailSrc);
+  expect('F4k — order_detail.js still has no fetch( calls',
+    !/\bfetch\s*\(/.test(orderDetailNoComments));
+  expect('F4k — order_detail.js still has no mapbox references',
+    !/mapbox/i.test(orderDetailNoComments));
+  expect('F4k — order_detail.js still has no api.mapbox.com',
+    !/api\.mapbox\.com/.test(orderDetailNoComments));
+  expect('F4k — order_detail.js carries no card / charge payment strings',
+    !/<input[^>]*\btype=["']?card["']?/i.test(orderDetailNoComments));
+}
+
+// ── F4l — P3 markup disables «Открыть поездку» when canOpenTrip fails ─
+{
+  // Simulate a P3 render with an ineligible order: status=ACCEPTED but
+  // no selectedDriverId. The bodyP3 path should render the CTA with the
+  // disabled attribute on the button so a stray click can't fire.
+  const ineligible = {
+    id: 'render-test-p3',
+    status: 'ACCEPTED',
+    selectedDriverId: null,
+    passengerName: 'Test',
+    pickup: 'A', dropoff: 'B', time: 'now',
+    budget: 1000, comment: '',
+    offers: [],
+  };
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: ineligible, role: 'passenger', state: 'P3' });
+  expect('F4l — P3 CTA is rendered with disabled attribute when canOpenTrip=false',
+    /<button[^>]*data-action="open-trip"[^>]*\sdisabled/.test(markup));
+  // And ENABLED in the happy path.
+  const eligible = mkAcceptedOrder('render-test-p3-ok', 'drv-ok');
+  const markupOk = orderDetailMod.renderOrderDetailMarkup(
+    { order: eligible, role: 'passenger', state: 'P3' });
+  expect('F4l — P3 CTA is NOT disabled when canOpenTrip=true',
+    !/<button[^>]*data-action="open-trip"[^>]*\sdisabled/.test(markupOk));
 }
 
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────

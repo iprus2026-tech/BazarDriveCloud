@@ -16,6 +16,11 @@ import {
   commitPassengerSelection,
   getOrderOverlay,
 } from '../driver_offer_store.js';
+import {
+  RIDE_STATUS,
+  findActiveRide,
+  saveActiveRide,
+} from '../ride_state.js';
 
 export const SELF_DRIVER_ID = 'demo-driver-self';
 
@@ -312,6 +317,140 @@ export function resolveStateChip(state, order) {
   return STATE_CHIP[state] || '';
 }
 
+// ── BD-ORDER-DETAIL-01D-2B passenger handoff helpers ─────────────────
+//
+// `canOpenTrip(order)` is the gate for the «Открыть поездку» CTA in
+// P3. It only allows the click through when the order is genuinely
+// in the post-commit accepted state and the chosen DriverOffer is
+// still selectable / non-stale. `buildPassengerActiveRideSeed(order)`
+// constructs the active_ride seed from the merged Order Detail data
+// without writing it; the click handler is the only place that calls
+// saveActiveRide.
+
+const STALE_OFFER_STATUSES = new Set(['withdrawn', 'expired', 'rejected']);
+
+// Returns true when the merged order is eligible for the passenger
+// active-ride handoff. Conditions:
+//   • order.status === 'ACCEPTED' (set by 01D-2A commit or fixture)
+//   • order.selectedDriverId is a non-empty string
+//   • a matching DriverOffer exists in order.offers
+//   • that offer's status is 'accepted' (post-commit canonical) or
+//     'sent' (fixture path where the offer hasn't been written yet)
+//   • the offer is NOT in any terminal/stale status
+export function canOpenTrip(order) {
+  if (!order || typeof order !== 'object') return false;
+  if (order.status !== ORDER_STATUS.ACCEPTED) return false;
+  const driverId = order.selectedDriverId;
+  if (typeof driverId !== 'string' || driverId.length === 0) return false;
+  const offer = (order.offers || []).find(
+    (o) => o && typeof o === 'object' && o.driverId === driverId);
+  if (!offer) return false;
+  if (STALE_OFFER_STATUSES.has(offer.status)) return false;
+  return offer.status === 'accepted' || offer.status === 'sent';
+}
+
+function initialsFrom(name) {
+  if (typeof name !== 'string' || !name.trim()) return '';
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((p) => p.charAt(0).toUpperCase()).join('');
+}
+
+function formatRubLocal(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+  return new Intl.NumberFormat('ru-RU').format(value) + ' ₽';
+}
+
+// Builds the active_ride seed snapshot from the merged Order Detail
+// data. Pure — does not write anything, does not import side-effects.
+// The click handler calls saveActiveRide(seed) after a successful
+// build. Returns null when canOpenTrip() would refuse (so callers can
+// short-circuit on a single check).
+export function buildPassengerActiveRideSeed(order) {
+  if (!canOpenTrip(order)) return null;
+  const driverId = order.selectedDriverId;
+  const offer = (order.offers || []).find((o) => o && o.driverId === driverId);
+  if (!offer) return null;
+  const tripId = typeof order.tripId === 'string' && order.tripId
+    ? order.tripId
+    : `trip_${order.id}`;
+  const now = new Date().toISOString();
+  const priceLabel = formatRubLocal(typeof offer.price === 'number'
+    ? offer.price
+    : (typeof order.budget === 'number' ? order.budget : null));
+  return {
+    tripId,
+    orderId: order.id,
+    role: 'passenger',
+    status: RIDE_STATUS.DRIVER_EN_ROUTE,
+    selectedDriverId: driverId,
+    selectedOfferId: offer.id || null,
+    passenger: {
+      name: order.passengerName || '',
+      initials: initialsFrom(order.passengerName || ''),
+      rating: '',
+      phoneMasked: '',
+      luggage: order.comment || '',
+      note: order.comment || '',
+    },
+    driver: {
+      name: offer.driverName || '',
+      initials: initialsFrom(offer.driverName || ''),
+      rating: offer.rating || '',
+      car: offer.car || '',
+      onlineLabel: 'На линии',
+      shiftDuration: '',
+    },
+    vehicle: {
+      model: offer.car || '',
+      color: '',
+      plate: '',
+    },
+    order: {
+      offerPrice: priceLabel,
+      rate: '',
+      commission: '',
+      acceptTimerSec: 0,
+      pickupEta: offer.etaMin != null ? `${offer.etaMin} мин` : '',
+      pickupDistance: '',
+      destinationEta: '',
+      destinationDistance: '',
+      destinationNote: '',
+      tags: [],
+    },
+    route: {
+      pickupLabel: order.pickup || '',
+      dropoffLabel: order.dropoff || '',
+      currentInstruction: '',
+      currentStreet: '',
+      distanceToPickup: '',
+      etaToPickup: offer.etaMin != null ? `${offer.etaMin} мин` : '',
+      etaToDestination: '',
+    },
+    ride: {
+      price: priceLabel,
+      todayEarnings: '',
+      tripsToday: 0,
+      rating: '',
+    },
+    payment: {
+      last4: '',
+      method: '',
+      note: '',
+      amount: priceLabel,
+    },
+    chat: { unread: 0 },
+    timestamps: {
+      createdAt: now,
+      acceptedAt: now,
+      arrivedAt: null,
+      startedAt: null,
+      completedAt: null,
+      canceledAt: null,
+    },
+    seededFrom: 'order_detail_passenger_handoff',
+  };
+}
+
 function formatRub(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '';
   return new Intl.NumberFormat('ru-RU').format(value) + ' ₽';
@@ -431,7 +570,7 @@ function bodyP3(order) {
     ${routeSummary(order)}
     <div class="od-driver-card"><div class="od-driver-card__name">${escapeHtml(assigned.driverName || '')}</div><div class="od-driver-card__car">${escapeHtml(assigned.car || '')}</div><div class="od-driver-card__meta">★ ${escapeHtml(assigned.rating || '')} · ${escapeHtml(formatRub(assigned.price))}</div></div>
     <ol class="od-timeline" role="list" aria-label="Этапы поездки"><li class="od-timeline__step od-timeline__step--done">Заказ создан</li><li class="od-timeline__step od-timeline__step--done">Водитель выбран</li><li class="od-timeline__step od-timeline__step--current">Открыть поездку</li></ol>
-    ${actionsRow([{ label: 'Открыть поездку', dataAction: 'open-trip', variant: 'primary' }])}`;
+    ${actionsRow([{ label: 'Открыть поездку', dataAction: 'open-trip', variant: 'primary', disabled: !canOpenTrip(order) }])}`;
 }
 
 function bodyP4(order) {
@@ -613,7 +752,38 @@ function bindEvents(rootEl, initialCtx) {
       return;
     }
 
-    if (action === 'open-trip' || action === 'open-active-ride') {
+    // BD-ORDER-DETAIL-01D-2B — passenger «Открыть поездку» handoff.
+    // This is the ONLY place an active_ride seed is written for the
+    // Order Detail passenger flow. The 01D-2A select-driver path never
+    // touches bazardrive.active_ride.v1; only this explicit CTA tap
+    // does. Idempotent: a re-tap on an already-seeded tripId does
+    // saveActiveRide-skip and just re-navigates.
+    if (action === 'open-trip') {
+      if (btn.disabled) return;
+      if (role !== 'passenger') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const order = ctx.order;
+      if (!canOpenTrip(order)) {
+        showNotice(rootEl, 'Поездка ещё не доступна');
+        return;
+      }
+      const seed = buildPassengerActiveRideSeed(order);
+      if (!seed) {
+        showNotice(rootEl, 'Не удалось создать поездку');
+        return;
+      }
+      // Idempotent — preserve any in-flight active ride for this
+      // tripId instead of overwriting it.
+      if (!findActiveRide(seed.tripId)) saveActiveRide(seed);
+      go(`/active-ride?role=passenger&tripId=${encodeURIComponent(seed.tripId)}`);
+      return;
+    }
+
+    // Driver D3 «Открыть активную поездку» — existing behaviour.
+    // The driver active ride is owned by the driver flow and is not
+    // seeded from Order Detail; this handler just navigates when the
+    // fixture/canonical store already carries a tripId.
+    if (action === 'open-active-ride') {
+      if (btn.disabled) return;
       const tripId = ctx.order && ctx.order.tripId;
       if (tripId) {
         go(`/active-ride?role=${role}&tripId=${encodeURIComponent(tripId)}`);
