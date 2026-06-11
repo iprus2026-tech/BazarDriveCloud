@@ -46,6 +46,11 @@
 //                                     canonical driver completed-ride
 //                                     receipts read by history / payouts /
 //                                     the /receipt screen)
+//   bazardrive.driver_offers.v1     → driver_offer_store.js
+//                                     (BD-ORDER-DETAIL-01D-1 local
+//                                     DriverOffer store: status 'sent' or
+//                                     'withdrawn', keyed by orderId +
+//                                     driverId)
 //   bazardrive.myposts.v1           → mock_api.js
 //   profileTripDemo                 → passenger Profile demo override
 //
@@ -77,6 +82,7 @@ import {
   clearRideOrdersStore,
   clearDriverReceiptsStore,
 } from './mock_api.js';
+import { clearDriverOfferStore } from './driver_offer_store.js';
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
 
@@ -109,5 +115,6 @@ export function clearUserScopedStorage() {
   clearRideOrdersStore();
   clearDriverReceiptsStore();
   clearMyPostsStore();
+  clearDriverOfferStore();
   clearTripDemoMode();
 }
