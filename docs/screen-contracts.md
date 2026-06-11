@@ -539,20 +539,32 @@ BD-ORDER-DETAIL-01C ships the first read/render runtime — `/order/<id>` is
 now a registered route resolving to `public/src/screens/order_detail.js`,
 with every Model-B mutating action stubbed as a non-mutating toast.
 
-**BD-ORDER-DETAIL-01C shipped the read/render shell. BD-ORDER-DETAIL-01D-1
-opens the first Model-B write pinhole: the driver «Откликнуться на
-заказ» CTA persists a `DriverOffer(status='sent')` against the local
-store `bazardrive.driver_offers.v1`, and the D2 «Отозвать оффер»
-control flips it to `status='withdrawn'`.** Everything else in the
-Model B write contract — passenger «Выбрать водителя» commit, sent-only
-competing rejection, terminal-offer preservation across the commit
-boundary, `Order.status='ACCEPTED'` write, `selectedDriverId` write,
-active-ride seed, passenger «Отменить заказ», passenger «Отклонить»,
-driver D3 «Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2+**.
-The full write contract below stays authoritative for those follow-ups.
-Smoke pins the runtime-shell contract plus the new DriverOffer store's
-idempotent send + withdraw round-trip; the bans on `Order.status` and
-`selectedDriverId` mutations from any Order Detail CTA stay in force.
+**BD-ORDER-DETAIL-01C shipped the read/render shell.
+BD-ORDER-DETAIL-01D-1 opened the driver write pinhole (DriverOffer
+send/withdraw against `bazardrive.driver_offers.v1`).
+BD-ORDER-DETAIL-01D-2A opens the passenger commit pinhole**: «Выбрать
+водителя» now atomically (a) writes the order overlay
+`bazardrive.order_overlay.v1` with `Order.status='ACCEPTED'` +
+`Order.selectedDriverId = offer.driverId`, (b) flips the chosen
+DriverOffer to `status='accepted'`, (c) flips every competing
+**`status='sent'`** offer for the same order to `status='rejected'`,
+and (d) preserves terminal offers (`withdrawn`, `expired`, `rejected`,
+unknown) verbatim. The select-driver handler refuses to commit on
+unsafe / blocked / malformed input (foreign `orderId`, blocked
+`driverId`, non-`sent` target, missing target).
+
+**Active-ride seed is still deferred** to **BD-ORDER-DETAIL-01D-2B** —
+the canonical `bazardrive.active_ride.v1` write does not happen on the
+01D-2A commit. The P3 «Открыть поездку» CTA still navigates to
+`/active-ride?role=passenger&tripId=...` only when the merged order
+fixture supplies a `tripId`; without one it toasts a deferred-write
+stub. The remaining Model-B mutations — passenger «Отменить заказ»,
+passenger «Отклонить» on a single offer, driver D3 «Отменить» handoff
+— **remain deferred to BD-ORDER-DETAIL-01D-2C+**. The full write
+contract below stays authoritative for those follow-ups. Smoke pins
+the runtime-shell contract, the DriverOffer store send/withdraw
+round-trip, and the new commitPassengerSelection multi-write
+(F3a–F3k).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate

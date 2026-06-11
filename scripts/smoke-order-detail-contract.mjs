@@ -1115,6 +1115,299 @@ driverOfferStore.clearDriverOfferStore();
     !!reSent && reSent.status === 'sent');
 }
 
+// ── F3a–F3j. Passenger commit (BD-ORDER-DETAIL-01D-2A) ──────────────
+// Passenger «Выбрать водителя» local commit. Verifies the atomic
+// multi-write: order overlay (status='ACCEPTED' + selectedDriverId),
+// chosen offer → 'accepted', competing sent offers → 'rejected',
+// terminal offers preserved verbatim, no active_ride seed.
+
+expect('driver_offer_store.js exports commitPassengerSelection',
+  typeof driverOfferStore.commitPassengerSelection === 'function');
+expect('driver_offer_store.js exports getOrderOverlay',
+  typeof driverOfferStore.getOrderOverlay === 'function');
+expect('driver_offer_store.js exports clearOrderOverlayStore',
+  typeof driverOfferStore.clearOrderOverlayStore === 'function');
+
+// Helper to seed an order with a known offer mix for the commit tests.
+function seedOrderWithOffers(orderId, offers) {
+  _bdofs.clear();
+  const bucket = {};
+  for (const o of offers) bucket[o.driverId] = o;
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({ [orderId]: bucket }));
+}
+
+function mkOffer(orderId, driverId, status, extra = {}) {
+  return {
+    id: `offer_${orderId}_${driverId}`,
+    orderId,
+    driverId,
+    driverName: `Водитель ${driverId}`,
+    car: 'Demo · Test',
+    rating: '5,0',
+    etaMin: 5,
+    price: 1000,
+    message: 'mock',
+    status,
+    createdAt: '2026-06-11T08:00:00.000Z',
+    updatedAt: '2026-06-11T08:00:00.000Z',
+    expiresAt: '2026-06-11T08:15:00.000Z',
+    ...extra,
+  };
+}
+
+// ── F3a — passenger can select a sent offer ─────────────────────────
+{
+  seedOrderWithOffers('commit-test-a', [mkOffer('commit-test-a', 'drv-a1', 'sent')]);
+  const all = driverOfferStore.listDriverOffersForOrder('commit-test-a');
+  const accepted = driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-a',
+    selectedDriverId: 'drv-a1',
+    allOffers: all,
+  });
+  expect('F3a — commitPassengerSelection returns the accepted offer',
+    !!accepted && accepted.driverId === 'drv-a1' && accepted.status === 'accepted');
+}
+
+// ── F3b — selected order becomes ACCEPTED ───────────────────────────
+{
+  seedOrderWithOffers('commit-test-b', [mkOffer('commit-test-b', 'drv-b1', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-b',
+    selectedDriverId: 'drv-b1',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-b'),
+  });
+  const overlay = driverOfferStore.getOrderOverlay('commit-test-b');
+  expect('F3b — order overlay writes status="ACCEPTED"',
+    !!overlay && overlay.status === 'ACCEPTED');
+}
+
+// ── F3c — selectedDriverId is written from chosen offer.driverId ────
+{
+  seedOrderWithOffers('commit-test-c', [mkOffer('commit-test-c', 'drv-c-target', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-c',
+    selectedDriverId: 'drv-c-target',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-c'),
+  });
+  const overlay = driverOfferStore.getOrderOverlay('commit-test-c');
+  expect('F3c — order overlay writes selectedDriverId from chosen offer',
+    !!overlay && overlay.selectedDriverId === 'drv-c-target');
+}
+
+// ── F3d — chosen offer becomes accepted ─────────────────────────────
+{
+  seedOrderWithOffers('commit-test-d', [mkOffer('commit-test-d', 'drv-d1', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-d',
+    selectedDriverId: 'drv-d1',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-d'),
+  });
+  const after = driverOfferStore.getDriverOffer('commit-test-d', 'drv-d1');
+  expect('F3d — chosen offer status flips to "accepted"',
+    !!after && after.status === 'accepted');
+}
+
+// ── F3e — competing sent offers become rejected ─────────────────────
+{
+  seedOrderWithOffers('commit-test-e', [
+    mkOffer('commit-test-e', 'drv-e-target', 'sent'),
+    mkOffer('commit-test-e', 'drv-e-peer1',  'sent'),
+    mkOffer('commit-test-e', 'drv-e-peer2',  'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-e',
+    selectedDriverId: 'drv-e-target',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-e'),
+  });
+  const peer1 = driverOfferStore.getDriverOffer('commit-test-e', 'drv-e-peer1');
+  const peer2 = driverOfferStore.getDriverOffer('commit-test-e', 'drv-e-peer2');
+  expect('F3e — every competing sent offer flips to "rejected"',
+    !!peer1 && peer1.status === 'rejected'
+    && !!peer2 && peer2.status === 'rejected');
+}
+
+// ── F3f — withdrawn offer cannot be selected and remains withdrawn ──
+{
+  seedOrderWithOffers('commit-test-f', [
+    mkOffer('commit-test-f', 'drv-f-target', 'sent'),
+    mkOffer('commit-test-f', 'drv-f-with',   'withdrawn'),
+  ]);
+  // Attempt to select the withdrawn offer — must fail.
+  const reject1 = driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-f',
+    selectedDriverId: 'drv-f-with',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-f'),
+  });
+  expect('F3f — selecting a withdrawn offer returns null',
+    reject1 === null);
+  expect('F3f — withdrawn offer remains withdrawn after the failed select',
+    driverOfferStore.getDriverOffer('commit-test-f', 'drv-f-with')?.status === 'withdrawn');
+  // Now commit the actual sent target. The peer withdrawn must stay
+  // withdrawn — terminal preservation across a successful commit.
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-f',
+    selectedDriverId: 'drv-f-target',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-f'),
+  });
+  expect('F3f — terminal withdrawn offer is preserved through a peer commit',
+    driverOfferStore.getDriverOffer('commit-test-f', 'drv-f-with')?.status === 'withdrawn');
+}
+
+// ── F3g — expired offer cannot be selected and remains expired ──────
+{
+  seedOrderWithOffers('commit-test-g', [
+    mkOffer('commit-test-g', 'drv-g-target', 'sent'),
+    mkOffer('commit-test-g', 'drv-g-exp',    'expired'),
+  ]);
+  const reject1 = driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-g',
+    selectedDriverId: 'drv-g-exp',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-g'),
+  });
+  expect('F3g — selecting an expired offer returns null', reject1 === null);
+  expect('F3g — expired offer remains expired after the failed select',
+    driverOfferStore.getDriverOffer('commit-test-g', 'drv-g-exp')?.status === 'expired');
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-g',
+    selectedDriverId: 'drv-g-target',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-g'),
+  });
+  expect('F3g — terminal expired offer is preserved through a peer commit',
+    driverOfferStore.getDriverOffer('commit-test-g', 'drv-g-exp')?.status === 'expired');
+}
+
+// ── F3h — rejected offer cannot be selected and remains rejected ────
+{
+  seedOrderWithOffers('commit-test-h', [
+    mkOffer('commit-test-h', 'drv-h-target', 'sent'),
+    mkOffer('commit-test-h', 'drv-h-rej',    'rejected'),
+  ]);
+  const reject1 = driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-h',
+    selectedDriverId: 'drv-h-rej',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-h'),
+  });
+  expect('F3h — selecting a rejected offer returns null', reject1 === null);
+  expect('F3h — rejected offer remains rejected after the failed select',
+    driverOfferStore.getDriverOffer('commit-test-h', 'drv-h-rej')?.status === 'rejected');
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-h',
+    selectedDriverId: 'drv-h-target',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-h'),
+  });
+  expect('F3h — terminal rejected offer is preserved through a peer commit',
+    driverOfferStore.getDriverOffer('commit-test-h', 'drv-h-rej')?.status === 'rejected');
+}
+
+// ── F3i — malformed / foreign offers cannot be selected ─────────────
+{
+  seedOrderWithOffers('commit-test-i', [
+    mkOffer('commit-test-i', 'drv-i-sent', 'sent'),
+  ]);
+  // Foreign orderId on the supplied offer — the offer claims to belong
+  // to a different order than the one we're committing.
+  const foreign = [
+    mkOffer('OTHER-ORDER', 'drv-i-sent', 'sent'),
+  ];
+  expect('F3i — selecting an offer with foreign orderId returns null',
+    driverOfferStore.commitPassengerSelection({
+      orderId: 'commit-test-i',
+      selectedDriverId: 'drv-i-sent',
+      allOffers: foreign,
+    }) === null);
+  // Blocked driverId on either side of the composite key.
+  expect('F3i — selecting via __proto__ driverId returns null',
+    driverOfferStore.commitPassengerSelection({
+      orderId: 'commit-test-i',
+      selectedDriverId: '__proto__',
+      allOffers: [mkOffer('commit-test-i', '__proto__', 'sent')],
+    }) === null);
+  expect('F3i — selecting via __proto__ orderId returns null',
+    driverOfferStore.commitPassengerSelection({
+      orderId: '__proto__',
+      selectedDriverId: 'drv',
+      allOffers: [mkOffer('__proto__', 'drv', 'sent')],
+    }) === null);
+  // Malformed inputs.
+  expect('F3i — null allOffers returns null',
+    driverOfferStore.commitPassengerSelection({
+      orderId: 'commit-test-i',
+      selectedDriverId: 'drv-i-sent',
+      allOffers: null,
+    }) === null);
+  expect('F3i — missing target driver returns null',
+    driverOfferStore.commitPassengerSelection({
+      orderId: 'commit-test-i',
+      selectedDriverId: 'drv-i-not-present',
+      allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-i'),
+    }) === null);
+  // The original sent offer must still be sent after every rejection.
+  expect('F3i — sent target is untouched after every failed selection attempt',
+    driverOfferStore.getDriverOffer('commit-test-i', 'drv-i-sent')?.status === 'sent');
+  // Order.status must not have been written by any failed attempt.
+  expect('F3i — no order overlay write happens for failed selections',
+    driverOfferStore.getOrderOverlay('commit-test-i') === null);
+}
+
+// ── F3j — no active_ride seed is written in 01D-2A ──────────────────
+{
+  _bdofs.clear();
+  // Run a successful commit and check that the active_ride key is
+  // never touched by either the store or the click-handler path.
+  seedOrderWithOffers('commit-test-j', [
+    mkOffer('commit-test-j', 'drv-j', 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'commit-test-j',
+    selectedDriverId: 'drv-j',
+    allOffers: driverOfferStore.listDriverOffersForOrder('commit-test-j'),
+  });
+  expect('F3j — bazardrive.active_ride.v1 is NOT seeded by commitPassengerSelection',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+  // Source-level guard on order_detail.js: the select-driver handler
+  // path must never call saveActiveRide / updateActiveRideStatus, and
+  // must never write the active_ride.v1 key.
+  expect('F3j — order_detail.js select-driver path never seeds active_ride',
+    !/select-driver[\s\S]{0,2000}saveActiveRide\s*\(/.test(orderDetailSrc)
+    && !/select-driver[\s\S]{0,2000}updateActiveRideStatus\s*\(/.test(orderDetailSrc)
+    && !/select-driver[\s\S]{0,2000}active_ride\.v1/.test(orderDetailSrc));
+  const offerStoreSrcInline = read('../public/src/driver_offer_store.js');
+  // Strip comments before the active_ride scan so the "deliberately
+  // does NOT seed bazardrive.active_ride.v1" disclaimer in the
+  // commitPassengerSelection JSDoc isn't a false positive.
+  const offerStoreCode = stripComments(offerStoreSrcInline);
+  expect('F3j — driver_offer_store.js never seeds active_ride (code-only)',
+    !/saveActiveRide\s*\(/.test(offerStoreCode)
+    && !/updateActiveRideStatus\s*\(/.test(offerStoreCode)
+    && !/active_ride\.v1/.test(offerStoreCode));
+}
+
+// ── F3k — loadOrder applies the overlay → passenger sees P3 ──────────
+// Smoke-level integration check: a successful commit on demo-order-offers
+// (which fixture-ships two sent offers) flips the merged Order to
+// status='ACCEPTED' + selectedDriverId, and the passenger resolveState
+// lands on P3.
+{
+  driverOfferStore.clearDriverOfferStore();
+  const before = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F3k baseline — demo-order-offers passenger sees P2 before commit',
+    orderDetailMod.resolveState(before, 'passenger') === 'P2');
+  const target = before.offers.find((o) => o.status === 'sent');
+  expect('F3k baseline — at least one sent fixture offer is present', !!target);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'demo-order-offers',
+    selectedDriverId: target.driverId,
+    allOffers: before.offers,
+  });
+  const after = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F3k — after commit, merged Order.status is "ACCEPTED"',
+    after.status === 'ACCEPTED');
+  expect('F3k — after commit, merged Order.selectedDriverId mirrors the chosen offer',
+    after.selectedDriverId === target.driverId);
+  expect('F3k — passenger resolveState lands on P3 after commit',
+    orderDetailMod.resolveState(after, 'passenger') === 'P3');
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
@@ -1162,8 +1455,11 @@ expect('driver_offer_store.js never calls fetch(',
 const offerStoreSrcNoComments = stripComments(offerStoreSrc);
 expect('driver_offer_store.js never references mapbox in code',
   !/mapbox/i.test(offerStoreSrcNoComments));
-expect('driver_offer_store.js never writes the active_ride store',
-  !/active_ride\.v1/.test(offerStoreSrc));
+// Comment-strip so a "deliberately does NOT seed
+// bazardrive.active_ride.v1" disclaimer added in BD-ORDER-DETAIL-01D-2A
+// to document the commit boundary doesn't trip the literal scan.
+expect('driver_offer_store.js never writes the active_ride store (code-only)',
+  !/active_ride\.v1/.test(offerStoreSrcNoComments));
 
 // ── G. screen-map.md mirrors the runtime-shell entry ─────────────────
 const mapPath = new URL('../docs/screen-map.md', import.meta.url);

@@ -13,6 +13,8 @@ import {
   withdrawDriverOffer,
   listDriverOffersForOrder,
   getDriverOffer,
+  commitPassengerSelection,
+  getOrderOverlay,
 } from '../driver_offer_store.js';
 
 export const SELF_DRIVER_ID = 'demo-driver-self';
@@ -248,11 +250,10 @@ export function loadOrder(id) {
   // (BD-ORDER-DETAIL-01D-1). The store is keyed by (orderId, driverId);
   // when a stored offer collides with a fixture offer for the same
   // driverId, the stored version wins because it carries the latest
-  // user action (sent / withdrawn). The fixture's accepted demo offers
-  // stay intact because no driver tap can target them via the local
-  // store: the SELF_DRIVER_ID is the only driver this slice writes for.
+  // user action (sent / withdrawn / accepted / rejected).
   const fixtureOffers = (fixture.offers || []).map((o) => ({ ...o }));
   const stored = listDriverOffersForOrder(id);
+  let mergedOffers;
   if (stored.length) {
     const seen = new Set();
     const merged = [];
@@ -263,9 +264,25 @@ export function loadOrder(id) {
     for (const o of fixtureOffers) {
       if (!seen.has(o.driverId)) merged.push(o);
     }
-    return { ...fixture, offers: merged };
+    mergedOffers = merged;
+  } else {
+    mergedOffers = fixtureOffers;
   }
-  return { ...fixture, offers: fixtureOffers };
+  // BD-ORDER-DETAIL-01D-2A — apply the order overlay so passenger
+  // commits (`Order.status='ACCEPTED'` + `selectedDriverId`) surface
+  // on subsequent reads. Only `status` and `selectedDriverId` flow
+  // from the overlay; every other field stays canonical.
+  const overlay = getOrderOverlay(id);
+  const base = { ...fixture, offers: mergedOffers };
+  if (overlay) {
+    if (typeof overlay.status === 'string' && overlay.status) {
+      base.status = overlay.status;
+    }
+    if (typeof overlay.selectedDriverId === 'string' && overlay.selectedDriverId) {
+      base.selectedDriverId = overlay.selectedDriverId;
+    }
+  }
+  return base;
 }
 
 export function resolveState(order, role) {
@@ -647,6 +664,48 @@ function bindEvents(rootEl, initialCtx) {
       withdrawDriverOffer({ orderId: id, driverId: SELF_DRIVER_ID });
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Оффер отозван');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-01D-2A — passenger «Выбрать водителя». Local
+    // atomic commit:
+    //   • write the order overlay (status='ACCEPTED' + selectedDriverId)
+    //   • flip the chosen offer to status='accepted'
+    //   • flip competing sent offers for the same order to
+    //     status='rejected'
+    //   • leave terminal offers (withdrawn / expired / rejected) alone
+    //
+    // The handler refuses to commit on:
+    //   • missing / unknown offer id (foreign offer, malformed id)
+    //   • non-passenger role (defence-in-depth — the button only
+    //     renders on P2)
+    //   • offer that isn't currently status='sent'
+    //   • offer that doesn't belong to this order
+    //
+    // No active_ride seed is written in this slice — that's
+    // BD-ORDER-DETAIL-01D-2B's job.
+    if (action === 'select-driver') {
+      const id = ctx.id;
+      if (!id || !ctx.order) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      if (role !== 'passenger') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offerId = btn.dataset.offerId;
+      if (!offerId) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offer = (ctx.order.offers || []).find((o) => o && o.id === offerId);
+      if (!offer || offer.orderId !== id || offer.status !== 'sent') {
+        showNotice(rootEl, 'Этого водителя нельзя выбрать');
+        return;
+      }
+      const result = commitPassengerSelection({
+        orderId: id,
+        selectedDriverId: offer.driverId,
+        allOffers: ctx.order.offers,
+      });
+      if (!result) {
+        showNotice(rootEl, 'Не удалось выбрать водителя');
+        return;
+      }
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Водитель выбран');
       return;
     }
 
