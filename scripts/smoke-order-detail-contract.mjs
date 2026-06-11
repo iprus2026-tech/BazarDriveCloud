@@ -1408,6 +1408,80 @@ function mkOffer(orderId, driverId, status, extra = {}) {
     orderDetailMod.resolveState(after, 'passenger') === 'P3');
 }
 
+// ── F3l — stale sent snapshot cannot accept terminal stored target ───
+// Codex review on PR #464: an old passenger tab can hold an
+// `allOffers` snapshot where the target offer still claims
+// status='sent', even though the store has since flipped that same
+// offer to withdrawn / rejected / expired (e.g. driver withdrew in
+// another tab, or a 01D-2C reject mutation landed). The stored
+// baseline is the source of truth; the commit must refuse and leave
+// the terminal stored offer + every peer verbatim.
+for (const terminalStatus of ['withdrawn', 'rejected', 'expired']) {
+  const orderId = `commit-test-l-${terminalStatus}`;
+  const driverId = `drv-l-${terminalStatus}`;
+
+  // The STORE carries a terminal offer for the target driver.
+  seedOrderWithOffers(orderId, [
+    mkOffer(orderId, driverId, terminalStatus),
+  ]);
+
+  // The CALLER passes a stale snapshot still claiming the same offer
+  // is sent.
+  const staleAllOffers = [
+    mkOffer(orderId, driverId, 'sent'),
+  ];
+
+  const result = driverOfferStore.commitPassengerSelection({
+    orderId,
+    selectedDriverId: driverId,
+    allOffers: staleAllOffers,
+  });
+
+  expect(`F3l — stale sent snapshot over stored ${terminalStatus} returns null`,
+    result === null);
+  expect(`F3l — stored ${terminalStatus} target remains terminal after stale select`,
+    driverOfferStore.getDriverOffer(orderId, driverId)?.status === terminalStatus);
+  expect(`F3l — no order overlay is written for stale ${terminalStatus} target`,
+    driverOfferStore.getOrderOverlay(orderId) === null);
+}
+
+// F3l second pass — when a peer's stored baseline has gone terminal
+// since the snapshot was captured, the peer must be preserved
+// verbatim (not rewritten to 'rejected'). A legitimately-sent target
+// in the same commit still goes through.
+{
+  const orderId = 'commit-test-l-peer';
+  seedOrderWithOffers(orderId, [
+    mkOffer(orderId, 'drv-l-target', 'sent'),
+    mkOffer(orderId, 'drv-l-peer-withdrawn', 'withdrawn'),
+    mkOffer(orderId, 'drv-l-peer-expired',   'expired'),
+    mkOffer(orderId, 'drv-l-peer-rejected',  'rejected'),
+  ]);
+  const stalePeers = [
+    mkOffer(orderId, 'drv-l-target',           'sent'),
+    // Snapshot still thinks these peers are sent even though the
+    // store has them as terminal.
+    mkOffer(orderId, 'drv-l-peer-withdrawn',   'sent'),
+    mkOffer(orderId, 'drv-l-peer-expired',     'sent'),
+    mkOffer(orderId, 'drv-l-peer-rejected',    'sent'),
+  ];
+  const ok = driverOfferStore.commitPassengerSelection({
+    orderId,
+    selectedDriverId: 'drv-l-target',
+    allOffers: stalePeers,
+  });
+  expect('F3l peer — legitimate sent target still commits when peers are stale',
+    !!ok && ok.status === 'accepted' && ok.driverId === 'drv-l-target');
+  expect('F3l peer — stale-snapshot withdrawn peer stays withdrawn',
+    driverOfferStore.getDriverOffer(orderId, 'drv-l-peer-withdrawn')?.status === 'withdrawn');
+  expect('F3l peer — stale-snapshot expired peer stays expired',
+    driverOfferStore.getDriverOffer(orderId, 'drv-l-peer-expired')?.status === 'expired');
+  expect('F3l peer — stale-snapshot rejected peer stays rejected',
+    driverOfferStore.getDriverOffer(orderId, 'drv-l-peer-rejected')?.status === 'rejected');
+  expect('F3l peer — order overlay still writes for the legitimate commit',
+    driverOfferStore.getOrderOverlay(orderId)?.status === 'ACCEPTED');
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();

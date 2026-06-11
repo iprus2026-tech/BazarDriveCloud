@@ -526,18 +526,31 @@ export function commitPassengerSelection({ orderId, selectedDriverId, allOffers 
     if (!isSafeStoreKey(offer.driverId)) continue;
     if (offer.orderId !== orderId) continue;
 
-    // Terminal offers (withdrawn / expired / rejected) and any unknown
-    // status are preserved verbatim — 01D-2A never overwrites them.
-    const isSent = offer.status === DRIVER_OFFER_STATUS.SENT;
-    const isTarget = offer.driverId === selectedDriverId;
-    if (!isTarget && !isSent) continue;
-
-    // The store record is the source of truth; if absent, seed it from
-    // the supplied offer so fixture-only candidates land in the store
-    // after the commit.
+    // The stored baseline (the bucket entry) is the source of truth.
+    // The snapshot's `status` may be stale: another tab could have
+    // already withdrawn / rejected / expired this same offer, and the
+    // commit must respect the persisted state instead of the snapshot.
+    // Fall back to a fresh copy of the supplied offer only when the
+    // store has no entry yet (fixture-only candidate, first commit).
     const baseline = hasOwn(bucket, offer.driverId) && isPlainObject(bucket[offer.driverId])
       ? bucket[offer.driverId]
       : { ...offer };
+    const baselineIsSent = baseline.status === DRIVER_OFFER_STATUS.SENT;
+    const isTarget = offer.driverId === selectedDriverId;
+
+    // BD-ORDER-DETAIL-01D-2A stale-store guard. If the target's
+    // stored baseline is no longer 'sent', the commit fails wholesale —
+    // we return null before any saveStore / saveOverlayStore, leaving
+    // the stored terminal offer (and every peer) verbatim.
+    if (isTarget && !baselineIsSent) {
+      return null;
+    }
+    // Peers whose stored baseline is no longer 'sent' are likewise
+    // preserved verbatim. They're skipped, not overwritten — the
+    // snapshot's stale `status='sent'` claim is ignored.
+    if (!baselineIsSent) {
+      continue;
+    }
     const nextStatus = isTarget
       ? OFFER_STATUS_ACCEPTED
       : OFFER_STATUS_REJECTED;
