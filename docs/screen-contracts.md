@@ -553,6 +553,20 @@ unknown) verbatim. The select-driver handler refuses to commit on
 unsafe / blocked / malformed input (foreign `orderId`, blocked
 `driverId`, non-`sent` target, missing target).
 
+**BD-ORDER-DETAIL-01D-2C-A opens the passenger cancel pinhole**: P1
+«Отменить заказ» now performs a 2-step armed/confirm click and, on the
+second click, writes the order overlay record
+`{ status: 'CANCELED', canceledBy: 'passenger', canceledAt, updatedAt }`
+via the new `cancelOrderByPassenger({ orderId })` helper. The overlay
+preserves any previously written `selectedDriverId` (01D-2A) verbatim.
+01D-2C-A is **overlay-only** — DriverOffer status transitions (sent →
+rejected sync on cancel) are deferred to a later 01D-2C sub-slice, the
+active_ride store is **not** seeded, and the driver-side flow stays
+intact (a canceled order resolves to D4 with no offer CTA). After the
+commit the merged Order Detail resolves to P4 (terminal canceled),
+so the cancel button leaves the DOM and the armed state cannot persist
+across re-renders.
+
 **BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
 «Открыть поездку» CTA now writes the canonical
 `bazardrive.active_ride.v1` snapshot (via `ride_state.saveActiveRide`)
