@@ -947,6 +947,44 @@ driverOfferStore.clearDriverOfferStore();
     driverOfferStore.getDriverOffer('safe-order', 'drv-safe')?.status === 'sent');
 }
 
+// ── F2k2. listDriverOffersForOrder filters bucket-internal blocked keys ─
+// BD-ORDER-DETAIL-01D-1F Codex follow-up: the outer `orderId` was
+// already gated through `isSafeStoreKey`, but a legacy / corrupted
+// bucket can still carry own driverId keys like `__proto__` /
+// `constructor` / `prototype`. `getDriverOffer` rejects them on read,
+// so `listDriverOffersForOrder` must agree — otherwise the
+// `loadOrder()` merge re-surfaces a blocked driverId via the main
+// read path.
+{
+  const protoBefore = JSON.stringify(Object.keys(Object.prototype));
+  // Seed a safe order bucket with three blocked driver entries
+  // alongside one safe one.
+  _bdofs.clear();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'safe-order': {
+      '__proto__':  { id: 'p1', orderId: 'safe-order', driverId: '__proto__',  status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'constructor':{ id: 'p2', orderId: 'safe-order', driverId: 'constructor',status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'prototype':  { id: 'p3', orderId: 'safe-order', driverId: 'prototype',  status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'drv-safe':   { id: 'ok', orderId: 'safe-order', driverId: 'drv-safe',   status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+    },
+  }));
+  const list = driverOfferStore.listDriverOffersForOrder('safe-order');
+  expect('listDriverOffersForOrder filters out __proto__ / constructor / prototype driverIds',
+    list.length === 1, `got=${list.length}`);
+  expect('the single returned offer is the safe driver',
+    list.length === 1 && list[0].driverId === 'drv-safe');
+  expect('getDriverOffer rejects driverId="__proto__" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', '__proto__') === null);
+  expect('getDriverOffer rejects driverId="constructor" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', 'constructor') === null);
+  expect('getDriverOffer rejects driverId="prototype" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', 'prototype') === null);
+  expect('Object.prototype keys unchanged after bucket-internal blocked-key read',
+    JSON.stringify(Object.keys(Object.prototype)) === protoBefore);
+  expect('Object.prototype is NOT polluted via bucket-internal __proto__ driver entry',
+    Object.prototype.polluted === undefined);
+}
+
 // ── F2l. details overlay cannot override canonical identity ──────────
 // BD-ORDER-DETAIL-01D-1F — the whitelist accepts only render/edit
 // fields. Caller-supplied id, orderId, driverId, status, createdAt,

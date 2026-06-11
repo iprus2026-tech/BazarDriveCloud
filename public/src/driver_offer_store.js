@@ -248,10 +248,12 @@ export function listDriverOffersForOrder(orderId) {
   if (!hasOwn(store, orderId)) return [];
   const bucket = store[orderId];
   if (!isPlainObject(bucket)) return [];
-  // Only enumerate own properties — Object.values walks own keys but
-  // we still filter through hasOwn() for symmetry with getDriverOffer.
+  // Filter inside the bucket too: legacy / corrupted storage may carry
+  // own driverId keys like "__proto__" / "constructor" / "prototype",
+  // and `getDriverOffer` already rejects them — `list` must agree, or
+  // the merge in `loadOrder()` would re-surface a blocked driverId.
   return Object.keys(bucket)
-    .filter((k) => hasOwn(bucket, k))
+    .filter((k) => isSafeStoreKey(k) && hasOwn(bucket, k))
     .map((k) => bucket[k])
     .filter(isPlainObject);
 }
