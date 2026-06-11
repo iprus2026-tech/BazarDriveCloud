@@ -553,18 +553,27 @@ unknown) verbatim. The select-driver handler refuses to commit on
 unsafe / blocked / malformed input (foreign `orderId`, blocked
 `driverId`, non-`sent` target, missing target).
 
-**Active-ride seed is still deferred** to **BD-ORDER-DETAIL-01D-2B** —
-the canonical `bazardrive.active_ride.v1` write does not happen on the
-01D-2A commit. The P3 «Открыть поездку» CTA still navigates to
-`/active-ride?role=passenger&tripId=...` only when the merged order
-fixture supplies a `tripId`; without one it toasts a deferred-write
-stub. The remaining Model-B mutations — passenger «Отменить заказ»,
-passenger «Отклонить» on a single offer, driver D3 «Отменить» handoff
-— **remain deferred to BD-ORDER-DETAIL-01D-2C+**. The full write
-contract below stays authoritative for those follow-ups. Smoke pins
-the runtime-shell contract, the DriverOffer store send/withdraw
-round-trip, and the new commitPassengerSelection multi-write
-(F3a–F3k).
+**BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
+«Открыть поездку» CTA now writes the canonical
+`bazardrive.active_ride.v1` snapshot (via `ride_state.saveActiveRide`)
+and routes the passenger to `/active-ride?role=passenger&tripId=...`.
+The seed is computed by the new `buildPassengerActiveRideSeed(order)`
+pure helper from the merged Order Detail data: tripId, orderId,
+passenger snapshot, driver/vehicle snapshot from the chosen offer,
+route + price snapshot, and `seededFrom: 'order_detail_passenger_handoff'`.
+The CTA is gated by `canOpenTrip(order)` — accepted order +
+non-empty `selectedDriverId` + matching offer with status `'accepted'`
+or `'sent'`; the button renders as `disabled` when the gate refuses,
+and the click handler short-circuits before writing anything. Idempotent:
+a re-tap on an already-seeded `tripId` skips `saveActiveRide` and just
+re-navigates. The 01D-2A select-driver commit alone still **never**
+seeds active_ride. The remaining Model-B mutations — passenger
+«Отменить заказ», passenger «Отклонить» on a single offer, driver D3
+«Отменить» handoff — **remain deferred to BD-ORDER-DETAIL-01D-2C+**.
+The full write contract below stays authoritative for those follow-ups.
+Smoke pins the runtime-shell contract, the DriverOffer store
+send/withdraw round-trip, the commitPassengerSelection multi-write
+(F3a–F3l), and the new active-ride seed handoff (F4a–F4l).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate
