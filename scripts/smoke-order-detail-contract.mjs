@@ -824,6 +824,297 @@ driverOfferStore.clearDriverOfferStore();
     ar === undefined || ar === null);
 }
 
+// ── F2h. expiresAt is stamped on every fresh sent offer (01D-1F) ───
+// BD-ORDER-DETAIL-01D-1F hardening — Codex flagged the missing TTL on
+// fresh DriverOffers. Default: createdAt + 15 minutes. Spec smoke pin.
+{
+  driverOfferStore.clearDriverOfferStore();
+  const fresh = driverOfferStore.sendDriverOffer({
+    orderId: 'ttl-test', driverId: 'drv-ttl',
+  });
+  expect('fresh sent offer carries an expiresAt string',
+    !!fresh && typeof fresh.expiresAt === 'string' && fresh.expiresAt.length > 0);
+  const created = new Date(fresh.createdAt).getTime();
+  const expires = new Date(fresh.expiresAt).getTime();
+  expect('expiresAt parses to a finite timestamp', Number.isFinite(expires));
+  expect('expiresAt > createdAt', expires > created);
+  // 15 minutes ± a small slack window for clock smearing across the
+  // bumped stamp.
+  const FIFTEEN_MIN = 15 * 60_000;
+  expect('expiresAt is approximately createdAt + 15 minutes',
+    Math.abs((expires - created) - FIFTEEN_MIN) < 1000,
+    `delta=${expires - created} expected≈${FIFTEEN_MIN}`);
+}
+
+// ── F2i. Re-send of a withdrawn offer preserves identity + expiresAt ─
+{
+  driverOfferStore.clearDriverOfferStore();
+  const sent = driverOfferStore.sendDriverOffer({
+    orderId: 'resend-test', driverId: 'drv-resend',
+  });
+  const originalExpiresAt = sent.expiresAt;
+  const originalCreatedAt = sent.createdAt;
+  driverOfferStore.withdrawDriverOffer({
+    orderId: 'resend-test', driverId: 'drv-resend',
+  });
+  const resent = driverOfferStore.sendDriverOffer({
+    orderId: 'resend-test', driverId: 'drv-resend',
+  });
+  expect('re-send flips status back to sent', resent.status === 'sent');
+  expect('re-send preserves createdAt', resent.createdAt === originalCreatedAt);
+  expect('re-send preserves the original expiresAt when still valid',
+    resent.expiresAt === originalExpiresAt);
+}
+
+// ── F2j. Re-send backfills expiresAt when the existing one is missing ─
+{
+  // Pre-seed a withdrawn offer without an expiresAt — this is the
+  // shape an upgrade from the pre-hardening store would leave behind.
+  _bdofs.clear();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'backfill-test': {
+      'drv-backfill': {
+        id: 'offer_backfill-test_drv-backfill',
+        orderId: 'backfill-test',
+        driverId: 'drv-backfill',
+        status: 'withdrawn',
+        createdAt: '2026-06-11T08:00:00.000Z',
+        updatedAt: '2026-06-11T08:05:00.000Z',
+        // no expiresAt
+      },
+    },
+  }));
+  const resent = driverOfferStore.sendDriverOffer({
+    orderId: 'backfill-test', driverId: 'drv-backfill',
+  });
+  expect('re-send backfills a missing expiresAt',
+    !!resent && typeof resent.expiresAt === 'string' && resent.expiresAt.length > 0);
+  // Backfill is anchored to createdAt + 15 min (safer than updatedAt +
+  // 15 min — keeps offer lifetime measured from creation).
+  const created = new Date(resent.createdAt).getTime();
+  const expires = new Date(resent.expiresAt).getTime();
+  const FIFTEEN_MIN = 15 * 60_000;
+  expect('backfilled expiresAt = createdAt + 15 min',
+    Math.abs((expires - created) - FIFTEEN_MIN) < 1000);
+}
+
+// ── F2k. Special keys + prototype pollution rejected ─────────────────
+// BD-ORDER-DETAIL-01D-1F — `__proto__`, `constructor`, `prototype`
+// must never reach a bracket write. Either side of the composite key
+// being blocked is enough to fail the call. We also check that the
+// store never mutates Object.prototype as a side effect, even when a
+// hostile JSON tries to smuggle a polluted bucket.
+{
+  driverOfferStore.clearDriverOfferStore();
+  // Capture a snapshot of Object.prototype before the polluted attempt.
+  const protoSnapshot = JSON.stringify(Object.keys(Object.prototype));
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    expect(`sendDriverOffer rejects orderId = "${key}"`,
+      driverOfferStore.sendDriverOffer({ orderId: key, driverId: 'drv' }) === null);
+    expect(`sendDriverOffer rejects driverId = "${key}"`,
+      driverOfferStore.sendDriverOffer({ orderId: 'order', driverId: key }) === null);
+    expect(`getDriverOffer rejects orderId = "${key}"`,
+      driverOfferStore.getDriverOffer(key, 'drv') === null);
+    expect(`getDriverOffer rejects driverId = "${key}"`,
+      driverOfferStore.getDriverOffer('order', key) === null);
+    expect(`listDriverOffersForOrder rejects orderId = "${key}"`,
+      driverOfferStore.listDriverOffersForOrder(key).length === 0);
+    expect(`withdrawDriverOffer rejects orderId = "${key}"`,
+      driverOfferStore.withdrawDriverOffer({ orderId: key, driverId: 'drv' }) === null);
+    expect(`withdrawDriverOffer rejects driverId = "${key}"`,
+      driverOfferStore.withdrawDriverOffer({ orderId: 'order', driverId: key }) === null);
+  }
+  // The polluted-JSON smuggle: localStorage carries a "__proto__" key.
+  // Our loader copies into a null-proto map and filters via
+  // isSafeStoreKey, so the polluted bucket can't reach the store.
+  _bdofs.clear();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    '__proto__': { polluted: true },
+    'safe-order': { 'drv-safe': {
+      id: 'offer_safe', orderId: 'safe-order', driverId: 'drv-safe',
+      status: 'sent', createdAt: '2026-06-11T08:00:00.000Z',
+      updatedAt: '2026-06-11T08:00:00.000Z',
+    } },
+  }));
+  // Object.prototype must not have gained a `polluted` field as a
+  // side effect of parsing/loading.
+  expect('Object.prototype is NOT polluted via JSON __proto__ smuggle',
+    Object.prototype.polluted === undefined);
+  expect('Object.prototype keys are unchanged after pollution attempt',
+    JSON.stringify(Object.keys(Object.prototype)) === protoSnapshot);
+  // The "safe-order" bucket is still readable.
+  expect('safe entries co-existing with a polluted __proto__ key still load',
+    driverOfferStore.getDriverOffer('safe-order', 'drv-safe')?.status === 'sent');
+}
+
+// ── F2k2. listDriverOffersForOrder filters bucket-internal blocked keys ─
+// BD-ORDER-DETAIL-01D-1F Codex follow-up: the outer `orderId` was
+// already gated through `isSafeStoreKey`, but a legacy / corrupted
+// bucket can still carry own driverId keys like `__proto__` /
+// `constructor` / `prototype`. `getDriverOffer` rejects them on read,
+// so `listDriverOffersForOrder` must agree — otherwise the
+// `loadOrder()` merge re-surfaces a blocked driverId via the main
+// read path.
+{
+  const protoBefore = JSON.stringify(Object.keys(Object.prototype));
+  // Seed a safe order bucket with three blocked driver entries
+  // alongside one safe one.
+  _bdofs.clear();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'safe-order': {
+      '__proto__':  { id: 'p1', orderId: 'safe-order', driverId: '__proto__',  status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'constructor':{ id: 'p2', orderId: 'safe-order', driverId: 'constructor',status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'prototype':  { id: 'p3', orderId: 'safe-order', driverId: 'prototype',  status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'drv-safe':   { id: 'ok', orderId: 'safe-order', driverId: 'drv-safe',   status: 'sent', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+    },
+  }));
+  const list = driverOfferStore.listDriverOffersForOrder('safe-order');
+  expect('listDriverOffersForOrder filters out __proto__ / constructor / prototype driverIds',
+    list.length === 1, `got=${list.length}`);
+  expect('the single returned offer is the safe driver',
+    list.length === 1 && list[0].driverId === 'drv-safe');
+  expect('getDriverOffer rejects driverId="__proto__" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', '__proto__') === null);
+  expect('getDriverOffer rejects driverId="constructor" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', 'constructor') === null);
+  expect('getDriverOffer rejects driverId="prototype" even inside a safe order bucket',
+    driverOfferStore.getDriverOffer('safe-order', 'prototype') === null);
+  expect('Object.prototype keys unchanged after bucket-internal blocked-key read',
+    JSON.stringify(Object.keys(Object.prototype)) === protoBefore);
+  expect('Object.prototype is NOT polluted via bucket-internal __proto__ driver entry',
+    Object.prototype.polluted === undefined);
+}
+
+// ── F2l. details overlay cannot override canonical identity ──────────
+// BD-ORDER-DETAIL-01D-1F — the whitelist accepts only render/edit
+// fields. Caller-supplied id, orderId, driverId, status, createdAt,
+// updatedAt, expiresAt are silently dropped.
+{
+  driverOfferStore.clearDriverOfferStore();
+  const hostile = driverOfferStore.sendDriverOffer({
+    orderId: 'safe-order',
+    driverId: 'safe-driver',
+    details: {
+      id: 'evil',
+      orderId: 'evil-order',
+      driverId: 'evil-driver',
+      status: 'accepted',
+      createdAt: 'bad',
+      updatedAt: 'bad',
+      expiresAt: 'bad',
+      price: 777,
+      etaMin: 9,
+      driverName: 'Тест',
+      car: 'Hostile · Test',
+      rating: '5,0',
+      message: 'hostile message',
+    },
+  });
+  expect('details.id is rejected — id stays the canonical composite id',
+    !!hostile && hostile.id === 'offer_safe-order_safe-driver');
+  expect('details.orderId is rejected — canonical orderId wins',
+    !!hostile && hostile.orderId === 'safe-order');
+  expect('details.driverId is rejected — canonical driverId wins',
+    !!hostile && hostile.driverId === 'safe-driver');
+  expect('details.status is rejected — fresh offer is always sent',
+    !!hostile && hostile.status === 'sent');
+  expect('details.createdAt is rejected — store-stamped ISO wins',
+    !!hostile
+    && hostile.createdAt !== 'bad'
+    && Number.isFinite(new Date(hostile.createdAt).getTime()));
+  expect('details.updatedAt is rejected — store-stamped ISO wins',
+    !!hostile
+    && hostile.updatedAt !== 'bad'
+    && Number.isFinite(new Date(hostile.updatedAt).getTime()));
+  expect('details.expiresAt is rejected — store-stamped TTL wins',
+    !!hostile
+    && hostile.expiresAt !== 'bad'
+    && Number.isFinite(new Date(hostile.expiresAt).getTime()));
+  // Whitelisted render fields ARE honoured.
+  expect('details.price (whitelisted, numeric) is accepted',
+    !!hostile && hostile.price === 777);
+  expect('details.etaMin (whitelisted, numeric) is accepted',
+    !!hostile && hostile.etaMin === 9);
+  expect('details.driverName (whitelisted, string) is accepted',
+    !!hostile && hostile.driverName === 'Тест');
+  expect('details.car (whitelisted, string) is accepted',
+    !!hostile && hostile.car === 'Hostile · Test');
+  expect('details.message (whitelisted, string) is accepted',
+    !!hostile && hostile.message === 'hostile message');
+}
+
+// ── F2m. Type validation in the details overlay ─────────────────────
+{
+  driverOfferStore.clearDriverOfferStore();
+  const offer = driverOfferStore.sendDriverOffer({
+    orderId: 'type-test', driverId: 'drv-types',
+    details: {
+      price: -10,                  // negative — must be dropped
+      etaMin: 0,                   // not > 0 — must be dropped
+      driverName: 42,              // not a string — must be dropped
+      car: 'Test Car',             // string — accepted
+      rating: 4.5,                 // not a string — must be dropped
+      message: '',                 // empty string — accepted (string-typed)
+    },
+  });
+  expect('negative price is rejected — falls back to hydrated default',
+    !!offer && offer.price === 1000);
+  expect('etaMin = 0 is rejected — falls back to hydrated default',
+    !!offer && offer.etaMin === 5);
+  expect('non-string driverName is rejected — falls back to hydrated default',
+    !!offer && offer.driverName === 'Вы (демо)');
+  expect('non-string rating is rejected — falls back to hydrated default',
+    !!offer && offer.rating === '5,0');
+  expect('valid string car is honoured', !!offer && offer.car === 'Test Car');
+}
+
+// ── F2n. withdrawDriverOffer preserves terminal / unknown statuses ──
+// Pre-seed offers in every non-sent status. withdraw must NOT
+// overwrite their status — only `sent` is overridable.
+{
+  _bdofs.clear();
+  const seeded = {
+    'preserve-test': {
+      'drv-w': { id: 'a', orderId: 'preserve-test', driverId: 'drv-w', status: 'withdrawn', createdAt: '2026-06-11T08:00:00.000Z', updatedAt: '2026-06-11T08:00:00.000Z', expiresAt: '2026-06-11T08:15:00.000Z' },
+      'drv-a': { id: 'b', orderId: 'preserve-test', driverId: 'drv-a', status: 'accepted',  createdAt: '2026-06-11T08:01:00.000Z', updatedAt: '2026-06-11T08:01:00.000Z', expiresAt: '2026-06-11T08:16:00.000Z' },
+      'drv-r': { id: 'c', orderId: 'preserve-test', driverId: 'drv-r', status: 'rejected',  createdAt: '2026-06-11T08:02:00.000Z', updatedAt: '2026-06-11T08:02:00.000Z', expiresAt: '2026-06-11T08:17:00.000Z' },
+      'drv-e': { id: 'd', orderId: 'preserve-test', driverId: 'drv-e', status: 'expired',   createdAt: '2026-06-11T08:03:00.000Z', updatedAt: '2026-06-11T08:03:00.000Z', expiresAt: '2026-06-11T08:18:00.000Z' },
+      'drv-u': { id: 'e', orderId: 'preserve-test', driverId: 'drv-u', status: 'unknown',   createdAt: '2026-06-11T08:04:00.000Z', updatedAt: '2026-06-11T08:04:00.000Z', expiresAt: '2026-06-11T08:19:00.000Z' },
+    },
+  };
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify(seeded));
+  for (const [key, expectedStatus] of [
+    ['drv-w', 'withdrawn'], ['drv-a', 'accepted'], ['drv-r', 'rejected'],
+    ['drv-e', 'expired'],   ['drv-u', 'unknown'],
+  ]) {
+    const result = driverOfferStore.withdrawDriverOffer({
+      orderId: 'preserve-test', driverId: key,
+    });
+    expect(`withdraw preserves status='${expectedStatus}'`,
+      !!result && result.status === expectedStatus);
+    // The store record itself was not mutated.
+    expect(`store still reads status='${expectedStatus}' after withdraw call`,
+      driverOfferStore.getDriverOffer('preserve-test', key)?.status === expectedStatus);
+  }
+  // sendDriverOffer on a terminal-status entry is also a no-op.
+  for (const [key, expectedStatus] of [
+    ['drv-a', 'accepted'], ['drv-r', 'rejected'],
+    ['drv-e', 'expired'],  ['drv-u', 'unknown'],
+  ]) {
+    const result = driverOfferStore.sendDriverOffer({
+      orderId: 'preserve-test', driverId: key,
+    });
+    expect(`sendDriverOffer also preserves terminal status='${expectedStatus}'`,
+      !!result && result.status === expectedStatus);
+  }
+  // Only the withdrawn offer flips back to sent.
+  const reSent = driverOfferStore.sendDriverOffer({
+    orderId: 'preserve-test', driverId: 'drv-w',
+  });
+  expect('sendDriverOffer on a withdrawn offer flips it back to sent',
+    !!reSent && reSent.status === 'sent');
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
