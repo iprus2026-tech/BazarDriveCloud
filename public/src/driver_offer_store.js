@@ -382,8 +382,210 @@ export function withdrawDriverOffer({ orderId, driverId } = {}) {
   return next;
 }
 
-// Clears the entire store. Owned by the user-scoped logout boundary in
-// storage_boundary.js; exported so 01D-1 tests can reset between runs.
+// Clears the entire offers store + the order overlay store. Owned by
+// the user-scoped logout boundary in storage_boundary.js; exported so
+// tests can reset between runs.
 export function clearDriverOfferStore() {
   writeRaw('{}');
+  clearOrderOverlayStore();
+}
+
+// ── Order overlay store (BD-ORDER-DETAIL-01D-2A) ────────────────────
+//
+// The Order Detail screen has no real backend, so the passenger
+// «Выбрать водителя» commit needs a local place to record the
+// resulting `Order.status='ACCEPTED'` + `selectedDriverId` writes that
+// `loadOrder()` can layer on top of the frozen `DEMO_ORDERS` fixtures
+// at render time. Same fail-soft posture as the DriverOffer store:
+//   • null-prototype map for the parsed envelope
+//   • `isSafeStoreKey()` guard on `orderId`
+//   • `hasOwn()` reads
+//   • malformed buckets reset to `{}` on write
+//
+// Shape:
+//   {
+//     [orderId]: {
+//       status,             // canonical enum (e.g. 'ACCEPTED')
+//       selectedDriverId,
+//       updatedAt
+//     }
+//   }
+//
+// The overlay is a thin patch — `loadOrder()` only reads `status` and
+// `selectedDriverId` from it and merges them onto the fixture; every
+// other field stays canonical.
+
+const ORDER_OVERLAY_STORAGE_KEY = 'bazardrive.order_overlay.v1';
+export const ORDER_DETAIL_OVERLAY_STORAGE_KEY = ORDER_OVERLAY_STORAGE_KEY;
+
+const _overlayMemoryStore = { value: '' };
+
+function readOverlayRaw() {
+  const ls = safeLocalStorage();
+  if (ls) return ls.getItem(ORDER_OVERLAY_STORAGE_KEY);
+  return _overlayMemoryStore.value || null;
+}
+
+function writeOverlayRaw(value) {
+  const ls = safeLocalStorage();
+  if (ls) { ls.setItem(ORDER_OVERLAY_STORAGE_KEY, value); return; }
+  _overlayMemoryStore.value = value;
+}
+
+function loadOverlayStore() {
+  const raw = readOverlayRaw();
+  if (!raw) return createMap();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createMap();
+    }
+    const out = createMap();
+    for (const k of Object.keys(parsed)) {
+      if (isSafeStoreKey(k)) out[k] = parsed[k];
+    }
+    return out;
+  } catch {
+    return createMap();
+  }
+}
+
+function saveOverlayStore(map) {
+  writeOverlayRaw(JSON.stringify(map));
+}
+
+// Returns the overlay record for `orderId` or null. Reads through
+// `hasOwn()` so a polluted prototype chain on the parsed envelope
+// cannot leak through.
+export function getOrderOverlay(orderId) {
+  if (!isSafeStoreKey(orderId)) return null;
+  const store = loadOverlayStore();
+  if (!hasOwn(store, orderId)) return null;
+  const entry = store[orderId];
+  return isPlainObject(entry) ? entry : null;
+}
+
+// Frozen status literals used by `commitPassengerSelection`. `accepted`
+// and `rejected` are NOT in DRIVER_OFFER_STATUS because the public
+// send/withdraw API never writes them — they live only inside the
+// commit transaction. ORDER_STATUS_ACCEPTED mirrors the canonical
+// enum used by `ride_state.js`; held here to avoid a circular import
+// (the order-detail click handler imports from this module, not from
+// ride_state).
+const OFFER_STATUS_ACCEPTED = 'accepted';
+const OFFER_STATUS_REJECTED = 'rejected';
+const ORDER_STATUS_ACCEPTED = 'ACCEPTED';
+
+// Atomic-ish multi-write that BD-ORDER-DETAIL-01D-2A needs for the
+// passenger commit:
+//   • the order overlay record gains `{ status: 'ACCEPTED',
+//     selectedDriverId, updatedAt }`
+//   • the chosen DriverOffer flips to `status='accepted'`
+//   • every other sent DriverOffer for the same order flips to
+//     `status='rejected'`
+//   • terminal offers (`withdrawn`, `expired`, `rejected`) are
+//     preserved verbatim — the loop short-circuits on them
+//
+// `allOffers` is the merged list the caller (order_detail.js) already
+// holds — passing it in keeps fixture-only offers and store-resident
+// offers under one code path.
+//
+// Returns the committed (accepted) offer object on success, null on
+// any validation failure (unsafe keys, missing target, target not in
+// status='sent', foreign orderId, malformed `allOffers`). The store is
+// written in a single `saveStore` + `saveOverlayStore` pair, so a
+// caller observes either the full commit or nothing.
+//
+// NOTE: this helper deliberately does NOT seed `bazardrive.active_ride.v1`.
+// That write belongs to a later sub-slice (BD-ORDER-DETAIL-01D-2B);
+// 01D-2A stops at the Order-Detail-side commit.
+export function commitPassengerSelection({ orderId, selectedDriverId, allOffers } = {}) {
+  if (!isSafeStoreKey(orderId)) return null;
+  if (!isSafeStoreKey(selectedDriverId)) return null;
+  if (!Array.isArray(allOffers)) return null;
+
+  // Find the target offer. It must be a plain object, belong to this
+  // order, have a safe driverId, and currently be status='sent'.
+  const target = allOffers.find((o) => isPlainObject(o)
+    && isSafeStoreKey(o.driverId)
+    && o.driverId === selectedDriverId
+    && o.orderId === orderId
+    && o.status === DRIVER_OFFER_STATUS.SENT);
+  if (!target) return null;
+
+  const store = loadStore();
+  let bucket = hasOwn(store, orderId) ? store[orderId] : null;
+  if (!isPlainObject(bucket)) {
+    bucket = createMap();
+    store[orderId] = bucket;
+  }
+
+  let acceptedOffer = null;
+  for (const offer of allOffers) {
+    if (!isPlainObject(offer)) continue;
+    if (!isSafeStoreKey(offer.driverId)) continue;
+    if (offer.orderId !== orderId) continue;
+
+    // The stored baseline (the bucket entry) is the source of truth.
+    // The snapshot's `status` may be stale: another tab could have
+    // already withdrawn / rejected / expired this same offer, and the
+    // commit must respect the persisted state instead of the snapshot.
+    // Fall back to a fresh copy of the supplied offer only when the
+    // store has no entry yet (fixture-only candidate, first commit).
+    const baseline = hasOwn(bucket, offer.driverId) && isPlainObject(bucket[offer.driverId])
+      ? bucket[offer.driverId]
+      : { ...offer };
+    const baselineIsSent = baseline.status === DRIVER_OFFER_STATUS.SENT;
+    const isTarget = offer.driverId === selectedDriverId;
+
+    // BD-ORDER-DETAIL-01D-2A stale-store guard. If the target's
+    // stored baseline is no longer 'sent', the commit fails wholesale —
+    // we return null before any saveStore / saveOverlayStore, leaving
+    // the stored terminal offer (and every peer) verbatim.
+    if (isTarget && !baselineIsSent) {
+      return null;
+    }
+    // Peers whose stored baseline is no longer 'sent' are likewise
+    // preserved verbatim. They're skipped, not overwritten — the
+    // snapshot's stale `status='sent'` claim is ignored.
+    if (!baselineIsSent) {
+      continue;
+    }
+    const nextStatus = isTarget
+      ? OFFER_STATUS_ACCEPTED
+      : OFFER_STATUS_REJECTED;
+    const next = {
+      ...baseline,
+      // Re-pin canonical identity in case the supplied offer carries
+      // stale field shape.
+      id:        baseline.id || buildOfferId(orderId, offer.driverId),
+      orderId,
+      driverId:  offer.driverId,
+      status:    nextStatus,
+      updatedAt: bumpedIso(baseline.updatedAt),
+    };
+    bucket[offer.driverId] = next;
+    if (isTarget) acceptedOffer = next;
+  }
+
+  saveStore(store);
+
+  // Write the order overlay so `loadOrder()` sees the new status +
+  // selectedDriverId on the next read.
+  const overlayStore = loadOverlayStore();
+  overlayStore[orderId] = {
+    status: ORDER_STATUS_ACCEPTED,
+    selectedDriverId,
+    updatedAt: bumpedIso(null),
+  };
+  saveOverlayStore(overlayStore);
+
+  return acceptedOffer;
+}
+
+// Clears the order overlay store. Called from `clearDriverOfferStore`
+// so the user-scoped logout boundary continues to wipe everything the
+// Order Detail screen wrote.
+export function clearOrderOverlayStore() {
+  writeOverlayRaw('{}');
 }
