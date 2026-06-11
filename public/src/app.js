@@ -24,6 +24,7 @@ import postDetail from './screens/post_detail.js';
 import inbox      from './screens/inbox.js';
 import driverMap  from './screens/driver_map.js';
 import tripReceipt from './screens/trip_receipt.js';
+import orderDetail from './screens/order_detail.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -45,6 +46,10 @@ register('/trip-confirmation', tripConfirmation);
 register('/post',        postDetail);
 register('/inbox',       inbox);
 register('/receipt',     tripReceipt);
+// BD-ORDER-DETAIL-01C — /order is the exact-registration anchor; the
+// router resolves /order/<id> (any id) to this loader and the screen
+// reads the id off location.hash itself.
+register('/order',       orderDetail);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {
