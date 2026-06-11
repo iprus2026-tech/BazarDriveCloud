@@ -537,16 +537,177 @@ expect('order_detail.js never references a Mapbox access token in code',
 expect('order_detail.js never emits inline script/style markup',
   !/<script\b/i.test(orderDetailSrc)
   && !/\bstyle\s*=\s*["'][^"']/.test(orderDetailSrc));
-expect('order_detail.js carries deferred-write stub toasts',
-  /Действие будет подключено в 01D/.test(orderDetailSrc)
-  && /Оффер будет подключён в 01D/.test(orderDetailSrc));
-expect('driver-send-offer path never mutates order / selectedDriverId / DriverOffer',
-  !/driver-send-offer[\s\S]{0,500}Order\.status\s*=/.test(orderDetailSrc)
-  && !/driver-send-offer[\s\S]{0,500}selectedDriverId\s*=/.test(orderDetailSrc)
-  && !/saveDriverOffer\s*\(/.test(orderDetailSrc));
-expect('order_detail.js never seeds active_ride in 01C',
+expect('order_detail.js still carries deferred-write stub toasts for the non-01D-1 actions',
+  /Действие будет подключено в 01D/.test(orderDetailSrc));
+// BD-ORDER-DETAIL-01D-1 relaxes the gate on the driver-send-offer path:
+// the runtime IS now allowed to persist a DriverOffer for the calling
+// driver via the local store. The 01C bans on Order.status and
+// selectedDriverId mutations stay in force — only the offer-store
+// pinhole opens.
+expect('driver-send-offer path never mutates Order.status',
+  !/driver-send-offer[\s\S]{0,800}Order\.status\s*=/.test(orderDetailSrc));
+expect('driver-send-offer path never mutates selectedDriverId',
+  !/driver-send-offer[\s\S]{0,800}selectedDriverId\s*=/.test(orderDetailSrc));
+expect('driver-send-offer path writes the DriverOffer store (sendDriverOffer)',
+  /driver-send-offer[\s\S]{0,800}sendDriverOffer\s*\(/.test(orderDetailSrc));
+expect('withdraw-offer path uses withdrawDriverOffer (no Order/selectedDriverId mutation)',
+  /withdraw-offer[\s\S]{0,800}withdrawDriverOffer\s*\(/.test(orderDetailSrc)
+  && !/withdraw-offer[\s\S]{0,800}Order\.status\s*=/.test(orderDetailSrc)
+  && !/withdraw-offer[\s\S]{0,800}selectedDriverId\s*=/.test(orderDetailSrc));
+expect('order_detail.js still never seeds active_ride in 01D-1',
   !/saveActiveRide\s*\(/.test(orderDetailSrc)
-  && !/updateActiveRideStatus\s*\(/.test(orderDetailSrc));
+  && !/updateActiveRideStatus\s*\(/.test(orderDetailSrc)
+  && !/active_ride\.v1/.test(orderDetailSrc));
+
+// ── F1. DriverOffer local store (BD-ORDER-DETAIL-01D-1) ─────────────
+// Behavioral round-trip over the new local store: an in-memory
+// localStorage shim runs the same module the runtime loads. Pins:
+//   • exported API surface, status enum
+//   • send is idempotent (same orderId+driverId → same offer, no dup)
+//   • send after withdraw re-sends and bumps updatedAt
+//   • withdraw flips sent → withdrawn and is itself idempotent
+//   • storage key is exactly the contracted bazardrive.driver_offers.v1
+//   • clear empties the store
+const _bdofs = new Map();
+globalThis.localStorage = {
+  getItem: (k) => _bdofs.has(k) ? _bdofs.get(k) : null,
+  setItem: (k, v) => { _bdofs.set(k, String(v)); },
+  removeItem: (k) => { _bdofs.delete(k); },
+  clear: () => { _bdofs.clear(); },
+};
+const driverOfferStore = await import(new URL('../public/src/driver_offer_store.js', import.meta.url).href);
+expect('driver_offer_store exports the contracted helpers',
+  typeof driverOfferStore.sendDriverOffer === 'function'
+  && typeof driverOfferStore.withdrawDriverOffer === 'function'
+  && typeof driverOfferStore.getDriverOffer === 'function'
+  && typeof driverOfferStore.listDriverOffersForOrder === 'function'
+  && typeof driverOfferStore.clearDriverOfferStore === 'function'
+  && driverOfferStore.DRIVER_OFFER_STATUS
+  && driverOfferStore.DRIVER_OFFER_STATUS.SENT === 'sent'
+  && driverOfferStore.DRIVER_OFFER_STATUS.WITHDRAWN === 'withdrawn');
+expect('driver_offer_store uses the canonical storage key bazardrive.driver_offers.v1',
+  driverOfferStore.DRIVER_OFFERS_STORAGE_KEY === 'bazardrive.driver_offers.v1');
+
+driverOfferStore.clearDriverOfferStore();
+const A = driverOfferStore.sendDriverOffer({ orderId: 'order-x', driverId: 'drv-1' });
+expect('sendDriverOffer creates a fresh DriverOffer with status=sent',
+  !!A && A.status === 'sent' && A.orderId === 'order-x' && A.driverId === 'drv-1'
+  && typeof A.id === 'string' && A.id.length > 0
+  && typeof A.createdAt === 'string' && A.createdAt.length > 0
+  && typeof A.updatedAt === 'string' && A.updatedAt.length > 0);
+const A2 = driverOfferStore.sendDriverOffer({ orderId: 'order-x', driverId: 'drv-1' });
+expect('repeated sendDriverOffer on the same key is idempotent (no dup, same id, same createdAt)',
+  !!A2 && A2.id === A.id && A2.status === 'sent'
+  && A2.createdAt === A.createdAt
+  && driverOfferStore.listDriverOffersForOrder('order-x').length === 1);
+const W = driverOfferStore.withdrawDriverOffer({ orderId: 'order-x', driverId: 'drv-1' });
+expect('withdrawDriverOffer flips status to withdrawn and bumps updatedAt',
+  !!W && W.status === 'withdrawn' && W.id === A.id && W.createdAt === A.createdAt
+  && W.updatedAt !== A.updatedAt);
+const Wn = driverOfferStore.withdrawDriverOffer({ orderId: 'order-x', driverId: 'drv-1' });
+expect('withdraw on an already-withdrawn offer is idempotent',
+  !!Wn && Wn.status === 'withdrawn' && Wn.id === A.id);
+const Rs = driverOfferStore.sendDriverOffer({ orderId: 'order-x', driverId: 'drv-1' });
+expect('send after withdraw re-sends with status=sent (same id, createdAt preserved)',
+  !!Rs && Rs.status === 'sent' && Rs.id === A.id && Rs.createdAt === A.createdAt
+  && driverOfferStore.listDriverOffersForOrder('order-x').length === 1);
+expect('sendDriverOffer rejects malformed input',
+  driverOfferStore.sendDriverOffer({}) === null
+  && driverOfferStore.sendDriverOffer({ orderId: '', driverId: 'd' }) === null
+  && driverOfferStore.sendDriverOffer({ orderId: 'o', driverId: '' }) === null);
+expect('getDriverOffer is read-only and returns the current offer',
+  driverOfferStore.getDriverOffer('order-x', 'drv-1')?.status === 'sent'
+  && driverOfferStore.getDriverOffer('missing', 'drv-1') === null);
+
+// ── F2. order_detail.js merges stored offers into loadOrder() ──────
+driverOfferStore.clearDriverOfferStore();
+{
+  const base = orderDetailMod.loadOrder('demo-order-1');
+  expect('demo-order-1 baseline has no offers before any driver action',
+    base.offers.length === 0);
+  const sent = driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('sendDriverOffer persists for the SELF driver on demo-order-1', !!sent);
+  const after = orderDetailMod.loadOrder('demo-order-1');
+  expect('loadOrder merges the stored sent offer into the fixture',
+    after.offers.some((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID && o.status === 'sent'));
+  expect('driver resolveState moves to D2 with a self-sent stored offer',
+    orderDetailMod.resolveState(after, 'driver') === 'D2');
+  // Withdraw → back to D1 because the withdrawn offer is no longer a
+  // sent candidate and activeSentOffers([…]) === 0.
+  driverOfferStore.withdrawDriverOffer({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const after2 = orderDetailMod.loadOrder('demo-order-1');
+  expect('after withdraw, the withdrawn offer is preserved in the merged data',
+    after2.offers.some((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID && o.status === 'withdrawn'));
+  expect('driver resolveState falls back to D1 once the offer is withdrawn',
+    orderDetailMod.resolveState(after2, 'driver') === 'D1');
+  expect('activeSentOffers excludes the withdrawn offer',
+    orderDetailMod.activeSentOffers(after2).length === 0);
+
+  // Sanity — the Order.status / selectedDriverId / tripId fields the
+  // contract names as untouchable for this slice are still untouched.
+  expect('Order.status is unchanged after send + withdraw',
+    after2.status === base.status);
+  expect('Order.selectedDriverId is unchanged after send + withdraw',
+    after2.selectedDriverId === base.selectedDriverId);
+  expect('Order.tripId is unchanged after send + withdraw',
+    after2.tripId === base.tripId);
+}
+
+// ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
+{
+  driverOfferStore.clearDriverOfferStore();
+  // Even if a driver had managed to send an offer earlier, the order
+  // going EXPIRED must dominate state resolution: D4 unavailability
+  // wins over a stale own-sent merge.
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-expired',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const expired = orderDetailMod.loadOrder('demo-order-expired');
+  expect('EXPIRED order with a self-sent stored offer still resolves to D4',
+    orderDetailMod.resolveState(expired, 'driver') === 'D4');
+}
+
+// ── F4. Malformed id still falls through to S2 even with store hits ─
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.sendDriverOffer({ orderId: '%E0%A4%A', driverId: 'd' });
+  const parsed = orderDetailMod.parseOrderHashPath('#/order/%E0%A4%A?role=driver');
+  expect('malformed id still decodes to null in 01D-1', parsed.id === null);
+  expect('malformed id still resolves to S2 (loadOrder=null wins over the store)',
+    orderDetailMod.resolveState(orderDetailMod.loadOrder(parsed.id), 'driver') === 'S2');
+}
+
+// ── F5. Storage boundary clears the new store ──────────────────────
+const boundarySrc = read('../public/src/storage_boundary.js');
+expect('storage_boundary.js imports clearDriverOfferStore',
+  /import\s*\{\s*clearDriverOfferStore\s*\}\s*from\s*['"]\.\/driver_offer_store\.js['"]/.test(boundarySrc));
+expect('clearUserScopedStorage calls clearDriverOfferStore',
+  /clearUserScopedStorage[\s\S]{0,2000}clearDriverOfferStore\s*\(/.test(boundarySrc));
+
+// ── F6. SW precaches the new store + VERSION bumped to ≥ v112 ──────
+expect('public/sw.js precaches driver_offer_store.js',
+  /\.\/src\/driver_offer_store\.js/.test(swJs));
+expect('public/sw.js VERSION bumped to v112+ for the new store',
+  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 112);
+
+// ── F7. driver_offer_store.js is out-of-scope-clean (no fetch/Mapbox) ─
+const offerStoreSrc = read('../public/src/driver_offer_store.js');
+expect('driver_offer_store.js never calls fetch(',
+  !/\bfetch\s*\(/.test(offerStoreSrc));
+// Strip comments so the file's own "No backend, no Mapbox, no fetch"
+// disclaimer doesn't trip the case-insensitive scan.
+const offerStoreSrcNoComments = stripComments(offerStoreSrc);
+expect('driver_offer_store.js never references mapbox in code',
+  !/mapbox/i.test(offerStoreSrcNoComments));
+expect('driver_offer_store.js never writes the active_ride store',
+  !/active_ride\.v1/.test(offerStoreSrc));
 
 // ── G. screen-map.md mirrors the runtime-shell entry ─────────────────
 const mapPath = new URL('../docs/screen-map.md', import.meta.url);

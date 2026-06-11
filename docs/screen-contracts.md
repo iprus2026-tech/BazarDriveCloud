@@ -539,14 +539,20 @@ BD-ORDER-DETAIL-01C ships the first read/render runtime — `/order/<id>` is
 now a registered route resolving to `public/src/screens/order_detail.js`,
 with every Model-B mutating action stubbed as a non-mutating toast.
 
-**BD-ORDER-DETAIL-01C is read/render only. Mutating Model-B actions
-remain deferred to BD-ORDER-DETAIL-01D.** That includes driver-offer
-create, passenger «Выбрать водителя» commit, terminal-offer preservation,
-active-ride seed, and cancel/reject. The full write contract below stays
-authoritative for the 01D follow-up. Smoke is re-graded from gate-phase
-to runtime-shell phase: it now asserts the route is supported, the
-screen module exports the contracted helpers, and rendered markup
-conforms to Model B.
+**BD-ORDER-DETAIL-01C shipped the read/render shell. BD-ORDER-DETAIL-01D-1
+opens the first Model-B write pinhole: the driver «Откликнуться на
+заказ» CTA persists a `DriverOffer(status='sent')` against the local
+store `bazardrive.driver_offers.v1`, and the D2 «Отозвать оффер»
+control flips it to `status='withdrawn'`.** Everything else in the
+Model B write contract — passenger «Выбрать водителя» commit, sent-only
+competing rejection, terminal-offer preservation across the commit
+boundary, `Order.status='ACCEPTED'` write, `selectedDriverId` write,
+active-ride seed, passenger «Отменить заказ», passenger «Отклонить»,
+driver D3 «Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2+**.
+The full write contract below stays authoritative for those follow-ups.
+Smoke pins the runtime-shell contract plus the new DriverOffer store's
+idempotent send + withdraw round-trip; the bans on `Order.status` and
+`selectedDriverId` mutations from any Order Detail CTA stay in force.
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate

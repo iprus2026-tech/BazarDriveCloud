@@ -8,6 +8,12 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 import { applySmokeRole } from '../smoke_role.js';
+import {
+  sendDriverOffer,
+  withdrawDriverOffer,
+  listDriverOffersForOrder,
+  getDriverOffer,
+} from '../driver_offer_store.js';
 
 export const SELF_DRIVER_ID = 'demo-driver-self';
 
@@ -237,7 +243,29 @@ export function resolveRoleFromQuery(query, currentUser) {
 export function loadOrder(id) {
   if (!id || typeof id !== 'string') return null;
   const fixture = DEMO_ORDERS[id];
-  return fixture ? { ...fixture, offers: (fixture.offers || []).map((o) => ({ ...o })) } : null;
+  if (!fixture) return null;
+  // Clone fixture + merge in live DriverOffers from the local store
+  // (BD-ORDER-DETAIL-01D-1). The store is keyed by (orderId, driverId);
+  // when a stored offer collides with a fixture offer for the same
+  // driverId, the stored version wins because it carries the latest
+  // user action (sent / withdrawn). The fixture's accepted demo offers
+  // stay intact because no driver tap can target them via the local
+  // store: the SELF_DRIVER_ID is the only driver this slice writes for.
+  const fixtureOffers = (fixture.offers || []).map((o) => ({ ...o }));
+  const stored = listDriverOffersForOrder(id);
+  if (stored.length) {
+    const seen = new Set();
+    const merged = [];
+    for (const o of stored) {
+      seen.add(o.driverId);
+      merged.push({ ...o });
+    }
+    for (const o of fixtureOffers) {
+      if (!seen.has(o.driverId)) merged.push(o);
+    }
+    return { ...fixture, offers: merged };
+  }
+  return { ...fixture, offers: fixtureOffers };
 }
 
 export function resolveState(order, role) {
@@ -504,11 +532,39 @@ const STUB_ROUTES_BACK_TO_FEED = new Set([
   'create-new-order',
 ]);
 
-function bindEvents(rootEl, { order, role }) {
+// BD-ORDER-DETAIL-01D-1 — rebuild the screen's inner markup after a
+// mutating offer write so the new D2/D1 state surfaces without a full
+// router re-navigation. We reuse the click delegate already bound to
+// `rootEl` by only rewriting innerHTML (the listener stays attached).
+function rerenderInPlace(rootEl, ctx) {
+  const order = ctx.id ? loadOrder(ctx.id) : null;
+  const state = resolveState(order, ctx.role);
+  const fresh = renderOrderDetailMarkup({ order, role: ctx.role, state });
+  // The renderer returns a full <section> wrapper; we already have one,
+  // so swap the inner header + body by parsing the fresh markup and
+  // copying its children + dataset.
+  const host = document.createElement('div');
+  host.innerHTML = fresh;
+  const next = host.firstElementChild;
+  if (!next) return;
+  rootEl.dataset.state = next.dataset.state || '';
+  rootEl.dataset.role  = next.dataset.role  || '';
+  rootEl.dataset.orderId = next.dataset.orderId || '';
+  rootEl.replaceChildren(...Array.from(next.childNodes));
+  // The order/state captured in the click closure must follow the new
+  // state so subsequent clicks see the up-to-date values.
+  ctx.order = order;
+  ctx.state = state;
+}
+
+function bindEvents(rootEl, initialCtx) {
+  // Keep a mutable context so re-renders update what the closure sees.
+  const ctx = { ...initialCtx };
   rootEl.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
+    const { role } = ctx;
 
     if (STUB_ROUTES_BACK_TO_FEED.has(action)) {
       if (action === 'find-other-orders' && role === 'driver') {
@@ -524,7 +580,7 @@ function bindEvents(rootEl, { order, role }) {
     }
 
     if (action === 'open-trip' || action === 'open-active-ride') {
-      const tripId = order && order.tripId;
+      const tripId = ctx.order && ctx.order.tripId;
       if (tripId) {
         go(`/active-ride?role=${role}&tripId=${encodeURIComponent(tripId)}`);
         return;
@@ -533,8 +589,36 @@ function bindEvents(rootEl, { order, role }) {
       return;
     }
 
+    // BD-ORDER-DETAIL-01D-1 — driver «Откликнуться на заказ»: write a
+    // DriverOffer(status='sent') for (orderId, SELF_DRIVER_ID) into the
+    // local store, then re-render to D2. No Order.status write, no
+    // selectedDriverId write, no active_ride seed. Idempotent: a
+    // repeated tap while the offer is already 'sent' is a no-op.
     if (action === 'driver-send-offer') {
-      showNotice(rootEl, STUB_TOAST_OFFER);
+      const id = ctx.id;
+      if (!id) { showNotice(rootEl, STUB_TOAST_OFFER); return; }
+      const existing = getDriverOffer(id, SELF_DRIVER_ID);
+      if (existing && existing.status === 'sent') {
+        showNotice(rootEl, 'Оффер уже отправлен');
+        return;
+      }
+      const result = sendDriverOffer({ orderId: id, driverId: SELF_DRIVER_ID });
+      if (!result) { showNotice(rootEl, STUB_TOAST_OFFER); return; }
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Оффер отправлен');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-01D-1 — D2 «Отозвать оффер». Flips the existing
+    // 'sent' offer to 'withdrawn' (idempotent — withdrawn stays
+    // withdrawn) and re-renders. The driver lands back on D1 because
+    // the withdrawn offer no longer counts as a sent candidate.
+    if (action === 'withdraw-offer') {
+      const id = ctx.id;
+      if (!id) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      withdrawDriverOffer({ orderId: id, driverId: SELF_DRIVER_ID });
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Оффер отозван');
       return;
     }
 
@@ -553,6 +637,6 @@ export default function orderDetail() {
   const host = document.createElement('div');
   host.innerHTML = renderOrderDetailMarkup({ order, role, state });
   const section = host.firstElementChild;
-  bindEvents(section, { order, role, state });
+  bindEvents(section, { order, role, state, id });
   return section;
 }
