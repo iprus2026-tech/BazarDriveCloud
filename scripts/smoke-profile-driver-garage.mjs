@@ -4280,6 +4280,90 @@ user.set({
     !/\bsessionStorage\s*\.\s*setItem\s*\(/.test(bodyNoComments));
 }
 
+// ── Scenario 121 — BD-PROFILE-D-05J-WIRE-S garage selector wiring
+// source guard. S109 / S116 / S119 already exercise CSS-special
+// garage ids through real DOM stubs (restore selectors, every active-
+// card per-vehicle selector after restore). This pins the SHAPE of
+// `wireGarageActions` in public/src/screens/profile.js so a future
+// refactor that re-introduces a raw `${id}` interpolation (bypassing
+// `escapeCssId`) is caught at the source level. ────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const profileSrc = readFileSync(join(projectRoot, 'public/src/screens/profile.js'), 'utf8');
+
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const body = sliceFn(profileSrc, 'function wireGarageActions(');
+  expect('S121: wireGarageActions body extracted',
+    body.length > 0, String(body.length));
+
+  // Positive pins — active-list per-vehicle loop. Every active-card
+  // selector inside the loop must funnel through `escapeCssId(id)`.
+  expect('S121: active loop declares `const eid = escapeCssId(id)`',
+    /const\s+eid\s*=\s*escapeCssId\(\s*id\s*\)/.test(body));
+  expect('S121: active loop edit selector uses `#pf2-garage-edit-${eid}`',
+    /querySelector\(\s*`#pf2-garage-edit-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: active loop make-active selector uses `#pf2-garage-make-active-${eid}`',
+    /querySelector\(\s*`#pf2-garage-make-active-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: active loop archive selector uses `#pf2-garage-archive-${eid}`',
+    /querySelector\(\s*`#pf2-garage-archive-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: active loop confirm row selector uses `#pf2-garage-confirm-${eid}`',
+    /querySelector\(\s*`#pf2-garage-confirm-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: active loop archive-cancel selector uses `#pf2-garage-archive-cancel-${eid}`',
+    /querySelector\(\s*`#pf2-garage-archive-cancel-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: active loop archive-final-confirm selector uses `#pf2-garage-archive-confirm-${eid}`',
+    /querySelector\(\s*`#pf2-garage-archive-confirm-\$\{eid\}`\s*\)/.test(body));
+
+  // Positive pins — archived-list per-vehicle loop. Same invariant
+  // for the restore selector family; the archived loop iterates `aid`
+  // (archived id) instead of `id`.
+  expect('S121: archived loop declares `const eid = escapeCssId(aid)`',
+    /const\s+eid\s*=\s*escapeCssId\(\s*aid\s*\)/.test(body));
+  expect('S121: archived loop restore selector uses `#pf2-garage-restore-${eid}`',
+    /querySelector\(\s*`#pf2-garage-restore-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: archived loop restore-confirm-row selector uses `#pf2-garage-restore-confirm-row-${eid}`',
+    /querySelector\(\s*`#pf2-garage-restore-confirm-row-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: archived loop restore-cancel selector uses `#pf2-garage-restore-cancel-${eid}`',
+    /querySelector\(\s*`#pf2-garage-restore-cancel-\$\{eid\}`\s*\)/.test(body));
+  expect('S121: archived loop restore-final-confirm selector uses `#pf2-garage-restore-confirm-${eid}`',
+    /querySelector\(\s*`#pf2-garage-restore-confirm-\$\{eid\}`\s*\)/.test(body));
+
+  // Negative pin — no per-vehicle pf2-garage selector inside the
+  // function body may interpolate the RAW `${id}` or `${aid}`. Strip
+  // comments first so explanatory comments naming the raw form
+  // (e.g. "do NOT use `#pf2-garage-edit-${id}` here") do not
+  // false-positive against the scan target.
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const bodyNoComments = stripComments(body);
+  const RAW_PATTERNS = [
+    /`#pf2-garage-edit-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-make-active-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-archive-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-archive-cancel-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-archive-confirm-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-confirm-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-restore-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-restore-confirm-row-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-restore-cancel-\$\{(?:id|aid)\}`/,
+    /`#pf2-garage-restore-confirm-\$\{(?:id|aid)\}`/,
+  ];
+  for (const re of RAW_PATTERNS) {
+    expect(
+      `S121: wireGarageActions has NO raw \${id}/\${aid} interpolation for ${re.source}`,
+      !re.test(bodyNoComments));
+  }
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
