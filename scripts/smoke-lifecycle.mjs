@@ -93,6 +93,17 @@ expect('Terminal — order excluded from listNearbyOrders', !mockApi.listNearbyO
 expect('Terminal — order excluded from feed projection', !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order.id));
 
 // ── CANCELED path ─────────────────────────────────────────────
+// Scenarios are conceptually independent. `createRideOrder` derives
+// `order.id` from `Date.now()` (1 ms resolution), so two consecutive
+// `createRideOrder` calls on a fast CI runner can collide on the same
+// id → the same `trip_${order.id}` tripId. Pre-BD-ACTIVE-RIDE-TERM-01
+// this was masked because `updateActiveRideStatus` overwrote the
+// previous record unconditionally; with the terminal-regression guard
+// now in place, a collision would leave the prior scenario's terminal
+// record in the store and cause the next scenario's terminal write to
+// be refused. Reset the active-ride store at every scenario boundary
+// so the scenarios stay independent regardless of clock granularity.
+rideState.clearActiveRideStore();
 const order2 = mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'A' }, dropoff: { id: null, label: 'B' },
@@ -120,6 +131,10 @@ expect('CANCEL — order excluded from Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order2.id));
 
 // ── NO_SHOW path ─────────────────────────────────────────────
+// Reset active-ride store so an `order.id` clock-collision with the
+// preceding CANCEL scenario can't carry the CANCELED record into this
+// scenario's tripId.
+rideState.clearActiveRideStore();
 const order3 = mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'A' }, dropoff: { id: null, label: 'B' },
@@ -248,6 +263,9 @@ expect('BareDriverCancel — canceled order NOT in listNearbyOrders()',
 expect('BareDriverCancel — canceled order NOT in Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order7.id));
 
+// Reset active-ride store so a clock-collision between order7 (CANCEL)
+// and order8 (NO_SHOW) ids can't carry CANCEL state into this scenario.
+rideState.clearActiveRideStore();
 const order8 = mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'W' }, dropoff: { id: null, label: 'X' },
