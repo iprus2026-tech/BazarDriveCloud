@@ -259,6 +259,27 @@ if (exists(routeTemplateTerminalSmoke)) {
   }
 }
 
+// BD-COMPOSER-PREFILL-TERM-01 — consumer audit for the route-template
+// bridge. BD-ROUTE-TEMPLATE-TERM-01 locked the writers; this smoke
+// locks the consumer: `composer.js` reads the sanitized repeat-route
+// draft via `consumeRepeatRouteDraft()`, applies it through the
+// whitelist mapping in `applyRepeatRoute()`, preserves user work on
+// collision, and publishes a clean `createRideOrder()` payload that
+// carries no stale identity / payment / receipt / cancel-actor /
+// chat / vehicle metadata from the prior ride. Pins the composer's
+// source isolation (no ride_state / active_ride* / driver_offer_store
+// / trip_receipt / favorite_routes imports), the publish-path field
+// whitelist, and the favorite-notice UI-only flow.
+const composerPrefillTerminalSmoke = path.join(root, 'scripts', 'smoke-composer-prefill-terminal.mjs');
+if (exists(composerPrefillTerminalSmoke)) {
+  try {
+    execFileSync(process.execPath, [composerPrefillTerminalSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-composer-prefill-terminal.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
 // ?pane=constructor must not resolve to an inherited value or make the profile
 // render throw; valid aliases keep activating the right pane.
