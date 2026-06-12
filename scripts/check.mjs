@@ -239,6 +239,26 @@ if (exists(rideHistoryTerminalSmoke)) {
   }
 }
 
+// BD-ROUTE-TEMPLATE-TERM-01 — route-template bridge contract for the
+// «Повторить маршрут» and «В избранные» actions. Pins repeat_route.js
+// + favorite_routes.js as route-template-only bridges: terminal
+// actor / identity / payment / receipt / earnings / chat / vehicle
+// metadata never crosses from a completed-or-canceled history entry
+// into a fresh composer draft. Locks builder whitelist shape, storage
+// round-trip sanitizers (peek + consume both re-sanitize), favorite
+// notice payload (`{source, label}` only), and source-level isolation
+// (no mock_api / ride_state / active_ride / driver_offer_store imports;
+// canonical storage-key allow-list per module).
+const routeTemplateTerminalSmoke = path.join(root, 'scripts', 'smoke-route-template-terminal.mjs');
+if (exists(routeTemplateTerminalSmoke)) {
+  try {
+    execFileSync(process.execPath, [routeTemplateTerminalSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-route-template-terminal.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
 // ?pane=constructor must not resolve to an inherited value or make the profile
 // render throw; valid aliases keep activating the right pane.
