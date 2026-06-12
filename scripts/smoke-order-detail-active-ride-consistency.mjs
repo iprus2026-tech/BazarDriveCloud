@@ -82,6 +82,20 @@ const ACTIVE_RIDE_STORE_KEY = 'bazardrive.active_ride.v1';
 const ORDER_OVERLAY_STORE_KEY = 'bazardrive.order_overlay.v1';
 const DRIVER_OFFERS_KEY = 'bazardrive.driver_offers.v1';
 
+// BD-ORDER-DETAIL-01D-3 P2 review fix #4 — unified terminal CTA
+// forbid-list applied symmetrically to BOTH the passenger P4 and the
+// driver D4 markup, AND to both CANCELED (overlay-driven) and EXPIRED
+// (fixture-driven) terminal scenarios. The original sweep skipped
+// `driver-cancel` on P4 and `reject-offer` on D4 — codifying the full
+// set in one constant prevents the asymmetry from reappearing.
+const TERMINAL_FORBIDDEN_CTAS = [
+  'data-action="select-driver"',
+  'data-action="reject-offer"',
+  'data-action="open-trip"',
+  'data-action="driver-cancel"',
+  'data-action="driver-send-offer"',
+];
+
 // ── Test scaffolding: seed an order with a known offer mix ──────────
 //
 // Five competing offers per the task spec:
@@ -338,6 +352,54 @@ expect('A — ride_state exports saveActiveRide + findActiveRide',
     && seed.tripId !== rideState.DEMO_ACTIVE_RIDE_ID);
 }
 
+// ── F/poison — stale/demo order.tripId MUST be ignored by the seed ─
+//   BD-ORDER-DETAIL-01D-3 P2 review fix #3 — the original test only
+//   exercised the default `trip_${order.id}` derivation by NEVER
+//   setting `order.tripId`. A malicious / stale snapshot could plant
+//   a different tripId on the merged order, and the seed builder
+//   would silently honor it — the resulting active-ride record would
+//   point at the wrong key. Plant a deliberately wrong tripId and
+//   prove the builder ignores it.
+{
+  // Reset and re-commit so we know the offer store is in a clean state.
+  seedFreshScenario();
+  driverOfferStore.commitPassengerSelection({
+    orderId: ORDER_ID,
+    selectedDriverId: 'drv-A',
+    allOffers: driverOfferStore.listDriverOffersForOrder(ORDER_ID),
+  });
+  const poisonedMerged = {
+    id: ORDER_ID,
+    // Stale / demo tripId smuggled in by a hostile / drift snapshot.
+    // The seed builder MUST NOT honor this — the canonical handoff
+    // tripId is always `trip_${order.id}`.
+    tripId: 'stale_demo_trip_id',
+    status: 'ACCEPTED',
+    selectedDriverId: 'drv-A',
+    passengerName: 'Уникальный Пассажир',
+    pickup: 'Уникальная точка А',
+    dropoff: 'Уникальная точка Б',
+    budget: 1200,
+    comment: '',
+    offers: driverOfferStore.listDriverOffersForOrder(ORDER_ID),
+  };
+  const seed = orderDetailMod.buildPassengerActiveRideSeed(poisonedMerged);
+  expect('F/poison — buildPassengerActiveRideSeed returns a non-null seed for the poisoned merged order',
+    !!seed);
+  expect('F/poison — seed.tripId is the canonical trip_${order.id} (NOT the stale poison)',
+    seed?.tripId === `trip_${ORDER_ID}`);
+  expect('F/poison — seed.tripId is NOT the stale "stale_demo_trip_id"',
+    seed?.tripId !== 'stale_demo_trip_id');
+  // Persist the seed and verify the store ends up keyed by the
+  // canonical tripId — not the stale poison.
+  rideState.clearActiveRideStore();
+  rideState.saveActiveRide(seed);
+  expect('F/poison — persisted record is reachable via the canonical tripId',
+    !!rideState.findActiveRide(`trip_${ORDER_ID}`));
+  expect('F/poison — persisted record is NOT reachable via the stale poison tripId',
+    rideState.findActiveRide('stale_demo_trip_id') === null);
+}
+
 // ── G. Passenger active-ride consumer sees the same selected driver ─
 //   The handoff click handler funnels through saveActiveRide(seed)
 //   then navigates to /active-ride?role=passenger&tripId=…
@@ -429,50 +491,85 @@ expect('A — ride_state exports saveActiveRide + findActiveRide',
     driverMarkup.includes('Открыть активную поездку'));
 }
 
-// ── I. Terminal order hides the select-driver CTA ───────────────────
-//   bodyP4 carries «Создать новый заказ» + «Вернуться в ленту» and
-//   nothing that could nominate a new driver. The forbidden CTAs are
-//   not in the rendered markup.
+// ── I. Terminal order hides the full forbidden-CTA set ──────────────
+//   Both CANCELED (overlay-driven) AND EXPIRED (fixture-driven)
+//   terminal scenarios must hide every CTA in TERMINAL_FORBIDDEN_CTAS
+//   on BOTH P4 (passenger) and D4 (driver). Codifying the full set in
+//   the loop catches a future change that re-introduces, say,
+//   `driver-cancel` on P4 or `reject-offer` on D4.
+
+// ── I/CANCELED — overlay-driven terminal ────────────────────────────
 {
   // Take demo-order-1 (P1 canonical) and run cancelOrderByPassenger to
-  // overlay it to CANCELED, then re-load and render P4.
+  // overlay it to CANCELED, then re-load and render P4 / D4.
   _bdofs.clear();
   driverOfferStore.clearDriverOfferStore();
   driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
   const canceled = orderDetailMod.loadOrder('demo-order-1');
-  expect('I baseline — demo-order-1 status flipped to CANCELED via overlay',
+  expect('I/CANCELED baseline — demo-order-1 status flipped to CANCELED via overlay',
     canceled.status === 'CANCELED');
-  expect('I baseline — passenger resolves to P4',
+  expect('I/CANCELED baseline — passenger resolves to P4',
     orderDetailMod.resolveState(canceled, 'passenger') === 'P4');
+  expect('I/CANCELED baseline — driver resolves to D4',
+    orderDetailMod.resolveState(canceled, 'driver') === 'D4');
   const passengerP4 = orderDetailMod.renderOrderDetailMarkup({
     order: canceled, role: 'passenger', state: 'P4',
   });
-  for (const forbidden of [
-    'data-action="select-driver"',
-    'data-action="reject-offer"',
-    'data-action="open-trip"',
-    'data-action="driver-send-offer"',
-  ]) {
-    expect(`I — P4 terminal markup does NOT carry ${forbidden}`,
+  for (const forbidden of TERMINAL_FORBIDDEN_CTAS) {
+    expect(`I/CANCELED — P4 terminal markup does NOT carry ${forbidden}`,
       !passengerP4.includes(forbidden));
   }
-  expect('I — P4 terminal markup keeps only safe exits',
+  expect('I/CANCELED — P4 terminal markup keeps only safe exits',
     passengerP4.includes('Создать новый заказ')
     && passengerP4.includes('Вернуться в ленту'));
-  // Driver side on the same canceled order resolves to D4 with no
-  // select-/open-trip surfaces and no offer CTA.
   const d4 = orderDetailMod.renderOrderDetailMarkup({
     order: canceled, role: 'driver', state: 'D4',
   });
-  for (const forbidden of [
-    'data-action="select-driver"',
-    'data-action="open-trip"',
-    'data-action="driver-cancel"',
-    'data-action="driver-send-offer"',
-  ]) {
-    expect(`I — D4 terminal markup does NOT carry ${forbidden}`,
+  for (const forbidden of TERMINAL_FORBIDDEN_CTAS) {
+    expect(`I/CANCELED — D4 terminal markup does NOT carry ${forbidden}`,
       !d4.includes(forbidden));
   }
+}
+
+// ── I/EXPIRED — fixture-driven terminal (BD-ORDER-DETAIL-01D-3 P2 review fix #2) ─
+//   demo-order-expired carries status='EXPIRED' + lockedReason='order_expired'
+//   directly in the fixture (no overlay needed). The terminal-CTA
+//   invariant must hold the same way as for CANCELED orders — every
+//   forbidden CTA absent on BOTH P4 and D4, on a brand-new fixture-only
+//   read with no prior commit / cancel state.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const expired = orderDetailMod.loadOrder('demo-order-expired');
+  expect('I/EXPIRED baseline — demo-order-expired status === EXPIRED',
+    expired?.status === 'EXPIRED');
+  expect('I/EXPIRED baseline — passenger resolves to P4',
+    orderDetailMod.resolveState(expired, 'passenger') === 'P4');
+  expect('I/EXPIRED baseline — driver resolves to D4',
+    orderDetailMod.resolveState(expired, 'driver') === 'D4');
+  // P4 markup — full forbidden-CTA sweep.
+  const expiredP4 = orderDetailMod.renderOrderDetailMarkup({
+    order: expired, role: 'passenger', state: 'P4',
+  });
+  for (const forbidden of TERMINAL_FORBIDDEN_CTAS) {
+    expect(`I/EXPIRED — P4 terminal markup does NOT carry ${forbidden}`,
+      !expiredP4.includes(forbidden));
+  }
+  expect('I/EXPIRED — P4 markup keeps only safe terminal exits',
+    expiredP4.includes('Создать новый заказ')
+    && expiredP4.includes('Вернуться в ленту'));
+  expect('I/EXPIRED — P4 markup carries the «Истёк» status chip',
+    expiredP4.includes('Истёк'));
+  // D4 markup — same forbidden-CTA sweep + the canonical expired copy.
+  const expiredD4 = orderDetailMod.renderOrderDetailMarkup({
+    order: expired, role: 'driver', state: 'D4',
+  });
+  for (const forbidden of TERMINAL_FORBIDDEN_CTAS) {
+    expect(`I/EXPIRED — D4 terminal markup does NOT carry ${forbidden}`,
+      !expiredD4.includes(forbidden));
+  }
+  expect('I/EXPIRED — D4 markup shows the «Заказ истёк» reason',
+    expiredD4.includes('Заказ истёк'));
 }
 
 // ── J. Cancel does NOT recreate / revive the active-ride record ─────
@@ -494,25 +591,92 @@ expect('A — ride_state exports saveActiveRide + findActiveRide',
     rideState.findActiveRide(`trip_demo-order-1`) === null);
 
   // Now exercise the inverse — a PRIOR handoff seed exists, then the
-  // passenger cancels. The active-ride record stays put; the cancel
-  // overlay does not retroactively delete or rewrite it.
+  // passenger cancels. The active-ride record stays put BYTE-FOR-BYTE;
+  // the cancel overlay does not retroactively delete or rewrite any
+  // field of the persisted active ride.
+  //
+  // BD-ORDER-DETAIL-01D-3 P2 review fix #1 — the original assertion
+  // only checked `status` + `driver.name`. A future bug that
+  // overwrote `selectedDriverId`, the passenger / route snapshots,
+  // timestamps, or any other field would slip through. Compare the
+  // full serialized record before and after the overlay cancel to
+  // catch any field-level mutation.
   rideState.clearActiveRideStore();
   rideState.saveActiveRide({
     tripId: 'trip_pre-existing-active',
+    orderId: 'pre-existing-active',
     role: 'passenger',
     status: 'DRIVER_EN_ROUTE',
-    passenger: { name: 'Test' },
-    driver:    { name: 'Test driver' },
-    route:     { pickupLabel: 'A', dropoffLabel: 'B' },
-    timestamps: { createdAt: '2026-06-12T07:00:00.000Z' },
+    selectedDriverId: 'drv-pre-existing-A',
+    passenger: {
+      name: 'Уникальный Пассажир',
+      initials: 'УП',
+      rating: '4,55',
+      phoneMasked: '+7 ... 00-11',
+      luggage: 'уникальный багаж',
+      note: 'уникальная заметка',
+    },
+    driver: {
+      name: 'Уникальный Водитель',
+      initials: 'УВ',
+      rating: '4,99',
+      car: 'Уникальный · модель',
+      onlineLabel: 'На линии',
+      shiftDuration: '',
+    },
+    vehicle: { model: 'Уникальный · модель', color: 'белый', plate: 'А777АА777' },
+    route: {
+      pickupLabel:  'Уникальная точка А',
+      dropoffLabel: 'Уникальная точка Б',
+      currentInstruction: 'Через 250 м направо',
+      currentStreet: 'на тестовой улице',
+      etaToPickup: '4 мин',
+      etaToDestination: '28 мин',
+    },
+    order: { offerPrice: '999 ₽', pickupEta: '4 мин' },
+    ride: { price: '999 ₽' },
+    payment: { amount: '999 ₽' },
+    timestamps: {
+      createdAt:  '2026-06-12T07:00:00.000Z',
+      acceptedAt: '2026-06-12T07:01:00.000Z',
+    },
+    seededFrom: 'order_detail_passenger_handoff',
   });
-  const before = rideState.findActiveRide('trip_pre-existing-active');
+  const beforeSerialized = JSON.stringify(
+    rideState.findActiveRide('trip_pre-existing-active'));
   driverOfferStore.cancelOrderByPassenger({ orderId: 'pre-existing-active' });
-  const after = rideState.findActiveRide('trip_pre-existing-active');
-  expect('J — pre-existing active ride is preserved across order overlay cancel',
-    !!after
-    && after.status === before.status
-    && after.driver?.name === before.driver?.name);
+  const afterSerialized = JSON.stringify(
+    rideState.findActiveRide('trip_pre-existing-active'));
+  expect('J — active ride record is preserved byte-for-byte across overlay cancel',
+    afterSerialized === beforeSerialized,
+    afterSerialized === beforeSerialized
+      ? ''
+      : `before=${beforeSerialized.length}B after=${afterSerialized.length}B`);
+  // Spot pins on individual high-risk fields for diagnostic clarity if
+  // the serialized comparison ever fails — these are redundant with the
+  // byte-for-byte equality above but make the failure log point at the
+  // specific field that drifted.
+  const after = JSON.parse(afterSerialized || 'null');
+  expect('J — selectedDriverId preserved (no overlay rewrite)',
+    after?.selectedDriverId === 'drv-pre-existing-A');
+  expect('J — passenger snapshot preserved',
+    after?.passenger?.name === 'Уникальный Пассажир'
+    && after?.passenger?.phoneMasked === '+7 ... 00-11'
+    && after?.passenger?.note === 'уникальная заметка');
+  expect('J — driver snapshot preserved',
+    after?.driver?.name === 'Уникальный Водитель'
+    && after?.driver?.rating === '4,99');
+  expect('J — route snapshot preserved',
+    after?.route?.pickupLabel === 'Уникальная точка А'
+    && after?.route?.dropoffLabel === 'Уникальная точка Б');
+  expect('J — timestamps preserved verbatim (no canceledAt injected onto active-ride)',
+    after?.timestamps?.createdAt === '2026-06-12T07:00:00.000Z'
+    && after?.timestamps?.acceptedAt === '2026-06-12T07:01:00.000Z'
+    && after?.timestamps?.canceledAt === undefined);
+  expect('J — orderId on the active-ride record preserved',
+    after?.orderId === 'pre-existing-active');
+  expect('J — seededFrom marker preserved',
+    after?.seededFrom === 'order_detail_passenger_handoff');
 }
 
 // ── K. Source guards ────────────────────────────────────────────────

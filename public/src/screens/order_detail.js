@@ -427,9 +427,12 @@ export function buildPassengerActiveRideSeed(order) {
   const driverId = order.selectedDriverId;
   const offer = (order.offers || []).find((o) => o && o.driverId === driverId);
   if (!offer) return null;
-  const tripId = typeof order.tripId === 'string' && order.tripId
-    ? order.tripId
-    : `trip_${order.id}`;
+  // BD-ORDER-DETAIL-01D-3 — the accepted active-ride seed ALWAYS
+  // derives `tripId` canonically from `order.id`. A stale or demo
+  // `order.tripId` planted on the merged snapshot (e.g. via a fixture
+  // legacy field or a hostile snapshot) is ignored — the canonical
+  // handoff key is the only key the active-ride store ever sees.
+  const tripId = `trip_${order.id}`;
   const now = new Date().toISOString();
   const priceLabel = formatRubLocal(typeof offer.price === 'number'
     ? offer.price
