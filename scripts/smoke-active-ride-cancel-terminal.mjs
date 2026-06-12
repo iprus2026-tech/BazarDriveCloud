@@ -427,8 +427,10 @@ function seedRide(tripId, overrides = {}) {
   // the chain so neither can be replaced by a foreign helper.
   expect('T10 — driver screen has persistDriverCancel calling persistDriverRideStatus',
     /persistDriverCancel[\s\S]{0,400}persistDriverRideStatus\s*\(/.test(driverScreenSrc));
+  // Window widened (was 400) — T14 added a pre-save guard block
+  // before the updateActiveRideStatus call.
   expect('T10 — driver screen has persistDriverRideStatus calling updateActiveRideStatus',
-    /persistDriverRideStatus[\s\S]{0,400}updateActiveRideStatus\s*\(/.test(driverScreenSrc));
+    /persistDriverRideStatus[\s\S]{0,2000}updateActiveRideStatus\s*\(/.test(driverScreenSrc));
   expect('T10 — passenger cancel handler persists via updateActiveRideStatus (not Order Detail)',
     /updateActiveRideStatus\s*\([\s\S]{0,400}RIDE_STATUS\.CANCELED/.test(passengerScreenSrc));
 }
@@ -459,8 +461,10 @@ function seedRide(tripId, overrides = {}) {
   // Source pin: persistDriverRideStatus now gates the sync on
   // `nextRide.status === nextStatus`. Without this, the canonical
   // order would be written to the requested-but-not-applied status.
+  // Window widened (was 800) — T14 added the pre-save block above
+  // the gate.
   expect('T11 — persistDriverRideStatus gates syncCanonicalOrderStatus on actual transition',
-    /persistDriverRideStatus[\s\S]{0,800}nextRide\.status\s*===\s*nextStatus[\s\S]{0,300}syncCanonicalOrderStatus/.test(driverScreenSrc));
+    /persistDriverRideStatus[\s\S]{0,2400}nextRide\.status\s*===\s*nextStatus[\s\S]{0,300}syncCanonicalOrderStatus/.test(driverScreenSrc));
   // Also pin that the old unconditional `if (nextRide) syncCanonicalOrderStatus(...)`
   // is gone — a future revert would re-introduce the leak.
   expect('T11 — old unconditional sync pattern is gone',
@@ -579,6 +583,94 @@ function seedRide(tripId, overrides = {}) {
   });
   expect('T13 — cross-terminal save (CANCELED → NO_SHOW) is also refused',
     crossTerminal?.status === 'CANCELED');
+}
+
+// ── T14 — driver simulated-ride terminal action persists via pre-save ─
+// Regression pin for the second-round P2 review: the terminal-write
+// existing-ride requirement (T12) initially broke status-simulated
+// rides — `loadCanonicalActiveRide` returns null for an unknown
+// tripId, the screen builds an in-memory ride via `createDemoActiveRide`
+// (NOT persisted), and a Finish / No-show / Cancel click would
+// silently no-op because `updateActiveRideStatus(unknown-tripId,
+// CANCELED|NO_SHOW|COMPLETED)` returns null. Fix: `persistDriverRideStatus`
+// pre-saves the in-memory ride via `findActiveRide`/`saveActiveRide`
+// when the store has no entry yet, so the terminal write has an
+// existing record to mutate.
+{
+  // Behavioral: pre-save then terminal write end-to-end. The store
+  // starts empty, the caller pre-saves a non-terminal in-memory ride,
+  // then writes a terminal status; the terminal write succeeds.
+  _store.clear();
+  const simulatedRide = rideState.createDemoActiveRide({
+    tripId: 'sim-trip-14',
+    status: rideState.RIDE_STATUS.IN_PROGRESS,
+    passenger: { name: 'Sim Passenger' },
+  });
+  // Caller sequence: pre-save (matches persistDriverRideStatus).
+  rideState.saveActiveRide(simulatedRide);
+  const completed = rideState.updateActiveRideStatus('sim-trip-14',
+    rideState.RIDE_STATUS.COMPLETED, {});
+  expect('T14 — terminal write succeeds after pre-save on simulated ride',
+    completed?.status === 'COMPLETED');
+  expect('T14 — simulated passenger identity preserved across terminal write',
+    completed?.passenger?.name === 'Sim Passenger');
+  // Without the pre-save: direct terminal write on an unknown tripId
+  // returns null (T12 behaviour, regressed by the second-round review).
+  _store.clear();
+  const directTerminal = rideState.updateActiveRideStatus('sim-trip-14b',
+    rideState.RIDE_STATUS.COMPLETED, {});
+  expect('T14 — without pre-save, terminal write on unknown tripId is still refused',
+    directTerminal === null);
+  // Source pins: persistDriverRideStatus imports findActiveRide +
+  // saveActiveRide and uses them as the pre-save gate.
+  expect('T14 — active_ride.js imports findActiveRide from ride_state.js',
+    /import\s*\{[\s\S]*?findActiveRide[\s\S]*?\}\s*from\s*['"]\.\.\/ride_state\.js['"]/.test(driverScreenSrc));
+  expect('T14 — active_ride.js imports saveActiveRide from ride_state.js',
+    /import\s*\{[\s\S]*?saveActiveRide[\s\S]*?\}\s*from\s*['"]\.\.\/ride_state\.js['"]/.test(driverScreenSrc));
+  expect('T14 — persistDriverRideStatus pre-saves when no canonical store record',
+    /persistDriverRideStatus[\s\S]{0,1500}!\s*findActiveRide\(\s*ride\.tripId\s*\)[\s\S]{0,200}saveActiveRide\(\s*ride\s*\)/.test(driverScreenSrc));
+}
+
+// ── T15 — passenger canonical sync gated on canceledRide.status === CANCELED ─
+// Regression pin for the second-round P2 review: when the active-ride
+// store already carries a non-CANCELED terminal record (driver-
+// completed in another tab), the stale passenger tab still calls
+// `updateTripStatus(canonicalOrderId, CANCELED)` unconditionally. Fix:
+// gate the canonical sync on `canceledRide.status === CANCELED` —
+// mirrors the driver-side `nextRide.status === nextStatus` gate (T11).
+{
+  // Source pin: passenger cancel handler now gates the canonical
+  // sync on the actual outcome.
+  expect('T15 — passenger cancel handler gates updateTripStatus on canceledRide.status === CANCELED',
+    /canonicalOrderId[\s\S]{0,400}canceledRide[\s\S]{0,200}status\s*===\s*RIDE_STATUS\.CANCELED[\s\S]{0,200}updateTripStatus/.test(passengerScreenSrc));
+  // Forbid the old unconditional pattern: a future revert would
+  // re-introduce the leak.
+  expect('T15 — old unconditional `if (canonicalOrderId) updateTripStatus` pattern is gone',
+    !/if\s*\(\s*canonicalOrderId\s*\)\s*updateTripStatus\s*\(\s*canonicalOrderId\s*,\s*RIDE_STATUS\.CANCELED\s*\)/.test(passengerScreenSrc));
+  // Behavioral: when a driver completes the ride and a stale
+  // passenger tab fires updateActiveRideStatus, the helper returns
+  // the COMPLETED record (NOT CANCELED). The source-level gate
+  // means the caller knows not to fire updateTripStatus.
+  seedRide('trip-t15');
+  rideState.updateActiveRideStatus('trip-t15', rideState.RIDE_STATUS.COMPLETED, {});
+  const stalePassengerResult = rideState.updateActiveRideStatus('trip-t15',
+    rideState.RIDE_STATUS.CANCELED,
+    { cancel: { by: 'passenger', reason: 'changed_mind' } });
+  expect('T15 — stale passenger CANCELED on COMPLETED ride returns COMPLETED record',
+    stalePassengerResult?.status === 'COMPLETED');
+  expect('T15 — caller-visible signal: returned status !== CANCELED',
+    stalePassengerResult?.status !== 'CANCELED');
+  // Same for a driver-canceled ride: passenger retry returns driver
+  // record verbatim, the gate prevents the canonical sync.
+  seedRide('trip-t15b');
+  rideState.cancelActiveRide({ tripId: 'trip-t15b', canceledBy: 'driver' });
+  const stalePassengerOnDriverCancel = rideState.updateActiveRideStatus('trip-t15b',
+    rideState.RIDE_STATUS.CANCELED,
+    { cancel: { by: 'passenger', reason: 'changed_mind' } });
+  expect('T15 — driver-canceled actor preserved across stale passenger retry',
+    stalePassengerOnDriverCancel?.cancel?.by === 'driver');
+  expect('T15 — returned status IS CANCELED (same terminal) — caller still gates on actor',
+    stalePassengerOnDriverCancel?.status === 'CANCELED');
 }
 
 console.log('\n' + (issues.length

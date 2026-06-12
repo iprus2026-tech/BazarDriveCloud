@@ -20,6 +20,8 @@ import {
   SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
+  findActiveRide,
+  saveActiveRide,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import {
@@ -380,6 +382,24 @@ export default function activeRide() {
   ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
   function persistDriverRideStatus(nextStatus, patch = {}) {
+    // BD-ACTIVE-RIDE-TERM-01 P2 follow-up — when the driver is on a
+    // status-simulated demo (loadCanonicalActiveRide returned null
+    // and we built `ride` via createDemoActiveRide / handoff
+    // snapshot above), the ride hasn't been persisted to
+    // `bazardrive.active_ride.v1` yet. The terminal-write existing-
+    // ride guard inside `updateActiveRideStatus` refuses unknown
+    // tripIds for CANCELED / NO_SHOW / COMPLETED — so a legitimate
+    // Finish / No-show / Cancel click on a status-simulated ride
+    // would otherwise silently fall back to the in-memory snapshot
+    // and the screen would never advance. Pre-save the in-memory
+    // ride once so the terminal write has an existing record to
+    // mutate. Idempotent: when the ride is already in the store,
+    // the saveActiveRide terminal-record freeze either passes through
+    // (non-terminal snapshot, non-terminal stored) or refuses
+    // verbatim (terminal already landed); either way the
+    // updateActiveRideStatus call right after sees the canonical
+    // store state.
+    if (!findActiveRide(ride.tripId)) saveActiveRide(ride);
     const nextRide = updateActiveRideStatus(ride.tripId, nextStatus, patch);
     // BD-ACTIVE-RIDE-TERM-01 — only sync the canonical order when the
     // status actually changed to `nextStatus`. `updateActiveRideStatus`
