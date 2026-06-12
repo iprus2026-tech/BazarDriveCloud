@@ -15,6 +15,7 @@ import {
   getDriverOffer,
   commitPassengerSelection,
   cancelOrderByPassenger,
+  cancelOrderByDriver,
   rejectDriverOfferByPassenger,
   rejectSentOffersForPassengerCanceledOrder,
   getOrderOverlay,
@@ -289,6 +290,14 @@ export function loadOrder(id) {
     }
     if (typeof overlay.selectedDriverId === 'string' && overlay.selectedDriverId) {
       base.selectedDriverId = overlay.selectedDriverId;
+    }
+    // BD-ORDER-DETAIL-01D-2D — surface the cancel actor so bodyP4 can
+    // differentiate «Заказ отменён.» (passenger / system) from
+    // «Водитель отменил заказ.» (assigned driver). The driver D4
+    // surface keeps the generic `order_canceled` lockedReason copy
+    // regardless of actor.
+    if (typeof overlay.canceledBy === 'string' && overlay.canceledBy) {
+      base.canceledBy = overlay.canceledBy;
     }
   }
   // BD-ORDER-DETAIL-01D-2C-B — lockedReason precedence on D4:
@@ -622,9 +631,14 @@ function bodyP3(order) {
 }
 
 function bodyP4(order) {
-  const terminalText = order.status === ORDER_STATUS.EXPIRED
-    ? 'Заказ истёк. Создайте новый.'
-    : 'Заказ отменён.';
+  let terminalText;
+  if (order.status === ORDER_STATUS.EXPIRED) {
+    terminalText = 'Заказ истёк. Создайте новый.';
+  } else if (order.canceledBy === 'driver') {
+    terminalText = 'Водитель отменил заказ.';
+  } else {
+    terminalText = 'Заказ отменён.';
+  }
   return `
     ${routeSummary(order)}
     <div class="od-terminal" role="status" aria-live="polite"><div class="od-terminal__title">Поездка закрыта</div><div class="od-terminal__text">${escapeHtml(terminalText)}</div></div>
@@ -985,6 +999,72 @@ function bindEvents(rootEl, initialCtx) {
         orderId: id,
         allOffers: (ctx.order && ctx.order.offers) || [],
       });
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Заказ отменён');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-01D-2D — assigned-driver «Отменить» on D3.
+    // Two-step armed/confirm pattern mirroring the passenger
+    // cancel-order handler. Eligibility:
+    //   • role === 'driver'
+    //   • ctx.order.status === ACCEPTED
+    //   • ctx.order.selectedDriverId === SELF_DRIVER_ID
+    // On success the overlay carries status='CANCELED' +
+    // canceledBy='driver'; the assignment record (selectedDriverId)
+    // is preserved by the helper. The accepted DriverOffer stays
+    // accepted — driver cancel does NOT flip offer status back to
+    // sent / rejected. The active_ride store is NOT touched here.
+    // Stale-tab race (passenger already canceled) lands in the
+    // non-success branch: re-render so the screen catches up to the
+    // terminal state, toast «Заказ уже отменён».
+    if (action === 'driver-cancel') {
+      if (btn.disabled) return;
+      if (role !== 'driver') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const id = ctx.id;
+      if (!id) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      if (!ctx.order
+          || ctx.order.status !== ORDER_STATUS.ACCEPTED
+          || ctx.order.selectedDriverId !== SELF_DRIVER_ID) {
+        showNotice(rootEl, 'Заказ нельзя отменить');
+        return;
+      }
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Подтвердите отмену';
+        showNotice(rootEl, 'Нажмите ещё раз, чтобы отменить заказ');
+        if (btn.__disarmTimer) clearTimeout(btn.__disarmTimer);
+        btn.__disarmTimer = setTimeout(() => {
+          try {
+            btn.dataset.armed = '';
+            btn.textContent = 'Отменить';
+          } catch {}
+        }, 5000);
+        return;
+      }
+      // Pass the merged order snapshot through so the helper can
+      // verify the accepted-assignment proof on the no-overlay path
+      // (fixture-only ACCEPTED). Without this, a direct / stale call
+      // could pin a CANCELED overlay onto any safe `orderId`.
+      const result = cancelOrderByDriver({
+        orderId: id,
+        driverId: SELF_DRIVER_ID,
+        order: ctx.order,
+      });
+      if (!result) {
+        showNotice(rootEl, 'Не удалось отменить заказ');
+        return;
+      }
+      // Stale-result branch: another tab landed a passenger cancel
+      // before this driver tap. The helper is idempotent on any prior
+      // cancel actor; we re-render so the screen catches up but never
+      // toast a misleading «Заказ отменён» as if the driver had
+      // performed the cancel.
+      if (result.canceledBy !== 'driver') {
+        rerenderInPlace(rootEl, ctx);
+        showNotice(rootEl, 'Заказ уже отменён');
+        return;
+      }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Заказ отменён');
       return;
