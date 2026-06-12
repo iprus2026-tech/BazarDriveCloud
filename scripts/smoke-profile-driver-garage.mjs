@@ -4206,6 +4206,80 @@ user.set({
   // active-card iteration).
 }
 
+// ── Scenario 120 — BD-PROFILE-D-05J-MA-S markGarageVehicleActive
+// source guard parity. S105 source-pins `restoreGarageVehicle`; this
+// mirrors that coverage onto the SIBLING writer
+// `markGarageVehicleActive` so a future revert that smuggles a
+// cross-surface call (active-ride / receipt / history / responses)
+// or a raw localStorage write into the make-active path is caught at
+// the source level too. No runtime change — pure static scan. ────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const stateSrc = readFileSync(join(projectRoot, 'public/src/state.js'), 'utf8');
+
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const body = sliceFn(stateSrc, 'export function markGarageVehicleActive(');
+  expect('S120: markGarageVehicleActive body extracted',
+    body.length > 0, String(body.length));
+
+  // Positive pins — these encode the documented contract shape: trim
+  // incoming id, refuse blank, route the chosen id into activeVehicleId,
+  // clear the restoredFromArchive marker on activation, and preserve
+  // the vehicles collection through the local `nextVehicles` slot.
+  expect('S120: incoming vehicleId is trimmed into targetId',
+    /const\s+targetId\s*=\s*[^;]*\bvehicleId\b[^;]*\.trim\s*\(\s*\)/.test(body));
+  expect('S120: blank targetId returns null',
+    /if\s*\(\s*!\s*targetId\s*\)\s*return\s+null/.test(body));
+  expect('S120: activeVehicleId is set to targetId on persist',
+    /activeVehicleId\s*:\s*targetId\b/.test(body));
+  expect('S120: restoredFromArchive marker is deleted on activation',
+    /delete\s+\w+\.restoredFromArchive\b/.test(body));
+  expect('S120: vehicles collection is persisted via nextVehicles',
+    /vehicles\s*:\s*nextVehicles\b/.test(body));
+
+  // Comment-stripped scan target for the forbidden-token sweep — an
+  // explanatory comment that mentions a forbidden symbol must not
+  // false-positive against this helper.
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const bodyNoComments = stripComments(body);
+
+  // Cross-surface forbidden calls + storage keys — markGarageVehicleActive
+  // owns ONLY the driverGarage slice; it must never reach into the
+  // active-ride, receipt, history, or response stores.
+  const FORBIDDEN = [
+    { name: 'saveActiveRide',           regex: /\bsaveActiveRide\s*\(/ },
+    { name: 'saveRideHistoryEntry',     regex: /\bsaveRideHistoryEntry\s*\(/ },
+    { name: 'createRideOrder',          regex: /\bcreateRideOrder\s*\(/ },
+    { name: 'acceptCanonicalRideOrder', regex: /\bacceptCanonicalRideOrder\s*\(/ },
+    { name: '"bazardrive.responses.v1"',       regex: /bazardrive\.responses\.v1/ },
+    { name: '"bazardrive.active_ride.v1"',     regex: /bazardrive\.active_ride\.v1/ },
+    { name: '"bazardrive.ride_history.v1"',    regex: /bazardrive\.ride_history\.v1/ },
+    { name: '"bazardrive.driver_receipts.v1"', regex: /bazardrive\.driver_receipts\.v1/ },
+    { name: '"bazardrive.respond.v1"',         regex: /bazardrive\.respond\.v1/ },
+  ];
+  for (const { name, regex } of FORBIDDEN) {
+    expect(`S120: markGarageVehicleActive does NOT touch ${name}`,
+      !regex.test(bodyNoComments));
+  }
+  // Raw storage writes — the canonical writer is `persist()`; the
+  // helper must not bypass it via direct localStorage/sessionStorage.
+  expect('S120: markGarageVehicleActive does NOT call localStorage.setItem directly',
+    !/\blocalStorage\s*\.\s*setItem\s*\(/.test(bodyNoComments));
+  expect('S120: markGarageVehicleActive does NOT call sessionStorage.setItem directly',
+    !/\bsessionStorage\s*\.\s*setItem\s*\(/.test(bodyNoComments));
+}
+
 // ── Result ───────────────────────────────────────────────────────────────────
 if (issues.length) {
   console.error('\nSMOKE FAILED:');
