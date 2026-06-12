@@ -570,19 +570,55 @@ across re-renders.
 **BD-ORDER-DETAIL-01D-2C-B opens the passenger reject-offer pinhole**:
 P2 «Отклонить» on a single DriverOffer card now flips ONLY that one
 offer to `status='rejected'` via the new
-`rejectDriverOfferByPassenger({ orderId, driverId })` helper, stamping
-`rejectedBy='passenger'` + `rejectedAt` + a monotonic `updatedAt`.
-Other sent offers for the same order stay `sent` and remain selectable;
-terminal offers (`withdrawn`, `expired`, `accepted`, and any pre-existing
-`rejected` with a different `rejectedBy`) are preserved verbatim. The
-order overlay (`selectedDriverId`, `Order.status`) is **not** touched,
-the active_ride store is **not** seeded, and the driver flow is
-unaffected. Idempotent: a second reject on an already-passenger-rejected
-offer returns the existing record. Because `activeSentOffers()` already
-filters terminal statuses, the rejected offer naturally drops out of
-P2 and is no longer a selectable / open-trip candidate; the
-`commitPassengerSelection` stale-store guard also refuses to promote a
-rejected offer to `selectedDriverId`.
+`rejectDriverOfferByPassenger({ orderId, driverId, offer? })` helper,
+stamping `rejectedBy='passenger'` + `rejectedAt` + a monotonic
+`updatedAt`. The optional `offer` snapshot lets the click handler
+persist a fixture-only sent baseline (a P2 candidate that has not yet
+been written to `bazardrive.driver_offers.v1`) before flipping it to
+rejected — mirroring the snapshot fallback `commitPassengerSelection`
+uses. Other sent offers for the same order stay `sent` and remain
+selectable; terminal offers (`withdrawn`, `expired`, `accepted`, and
+any pre-existing `rejected` with a different `rejectedBy`) are
+preserved verbatim. The order overlay (`selectedDriverId`,
+`Order.status`) is **not** touched, and the active_ride store is
+**not** seeded. Idempotent: a second reject on an already-passenger-
+rejected offer returns the existing record. Because
+`activeSentOffers()` already filters terminal statuses, the rejected
+offer naturally drops out of P2 and is no longer a selectable /
+open-trip candidate; the `commitPassengerSelection` stale-store guard
+also refuses to promote a rejected offer to `selectedDriverId`.
+
+The reject-offer click handler validates the helper outcome before
+toasting success — it only shows «Оффер отклонён» when
+`result.status === 'rejected' && result.rejectedBy === 'passenger'`. A
+truthy result with a non-matching shape (the snapshot was stale and the
+stored offer is now `accepted` / `withdrawn` / `expired` / foreign-
+rejected) is treated as non-success: the handler re-renders so the
+stale card drops out of P2 and toasts «Этот оффер недоступен» instead
+of the misleading success copy.
+
+**SELF-driver D4 transition.** When the passenger rejects the SELF
+driver's own DriverOffer, the driver view routes to **D4** (NOT D1)
+with `lockedReason='driver_offer_rejected'` and the explicit info copy
+«Пассажир отклонил ваш оффер». The `driver-send-offer` click handler
+is hardened with a defensive short-circuit on `existing.status ===
+'rejected'` (toasting «Пассажир отклонил оффер») so that even a stale
+render cannot fake a successful resend — `sendDriverOffer` already
+preserves the rejected status verbatim, but the handler must not toast
+«Оффер отправлен» against an unchanged store.
+
+**lockedReason precedence on D4** (applied in `loadOrder()`):
+1. fixture-set `lockedReason` always wins (e.g. `demo-order-locked`
+   carries `'passenger_chose_other'`);
+2. terminal order statuses next: runtime CANCELED orders get
+   `'order_canceled'`, runtime EXPIRED orders get `'order_expired'`,
+   so D4 shows the explicit «Заказ отменён» / «Заказ истёк» copy
+   instead of the generic «Заказ недоступен для отклика.» fallback;
+3. only on non-terminal `CREATED` orders, a passenger-rejected SELF
+   offer surfaces `'driver_offer_rejected'`.
+
+This precedence guarantees the cancel-after-reject path shows the
+canceled-order reason on D4, never the per-offer rejected reason.
 
 **BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
 «Открыть поездку» CTA now writes the canonical

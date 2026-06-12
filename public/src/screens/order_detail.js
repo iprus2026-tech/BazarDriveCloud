@@ -290,27 +290,30 @@ export function loadOrder(id) {
       base.selectedDriverId = overlay.selectedDriverId;
     }
   }
-  // BD-ORDER-DETAIL-01D-2C-B — surface the driver-side info reason
-  // when the SELF DriverOffer was passenger-rejected. The fixture-side
-  // lockedReason set (canceled / expired / passenger_chose_other / …)
-  // is preserved; this overlay only fills the gap when no fixture
-  // reason is set so a runtime reject can route the SELF driver to D4
-  // with an explicit info label instead of falling through to D1.
-  //
-  // Skipped for CANCELED / EXPIRED orders so the order's own terminal
-  // reason wins. Without this guard, a passenger who rejects the SELF
-  // offer and THEN cancels the whole order would surface "Пассажир
-  // отклонил ваш оффер" on the driver D4 instead of the canceled /
-  // expired reason — the cancel-after-reject path must show the
-  // terminal-order reason, not the per-offer one.
-  if (!base.lockedReason
-      && base.status !== ORDER_STATUS.CANCELED
-      && base.status !== ORDER_STATUS.EXPIRED) {
-    const selfRejected = mergedOffers.find(
-      (o) => o && o.driverId === SELF_DRIVER_ID
-        && o.status === 'rejected'
-        && o.rejectedBy === 'passenger');
-    if (selfRejected) base.lockedReason = 'driver_offer_rejected';
+  // BD-ORDER-DETAIL-01D-2C-B — lockedReason precedence on D4:
+  //   1. fixture-set lockedReason (e.g. demo-order-locked carries
+  //      'passenger_chose_other') always wins.
+  //   2. terminal order statuses win next: a runtime CANCELED order
+  //      (cancel-overlay) gets 'order_canceled'; a runtime EXPIRED
+  //      order gets 'order_expired'. These layer the canonical reason
+  //      so D4 shows «Заказ отменён» / «Заказ истёк» instead of the
+  //      generic «Заказ недоступен для отклика.» fallback.
+  //   3. only for non-terminal CREATED orders: a passenger-rejected
+  //      SELF offer surfaces the 'driver_offer_rejected' reason. The
+  //      cancel-after-reject path must show the canceled reason, not
+  //      the per-offer one.
+  if (!base.lockedReason) {
+    if (base.status === ORDER_STATUS.CANCELED) {
+      base.lockedReason = 'order_canceled';
+    } else if (base.status === ORDER_STATUS.EXPIRED) {
+      base.lockedReason = 'order_expired';
+    } else {
+      const selfRejected = mergedOffers.find(
+        (o) => o && o.driverId === SELF_DRIVER_ID
+          && o.status === 'rejected'
+          && o.rejectedBy === 'passenger');
+      if (selfRejected) base.lockedReason = 'driver_offer_rejected';
+    }
   }
   return base;
 }

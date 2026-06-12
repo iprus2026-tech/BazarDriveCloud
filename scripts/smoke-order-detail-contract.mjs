@@ -2678,24 +2678,25 @@ expect('F6y — stale-result branch returns before the success toast',
     merged.status === 'CANCELED');
   expect('F6z — driver resolveState lands on D4',
     orderDetailMod.resolveState(merged, 'driver') === 'D4');
-  expect('F6z — lockedReason is NOT driver_offer_rejected for the canceled order',
+  expect('F6z — lockedReason is order_canceled (NOT driver_offer_rejected)',
+    merged.lockedReason === 'order_canceled');
+  expect('F6z — lockedReason is explicitly NOT driver_offer_rejected',
     merged.lockedReason !== 'driver_offer_rejected');
   const markup = orderDetailMod.renderOrderDetailMarkup(
     { order: merged, role: 'driver', state: 'D4' });
   expect('F6z — D4 markup does NOT show «Пассажир отклонил ваш оффер»',
     !markup.includes('Пассажир отклонил ваш оффер'));
-  expect('F6z — D4 markup shows a canceled / unavailable reason',
-    markup.includes('Заказ отменён')
-    || markup.includes('Заказ недоступен')
-    || markup.includes('отменён'));
+  expect('F6z — D4 markup shows the explicit «Заказ отменён» reason',
+    markup.includes('Заказ отменён'));
+  expect('F6z — D4 markup does NOT fall back to the generic «Заказ недоступен для отклика.»',
+    !markup.includes('Заказ недоступен для отклика.'));
   expect('F6z — D4 markup carries NO «Откликнуться» CTA',
     !markup.includes('Откликнуться'));
   // Passenger side also resolves to terminal P4, NOT P1.
   expect('F6z — passenger view resolves to P4 (terminal)',
     orderDetailMod.resolveState(merged, 'passenger') === 'P4');
-  // Same guarantee for an EXPIRED order (synthetic — use the fixture
-  // demo-order-expired which is canonically EXPIRED, then layer a
-  // SELF reject on it).
+  // Same guarantee for an EXPIRED order (the fixture demo-order-expired
+  // is canonically EXPIRED, then layer a SELF reject on it).
   driverOfferStore.sendDriverOffer({
     orderId: 'demo-order-expired', driverId: orderDetailMod.SELF_DRIVER_ID,
   });
@@ -2714,6 +2715,35 @@ expect('F6y — stale-result branch returns before the success toast',
   expect('F6z — EXPIRED D4 markup shows «Заказ истёк», not the rejected reason',
     expiredMarkup.includes('Заказ истёк')
     && !expiredMarkup.includes('Пассажир отклонил ваш оффер'));
+  expect('F6z — EXPIRED D4 markup does NOT fall back to the generic unavailable line',
+    !expiredMarkup.includes('Заказ недоступен для отклика.'));
+}
+
+// ── F6aa — runtime CANCELED without a prior reject also gets the
+//          canonical order_canceled reason (covers the cancel-only path).
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F6aa — runtime canceled order surfaces order_canceled lockedReason',
+    merged.lockedReason === 'order_canceled');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F6aa — driver D4 markup shows «Заказ отменён» on a runtime cancel',
+    markup.includes('Заказ отменён'));
+  expect('F6aa — driver D4 markup does NOT show the generic unavailable line',
+    !markup.includes('Заказ недоступен для отклика.'));
+}
+
+// ── F6bb — fixture-set lockedReason is preserved (precedence rule #1) ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  // demo-order-locked carries lockedReason='passenger_chose_other' in
+  // the fixture; the runtime overlay must NOT overwrite it.
+  const merged = orderDetailMod.loadOrder('demo-order-locked');
+  expect('F6bb — fixture lockedReason is preserved over runtime overlays',
+    merged.lockedReason === 'passenger_chose_other');
 }
 
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
@@ -2748,11 +2778,17 @@ expect('storage_boundary.js imports clearDriverOfferStore',
 expect('clearUserScopedStorage calls clearDriverOfferStore',
   /clearUserScopedStorage[\s\S]{0,2000}clearDriverOfferStore\s*\(/.test(boundarySrc));
 
-// ── F6. SW precaches the new store + VERSION bumped to ≥ v112 ──────
+// ── F6. SW precaches the new store + VERSION bumped to ≥ v113 ──────
+// Floor lifted from v112 → v113 for BD-ORDER-DETAIL-01D-2C-B because
+// this slice modifies two precached runtime modules
+// (`order_detail.js` + `driver_offer_store.js`); without the bump,
+// existing PWA clients on v112 would keep serving the old cached JS.
 expect('public/sw.js precaches driver_offer_store.js',
   /\.\/src\/driver_offer_store\.js/.test(swJs));
-expect('public/sw.js VERSION bumped to v112+ for the new store',
-  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 112);
+expect('public/sw.js precaches order_detail.js',
+  /\.\/src\/screens\/order_detail\.js/.test(swJs));
+expect('public/sw.js VERSION bumped to v113+ for the 01D-2C-B runtime module changes',
+  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 113);
 
 // ── F7. driver_offer_store.js is out-of-scope-clean (no fetch/Mapbox) ─
 const offerStoreSrc = read('../public/src/driver_offer_store.js');
