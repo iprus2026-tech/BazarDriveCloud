@@ -496,6 +496,28 @@ if (exists(orderDetailSeedConsumptionSmoke)) {
   }
 }
 
+// BD-ORDER-DETAIL-01D-3 — selected-driver / active-ride consistency
+// audit. Spans the passenger select-driver commit (01D-2A), the
+// open-trip seed (01D-2B), and the active-ride terminal contract
+// (BD-ACTIVE-RIDE-TERM-01) in one place. Pins: only sent DriverOffers
+// are selectable; the chosen offer's snapshot (driverName / car /
+// rating / etaMin / price) lands verbatim in the active-ride seed (no
+// demo fallback identity); peer sent offers flip to rejected and stop
+// being selectable; terminal offers (withdrawn / expired / rejected)
+// stay verbatim and cannot pose as the selected driver through any
+// stale-snapshot path; terminal orders hide every select-driver CTA;
+// cancel does NOT recreate or revive the active-ride record;
+// driver_offer_store.js never imports active_ride / receipt / history.
+const orderDetailConsistencySmoke = path.join(root, 'scripts', 'smoke-order-detail-active-ride-consistency.mjs');
+if (exists(orderDetailConsistencySmoke)) {
+  try {
+    execFileSync(process.execPath, [orderDetailConsistencySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-detail-active-ride-consistency.mjs failed\n${msg}`);
+  }
+}
+
 // BD-LIFECYCLE-01 — headless lifecycle smoke. Exercises mock_api.js +
 // ride_state.js + ride_actions.js + trip_confirmation_handoff.js against an
 // in-memory localStorage shim and walks COMPLETED / NO_SHOW / CANCELED
