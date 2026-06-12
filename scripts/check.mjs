@@ -206,6 +206,22 @@ if (exists(driverEarningsSmoke)) {
   }
 }
 
+// BD-ACTIVE-RIDE-TERM-01 — actor-aware cancel + terminal-regression
+// guard for the post-handoff active-ride lifecycle. Locks the
+// cancelActiveRide helper contract, the terminal-status frozen set
+// inside updateActiveRideStatus, and the driver / passenger terminal
+// render branches (cancel.by differentiation, no active CTAs in
+// terminal stubs, no Order Detail helper leakage into ride_state).
+const activeRideCancelTerminalSmoke = path.join(root, 'scripts', 'smoke-active-ride-cancel-terminal.mjs');
+if (exists(activeRideCancelTerminalSmoke)) {
+  try {
+    execFileSync(process.execPath, [activeRideCancelTerminalSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-active-ride-cancel-terminal.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
 // ?pane=constructor must not resolve to an inherited value or make the profile
 // render throw; valid aliases keep activating the right pane.

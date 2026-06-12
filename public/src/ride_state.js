@@ -258,9 +258,41 @@ export function getActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
   return demo;
 }
 
+// BD-ACTIVE-RIDE-TERM-01 — terminal-status frozen set. Any update or
+// pre-save that would transition an existing CANCELED / NO_SHOW /
+// COMPLETED ride to a different status is refused at the store level:
+// the screen-side renders never bind non-terminal-action buttons on a
+// terminal ride, but a stale tab — where the click event fires after
+// another tab persisted the terminal transition — could otherwise
+// land a regression. Declared above the writers (`saveActiveRide`,
+// `updateActiveRideStatus`, `cancelActiveRide`) so the
+// temporal-dead-zone never matters.
+const TERMINAL_RIDE_STATUSES = new Set([
+  RIDE_STATUS.CANCELED,
+  RIDE_STATUS.NO_SHOW,
+  RIDE_STATUS.COMPLETED,
+]);
+
 export function saveActiveRide(ride) {
   if (!isPlainObject(ride) || !ride.tripId) return ride;
   const store = loadActiveRideStore();
+  // BD-ACTIVE-RIDE-TERM-01 P2 — terminal-record freeze on the pre-save
+  // path. Without this guard, a stale tab calling
+  // `saveActiveRide(staleNonTerminalRide)` (the passenger cancel
+  // handler does exactly this as a pre-save before
+  // `updateActiveRideStatus`) would thaw an existing terminal record
+  // back to a non-terminal status, losing `cancel.by`, `cancel.reason`,
+  // and `timestamps.canceledAt`. The store-level freeze refuses any
+  // incoming write that would change a terminal `existing.status` to
+  // a different status. Idempotent re-save of the same terminal status
+  // passes through so a legitimate field patch on a terminal record
+  // (without changing the status) still lands.
+  const existing = store[ride.tripId];
+  if (existing && isPlainObject(existing)
+      && TERMINAL_RIDE_STATUSES.has(existing.status)
+      && ride.status !== existing.status) {
+    return existing;
+  }
   store[ride.tripId] = ride;
   saveActiveRideStore(store);
   return ride;
@@ -277,7 +309,29 @@ export function getNextDriverStatus(status) {
 
 export function updateActiveRideStatus(tripId, status, patch = {}) {
   if (!isValidRideStatus(status)) return findActiveRide(tripId);
-  const ride = getActiveRide(tripId);
+  // BD-ACTIVE-RIDE-TERM-01 — terminal-regression guard. Read through
+  // findActiveRide (NOT getActiveRide) so we don't auto-create a demo
+  // ride just to refuse the transition; the caller's stale tripId
+  // returns whatever's actually persisted (null when the trip never
+  // existed). When the ride is already in a terminal status, return
+  // it verbatim — no status overwrite, no timestamp rewrite, no patch
+  // merge.
+  const existing = findActiveRide(tripId);
+  if (existing && TERMINAL_RIDE_STATUSES.has(existing.status)) {
+    return existing;
+  }
+  // BD-ACTIVE-RIDE-TERM-01 P2 — terminal writes require an existing
+  // active ride. Without this guard, a stale / forged
+  // `updateActiveRideStatus('unknown-trip', 'CANCELED')` would call
+  // `getActiveRide` below, materialise a demo identity, and stamp it
+  // CANCELED. Non-terminal writes keep the legacy auto-create
+  // behaviour because various screen flows rely on it (the driver
+  // accept handler still expects `updateActiveRideStatus` to
+  // materialise a demo ride from a deep-link tripId).
+  if (TERMINAL_RIDE_STATUSES.has(status) && !existing) {
+    return null;
+  }
+  const ride = existing || getActiveRide(tripId);
   const timestampField = STATUS_TIMESTAMP_FIELD[status];
   const timestamps = { ...(ride.timestamps || {}) };
   if (timestampField) {
@@ -290,6 +344,72 @@ export function updateActiveRideStatus(tripId, status, patch = {}) {
   const next = deepMerge(ride, patch);
   next.status = status;
   next.timestamps = timestamps;
+  return saveActiveRide(next);
+}
+
+// BD-ACTIVE-RIDE-TERM-01 — actor-aware active-ride cancel.
+//
+// Closes the post-handoff terminal-visibility gap: the Order Detail
+// 01D-2A/B/C/D slices intentionally do NOT mutate
+// `bazardrive.active_ride.v1`, so once an active ride is created via
+// the open-trip handoff, only this helper (and the equivalent
+// `updateActiveRideStatus` patch path the active-ride screens already
+// use) can write the terminal cancel record onto it.
+//
+// Eligibility:
+//   • `tripId` MUST be a non-empty string AND already exist in the
+//     active-ride store. Calls on an unknown tripId return null —
+//     unlike `getActiveRide`, this helper NEVER auto-creates a demo
+//     ride. A stale or forged call therefore cannot pin a CANCELED
+//     status onto a freshly-materialized demo identity.
+//   • Already-terminal rides (CANCELED / NO_SHOW / COMPLETED) are
+//     returned verbatim — idempotent on any prior cancel actor /
+//     terminal status. The caller checks `result.cancel?.by` to
+//     differentiate the success path from the stale outcome.
+//
+// Stamps:
+//   • status                = 'CANCELED'
+//   • timestamps.canceledAt = monotonic ISO stamp
+//   • cancel.by             = `canceledBy` (preserved verbatim;
+//                             'driver' / 'passenger' / 'system' /
+//                             any other non-empty string passes;
+//                             missing / non-string becomes null so
+//                             the render branches degrade gracefully)
+//   • cancel.reason         = `reason` (preserved verbatim when a
+//                             non-empty string; otherwise omitted)
+//   • cancel.comment        = `comment` (preserved verbatim when a
+//                             non-empty string; otherwise omitted)
+//
+// Preserved verbatim from the existing ride snapshot:
+//   • every ride-shape field outside `status` / `timestamps.canceledAt`
+//     / `cancel` (passenger / driver / order / route / ride / waiting
+//     etc.) — the cancel must not erase the snapshot data the terminal
+//     copy renders against.
+//
+// Does NOT touch:
+//   • the Order Detail overlay store
+//     (`bazardrive.order_overlay.v1`) — that surface is owned by the
+//     Order Detail 01D slices;
+//   • the DriverOffer store (`bazardrive.driver_offers.v1`).
+export function cancelActiveRide({ tripId, canceledBy, reason, comment } = {}) {
+  if (typeof tripId !== 'string' || !tripId) return null;
+  const existing = findActiveRide(tripId);
+  if (!existing) return null;
+  if (TERMINAL_RIDE_STATUSES.has(existing.status)) return existing;
+  const by = typeof canceledBy === 'string' && canceledBy ? canceledBy : null;
+  const cancel = { ...(isPlainObject(existing.cancel) ? existing.cancel : {}) };
+  cancel.by = by;
+  if (typeof reason === 'string' && reason) cancel.reason = reason;
+  if (typeof comment === 'string' && comment) cancel.comment = comment;
+  const next = {
+    ...existing,
+    status: RIDE_STATUS.CANCELED,
+    cancel,
+    timestamps: {
+      ...(isPlainObject(existing.timestamps) ? existing.timestamps : {}),
+      canceledAt: new Date().toISOString(),
+    },
+  };
   return saveActiveRide(next);
 }
 

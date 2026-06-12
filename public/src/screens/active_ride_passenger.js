@@ -1659,12 +1659,27 @@ export default function activeRidePassenger(options = {}) {
           // pattern in active_ride.js; CANCELED is a legal transition
           // from CREATED, ACCEPTED and IN_PROGRESS so no defensive
           // bridge is needed.
+          //
+          // BD-ACTIVE-RIDE-TERM-01 P2 follow-up — gate the canonical
+          // sync on `canceledRide?.status === CANCELED`. When the
+          // active-ride store already carries a terminal record
+          // (e.g. a stale tab races behind a driver-completed ride
+          // or a passenger-canceled retry), `updateActiveRideStatus`
+          // returns the existing terminal record verbatim. Without
+          // this gate the passenger would silently move the canonical
+          // order to CANCELED while the active-ride record stays
+          // COMPLETED / NO_SHOW / driver-canceled, leaving Feed /
+          // DriverMap / history views inconsistent.
           const orderForSync = canceledRide || ride;
           const canonicalOrderId = (orderForSync && typeof orderForSync.orderId === 'string' && orderForSync.orderId)
             || (typeof ride.tripId === 'string' && ride.tripId.startsWith('trip_order-')
                 ? ride.tripId.slice('trip_'.length)
                 : null);
-          if (canonicalOrderId) updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
+          if (canonicalOrderId
+              && canceledRide
+              && canceledRide.status === RIDE_STATUS.CANCELED) {
+            updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
+          }
           // Hand the canceled-state copy back to the sheet. The
           // ?status=CANCELED fallback screen still renders on direct
           // entry / reload via renderPassengerCanceledFallback.
