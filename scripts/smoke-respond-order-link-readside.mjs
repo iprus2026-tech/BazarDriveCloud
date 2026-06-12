@@ -38,6 +38,18 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
+// BD-RESPOND-ORDER-LINK-READSIDE-COMMENT-S (#485): strip JS comments so the
+// forbidden-runtime negative scans below cannot be false-failed by an
+// explanatory comment that names a forbidden call ("do NOT call
+// createRideOrder() here"). Preserves URL-shaped `://` (e.g. "import 'https://…'"
+// stays intact). Smoke-local — no parser, no dependency.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+const responsesCode = stripComments(responses);
+
 // Extract a function body by name via brace matching (same approach as the
 // write-side guard) so an assertion scoped to one function can't read another.
 function functionBody(source, name) {
@@ -70,6 +82,7 @@ expect('responses keeps the keyed responses store key bazardrive.responses.v1',
 
 // ── Invariant 2 — reader filters passenger_response by canonical orderId ──
 const loaderBody = functionBody(responses, 'loadResponsesForOrder') || '';
+const loaderCode = stripComments(loaderBody);
 expect('responses defines loadResponsesForOrder', loaderBody.length > 0);
 expect('loadResponsesForOrder reads RESPONSES_KEY via getItem',
   /getItem\(\s*RESPONSES_KEY/.test(loaderBody));
@@ -78,11 +91,11 @@ expect('loadResponsesForOrder filters kind === passenger_response',
 expect('loadResponsesForOrder matches on the canonical orderId',
   /r\.orderId/.test(loaderBody));
 expect('loadResponsesForOrder is read-only (no setItem on the responses store)',
-  !/setItem\(\s*RESPONSES_KEY/.test(loaderBody));
+  !/setItem\(\s*RESPONSES_KEY/.test(loaderCode));
 
 // ── Invariant 3 — map a real response into the existing card shape ──
 const mapperBody = functionBody(responses, 'mapResponseToDriverCard') || '';
-expect('responses defines mapResponseToDriverCard', mapperBody.length > 0);
+const mapperCode = stripComments(mapperBody);
 expect('mapped card carries a real responseId (so /chat resolves the handoff)',
   /responseId\s*=\s*String\(\s*response\.id/.test(mapperBody));
 expect('mapped card price derives from driverPrice',
@@ -96,6 +109,7 @@ expect('mapped card fills a CSS-valid avatarTone (no undefined tone class)',
 
 // ── Invariant 4 — MOCK_DRIVERS fallback preserved via buildDriversForOrder ──
 const selectorBody = functionBody(responses, 'buildDriversForOrder') || '';
+const selectorCode = stripComments(selectorBody);
 expect('responses defines buildDriversForOrder', selectorBody.length > 0);
 expect('buildDriversForOrder sources real responses via loadResponsesForOrder',
   /loadResponsesForOrder\(/.test(selectorBody));
@@ -109,16 +123,19 @@ expect('responses() builds the board via buildDriversForOrder(request)',
   /const\s+drivers\s*=\s*buildDriversForOrder\(\s*request\s*\)/.test(responses));
 
 // ── Invariant 6 — read-only: never writes responses.v1, never mutates canon ──
+// Comment-stripped scan targets so a "// never setItem(RESPONSES_KEY)" /
+// "// do not call createRideOrder()" disclaimer in the runtime source
+// cannot false-fail this contract pin (#485).
 expect('responses never writes the responses store (no setItem on RESPONSES_KEY)',
-  !/setItem\(\s*RESPONSES_KEY/.test(responses));
-for (const [fn, body] of [
-  ['loadResponsesForOrder', loaderBody],
-  ['mapResponseToDriverCard', mapperBody],
-  ['buildDriversForOrder', selectorBody],
+  !/setItem\(\s*RESPONSES_KEY/.test(responsesCode));
+for (const [fn, code] of [
+  ['loadResponsesForOrder', loaderCode],
+  ['mapResponseToDriverCard', mapperCode],
+  ['buildDriversForOrder', selectorCode],
 ]) {
   for (const mut of ['createRideOrder', 'acceptNearbyOrder', 'updateTripStatus']) {
     expect(`${fn} does NOT call ${mut}() (read-side, no canonical mutation)`,
-      !new RegExp(`\\b${mut}\\s*\\(`).test(body));
+      !new RegExp(`\\b${mut}\\s*\\(`).test(code));
   }
 }
 
@@ -130,8 +147,9 @@ expect('responses still seeds the accept → active-ride handoff (buildPassenger
     && /buildPassengerActiveRide\(\s*canonicalOrder/.test(responses));
 
 // ── Invariant 8 — read-side stays self-contained (no cross-screen chat import) ──
+// Scan code-only so a `// imports from ./chat.js …` doc note doesn't false-fail.
 expect('responses does not import from chat.js',
-  !/from\s*'\.\/chat\.js'/.test(responses));
+  !/from\s*'\.\/chat\.js'/.test(responsesCode));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
