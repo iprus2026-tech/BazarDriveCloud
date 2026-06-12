@@ -15,6 +15,7 @@ import {
   getDriverOffer,
   commitPassengerSelection,
   cancelOrderByPassenger,
+  rejectDriverOfferByPassenger,
   getOrderOverlay,
 } from '../driver_offer_store.js';
 import {
@@ -921,6 +922,41 @@ function bindEvents(rootEl, initialCtx) {
       }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Водитель выбран');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-01D-2C-B — passenger «Отклонить» on a single offer.
+    // Flips ONLY the targeted DriverOffer to status='rejected' via the
+    // local store helper. Other sent offers stay sent and remain
+    // selectable. The order overlay (selectedDriverId / Order.status)
+    // is NOT touched and the active_ride store is NOT seeded. Idempotent:
+    // a second tap on an already-passenger-rejected offer is a no-op
+    // (the helper returns the existing record). Refused on: non-passenger
+    // role, missing/foreign offer id, offer that doesn't belong to this
+    // order, or offer that isn't currently 'sent'. After commit the
+    // screen re-renders; the rejected offer drops out of P2 because
+    // activeSentOffers() excludes it.
+    if (action === 'reject-offer') {
+      if (role !== 'passenger') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const id = ctx.id;
+      if (!id || !ctx.order) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offerId = btn.dataset.offerId;
+      if (!offerId) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offer = (ctx.order.offers || []).find((o) => o && o.id === offerId);
+      if (!offer || offer.orderId !== id || offer.status !== 'sent') {
+        showNotice(rootEl, 'Этот оффер нельзя отклонить');
+        return;
+      }
+      const result = rejectDriverOfferByPassenger({
+        orderId: id,
+        driverId: offer.driverId,
+      });
+      if (!result) {
+        showNotice(rootEl, 'Не удалось отклонить оффер');
+        return;
+      }
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Оффер отклонён');
       return;
     }
 

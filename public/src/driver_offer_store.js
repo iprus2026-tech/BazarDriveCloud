@@ -635,6 +635,54 @@ export function cancelOrderByPassenger({ orderId } = {}) {
   return next;
 }
 
+// BD-ORDER-DETAIL-01D-2C-B — passenger «Отклонить» on a single offer.
+//
+// Flips the targeted DriverOffer (orderId, driverId) from `'sent'` to
+// `'rejected'` and stamps `rejectedBy='passenger'`, `rejectedAt`, and a
+// monotonic `updatedAt`. Other offers in the same bucket — and every
+// other order — are untouched. The order overlay (selectedDriverId,
+// Order.status) is NOT touched, and the active_ride store is NOT
+// seeded. This is a pure per-offer mutation.
+//
+// Idempotent:
+//   • a second reject on an offer already carrying
+//     `status='rejected'` + `rejectedBy='passenger'` returns the
+//     existing record verbatim (same rejectedAt, same updatedAt).
+//
+// Refused / preserved verbatim:
+//   • non-`sent` statuses (`accepted`, `withdrawn`, `expired`, or a
+//     pre-existing `rejected` with a different `rejectedBy`) are
+//     returned UNCHANGED — passenger reject only acts on live sent
+//     candidates, never overwrites terminal state owned by a peer
+//     transition.
+//   • missing offer / malformed bucket / blocked or unsafe key →
+//     null (same posture as every other store helper).
+export function rejectDriverOfferByPassenger({ orderId, driverId } = {}) {
+  if (!isSafeStoreKey(orderId) || !isSafeStoreKey(driverId)) return null;
+  const store = loadStore();
+  if (!hasOwn(store, orderId)) return null;
+  const bucket = store[orderId];
+  if (!isPlainObject(bucket) || !hasOwn(bucket, driverId)) return null;
+  const existing = bucket[driverId];
+  if (!isPlainObject(existing)) return null;
+  if (existing.status === OFFER_STATUS_REJECTED
+      && existing.rejectedBy === 'passenger') {
+    return existing;
+  }
+  if (existing.status !== DRIVER_OFFER_STATUS.SENT) return existing;
+  const stamp = bumpedIso(existing.updatedAt);
+  const next = {
+    ...existing,
+    status:     OFFER_STATUS_REJECTED,
+    rejectedBy: 'passenger',
+    rejectedAt: stamp,
+    updatedAt:  stamp,
+  };
+  bucket[driverId] = next;
+  saveStore(store);
+  return next;
+}
+
 // Clears the order overlay store. Called from `clearDriverOfferStore`
 // so the user-scoped logout boundary continues to wipe everything the
 // Order Detail screen wrote.

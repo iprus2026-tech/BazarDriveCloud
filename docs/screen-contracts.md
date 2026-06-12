@@ -567,6 +567,23 @@ commit the merged Order Detail resolves to P4 (terminal canceled),
 so the cancel button leaves the DOM and the armed state cannot persist
 across re-renders.
 
+**BD-ORDER-DETAIL-01D-2C-B opens the passenger reject-offer pinhole**:
+P2 «Отклонить» on a single DriverOffer card now flips ONLY that one
+offer to `status='rejected'` via the new
+`rejectDriverOfferByPassenger({ orderId, driverId })` helper, stamping
+`rejectedBy='passenger'` + `rejectedAt` + a monotonic `updatedAt`.
+Other sent offers for the same order stay `sent` and remain selectable;
+terminal offers (`withdrawn`, `expired`, `accepted`, and any pre-existing
+`rejected` with a different `rejectedBy`) are preserved verbatim. The
+order overlay (`selectedDriverId`, `Order.status`) is **not** touched,
+the active_ride store is **not** seeded, and the driver flow is
+unaffected. Idempotent: a second reject on an already-passenger-rejected
+offer returns the existing record. Because `activeSentOffers()` already
+filters terminal statuses, the rejected offer naturally drops out of
+P2 and is no longer a selectable / open-trip candidate; the
+`commitPassengerSelection` stale-store guard also refuses to promote a
+rejected offer to `selectedDriverId`.
+
 **BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
 «Открыть поездку» CTA now writes the canonical
 `bazardrive.active_ride.v1` snapshot (via `ride_state.saveActiveRide`)
@@ -581,13 +598,14 @@ or `'sent'`; the button renders as `disabled` when the gate refuses,
 and the click handler short-circuits before writing anything. Idempotent:
 a re-tap on an already-seeded `tripId` skips `saveActiveRide` and just
 re-navigates. The 01D-2A select-driver commit alone still **never**
-seeds active_ride. The remaining Model-B mutations — passenger
-«Отменить заказ», passenger «Отклонить» on a single offer, driver D3
-«Отменить» handoff — **remain deferred to BD-ORDER-DETAIL-01D-2C+**.
-The full write contract below stays authoritative for those follow-ups.
+seeds active_ride. The remaining Model-B mutation — driver D3
+«Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2C+**.
+The full write contract below stays authoritative for that follow-up.
 Smoke pins the runtime-shell contract, the DriverOffer store
 send/withdraw round-trip, the commitPassengerSelection multi-write
-(F3a–F3l), and the new active-ride seed handoff (F4a–F4l).
+(F3a–F3l), the active-ride seed handoff (F4a–F4l), the passenger
+cancel-order overlay (F5a–F5m), and the passenger reject-offer overlay
+(F6a–F6o).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate
