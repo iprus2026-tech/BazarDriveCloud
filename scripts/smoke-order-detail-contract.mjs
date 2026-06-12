@@ -3326,6 +3326,99 @@ expect('F7m — rejectSentOffersForPassengerCanceledOrder stamps rejectedReason=
     !_bdofs.has('bazardrive.active_ride.v1'));
 }
 
+// ── F7o — stored-only sent offer (NOT in snapshot) still gets rejected ─
+// Regression pin for the bucket-vs-snapshot bug: if another tab / role
+// writes a sent DriverOffer into `bazardrive.driver_offers.v1` AFTER
+// the current Order Detail screen rendered, the caller's snapshot
+// won't include it. The sync must still pick it up from the stored
+// bucket; otherwise that stored-only sent offer would stay `sent`
+// after the passenger cancel and surface on the driver side as a
+// stale D2.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Seed a stored sent offer for the order under test, AND a stored
+  // sent offer for an unrelated order (cross-order isolation guard).
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'cancel-sync-test-o': {
+      'drv-stored-only': mkOffer('cancel-sync-test-o', 'drv-stored-only', 'sent'),
+    },
+    'cancel-sync-test-o-other': {
+      'drv-other-order': mkOffer('cancel-sync-test-o-other', 'drv-other-order', 'sent'),
+    },
+  }));
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-o' });
+  // Critical: caller passes an EMPTY snapshot — the screen never saw
+  // the stored sent offer (the live row was injected after render).
+  const result = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-o',
+    allOffers: [],
+  });
+  expect('F7o — sync flips the stored-only sent offer even with empty snapshot',
+    Array.isArray(result) && result.length === 1
+    && result[0].driverId === 'drv-stored-only'
+    && result[0].status === 'rejected'
+    && result[0].rejectedBy === 'passenger_cancel'
+    && result[0].rejectedReason === 'order_canceled_by_passenger');
+  const storedAfter = driverOfferStore.getDriverOffer('cancel-sync-test-o', 'drv-stored-only');
+  expect('F7o — stored-only sent offer is persisted as rejected (passenger_cancel)',
+    storedAfter?.status === 'rejected'
+    && storedAfter?.rejectedBy === 'passenger_cancel'
+    && storedAfter?.rejectedReason === 'order_canceled_by_passenger');
+  // Cross-order stored sent offer remains sent.
+  const otherAfter = driverOfferStore.getDriverOffer('cancel-sync-test-o-other', 'drv-other-order');
+  expect('F7o — stored sent offer for a different orderId stays sent',
+    otherAfter?.status === 'sent');
+  expect('F7o — sync does NOT seed bazardrive.active_ride.v1 in the stored-only path',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+}
+
+// ── F7p — mixed stored + snapshot candidates merge without duplication ─
+// When the snapshot includes the same driverId as a stored entry, the
+// stored baseline wins (matches the commit/reject helpers' stale-store
+// guard). When the snapshot includes a NEW driverId for the same
+// order, the snapshot fallback applies. The merge must not produce
+// duplicate writes and must respect terminal statuses on either side.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'cancel-sync-test-p': {
+      // Stored sent — present in both snapshot AND bucket.
+      'drv-both-sent':  mkOffer('cancel-sync-test-p', 'drv-both-sent',  'sent'),
+      // Stored withdrawn — present only in bucket. Must stay verbatim.
+      'drv-stored-w':   mkOffer('cancel-sync-test-p', 'drv-stored-w',   'withdrawn'),
+      // Stored sent — present only in bucket (not in snapshot). Must flip.
+      'drv-stored-only-2': mkOffer('cancel-sync-test-p', 'drv-stored-only-2', 'sent'),
+    },
+  }));
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-p' });
+  const result = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-p',
+    allOffers: [
+      // Same driverId as one stored entry — stored baseline wins.
+      mkOffer('cancel-sync-test-p', 'drv-both-sent', 'sent'),
+      // Snapshot-only fixture-style entry (no store baseline).
+      mkOffer('cancel-sync-test-p', 'drv-snapshot-only', 'sent'),
+    ],
+  });
+  expect('F7p — sync flips 3 distinct candidates (both, stored-only, snapshot-only)',
+    Array.isArray(result) && result.length === 3);
+  const driverIds = result.map((o) => o.driverId).sort();
+  expect('F7p — rejected driverIds are the three eligible candidates, deduplicated',
+    JSON.stringify(driverIds) === JSON.stringify(
+      ['drv-both-sent', 'drv-snapshot-only', 'drv-stored-only-2']));
+  expect('F7p — stored withdrawn peer preserved verbatim',
+    driverOfferStore.getDriverOffer('cancel-sync-test-p', 'drv-stored-w')?.status === 'withdrawn');
+  for (const driverId of ['drv-both-sent', 'drv-stored-only-2', 'drv-snapshot-only']) {
+    const stored = driverOfferStore.getDriverOffer('cancel-sync-test-p', driverId);
+    expect(`F7p — ${driverId} persisted as passenger_cancel rejected`,
+      stored?.status === 'rejected'
+      && stored?.rejectedBy === 'passenger_cancel'
+      && stored?.rejectedReason === 'order_canceled_by_passenger');
+  }
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
@@ -3358,17 +3451,19 @@ expect('storage_boundary.js imports clearDriverOfferStore',
 expect('clearUserScopedStorage calls clearDriverOfferStore',
   /clearUserScopedStorage[\s\S]{0,2000}clearDriverOfferStore\s*\(/.test(boundarySrc));
 
-// ── F6. SW precaches the new store + VERSION bumped to ≥ v113 ──────
-// Floor lifted from v112 → v113 for BD-ORDER-DETAIL-01D-2C-B because
-// this slice modifies two precached runtime modules
-// (`order_detail.js` + `driver_offer_store.js`); without the bump,
-// existing PWA clients on v112 would keep serving the old cached JS.
+// ── F6. SW precaches the new store + VERSION bumped to ≥ v114 ──────
+// Floor lifted to v114 for BD-ORDER-DETAIL-01D-2C-C because this slice
+// modifies the same two precached runtime modules (`order_detail.js`
+// + `driver_offer_store.js`) again — the cancel-order handler now
+// imports a new helper and the store carries
+// `rejectSentOffersForPassengerCanceledOrder`. Without the bump,
+// existing PWA clients on v113 would keep serving the old cached JS.
 expect('public/sw.js precaches driver_offer_store.js',
   /\.\/src\/driver_offer_store\.js/.test(swJs));
 expect('public/sw.js precaches order_detail.js',
   /\.\/src\/screens\/order_detail\.js/.test(swJs));
-expect('public/sw.js VERSION bumped to v113+ for the 01D-2C-B runtime module changes',
-  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 113);
+expect('public/sw.js VERSION bumped to v114+ for the 01D-2C-C runtime module changes',
+  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 114);
 
 // ── F7. driver_offer_store.js is out-of-scope-clean (no fetch/Mapbox) ─
 const offerStoreSrc = read('../public/src/driver_offer_store.js');
