@@ -160,6 +160,14 @@ expect('NO_SHOW — order excluded from Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order3.id));
 
 // ── Refresh persistence (same tripId still resolves after re-import) ──
+// Reset active-ride store so a clock-collision between order3 (NO_SHOW
+// terminal) and this scenario's id can't leave a terminal record in
+// the store — `acceptCanonicalRideOrder` materializes the new ride via
+// `saveActiveRide`, which BD-ACTIVE-RIDE-TERM-01 now freezes on an
+// existing terminal record. Without this reset a colliding id would
+// leave the prior scenario's identity ('Тест3') in place instead of
+// the Refresh passenger snapshot.
+rideState.clearActiveRideStore();
 const order4 = mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'X' }, dropoff: { id: null, label: 'Y' },
