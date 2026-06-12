@@ -222,6 +222,23 @@ if (exists(activeRideCancelTerminalSmoke)) {
   }
 }
 
+// BD-RIDE-HISTORY-TERM-01 — downstream propagation contract for the
+// ride history + driver receipt surfaces. Pins ride_history.js
+// builder fallbacks (no demo identity leak), mock_api receipt
+// sanitizer, trip_receipt.js read-only / no-recompute contract, and
+// the caller-site COMPLETED gates inside active_ride.js /
+// active_ride_passenger.js so canceled / no-show paths never write a
+// history entry or a settled receipt.
+const rideHistoryTerminalSmoke = path.join(root, 'scripts', 'smoke-ride-history-terminal.mjs');
+if (exists(rideHistoryTerminalSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideHistoryTerminalSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-history-terminal.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
 // ?pane=constructor must not resolve to an inherited value or make the profile
 // render throw; valid aliases keep activating the right pane.
