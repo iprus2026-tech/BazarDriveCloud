@@ -727,6 +727,72 @@ expect('K4 — order_detail.js does NOT reference DEMO_ACTIVE_RIDE_ID',
 expect('K4 — buildPassengerActiveRideSeed derives tripId from order.id',
   /trip_\$\{order\.id\}/.test(orderDetailSrc));
 
+// K4-source. BD-ORDER-DETAIL-01D-3S canonical-tripId source guard.
+// The F-poison runtime check (above) proves a stale `order.tripId`
+// cannot override the canonical handoff key TODAY. This block pins the
+// shape of the source so a future revert that re-introduces the
+// `order.tripId || …` / `order?.tripId ?? …` fallback (or any other
+// tripId-reading path) is caught at the source level even if F-poison
+// happens to be silenced by a shape change in the test fixture.
+//
+// Scope: ONLY the body of `buildPassengerActiveRideSeed`. Legitimate
+// `order.tripId` mentions elsewhere in the file (e.g. the unrelated
+// non-handoff navigate branch at the bottom of resolveDispatch — which
+// reads `ctx.order.tripId` for routes that ALREADY have an active ride
+// in the canonical store) are out of scope here.
+function extractBuildSeedBody(src) {
+  const sig = /export function buildPassengerActiveRideSeed\s*\([^)]*\)\s*\{/;
+  const m = sig.exec(src);
+  if (!m) return null;
+  let depth = 1;
+  let i = m.index + m[0].length;
+  for (; i < src.length && depth > 0; i++) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return src.slice(m.index, i);
+}
+const buildSeedBody = extractBuildSeedBody(orderDetailSrc);
+expect('K4-source — buildPassengerActiveRideSeed body extracted from source',
+  typeof buildSeedBody === 'string' && buildSeedBody.length > 0);
+const buildSeedBodyNoComments = buildSeedBody
+  ? stripComments(buildSeedBody)
+  : '';
+// Canonical derivation present in the function body.
+expect('K4-source — function body contains canonical `trip_${order.id}` template literal',
+  /`trip_\$\{order\.id\}`/.test(buildSeedBodyNoComments));
+// No path in the function body may read `order.tripId` in ANY form.
+const FORBIDDEN_TRIPID_READS = [
+  'order.tripId',
+  'order?.tripId',
+  "['tripId']",
+  '["tripId"]',
+];
+for (const forbidden of FORBIDDEN_TRIPID_READS) {
+  expect(`K4-source — function body does NOT read ${forbidden}`,
+    !buildSeedBodyNoComments.includes(forbidden));
+}
+// Pin the specific `const tripId = …;` statement — its RHS must be the
+// canonical template literal with NO `||` (logical fallback), NO `??`
+// (nullish coalescing), and NO `?…:` (ternary). Scoped to the RHS of the
+// tripId declaration so we don't trip over legitimate `||` / `?:` uses
+// elsewhere in the function (e.g. `selectedOfferId: offer.id || null`).
+const tripIdStmt = /const\s+tripId\s*=\s*([^;]+);/.exec(buildSeedBodyNoComments);
+expect('K4-source — `const tripId = …;` statement found in function body',
+  !!tripIdStmt);
+if (tripIdStmt) {
+  const rhs = tripIdStmt[1];
+  expect('K4-source — tripId derivation RHS has NO `||` logical fallback',
+    !rhs.includes('||'));
+  expect('K4-source — tripId derivation RHS has NO `??` nullish-coalescing fallback',
+    !rhs.includes('??'));
+  expect('K4-source — tripId derivation RHS has NO `?` ternary / optional-chain fallback',
+    !rhs.includes('?'));
+  expect('K4-source — tripId derivation RHS IS the canonical template literal (no extra tokens)',
+    rhs.trim() === '`trip_${order.id}`');
+}
+
 // K5. The open-trip click handler is the ONLY place saveActiveRide is
 // called from order_detail.js, gated on canOpenTrip — both invariants
 // are already pinned by smoke-order-detail-contract.mjs (F4j). Mirror
