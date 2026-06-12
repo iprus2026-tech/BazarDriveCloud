@@ -583,6 +583,58 @@ export function commitPassengerSelection({ orderId, selectedDriverId, allOffers 
   return acceptedOffer;
 }
 
+// Canonical Order.status enum value used by the cancel path (mirrors
+// `ride_state.js`). Held here to avoid a circular import for the same
+// reason ORDER_STATUS_ACCEPTED is.
+const ORDER_STATUS_CANCELED = 'CANCELED';
+
+// BD-ORDER-DETAIL-01D-2C-A — passenger «Отменить заказ» local commit.
+//
+// Writes the order overlay record for `orderId` with:
+//   • status        = 'CANCELED'
+//   • canceledBy    = 'passenger'
+//   • canceledAt    = ISO timestamp (monotonic vs the overlay's
+//                     previous updatedAt, just like the existing
+//                     commit path)
+//   • updatedAt     = same monotonic stamp
+//
+// Existing overlay fields (e.g. `selectedDriverId` written by a prior
+// 01D-2A commit) are PRESERVED — the contract documents that
+// `selectedDriverId` stays unchanged across a cancel. This slice does
+// NOT touch the DriverOffer-status store (sent → rejected sync is a
+// later 01D-2C sub-slice), the active_ride store, or any driver-side
+// surface.
+//
+// Idempotent: a second call when the overlay is already
+// `status='CANCELED'` with `canceledBy='passenger'` returns the
+// existing record unchanged.
+//
+// Refused on unsafe / blocked keys (`__proto__` / `constructor` /
+// `prototype`) — same posture as every other store helper.
+export function cancelOrderByPassenger({ orderId } = {}) {
+  if (!isSafeStoreKey(orderId)) return null;
+  const overlayStore = loadOverlayStore();
+  const bucket = hasOwn(overlayStore, orderId) && isPlainObject(overlayStore[orderId])
+    ? overlayStore[orderId]
+    : {};
+  if (bucket.status === ORDER_STATUS_CANCELED && bucket.canceledBy === 'passenger') {
+    return bucket;
+  }
+  const stamp = bumpedIso(bucket && typeof bucket.updatedAt === 'string'
+    ? bucket.updatedAt
+    : null);
+  const next = {
+    ...bucket,
+    status:     ORDER_STATUS_CANCELED,
+    canceledBy: 'passenger',
+    canceledAt: stamp,
+    updatedAt:  stamp,
+  };
+  overlayStore[orderId] = next;
+  saveOverlayStore(overlayStore);
+  return next;
+}
+
 // Clears the order overlay store. Called from `clearDriverOfferStore`
 // so the user-scoped logout boundary continues to wipe everything the
 // Order Detail screen wrote.

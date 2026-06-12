@@ -14,6 +14,7 @@ import {
   listDriverOffersForOrder,
   getDriverOffer,
   commitPassengerSelection,
+  cancelOrderByPassenger,
   getOrderOverlay,
 } from '../driver_offer_store.js';
 import {
@@ -854,6 +855,50 @@ function bindEvents(rootEl, initialCtx) {
     //
     // No active_ride seed is written in this slice — that's
     // BD-ORDER-DETAIL-01D-2B's job.
+    // BD-ORDER-DETAIL-01D-2C-A — passenger «Отменить заказ».
+    // Two-step confirmation: first click arms the button and shows a
+    // re-confirm notice (auto-disarms after 5s via setTimeout); second
+    // click commits the cancel via cancelOrderByPassenger, which only
+    // writes the order overlay record. DriverOffer statuses are NOT
+    // touched in this slice (that sync belongs to a later 01D-2C
+    // sub-slice). No active_ride seed is created. selectedDriverId
+    // from a prior 01D-2A commit is preserved verbatim in the overlay.
+    // After commit the screen re-renders and resolveState routes to
+    // P4 (terminal canceled), so the cancel button is no longer in
+    // the DOM and the armed state cannot leak across re-renders.
+    if (action === 'cancel-order') {
+      if (btn.disabled) return;
+      if (role !== 'passenger') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const id = ctx.id;
+      if (!id) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      // Already canceled — no-op with a sensible toast.
+      if (ctx.order && ctx.order.status === ORDER_STATUS.CANCELED) {
+        showNotice(rootEl, 'Заказ уже отменён');
+        return;
+      }
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Подтвердите отмену';
+        showNotice(rootEl, 'Нажмите ещё раз, чтобы отменить заказ');
+        if (btn.__disarmTimer) clearTimeout(btn.__disarmTimer);
+        btn.__disarmTimer = setTimeout(() => {
+          try {
+            btn.dataset.armed = '';
+            btn.textContent = 'Отменить заказ';
+          } catch {}
+        }, 5000);
+        return;
+      }
+      const result = cancelOrderByPassenger({ orderId: id });
+      if (!result) {
+        showNotice(rootEl, 'Не удалось отменить заказ');
+        return;
+      }
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Заказ отменён');
+      return;
+    }
+
     if (action === 'select-driver') {
       const id = ctx.id;
       if (!id || !ctx.order) { showNotice(rootEl, STUB_TOAST_ACTION); return; }

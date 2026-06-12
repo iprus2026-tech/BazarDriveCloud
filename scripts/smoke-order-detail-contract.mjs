@@ -1777,6 +1777,253 @@ expect('F4j — select-driver handler path never calls saveActiveRide',
     !/<button[^>]*data-action="open-trip"[^>]*\sdisabled/.test(markupOk));
 }
 
+// ── F5a–F5m. Passenger cancel order (BD-ORDER-DETAIL-01D-2C-A) ──────
+// First 01D-2C mutation: passenger «Отменить заказ» writes the order
+// overlay. The DriverOffer-status sync (sent → rejected) is NOT part
+// of 01D-2C-A — that's a later sub-slice. active_ride is NOT touched.
+// The driver flow is NOT touched. The store helper enforces the
+// existing safe-key / prototype-pollution guards.
+
+expect('driver_offer_store.js exports cancelOrderByPassenger',
+  typeof driverOfferStore.cancelOrderByPassenger === 'function');
+
+// ── F5a — cancelOrderByPassenger writes the overlay with the right shape ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  const result = driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-a' });
+  expect('F5a — cancelOrderByPassenger returns the canceled overlay record',
+    !!result
+    && result.status === 'CANCELED'
+    && result.canceledBy === 'passenger'
+    && typeof result.canceledAt === 'string' && result.canceledAt.length > 0
+    && typeof result.updatedAt === 'string' && result.updatedAt.length > 0);
+  const overlay = driverOfferStore.getOrderOverlay('cancel-test-a');
+  expect('F5a — overlay store carries the canceled record',
+    !!overlay
+    && overlay.status === 'CANCELED'
+    && overlay.canceledBy === 'passenger');
+}
+
+// ── F5b — cancel is idempotent ──────────────────────────────────────
+{
+  driverOfferStore.clearDriverOfferStore();
+  const first = driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-b' });
+  const second = driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-b' });
+  expect('F5b — second cancel returns the same record (idempotent)',
+    !!second
+    && second.status === 'CANCELED'
+    && second.canceledAt === first.canceledAt
+    && second.updatedAt === first.updatedAt);
+}
+
+// ── F5c — selectedDriverId is preserved across a cancel ─────────────
+// Contract: "selectedDriverId stays unchanged" when the passenger
+// cancels. Simulate a 01D-2A commit first, then cancel — the overlay
+// must carry both the canceled status AND the selectedDriverId.
+{
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-test-c', [mkOffer('cancel-test-c', 'drv-c1', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'cancel-test-c',
+    selectedDriverId: 'drv-c1',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-test-c'),
+  });
+  const before = driverOfferStore.getOrderOverlay('cancel-test-c');
+  expect('F5c baseline — overlay carries selectedDriverId after commit',
+    !!before && before.selectedDriverId === 'drv-c1');
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-c' });
+  const after = driverOfferStore.getOrderOverlay('cancel-test-c');
+  expect('F5c — selectedDriverId preserved across cancel',
+    !!after
+    && after.status === 'CANCELED'
+    && after.selectedDriverId === 'drv-c1'
+    && after.canceledBy === 'passenger');
+}
+
+// ── F5d — DriverOffer-store records are NOT mutated by cancel ───────
+// 01D-2C-A is overlay-only. The sent → rejected sync is a later
+// sub-slice. Confirm by seeding offers, canceling, and checking each
+// offer's status is verbatim.
+{
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-test-d', [
+    mkOffer('cancel-test-d', 'drv-d-sent',       'sent'),
+    mkOffer('cancel-test-d', 'drv-d-withdrawn',  'withdrawn'),
+    mkOffer('cancel-test-d', 'drv-d-expired',    'expired'),
+    mkOffer('cancel-test-d', 'drv-d-rejected',   'rejected'),
+  ]);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-d' });
+  expect('F5d — sent offer stays sent after cancel (01D-2C-A is overlay-only)',
+    driverOfferStore.getDriverOffer('cancel-test-d', 'drv-d-sent')?.status === 'sent');
+  expect('F5d — withdrawn offer stays withdrawn after cancel',
+    driverOfferStore.getDriverOffer('cancel-test-d', 'drv-d-withdrawn')?.status === 'withdrawn');
+  expect('F5d — expired offer stays expired after cancel',
+    driverOfferStore.getDriverOffer('cancel-test-d', 'drv-d-expired')?.status === 'expired');
+  expect('F5d — rejected offer stays rejected after cancel',
+    driverOfferStore.getDriverOffer('cancel-test-d', 'drv-d-rejected')?.status === 'rejected');
+}
+
+// ── F5e — active_ride.v1 is NOT seeded by cancel ────────────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-e' });
+  expect('F5e — bazardrive.active_ride.v1 is NOT written by cancel',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+}
+
+// ── F5f — canOpenTrip returns false for a canceled order ────────────
+{
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-test-f', [mkOffer('cancel-test-f', 'drv-f', 'sent')]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'cancel-test-f',
+    selectedDriverId: 'drv-f',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-test-f'),
+  });
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-test-f' });
+  // Simulate the merged order shape loadOrder would produce.
+  const merged = {
+    id: 'cancel-test-f',
+    status: 'CANCELED',
+    selectedDriverId: 'drv-f',
+    offers: driverOfferStore.listDriverOffersForOrder('cancel-test-f'),
+  };
+  expect('F5f — canOpenTrip is false for a canceled order',
+    orderDetailMod.canOpenTrip(merged) === false);
+  expect('F5f — buildPassengerActiveRideSeed returns null for a canceled order',
+    orderDetailMod.buildPassengerActiveRideSeed(merged) === null);
+}
+
+// ── F5g — loadOrder applies the canceled overlay → resolveState = P4 ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F5g — merged Order.status === "CANCELED" after cancel',
+    merged && merged.status === 'CANCELED');
+  expect('F5g — passenger resolveState lands on P4 after cancel',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P4');
+  // P4 markup carries the canceled terminal copy.
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'passenger', state: 'P4' });
+  expect('F5g — P4 markup includes the canceled exits',
+    markup.includes('Создать новый заказ') && markup.includes('Вернуться в ленту'));
+  expect('F5g — P4 markup exposes NO Отменить заказ / Открыть поездку CTA',
+    !/data-action="cancel-order"/.test(markup)
+    && !/data-action="open-trip"/.test(markup));
+}
+
+// ── F5h — driver flow unaffected: canceled order → D4 (no offer CTA) ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F5h — driver resolveState lands on D4 for a canceled order',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F5h — driver D4 markup carries NO «Откликнуться» on a canceled order',
+    !markup.includes('Откликнуться'));
+}
+
+// ── F5i — selected-driver / 2B handoff still works for non-canceled orders ─
+// A successful 01D-2A commit + 01D-2B handoff on a different order ID
+// must remain unaffected by a cancel on demo-order-1.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  seedOrderWithOffers('handoff-after-cancel', [
+    mkOffer('handoff-after-cancel', 'drv-ok', 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'handoff-after-cancel',
+    selectedDriverId: 'drv-ok',
+    allOffers: driverOfferStore.listDriverOffersForOrder('handoff-after-cancel'),
+  });
+  const okOrder = {
+    id: 'handoff-after-cancel',
+    status: 'ACCEPTED',
+    selectedDriverId: 'drv-ok',
+    passengerName: 'Test',
+    pickup: 'A', dropoff: 'B', time: 'now',
+    budget: 1000, comment: '',
+    offers: driverOfferStore.listDriverOffersForOrder('handoff-after-cancel'),
+  };
+  expect('F5i — canOpenTrip still true for an untouched accepted order',
+    orderDetailMod.canOpenTrip(okOrder) === true);
+  const seed = orderDetailMod.buildPassengerActiveRideSeed(okOrder);
+  expect('F5i — buildPassengerActiveRideSeed still returns a seed for an untouched accepted order',
+    !!seed && seed.tripId === 'trip_handoff-after-cancel');
+}
+
+// ── F5j — safe-key guards on cancelOrderByPassenger ─────────────────
+{
+  expect('F5j — cancelOrderByPassenger rejects __proto__ orderId',
+    driverOfferStore.cancelOrderByPassenger({ orderId: '__proto__' }) === null);
+  expect('F5j — cancelOrderByPassenger rejects constructor orderId',
+    driverOfferStore.cancelOrderByPassenger({ orderId: 'constructor' }) === null);
+  expect('F5j — cancelOrderByPassenger rejects prototype orderId',
+    driverOfferStore.cancelOrderByPassenger({ orderId: 'prototype' }) === null);
+  expect('F5j — cancelOrderByPassenger rejects empty orderId',
+    driverOfferStore.cancelOrderByPassenger({ orderId: '' }) === null);
+  expect('F5j — cancelOrderByPassenger rejects missing args',
+    driverOfferStore.cancelOrderByPassenger() === null
+    && driverOfferStore.cancelOrderByPassenger({}) === null);
+  expect('Object.prototype is NOT polluted by cancelOrderByPassenger attempts',
+    Object.prototype.canceledBy === undefined);
+}
+
+// ── F5k — cancel-order click handler is gated on role + 2-step confirm ─
+expect('F5k — cancel-order handler gates on role === "passenger"',
+  /cancel-order[\s\S]{0,1200}role\s*!==\s*['"]passenger['"]/.test(orderDetailSrc));
+expect('F5k — cancel-order handler uses a 2-step armed/confirm pattern',
+  /cancel-order[\s\S]{0,1500}dataset\.armed/.test(orderDetailSrc));
+expect('F5k — cancel-order handler commits via cancelOrderByPassenger',
+  /cancel-order[\s\S]{0,2000}cancelOrderByPassenger\s*\(/.test(orderDetailSrc));
+// (F5k — `saveActiveRide` / `updateActiveRideStatus` ban is enforced
+// below via the bound-extracted cancel handler block to avoid window
+// drag from the bodyP1 button markup.)
+// Bound-extract the cancel-order handler body so the assertion can't
+// drag the regex into a neighbouring handler. The cancel block runs
+// from `action === 'cancel-order'` up to (but not including) the next
+// handler's `action === 'select-driver'`.
+const cancelBlockMatch = orderDetailSrc.match(
+  /action\s*===\s*['"]cancel-order['"][\s\S]*?action\s*===\s*['"]select-driver['"]/);
+const cancelBlock = cancelBlockMatch ? cancelBlockMatch[0] : '';
+expect('F5k — cancel-order handler block resolved', cancelBlock.length > 0);
+expect('F5k — cancel-order handler never calls sendDriverOffer',
+  !/sendDriverOffer\s*\(/.test(cancelBlock));
+expect('F5k — cancel-order handler never calls withdrawDriverOffer',
+  !/withdrawDriverOffer\s*\(/.test(cancelBlock));
+expect('F5k — cancel-order handler never calls commitPassengerSelection',
+  !/commitPassengerSelection\s*\(/.test(cancelBlock));
+expect('F5k — cancel-order handler never calls saveActiveRide',
+  !/saveActiveRide\s*\(/.test(cancelBlock));
+expect('F5k — cancel-order handler never calls updateActiveRideStatus',
+  !/updateActiveRideStatus\s*\(/.test(cancelBlock));
+
+// ── F5l — driver_offer_store.js cancel path is overlay-only ─────────
+const offerStoreSrcF5 = read('../public/src/driver_offer_store.js');
+const offerStoreCodeF5 = stripComments(offerStoreSrcF5);
+expect('F5l — cancelOrderByPassenger never writes active_ride',
+  !/cancelOrderByPassenger[\s\S]{0,2000}saveActiveRide\s*\(/.test(offerStoreCodeF5)
+  && !/cancelOrderByPassenger[\s\S]{0,2000}active_ride\.v1/.test(offerStoreCodeF5));
+expect('F5l — cancelOrderByPassenger uses ORDER_STATUS_CANCELED literal',
+  /cancelOrderByPassenger[\s\S]{0,2000}ORDER_STATUS_CANCELED/.test(offerStoreCodeF5)
+  || /cancelOrderByPassenger[\s\S]{0,2000}['"`]CANCELED['"`]/.test(offerStoreCodeF5));
+
+// ── F5m — P1 markup carries the cancel-order CTA on an un-canceled order ─
+{
+  driverOfferStore.clearDriverOfferStore();
+  const baseline = orderDetailMod.loadOrder('demo-order-1');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: baseline, role: 'passenger', state: 'P1' });
+  expect('F5m — P1 markup exposes the cancel-order CTA',
+    /data-action="cancel-order"/.test(markup));
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
