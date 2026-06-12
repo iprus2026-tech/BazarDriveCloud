@@ -3419,6 +3419,339 @@ expect('F7m — rejectSentOffersForPassengerCanceledOrder stamps rejectedReason=
   }
 }
 
+// ── F8a–F8l. Assigned-driver «Отменить» on D3 (01D-2D) ──────────────
+// Closes the last deferred Model-B mutation: when the driver currently
+// assigned to an ACCEPTED order taps cancel from D3, the order overlay
+// flips to `status='CANCELED'` + `canceledBy='driver'`. The assigned
+// `selectedDriverId` is preserved on the overlay so the passenger view
+// can render the explicit «Водитель отменил заказ.» copy on P4. The
+// accepted DriverOffer stays `accepted` (the helper does not roll it
+// back to sent/rejected), and `bazardrive.active_ride.v1` is never
+// touched by this path.
+
+expect('F8 — driver_offer_store exports cancelOrderByDriver',
+  typeof driverOfferStore.cancelOrderByDriver === 'function');
+
+// ── F8a — happy path: cancel commits a CANCELED overlay with driver actor ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Seed an ACCEPTED overlay with SELF as the assigned driver. Real
+  // flow: a prior 01D-2A commit landed this state.
+  seedOrderWithOffers('driver-cancel-test-a', [
+    mkOffer('driver-cancel-test-a', orderDetailMod.SELF_DRIVER_ID, 'sent'),
+    mkOffer('driver-cancel-test-a', 'drv-peer-rejected', 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'driver-cancel-test-a',
+    selectedDriverId: orderDetailMod.SELF_DRIVER_ID,
+    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-a'),
+  });
+  const result = driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-a',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8a — cancelOrderByDriver returns the canceled overlay record',
+    !!result
+    && result.status === 'CANCELED'
+    && result.canceledBy === 'driver'
+    && typeof result.canceledAt === 'string' && result.canceledAt.length > 0
+    && typeof result.updatedAt === 'string' && result.updatedAt.length > 0);
+  const overlay = driverOfferStore.getOrderOverlay('driver-cancel-test-a');
+  expect('F8a — overlay carries the canceled record + driver actor',
+    !!overlay
+    && overlay.status === 'CANCELED'
+    && overlay.canceledBy === 'driver');
+  expect('F8a — selectedDriverId preserved across driver cancel',
+    overlay.selectedDriverId === orderDetailMod.SELF_DRIVER_ID);
+  // Accepted DriverOffer stays accepted (not rolled back to sent/rejected).
+  const accepted = driverOfferStore.getDriverOffer('driver-cancel-test-a', orderDetailMod.SELF_DRIVER_ID);
+  expect('F8a — accepted SELF offer remains accepted after driver cancel',
+    accepted?.status === 'accepted');
+  // Peer that was flipped to rejected by the prior commit stays rejected.
+  const peer = driverOfferStore.getDriverOffer('driver-cancel-test-a', 'drv-peer-rejected');
+  expect('F8a — peer rejected (from prior commit) stays rejected',
+    peer?.status === 'rejected');
+}
+
+// ── F8b — driver cancel is idempotent on any prior cancel actor ─────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('driver-cancel-test-b', [
+    mkOffer('driver-cancel-test-b', orderDetailMod.SELF_DRIVER_ID, 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'driver-cancel-test-b',
+    selectedDriverId: orderDetailMod.SELF_DRIVER_ID,
+    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-b'),
+  });
+  const first = driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-b',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const second = driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-b',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8b — second driver cancel returns the same record (idempotent)',
+    !!second
+    && second.status === 'CANCELED'
+    && second.canceledBy === 'driver'
+    && second.canceledAt === first.canceledAt
+    && second.updatedAt === first.updatedAt);
+}
+
+// ── F8c — driver cancel refuses to overwrite a passenger cancel ─────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('driver-cancel-test-c', [
+    mkOffer('driver-cancel-test-c', orderDetailMod.SELF_DRIVER_ID, 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'driver-cancel-test-c',
+    selectedDriverId: orderDetailMod.SELF_DRIVER_ID,
+    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-c'),
+  });
+  // Passenger cancels first.
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'driver-cancel-test-c' });
+  const overlayBefore = driverOfferStore.getOrderOverlay('driver-cancel-test-c');
+  // Driver tries to cancel — helper returns the existing passenger cancel verbatim.
+  const result = driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-c',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8c — helper returns the existing passenger-cancel record verbatim',
+    !!result
+    && result.canceledBy === 'passenger'
+    && result.canceledAt === overlayBefore.canceledAt);
+  const overlayAfter = driverOfferStore.getOrderOverlay('driver-cancel-test-c');
+  expect('F8c — overlay actor stays passenger (driver did NOT overwrite)',
+    overlayAfter?.canceledBy === 'passenger');
+}
+
+// ── F8d — refuses when overlay pins a foreign selectedDriverId ──────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('driver-cancel-test-d', [
+    mkOffer('driver-cancel-test-d', 'drv-other', 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'driver-cancel-test-d',
+    selectedDriverId: 'drv-other',
+    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-d'),
+  });
+  // SELF was never the assigned driver — helper must refuse.
+  const result = driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-d',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8d — helper refuses cancel from a non-assigned driver',
+    result === null);
+  const overlay = driverOfferStore.getOrderOverlay('driver-cancel-test-d');
+  expect('F8d — overlay stays ACCEPTED (no foreign-driver cancel landed)',
+    overlay?.status === 'ACCEPTED'
+    && overlay?.selectedDriverId === 'drv-other');
+}
+
+// ── F8e — fixture-only ACCEPTED (no prior overlay) is acceptable ────
+// demo-order-accepted carries selectedDriverId=SELF in the fixture but
+// has no overlay record. The helper writes a fresh CANCELED overlay
+// with the supplied driverId as selectedDriverId so the resulting
+// canceled record stays attributable.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const result = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8e — driver cancel succeeds on fixture-only ACCEPTED order',
+    !!result
+    && result.status === 'CANCELED'
+    && result.canceledBy === 'driver');
+  expect('F8e — overlay pins selectedDriverId = SELF from the caller',
+    result.selectedDriverId === orderDetailMod.SELF_DRIVER_ID);
+}
+
+// ── F8f — passenger view resolves P4 with «Водитель отменил заказ.» ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('driver-cancel-test-f', [
+    mkOffer('driver-cancel-test-f', orderDetailMod.SELF_DRIVER_ID, 'sent'),
+  ]);
+  driverOfferStore.commitPassengerSelection({
+    orderId: 'driver-cancel-test-f',
+    selectedDriverId: orderDetailMod.SELF_DRIVER_ID,
+    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-f'),
+  });
+  driverOfferStore.cancelOrderByDriver({
+    orderId: 'driver-cancel-test-f',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  // The smoke harness loadOrder works against DEMO_ORDERS only — use
+  // demo-order-accepted as the canonical fixture-backed ACCEPTED order.
+  driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const merged = orderDetailMod.loadOrder('demo-order-accepted');
+  expect('F8f — passenger view resolves to P4 after driver cancel',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P4');
+  expect('F8f — merged order surfaces canceledBy="driver" from overlay',
+    merged.canceledBy === 'driver');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'passenger', state: 'P4' });
+  expect('F8f — passenger P4 markup shows «Водитель отменил заказ.»',
+    markup.includes('Водитель отменил заказ.'));
+  expect('F8f — passenger P4 markup does NOT show generic «Заказ отменён.»',
+    !markup.includes('Заказ отменён.'));
+  for (const forbidden of ['Открыть поездку', 'Выбрать водителя', 'Отклонить']) {
+    expect(`F8f — passenger P4 markup does NOT carry «${forbidden}»`,
+      !markup.includes(forbidden));
+  }
+  expect('F8f — passenger P4 markup keeps terminal exits',
+    markup.includes('Создать новый заказ') && markup.includes('Вернуться в ленту'));
+}
+
+// ── F8g — driver view resolves D4 with no D3 active CTAs ────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const merged = orderDetailMod.loadOrder('demo-order-accepted');
+  expect('F8g — driver view resolves to D4 after driver cancel',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  expect('F8g — lockedReason is order_canceled (canonical D4 reason)',
+    merged.lockedReason === 'order_canceled');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F8g — driver D4 markup shows «Заказ отменён»',
+    markup.includes('Заказ отменён'));
+  for (const forbidden of [
+    'Начать подачу',
+    'Открыть активную поездку',
+    'Откликнуться на заказ',
+    'Оффер отправлен',
+  ]) {
+    expect(`F8g — driver D4 markup does NOT carry «${forbidden}»`,
+      !markup.includes(forbidden));
+  }
+  // The «Отменить» button in D3 must also be gone (D4 doesn't render it).
+  expect('F8g — driver D4 markup carries no driver-cancel CTA',
+    !/data-action="driver-cancel"/.test(markup));
+}
+
+// ── F8h — safe-key guards on cancelOrderByDriver ────────────────────
+{
+  expect('F8h — cancelOrderByDriver refuses __proto__ orderId',
+    driverOfferStore.cancelOrderByDriver({ orderId: '__proto__', driverId: 'd' }) === null);
+  expect('F8h — cancelOrderByDriver refuses constructor orderId',
+    driverOfferStore.cancelOrderByDriver({ orderId: 'constructor', driverId: 'd' }) === null);
+  expect('F8h — cancelOrderByDriver refuses prototype orderId',
+    driverOfferStore.cancelOrderByDriver({ orderId: 'prototype', driverId: 'd' }) === null);
+  expect('F8h — cancelOrderByDriver refuses __proto__ driverId',
+    driverOfferStore.cancelOrderByDriver({ orderId: 'x', driverId: '__proto__' }) === null);
+  expect('F8h — cancelOrderByDriver refuses empty orderId / driverId',
+    driverOfferStore.cancelOrderByDriver({ orderId: '', driverId: 'd' }) === null
+    && driverOfferStore.cancelOrderByDriver({ orderId: 'x', driverId: '' }) === null);
+  expect('F8h — cancelOrderByDriver refuses missing args',
+    driverOfferStore.cancelOrderByDriver() === null
+    && driverOfferStore.cancelOrderByDriver({}) === null);
+  expect('Object.prototype is NOT polluted by cancelOrderByDriver attempts',
+    Object.prototype.canceledBy === undefined);
+}
+
+// ── F8i — active_ride store is NEVER seeded by the driver cancel path ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8i — bazardrive.active_ride.v1 is NOT written by driver cancel',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+}
+
+// ── F8j — existing active_ride record is NOT overwritten ────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Pre-seed the active_ride store with a sentinel record. The driver
+  // cancel must not mutate it (the store-helper-level invariant).
+  const sentinel = JSON.stringify({
+    'trip-pre-existing': { tripId: 'trip-pre-existing', status: 'driver_en_route', _marker: 'unchanged' },
+  });
+  _bdofs.set('bazardrive.active_ride.v1', sentinel);
+  driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8j — pre-existing active_ride record is preserved verbatim',
+    _bdofs.get('bazardrive.active_ride.v1') === sentinel);
+}
+
+// ── F8k — driver-cancel click handler is gated + uses 2-step confirm ─
+expect('F8k — driver-cancel handler gates on role === "driver"',
+  /driver-cancel[\s\S]{0,2500}role\s*!==\s*['"]driver['"]/.test(orderDetailSrc));
+expect('F8k — driver-cancel handler requires status === ACCEPTED',
+  /driver-cancel[\s\S]{0,2500}status\s*!==\s*ORDER_STATUS\.ACCEPTED/.test(orderDetailSrc));
+expect('F8k — driver-cancel handler requires selectedDriverId === SELF',
+  /driver-cancel[\s\S]{0,2500}selectedDriverId\s*!==\s*SELF_DRIVER_ID/.test(orderDetailSrc));
+expect('F8k — driver-cancel handler uses 2-step armed pattern',
+  /driver-cancel[\s\S]{0,2500}dataset\.armed/.test(orderDetailSrc));
+expect('F8k — driver-cancel handler commits via cancelOrderByDriver',
+  /driver-cancel[\s\S]{0,2500}cancelOrderByDriver\s*\(/.test(orderDetailSrc));
+// Bound-extract the driver-cancel block via its unique armed-prompt
+// notice so the assertions don't drag.
+const driverCancelMatch = orderDetailSrc.match(
+  /action\s*===\s*['"]driver-cancel['"][\s\S]*?showNotice\(rootEl,\s*['"]Заказ отменён['"]\)/);
+const driverCancelBlock = driverCancelMatch ? driverCancelMatch[0] : '';
+expect('F8k — driver-cancel block resolved', driverCancelBlock.length > 0);
+expect('F8k — driver-cancel handler validates result.canceledBy === "driver" before success',
+  /result\.canceledBy\s*!==\s*['"]driver['"]/.test(driverCancelBlock));
+expect('F8k — driver-cancel handler never seeds active_ride',
+  !/saveActiveRide\s*\(/.test(driverCancelBlock));
+expect('F8k — driver-cancel handler never calls passenger sync helpers',
+  !/rejectSentOffersForPassengerCanceledOrder\s*\(/.test(driverCancelBlock)
+  && !/cancelOrderByPassenger\s*\(/.test(driverCancelBlock)
+  && !/rejectDriverOfferByPassenger\s*\(/.test(driverCancelBlock));
+
+// ── F8l — driver_offer_store cancelOrderByDriver stays in scope ─────
+const offerStoreSrcF8 = read('../public/src/driver_offer_store.js');
+const offerStoreCodeF8 = stripComments(offerStoreSrcF8);
+expect('F8l — cancelOrderByDriver never writes active_ride',
+  !/cancelOrderByDriver[\s\S]{0,2500}saveActiveRide\s*\(/.test(offerStoreCodeF8)
+  && !/cancelOrderByDriver[\s\S]{0,2500}active_ride\.v1/.test(offerStoreCodeF8));
+expect('F8l — cancelOrderByDriver never writes the DriverOffer store',
+  !/cancelOrderByDriver[\s\S]{0,2500}saveStore\s*\(/.test(offerStoreCodeF8));
+expect('F8l — cancelOrderByDriver stamps canceledBy=driver',
+  /cancelOrderByDriver[\s\S]{0,2500}canceledBy[\s\S]{0,200}['"]driver['"]/.test(offerStoreCodeF8));
+expect('F8l — cancelOrderByDriver preserves selectedDriverId',
+  /cancelOrderByDriver[\s\S]{0,2500}selectedDriverId[\s\S]{0,200}bucket\.selectedDriverId/.test(offerStoreCodeF8));
+
+// ── F8m — D3 markup still carries the «Отменить» CTA pre-cancel ─────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Fresh demo-order-accepted with no overlay — driver is on D3.
+  const merged = orderDetailMod.loadOrder('demo-order-accepted');
+  expect('F8m baseline — driver state is D3 for the canonical fixture',
+    orderDetailMod.resolveState(merged, 'driver') === 'D3');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D3' });
+  expect('F8m — D3 markup exposes the driver-cancel CTA',
+    /data-action="driver-cancel"/.test(markup)
+    && markup.includes('Отменить'));
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
@@ -3451,19 +3784,20 @@ expect('storage_boundary.js imports clearDriverOfferStore',
 expect('clearUserScopedStorage calls clearDriverOfferStore',
   /clearUserScopedStorage[\s\S]{0,2000}clearDriverOfferStore\s*\(/.test(boundarySrc));
 
-// ── F6. SW precaches the new store + VERSION bumped to ≥ v114 ──────
-// Floor lifted to v114 for BD-ORDER-DETAIL-01D-2C-C because this slice
+// ── F6. SW precaches the new store + VERSION bumped to ≥ v115 ──────
+// Floor lifted to v115 for BD-ORDER-DETAIL-01D-2D because this slice
 // modifies the same two precached runtime modules (`order_detail.js`
-// + `driver_offer_store.js`) again — the cancel-order handler now
-// imports a new helper and the store carries
-// `rejectSentOffersForPassengerCanceledOrder`. Without the bump,
-// existing PWA clients on v113 would keep serving the old cached JS.
+// + `driver_offer_store.js`) again — the driver-cancel handler now
+// imports the new `cancelOrderByDriver` helper, the loadOrder merges
+// `canceledBy` into the base, and bodyP4 differentiates the terminal
+// copy by actor. Without the bump, existing PWA clients on v114 would
+// keep serving the old cached JS.
 expect('public/sw.js precaches driver_offer_store.js',
   /\.\/src\/driver_offer_store\.js/.test(swJs));
 expect('public/sw.js precaches order_detail.js',
   /\.\/src\/screens\/order_detail\.js/.test(swJs));
-expect('public/sw.js VERSION bumped to v114+ for the 01D-2C-C runtime module changes',
-  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 114);
+expect('public/sw.js VERSION bumped to v115+ for the 01D-2D runtime module changes',
+  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 115);
 
 // ── F7. driver_offer_store.js is out-of-scope-clean (no fetch/Mapbox) ─
 const offerStoreSrc = read('../public/src/driver_offer_store.js');

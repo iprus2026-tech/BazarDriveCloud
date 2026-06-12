@@ -709,6 +709,73 @@ export function rejectDriverOfferByPassenger({ orderId, driverId, offer } = {}) 
   return next;
 }
 
+// BD-ORDER-DETAIL-01D-2D — assigned-driver «Отменить» on a D3 order.
+//
+// When the driver currently assigned to an ACCEPTED order taps cancel
+// from D3, write the order overlay record:
+//   • status        = 'CANCELED'
+//   • canceledBy    = 'driver'
+//   • canceledAt    = ISO timestamp (monotonic vs the overlay's
+//                     previous updatedAt)
+//   • updatedAt     = same monotonic stamp
+//   • selectedDriverId preserved (the assignment record stays on the
+//     overlay so audit / passenger-side view still know who canceled)
+//
+// Eligibility (defense-in-depth — the click handler already gates
+// these via ctx.order, but the store enforces them too so a stale tab
+// or direct call cannot pin a cancel onto someone else's accepted
+// order):
+//   • when an overlay exists and pins a `selectedDriverId`, that value
+//     MUST equal `driverId` — only the assigned driver may cancel.
+//   • when no overlay exists yet (fixture-only ACCEPTED path), the
+//     helper trusts the caller's driverId and uses it as the overlay's
+//     selectedDriverId so the resulting canceled record is still
+//     attributable.
+//
+// Idempotent: a second call when the overlay is already
+// `status='CANCELED'` returns the existing record verbatim (including
+// when it was canceled by the passenger first — the helper does NOT
+// overwrite an earlier cancel actor; the click handler differentiates
+// success vs stale outcome via `result.canceledBy`).
+//
+// Refused on unsafe / blocked keys or when the overlay pins a foreign
+// `selectedDriverId`. This slice does NOT touch the DriverOffer store
+// (the accepted offer stays `accepted`, peer rejected/withdrawn/expired
+// offers stay verbatim), and does NOT seed `bazardrive.active_ride.v1`.
+export function cancelOrderByDriver({ orderId, driverId } = {}) {
+  if (!isSafeStoreKey(orderId)) return null;
+  if (!isSafeStoreKey(driverId)) return null;
+  const overlayStore = loadOverlayStore();
+  const bucket = hasOwn(overlayStore, orderId) && isPlainObject(overlayStore[orderId])
+    ? overlayStore[orderId]
+    : {};
+  // Idempotent on any prior cancel actor — the caller checks
+  // `result.canceledBy` to distinguish the success path from the stale
+  // (passenger-cancel-already-landed) outcome.
+  if (bucket.status === ORDER_STATUS_CANCELED) return bucket;
+  // Defense-in-depth: when the overlay pins a different selectedDriverId,
+  // refuse — only the assigned driver may cancel from D3.
+  if (typeof bucket.selectedDriverId === 'string'
+      && bucket.selectedDriverId
+      && bucket.selectedDriverId !== driverId) {
+    return null;
+  }
+  const stamp = bumpedIso(bucket && typeof bucket.updatedAt === 'string'
+    ? bucket.updatedAt
+    : null);
+  const next = {
+    ...bucket,
+    status:           ORDER_STATUS_CANCELED,
+    canceledBy:       'driver',
+    canceledAt:       stamp,
+    updatedAt:        stamp,
+    selectedDriverId: bucket.selectedDriverId || driverId,
+  };
+  overlayStore[orderId] = next;
+  saveOverlayStore(overlayStore);
+  return next;
+}
+
 // BD-ORDER-DETAIL-01D-2C-C — passenger «Отменить заказ» offer sync.
 //
 // Closes the deferred gap from 01D-2C-A: when the passenger cancels the
