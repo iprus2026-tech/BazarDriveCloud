@@ -709,6 +709,140 @@ export function rejectDriverOfferByPassenger({ orderId, driverId, offer } = {}) 
   return next;
 }
 
+// BD-ORDER-DETAIL-01D-2C-C — passenger «Отменить заказ» offer sync.
+//
+// Closes the deferred gap from 01D-2C-A: when the passenger cancels the
+// whole order, every active `status='sent'` DriverOffer for that order
+// flips to a terminal `status='rejected'` record stamped with:
+//   • rejectedBy='passenger_cancel'
+//   • rejectedReason='order_canceled_by_passenger'
+//   • rejectedAt = monotonic ISO stamp
+//   • updatedAt  = same stamp
+//
+// Without the sync, stale `sent` offers would keep surfacing on the
+// driver side as D2 («Оффер отправлен») even after the order was
+// canceled. This helper is the local mirror of what the backend would
+// emit on a real cancel broadcast.
+//
+// Candidates are built from the UNION of two sources, deduplicated by
+// `driverId`:
+//   A) every stored bucket entry for `orderId` in
+//      `bazardrive.driver_offers.v1` — covers fresh sent offers another
+//      tab/role wrote AFTER the current Order Detail screen rendered
+//      (the snapshot the caller holds would not see them);
+//   B) every `allOffers` snapshot entry whose `orderId` matches — covers
+//      fixture-only sent offers that have no store baseline yet (a
+//      fresh `/order/demo-order-offers` cancel where the fixture
+//      surfaces sent peers without ever touching the store), matching
+//      the snapshot fallback `commitPassengerSelection` already uses.
+//
+// Stored baseline is always the source of truth when present — the
+// snapshot is consulted only when no stored entry exists for that
+// `driverId`. This keeps the helper aligned with the existing stale-
+// store guards across the rest of the file.
+//
+// Mutates only offers that satisfy ALL of:
+//   • `isSafeStoreKey(driverId)`
+//   • effective baseline (stored, or snapshot when no stored entry)
+//     `status === 'sent'`
+//   • for snapshot-only candidates: `snapshot.orderId === orderId` and
+//     snapshot is a plain object
+//
+// Preserved verbatim:
+//   • `accepted` / `rejected` / `withdrawn` / `expired` / any unknown
+//     future status on the stored baseline
+//   • offers belonging to a different `orderId`
+//   • snapshot entries whose `driverId` is unsafe / blocked
+//
+// Does NOT touch the order overlay (cancelOrderByPassenger owns that
+// write) and does NOT seed `bazardrive.active_ride.v1`.
+//
+// Returns an array of the rejected offer records on success (empty if
+// nothing was eligible to flip). Returns null on invalid input
+// (`orderId` unsafe / blocked, `allOffers` not an array) so the caller
+// can distinguish "nothing to do" from "input refused".
+export function rejectSentOffersForPassengerCanceledOrder({ orderId, allOffers } = {}) {
+  if (!isSafeStoreKey(orderId)) return null;
+  if (!Array.isArray(allOffers)) return null;
+
+  const store = loadStore();
+  let bucket = hasOwn(store, orderId) ? store[orderId] : null;
+  if (!isPlainObject(bucket)) {
+    bucket = createMap();
+    store[orderId] = bucket;
+  }
+
+  // Build a snapshot lookup keyed by safe driverId for this orderId so
+  // we can hand both store-resident and fixture-only candidates through
+  // the same write path without iterating allOffers twice.
+  const snapshotByDriver = createMap();
+  for (const offer of allOffers) {
+    if (!isPlainObject(offer)) continue;
+    if (!isSafeStoreKey(offer.driverId)) continue;
+    if (offer.orderId !== orderId) continue;
+    // First-write-wins on duplicate driverIds in the caller's snapshot
+    // (matches the dedup guarantee of the store's composite key).
+    if (!hasOwn(snapshotByDriver, offer.driverId)) {
+      snapshotByDriver[offer.driverId] = offer;
+    }
+  }
+
+  // Union the driverIds from the stored bucket and the snapshot. The
+  // bucket is the source for offers another tab/role wrote after the
+  // caller's snapshot was taken; the snapshot covers fixture-only
+  // peers that have no store baseline yet.
+  const candidateDriverIds = createMap();
+  for (const driverId of Object.keys(bucket)) {
+    if (isSafeStoreKey(driverId) && hasOwn(bucket, driverId)) {
+      candidateDriverIds[driverId] = true;
+    }
+  }
+  for (const driverId of Object.keys(snapshotByDriver)) {
+    candidateDriverIds[driverId] = true;
+  }
+
+  const rejected = [];
+  let mutated = false;
+
+  for (const driverId of Object.keys(candidateDriverIds)) {
+    if (!isSafeStoreKey(driverId)) continue;
+
+    // Stored baseline is the source of truth (matches the
+    // commitPassengerSelection stale-store guard). Snapshot fallback
+    // covers fixture-only offers the click handler renders from
+    // `loadOrder()` before the first store write.
+    const storedBaseline = hasOwn(bucket, driverId) && isPlainObject(bucket[driverId])
+      ? bucket[driverId]
+      : null;
+    const snapshotBaseline = hasOwn(snapshotByDriver, driverId)
+      ? snapshotByDriver[driverId]
+      : null;
+    const baseline = storedBaseline || (snapshotBaseline ? { ...snapshotBaseline } : null);
+    if (!baseline) continue;
+
+    if (baseline.status !== DRIVER_OFFER_STATUS.SENT) continue;
+
+    const stamp = bumpedIso(baseline.updatedAt);
+    const next = {
+      ...baseline,
+      id: baseline.id || buildOfferId(orderId, driverId),
+      orderId,
+      driverId,
+      status:         OFFER_STATUS_REJECTED,
+      rejectedBy:     'passenger_cancel',
+      rejectedReason: 'order_canceled_by_passenger',
+      rejectedAt:     stamp,
+      updatedAt:      stamp,
+    };
+    bucket[driverId] = next;
+    rejected.push(next);
+    mutated = true;
+  }
+
+  if (mutated) saveStore(store);
+  return rejected;
+}
+
 // Clears the order overlay store. Called from `clearDriverOfferStore`
 // so the user-scoped logout boundary continues to wipe everything the
 // Order Detail screen wrote.
