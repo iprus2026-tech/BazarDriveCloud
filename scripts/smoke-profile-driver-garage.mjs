@@ -4305,62 +4305,71 @@ user.set({
   expect('S121: wireGarageActions body extracted',
     body.length > 0, String(body.length));
 
+  // Codex P3 review fix — strip comments BEFORE the positive pins so a
+  // commented-out selector example (e.g. a "// TODO replace
+  // `…${eid}` …" line) cannot satisfy a required positive shape pin
+  // while the runtime selector that actually drove the helper was
+  // deleted or rewritten with a raw interpolation.
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const bodyCode = stripComments(body);
+
   // Positive pins — active-list per-vehicle loop. Every active-card
   // selector inside the loop must funnel through `escapeCssId(id)`.
   expect('S121: active loop declares `const eid = escapeCssId(id)`',
-    /const\s+eid\s*=\s*escapeCssId\(\s*id\s*\)/.test(body));
+    /const\s+eid\s*=\s*escapeCssId\(\s*id\s*\)/.test(bodyCode));
   expect('S121: active loop edit selector uses `#pf2-garage-edit-${eid}`',
-    /querySelector\(\s*`#pf2-garage-edit-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-edit-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: active loop make-active selector uses `#pf2-garage-make-active-${eid}`',
-    /querySelector\(\s*`#pf2-garage-make-active-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-make-active-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: active loop archive selector uses `#pf2-garage-archive-${eid}`',
-    /querySelector\(\s*`#pf2-garage-archive-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-archive-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: active loop confirm row selector uses `#pf2-garage-confirm-${eid}`',
-    /querySelector\(\s*`#pf2-garage-confirm-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-confirm-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: active loop archive-cancel selector uses `#pf2-garage-archive-cancel-${eid}`',
-    /querySelector\(\s*`#pf2-garage-archive-cancel-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-archive-cancel-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: active loop archive-final-confirm selector uses `#pf2-garage-archive-confirm-${eid}`',
-    /querySelector\(\s*`#pf2-garage-archive-confirm-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-archive-confirm-\$\{eid\}`\s*\)/.test(bodyCode));
 
   // Positive pins — archived-list per-vehicle loop. Same invariant
   // for the restore selector family; the archived loop iterates `aid`
   // (archived id) instead of `id`.
   expect('S121: archived loop declares `const eid = escapeCssId(aid)`',
-    /const\s+eid\s*=\s*escapeCssId\(\s*aid\s*\)/.test(body));
+    /const\s+eid\s*=\s*escapeCssId\(\s*aid\s*\)/.test(bodyCode));
   expect('S121: archived loop restore selector uses `#pf2-garage-restore-${eid}`',
-    /querySelector\(\s*`#pf2-garage-restore-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-restore-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: archived loop restore-confirm-row selector uses `#pf2-garage-restore-confirm-row-${eid}`',
-    /querySelector\(\s*`#pf2-garage-restore-confirm-row-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-restore-confirm-row-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: archived loop restore-cancel selector uses `#pf2-garage-restore-cancel-${eid}`',
-    /querySelector\(\s*`#pf2-garage-restore-cancel-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-restore-cancel-\$\{eid\}`\s*\)/.test(bodyCode));
   expect('S121: archived loop restore-final-confirm selector uses `#pf2-garage-restore-confirm-${eid}`',
-    /querySelector\(\s*`#pf2-garage-restore-confirm-\$\{eid\}`\s*\)/.test(body));
+    /querySelector\(\s*`#pf2-garage-restore-confirm-\$\{eid\}`\s*\)/.test(bodyCode));
 
   // Negative pin — no per-vehicle pf2-garage selector inside the
-  // function body may interpolate the RAW `${id}` or `${aid}`. Strip
-  // comments first so explanatory comments naming the raw form
-  // (e.g. "do NOT use `#pf2-garage-edit-${id}` here") do not
-  // false-positive against the scan target.
-  const stripComments = (src) => src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const bodyNoComments = stripComments(body);
+  // function body may interpolate the RAW `${id}` or `${aid}` (with or
+  // without whitespace inside the template hole, so a stylistic
+  // `${ id }` / `${ aid }` is caught too). Strips comments first so
+  // explanatory comments naming the raw form (e.g. "do NOT use
+  // `#pf2-garage-edit-${id}` here") do not false-positive against the
+  // scan target.
+  const RAW_ID_OR_AID = '\\$\\{\\s*(?:id|aid)\\s*\\}';
   const RAW_PATTERNS = [
-    /`#pf2-garage-edit-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-make-active-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-archive-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-archive-cancel-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-archive-confirm-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-confirm-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-restore-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-restore-confirm-row-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-restore-cancel-\$\{(?:id|aid)\}`/,
-    /`#pf2-garage-restore-confirm-\$\{(?:id|aid)\}`/,
+    new RegExp('`#pf2-garage-edit-'                + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-make-active-'         + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-archive-'             + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-archive-cancel-'      + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-archive-confirm-'     + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-confirm-'             + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-restore-'             + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-restore-confirm-row-' + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-restore-cancel-'      + RAW_ID_OR_AID + '`'),
+    new RegExp('`#pf2-garage-restore-confirm-'     + RAW_ID_OR_AID + '`'),
   ];
   for (const re of RAW_PATTERNS) {
     expect(
       `S121: wireGarageActions has NO raw \${id}/\${aid} interpolation for ${re.source}`,
-      !re.test(bodyNoComments));
+      !re.test(bodyCode));
   }
 }
 
