@@ -548,8 +548,12 @@ expect('driver-send-offer path never mutates Order.status',
   !/driver-send-offer[\s\S]{0,800}Order\.status\s*=/.test(orderDetailSrc));
 expect('driver-send-offer path never mutates selectedDriverId',
   !/driver-send-offer[\s\S]{0,800}selectedDriverId\s*=/.test(orderDetailSrc));
+// Window widened to 1600 chars in BD-ORDER-DETAIL-01D-2C-B — the
+// 01D-2C-B short-circuit for an existing rejected SELF offer sits
+// between the early `existing.status === 'sent'` return and the
+// sendDriverOffer call.
 expect('driver-send-offer path writes the DriverOffer store (sendDriverOffer)',
-  /driver-send-offer[\s\S]{0,800}sendDriverOffer\s*\(/.test(orderDetailSrc));
+  /driver-send-offer[\s\S]{0,1600}sendDriverOffer\s*\(/.test(orderDetailSrc));
 expect('withdraw-offer path uses withdrawDriverOffer (no Order/selectedDriverId mutation)',
   /withdraw-offer[\s\S]{0,800}withdrawDriverOffer\s*\(/.test(orderDetailSrc)
   && !/withdraw-offer[\s\S]{0,800}Order\.status\s*=/.test(orderDetailSrc)
@@ -2347,6 +2351,211 @@ expect('F6n — rejectDriverOfferByPassenger stamps rejectedBy=passenger',
     /data-action="reject-offer"/.test(markup)
     && markup.includes('Отклонить'));
 }
+
+// ── F6p–F6u. Codex review feedback ──────────────────────────────────
+// F6p: reject must persist from a fixture-only sent snapshot (P2 card
+//      that hasn't been written to bazardrive.driver_offers.v1 yet).
+// F6q: integration via loadOrder — fresh /order/demo-order-offers
+//      passenger reject succeeds with an empty offer store.
+// F6r: rejected fixture offer is no longer selectable / canOpenTrip.
+// F6s: passenger-rejected SELF offer routes driver to D4 with the
+//      explicit driver_offer_rejected lockedReason, not D1.
+// F6t: sendDriverOffer preserves a passenger-rejected offer verbatim;
+//      the click handler short-circuits before showing «Оффер отправлен».
+// F6u: source-level pin on the driver-send-offer guard.
+
+// ── F6p — fixture-only sent snapshot is persisted as rejected ───────
+{
+  driverOfferStore.clearDriverOfferStore();
+  // No store entry. Pass a sent-offer snapshot mirroring what the click
+  // handler passes when the P2 card is fixture-backed.
+  const snapshot = mkOffer('reject-test-p', 'drv-p', 'sent', {
+    driverName: 'Тест Водитель',
+    price: 1234,
+  });
+  const result = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'reject-test-p',
+    driverId: 'drv-p',
+    offer: snapshot,
+  });
+  expect('F6p — reject persists from a fixture-only sent snapshot',
+    !!result
+    && result.status === 'rejected'
+    && result.rejectedBy === 'passenger'
+    && typeof result.rejectedAt === 'string' && result.rejectedAt.length > 0);
+  const stored = driverOfferStore.getDriverOffer('reject-test-p', 'drv-p');
+  expect('F6p — store now carries the rejected baseline derived from snapshot',
+    !!stored
+    && stored.status === 'rejected'
+    && stored.rejectedBy === 'passenger'
+    && stored.driverName === 'Тест Водитель'
+    && stored.price === 1234);
+  expect('F6p — reject still refuses when no snapshot AND no stored baseline',
+    driverOfferStore.rejectDriverOfferByPassenger({
+      orderId: 'reject-test-p-empty', driverId: 'd',
+    }) === null);
+  expect('F6p — snapshot with mismatched orderId is refused',
+    driverOfferStore.rejectDriverOfferByPassenger({
+      orderId: 'reject-test-p-empty', driverId: 'd',
+      offer: { ...snapshot, orderId: 'other-order' },
+    }) === null);
+  expect('F6p — snapshot with non-sent status is refused',
+    driverOfferStore.rejectDriverOfferByPassenger({
+      orderId: 'reject-test-p-empty', driverId: 'd',
+      offer: { id: 'x', orderId: 'reject-test-p-empty', driverId: 'd', status: 'withdrawn' },
+    }) === null);
+}
+
+// ── F6q — fresh /order/demo-order-offers passenger reject works ─────
+// Reproduces the Codex P1 scenario: an empty driver_offers.v1 store +
+// the deterministic fixture P2 candidates. The merged loadOrder result
+// is what the click handler iterates over, and the snapshot it passes
+// to rejectDriverOfferByPassenger comes straight off `order.offers`.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const fresh = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F6q baseline — demo-order-offers fresh has 2 sent fixture offers',
+    fresh.offers.filter((o) => o.status === 'sent').length === 2);
+  const target = fresh.offers.find((o) => o.driverId === 'driver-1');
+  expect('F6q baseline — fixture target offer is sent',
+    !!target && target.status === 'sent');
+  const result = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-offers',
+    driverId: 'driver-1',
+    offer: target,
+  });
+  expect('F6q — fixture-only reject succeeds via the merged path',
+    !!result
+    && result.status === 'rejected'
+    && result.rejectedBy === 'passenger');
+  const after = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F6q — merged order surfaces the rejected target via store overlay',
+    after.offers.find((o) => o.driverId === 'driver-1')?.status === 'rejected');
+  expect('F6q — the other fixture offer stays sent',
+    after.offers.find((o) => o.driverId === 'driver-2')?.status === 'sent');
+  expect('F6q — passenger state remains P2 (second sent offer survives)',
+    orderDetailMod.resolveState(after, 'passenger') === 'P2');
+  expect('F6q — bazardrive.active_ride.v1 is NOT seeded by the reject',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+}
+
+// ── F6r — rejected fixture offer is no longer selectable / eligible ─
+{
+  driverOfferStore.clearDriverOfferStore();
+  const fresh = orderDetailMod.loadOrder('demo-order-offers');
+  const target = fresh.offers.find((o) => o.driverId === 'driver-1');
+  driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-offers',
+    driverId: 'driver-1',
+    offer: target,
+  });
+  const after = orderDetailMod.loadOrder('demo-order-offers');
+  const refused = driverOfferStore.commitPassengerSelection({
+    orderId: 'demo-order-offers',
+    selectedDriverId: 'driver-1',
+    allOffers: after.offers,
+  });
+  expect('F6r — commitPassengerSelection refuses the rejected fixture offer',
+    refused === null);
+  const sentIds = orderDetailMod.activeSentOffers(after).map((o) => o.driverId);
+  expect('F6r — activeSentOffers excludes the rejected driver-1',
+    !sentIds.includes('driver-1'));
+  expect('F6r — activeSentOffers still includes the un-rejected driver-2',
+    sentIds.includes('driver-2'));
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: after, role: 'passenger', state: 'P2' });
+  expect('F6r — P2 markup excludes the rejected driver from the card list',
+    !markup.includes(target.driverName));
+  // canOpenTrip / seed builder also refuse if the rejected driver is
+  // somehow promoted to selectedDriverId (belt-and-suspenders).
+  const promoted = { ...after, status: 'ACCEPTED', selectedDriverId: 'driver-1' };
+  expect('F6r — canOpenTrip refuses a rejected promoted-selected offer',
+    orderDetailMod.canOpenTrip(promoted) === false);
+  expect('F6r — buildPassengerActiveRideSeed returns null for the promoted-rejected case',
+    orderDetailMod.buildPassengerActiveRideSeed(promoted) === null);
+}
+
+// ── F6s — passenger-rejected SELF offer routes driver to D4, not D1 ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  // Driver sends offer (D1 → D2).
+  const sent = driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F6s baseline — SELF offer is sent', !!sent && sent.status === 'sent');
+  // Passenger rejects the SELF offer.
+  const offerSnapshot = orderDetailMod.loadOrder('demo-order-1').offers
+    .find((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID);
+  const rejected = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    offer: offerSnapshot,
+  });
+  expect('F6s baseline — reject succeeded',
+    !!rejected && rejected.status === 'rejected' && rejected.rejectedBy === 'passenger');
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F6s — driver state is D4 (NOT D1) after passenger rejects SELF offer',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  expect('F6s — loadOrder surfaces the driver_offer_rejected lockedReason',
+    merged.lockedReason === 'driver_offer_rejected');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F6s — D4 markup carries the «Пассажир отклонил ваш оффер» info',
+    markup.includes('Пассажир отклонил ваш оффер'));
+  expect('F6s — D4 markup carries NO «Откликнуться» CTA',
+    !markup.includes('Откликнуться'));
+  expect('F6s — D4 markup exposes only safe driver exits',
+    markup.includes('Найти другие заказы') && markup.includes('Вернуться в ленту'));
+  // Passenger view also reflects the rejected SELF offer — no longer P2.
+  expect('F6s — passenger view falls back to P1 once the only sent offer is rejected',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P1');
+}
+
+// ── F6t — sendDriverOffer preserves a passenger-rejected SELF offer ──
+{
+  driverOfferStore.clearDriverOfferStore();
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-t', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const baseline = driverOfferStore.getDriverOffer('demo-order-t', orderDetailMod.SELF_DRIVER_ID);
+  driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-t',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    offer: baseline,
+  });
+  const rejected = driverOfferStore.getDriverOffer('demo-order-t', orderDetailMod.SELF_DRIVER_ID);
+  expect('F6t baseline — SELF offer is now rejected',
+    rejected?.status === 'rejected' && rejected?.rejectedBy === 'passenger');
+  // The driver now attempts to re-send via sendDriverOffer. The helper
+  // must preserve the rejected status verbatim and NOT flip back to sent.
+  const result = driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-t', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F6t — sendDriverOffer returns the existing rejected record verbatim',
+    !!result
+    && result.status === 'rejected'
+    && result.rejectedBy === 'passenger'
+    && result.rejectedAt === rejected.rejectedAt);
+  const stillRejected = driverOfferStore.getDriverOffer('demo-order-t', orderDetailMod.SELF_DRIVER_ID);
+  expect('F6t — store still carries the rejected record (no resend)',
+    stillRejected?.status === 'rejected'
+    && stillRejected?.rejectedBy === 'passenger');
+}
+
+// ── F6u — driver-send-offer click handler short-circuits on rejected ──
+expect('F6u — driver-send-offer handler short-circuits on existing rejected',
+  /driver-send-offer[\s\S]{0,2500}existing[\s\S]{0,400}status\s*===\s*['"]rejected['"]/.test(orderDetailSrc));
+expect('F6u — driver-send-offer handler shows a non-success toast for rejected',
+  /existing[\s\S]{0,400}status\s*===\s*['"]rejected['"][\s\S]{0,400}showNotice\(rootEl,\s*['"]Пассажир отклонил оффер['"]\)/.test(orderDetailSrc));
+// Bound-extract the driver-send-offer handler so the assertions can't
+// drag the regex into a neighbouring handler.
+const sendBlockMatch = orderDetailSrc.match(
+  /action\s*===\s*['"]driver-send-offer['"][\s\S]*?showNotice\(rootEl,\s*['"]Оффер отправлен['"]\)/);
+const sendBlock = sendBlockMatch ? sendBlockMatch[0] : '';
+expect('F6u — driver-send-offer handler block resolved', sendBlock.length > 0);
+expect('F6u — driver-send-offer handler returns early on existing rejected',
+  /status\s*===\s*['"]rejected['"][\s\S]{0,400}return;/.test(sendBlock));
 
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {

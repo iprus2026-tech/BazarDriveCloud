@@ -207,6 +207,7 @@ const LOCK_REASON_LABEL = Object.freeze({
   order_already_taken:   'Заказ уже принят',
   order_canceled:        'Заказ отменён',
   order_expired:         'Заказ истёк',
+  driver_offer_rejected: 'Пассажир отклонил ваш оффер',
 });
 
 // BD-ORDER-DETAIL-01C Codex P2 — guard decodeURIComponent against
@@ -289,6 +290,19 @@ export function loadOrder(id) {
       base.selectedDriverId = overlay.selectedDriverId;
     }
   }
+  // BD-ORDER-DETAIL-01D-2C-B — surface the driver-side info reason
+  // when the SELF DriverOffer was passenger-rejected. The fixture-side
+  // lockedReason set (canceled / expired / passenger_chose_other / …)
+  // is preserved; this overlay only fills the gap when no fixture
+  // reason is set so a runtime reject can route the SELF driver to D4
+  // with an explicit info label instead of falling through to D1.
+  if (!base.lockedReason) {
+    const selfRejected = mergedOffers.find(
+      (o) => o && o.driverId === SELF_DRIVER_ID
+        && o.status === 'rejected'
+        && o.rejectedBy === 'passenger');
+    if (selfRejected) base.lockedReason = 'driver_offer_rejected';
+  }
   return base;
 }
 
@@ -302,6 +316,17 @@ export function resolveState(order, role) {
     if (status === ORDER_STATUS.ACCEPTED) {
       return order.selectedDriverId === SELF_DRIVER_ID ? 'D3' : 'D4';
     }
+    // BD-ORDER-DETAIL-01D-2C-B — passenger rejected the SELF offer.
+    // Falling through to D1 would surface an actionable «Откликнуться»
+    // CTA whose underlying sendDriverOffer refuses to overwrite a
+    // terminal rejected status (so the driver would see a misleading
+    // success toast without any state change). Lock the driver into D4
+    // with the explicit driver_offer_rejected info reason instead.
+    const ownRejectedByPassenger = (order.offers || []).find(
+      (o) => o && o.driverId === SELF_DRIVER_ID
+        && o.status === 'rejected'
+        && o.rejectedBy === 'passenger');
+    if (ownRejectedByPassenger) return 'D4';
     const ownOffer = (order.offers || []).find(
       (o) => o && o.driverId === SELF_DRIVER_ID && o.status === 'sent');
     return ownOffer ? 'D2' : 'D1';
@@ -808,6 +833,19 @@ function bindEvents(rootEl, initialCtx) {
         showNotice(rootEl, 'Оффер уже отправлен');
         return;
       }
+      // BD-ORDER-DETAIL-01D-2C-B — sendDriverOffer preserves terminal
+      // statuses (accepted / rejected / expired) verbatim instead of
+      // overwriting them. A passenger-rejected offer is terminal from
+      // 01D-2C-B's POV — resend is owned by a later sub-slice. Short-
+      // circuit before the «Оффер отправлен» toast so the driver never
+      // sees a misleading success state. resolveState already routes
+      // this driver to D4 via `driver_offer_rejected`, so the
+      // «Откликнуться» button is normally not in the DOM; this is
+      // defense-in-depth against a stale render or direct dispatch.
+      if (existing && existing.status === 'rejected') {
+        showNotice(rootEl, 'Пассажир отклонил оффер');
+        return;
+      }
       // Hydrate the fresh offer with order-derived defaults so the
       // resulting D2 summary and any cross-role P2 card carry sensible
       // price / ETA / route context. The store still backfills demo
@@ -947,9 +985,15 @@ function bindEvents(rootEl, initialCtx) {
         showNotice(rootEl, 'Этот оффер нельзя отклонить');
         return;
       }
+      // Pass the offer snapshot through so the helper can persist a
+      // fixture-only baseline (a P2 candidate that hasn't been written
+      // to `bazardrive.driver_offers.v1` yet) before flipping it to
+      // rejected. Mirrors the snapshot fallback `commitPassengerSelection`
+      // already uses for the same scenario.
       const result = rejectDriverOfferByPassenger({
         orderId: id,
         driverId: offer.driverId,
+        offer,
       });
       if (!result) {
         showNotice(rootEl, 'Не удалось отклонить оффер');
