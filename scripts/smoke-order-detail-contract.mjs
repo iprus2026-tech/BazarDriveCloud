@@ -2913,6 +2913,419 @@ expect('F6ff — guard branches generic toast under the non-passenger else',
     orderDetailMod.resolveState(merged, 'driver') === 'D1');
 }
 
+// ── F7a–F7n. Passenger cancel-order sent → rejected sync (01D-2C-C) ─
+// Closes the deferred gap from 01D-2C-A: when the passenger cancels the
+// whole order, every active `status='sent'` DriverOffer for that order
+// flips to a terminal `status='rejected'` record stamped with
+// `rejectedBy='passenger_cancel'` + `rejectedReason='order_canceled_by_passenger'`.
+// Terminal offers (`accepted` / `withdrawn` / `expired` / pre-existing
+// `rejected`) and cross-order offers are preserved verbatim. The cancel
+// overlay (01D-2C-A) is untouched by the sync; active_ride is not
+// touched by either path.
+
+expect('F7 — driver_offer_store exports rejectSentOffersForPassengerCanceledOrder',
+  typeof driverOfferStore.rejectSentOffersForPassengerCanceledOrder === 'function');
+
+// ── F7a — multi-offer cancel flips every active sent offer to rejected ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-sync-test-a', [
+    mkOffer('cancel-sync-test-a', 'drv-a-1', 'sent'),
+    mkOffer('cancel-sync-test-a', 'drv-a-2', 'sent'),
+    mkOffer('cancel-sync-test-a', 'drv-a-3', 'sent'),
+  ]);
+  const overlayResult = driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-a' });
+  expect('F7a — overlay carries cancel record',
+    !!overlayResult && overlayResult.status === 'CANCELED' && overlayResult.canceledBy === 'passenger');
+  const syncResult = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-a',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-a'),
+  });
+  expect('F7a — sync returns an array of 3 rejected records',
+    Array.isArray(syncResult) && syncResult.length === 3);
+  for (const driverId of ['drv-a-1', 'drv-a-2', 'drv-a-3']) {
+    const stored = driverOfferStore.getDriverOffer('cancel-sync-test-a', driverId);
+    expect(`F7a — ${driverId} status flipped to rejected`,
+      stored?.status === 'rejected');
+    expect(`F7a — ${driverId} carries rejectedBy='passenger_cancel'`,
+      stored?.rejectedBy === 'passenger_cancel');
+    expect(`F7a — ${driverId} carries rejectedReason='order_canceled_by_passenger'`,
+      stored?.rejectedReason === 'order_canceled_by_passenger');
+    expect(`F7a — ${driverId} carries non-empty rejectedAt`,
+      typeof stored?.rejectedAt === 'string' && stored.rejectedAt.length > 0);
+    expect(`F7a — ${driverId} updatedAt bumped`,
+      typeof stored?.updatedAt === 'string' && stored.updatedAt === stored.rejectedAt);
+  }
+}
+
+// ── F7b — overlay state after cancel + sync is canonical ─────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-sync-test-b', [
+    mkOffer('cancel-sync-test-b', 'drv-b', 'sent'),
+  ]);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-b' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-b',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-b'),
+  });
+  const overlay = driverOfferStore.getOrderOverlay('cancel-sync-test-b');
+  expect('F7b — overlay status === CANCELED',
+    overlay?.status === 'CANCELED');
+  expect('F7b — overlay canceledBy === passenger',
+    overlay?.canceledBy === 'passenger');
+  expect('F7b — overlay carries canceledAt and updatedAt',
+    typeof overlay?.canceledAt === 'string' && overlay.canceledAt.length > 0
+    && typeof overlay?.updatedAt === 'string' && overlay.updatedAt.length > 0);
+}
+
+// ── F7c — terminal statuses preserved verbatim ──────────────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-sync-test-c', [
+    mkOffer('cancel-sync-test-c', 'drv-c-sent',      'sent'),
+    mkOffer('cancel-sync-test-c', 'drv-c-withdrawn', 'withdrawn'),
+    mkOffer('cancel-sync-test-c', 'drv-c-expired',   'expired'),
+    mkOffer('cancel-sync-test-c', 'drv-c-accepted',  'accepted'),
+  ]);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-c' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-c',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-c'),
+  });
+  expect('F7c — sent offer flipped to rejected',
+    driverOfferStore.getDriverOffer('cancel-sync-test-c', 'drv-c-sent')?.status === 'rejected');
+  expect('F7c — withdrawn offer preserved verbatim',
+    driverOfferStore.getDriverOffer('cancel-sync-test-c', 'drv-c-withdrawn')?.status === 'withdrawn');
+  expect('F7c — expired offer preserved verbatim',
+    driverOfferStore.getDriverOffer('cancel-sync-test-c', 'drv-c-expired')?.status === 'expired');
+  expect('F7c — accepted offer preserved verbatim',
+    driverOfferStore.getDriverOffer('cancel-sync-test-c', 'drv-c-accepted')?.status === 'accepted');
+}
+
+// ── F7d — already-rejected offer preserves original rejectedBy/rejectedAt ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-sync-test-d', [
+    mkOffer('cancel-sync-test-d', 'drv-d-1', 'sent'),
+    mkOffer('cancel-sync-test-d', 'drv-d-2', 'rejected', {
+      rejectedBy: 'passenger',
+      rejectedAt: '2026-06-10T10:00:00.000Z',
+    }),
+    mkOffer('cancel-sync-test-d', 'drv-d-3', 'rejected', {
+      rejectedBy: 'system',
+      rejectedReason: 'driver_no_show',
+      rejectedAt: '2026-06-10T11:00:00.000Z',
+    }),
+  ]);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-d' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-d',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-d'),
+  });
+  const d1 = driverOfferStore.getDriverOffer('cancel-sync-test-d', 'drv-d-1');
+  expect('F7d — newly-canceled sent offer carries passenger_cancel reason',
+    d1?.status === 'rejected' && d1?.rejectedBy === 'passenger_cancel');
+  const d2 = driverOfferStore.getDriverOffer('cancel-sync-test-d', 'drv-d-2');
+  expect('F7d — already-passenger-rejected preserves original rejectedBy',
+    d2?.status === 'rejected'
+    && d2?.rejectedBy === 'passenger'
+    && d2?.rejectedAt === '2026-06-10T10:00:00.000Z');
+  const d3 = driverOfferStore.getDriverOffer('cancel-sync-test-d', 'drv-d-3');
+  expect('F7d — already-system-rejected preserves original rejectedBy + rejectedReason',
+    d3?.status === 'rejected'
+    && d3?.rejectedBy === 'system'
+    && d3?.rejectedReason === 'driver_no_show'
+    && d3?.rejectedAt === '2026-06-10T11:00:00.000Z');
+}
+
+// ── F7e — cross-order sent offer remains sent ────────────────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Hand-assemble two orders' buckets so both live under the same
+  // store envelope (seedOrderWithOffers clears each call).
+  _bdofs.set('bazardrive.driver_offers.v1', JSON.stringify({
+    'cancel-sync-test-e-one': {
+      'drv-target': mkOffer('cancel-sync-test-e-one', 'drv-target', 'sent'),
+    },
+    'cancel-sync-test-e-two': {
+      'drv-other':  mkOffer('cancel-sync-test-e-two', 'drv-other',  'sent'),
+    },
+  }));
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-e-one' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-e-one',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-e-one'),
+  });
+  expect('F7e — canceled order target offer is rejected',
+    driverOfferStore.getDriverOffer('cancel-sync-test-e-one', 'drv-target')?.status === 'rejected');
+  expect('F7e — unrelated order sent offer remains sent',
+    driverOfferStore.getDriverOffer('cancel-sync-test-e-two', 'drv-other')?.status === 'sent');
+  expect('F7e — unrelated order overlay not touched',
+    driverOfferStore.getOrderOverlay('cancel-sync-test-e-two') === null);
+}
+
+// ── F7f — no active_ride seed / no overlay mutation by the sync ─────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('cancel-sync-test-f', [
+    mkOffer('cancel-sync-test-f', 'drv-f', 'sent'),
+  ]);
+  // Pre-seed an overlay record so we can prove the sync doesn't change it.
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'cancel-sync-test-f' });
+  const overlayBefore = driverOfferStore.getOrderOverlay('cancel-sync-test-f');
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-f',
+    allOffers: driverOfferStore.listDriverOffersForOrder('cancel-sync-test-f'),
+  });
+  const overlayAfter = driverOfferStore.getOrderOverlay('cancel-sync-test-f');
+  expect('F7f — sync does NOT seed bazardrive.active_ride.v1',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+  expect('F7f — sync does NOT change overlay.canceledAt',
+    overlayAfter?.canceledAt === overlayBefore?.canceledAt);
+  expect('F7f — sync does NOT change overlay.updatedAt',
+    overlayAfter?.updatedAt === overlayBefore?.updatedAt);
+}
+
+// ── F7g — fixture-only sent offers persisted via snapshot path ──────
+// Reproduces the realistic Order Detail click path: passenger lands on
+// /order/demo-order-offers (two fixture sent offers, empty store), taps
+// «Отменить заказ». The cancel-order handler passes ctx.order.offers
+// (the fixture snapshot) into the sync helper, which persists both as
+// rejected records.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const fresh = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F7g baseline — demo-order-offers carries 2 sent fixture offers',
+    fresh.offers.filter((o) => o.status === 'sent').length === 2);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-offers' });
+  const syncResult = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'demo-order-offers',
+    allOffers: fresh.offers,
+  });
+  expect('F7g — sync returns 2 rejected records from fixture-only snapshot',
+    Array.isArray(syncResult) && syncResult.length === 2);
+  for (const driverId of ['driver-1', 'driver-2']) {
+    const stored = driverOfferStore.getDriverOffer('demo-order-offers', driverId);
+    expect(`F7g — ${driverId} persisted as rejected via snapshot fallback`,
+      stored?.status === 'rejected'
+      && stored?.rejectedBy === 'passenger_cancel'
+      && stored?.rejectedReason === 'order_canceled_by_passenger');
+  }
+}
+
+// ── F7h — driver canceled order resolves D4 with no offer CTA ───────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Driver sends an offer (D1 → D2), then passenger cancels.
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  // Sanity — driver is on D2 before the cancel.
+  const beforeCancel = orderDetailMod.loadOrder('demo-order-1');
+  expect('F7h baseline — driver is on D2 with a sent SELF offer',
+    orderDetailMod.resolveState(beforeCancel, 'driver') === 'D2');
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'demo-order-1',
+    allOffers: beforeCancel.offers,
+  });
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F7h — driver state lands on D4 after cancel + sync',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  expect('F7h — SELF offer is rejected with passenger_cancel reason',
+    merged.offers.find((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID)?.status === 'rejected'
+    && merged.offers.find((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID)?.rejectedBy === 'passenger_cancel');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F7h — driver D4 markup shows «Заказ отменён»',
+    markup.includes('Заказ отменён'));
+  for (const forbidden of [
+    'Откликнуться на заказ',
+    'Оффер отправлен',
+    'Отозвать оффер',
+    'Изменить оффер',
+  ]) {
+    expect(`F7h — driver D4 markup does NOT carry «${forbidden}»`,
+      !markup.includes(forbidden));
+  }
+}
+
+// ── F7i — passenger canceled order resolves P4 with terminal exits ──
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Seed a peer sent offer so we can also verify P2 affordances disappear.
+  seedOrderWithOffers('demo-order-offers', [
+    mkOffer('demo-order-offers', 'driver-1', 'sent'),
+  ]);
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-offers' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'demo-order-offers',
+    allOffers: driverOfferStore.listDriverOffersForOrder('demo-order-offers'),
+  });
+  const merged = orderDetailMod.loadOrder('demo-order-offers');
+  expect('F7i — passenger state lands on P4',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P4');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'passenger', state: 'P4' });
+  expect('F7i — passenger P4 markup carries «Создать новый заказ»',
+    markup.includes('Создать новый заказ'));
+  expect('F7i — passenger P4 markup carries «Вернуться в ленту»',
+    markup.includes('Вернуться в ленту'));
+  for (const forbidden of ['Выбрать водителя', 'Отклонить', 'Откликнуться']) {
+    expect(`F7i — passenger P4 markup does NOT carry «${forbidden}»`,
+      !markup.includes(forbidden));
+  }
+}
+
+// ── F7j — safe-key guards on rejectSentOffersForPassengerCanceledOrder ─
+{
+  expect('F7j — sync refuses __proto__ orderId',
+    driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: '__proto__', allOffers: [],
+    }) === null);
+  expect('F7j — sync refuses constructor orderId',
+    driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: 'constructor', allOffers: [],
+    }) === null);
+  expect('F7j — sync refuses prototype orderId',
+    driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: 'prototype', allOffers: [],
+    }) === null);
+  expect('F7j — sync refuses empty orderId',
+    driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: '', allOffers: [],
+    }) === null);
+  expect('F7j — sync refuses missing args / non-array allOffers',
+    driverOfferStore.rejectSentOffersForPassengerCanceledOrder() === null
+    && driverOfferStore.rejectSentOffersForPassengerCanceledOrder({}) === null
+    && driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: 'x', allOffers: null,
+    }) === null
+    && driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+      orderId: 'x', allOffers: 'not-an-array',
+    }) === null);
+  // Snapshot entries with blocked driverId are skipped, not pollutive.
+  driverOfferStore.clearDriverOfferStore();
+  const result = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'guard-test',
+    allOffers: [
+      { orderId: 'guard-test', driverId: '__proto__', status: 'sent' },
+      { orderId: 'guard-test', driverId: 'constructor', status: 'sent' },
+      { orderId: 'guard-test', driverId: 'drv-good',  status: 'sent' },
+    ],
+  });
+  expect('F7j — sync skips snapshot entries with blocked driverId',
+    Array.isArray(result) && result.length === 1
+    && result[0].driverId === 'drv-good');
+  expect('Object.prototype is NOT polluted by sync attempts',
+    Object.prototype.rejectedBy === undefined
+    && Object.prototype.rejectedReason === undefined);
+}
+
+// ── F7k — sync skips foreign-order snapshot entries ─────────────────
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  const result = driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'cancel-sync-test-k',
+    allOffers: [
+      { orderId: 'cancel-sync-test-k', driverId: 'drv-own',  status: 'sent' },
+      // Foreign order id — must be skipped.
+      { orderId: 'other-order',         driverId: 'drv-other', status: 'sent' },
+    ],
+  });
+  expect('F7k — sync flips only the same-order entry',
+    Array.isArray(result) && result.length === 1
+    && result[0].driverId === 'drv-own');
+  // The store should NOT carry a foreign-order rejection write.
+  const storeJson = _bdofs.get('bazardrive.driver_offers.v1') || '{}';
+  expect('F7k — foreign-order bucket is not created by the sync',
+    !JSON.parse(storeJson)['other-order']);
+}
+
+// ── F7l — cancel-order click handler imports + calls the sync ───────
+expect('F7l — order_detail.js imports rejectSentOffersForPassengerCanceledOrder',
+  /import\s*\{[\s\S]*?rejectSentOffersForPassengerCanceledOrder[\s\S]*?\}\s*from\s*['"]\.\.\/driver_offer_store\.js['"]/.test(orderDetailSrc));
+expect('F7l — cancel-order handler calls rejectSentOffersForPassengerCanceledOrder',
+  /cancel-order[\s\S]{0,3500}rejectSentOffersForPassengerCanceledOrder\s*\(/.test(orderDetailSrc));
+// Bound-extract the cancel handler so the assertion can't drag into a
+// neighbouring block.
+const cancelBlock7Match = orderDetailSrc.match(
+  /action\s*===\s*['"]cancel-order['"][\s\S]*?action\s*===\s*['"]select-driver['"]/);
+const cancelBlock7 = cancelBlock7Match ? cancelBlock7Match[0] : '';
+expect('F7l — cancel-order block resolved', cancelBlock7.length > 0);
+expect('F7l — sync call appears AFTER the cancelOrderByPassenger success path',
+  /cancelOrderByPassenger\s*\([\s\S]{0,1500}rejectSentOffersForPassengerCanceledOrder\s*\(/.test(cancelBlock7));
+expect('F7l — cancel-order handler passes allOffers from ctx.order',
+  /rejectSentOffersForPassengerCanceledOrder\s*\(\s*\{[\s\S]{0,400}allOffers:\s*\(?ctx\.order/.test(cancelBlock7));
+expect('F7l — cancel-order handler never seeds active_ride',
+  !/saveActiveRide\s*\(/.test(cancelBlock7));
+
+// ── F7m — store source pin: sync stays in scope ─────────────────────
+const offerStoreSrcF7 = read('../public/src/driver_offer_store.js');
+const offerStoreCodeF7 = stripComments(offerStoreSrcF7);
+expect('F7m — rejectSentOffersForPassengerCanceledOrder never writes active_ride',
+  !/rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}saveActiveRide\s*\(/.test(offerStoreCodeF7)
+  && !/rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}active_ride\.v1/.test(offerStoreCodeF7));
+expect('F7m — rejectSentOffersForPassengerCanceledOrder never writes the order overlay',
+  !/rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}saveOverlayStore\s*\(/.test(offerStoreCodeF7));
+expect('F7m — rejectSentOffersForPassengerCanceledOrder gates on baseline.status === SENT',
+  /rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}baseline\.status\s*!==\s*DRIVER_OFFER_STATUS\.SENT/.test(offerStoreCodeF7));
+expect('F7m — rejectSentOffersForPassengerCanceledOrder stamps rejectedBy=passenger_cancel',
+  /rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}rejectedBy[\s\S]{0,200}['"]passenger_cancel['"]/.test(offerStoreCodeF7));
+expect('F7m — rejectSentOffersForPassengerCanceledOrder stamps rejectedReason=order_canceled_by_passenger',
+  /rejectSentOffersForPassengerCanceledOrder[\s\S]{0,3000}rejectedReason[\s\S]{0,200}['"]order_canceled_by_passenger['"]/.test(offerStoreCodeF7));
+
+// ── F7n — end-to-end via the merged order: cancel + sync via cancelOrderByPassenger + helper ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Simulate the realistic flow on demo-order-offers: passenger sees 2
+  // fixture sent offers, taps cancel; the handler runs both cancel +
+  // sync via the snapshot.
+  const fresh = orderDetailMod.loadOrder('demo-order-offers');
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-offers' });
+  driverOfferStore.rejectSentOffersForPassengerCanceledOrder({
+    orderId: 'demo-order-offers',
+    allOffers: fresh.offers,
+  });
+  const merged = orderDetailMod.loadOrder('demo-order-offers');
+  // Both passenger and driver views land on the terminal D4/P4 state.
+  expect('F7n — passenger view is P4 after cancel + sync',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P4');
+  expect('F7n — driver view is D4 after cancel + sync',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  // Order has order_canceled lockedReason (precedence rule from 01D-2C-B).
+  expect('F7n — lockedReason is order_canceled',
+    merged.lockedReason === 'order_canceled');
+  // No fixture offer remains sent.
+  const stillSent = merged.offers.filter((o) => o.status === 'sent');
+  expect('F7n — no sent offer survives the cancel sync',
+    stillSent.length === 0);
+  // Driver D4 markup
+  const driverMarkup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F7n — driver D4 markup shows «Заказ отменён»',
+    driverMarkup.includes('Заказ отменён'));
+  expect('F7n — driver D4 markup excludes D2 affordances',
+    !driverMarkup.includes('Оффер отправлен')
+    && !driverMarkup.includes('Отозвать оффер')
+    && !driverMarkup.includes('Изменить оффер'));
+  // bazardrive.active_ride.v1 never written across the whole flow.
+  expect('F7n — bazardrive.active_ride.v1 is NOT written during cancel + sync',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();

@@ -559,13 +559,12 @@ second click, writes the order overlay record
 `{ status: 'CANCELED', canceledBy: 'passenger', canceledAt, updatedAt }`
 via the new `cancelOrderByPassenger({ orderId })` helper. The overlay
 preserves any previously written `selectedDriverId` (01D-2A) verbatim.
-01D-2C-A is **overlay-only** — DriverOffer status transitions (sent →
-rejected sync on cancel) are deferred to a later 01D-2C sub-slice, the
-active_ride store is **not** seeded, and the driver-side flow stays
-intact (a canceled order resolves to D4 with no offer CTA). After the
-commit the merged Order Detail resolves to P4 (terminal canceled),
-so the cancel button leaves the DOM and the armed state cannot persist
-across re-renders.
+After the commit the merged Order Detail resolves to P4 (terminal
+canceled), so the cancel button leaves the DOM and the armed state
+cannot persist across re-renders. 01D-2C-A wrote the overlay only —
+the **DriverOffer sent → rejected sync** for the same order is now
+closed in **01D-2C-C** (see below). The active_ride store is **not**
+seeded by either path.
 
 **BD-ORDER-DETAIL-01D-2C-B opens the passenger reject-offer pinhole**:
 P2 «Отклонить» on a single DriverOffer card now flips ONLY that one
@@ -626,6 +625,46 @@ records.
 5. only on non-terminal `CREATED` orders, a passenger-rejected SELF
    offer surfaces `'driver_offer_rejected'`.
 
+**BD-ORDER-DETAIL-01D-2C-C closes the cancel-side DriverOffer sync gap**:
+after the passenger commits a whole-order cancel via 01D-2C-A, the
+cancel-order click handler also calls the new
+`rejectSentOffersForPassengerCanceledOrder({ orderId, allOffers })`
+helper. The helper iterates the merged offer snapshot (so fixture-only
+sent offers without a store baseline are picked up via the same
+snapshot fallback `commitPassengerSelection` uses) and flips every
+active `status='sent'` DriverOffer belonging to `orderId` to a terminal
+record stamped with:
+- `status='rejected'`,
+- `rejectedBy='passenger_cancel'`,
+- `rejectedReason='order_canceled_by_passenger'`,
+- `rejectedAt` + `updatedAt` (monotonic ISO stamps).
+
+Without this sync, stale `sent` offers would keep surfacing on the
+driver side as D2 («Оффер отправлен») even after `Order.status` flipped
+to `CANCELED`. After the sync the driver lands on D4 with the
+`order_canceled` lockedReason (precedence rule #3 above) and the explicit
+«Заказ отменён» copy — no «Откликнуться на заказ» / «Оффер отправлен»
+/ «Отозвать оффер» / «Изменить оффер» CTAs in the DOM.
+
+Preserved verbatim:
+- terminal offers (`accepted` / `withdrawn` / `expired` / pre-existing
+  `rejected` with foreign `rejectedBy`),
+- offers belonging to other orders,
+- snapshot entries with blocked / unsafe `driverId`,
+- the cancel overlay (`canceledAt` / `updatedAt` / `canceledBy`) — the
+  sync only mutates the DriverOffer store, never the order overlay,
+- `selectedDriverId` from a prior 01D-2A commit.
+
+Refused (returns `null`):
+- unsafe / blocked `orderId`,
+- non-array `allOffers`.
+
+The cancel overlay is the source of truth for terminal order state; the
+click handler does NOT rollback the cancel if the sync returns null or
+an empty array — a canceled order is canceled regardless of whether any
+sent offers existed. The active_ride store is **not** touched by either
+the cancel overlay or the sync.
+
 This precedence guarantees:
 - cancel-after-reject path shows the canceled-order reason on D4,
   never the per-offer rejected reason;
@@ -650,13 +689,14 @@ and the click handler short-circuits before writing anything. Idempotent:
 a re-tap on an already-seeded `tripId` skips `saveActiveRide` and just
 re-navigates. The 01D-2A select-driver commit alone still **never**
 seeds active_ride. The remaining Model-B mutation — driver D3
-«Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2C+**.
+«Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2D+**.
 The full write contract below stays authoritative for that follow-up.
 Smoke pins the runtime-shell contract, the DriverOffer store
 send/withdraw round-trip, the commitPassengerSelection multi-write
 (F3a–F3l), the active-ride seed handoff (F4a–F4l), the passenger
-cancel-order overlay (F5a–F5m), and the passenger reject-offer overlay
-(F6a–F6o).
+cancel-order overlay (F5a–F5m), the passenger reject-offer overlay
+(F6a–F6o, F6p–F6ff), and the passenger cancel-order sent → rejected
+sync (F7a–F7n).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate
@@ -757,7 +797,7 @@ mutating CTAs as non-mutating toast stubs.
 |---|---|---|---|---|
 | Driver | taps «Откликнуться на заказ» | **None.** `Order.status` and `Order.selectedDriverId` are never written by the driver tap. | Creates `DriverOffer(status='sent')` against `orderId` + `driverId`. | None. |
 | Passenger | taps «Выбрать водителя» on a `DriverOffer` | Writes `Order.selectedDriverId = offer.driverId` and `Order.status = 'ACCEPTED'` atomically. (`'ACCEPTED'` is the canonical enum value from `ride_state.js`; the UI chip text «Заказ принят» is rendered, not stored.) | Selected offer flips to `status='accepted'`. **Only active competing offers for the same `orderId` with `status='sent'`** flip to `status='rejected'`. Terminal offers (`status='withdrawn'`, `status='expired'`) are **preserved verbatim** — never overwritten. | Seeds `bazardrive.active_ride.v1` for `tripId = trip_${order.id}` with `status = 'ACCEPTED'` and the selected driver / vehicle snapshot. The P3 «Открыть поездку» CTA hands off to `/active-ride?role=passenger&tripId=trip_${order.id}` using that seed. |
-| Passenger | taps «Отменить заказ» (P1) | Writes `Order.status = 'CANCELED'`. `selectedDriverId` stays unchanged (may still be `null`). | **Only active offers for the order with `status='sent'`** flip to `status='rejected'`. Terminal offers (`withdrawn`, `expired`) preserved verbatim. | None — no trip was seeded yet. |
+| Passenger | taps «Отменить заказ» (P1) | Writes the order overlay record `{ status: 'CANCELED', canceledBy: 'passenger', canceledAt, updatedAt }` via `cancelOrderByPassenger({ orderId })`. `selectedDriverId` from a prior 01D-2A commit stays unchanged. | **01D-2C-C sync:** every active `status='sent'` DriverOffer for this `orderId` flips to a terminal record with `status='rejected'`, `rejectedBy='passenger_cancel'`, `rejectedReason='order_canceled_by_passenger'`, `rejectedAt`, `updatedAt` via `rejectSentOffersForPassengerCanceledOrder({ orderId, allOffers })`. Terminal offers (`accepted` / `withdrawn` / `expired` / pre-existing `rejected`) and cross-order offers are preserved verbatim. Snapshot fallback covers fixture-only sent offers without a store baseline. | None — `bazardrive.active_ride.v1` is untouched. |
 | Passenger | taps «Отклонить» on a single `DriverOffer` (P2) | **None.** The order keeps its current status (typically `CREATED`); `selectedDriverId` stays untouched — rejecting one offer does not pick a winner. | Only that single offer flips from `status='sent'` → `status='rejected'`. Other offers, including other sent ones, stay untouched and remain selectable. | None. |
 | Driver | taps «Отозвать оффер» (D2) | None. | Own offer flips to `status='withdrawn'`. | None. |
 | Driver | taps «Отменить» on D3 (active assignment) | **Delegated to the canonical active-ride cancellation handoff.** This row does not directly mutate `Order.status` — the active-ride flow (`renderCanceledStub` / `persistDriverCancel` in `active_ride.js`) owns the terminal write into `bazardrive.active_ride.v1` and the canonical `ride_orders.v1` mirror, per BD-RIDE-D-SHEETS-02. Whether the underlying `Order.status` flips to `'CANCELED'` is the active-ride / backend policy decision, **not** an Order-Detail-side write. | None directly. The active-ride cancel flow may sync the assigned offer's status; the contract does not prescribe that here. | None — the seed already exists; the active-ride lifecycle owns it. |

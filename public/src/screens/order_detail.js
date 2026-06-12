@@ -16,6 +16,7 @@ import {
   commitPassengerSelection,
   cancelOrderByPassenger,
   rejectDriverOfferByPassenger,
+  rejectSentOffersForPassengerCanceledOrder,
   getOrderOverlay,
 } from '../driver_offer_store.js';
 import {
@@ -964,6 +965,26 @@ function bindEvents(rootEl, initialCtx) {
         showNotice(rootEl, 'Не удалось отменить заказ');
         return;
       }
+      // BD-ORDER-DETAIL-01D-2C-C — sync active sent DriverOffers to
+      // terminal `rejected` so the driver side never sees stale D2
+      // («Оффер отправлен») after the order is canceled. The cancel
+      // overlay alone leaves `sent` records untouched in the store;
+      // this call flips every active sent offer for `orderId` to
+      // `status='rejected'` with `rejectedBy='passenger_cancel'` /
+      // `rejectedReason='order_canceled_by_passenger'`. Snapshot
+      // fallback (`allOffers`) covers fixture-only sent offers that
+      // have no store baseline yet, matching the pattern
+      // commitPassengerSelection uses.
+      //
+      // The overlay cancel is the source of truth for terminal order
+      // state — we do NOT rollback the cancel if this sync returns
+      // null (refused input) or an empty array (nothing eligible). The
+      // canceled order is canceled regardless of whether any sent
+      // offers existed.
+      rejectSentOffersForPassengerCanceledOrder({
+        orderId: id,
+        allOffers: (ctx.order && ctx.order.offers) || [],
+      });
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Заказ отменён');
       return;
