@@ -64,6 +64,71 @@ function stripComments(src) {
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 
+// BD-RIDE-HISTORY-TERM-01 P2 review fix — brace-counting function-body
+// extractor. The previous regex `function\s+name[\s\S]*?\n\s*\}` walked
+// non-greedily to the first standalone `}`, which terminated at the
+// CLOSING brace of any nested `if` / `else` / `try` block instead of the
+// function's own closing brace. That weakened C3 / E2: a writer added
+// AFTER a nested block in `renderCanceledStub` /
+// `renderPassengerCanceledFallback` / `receiptMissingHtml` would slip
+// past the no-writer assertions. This helper walks brace depth manually
+// so nested blocks are tolerated and the full body is returned.
+//
+// Returns null when the named function can't be located. The first
+// argument may be a comment-stripped source; the caller decides.
+function extractFunctionBody(source, functionName) {
+  const start = source.indexOf(`function ${functionName}`);
+  if (start === -1) return null;
+  const paren = source.indexOf('(', start);
+  if (paren === -1) return null;
+  // Walk past the parameter list — an object-default parameter
+  // (`(options = {})`) contains a `{` that must not be mistaken for the
+  // body's opening brace.
+  let pdepth = 0;
+  let afterParams = -1;
+  for (let i = paren; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '(') pdepth++;
+    else if (ch === ')') {
+      pdepth--;
+      if (pdepth === 0) { afterParams = i + 1; break; }
+    }
+  }
+  if (afterParams === -1) return null;
+  const open = source.indexOf('{', afterParams);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
+// Extracts the exact list of names imported from a `from '<path>'`
+// specifier. Returns a sorted array of names (so the caller can compare
+// against an explicit whitelist) or null when no matching import block
+// is found. Tolerates whitespace / newlines / trailing commas inside
+// the `{ ... }` block.
+function namedImportsFrom(source, pathFragment) {
+  const re = new RegExp(
+    `import\\s*\\{([^}]+)\\}\\s*from\\s*['"][^'"]*` + pathFragment + `[^'"]*['"]`);
+  const m = source.match(re);
+  if (!m) return null;
+  return m[1]
+    .split(',')
+    .map((s) => s.trim())
+    // Drop alias suffixes (`getReceipt as gr`) but keep the original
+    // name so the whitelist comparison stays exact.
+    .map((s) => s.split(/\s+as\s+/)[0].trim())
+    .filter(Boolean)
+    .sort();
+}
+
 // Build a synthetic "completed ride" object whose driver / passenger /
 // vehicle / route fields are unique strings so we can prove the
 // history builders preserve them verbatim (not the demo seed).
@@ -409,34 +474,54 @@ expect('B — mock_api exports sanitizeDriverReceipt + DEMO_DRIVER_RECEIPT + cle
   const driverNoComments = stripComments(driverActiveSrc);
   const passengerNoComments = stripComments(passengerActiveSrc);
 
-  // Extract renderCanceledStub body (driver side).
-  const driverStubMatch = driverNoComments.match(/function\s+renderCanceledStub\s*\([\s\S]*?\n\s*\}/);
-  const driverStubBody = driverStubMatch ? driverStubMatch[0] : '';
-  expect('C3 — driver renderCanceledStub body resolved', driverStubBody.length > 0);
+  // Extract renderCanceledStub body (driver side) via brace counting so
+  // nested if/else blocks inside the renderer don't terminate the walk
+  // early. The driver stub has three branches (NO_SHOW, byPassenger,
+  // driver-cancel default) plus a conditional `reasonRow` block — a
+  // non-greedy regex stops at the first nested `}` and the no-writer
+  // assertions become meaningless against any code beyond that point.
+  const driverStubBody = extractFunctionBody(driverNoComments, 'renderCanceledStub');
+  expect('C3 — driver renderCanceledStub body resolved (brace-counted)',
+    !!driverStubBody && driverStubBody.length > 0);
   expect('C3 — driver renderCanceledStub never calls saveDriverReceipt',
-    !/saveDriverReceipt\s*\(/.test(driverStubBody));
+    !/saveDriverReceipt\s*\(/.test(driverStubBody || ''));
   expect('C3 — driver renderCanceledStub never calls saveRideHistoryEntry',
-    !/saveRideHistoryEntry\s*\(/.test(driverStubBody));
+    !/saveRideHistoryEntry\s*\(/.test(driverStubBody || ''));
   expect('C3 — driver renderCanceledStub never calls buildDriverHistoryEntry',
-    !/buildDriverHistoryEntry\s*\(/.test(driverStubBody));
+    !/buildDriverHistoryEntry\s*\(/.test(driverStubBody || ''));
 
-  // Extract renderPassengerCanceledFallback body (passenger side).
-  const passengerFallbackMatch = passengerNoComments.match(
-    /function\s+renderPassengerCanceledFallback[\s\S]*?return\s+root;/);
-  const passengerFallbackBody = passengerFallbackMatch ? passengerFallbackMatch[0] : '';
-  expect('C3 — passenger renderPassengerCanceledFallback body resolved',
-    passengerFallbackBody.length > 0);
+  // Extract renderPassengerCanceledFallback body via brace counting so
+  // nested template / ternary blocks don't truncate the walk.
+  const passengerFallbackBody = extractFunctionBody(
+    passengerNoComments, 'renderPassengerCanceledFallback');
+  expect('C3 — passenger renderPassengerCanceledFallback body resolved (brace-counted)',
+    !!passengerFallbackBody && passengerFallbackBody.length > 0);
   expect('C3 — passenger cancel fallback never calls saveRideHistoryEntry',
-    !/saveRideHistoryEntry\s*\(/.test(passengerFallbackBody));
+    !/saveRideHistoryEntry\s*\(/.test(passengerFallbackBody || ''));
   expect('C3 — passenger cancel fallback never calls buildPassengerHistoryEntry',
-    !/buildPassengerHistoryEntry\s*\(/.test(passengerFallbackBody));
+    !/buildPassengerHistoryEntry\s*\(/.test(passengerFallbackBody || ''));
   expect('C3 — passenger cancel fallback never calls saveDriverReceipt',
-    !/saveDriverReceipt\s*\(/.test(passengerFallbackBody));
+    !/saveDriverReceipt\s*\(/.test(passengerFallbackBody || ''));
 
   // The passenger cancel handler's onConfirm closure (the sheet's
   // cancel path) must not write a history entry either.
   expect('C3 — passenger onConfirm cancel closure never calls saveRideHistoryEntry',
     !/openPassengerCancelSheet[\s\S]{0,3500}onConfirm[\s\S]{0,2500}saveRideHistoryEntry\s*\(/.test(passengerActiveSrc));
+
+  // BD-RIDE-HISTORY-TERM-01 P2 review fix — regression pin proving the
+  // brace-counting extractor actually walked through the renderer's
+  // nested branches. The driver stub's last branch sets the locked
+  // title `Заказ отменён` (the default driver-cancel copy) AFTER the
+  // NO_SHOW + byPassenger conditional blocks. The passenger fallback
+  // ends with `return root;`. If the old non-greedy walk truncated at
+  // the first nested closing brace, neither marker would be in the
+  // extracted body.
+  expect('C3 — extractor captured driver stub through its final branch (post-nested-blocks)',
+    !!driverStubBody && /Заказ отменён/.test(driverStubBody));
+  expect('C3 — extractor captured the driver stub renderer call to sheet.innerHTML',
+    !!driverStubBody && /sheet\.innerHTML\s*=/.test(driverStubBody));
+  expect('C3 — extractor captured passenger fallback through its final `return root;`',
+    !!passengerFallbackBody && /return\s+root\s*;/.test(passengerFallbackBody));
 }
 
 // ── C4. Caller-site COMPLETED gates: history writes only in COMPLETED ─
@@ -488,8 +573,30 @@ expect('B — mock_api exports sanitizeDriverReceipt + DEMO_DRIVER_RECEIPT + cle
 
 // ── E. trip_receipt.js source isolation ─────────────────────────────
 const receiptScreenNoComments = stripComments(receiptScreenSrc);
-expect('E — trip_receipt.js imports getReceipt from mock_api',
-  /import\s*\{[\s\S]*?getReceipt[\s\S]*?\}\s*from\s*['"]\.\.\/mock_api\.js['"]/.test(receiptScreenSrc));
+// BD-RIDE-HISTORY-TERM-01 P2 review fix — the import-list whitelist.
+// The old regex only checked that `getReceipt` appeared inside the
+// named-import braces; a future
+//   import { getReceipt, saveDriverReceipt } from '../mock_api.js';
+// would have slipped past. Enforce that the named-import list is
+// EXACTLY `['getReceipt']` so any extra (mutating) name landing in the
+// receipt screen surfaces immediately.
+const mockApiImports = namedImportsFrom(receiptScreenSrc, 'mock_api');
+expect('E — trip_receipt.js named import list resolved from mock_api',
+  Array.isArray(mockApiImports));
+expect('E — trip_receipt.js imports EXACTLY {getReceipt} from mock_api',
+  Array.isArray(mockApiImports)
+  && mockApiImports.length === 1
+  && mockApiImports[0] === 'getReceipt');
+// Defense-in-depth — assert each forbidden mutating helper by name.
+for (const forbidden of [
+  'saveDriverReceipt',
+  'clearDriverReceiptsStore',
+  'sanitizeDriverReceipt',
+  'listDriverReceipts',
+]) {
+  expect(`E — trip_receipt.js does NOT import ${forbidden} from mock_api`,
+    Array.isArray(mockApiImports) && !mockApiImports.includes(forbidden));
+}
 expect('E — trip_receipt.js does NOT import ride_state.js',
   !/from\s*['"][^'"]*ride_state(\.js)?['"]/.test(receiptScreenSrc));
 expect('E — trip_receipt.js does NOT import active_ride',
@@ -529,23 +636,32 @@ expect('E1 — payment labels are «Оплата наличными» / «Без
 
 // ── E2. Missing-receipt fallback does NOT leak settled copy ─────────
 {
-  // Extract the receiptMissingHtml body so the copy assertions don't
-  // accidentally match strings inside the settled receiptDocHtml.
-  const missingMatch = receiptScreenNoComments.match(
-    /function\s+receiptMissingHtml\s*\([\s\S]*?\n\s*\}/);
-  const missingBody = missingMatch ? missingMatch[0] : '';
-  expect('E2 — receiptMissingHtml body resolved', missingBody.length > 0);
+  // Extract the receiptMissingHtml body via brace counting so the copy
+  // assertions can't accidentally match strings inside the settled
+  // `receiptDocHtml` AND so a future nested block inside the missing
+  // renderer (e.g. a conditional helper-text path) doesn't truncate
+  // the extracted body and silently hide a regression.
+  const missingBody = extractFunctionBody(
+    receiptScreenNoComments, 'receiptMissingHtml');
+  expect('E2 — receiptMissingHtml body resolved (brace-counted)',
+    !!missingBody && missingBody.length > 0);
   expect('E2 — missing-receipt fallback shows «Чек не найден»',
-    /Чек не найден/.test(missingBody));
+    /Чек не найден/.test(missingBody || ''));
   expect('E2 — missing-receipt fallback does NOT show «Завершено и рассчитано»',
-    !/Завершено и рассчитано/.test(missingBody));
+    !/Завершено и рассчитано/.test(missingBody || ''));
   expect('E2 — missing-receipt fallback does NOT show «Ваш доход за поездку»',
-    !/Ваш доход за поездку/.test(missingBody));
+    !/Ваш доход за поездку/.test(missingBody || ''));
   expect('E2 — missing-receipt fallback does NOT show «Завершено» status badge',
-    !/Завершено</.test(missingBody));
+    !/Завершено</.test(missingBody || ''));
   expect('E2 — missing-receipt fallback does NOT show payment labels',
-    !/Оплата наличными/.test(missingBody)
-    && !/Безналичный расчёт/.test(missingBody));
+    !/Оплата наличными/.test(missingBody || '')
+    && !/Безналичный расчёт/.test(missingBody || ''));
+  // Sanity pin: the extracted body ends at the function's own closing
+  // brace (the template's `</article>` terminator is followed by the
+  // wrapping back-tick, semicolon, and `}`). If the extractor had
+  // walked to the first nested `}` only, this anchor would not hold.
+  expect('E2 — extractor captured the receiptMissingHtml return template through its closing tag',
+    !!missingBody && /<\/article>/.test(missingBody));
 }
 
 // ── F. ride_history.js source isolation ─────────────────────────────
