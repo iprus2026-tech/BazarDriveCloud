@@ -296,7 +296,16 @@ export function loadOrder(id) {
   // is preserved; this overlay only fills the gap when no fixture
   // reason is set so a runtime reject can route the SELF driver to D4
   // with an explicit info label instead of falling through to D1.
-  if (!base.lockedReason) {
+  //
+  // Skipped for CANCELED / EXPIRED orders so the order's own terminal
+  // reason wins. Without this guard, a passenger who rejects the SELF
+  // offer and THEN cancels the whole order would surface "Пассажир
+  // отклонил ваш оффер" on the driver D4 instead of the canceled /
+  // expired reason — the cancel-after-reject path must show the
+  // terminal-order reason, not the per-offer one.
+  if (!base.lockedReason
+      && base.status !== ORDER_STATUS.CANCELED
+      && base.status !== ORDER_STATUS.EXPIRED) {
     const selfRejected = mergedOffers.find(
       (o) => o && o.driverId === SELF_DRIVER_ID
         && o.status === 'rejected'
@@ -997,6 +1006,21 @@ function bindEvents(rootEl, initialCtx) {
       });
       if (!result) {
         showNotice(rootEl, 'Не удалось отклонить оффер');
+        return;
+      }
+      // BD-ORDER-DETAIL-01D-2C-B — only treat as success when the
+      // helper actually performed (or idempotently re-confirmed) a
+      // passenger reject. A truthy result with a non-matching
+      // status / rejectedBy means the snapshot was stale: another
+      // tab — or a peer transition — moved the stored offer into a
+      // terminal status (`accepted`, `withdrawn`, `expired`, or a
+      // pre-existing `rejected` with a foreign `rejectedBy`). The
+      // helper preserves those verbatim, so we re-render to drop the
+      // stale card out of P2 and show a non-success toast instead of
+      // the misleading «Оффер отклонён».
+      if (result.status !== 'rejected' || result.rejectedBy !== 'passenger') {
+        rerenderInPlace(rootEl, ctx);
+        showNotice(rootEl, 'Этот оффер недоступен');
         return;
       }
       rerenderInPlace(rootEl, ctx);

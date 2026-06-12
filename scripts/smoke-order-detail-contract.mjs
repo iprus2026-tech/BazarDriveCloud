@@ -2557,6 +2557,165 @@ expect('F6u — driver-send-offer handler block resolved', sendBlock.length > 0)
 expect('F6u — driver-send-offer handler returns early on existing rejected',
   /status\s*===\s*['"]rejected['"][\s\S]{0,400}return;/.test(sendBlock));
 
+// ── F6v–F6z. Follow-up review feedback ──────────────────────────────
+// F6v: helper preserves stale-stored accepted offer (snapshot doesn't
+//      override a non-sent stored baseline).
+// F6w: helper preserves stale-stored withdrawn / expired offers.
+// F6x: helper preserves stale-stored foreign-rejected offer; no
+//      overlay write; no active_ride seed.
+// F6y: reject-offer click handler validates result.status === 'rejected'
+//      AND result.rejectedBy === 'passenger' before the success toast.
+// F6z: cancel-after-reject — terminal CANCELED reason wins over
+//      driver_offer_rejected; D4 markup hides the rejected reason.
+
+// ── F6v — stale-render: stored accepted offer NOT overwritten ───────
+{
+  driverOfferStore.clearDriverOfferStore();
+  // Store the offer in 'accepted' state (e.g. an active commit landed
+  // from another tab between the P2 render and the click).
+  seedOrderWithOffers('stale-test-v', [
+    mkOffer('stale-test-v', 'drv-v', 'accepted'),
+  ]);
+  const before = driverOfferStore.getDriverOffer('stale-test-v', 'drv-v');
+  expect('F6v baseline — stored offer is accepted', before?.status === 'accepted');
+  // Caller passes a sent snapshot (stale render).
+  const result = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'stale-test-v', driverId: 'drv-v',
+    offer: mkOffer('stale-test-v', 'drv-v', 'sent'),
+  });
+  expect('F6v — helper returns the stored accepted offer verbatim',
+    !!result && result.status === 'accepted');
+  expect('F6v — result.rejectedBy is NOT "passenger" (signals non-success to handler)',
+    result.rejectedBy !== 'passenger');
+  const after = driverOfferStore.getDriverOffer('stale-test-v', 'drv-v');
+  expect('F6v — stored offer remains accepted (no mutation)',
+    after?.status === 'accepted' && after?.id === before.id);
+}
+
+// ── F6w — stale-render: stored withdrawn / expired offers NOT mutated ─
+for (const stale of ['withdrawn', 'expired']) {
+  driverOfferStore.clearDriverOfferStore();
+  const orderId = `stale-test-w-${stale}`;
+  seedOrderWithOffers(orderId, [mkOffer(orderId, 'drv-w', stale)]);
+  const result = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId, driverId: 'drv-w',
+    offer: mkOffer(orderId, 'drv-w', 'sent'),
+  });
+  expect(`F6w — stored ${stale} offer is returned verbatim from snapshot path`,
+    !!result && result.status === stale);
+  expect(`F6w — stored ${stale} offer is preserved`,
+    driverOfferStore.getDriverOffer(orderId, 'drv-w')?.status === stale);
+  expect(`F6w — result.rejectedBy is NOT "passenger" for stored ${stale}`,
+    result.rejectedBy !== 'passenger');
+}
+
+// ── F6x — stale-render: foreign-rejected stays put; no side effects ─
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  seedOrderWithOffers('stale-test-x', [
+    mkOffer('stale-test-x', 'drv-x', 'rejected', { rejectedBy: 'system' }),
+  ]);
+  const overlayBefore = _bdofs.get('bazardrive.order_overlay.v1') || null;
+  const result = driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'stale-test-x', driverId: 'drv-x',
+    offer: mkOffer('stale-test-x', 'drv-x', 'sent'),
+  });
+  expect('F6x — foreign-rejected offer returned verbatim',
+    !!result && result.status === 'rejected' && result.rejectedBy === 'system');
+  expect('F6x — foreign-rejected status not overwritten',
+    driverOfferStore.getDriverOffer('stale-test-x', 'drv-x')?.rejectedBy === 'system');
+  expect('F6x — stale reject does NOT seed bazardrive.active_ride.v1',
+    !_bdofs.has('bazardrive.active_ride.v1'));
+  const overlayAfter = _bdofs.get('bazardrive.order_overlay.v1') || null;
+  expect('F6x — stale reject does NOT write the order overlay',
+    overlayAfter === overlayBefore);
+}
+
+// ── F6y — reject-offer click handler validates result before success ─
+expect('F6y — reject-offer handler checks result.status !== "rejected"',
+  /reject-offer[\s\S]{0,3500}result\.status\s*!==\s*['"]rejected['"]/.test(orderDetailSrc));
+expect('F6y — reject-offer handler checks result.rejectedBy !== "passenger"',
+  /reject-offer[\s\S]{0,3500}result\.rejectedBy\s*!==\s*['"]passenger['"]/.test(orderDetailSrc));
+expect('F6y — reject-offer handler shows non-success toast on stale outcome',
+  /reject-offer[\s\S]{0,3500}['"]Этот оффер недоступен['"]/.test(orderDetailSrc));
+// Bound-extract the reject-offer handler success branch so the
+// assertions can't drag into a neighbouring handler.
+const rejectBlock2Match = orderDetailSrc.match(
+  /action\s*===\s*['"]reject-offer['"][\s\S]*?showNotice\(rootEl,\s*['"]Оффер отклонён['"]\)/);
+const rejectBlock2 = rejectBlock2Match ? rejectBlock2Match[0] : '';
+expect('F6y — reject-offer handler block resolved', rejectBlock2.length > 0);
+expect('F6y — stale-result branch re-renders before the non-success toast',
+  /result\.status\s*!==\s*['"]rejected['"][\s\S]{0,400}rerenderInPlace\(rootEl,\s*ctx\)/.test(rejectBlock2));
+expect('F6y — stale-result branch returns before the success toast',
+  /result\.rejectedBy\s*!==\s*['"]passenger['"][\s\S]{0,400}return;/.test(rejectBlock2));
+
+// ── F6z — cancel-after-reject: canceled reason wins over rejected ───
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // 1. Driver sends offer (D1 → D2 in their view).
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-1', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  // 2. Passenger rejects the SELF offer.
+  const offerSnap = orderDetailMod.loadOrder('demo-order-1').offers
+    .find((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID);
+  driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    offer: offerSnap,
+  });
+  // Sanity — without the cancel, the driver lands on D4 with the
+  // driver_offer_rejected reason (F6s path).
+  const beforeCancel = orderDetailMod.loadOrder('demo-order-1');
+  expect('F6z baseline — pre-cancel driver_offer_rejected reason is set',
+    beforeCancel.lockedReason === 'driver_offer_rejected');
+  // 3. Passenger cancels the whole order.
+  driverOfferStore.cancelOrderByPassenger({ orderId: 'demo-order-1' });
+  const merged = orderDetailMod.loadOrder('demo-order-1');
+  expect('F6z — order is CANCELED after cancel',
+    merged.status === 'CANCELED');
+  expect('F6z — driver resolveState lands on D4',
+    orderDetailMod.resolveState(merged, 'driver') === 'D4');
+  expect('F6z — lockedReason is NOT driver_offer_rejected for the canceled order',
+    merged.lockedReason !== 'driver_offer_rejected');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'driver', state: 'D4' });
+  expect('F6z — D4 markup does NOT show «Пассажир отклонил ваш оффер»',
+    !markup.includes('Пассажир отклонил ваш оффер'));
+  expect('F6z — D4 markup shows a canceled / unavailable reason',
+    markup.includes('Заказ отменён')
+    || markup.includes('Заказ недоступен')
+    || markup.includes('отменён'));
+  expect('F6z — D4 markup carries NO «Откликнуться» CTA',
+    !markup.includes('Откликнуться'));
+  // Passenger side also resolves to terminal P4, NOT P1.
+  expect('F6z — passenger view resolves to P4 (terminal)',
+    orderDetailMod.resolveState(merged, 'passenger') === 'P4');
+  // Same guarantee for an EXPIRED order (synthetic — use the fixture
+  // demo-order-expired which is canonically EXPIRED, then layer a
+  // SELF reject on it).
+  driverOfferStore.sendDriverOffer({
+    orderId: 'demo-order-expired', driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  const expiredSnap = orderDetailMod.loadOrder('demo-order-expired').offers
+    .find((o) => o.driverId === orderDetailMod.SELF_DRIVER_ID);
+  driverOfferStore.rejectDriverOfferByPassenger({
+    orderId: 'demo-order-expired',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    offer: expiredSnap,
+  });
+  const expiredMerged = orderDetailMod.loadOrder('demo-order-expired');
+  expect('F6z — EXPIRED order keeps its order_expired lockedReason',
+    expiredMerged.lockedReason === 'order_expired');
+  const expiredMarkup = orderDetailMod.renderOrderDetailMarkup(
+    { order: expiredMerged, role: 'driver', state: 'D4' });
+  expect('F6z — EXPIRED D4 markup shows «Заказ истёк», not the rejected reason',
+    expiredMarkup.includes('Заказ истёк')
+    && !expiredMarkup.includes('Пассажир отклонил ваш оффер'));
+}
+
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
 {
   driverOfferStore.clearDriverOfferStore();
