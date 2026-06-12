@@ -598,27 +598,42 @@ stale card drops out of P2 and toasts «Этот оффер недоступен
 of the misleading success copy.
 
 **SELF-driver D4 transition.** When the passenger rejects the SELF
-driver's own DriverOffer, the driver view routes to **D4** (NOT D1)
-with `lockedReason='driver_offer_rejected'` and the explicit info copy
-«Пассажир отклонил ваш оффер». The `driver-send-offer` click handler
-is hardened with a defensive short-circuit on `existing.status ===
-'rejected'` (toasting «Пассажир отклонил оффер») so that even a stale
-render cannot fake a successful resend — `sendDriverOffer` already
-preserves the rejected status verbatim, but the handler must not toast
-«Оффер отправлен» against an unchanged store.
+driver's own DriverOffer on a still-CREATED order, the driver view
+routes to **D4** (NOT D1) with `lockedReason='driver_offer_rejected'`
+and the explicit info copy «Пассажир отклонил ваш оффер». The
+`driver-send-offer` click handler is hardened with a defensive
+short-circuit on `existing.status === 'rejected'` that branches on
+`rejectedBy`:
+- `rejectedBy === 'passenger'` → «Пассажир отклонил оффер»;
+- any other `rejectedBy` (`system` / `driver` / missing / …) →
+  generic «Оффер недоступен» so the rejecter is never mislabeled.
+
+`sendDriverOffer` already preserves the rejected status verbatim — the
+handler-side branch ensures the driver never sees the misleading
+«Оффер отправлен» toast against an unchanged terminal store, and the
+generic copy keeps the rejecter accurate for non-passenger terminal
+records.
 
 **lockedReason precedence on D4** (applied in `loadOrder()`):
 1. fixture-set `lockedReason` always wins (e.g. `demo-order-locked`
    carries `'passenger_chose_other'`);
-2. terminal order statuses next: runtime CANCELED orders get
-   `'order_canceled'`, runtime EXPIRED orders get `'order_expired'`,
-   so D4 shows the explicit «Заказ отменён» / «Заказ истёк» copy
-   instead of the generic «Заказ недоступен для отклика.» fallback;
-3. only on non-terminal `CREATED` orders, a passenger-rejected SELF
+2. runtime `ACCEPTED` with `selectedDriverId !== SELF` →
+   `'passenger_chose_other'` — the canonical D4 reason when the order
+   is taken by another driver (SELF-selected ACCEPTED orders route to
+   D3 and never read this label);
+3. runtime `CANCELED` → `'order_canceled'` so D4 shows «Заказ отменён»;
+4. runtime `EXPIRED` → `'order_expired'` so D4 shows «Заказ истёк»;
+5. only on non-terminal `CREATED` orders, a passenger-rejected SELF
    offer surfaces `'driver_offer_rejected'`.
 
-This precedence guarantees the cancel-after-reject path shows the
-canceled-order reason on D4, never the per-offer rejected reason.
+This precedence guarantees:
+- cancel-after-reject path shows the canceled-order reason on D4,
+  never the per-offer rejected reason;
+- passenger-picked-another-driver path shows
+  «Пассажир выбрал другого водителя», never the per-offer rejected
+  reason;
+- the per-offer `driver_offer_rejected` reason only ever surfaces
+  while the order is still open (`CREATED`).
 
 **BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
 «Открыть поездку» CTA now writes the canonical

@@ -293,21 +293,29 @@ export function loadOrder(id) {
   // BD-ORDER-DETAIL-01D-2C-B — lockedReason precedence on D4:
   //   1. fixture-set lockedReason (e.g. demo-order-locked carries
   //      'passenger_chose_other') always wins.
-  //   2. terminal order statuses win next: a runtime CANCELED order
-  //      (cancel-overlay) gets 'order_canceled'; a runtime EXPIRED
-  //      order gets 'order_expired'. These layer the canonical reason
-  //      so D4 shows «Заказ отменён» / «Заказ истёк» instead of the
-  //      generic «Заказ недоступен для отклика.» fallback.
-  //   3. only for non-terminal CREATED orders: a passenger-rejected
-  //      SELF offer surfaces the 'driver_offer_rejected' reason. The
-  //      cancel-after-reject path must show the canceled reason, not
-  //      the per-offer one.
+  //   2. runtime ACCEPTED with selectedDriverId !== SELF surfaces
+  //      'passenger_chose_other' — the order is taken by someone else,
+  //      which is the canonical D4 reason for that flow (so D4 shows
+  //      «Пассажир выбрал другого водителя» instead of the generic
+  //      «Заказ недоступен для отклика.» fallback). SELF-selected
+  //      ACCEPTED orders route to D3 and never read this label.
+  //   3. runtime CANCELED → 'order_canceled' so D4 shows «Заказ отменён».
+  //   4. runtime EXPIRED → 'order_expired' so D4 shows «Заказ истёк».
+  //   5. only for non-terminal CREATED orders: a passenger-rejected
+  //      SELF offer surfaces the 'driver_offer_rejected' reason. Gating
+  //      on CREATED prevents the cancel-after-reject path or the
+  //      passenger-picked-another-driver path from mislabeling D4 as
+  //      «Пассажир отклонил ваш оффер» when the actual reason is the
+  //      terminal-order status above.
   if (!base.lockedReason) {
-    if (base.status === ORDER_STATUS.CANCELED) {
+    if (base.status === ORDER_STATUS.ACCEPTED
+        && base.selectedDriverId !== SELF_DRIVER_ID) {
+      base.lockedReason = 'passenger_chose_other';
+    } else if (base.status === ORDER_STATUS.CANCELED) {
       base.lockedReason = 'order_canceled';
     } else if (base.status === ORDER_STATUS.EXPIRED) {
       base.lockedReason = 'order_expired';
-    } else {
+    } else if (base.status === ORDER_STATUS.CREATED) {
       const selfRejected = mergedOffers.find(
         (o) => o && o.driverId === SELF_DRIVER_ID
           && o.status === 'rejected'
@@ -847,15 +855,26 @@ function bindEvents(rootEl, initialCtx) {
       }
       // BD-ORDER-DETAIL-01D-2C-B — sendDriverOffer preserves terminal
       // statuses (accepted / rejected / expired) verbatim instead of
-      // overwriting them. A passenger-rejected offer is terminal from
-      // 01D-2C-B's POV — resend is owned by a later sub-slice. Short-
-      // circuit before the «Оффер отправлен» toast so the driver never
-      // sees a misleading success state. resolveState already routes
-      // this driver to D4 via `driver_offer_rejected`, so the
-      // «Откликнуться» button is normally not in the DOM; this is
-      // defense-in-depth against a stale render or direct dispatch.
+      // overwriting them. Short-circuit before the «Оффер отправлен»
+      // toast so the driver never sees a misleading success state on
+      // a terminal record. Differentiate by `rejectedBy`:
+      //   • rejectedBy='passenger' → «Пассажир отклонил оффер» — the
+      //     passenger actively rejected this offer. resolveState
+      //     normally routes this case to D4 via driver_offer_rejected
+      //     so the «Откликнуться» CTA isn't in the DOM; this branch
+      //     is defense-in-depth against stale render / direct dispatch.
+      //   • any other rejectedBy (`system` / `driver` / missing / …)
+      //     → the generic «Оффер недоступен». Resolving stays on D1
+      //     for those non-passenger terminal records, so the driver
+      //     can land here through the live CTA — mislabeling the
+      //     rejecter would attribute the action to the wrong actor.
+      //     Resend transition for those is owned by a later sub-slice.
       if (existing && existing.status === 'rejected') {
-        showNotice(rootEl, 'Пассажир отклонил оффер');
+        if (existing.rejectedBy === 'passenger') {
+          showNotice(rootEl, 'Пассажир отклонил оффер');
+        } else {
+          showNotice(rootEl, 'Оффер недоступен');
+        }
         return;
       }
       // Hydrate the fresh offer with order-derived defaults so the
