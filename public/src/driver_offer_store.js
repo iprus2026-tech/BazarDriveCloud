@@ -601,13 +601,18 @@ const ORDER_STATUS_CANCELED = 'CANCELED';
 // Existing overlay fields (e.g. `selectedDriverId` written by a prior
 // 01D-2A commit) are PRESERVED — the contract documents that
 // `selectedDriverId` stays unchanged across a cancel. This slice does
-// NOT touch the DriverOffer-status store (sent → rejected sync is a
-// later 01D-2C sub-slice), the active_ride store, or any driver-side
-// surface.
+// NOT touch the DriverOffer-status store (sent → rejected sync lives in
+// 01D-2C-C as a separate write), the active_ride store, or any
+// driver-side surface.
 //
-// Idempotent: a second call when the overlay is already
-// `status='CANCELED'` with `canceledBy='passenger'` returns the
-// existing record unchanged.
+// Idempotent on any prior CANCELED overlay (01D-2D refinement): when
+// the overlay is already `status='CANCELED'` for ANY actor — whether
+// the passenger landed an earlier cancel, or the assigned driver
+// landed a 01D-2D cancel first — the helper returns the existing
+// record verbatim. This prevents a stale passenger tab from
+// overwriting a driver-canceled overlay's `canceledBy='driver'`,
+// `canceledAt`, and `updatedAt`. The click handler differentiates
+// success vs stale outcome via `result.canceledBy`.
 //
 // Refused on unsafe / blocked keys (`__proto__` / `constructor` /
 // `prototype`) — same posture as every other store helper.
@@ -617,7 +622,12 @@ export function cancelOrderByPassenger({ orderId } = {}) {
   const bucket = hasOwn(overlayStore, orderId) && isPlainObject(overlayStore[orderId])
     ? overlayStore[orderId]
     : {};
-  if (bucket.status === ORDER_STATUS_CANCELED && bucket.canceledBy === 'passenger') {
+  // Idempotent on any prior CANCELED overlay, regardless of actor.
+  // Without this guard a stale passenger tab racing behind a driver
+  // cancel would silently overwrite canceledBy='driver' / canceledAt /
+  // updatedAt — losing the actor record the passenger P4 surface
+  // relies on to render «Водитель отменил заказ.».
+  if (bucket.status === ORDER_STATUS_CANCELED) {
     return bucket;
   }
   const stamp = bumpedIso(bucket && typeof bucket.updatedAt === 'string'
@@ -721,16 +731,22 @@ export function rejectDriverOfferByPassenger({ orderId, driverId, offer } = {}) 
 //   • selectedDriverId preserved (the assignment record stays on the
 //     overlay so audit / passenger-side view still know who canceled)
 //
-// Eligibility (defense-in-depth — the click handler already gates
-// these via ctx.order, but the store enforces them too so a stale tab
-// or direct call cannot pin a cancel onto someone else's accepted
-// order):
-//   • when an overlay exists and pins a `selectedDriverId`, that value
-//     MUST equal `driverId` — only the assigned driver may cancel.
-//   • when no overlay exists yet (fixture-only ACCEPTED path), the
-//     helper trusts the caller's driverId and uses it as the overlay's
-//     selectedDriverId so the resulting canceled record is still
-//     attributable.
+// Eligibility (defense-in-depth — the click handler already gates these
+// via ctx.order, but the store enforces them too so a stale tab or
+// direct call cannot pin a cancel onto someone else's accepted order):
+//   1. when an overlay exists and pins a `selectedDriverId`, that
+//      value MUST equal `driverId` — only the assigned driver may
+//      cancel from D3.
+//   2. when no overlay exists yet (fixture-only ACCEPTED path), the
+//      caller MUST supply an `order` snapshot proving the assignment.
+//      The snapshot must satisfy ALL of:
+//        • `isPlainObject(order)`
+//        • `order.id === orderId`
+//        • `order.status === 'ACCEPTED'`
+//        • `order.selectedDriverId === driverId`
+//      Without this proof the helper refuses — otherwise a direct
+//      call with a safe `orderId` + arbitrary `driverId` could pin a
+//      CANCELED overlay onto a CREATED order such as `demo-order-1`.
 //
 // Idempotent: a second call when the overlay is already
 // `status='CANCELED'` returns the existing record verbatim (including
@@ -738,17 +754,18 @@ export function rejectDriverOfferByPassenger({ orderId, driverId, offer } = {}) 
 // overwrite an earlier cancel actor; the click handler differentiates
 // success vs stale outcome via `result.canceledBy`).
 //
-// Refused on unsafe / blocked keys or when the overlay pins a foreign
-// `selectedDriverId`. This slice does NOT touch the DriverOffer store
-// (the accepted offer stays `accepted`, peer rejected/withdrawn/expired
-// offers stay verbatim), and does NOT seed `bazardrive.active_ride.v1`.
-export function cancelOrderByDriver({ orderId, driverId } = {}) {
+// Refused on unsafe / blocked keys, when the overlay pins a foreign
+// `selectedDriverId`, or when the no-overlay path is missing the
+// accepted-assignment proof. This slice does NOT touch the DriverOffer
+// store (the accepted offer stays `accepted`, peer rejected/withdrawn/
+// expired offers stay verbatim), and does NOT seed
+// `bazardrive.active_ride.v1`.
+export function cancelOrderByDriver({ orderId, driverId, order } = {}) {
   if (!isSafeStoreKey(orderId)) return null;
   if (!isSafeStoreKey(driverId)) return null;
   const overlayStore = loadOverlayStore();
-  const bucket = hasOwn(overlayStore, orderId) && isPlainObject(overlayStore[orderId])
-    ? overlayStore[orderId]
-    : {};
+  const hasOverlay = hasOwn(overlayStore, orderId) && isPlainObject(overlayStore[orderId]);
+  const bucket = hasOverlay ? overlayStore[orderId] : {};
   // Idempotent on any prior cancel actor — the caller checks
   // `result.canceledBy` to distinguish the success path from the stale
   // (passenger-cancel-already-landed) outcome.
@@ -759,6 +776,16 @@ export function cancelOrderByDriver({ orderId, driverId } = {}) {
       && bucket.selectedDriverId
       && bucket.selectedDriverId !== driverId) {
     return null;
+  }
+  // No-overlay path requires an accepted-assignment proof from the
+  // caller. The realistic Order Detail click handler passes
+  // `order: ctx.order` (the merged loadOrder snapshot); a direct or
+  // stale-tab call without the proof is rejected.
+  if (!hasOverlay) {
+    if (!isPlainObject(order)) return null;
+    if (order.id !== orderId) return null;
+    if (order.status !== ORDER_STATUS_ACCEPTED) return null;
+    if (order.selectedDriverId !== driverId) return null;
   }
   const stamp = bumpedIso(bucket && typeof bucket.updatedAt === 'string'
     ? bucket.updatedAt

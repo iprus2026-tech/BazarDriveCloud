@@ -630,15 +630,31 @@ assigned driver's «Отменить» on D3 now performs a 2-step armed/confirm
 click and, on the second click, writes the order overlay record
 `{ status: 'CANCELED', canceledBy: 'driver', canceledAt, updatedAt,
 selectedDriverId (preserved) }` via the new
-`cancelOrderByDriver({ orderId, driverId })` helper. The helper enforces
-defense-in-depth eligibility: when an overlay exists and pins a foreign
-`selectedDriverId`, the call refuses; when no overlay exists yet
-(fixture-only ACCEPTED), the helper uses the caller's `driverId` as the
-overlay's `selectedDriverId` so the canceled record stays attributable.
+`cancelOrderByDriver({ orderId, driverId, order })` helper. The helper
+enforces defense-in-depth eligibility:
+- when an overlay exists and pins a foreign `selectedDriverId`, the
+  call refuses;
+- when no overlay exists yet (fixture-only ACCEPTED path), the caller
+  MUST supply an `order` snapshot proving the assignment — the
+  snapshot must satisfy `isPlainObject(order)`, `order.id === orderId`,
+  `order.status === 'ACCEPTED'`, and `order.selectedDriverId === driverId`.
+  Without this proof the helper refuses, so a direct / stale-tab call
+  with a safe `orderId` + arbitrary `driverId` cannot pin a CANCELED
+  overlay onto a CREATED order such as `demo-order-1`. The Order
+  Detail click handler passes `order: ctx.order` through.
+
 Idempotent on any prior cancel actor — a second call (or a tab racing
 behind a passenger cancel) returns the existing record verbatim; the
 click handler differentiates success vs stale outcome by checking
 `result.canceledBy === 'driver'` before toasting «Заказ отменён».
+
+**`cancelOrderByPassenger` is symmetrically idempotent on any existing
+CANCELED overlay** regardless of actor: a stale passenger tab landing
+behind a driver cancel returns the existing driver-canceled record
+verbatim. Without this guard the passenger cancel would silently
+overwrite `canceledBy='driver'` / `canceledAt` / `updatedAt`, losing
+the actor record the passenger P4 surface uses to render «Водитель
+отменил заказ.».
 
 The accepted DriverOffer stays `accepted` — driver cancel does NOT
 flip the offer back to `sent` or `rejected`. Peer offers already
@@ -734,7 +750,7 @@ send/withdraw round-trip, the commitPassengerSelection multi-write
 (F3a–F3l), the active-ride seed handoff (F4a–F4l), the passenger
 cancel-order overlay (F5a–F5m), the passenger reject-offer overlay
 (F6a–F6o, F6p–F6ff), the passenger cancel-order sent → rejected
-sync (F7a–F7p), and the assigned-driver cancel (F8a–F8m).
+sync (F7a–F7p), and the assigned-driver cancel (F8a–F8o).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate

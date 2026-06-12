@@ -1042,9 +1042,14 @@ function bindEvents(rootEl, initialCtx) {
         }, 5000);
         return;
       }
+      // Pass the merged order snapshot through so the helper can
+      // verify the accepted-assignment proof on the no-overlay path
+      // (fixture-only ACCEPTED). Without this, a direct / stale call
+      // could pin a CANCELED overlay onto any safe `orderId`.
       const result = cancelOrderByDriver({
         orderId: id,
         driverId: SELF_DRIVER_ID,
+        order: ctx.order,
       });
       if (!result) {
         showNotice(rootEl, 'Не удалось отменить заказ');

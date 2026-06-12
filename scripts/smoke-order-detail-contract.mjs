@@ -3556,19 +3556,21 @@ expect('F8 — driver_offer_store exports cancelOrderByDriver',
     && overlay?.selectedDriverId === 'drv-other');
 }
 
-// ── F8e — fixture-only ACCEPTED (no prior overlay) is acceptable ────
+// ── F8e — fixture-only ACCEPTED (no prior overlay) requires accepted-assignment proof ─
 // demo-order-accepted carries selectedDriverId=SELF in the fixture but
 // has no overlay record. The helper writes a fresh CANCELED overlay
-// with the supplied driverId as selectedDriverId so the resulting
-// canceled record stays attributable.
+// only when the caller supplies a valid order snapshot proving the
+// assignment (`id` / `status='ACCEPTED'` / `selectedDriverId === driverId`).
 {
   _bdofs.clear();
   driverOfferStore.clearDriverOfferStore();
+  const merged = orderDetailMod.loadOrder('demo-order-accepted');
   const result = driverOfferStore.cancelOrderByDriver({
     orderId: 'demo-order-accepted',
     driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: merged,
   });
-  expect('F8e — driver cancel succeeds on fixture-only ACCEPTED order',
+  expect('F8e — driver cancel succeeds on fixture-only ACCEPTED with valid proof',
     !!result
     && result.status === 'CANCELED'
     && result.canceledBy === 'driver');
@@ -3580,23 +3582,14 @@ expect('F8 — driver_offer_store exports cancelOrderByDriver',
 {
   _bdofs.clear();
   driverOfferStore.clearDriverOfferStore();
-  seedOrderWithOffers('driver-cancel-test-f', [
-    mkOffer('driver-cancel-test-f', orderDetailMod.SELF_DRIVER_ID, 'sent'),
-  ]);
-  driverOfferStore.commitPassengerSelection({
-    orderId: 'driver-cancel-test-f',
-    selectedDriverId: orderDetailMod.SELF_DRIVER_ID,
-    allOffers: driverOfferStore.listDriverOffersForOrder('driver-cancel-test-f'),
-  });
-  driverOfferStore.cancelOrderByDriver({
-    orderId: 'driver-cancel-test-f',
-    driverId: orderDetailMod.SELF_DRIVER_ID,
-  });
-  // The smoke harness loadOrder works against DEMO_ORDERS only — use
-  // demo-order-accepted as the canonical fixture-backed ACCEPTED order.
+  // Use demo-order-accepted (fixture ACCEPTED with selectedDriverId=SELF).
+  // The helper requires the accepted-assignment proof since there's no
+  // prior overlay.
+  const initial = orderDetailMod.loadOrder('demo-order-accepted');
   driverOfferStore.cancelOrderByDriver({
     orderId: 'demo-order-accepted',
     driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: initial,
   });
   const merged = orderDetailMod.loadOrder('demo-order-accepted');
   expect('F8f — passenger view resolves to P4 after driver cancel',
@@ -3621,9 +3614,11 @@ expect('F8 — driver_offer_store exports cancelOrderByDriver',
 {
   _bdofs.clear();
   driverOfferStore.clearDriverOfferStore();
+  const initial = orderDetailMod.loadOrder('demo-order-accepted');
   driverOfferStore.cancelOrderByDriver({
     orderId: 'demo-order-accepted',
     driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: initial,
   });
   const merged = orderDetailMod.loadOrder('demo-order-accepted');
   expect('F8g — driver view resolves to D4 after driver cancel',
@@ -3672,9 +3667,11 @@ expect('F8 — driver_offer_store exports cancelOrderByDriver',
 {
   _bdofs.clear();
   driverOfferStore.clearDriverOfferStore();
+  const initial = orderDetailMod.loadOrder('demo-order-accepted');
   driverOfferStore.cancelOrderByDriver({
     orderId: 'demo-order-accepted',
     driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: initial,
   });
   expect('F8i — bazardrive.active_ride.v1 is NOT written by driver cancel',
     !_bdofs.has('bazardrive.active_ride.v1'));
@@ -3690,9 +3687,11 @@ expect('F8 — driver_offer_store exports cancelOrderByDriver',
     'trip-pre-existing': { tripId: 'trip-pre-existing', status: 'driver_en_route', _marker: 'unchanged' },
   });
   _bdofs.set('bazardrive.active_ride.v1', sentinel);
+  const initial = orderDetailMod.loadOrder('demo-order-accepted');
   driverOfferStore.cancelOrderByDriver({
     orderId: 'demo-order-accepted',
     driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: initial,
   });
   expect('F8j — pre-existing active_ride record is preserved verbatim',
     _bdofs.get('bazardrive.active_ride.v1') === sentinel);
@@ -3750,6 +3749,121 @@ expect('F8l — cancelOrderByDriver preserves selectedDriverId',
   expect('F8m — D3 markup exposes the driver-cancel CTA',
     /data-action="driver-cancel"/.test(markup)
     && markup.includes('Отменить'));
+}
+
+// ── F8n — direct cancelOrderByDriver on a non-assigned order is refused ─
+// Regression pin for the no-overlay path bug: a direct call with a
+// safe orderId + SELF driverId on a CREATED order (no overlay yet,
+// no real assignment) could previously pin a CANCELED overlay onto
+// the order. The helper now requires an accepted-assignment proof.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // demo-order-1 is CREATED in the fixture, no SELF assignment.
+  // Direct call WITHOUT order proof must refuse.
+  const noProof = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+  });
+  expect('F8n — direct cancel on CREATED order without proof returns null',
+    noProof === null);
+  expect('F8n — no overlay was written for the refused cancel',
+    driverOfferStore.getOrderOverlay('demo-order-1') === null);
+  const fresh = orderDetailMod.loadOrder('demo-order-1');
+  expect('F8n — passenger view stays P1 (no spurious cancel landed)',
+    orderDetailMod.resolveState(fresh, 'passenger') === 'P1');
+  expect('F8n — driver view stays D1 (no spurious cancel landed)',
+    orderDetailMod.resolveState(fresh, 'driver') === 'D1');
+  // Even when the caller forges a snapshot, the proof must match
+  // reality — order.status must be ACCEPTED and selectedDriverId
+  // must equal driverId. A forged CREATED snapshot is refused.
+  const forgedCreated = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: { id: 'demo-order-1', status: 'CREATED', selectedDriverId: orderDetailMod.SELF_DRIVER_ID },
+  });
+  expect('F8n — forged CREATED snapshot is refused', forgedCreated === null);
+  // Mismatched id is refused.
+  const forgedId = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: { id: 'other-order-id', status: 'ACCEPTED', selectedDriverId: orderDetailMod.SELF_DRIVER_ID },
+  });
+  expect('F8n — forged snapshot with mismatched id is refused', forgedId === null);
+  // Foreign selectedDriverId snapshot is refused.
+  const forgedDriver = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: { id: 'demo-order-1', status: 'ACCEPTED', selectedDriverId: 'drv-other' },
+  });
+  expect('F8n — forged snapshot with foreign selectedDriverId is refused',
+    forgedDriver === null);
+  // Non-object snapshot is refused.
+  expect('F8n — non-plain-object snapshot is refused',
+    driverOfferStore.cancelOrderByDriver({
+      orderId: 'demo-order-1',
+      driverId: orderDetailMod.SELF_DRIVER_ID,
+      order: 'not-an-object',
+    }) === null
+    && driverOfferStore.cancelOrderByDriver({
+      orderId: 'demo-order-1',
+      driverId: orderDetailMod.SELF_DRIVER_ID,
+      order: null,
+    }) === null);
+  // Valid ACCEPTED + SELF snapshot is accepted.
+  const valid = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-1',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: { id: 'demo-order-1', status: 'ACCEPTED', selectedDriverId: orderDetailMod.SELF_DRIVER_ID },
+  });
+  expect('F8n — valid accepted-assignment snapshot is accepted',
+    !!valid && valid.status === 'CANCELED' && valid.canceledBy === 'driver');
+  // Click-handler source pin: handler passes order: ctx.order through.
+  expect('F8n — driver-cancel click handler passes order: ctx.order to the helper',
+    /cancelOrderByDriver\s*\(\s*\{[\s\S]{0,400}order:\s*ctx\.order/.test(orderDetailSrc));
+}
+
+// ── F8o — cancelOrderByPassenger preserves a driver-canceled overlay ─
+// Regression pin for the passenger-overwrite bug: a stale passenger
+// tab landing behind a driver cancel previously overwrote the overlay
+// to canceledBy='passenger', losing the driver actor + canceledAt.
+// cancelOrderByPassenger is now idempotent on ANY existing CANCELED
+// overlay regardless of actor.
+{
+  _bdofs.clear();
+  driverOfferStore.clearDriverOfferStore();
+  // Driver cancel lands first on a fixture-only ACCEPTED order.
+  const fresh = orderDetailMod.loadOrder('demo-order-accepted');
+  const driverResult = driverOfferStore.cancelOrderByDriver({
+    orderId: 'demo-order-accepted',
+    driverId: orderDetailMod.SELF_DRIVER_ID,
+    order: fresh,
+  });
+  expect('F8o baseline — driver cancel landed',
+    driverResult?.status === 'CANCELED' && driverResult?.canceledBy === 'driver');
+  // Stale passenger tab confirms cancel.
+  const passengerResult = driverOfferStore.cancelOrderByPassenger({
+    orderId: 'demo-order-accepted',
+  });
+  expect('F8o — passenger cancel returns the existing driver-canceled record verbatim',
+    !!passengerResult
+    && passengerResult.status === 'CANCELED'
+    && passengerResult.canceledBy === 'driver'
+    && passengerResult.canceledAt === driverResult.canceledAt
+    && passengerResult.updatedAt === driverResult.updatedAt);
+  const overlay = driverOfferStore.getOrderOverlay('demo-order-accepted');
+  expect('F8o — overlay actor stays driver (passenger did NOT overwrite)',
+    overlay?.canceledBy === 'driver'
+    && overlay?.canceledAt === driverResult.canceledAt
+    && overlay?.updatedAt === driverResult.updatedAt);
+  // Passenger P4 copy still reflects driver actor.
+  const merged = orderDetailMod.loadOrder('demo-order-accepted');
+  const markup = orderDetailMod.renderOrderDetailMarkup(
+    { order: merged, role: 'passenger', state: 'P4' });
+  expect('F8o — passenger P4 copy still shows «Водитель отменил заказ.»',
+    markup.includes('Водитель отменил заказ.'));
+  expect('F8o — passenger P4 copy does NOT regress to generic «Заказ отменён.»',
+    !markup.includes('Заказ отменён.'));
 }
 
 // ── F3. EXPIRED orders still resolve to D4 (no offer surface) ──────
