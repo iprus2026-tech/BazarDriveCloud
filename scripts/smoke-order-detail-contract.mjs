@@ -3945,6 +3945,32 @@ if (mapPresent) {
     && /BD-ORDER-DETAIL-01[\s\S]{0,2400}01D\s+writes\s+landed/i.test(screenMap)
     && !/BD-ORDER-DETAIL-01[\s\S]{0,2400}\bmissing\s+runtime\b/i.test(screenMap)
     && !/BD-ORDER-DETAIL-01[\s\S]{0,2400}(unresolved|нерешён)[\s\S]{0,240}«Принять»/i.test(screenMap));
+
+  // ── G-stale. BD-ORDER-DETAIL-01D-DOC-G regression guard: every stale
+  // 01C-era phrase that PR #482 refreshed away must NOT reappear inside
+  // the BD-ORDER-DETAIL-01 row. Each phrase is asserted as a separate
+  // negative pin so a regression names the exact wording that drifted
+  // back. Scoping uses the same bounded `[\s\S]{0,2400}` window as the
+  // positive pin above so unrelated rows that legitimately mention the
+  // phrase (e.g. a different screen still in stub-only state) don't
+  // false-positive against the Order Detail row.
+  const STALE_PHRASES = [
+    'writes pending',
+    'Writes: none',
+    'Writes: **none**',
+    'non-mutating stubs',
+    'отложены до BD-ORDER-DETAIL-01D',
+    'Действие будет подключено в 01D',
+    'Оффер будет подключён в 01D',
+  ];
+  for (const phrase of STALE_PHRASES) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(
+      `BD-ORDER-DETAIL-01[\\s\\S]{0,2400}${escaped}`, 'i');
+    expect(
+      `G-stale — BD-ORDER-DETAIL-01 row in screen-map.md does NOT contain "${phrase}"`,
+      !re.test(screenMap));
+  }
 } else {
   expect('docs/screen-map.md not present — skipping mirrored entry check', true);
 }
