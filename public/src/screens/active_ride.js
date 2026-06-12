@@ -381,7 +381,16 @@ export default function activeRide() {
 
   function persistDriverRideStatus(nextStatus, patch = {}) {
     const nextRide = updateActiveRideStatus(ride.tripId, nextStatus, patch);
-    if (nextRide) syncCanonicalOrderStatus(nextRide, nextStatus);
+    // BD-ACTIVE-RIDE-TERM-01 — only sync the canonical order when the
+    // status actually changed to `nextStatus`. `updateActiveRideStatus`
+    // returns the existing terminal record verbatim on refused
+    // transitions (CANCELED / NO_SHOW / COMPLETED → non-terminal), so
+    // without this guard `syncCanonicalOrderStatus` would write the
+    // stale requested status (e.g. IN_PROGRESS / COMPLETED) onto the
+    // canonical order even though the active ride record didn't move.
+    if (nextRide && nextRide.status === nextStatus) {
+      syncCanonicalOrderStatus(nextRide, nextStatus);
+    }
     return nextRide || ride;
   }
   // BD-RIDE-D-10 — Driver-initiated cancel and no-show persist the same

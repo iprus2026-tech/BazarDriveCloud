@@ -258,9 +258,41 @@ export function getActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
   return demo;
 }
 
+// BD-ACTIVE-RIDE-TERM-01 — terminal-status frozen set. Any update or
+// pre-save that would transition an existing CANCELED / NO_SHOW /
+// COMPLETED ride to a different status is refused at the store level:
+// the screen-side renders never bind non-terminal-action buttons on a
+// terminal ride, but a stale tab — where the click event fires after
+// another tab persisted the terminal transition — could otherwise
+// land a regression. Declared above the writers (`saveActiveRide`,
+// `updateActiveRideStatus`, `cancelActiveRide`) so the
+// temporal-dead-zone never matters.
+const TERMINAL_RIDE_STATUSES = new Set([
+  RIDE_STATUS.CANCELED,
+  RIDE_STATUS.NO_SHOW,
+  RIDE_STATUS.COMPLETED,
+]);
+
 export function saveActiveRide(ride) {
   if (!isPlainObject(ride) || !ride.tripId) return ride;
   const store = loadActiveRideStore();
+  // BD-ACTIVE-RIDE-TERM-01 P2 — terminal-record freeze on the pre-save
+  // path. Without this guard, a stale tab calling
+  // `saveActiveRide(staleNonTerminalRide)` (the passenger cancel
+  // handler does exactly this as a pre-save before
+  // `updateActiveRideStatus`) would thaw an existing terminal record
+  // back to a non-terminal status, losing `cancel.by`, `cancel.reason`,
+  // and `timestamps.canceledAt`. The store-level freeze refuses any
+  // incoming write that would change a terminal `existing.status` to
+  // a different status. Idempotent re-save of the same terminal status
+  // passes through so a legitimate field patch on a terminal record
+  // (without changing the status) still lands.
+  const existing = store[ride.tripId];
+  if (existing && isPlainObject(existing)
+      && TERMINAL_RIDE_STATUSES.has(existing.status)
+      && ride.status !== existing.status) {
+    return existing;
+  }
   store[ride.tripId] = ride;
   saveActiveRideStore(store);
   return ride;
@@ -275,22 +307,6 @@ export function getNextDriverStatus(status) {
   return NEXT_DRIVER_STATUS[status] || status;
 }
 
-// BD-ACTIVE-RIDE-TERM-01 — terminal-status frozen set. Any update that
-// would transition an existing CANCELED / NO_SHOW / COMPLETED ride to
-// a different status is refused at the store level: the screen-side
-// renders (renderCanceledStub on the driver side,
-// renderPassengerCanceledFallback on the passenger side) never bind
-// non-terminal-action buttons on a terminal ride, but a stale tab —
-// where the click event fires after another tab persisted the
-// terminal transition — could otherwise land a regression. The guard
-// returns the existing terminal record verbatim so the caller can
-// re-render against the same shape.
-const TERMINAL_RIDE_STATUSES = new Set([
-  RIDE_STATUS.CANCELED,
-  RIDE_STATUS.NO_SHOW,
-  RIDE_STATUS.COMPLETED,
-]);
-
 export function updateActiveRideStatus(tripId, status, patch = {}) {
   if (!isValidRideStatus(status)) return findActiveRide(tripId);
   // BD-ACTIVE-RIDE-TERM-01 — terminal-regression guard. Read through
@@ -303,6 +319,17 @@ export function updateActiveRideStatus(tripId, status, patch = {}) {
   const existing = findActiveRide(tripId);
   if (existing && TERMINAL_RIDE_STATUSES.has(existing.status)) {
     return existing;
+  }
+  // BD-ACTIVE-RIDE-TERM-01 P2 — terminal writes require an existing
+  // active ride. Without this guard, a stale / forged
+  // `updateActiveRideStatus('unknown-trip', 'CANCELED')` would call
+  // `getActiveRide` below, materialise a demo identity, and stamp it
+  // CANCELED. Non-terminal writes keep the legacy auto-create
+  // behaviour because various screen flows rely on it (the driver
+  // accept handler still expects `updateActiveRideStatus` to
+  // materialise a demo ride from a deep-link tripId).
+  if (TERMINAL_RIDE_STATUSES.has(status) && !existing) {
+    return null;
   }
   const ride = existing || getActiveRide(tripId);
   const timestampField = STATUS_TIMESTAMP_FIELD[status];

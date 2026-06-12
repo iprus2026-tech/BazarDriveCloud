@@ -433,6 +433,154 @@ function seedRide(tripId, overrides = {}) {
     /updateActiveRideStatus\s*\([\s\S]{0,400}RIDE_STATUS\.CANCELED/.test(passengerScreenSrc));
 }
 
+// ── T11 — driver canonical sync only fires on actual status transition ─
+// Regression pin for the P2 review: persistDriverRideStatus must NOT
+// call syncCanonicalOrderStatus when updateActiveRideStatus refused
+// the transition (returns the existing terminal record verbatim
+// instead of writing `nextStatus`). Without this guard the canonical
+// order would be synced to the stale requested status (e.g. CANCELED
+// → IN_PROGRESS or CANCELED → COMPLETED) even though the active ride
+// didn't move.
+{
+  seedRide('trip-t11');
+  rideState.cancelActiveRide({
+    tripId: 'trip-t11',
+    canceledBy: 'driver',
+    reason: 'other',
+  });
+  // Simulate the stale "Завершить" / "Старт" click: caller requests
+  // IN_PROGRESS, the store refuses, returns the CANCELED record.
+  const refused = rideState.updateActiveRideStatus('trip-t11',
+    rideState.RIDE_STATUS.IN_PROGRESS, {});
+  expect('T11 — refused transition returns the existing terminal record',
+    refused?.status === 'CANCELED');
+  expect('T11 — refused result.status !== requested status (caller-visible signal)',
+    refused?.status !== rideState.RIDE_STATUS.IN_PROGRESS);
+  // Source pin: persistDriverRideStatus now gates the sync on
+  // `nextRide.status === nextStatus`. Without this, the canonical
+  // order would be written to the requested-but-not-applied status.
+  expect('T11 — persistDriverRideStatus gates syncCanonicalOrderStatus on actual transition',
+    /persistDriverRideStatus[\s\S]{0,800}nextRide\.status\s*===\s*nextStatus[\s\S]{0,300}syncCanonicalOrderStatus/.test(driverScreenSrc));
+  // Also pin that the old unconditional `if (nextRide) syncCanonicalOrderStatus(...)`
+  // is gone — a future revert would re-introduce the leak.
+  expect('T11 — old unconditional sync pattern is gone',
+    !/if\s*\(\s*nextRide\s*\)\s*syncCanonicalOrderStatus/.test(driverScreenSrc));
+}
+
+// ── T12 — terminal write on unknown tripId returns null + no demo creation ─
+// Regression pin for the P2 review: updateActiveRideStatus must NOT
+// auto-create a demo identity for an unknown tripId when the
+// requested status is terminal (CANCELED / NO_SHOW / COMPLETED).
+// Non-terminal writes still auto-create (the driver-accept handler
+// relies on it).
+{
+  _store.clear();
+  for (const terminalStatus of [
+    rideState.RIDE_STATUS.CANCELED,
+    rideState.RIDE_STATUS.NO_SHOW,
+    rideState.RIDE_STATUS.COMPLETED,
+  ]) {
+    const result = rideState.updateActiveRideStatus('unknown-trip-' + terminalStatus,
+      terminalStatus, { cancel: { by: 'forged-actor' } });
+    expect(`T12 — updateActiveRideStatus('unknown', ${terminalStatus}) returns null`,
+      result === null);
+    expect(`T12 — no record materialised for the unknown ${terminalStatus} write`,
+      rideState.findActiveRide('unknown-trip-' + terminalStatus) === null);
+  }
+  expect('T12 — bazardrive.active_ride.v1 stays empty across all unknown terminal writes',
+    !_store.has(ACTIVE_RIDE_STORE_KEY)
+    || JSON.parse(_store.get(ACTIVE_RIDE_STORE_KEY) || '{}').constructor === Object
+       && Object.keys(JSON.parse(_store.get(ACTIVE_RIDE_STORE_KEY) || '{}')).length === 0);
+  // Non-terminal write on an unknown tripId still materialises (legacy
+  // behaviour — the driver-accept deep-link path relies on this).
+  _store.clear();
+  const nonTerminal = rideState.updateActiveRideStatus('unknown-non-terminal',
+    rideState.RIDE_STATUS.DRIVER_EN_ROUTE, {});
+  expect('T12 — non-terminal write on unknown tripId still materialises (legacy)',
+    nonTerminal?.status === 'DRIVER_EN_ROUTE');
+}
+
+// ── T13 — saveActiveRide protects terminal records from stale pre-saves ─
+// Regression pin for the P2 review: the passenger cancel handler does
+// a pre-save (`saveActiveRide(ride)`) with a stale in-memory snapshot
+// before `updateActiveRideStatus`. If the stored ride was already
+// terminal (driver cancel landed first in another tab), the stale
+// pre-save must NOT thaw the terminal record back to a non-terminal
+// status.
+{
+  seedRide('trip-t13');
+  const canceled = rideState.cancelActiveRide({
+    tripId: 'trip-t13',
+    canceledBy: 'driver',
+    reason: 'driver_emergency',
+  });
+  const beforeCanceledAt = canceled.timestamps.canceledAt;
+  // Stale pre-save: snapshot taken before the cancel landed; status
+  // is still DRIVER_EN_ROUTE in this stale snapshot.
+  const stale = {
+    tripId: 'trip-t13',
+    status: rideState.RIDE_STATUS.DRIVER_EN_ROUTE,
+    passenger: { name: 'STALE Passenger' },
+    driver:    { name: 'STALE Driver' },
+    timestamps: { createdAt: '2026-01-01T00:00:00.000Z' },
+  };
+  const saveResult = rideState.saveActiveRide(stale);
+  expect('T13 — saveActiveRide returns the existing terminal record verbatim',
+    saveResult?.status === 'CANCELED'
+    && saveResult?.cancel?.by === 'driver');
+  const after = rideState.findActiveRide('trip-t13');
+  expect('T13 — stored ride remains CANCELED after the stale pre-save',
+    after?.status === 'CANCELED');
+  expect('T13 — cancel.by stays "driver" (stale passenger snapshot did NOT overwrite)',
+    after?.cancel?.by === 'driver');
+  expect('T13 — timestamps.canceledAt unchanged',
+    after?.timestamps?.canceledAt === beforeCanceledAt);
+  expect('T13 — passenger identity preserved (stale snapshot did NOT leak)',
+    after?.passenger?.name === 'Иван Тестов');
+  expect('T13 — driver identity preserved (stale snapshot did NOT leak)',
+    after?.driver?.name === 'Тестовый Водитель');
+
+  // End-to-end: the realistic passenger-cancel sequence (pre-save +
+  // updateActiveRideStatus) must not overwrite the driver actor.
+  const passengerStale = {
+    tripId: 'trip-t13',
+    status: rideState.RIDE_STATUS.IN_PROGRESS,
+    passenger: { name: 'STALE Passenger' },
+    timestamps: { createdAt: '2026-01-01T00:00:00.000Z' },
+  };
+  rideState.saveActiveRide(passengerStale);
+  const passengerCancelAttempt = rideState.updateActiveRideStatus('trip-t13',
+    rideState.RIDE_STATUS.CANCELED,
+    { cancel: { by: 'passenger', reason: 'passenger_changed_mind' } });
+  expect('T13 — end-to-end: passenger cancel sequence cannot overwrite driver actor',
+    passengerCancelAttempt?.cancel?.by === 'driver'
+    && passengerCancelAttempt?.cancel?.reason === 'driver_emergency'
+    && passengerCancelAttempt?.timestamps?.canceledAt === beforeCanceledAt);
+
+  // Idempotent re-save of the same terminal record still passes through:
+  // a legitimate caller can update peer fields on a terminal ride
+  // without changing the status.
+  const sameStatusRide = {
+    ...after,
+    ride: { ...(after.ride || {}), todayEarnings: '999 ₽' },
+  };
+  const idempotent = rideState.saveActiveRide(sameStatusRide);
+  expect('T13 — idempotent re-save of same terminal status passes through',
+    idempotent?.status === 'CANCELED'
+    && idempotent?.ride?.todayEarnings === '999 ₽');
+
+  // Cross-terminal save (CANCELED → NO_SHOW) is also refused — both
+  // are terminal but differ, so the freeze applies.
+  seedRide('trip-t13b');
+  rideState.cancelActiveRide({ tripId: 'trip-t13b', canceledBy: 'driver' });
+  const crossTerminal = rideState.saveActiveRide({
+    tripId: 'trip-t13b',
+    status: rideState.RIDE_STATUS.NO_SHOW,
+  });
+  expect('T13 — cross-terminal save (CANCELED → NO_SHOW) is also refused',
+    crossTerminal?.status === 'CANCELED');
+}
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
