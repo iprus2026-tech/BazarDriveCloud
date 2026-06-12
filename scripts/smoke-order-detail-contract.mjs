@@ -3950,10 +3950,21 @@ if (mapPresent) {
   // 01C-era phrase that PR #482 refreshed away must NOT reappear inside
   // the BD-ORDER-DETAIL-01 row. Each phrase is asserted as a separate
   // negative pin so a regression names the exact wording that drifted
-  // back. Scoping uses the same bounded `[\s\S]{0,2400}` window as the
-  // positive pin above so unrelated rows that legitimately mention the
-  // phrase (e.g. a different screen still in stub-only state) don't
-  // false-positive against the Order Detail row.
+  // back.
+  //
+  // Codex P2 review fix on #483 — extract the EXACT BD-ORDER-DETAIL-01
+  // markdown row (one line in the screens table) and scan that line
+  // only. The earlier `[\s\S]{0,2400}` window could spill into adjacent
+  // planned-screen rows and false-positive when another row legitimately
+  // used a phrase like "writes pending". Bounding to the single row
+  // eliminates that drift without weakening the guard.
+  const orderDetailRow = screenMap
+    .split(/\r?\n/)
+    .find((line) => /^\|\s*BD-ORDER-DETAIL-01\s*\|/.test(line));
+  expect(
+    'G-stale — BD-ORDER-DETAIL-01 row located in screen-map.md',
+    typeof orderDetailRow === 'string' && orderDetailRow.length > 0);
+  const orderDetailRowLc = (orderDetailRow || '').toLowerCase();
   const STALE_PHRASES = [
     'writes pending',
     'Writes: none',
@@ -3964,12 +3975,9 @@ if (mapPresent) {
     'Оффер будет подключён в 01D',
   ];
   for (const phrase of STALE_PHRASES) {
-    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(
-      `BD-ORDER-DETAIL-01[\\s\\S]{0,2400}${escaped}`, 'i');
     expect(
       `G-stale — BD-ORDER-DETAIL-01 row in screen-map.md does NOT contain "${phrase}"`,
-      !re.test(screenMap));
+      !orderDetailRowLc.includes(phrase.toLowerCase()));
   }
 } else {
   expect('docs/screen-map.md not present — skipping mirrored entry check', true);
