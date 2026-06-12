@@ -15,6 +15,7 @@ import {
   getDriverOffer,
   commitPassengerSelection,
   cancelOrderByPassenger,
+  rejectDriverOfferByPassenger,
   getOrderOverlay,
 } from '../driver_offer_store.js';
 import {
@@ -206,6 +207,7 @@ const LOCK_REASON_LABEL = Object.freeze({
   order_already_taken:   'Заказ уже принят',
   order_canceled:        'Заказ отменён',
   order_expired:         'Заказ истёк',
+  driver_offer_rejected: 'Пассажир отклонил ваш оффер',
 });
 
 // BD-ORDER-DETAIL-01C Codex P2 — guard decodeURIComponent against
@@ -288,6 +290,39 @@ export function loadOrder(id) {
       base.selectedDriverId = overlay.selectedDriverId;
     }
   }
+  // BD-ORDER-DETAIL-01D-2C-B — lockedReason precedence on D4:
+  //   1. fixture-set lockedReason (e.g. demo-order-locked carries
+  //      'passenger_chose_other') always wins.
+  //   2. runtime ACCEPTED with selectedDriverId !== SELF surfaces
+  //      'passenger_chose_other' — the order is taken by someone else,
+  //      which is the canonical D4 reason for that flow (so D4 shows
+  //      «Пассажир выбрал другого водителя» instead of the generic
+  //      «Заказ недоступен для отклика.» fallback). SELF-selected
+  //      ACCEPTED orders route to D3 and never read this label.
+  //   3. runtime CANCELED → 'order_canceled' so D4 shows «Заказ отменён».
+  //   4. runtime EXPIRED → 'order_expired' so D4 shows «Заказ истёк».
+  //   5. only for non-terminal CREATED orders: a passenger-rejected
+  //      SELF offer surfaces the 'driver_offer_rejected' reason. Gating
+  //      on CREATED prevents the cancel-after-reject path or the
+  //      passenger-picked-another-driver path from mislabeling D4 as
+  //      «Пассажир отклонил ваш оффер» when the actual reason is the
+  //      terminal-order status above.
+  if (!base.lockedReason) {
+    if (base.status === ORDER_STATUS.ACCEPTED
+        && base.selectedDriverId !== SELF_DRIVER_ID) {
+      base.lockedReason = 'passenger_chose_other';
+    } else if (base.status === ORDER_STATUS.CANCELED) {
+      base.lockedReason = 'order_canceled';
+    } else if (base.status === ORDER_STATUS.EXPIRED) {
+      base.lockedReason = 'order_expired';
+    } else if (base.status === ORDER_STATUS.CREATED) {
+      const selfRejected = mergedOffers.find(
+        (o) => o && o.driverId === SELF_DRIVER_ID
+          && o.status === 'rejected'
+          && o.rejectedBy === 'passenger');
+      if (selfRejected) base.lockedReason = 'driver_offer_rejected';
+    }
+  }
   return base;
 }
 
@@ -301,6 +336,17 @@ export function resolveState(order, role) {
     if (status === ORDER_STATUS.ACCEPTED) {
       return order.selectedDriverId === SELF_DRIVER_ID ? 'D3' : 'D4';
     }
+    // BD-ORDER-DETAIL-01D-2C-B — passenger rejected the SELF offer.
+    // Falling through to D1 would surface an actionable «Откликнуться»
+    // CTA whose underlying sendDriverOffer refuses to overwrite a
+    // terminal rejected status (so the driver would see a misleading
+    // success toast without any state change). Lock the driver into D4
+    // with the explicit driver_offer_rejected info reason instead.
+    const ownRejectedByPassenger = (order.offers || []).find(
+      (o) => o && o.driverId === SELF_DRIVER_ID
+        && o.status === 'rejected'
+        && o.rejectedBy === 'passenger');
+    if (ownRejectedByPassenger) return 'D4';
     const ownOffer = (order.offers || []).find(
       (o) => o && o.driverId === SELF_DRIVER_ID && o.status === 'sent');
     return ownOffer ? 'D2' : 'D1';
@@ -807,6 +853,30 @@ function bindEvents(rootEl, initialCtx) {
         showNotice(rootEl, 'Оффер уже отправлен');
         return;
       }
+      // BD-ORDER-DETAIL-01D-2C-B — sendDriverOffer preserves terminal
+      // statuses (accepted / rejected / expired) verbatim instead of
+      // overwriting them. Short-circuit before the «Оффер отправлен»
+      // toast so the driver never sees a misleading success state on
+      // a terminal record. Differentiate by `rejectedBy`:
+      //   • rejectedBy='passenger' → «Пассажир отклонил оффер» — the
+      //     passenger actively rejected this offer. resolveState
+      //     normally routes this case to D4 via driver_offer_rejected
+      //     so the «Откликнуться» CTA isn't in the DOM; this branch
+      //     is defense-in-depth against stale render / direct dispatch.
+      //   • any other rejectedBy (`system` / `driver` / missing / …)
+      //     → the generic «Оффер недоступен». Resolving stays on D1
+      //     for those non-passenger terminal records, so the driver
+      //     can land here through the live CTA — mislabeling the
+      //     rejecter would attribute the action to the wrong actor.
+      //     Resend transition for those is owned by a later sub-slice.
+      if (existing && existing.status === 'rejected') {
+        if (existing.rejectedBy === 'passenger') {
+          showNotice(rootEl, 'Пассажир отклонил оффер');
+        } else {
+          showNotice(rootEl, 'Оффер недоступен');
+        }
+        return;
+      }
       // Hydrate the fresh offer with order-derived defaults so the
       // resulting D2 summary and any cross-role P2 card carry sensible
       // price / ETA / route context. The store still backfills demo
@@ -921,6 +991,62 @@ function bindEvents(rootEl, initialCtx) {
       }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Водитель выбран');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-01D-2C-B — passenger «Отклонить» on a single offer.
+    // Flips ONLY the targeted DriverOffer to status='rejected' via the
+    // local store helper. Other sent offers stay sent and remain
+    // selectable. The order overlay (selectedDriverId / Order.status)
+    // is NOT touched and the active_ride store is NOT seeded. Idempotent:
+    // a second tap on an already-passenger-rejected offer is a no-op
+    // (the helper returns the existing record). Refused on: non-passenger
+    // role, missing/foreign offer id, offer that doesn't belong to this
+    // order, or offer that isn't currently 'sent'. After commit the
+    // screen re-renders; the rejected offer drops out of P2 because
+    // activeSentOffers() excludes it.
+    if (action === 'reject-offer') {
+      if (role !== 'passenger') { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const id = ctx.id;
+      if (!id || !ctx.order) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offerId = btn.dataset.offerId;
+      if (!offerId) { showNotice(rootEl, STUB_TOAST_ACTION); return; }
+      const offer = (ctx.order.offers || []).find((o) => o && o.id === offerId);
+      if (!offer || offer.orderId !== id || offer.status !== 'sent') {
+        showNotice(rootEl, 'Этот оффер нельзя отклонить');
+        return;
+      }
+      // Pass the offer snapshot through so the helper can persist a
+      // fixture-only baseline (a P2 candidate that hasn't been written
+      // to `bazardrive.driver_offers.v1` yet) before flipping it to
+      // rejected. Mirrors the snapshot fallback `commitPassengerSelection`
+      // already uses for the same scenario.
+      const result = rejectDriverOfferByPassenger({
+        orderId: id,
+        driverId: offer.driverId,
+        offer,
+      });
+      if (!result) {
+        showNotice(rootEl, 'Не удалось отклонить оффер');
+        return;
+      }
+      // BD-ORDER-DETAIL-01D-2C-B — only treat as success when the
+      // helper actually performed (or idempotently re-confirmed) a
+      // passenger reject. A truthy result with a non-matching
+      // status / rejectedBy means the snapshot was stale: another
+      // tab — or a peer transition — moved the stored offer into a
+      // terminal status (`accepted`, `withdrawn`, `expired`, or a
+      // pre-existing `rejected` with a foreign `rejectedBy`). The
+      // helper preserves those verbatim, so we re-render to drop the
+      // stale card out of P2 and show a non-success toast instead of
+      // the misleading «Оффер отклонён».
+      if (result.status !== 'rejected' || result.rejectedBy !== 'passenger') {
+        rerenderInPlace(rootEl, ctx);
+        showNotice(rootEl, 'Этот оффер недоступен');
+        return;
+      }
+      rerenderInPlace(rootEl, ctx);
+      showNotice(rootEl, 'Оффер отклонён');
       return;
     }
 

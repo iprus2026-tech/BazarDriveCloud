@@ -635,6 +635,80 @@ export function cancelOrderByPassenger({ orderId } = {}) {
   return next;
 }
 
+// BD-ORDER-DETAIL-01D-2C-B — passenger «Отклонить» on a single offer.
+//
+// Flips the targeted DriverOffer (orderId, driverId) from `'sent'` to
+// `'rejected'` and stamps `rejectedBy='passenger'`, `rejectedAt`, and a
+// monotonic `updatedAt`. Other offers in the same bucket — and every
+// other order — are untouched. The order overlay (selectedDriverId,
+// Order.status) is NOT touched, and the active_ride store is NOT
+// seeded. This is a pure per-offer mutation.
+//
+// The optional `offer` snapshot lets the caller persist a fixture-only
+// sent offer that hasn't been written to the local store yet — the
+// same pattern `commitPassengerSelection` uses when the merged P2
+// candidate has no store baseline. The snapshot must (a) match the
+// `orderId` / `driverId` arguments and (b) carry `status='sent'`;
+// otherwise the helper refuses and returns null.
+//
+// Idempotent:
+//   • a second reject on an offer already carrying
+//     `status='rejected'` + `rejectedBy='passenger'` returns the
+//     existing record verbatim (same rejectedAt, same updatedAt).
+//
+// Refused / preserved verbatim:
+//   • non-`sent` statuses on an existing stored offer (`accepted`,
+//     `withdrawn`, `expired`, or a pre-existing `rejected` with a
+//     different `rejectedBy`) are returned UNCHANGED — passenger
+//     reject only acts on live sent candidates, never overwrites
+//     terminal state owned by a peer transition.
+//   • missing stored offer AND no usable snapshot → null.
+//   • malformed bucket / blocked or unsafe key → null.
+export function rejectDriverOfferByPassenger({ orderId, driverId, offer } = {}) {
+  if (!isSafeStoreKey(orderId) || !isSafeStoreKey(driverId)) return null;
+  const snapshotUsable = isPlainObject(offer)
+    && offer.orderId === orderId
+    && offer.driverId === driverId
+    && offer.status === DRIVER_OFFER_STATUS.SENT;
+  const store = loadStore();
+  let bucket = hasOwn(store, orderId) ? store[orderId] : null;
+  if (!isPlainObject(bucket)) {
+    if (!snapshotUsable) return null;
+    bucket = createMap();
+    store[orderId] = bucket;
+  }
+  let existing = hasOwn(bucket, driverId) && isPlainObject(bucket[driverId])
+    ? bucket[driverId]
+    : null;
+  if (!existing) {
+    if (!snapshotUsable) return null;
+    // Fixture-only path: synthesize a sent baseline from the snapshot
+    // so the rejected overlay has somewhere to land. The store's
+    // saveStore() call below persists this baseline alongside the
+    // status flip in a single write.
+    existing = { ...offer };
+  }
+  if (existing.status === OFFER_STATUS_REJECTED
+      && existing.rejectedBy === 'passenger') {
+    return existing;
+  }
+  if (existing.status !== DRIVER_OFFER_STATUS.SENT) return existing;
+  const stamp = bumpedIso(existing.updatedAt);
+  const next = {
+    ...existing,
+    id: existing.id || buildOfferId(orderId, driverId),
+    orderId,
+    driverId,
+    status:     OFFER_STATUS_REJECTED,
+    rejectedBy: 'passenger',
+    rejectedAt: stamp,
+    updatedAt:  stamp,
+  };
+  bucket[driverId] = next;
+  saveStore(store);
+  return next;
+}
+
 // Clears the order overlay store. Called from `clearDriverOfferStore`
 // so the user-scoped logout boundary continues to wipe everything the
 // Order Detail screen wrote.

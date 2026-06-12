@@ -567,6 +567,74 @@ commit the merged Order Detail resolves to P4 (terminal canceled),
 so the cancel button leaves the DOM and the armed state cannot persist
 across re-renders.
 
+**BD-ORDER-DETAIL-01D-2C-B opens the passenger reject-offer pinhole**:
+P2 «Отклонить» on a single DriverOffer card now flips ONLY that one
+offer to `status='rejected'` via the new
+`rejectDriverOfferByPassenger({ orderId, driverId, offer? })` helper,
+stamping `rejectedBy='passenger'` + `rejectedAt` + a monotonic
+`updatedAt`. The optional `offer` snapshot lets the click handler
+persist a fixture-only sent baseline (a P2 candidate that has not yet
+been written to `bazardrive.driver_offers.v1`) before flipping it to
+rejected — mirroring the snapshot fallback `commitPassengerSelection`
+uses. Other sent offers for the same order stay `sent` and remain
+selectable; terminal offers (`withdrawn`, `expired`, `accepted`, and
+any pre-existing `rejected` with a different `rejectedBy`) are
+preserved verbatim. The order overlay (`selectedDriverId`,
+`Order.status`) is **not** touched, and the active_ride store is
+**not** seeded. Idempotent: a second reject on an already-passenger-
+rejected offer returns the existing record. Because
+`activeSentOffers()` already filters terminal statuses, the rejected
+offer naturally drops out of P2 and is no longer a selectable /
+open-trip candidate; the `commitPassengerSelection` stale-store guard
+also refuses to promote a rejected offer to `selectedDriverId`.
+
+The reject-offer click handler validates the helper outcome before
+toasting success — it only shows «Оффер отклонён» when
+`result.status === 'rejected' && result.rejectedBy === 'passenger'`. A
+truthy result with a non-matching shape (the snapshot was stale and the
+stored offer is now `accepted` / `withdrawn` / `expired` / foreign-
+rejected) is treated as non-success: the handler re-renders so the
+stale card drops out of P2 and toasts «Этот оффер недоступен» instead
+of the misleading success copy.
+
+**SELF-driver D4 transition.** When the passenger rejects the SELF
+driver's own DriverOffer on a still-CREATED order, the driver view
+routes to **D4** (NOT D1) with `lockedReason='driver_offer_rejected'`
+and the explicit info copy «Пассажир отклонил ваш оффер». The
+`driver-send-offer` click handler is hardened with a defensive
+short-circuit on `existing.status === 'rejected'` that branches on
+`rejectedBy`:
+- `rejectedBy === 'passenger'` → «Пассажир отклонил оффер»;
+- any other `rejectedBy` (`system` / `driver` / missing / …) →
+  generic «Оффер недоступен» so the rejecter is never mislabeled.
+
+`sendDriverOffer` already preserves the rejected status verbatim — the
+handler-side branch ensures the driver never sees the misleading
+«Оффер отправлен» toast against an unchanged terminal store, and the
+generic copy keeps the rejecter accurate for non-passenger terminal
+records.
+
+**lockedReason precedence on D4** (applied in `loadOrder()`):
+1. fixture-set `lockedReason` always wins (e.g. `demo-order-locked`
+   carries `'passenger_chose_other'`);
+2. runtime `ACCEPTED` with `selectedDriverId !== SELF` →
+   `'passenger_chose_other'` — the canonical D4 reason when the order
+   is taken by another driver (SELF-selected ACCEPTED orders route to
+   D3 and never read this label);
+3. runtime `CANCELED` → `'order_canceled'` so D4 shows «Заказ отменён»;
+4. runtime `EXPIRED` → `'order_expired'` so D4 shows «Заказ истёк»;
+5. only on non-terminal `CREATED` orders, a passenger-rejected SELF
+   offer surfaces `'driver_offer_rejected'`.
+
+This precedence guarantees:
+- cancel-after-reject path shows the canceled-order reason on D4,
+  never the per-offer rejected reason;
+- passenger-picked-another-driver path shows
+  «Пассажир выбрал другого водителя», never the per-offer rejected
+  reason;
+- the per-offer `driver_offer_rejected` reason only ever surfaces
+  while the order is still open (`CREATED`).
+
 **BD-ORDER-DETAIL-01D-2B opens the active-ride seed pinhole**: the P3
 «Открыть поездку» CTA now writes the canonical
 `bazardrive.active_ride.v1` snapshot (via `ride_state.saveActiveRide`)
@@ -581,13 +649,14 @@ or `'sent'`; the button renders as `disabled` when the gate refuses,
 and the click handler short-circuits before writing anything. Idempotent:
 a re-tap on an already-seeded `tripId` skips `saveActiveRide` and just
 re-navigates. The 01D-2A select-driver commit alone still **never**
-seeds active_ride. The remaining Model-B mutations — passenger
-«Отменить заказ», passenger «Отклонить» on a single offer, driver D3
-«Отменить» handoff — **remain deferred to BD-ORDER-DETAIL-01D-2C+**.
-The full write contract below stays authoritative for those follow-ups.
+seeds active_ride. The remaining Model-B mutation — driver D3
+«Отменить» handoff — **remains deferred to BD-ORDER-DETAIL-01D-2C+**.
+The full write contract below stays authoritative for that follow-up.
 Smoke pins the runtime-shell contract, the DriverOffer store
 send/withdraw round-trip, the commitPassengerSelection multi-write
-(F3a–F3l), and the new active-ride seed handoff (F4a–F4l).
+(F3a–F3l), the active-ride seed handoff (F4a–F4l), the passenger
+cancel-order overlay (F5a–F5m), and the passenger reject-offer overlay
+(F6a–F6o).
 
 **Chosen semantics: Model B — offer + passenger confirm.** Driver sends a
 `DriverOffer(status='sent')`. The driver tap **does not** mutate
