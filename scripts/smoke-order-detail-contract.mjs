@@ -2,8 +2,11 @@
 //
 // This smoke is the post-gate version of the Order Detail guard: /order/<id>
 // and order_detail.js are now expected to exist. The checks below keep the
-// Model B contract locked while the first runtime shell remains read/render
-// only and all mutating writes stay deferred to BD-ORDER-DETAIL-01D.
+// Model B contract locked AND the scoped local 01D write paths intact:
+// driver send/withdraw offer, passenger select-driver commit, passenger
+// open-trip active_ride handoff, passenger cancel order, passenger reject
+// offer, passenger cancel sent-offer sync, driver cancel accepted order.
+// Backend / Mapbox / payment remain out of scope.
 
 import fs from 'node:fs';
 
@@ -3939,7 +3942,7 @@ if (mapPresent) {
     && /BD-ORDER-DETAIL-01[\s\S]{0,2400}P0/.test(screenMap)
     && /BD-ORDER-DETAIL-01[\s\S]{0,2400}runtime\s+shell\s+present/i.test(screenMap)
     && /BD-ORDER-DETAIL-01[\s\S]{0,2400}Model\s+B[\s\S]{0,240}lock/i.test(screenMap)
-    && /BD-ORDER-DETAIL-01[\s\S]{0,2400}writes\s+pending/i.test(screenMap)
+    && /BD-ORDER-DETAIL-01[\s\S]{0,2400}01D\s+writes\s+landed/i.test(screenMap)
     && !/BD-ORDER-DETAIL-01[\s\S]{0,2400}\bmissing\s+runtime\b/i.test(screenMap)
     && !/BD-ORDER-DETAIL-01[\s\S]{0,2400}(unresolved|нерешён)[\s\S]{0,240}«Принять»/i.test(screenMap));
 } else {

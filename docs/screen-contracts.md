@@ -532,7 +532,7 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
-**Status:** runtime shell · Model B guarded · writes pending (BD-ORDER-DETAIL-01C).
+**Status:** runtime shell · Model B locked · scoped local 01D writes landed (driver send/withdraw offer, passenger select-driver commit, passenger open-trip active_ride handoff, passenger cancel order, passenger reject offer, passenger cancel sent-offer sync, driver cancel accepted order); backend / Mapbox / payment out of scope.
 This entry locks the Cloud Design / Codex audit decisions captured in
 #454 / #455 plus the BD-ORDER-DETAIL-01B Model B product call.
 BD-ORDER-DETAIL-01C ships the first read/render runtime — `/order/<id>` is
