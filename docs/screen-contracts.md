@@ -532,12 +532,16 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
-**Status:** runtime shell · Model B guarded · writes pending (BD-ORDER-DETAIL-01C).
+**Status:** runtime shell · Model B locked · scoped local 01D writes landed (driver send/withdraw offer, passenger select-driver commit, passenger open-trip active_ride handoff, passenger cancel order, passenger reject offer, passenger cancel sent-offer sync, driver cancel accepted order); backend / Mapbox / payment out of scope.
 This entry locks the Cloud Design / Codex audit decisions captured in
 #454 / #455 plus the BD-ORDER-DETAIL-01B Model B product call.
-BD-ORDER-DETAIL-01C ships the first read/render runtime — `/order/<id>` is
-now a registered route resolving to `public/src/screens/order_detail.js`,
-with every Model-B mutating action stubbed as a non-mutating toast.
+BD-ORDER-DETAIL-01C originally shipped the first read/render runtime shell —
+`/order/<id>` registered as a route resolving to `public/src/screens/order_detail.js`,
+with every Model-B mutating action stubbed as a non-mutating toast at that
+point. The scoped local 01D write paths enumerated in the Status line above
+have since landed (01D-1 / 01D-2A / 01D-2B / 01D-2C-A/B/C / 01D-2D), so
+the Model-B CTAs now mutate their scoped local stores instead of toasting;
+backend / Mapbox / payment remain out of scope.
 
 **BD-ORDER-DETAIL-01C shipped the read/render shell.
 BD-ORDER-DETAIL-01D-1 opened the driver write pinhole (DriverOffer
