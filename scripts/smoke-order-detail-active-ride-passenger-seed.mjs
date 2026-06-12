@@ -286,6 +286,65 @@ for (const [path, value] of READ_FIELDS) {
 expect('findActiveRide(unknown-tripId) returns null',
   rideState.findActiveRide('definitely-not-a-real-trip') === null);
 
+// ── G. BD-ORDER-DETAIL-01D-2B-F-S canonical tripId source-pin parity ─
+// Section A already pins the BEHAVIOR (seed.tripId === 'trip_audit-
+// order-2b') against the unique fixture. This block pins the SHAPE of
+// the runtime source so a future revert that re-introduces an
+// `order.tripId || …` / `order?.tripId ?? …` / `order['tripId'] …`
+// fallback inside `buildPassengerActiveRideSeed` is caught here even
+// if section A's fixture later changes shape. Mirror of the
+// K4-source guard already living in
+// scripts/smoke-order-detail-active-ride-consistency.mjs — the
+// passenger-seed-consumption audit independently locks the same
+// invariant so both smokes catch a revert without relying on each
+// other.
+const orderDetailSrc = read('../public/src/screens/order_detail.js');
+function extractBuildSeedBody(src) {
+  const sig = /export function buildPassengerActiveRideSeed\s*\([^)]*\)\s*\{/;
+  const m = sig.exec(src);
+  if (!m) return null;
+  let depth = 1;
+  let i = m.index + m[0].length;
+  for (; i < src.length && depth > 0; i++) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return src.slice(m.index, i);
+}
+const buildSeedBody = extractBuildSeedBody(orderDetailSrc);
+expect('G — buildPassengerActiveRideSeed body extracted from order_detail.js',
+  typeof buildSeedBody === 'string' && buildSeedBody.length > 0);
+const buildSeedBodyNoComments = buildSeedBody
+  ? stripComments(buildSeedBody)
+  : '';
+expect('G — function body contains canonical `trip_${order.id}` template literal',
+  /`trip_\$\{order\.id\}`/.test(buildSeedBodyNoComments));
+const FORBIDDEN_TRIPID_READS = [
+  'order.tripId',
+  'order?.tripId',
+  "['tripId']",
+  '["tripId"]',
+];
+for (const forbidden of FORBIDDEN_TRIPID_READS) {
+  expect(`G — function body does NOT read ${forbidden}`,
+    !buildSeedBodyNoComments.includes(forbidden));
+}
+const tripIdStmt = /const\s+tripId\s*=\s*([^;]+);/.exec(buildSeedBodyNoComments);
+expect('G — `const tripId = …;` statement found in function body',
+  !!tripIdStmt);
+if (tripIdStmt) {
+  const rhs = tripIdStmt[1];
+  expect('G — tripId derivation RHS has NO `||` logical fallback',
+    !rhs.includes('||'));
+  expect('G — tripId derivation RHS has NO `??` nullish-coalescing fallback',
+    !rhs.includes('??'));
+  expect('G — tripId derivation RHS has NO `?` ternary / optional-chain fallback',
+    !rhs.includes('?'));
+  expect('G — tripId derivation RHS IS the canonical template literal (no extra tokens)',
+    rhs.trim() === '`trip_${order.id}`');
+}
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
