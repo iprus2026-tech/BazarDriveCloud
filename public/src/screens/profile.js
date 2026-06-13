@@ -3489,6 +3489,14 @@ function wireGarageActions(root, vehicles = []) {
 // surfaces on the page are untouched. The DOM stub in the smoke
 // no-ops `replaceWith`, so smoke-side verification re-renders the
 // whole profile to confirm the persisted change.
+//
+// READY-K Codex P2-2 — after the in-place garage rebuild, refresh the
+// Documents pane's read-only READY-K hint in place so add / make-active
+// / archive / restore / edit handlers that already drive this path keep
+// the active/no-active/empty copy current without a full profile
+// re-render. The hint sits inside the Documents pane (rendered once at
+// renderDriver time and toggled by tab clicks), so without this refresh
+// it would keep the stale `u` snapshot.
 function refreshGarageSection(root) {
   const oldSection = root.querySelector('#pf2-garage');
   if (!oldSection) return;
@@ -3501,6 +3509,28 @@ function refreshGarageSection(root) {
   if (!newSection) return;
   oldSection.replaceWith(newSection);
   wireGarageActions(root, vehicles);
+  refreshGarageReadinessHint(root);
+}
+
+// READY-K Codex P2-2 — Refresh just the Documents pane's read-only
+// READY-K hint in place. Reads the fresh `user.get()`, re-renders the
+// READY-K `<section id="pf2-garage-ready">` markup, and swaps it for
+// the previous one. Does NOT re-render the rest of the Documents pane
+// (the document cards keep their own state), does NOT attach write
+// handlers (the hint stays a static section), and does NOT mutate
+// storage. When the READY-K hint is not in the current DOM (e.g.
+// passenger profile, Documents pane never mounted), this is a no-op —
+// the helper short-circuits on the missing anchor.
+function refreshGarageReadinessHint(root) {
+  if (!root) return;
+  const oldHint = root.querySelector('#pf2-garage-ready');
+  if (!oldHint) return;
+  const u = user.get();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = garageReadinessHintHtml(u);
+  const newHint = tmp.firstElementChild;
+  if (!newHint) return;
+  oldHint.replaceWith(newHint);
 }
 
 function renderDriver(root, u) {

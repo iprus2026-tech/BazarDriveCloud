@@ -91,6 +91,26 @@ globalThis.sessionStorage = {
 const clickHandlers = new Map();
 let renderedHtml = '';
 
+// BD-PROFILE-GARAGE-READY-K Codex P2-2 — in-place refresh trackers.
+// Both `refreshGarageSection` and the new `refreshGarageReadinessHint`
+// build their replacement markup in a `document.createElement('div')`
+// temp, then call `oldSection.replaceWith(newSection)`. The DOM stub
+// no-ops `replaceWith`, so we can't observe the swap directly; we
+// instead record:
+//   - every innerHTML assignment on a temp element (selectorless
+//     `document.createElement` result), and
+//   - every replaceWith call on a selector-bearing element.
+// A scenario can then fish out which temp HTML was paired with which
+// replaceWith target — sufficient to assert that the READY-K hint was
+// refreshed in place with content matching the new readiness state.
+// These trackers persist across `resetRenderedSurface` calls (which is
+// invoked twice per refresh — once for the garage section temp and
+// once for the readiness hint temp). Scenarios manage them explicitly
+// by snapshotting the array lengths before triggering and slicing
+// after.
+const replaceWithLog = [];
+const tempInnerHtmlLog = [];
+
 function resetRenderedSurface() {
   renderedHtml = '';
   clickHandlers.clear();
@@ -176,6 +196,11 @@ function makeEl(selectorHint) {
       if (isGarageSurface) resetRenderedSurface();
       this._html = html;
       renderedHtml += this._html;
+      // READY-K Codex P2-2 — a selectorless element is a
+      // `document.createElement('div')` temp (the refresh paths build
+      // their replacement markup on one). Log the assigned HTML so a
+      // later `replaceWith` entry can be correlated to the new content.
+      if (this._selector === null) tempInnerHtmlLog.push(html);
     },
     get innerHTML() { return this._html; },
     get firstElementChild() { return makeEl(); },
@@ -204,7 +229,25 @@ function makeEl(selectorHint) {
     querySelectorAll() { return []; },
     closest() { return null; },
     contains() { return false; },
-    appendChild(x) { return x; }, removeChild() {}, replaceWith() {}, remove() {},
+    appendChild(x) { return x; }, removeChild() {},
+    // READY-K Codex P2-2 — capture the replaceWith target selector and
+    // the HTML the temp it was paired with carried. The runtime pattern
+    // is: build `tmp = document.createElement('div')` → assign
+    // `tmp.innerHTML = …` (logged into tempInnerHtmlLog) → call
+    // `oldSection.replaceWith(tmp.firstElementChild)`. Pairing the
+    // replaceWith with the most recent temp innerHTML is reliable for
+    // the refresh paths because the two operations are adjacent.
+    replaceWith() {
+      if (this._selector) {
+        replaceWithLog.push({
+          targetSelector: this._selector,
+          newHtml: tempInnerHtmlLog.length
+            ? tempInnerHtmlLog[tempInnerHtmlLog.length - 1]
+            : '',
+        });
+      }
+    },
+    remove() {},
     setAttribute() {}, getAttribute() { return null; },
     scrollIntoView() {}, focus() {}, blur() {},
     click() {},
@@ -5381,6 +5424,384 @@ user.set({
       !pattern.test(stateCode));
     expect(`S133: resolveGarageReadinessVehicle body does NOT reference "${needle}"`,
       !pattern.test(vehicleCode));
+  }
+}
+
+// ── BD-PROFILE-GARAGE-READY-K — Codex P2 review follow-ups ────────────────
+// S134 covers P2-1 (derive readiness from normalized vehicles).
+// S135 + S136 cover P2-2 (refresh Documents READY-K hint after garage
+// mutations).
+// S137 covers P2-3 (materialised / restored legacy active reports
+// explicit_active, not legacy_fallback).
+// ─────────────────────────────────────────────────────────────────────────
+
+// ── Scenario 134 (Codex P2-1) — Malformed persisted collection is
+// normalised-empty. driverGarage.vehicles is non-empty raw, but every
+// entry is dropped by normalisePersistedVehicle (no model). With no
+// legacy fields either, buildGarageVehicles returns [] and the garage
+// renders the empty/add state — READY-K must report empty_garage /
+// empty_collection in lockstep so the Documents pane says
+// «Добавьте авто», NOT «Выберите активное авто» (which would strand the
+// driver on a no-active hint with no card to pick). ─────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // No legacy vehicle fields (vehicleMake / Model / Color / Plate).
+  driverGarage: {
+    activeVehicleId: null,
+    // Raw entries that fail normalisePersistedVehicle: bad-1 has no
+    // model (dropped), bad-2 is null (dropped). raw length > 0,
+    // normalised length === 0 — the bug fixed by P2-1.
+    vehicles: [{ id: 'bad-1' }, null],
+  },
+});
+{
+  const { buildGarageVehicles, getGarageReadinessState, resolveGarageReadinessVehicle }
+    = await import('../public/src/garage.js');
+  const vehiclesNorm = buildGarageVehicles(user.get());
+  expect('S134: buildGarageVehicles returns [] for malformed-only persisted collection',
+    Array.isArray(vehiclesNorm) && vehiclesNorm.length === 0,
+    `length=${vehiclesNorm.length}`);
+  const readiness = getGarageReadinessState(user.get());
+  expect('S134: readiness state === "empty_garage" (normalised-empty, NOT no_active_vehicle)',
+    readiness.state === 'empty_garage', String(readiness.state));
+  expect('S134: readiness reason === "empty_collection"',
+    readiness.reason === 'empty_collection', String(readiness.reason));
+  expect('S134: readiness vehicle === null',
+    readiness.vehicle === null);
+  expect('S134: resolveGarageReadinessVehicle mirrors null',
+    resolveGarageReadinessVehicle(user.get()) === null);
+  // Docs pane render carries the empty copy + add CTA hint.
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S134: docs pane renders «Добавьте авто»',
+    html.includes('Добавьте авто'));
+  expect('S134: docs pane does NOT render «Выберите активное авто» (no selectable card to pick)',
+    !html.includes('Выберите активное авто'));
+  expect('S134: docs pane carries data-garage-ready-state="empty_garage"',
+    html.includes('data-garage-ready-state="empty_garage"'));
+  expect('S134: docs pane carries data-garage-ready-reason="empty_collection"',
+    html.includes('data-garage-ready-reason="empty_collection"'));
+  // The raw persisted entry is NOT mutated by the read-only helper.
+  expect('S134: getGarageReadinessState did NOT mutate driverGarage.vehicles',
+    Array.isArray(user.get().driverGarage?.vehicles)
+      && user.get().driverGarage.vehicles.length === 2);
+}
+
+// ── Scenario 135 (Codex P2-2) — Docs READY-K hint refreshes after the
+// make-active garage handler runs. The Documents pane is rendered once
+// per profile mount and tab clicks only toggle pane classes; without
+// the new `refreshGarageReadinessHint` call inside `refreshGarageSection`
+// the hint would keep the stale `u` snapshot and continue advertising
+// «Выберите активное авто» even after the driver picked a vehicle. ───
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  // Initial render — both cards are make-active candidates (no active).
+  const initialHtml = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S135: initial docs pane carries no-active READY-K state',
+    initialHtml.includes('data-garage-ready-state="no_active_vehicle"')
+    && initialHtml.includes('data-garage-ready-reason="no_active_selection"'));
+  expect('S135: initial docs pane copy is «Выберите активное авто»',
+    initialHtml.includes('Выберите активное авто'));
+  expect('S135: initial docs pane does NOT advertise either vehicle as the anchor',
+    !initialHtml.includes('Документы активного авто'));
+  // Capture the make-active handler for real-1 BEFORE triggering it —
+  // the refresh path resets the surface tracker and clears the click
+  // handler map, so the captured reference is the only way to invoke
+  // after the fact.
+  const makeActiveFn = clickHandlers.get('#pf2-garage-make-active-real-1');
+  expect('S135: make-active handler for real-1 was wired',
+    typeof makeActiveFn === 'function');
+  // Snapshot the refresh tracker offsets so we can isolate the replace
+  // and temp HTML logs produced by this single click.
+  const replaceCountBefore = replaceWithLog.length;
+  const tempCountBefore = tempInnerHtmlLog.length;
+  if (typeof makeActiveFn === 'function') makeActiveFn();
+  // User-state mutation pinned: activeVehicleId is now real-1, marker
+  // cleared. This is the precondition for the in-place refresh to read
+  // the new state.
+  expect('S135: activeVehicleId === "real-1" after make-active click',
+    user.get().driverGarage?.activeVehicleId === 'real-1',
+    String(user.get().driverGarage?.activeVehicleId));
+  // In-place readiness refresh evidence: a replaceWith targeted
+  // #pf2-garage-ready, and the replacement HTML carries the new
+  // active_vehicle state + model/plate.
+  const refreshReplaces = replaceWithLog.slice(replaceCountBefore);
+  const readinessReplace = refreshReplaces.find((e) => e.targetSelector === '#pf2-garage-ready');
+  expect('S135: replaceWith was called on #pf2-garage-ready after make-active',
+    typeof readinessReplace === 'object' && readinessReplace !== null,
+    String(refreshReplaces.map((e) => e.targetSelector)));
+  const refreshTemps = tempInnerHtmlLog.slice(tempCountBefore);
+  const readinessTempHtml = refreshTemps.find((h) => h.includes('id="pf2-garage-ready"'));
+  expect('S135: a temp innerHTML carrying #pf2-garage-ready was assigned during refresh',
+    typeof readinessTempHtml === 'string' && readinessTempHtml.length > 0);
+  if (typeof readinessTempHtml === 'string') {
+    expect('S135: refreshed hint carries data-garage-ready-state="active_vehicle"',
+      readinessTempHtml.includes('data-garage-ready-state="active_vehicle"'));
+    expect('S135: refreshed hint carries data-garage-ready-reason="explicit_active"',
+      readinessTempHtml.includes('data-garage-ready-reason="explicit_active"'));
+    expect('S135: refreshed hint copy is «Документы активного авто»',
+      readinessTempHtml.includes('Документы активного авто'));
+    expect('S135: refreshed hint names the selected model "Toyota Prius"',
+      readinessTempHtml.includes('Toyota Prius'));
+    expect('S135: refreshed hint names the selected plate "А 123 ВС 77"',
+      readinessTempHtml.includes('А 123 ВС 77'));
+    // The other available sibling is NOT in the refreshed hint.
+    expect('S135: refreshed hint does NOT name real-2 ("Kia Sportage") as the anchor',
+      !readinessTempHtml.includes('Kia Sportage'));
+  }
+}
+
+// ── Scenario 136 (Codex P2-2) — Docs READY-K hint refreshes after the
+// archive-active garage handler runs. Initial: real-1 active. After
+// archiving real-1 via the existing per-vehicle archive-confirm
+// handler, activeVehicleId is cleared and the in-place readiness
+// refresh must flip the hint to «Выберите активное авто». No silent
+// promotion to real-2. ───────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const initialHtml = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S136: initial docs pane carries active_vehicle / explicit_active state',
+    initialHtml.includes('data-garage-ready-state="active_vehicle"')
+    && initialHtml.includes('data-garage-ready-reason="explicit_active"'));
+  expect('S136: initial docs pane copy is «Документы активного авто»',
+    initialHtml.includes('Документы активного авто'));
+  expect('S136: initial docs pane names "Toyota Prius" as the active anchor',
+    initialHtml.includes('Toyota Prius'));
+  // Archive flow: open confirm row, then confirm.  The confirm-final
+  // handler invokes `archiveGarageVehicle('real-1')` + `refreshGarageSection`,
+  // which in turn calls `refreshGarageReadinessHint`. We invoke the
+  // confirm handler directly (its body short-circuits on a missing
+  // confirmRow, and the stub's querySelector always returns a
+  // truthy element).
+  const archiveConfirmFn = clickHandlers.get('#pf2-garage-archive-confirm-real-1');
+  expect('S136: archive-confirm handler for real-1 was wired',
+    typeof archiveConfirmFn === 'function');
+  const replaceCountBefore = replaceWithLog.length;
+  const tempCountBefore = tempInnerHtmlLog.length;
+  if (typeof archiveConfirmFn === 'function') archiveConfirmFn();
+  expect('S136: activeVehicleId cleared to null after archiving the active',
+    user.get().driverGarage?.activeVehicleId === null,
+    String(user.get().driverGarage?.activeVehicleId));
+  // Real-1 is archived in the persisted record.
+  const realRecord1After = (user.get().driverGarage?.vehicles || [])
+    .find((v) => v && v.id === 'real-1');
+  expect('S136: real-1 carries archived: true after the archive click',
+    realRecord1After?.archived === true,
+    JSON.stringify(realRecord1After));
+  // In-place readiness refresh evidence.
+  const refreshReplaces = replaceWithLog.slice(replaceCountBefore);
+  const readinessReplace = refreshReplaces.find((e) => e.targetSelector === '#pf2-garage-ready');
+  expect('S136: replaceWith was called on #pf2-garage-ready after archive-active',
+    typeof readinessReplace === 'object' && readinessReplace !== null,
+    String(refreshReplaces.map((e) => e.targetSelector)));
+  const refreshTemps = tempInnerHtmlLog.slice(tempCountBefore);
+  const readinessTempHtml = refreshTemps.find((h) => h.includes('id="pf2-garage-ready"'));
+  expect('S136: a temp innerHTML carrying #pf2-garage-ready was assigned during refresh',
+    typeof readinessTempHtml === 'string' && readinessTempHtml.length > 0);
+  if (typeof readinessTempHtml === 'string') {
+    expect('S136: refreshed hint carries data-garage-ready-state="no_active_vehicle"',
+      readinessTempHtml.includes('data-garage-ready-state="no_active_vehicle"'));
+    expect('S136: refreshed hint carries data-garage-ready-reason="no_active_selection"',
+      readinessTempHtml.includes('data-garage-ready-reason="no_active_selection"'));
+    expect('S136: refreshed hint copy is «Выберите активное авто»',
+      readinessTempHtml.includes('Выберите активное авто'));
+    // No silent promotion: real-2 is NOT advertised as the anchor.
+    expect('S136: refreshed hint does NOT name real-2 ("Kia Sportage") as the anchor',
+      !readinessTempHtml.includes('Kia Sportage'));
+    // The archived real-1 is also NOT advertised as the anchor.
+    expect('S136: refreshed hint does NOT name the archived real-1 ("Toyota Prius") as the anchor',
+      !readinessTempHtml.includes('Toyota Prius'));
+  }
+}
+
+// ── Scenario 137 (Codex P2-3) — Materialised legacy explicit-active
+// reports `explicit_active`, NOT `legacy_fallback`. Starts with a
+// legacy-only profile (the synthesised fallback path). After archiving
+// the legacy card (which materialises it into driverGarage.vehicles),
+// restoring it, and explicitly making it active, the vehicle is a
+// persisted record with `activeVehicleId === 'legacy-1'`. It STILL has
+// `source: 'legacy'` in storage, but `_synthesized` is no longer set —
+// READY-K must report `explicit_active` so future docs/readiness code
+// can distinguish "driver picked a real vehicle that happens to come
+// from the legacy fields" from "no persisted record yet". ───────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // No persisted garage collection — legacy fallback path.
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const { archiveGarageVehicle: archiveFn,
+          restoreGarageVehicle: restoreFn,
+          markGarageVehicleActive: markActiveFn }
+    = await import('../public/src/state.js');
+  // Step 1 — initial legacy-fallback state.
+  {
+    const r0 = getGarageReadinessState(user.get());
+    expect('S137 step 1: legacy-only initial state === "active_vehicle"',
+      r0.state === 'active_vehicle', String(r0.state));
+    expect('S137 step 1: legacy-only initial reason === "legacy_fallback"',
+      r0.reason === 'legacy_fallback', String(r0.reason));
+    expect('S137 step 1: legacy-only initial vehicle._synthesized === true',
+      r0.vehicle?._synthesized === true, JSON.stringify(r0.vehicle));
+  }
+  // Step 2 — archive materialises legacy-1 into driverGarage.vehicles
+  // with `archived: true` and clears activeVehicleId.
+  archiveFn('legacy-1');
+  {
+    const rec = (user.get().driverGarage?.vehicles || [])
+      .find((v) => v && v.id === 'legacy-1');
+    expect('S137 step 2: legacy-1 materialised into driverGarage.vehicles',
+      rec && rec.source === 'legacy' && rec.archived === true,
+      JSON.stringify(rec));
+    expect('S137 step 2: activeVehicleId cleared after archiving the (active) legacy',
+      user.get().driverGarage?.activeVehicleId === null);
+  }
+  // Step 3 — restore unarchives + stamps restoredFromArchive marker.
+  restoreFn('legacy-1');
+  {
+    const rec = (user.get().driverGarage?.vehicles || [])
+      .find((v) => v && v.id === 'legacy-1');
+    expect('S137 step 3: restore stripped the archived flag',
+      rec && rec.archived !== true && rec.source === 'legacy',
+      JSON.stringify(rec));
+    // activeVehicleId remains null — restore never auto-promotes.
+    expect('S137 step 3: activeVehicleId remains null after restore',
+      user.get().driverGarage?.activeVehicleId === null);
+  }
+  // Step 4 — explicit make-active picks legacy-1 as the active anchor.
+  markActiveFn('legacy-1');
+  {
+    expect('S137 step 4: activeVehicleId === "legacy-1" after explicit make-active',
+      user.get().driverGarage?.activeVehicleId === 'legacy-1');
+    const rec = (user.get().driverGarage?.vehicles || [])
+      .find((v) => v && v.id === 'legacy-1');
+    expect('S137 step 4: restoredFromArchive marker cleared by make-active',
+      rec && rec.restoredFromArchive !== true,
+      JSON.stringify(rec));
+    // legacy-1 is a persisted record (no `_synthesized` ever escapes
+    // storage because normalisePersistedVehicle does not propagate it).
+    expect('S137 step 4: persisted legacy-1 carries source: "legacy" but NOT _synthesized',
+      rec && rec.source === 'legacy' && rec._synthesized !== true,
+      JSON.stringify(rec));
+  }
+  // Step 5 — READY-K classification: explicit_active, NOT legacy_fallback.
+  {
+    const r = getGarageReadinessState(user.get());
+    expect('S137 step 5: final state === "active_vehicle"',
+      r.state === 'active_vehicle', String(r.state));
+    expect('S137 step 5: final reason === "explicit_active" (the P2-3 fix)',
+      r.reason === 'explicit_active', String(r.reason));
+    expect('S137 step 5: final reason is NOT "legacy_fallback"',
+      r.reason !== 'legacy_fallback', String(r.reason));
+    expect('S137 step 5: final vehicle.id === "legacy-1"',
+      r.vehicle?.id === 'legacy-1', String(r.vehicle?.id));
+    expect('S137 step 5: final vehicle.source === "legacy" (storage truth preserved)',
+      r.vehicle?.source === 'legacy', String(r.vehicle?.source));
+    expect('S137 step 5: final vehicle does NOT carry the _synthesized marker',
+      r.vehicle?._synthesized !== true, JSON.stringify(r.vehicle));
+    // Docs pane render carries explicit_active markers too.
+    const html = renderProfile('#/profile?role=driver&pane=docs');
+    expect('S137 step 5: docs pane carries data-garage-ready-reason="explicit_active"',
+      html.includes('data-garage-ready-reason="explicit_active"'));
+    expect('S137 step 5: docs pane does NOT carry data-garage-ready-reason="legacy_fallback"',
+      !html.includes('data-garage-ready-reason="legacy_fallback"'));
+  }
+}
+
+// ── Scenario 138 (Codex P2-2 source guard) — `refreshGarageSection`
+// must call `refreshGarageReadinessHint`. Source-level pin so a future
+// refactor cannot accidentally drop the in-place readiness refresh
+// without flagging the smoke. Also pins that the helper exists, reads
+// fresh state via `user.get()`, builds the new markup with
+// `garageReadinessHintHtml`, and swaps it via `replaceWith` (without
+// any forbidden writes). ─────────────────────────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const profileSrc = readFileSync(join(projectRoot, 'public/src/screens/profile.js'), 'utf8');
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const refreshSectionBody = sliceFn(profileSrc, 'function refreshGarageSection(');
+  const refreshHintBody = sliceFn(profileSrc, 'function refreshGarageReadinessHint(');
+  expect('S138: refreshGarageSection body extracted',
+    refreshSectionBody.length > 0);
+  expect('S138: refreshGarageReadinessHint body extracted',
+    refreshHintBody.length > 0, String(refreshHintBody.length));
+  expect('S138: refreshGarageSection invokes refreshGarageReadinessHint(root)',
+    /refreshGarageReadinessHint\s*\(\s*root\s*\)/.test(refreshSectionBody));
+  expect('S138: refreshGarageReadinessHint reads fresh state via user.get()',
+    /user\s*\.\s*get\s*\(\s*\)/.test(refreshHintBody));
+  expect('S138: refreshGarageReadinessHint builds markup via garageReadinessHintHtml',
+    /garageReadinessHintHtml\s*\(/.test(refreshHintBody));
+  expect('S138: refreshGarageReadinessHint swaps #pf2-garage-ready via replaceWith',
+    /replaceWith\s*\(/.test(refreshHintBody)
+    && refreshHintBody.includes('#pf2-garage-ready'));
+  // Read-only contract: no writers / no document writers / no
+  // cross-surface keys inside the helper.
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const refreshHintCode = stripComments(refreshHintBody);
+  const FORBIDDEN_HINT = [
+    'user.set',
+    'localStorage.setItem',
+    'sessionStorage.setItem',
+    'archiveGarageVehicle',
+    'restoreGarageVehicle',
+    'markGarageVehicleActive',
+    'appendGarageVehicle',
+    'patchGarageVehicle',
+    'setDocumentStatus',
+    'createDocument',
+    'addEventListener',
+    'active_ride',
+    'responses',
+    'ride_history',
+    'driver_receipts',
+    'respond.v1',
+  ];
+  for (const needle of FORBIDDEN_HINT) {
+    const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    expect(`S138: refreshGarageReadinessHint does NOT reference "${needle}"`,
+      !pattern.test(refreshHintCode));
   }
 }
 

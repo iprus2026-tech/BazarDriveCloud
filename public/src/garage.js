@@ -231,45 +231,73 @@ export function resolveActiveGarageVehicle(u) {
 //     vehicle: <resolved vehicle> | null,
 //     reason:
 //       | 'explicit_active'     — saved activeVehicleId matches a
-//                                 non-archived persisted vehicle
-//       | 'legacy_fallback'     — synthesised legacy entry (no
+//                                 non-archived persisted vehicle (incl.
+//                                 a materialised / restored legacy-
+//                                 source vehicle the user explicitly
+//                                 picked)
+//       | 'legacy_fallback'     — synthesised legacy entry only
+//                                 (`_synthesized === true`; no
 //                                 persisted record at all)
-//       | 'no_active_selection' — persisted vehicles exist but no
-//                                 active selection (and not all
-//                                 archived)
+//       | 'no_active_selection' — persisted vehicles exist with at
+//                                 least one non-archived entry but no
+//                                 active selection
 //       | 'archived_only'       — every persisted entry is archived
-//       | 'empty_collection'    — no persisted record AND no legacy
-//                                 fields to synthesise from
+//       | 'empty_collection'    — no normalised selectable persisted
+//                                 record AND no synthesised legacy
+//                                 fallback
 //   }
 //
 // Reason matrix:
-//   state === 'active_vehicle'    + active.source === 'legacy' → 'legacy_fallback'
-//   state === 'active_vehicle'    + active.source !== 'legacy' → 'explicit_active'
-//   state === 'no_active_vehicle' + every persisted entry archived → 'archived_only'
-//   state === 'no_active_vehicle' + at least one non-archived persisted → 'no_active_selection'
+//   state === 'active_vehicle'    + active._synthesized === true → 'legacy_fallback'
+//   state === 'active_vehicle'    + active._synthesized !== true → 'explicit_active'
+//   state === 'no_active_vehicle' + every normalised persisted entry archived → 'archived_only'
+//   state === 'no_active_vehicle' + at least one non-archived normalised persisted → 'no_active_selection'
 //   state === 'empty_garage'      → 'empty_collection'
+//
+// READY-K Codex P2-1 — classification follows the same NORMALISED garage
+// truth as `buildGarageVehicles` / `resolveActiveGarageVehicle`, not the
+// raw `driverGarage.vehicles.length`. If every persisted record is
+// dropped by `normalisePersistedVehicle` (e.g. ids without models) and
+// there are no legacy fields, the garage overview renders the
+// empty/add state — and READY-K must report `empty_garage /
+// empty_collection` in lockstep so the Documents pane says
+// «Добавьте авто» instead of stranding the driver on
+// «Выберите активное авто» with no selectable card.
+//
+// READY-K Codex P2-3 — the synthesised-legacy reason hinges on the
+// `_synthesized: true` marker `buildGarageVehicles` stamps on its
+// in-memory legacy entry, NOT on `active.source === 'legacy'`. A
+// materialised / restored legacy-source vehicle the user explicitly
+// makes active is a real persisted record (no `_synthesized` marker;
+// `normalisePersistedVehicle` does not preserve that flag from
+// storage), so it correctly reports `explicit_active`.
 //
 // Archived-only is INTENTIONALLY no_active_vehicle, NOT empty_garage:
 // the user has touched the garage, they just have no usable car right
 // now. The UI hint and the future documents implementation treat the
 // two states differently (archived-only points the user at restore;
-// empty points the user at add).
+// empty points the user at add). Malformed persisted records that
+// normalise away are treated as empty for READY-K (there is no card
+// to restore or pick).
 export function getGarageReadinessState(u) {
   const active = resolveActiveGarageVehicle(u);
   if (active) {
     return {
       state: 'active_vehicle',
       vehicle: active,
-      reason: active.source === 'legacy' ? 'legacy_fallback' : 'explicit_active',
+      reason: active._synthesized === true ? 'legacy_fallback' : 'explicit_active',
     };
   }
-  const rawVehicles = (u && u.driverGarage && Array.isArray(u.driverGarage.vehicles))
-    ? u.driverGarage.vehicles : [];
-  if (rawVehicles.length === 0) {
+  // READY-K Codex P2-1 — normalised collection, not raw length. Mirrors
+  // the source of truth `buildGarageVehicles` / `resolveActiveGarageVehicle`
+  // use, so malformed (modelless / non-object) raw entries cannot pin
+  // the Documents pane on «Выберите активное авто» when no selectable
+  // card exists.
+  const normalised = readPersistedGarageVehicles(u);
+  if (normalised.length === 0) {
     return { state: 'empty_garage', vehicle: null, reason: 'empty_collection' };
   }
-  const allArchived = rawVehicles.every((v) =>
-    v && typeof v === 'object' && v.archived === true);
+  const allArchived = normalised.every((v) => v && v.archived === true);
   return {
     state: 'no_active_vehicle',
     vehicle: null,
