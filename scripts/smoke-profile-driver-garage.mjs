@@ -2235,6 +2235,53 @@ user.set({
     typeof clickHandlers.get('#pf2-garage-edit-backdrop') === 'function');
 }
 
+// ── Scenario 57b — Close button invocation mirrors cancel semantics. ──────
+// BD-PROFILE-GARAGE-EDIT-H: cancel, close, and backdrop must all clear the
+// local draft + selected edit id without mutating storage. S57 covers
+// cancel by invocation; this scenario does the same for the × close button
+// so a future regression that splits the three wirings is caught.
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-edit-real-2')?.();
+  setField(section, '#pf2-garage-edit-model', 'Garbage close');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-edit-close')?.();
+  const after = snapshotLocalStorage();
+  expect('S57b: close does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  const sheet = section.querySelector('#pf2-garage-edit-sheet');
+  expect('S57b: close hid the sheet',
+    sheet.hidden === true && sheet.dataset.garageEditState === 'closed');
+  expect('S57b: close cleared the editing target id',
+    sheet.dataset.editVehicleId === undefined,
+    String(sheet.dataset.editVehicleId));
+  expect('S57b: close cleared the model draft field',
+    section.querySelector('#pf2-garage-edit-model').value === '',
+    String(section.querySelector('#pf2-garage-edit-model').value));
+}
+
+// ── Scenario 57c — Backdrop invocation mirrors cancel semantics. ──────────
+// Same as S57b but for the backdrop close handler.
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-edit-real-2')?.();
+  setField(section, '#pf2-garage-edit-model', 'Garbage backdrop');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-edit-backdrop')?.();
+  const after = snapshotLocalStorage();
+  expect('S57c: backdrop does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  const sheet = section.querySelector('#pf2-garage-edit-sheet');
+  expect('S57c: backdrop hid the sheet',
+    sheet.hidden === true && sheet.dataset.garageEditState === 'closed');
+  expect('S57c: backdrop cleared the editing target id',
+    sheet.dataset.editVehicleId === undefined,
+    String(sheet.dataset.editVehicleId));
+  expect('S57c: backdrop cleared the model draft field',
+    section.querySelector('#pf2-garage-edit-model').value === '',
+    String(section.querySelector('#pf2-garage-edit-model').value));
+}
+
 // ── Scenario 58 — Blank model save is blocked: error surfaces, vehicles
 // stay byte-equal, sheet stays open. ─────────────────────────────────────
 {
@@ -2386,6 +2433,31 @@ user.set({
   const after = snapshotLocalStorage();
   expect('S62: defensive patches do NOT mutate localStorage',
     before === after, `before=${before.length}b after=${after.length}b`);
+}
+
+// ── Scenario 62b — Wired-path missing-id guard: if the sheet's stored
+// data-edit-vehicle-id is a stale / unknown id when Save is clicked, the
+// handler must refuse the write, surface the invalid state, and leave
+// storage byte-equal. Belt-and-braces against a future refactor that
+// would let a stale edit-vehicle-id slip through to patchGarageVehicle.
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-edit-real-2')?.();
+  // Smuggle in an unknown id on the open sheet — the wired Save path
+  // reads this exact dataset key.
+  const sheet = section.querySelector('#pf2-garage-edit-sheet');
+  sheet.dataset.editVehicleId = 'ghost-vehicle';
+  setField(section, '#pf2-garage-edit-model', 'Phantom Prius');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-edit-save')?.();
+  const after = snapshotLocalStorage();
+  expect('S62b: stale-id Save does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  const errEl = section.querySelector('#pf2-garage-edit-error');
+  expect('S62b: stale-id Save flips the error paragraph to invalid',
+    errEl.dataset.garageEditState === 'invalid');
+  expect('S62b: stale-id Save reveals the error paragraph',
+    errEl.hidden === false);
 }
 
 // ── Scenario 63 — Legacy-only profile: edit button keeps the local
