@@ -100,19 +100,19 @@ export function buildGarageVehicles(u, options = {}) {
   // make-active candidate.
   let raw = rawAll.filter((v) => v && v.archived !== true);
 
-  // 05I Codex P2 — the legacy fallback below fires when the active list
-  // is empty AND there is no archived `legacy-1` materialised by
-  // `archiveGarageVehicle` already. That prevents an archived legacy
-  // card from being re-synthesised from the legacy `vehicleMake / Model
-  // / Color / Plate` user fields on the next render. Archived NON-
-  // legacy entries (e.g. an archived persisted `real-2`) keep the
-  // legacy fallback semantics intact for the snapshot consumers and the
-  // garage render — only the explicit "I archived my legacy" gesture
-  // suppresses the fallback.
-  const hasArchivedLegacy = rawAll.some((v) =>
-    v && v.id === 'legacy-1' && v.archived === true);
-
-  if (raw.length === 0 && !hasArchivedLegacy) {
+  // BD-PROFILE-GARAGE-ARCHIVE-I2 Codex P2 — the legacy fallback fires
+  // ONLY when there is no valid persisted garage collection at all
+  // (`rawAll.length === 0`). Previously the condition was
+  // `raw.length === 0 && !hasArchivedLegacy`, which mis-fired when the
+  // user had a real persisted garage and archived every entry — the
+  // next render synthesised a `legacy-1` active card from the
+  // preserved `vehicleMake / Model / Color / Plate` fields, violating
+  // the no-silent-promotion contract and resurrecting a car the user
+  // had effectively retired. The new check naturally subsumes the old
+  // archived-legacy guard: an archived `legacy-1` materialisation
+  // keeps `rawAll.length > 0`, so the legacy fallback stays suppressed
+  // there too.
+  if (rawAll.length === 0) {
     const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
     const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
     const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';

@@ -4901,6 +4901,63 @@ user.set({
     slice.includes('data-garage-archived-count="1"'));
 }
 
+// ── Scenario 124b — BD-PROFILE-GARAGE-ARCHIVE-I2 Codex P2: block legacy
+// fallback after archiving the only persisted car. The previous
+// buildGarageVehicles condition (`raw.length === 0 && !hasArchivedLegacy`)
+// mis-fired when the user had a real persisted garage and archived
+// every entry — the next render synthesised a `legacy-1` active card
+// from the preserved `vehicleMake / Model / Color / Plate` fields,
+// resurrecting a car the user had effectively retired. The new check
+// is `rawAll.length === 0`, so any persisted record (even all-archived)
+// suppresses the legacy fallback. ──────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // Legacy fields preserved on the user record — would otherwise drive
+  // the resurrection if the fallback fired.
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('real-1');
+  // Legacy user fields preserved across archive.
+  expect('S124b: legacy vehicleMake preserved (NOT wiped by archive)',
+    user.get().vehicleMake === 'Hyundai');
+  expect('S124b: legacy vehiclePlate preserved (NOT wiped by archive)',
+    user.get().vehiclePlate === 'А 482 МР 77');
+  // Re-render: no legacy resurrection.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S124b: re-render does NOT resurrect a legacy-1 active card',
+    !slice.includes('id="pf2-garage-active-legacy-1"'));
+  expect('S124b: re-render emits no active-current span anywhere',
+    !/id="pf2-garage-active-/.test(slice));
+  expect('S124b: re-render carries the empty-state modifier',
+    slice.includes('pf2-garage--empty'));
+  // Archived hint surfaces from the persisted record.
+  expect('S124b: re-render advertises data-garage-archived-count="1"',
+    slice.includes('data-garage-archived-count="1"'));
+  expect('S124b: re-render shows "В архиве: 1" hint',
+    slice.includes('В архиве: 1'));
+  // Resolver-level: no active vehicle either way.
+  const { resolveActiveGarageVehicle, buildGarageVehicles }
+    = await import('../public/src/garage.js');
+  expect('S124b: resolveActiveGarageVehicle returns null (no legacy fallback)',
+    resolveActiveGarageVehicle(user.get()) === null,
+    String(resolveActiveGarageVehicle(user.get())?.id));
+  const list = buildGarageVehicles(user.get());
+  expect('S124b: buildGarageVehicles returns [] (every persisted entry is archived; no legacy synthesis)',
+    list.length === 0, String(list.length));
+}
+
 // ── Scenario 125 (Task F) — Non-scope source guard on public/src/garage.js.
 // Aligns with the BD-PROFILE-GARAGE-ARCHIVE-I2 boundary: garage.js stays a
 // pure read-only resolver and may not pull in cross-surface or out-of-
@@ -4917,6 +4974,11 @@ user.set({
   const garageCode = stripComments(garageSrc);
   // Forbidden module imports / bare references in code (comments
   // legitimately mention some of these symbols for documentation).
+  // Codex P2 review on PR #493 — the guard must catch every import
+  // syntax, not only `import x from '…'`. Side-effect imports
+  // (`import '…';`) and dynamic imports (`await import('…')`) would
+  // otherwise slip through and introduce the forbidden dependency
+  // while this contract guard reported green.
   const FORBIDDEN_IMPORTS = [
     'mapbox',
     'active_ride',
@@ -4928,10 +4990,22 @@ user.set({
     'documents',
     'readiness',
   ];
+  const importPatternsFor = (needle) => {
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [
+      // `… from '…<needle>…'` — static named / default imports + re-exports
+      new RegExp(`from\\s*['"\`][^'"\`]*${escaped}[^'"\`]*['"\`]`),
+      // `import '…<needle>…'` — side-effect imports
+      new RegExp(`\\bimport\\s*['"\`][^'"\`]*${escaped}[^'"\`]*['"\`]`),
+      // `import('…<needle>…')` — dynamic imports (with optional await)
+      new RegExp(`\\bimport\\s*\\(\\s*['"\`][^'"\`]*${escaped}[^'"\`]*['"\`]\\s*\\)`),
+    ];
+  };
   for (const needle of FORBIDDEN_IMPORTS) {
-    const pattern = new RegExp(`from\\s*['"][^'"]*${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^'"]*['"]`);
-    expect(`S125: garage.js does NOT import from "${needle}"`,
-      !pattern.test(garageCode));
+    const patterns = importPatternsFor(needle);
+    const hit = patterns.some((re) => re.test(garageCode));
+    expect(`S125: garage.js does NOT import "${needle}" via any import syntax (static / side-effect / dynamic)`,
+      !hit);
   }
   // Forbidden runtime calls (cross-surface or out-of-scope writers).
   const FORBIDDEN_CALLS = [
