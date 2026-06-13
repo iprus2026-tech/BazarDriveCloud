@@ -76,7 +76,44 @@ globalThis.sessionStorage = {
 // In production each querySelector call hits the real DOM and returns
 // the same node; the stub now mirrors that semantics within a single
 // element so the add-sheet draft fields behave deterministically.
+//
+// BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S — click capture is now
+// SURFACE-AWARE for a narrow set of known simple garage selectors
+// (the SURFACE_AWARE_SELECTORS set below). For those selectors, the
+// stub stores a handler in `clickHandlers` ONLY when the rendered HTML
+// actually carries `id="…"` for that selector — so S14/S15 cannot
+// silently capture a ghost handler for a button that the runtime no
+// longer renders. Every OTHER selector (dynamic, CSS-escaped, class /
+// attribute / composite) stays permissive — those scenarios depend on
+// per-vehicle ids that the runtime escapes via `escapeCssId` and the
+// substring lookup would not survive escaping, so we don't enforce
+// surface-awareness there. Smallest safe change.
 const clickHandlers = new Map();
+let renderedHtml = '';
+
+const SURFACE_AWARE_SELECTORS = new Set([
+  '#pf2-garage-add',
+  '#pf2-garage-edit-legacy-1',
+  '#pf2-garage-archive-legacy-1',
+  '#pf2-garage-archive-cancel-legacy-1',
+  '#pf2-garage-archive-confirm-legacy-1',
+  '#pf2-garage-make-active-demo-2',
+  '#pf2-garage-add-sheet',
+  '#pf2-garage-add-close',
+  '#pf2-garage-add-backdrop',
+  '#pf2-garage-add-cancel',
+  '#pf2-garage-add-save',
+]);
+
+function selectorIsRendered(selector) {
+  if (typeof selector !== 'string' || !selector.startsWith('#')) return true;
+  // Substring lookup of `id="…"` — the runtime emits these buttons as
+  // `<button id="X" …>`, so a literal `id="X"` in the assigned HTML
+  // proves the element exists. Only applied to ids in the narrow
+  // surface-aware set; dynamic / escaped ids fall through to permissive.
+  const id = selector.slice(1);
+  return renderedHtml.includes(`id="${id}"`);
+}
 
 function makeEl(selectorHint) {
   const el = {
@@ -88,12 +125,20 @@ function makeEl(selectorHint) {
     dataset: {},
     classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
     style: {},
-    set innerHTML(v) { this._html = String(v); },
+    set innerHTML(v) {
+      this._html = String(v);
+      renderedHtml += this._html;
+    },
     get innerHTML() { return this._html; },
     get firstElementChild() { return makeEl(); },
     addEventListener(type, fn) {
       if (type === 'click' && this._selector && typeof fn === 'function') {
-        clickHandlers.set(this._selector, fn);
+        const sel = this._selector;
+        // Surface gate ONLY for the known simple-id selectors that the
+        // smoke invokes directly. Everything else is captured as before
+        // so dynamic / CSS-escaped per-vehicle wiring is not perturbed.
+        if (SURFACE_AWARE_SELECTORS.has(sel) && !selectorIsRendered(sel)) return;
+        clickHandlers.set(sel, fn);
       }
     },
     removeEventListener() {},
@@ -147,6 +192,7 @@ function reset() {
   user.reset();
   clickHandlers.clear();
   currentHash = '';
+  renderedHtml = '';
 }
 
 // Serialize the localStorage Map's contents into a deterministic string so
@@ -161,6 +207,10 @@ function snapshotLocalStorage() {
 
 function renderProfile(hash) {
   currentHash = hash || '#/profile';
+  // BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S — reset the surface tracker so
+  // a button captured in a previous render cannot keep a ghost click
+  // binding when this render's markup no longer carries the matching id.
+  renderedHtml = '';
   const section = profile();
   return section._html || '';
 }
@@ -538,6 +588,16 @@ user.set({
 });
 {
   renderProfile('#/profile');
+  // Surface pins before the click capture so a missing button fails with
+  // a clear "id not rendered" signal instead of an opaque "captured null".
+  expect('S14 surface: populated garage renders #pf2-garage-add',
+    renderedHtml.includes('id="pf2-garage-add"'));
+  expect('S14 surface: populated garage renders #pf2-garage-edit-legacy-1',
+    renderedHtml.includes('id="pf2-garage-edit-legacy-1"'));
+  expect('S14 surface: populated garage renders #pf2-garage-archive-legacy-1',
+    renderedHtml.includes('id="pf2-garage-archive-legacy-1"'));
+  expect('S14 surface: populated garage renders #pf2-garage-archive-cancel-legacy-1',
+    renderedHtml.includes('id="pf2-garage-archive-cancel-legacy-1"'));
   const before = snapshotLocalStorage();
   // 05I — `#pf2-garage-archive-confirm-*` is no longer a DOM-only flash;
   // it is the archive write path and is intentionally EXCLUDED from the
@@ -584,6 +644,10 @@ user.set({
 });
 {
   renderProfile('#/profile');
+  // Surface pin: the empty-state add CTA must be in the rendered markup
+  // before the captured-handler assertion is meaningful.
+  expect('S15 surface: empty garage renders #pf2-garage-add',
+    renderedHtml.includes('id="pf2-garage-add"'));
   const beforeEmpty = snapshotLocalStorage();
   const addHandler = clickHandlers.get('#pf2-garage-add');
   expect('S15: empty-state add button has a captured handler',
@@ -1478,6 +1542,10 @@ user.set({
 // fields can be read/written via the cached querySelector stub.
 function captureSection(hash) {
   currentHash = hash || '#/profile';
+  // Same renderedHtml hygiene as renderProfile so the per-render
+  // surface tracker is consistent regardless of which entry point a
+  // scenario uses.
+  renderedHtml = '';
   return profile();
 }
 
