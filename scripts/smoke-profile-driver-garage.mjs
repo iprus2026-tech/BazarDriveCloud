@@ -207,10 +207,15 @@ function snapshotLocalStorage() {
 
 function renderProfile(hash) {
   currentHash = hash || '#/profile';
-  // BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S — reset the surface tracker so
-  // a button captured in a previous render cannot keep a ghost click
-  // binding when this render's markup no longer carries the matching id.
+  // BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S — clear BOTH the rendered-HTML
+  // tracker AND the click-handler map before each render. Resetting only
+  // the HTML tracker (Codex P2 review on #490) leaves a stale handler
+  // captured during a previous render() reachable via clickHandlers.get
+  // even when the new surface no longer carries that id — bypassing the
+  // surface-aware gate. Clearing clickHandlers here forces every captured
+  // binding to come from THIS render's wireGarageActions pass.
   renderedHtml = '';
+  clickHandlers.clear();
   const section = profile();
   return section._html || '';
 }
@@ -1123,6 +1128,31 @@ user.set({
     String(user.get().driverGarage?.activeVehicleId));
 }
 
+// ── Scenario 24b — Re-render clears stale click handlers ───────────────────
+// BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S Codex P2 review on #490 — prove
+// that a click handler captured on render N cannot leak into render N+1.
+// The `?garage=multi` preview renders the demo-2 make-active CTA; the
+// plain `/profile` render does NOT (demo-2 isn't in the user's legacy
+// collection). After the re-render, clickHandlers must NOT still return
+// the previous binding.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile?role=driver&garage=multi');
+  expect('S24b: multi render captures demo-2 make-active handler',
+    typeof clickHandlers.get('#pf2-garage-make-active-demo-2') === 'function');
+  renderProfile('#/profile');
+  expect('S24b: single-card re-render clears stale demo-2 make-active handler',
+    typeof clickHandlers.get('#pf2-garage-make-active-demo-2') !== 'function',
+    String(typeof clickHandlers.get('#pf2-garage-make-active-demo-2')));
+}
+
 // ── Scenario 25 — Stale activeVehicleId falls back to legacy ───────────────
 // If the persisted activeVehicleId points to a vehicle that is no longer
 // in the rebuilt collection (e.g. ?garage=multi turned off, so demo-2 is
@@ -1542,10 +1572,11 @@ user.set({
 // fields can be read/written via the cached querySelector stub.
 function captureSection(hash) {
   currentHash = hash || '#/profile';
-  // Same renderedHtml hygiene as renderProfile so the per-render
-  // surface tracker is consistent regardless of which entry point a
-  // scenario uses.
+  // Same hygiene as renderProfile so the per-render surface tracker AND
+  // the click-handler map are both consistent regardless of which entry
+  // point a scenario uses.
   renderedHtml = '';
+  clickHandlers.clear();
   return profile();
 }
 
