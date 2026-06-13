@@ -34,6 +34,21 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
+// BD-RESPOND-ORDER-LINK-WRITESIDE-COMMENT-S — strip JS comments so the
+// forbidden-runtime negative scans below cannot be false-failed by an
+// explanatory comment that names a forbidden call ("// do not call
+// createRideOrder()" / "// never call updateTripStatus()") or a forbidden
+// URL pattern ("// /chat?orderId=… is reserved for /responses"). Preserves
+// URL-shaped `://` so e.g. `'https://…'` string literals in code survive
+// untouched. Smoke-local, no dependency, no parser. Mirrors the helper
+// added to the sibling read-side smoke in #486.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+const respondCode = stripComments(respond);
+
 // Extract a function body by name via brace matching (same approach as the
 // unify guard) so an assertion scoped to one function can't read another.
 function functionBody(source, name) {
@@ -96,25 +111,35 @@ expect('passenger_response preserves requestId: post.id', /requestId:\s*post\.id
 expect('respond keeps the keyed responses store key bazardrive.responses.v1',
   /RESPONSES_KEY\s*=\s*'bazardrive\.responses\.v1'/.test(respond));
 const saveMapBody = functionBody(respond, 'saveResponseToMap') || '';
+// Reserved comment-stripped slice for future negative checks scoped to
+// saveResponseToMap. The current positive write pin stays on raw body.
+// eslint-disable-next-line no-unused-vars
+const saveMapCode = stripComments(saveMapBody);
 expect('saveResponseToMap writes into RESPONSES_KEY',
   saveMapBody.length > 0 && /setItem\(\s*RESPONSES_KEY/.test(saveMapBody));
 expect('respond persists the response via saveResponseToMap(response)',
   /saveResponseToMap\(\s*response\s*\)/.test(respond));
 
 // ── Invariant 5 — respond NEVER mutates the canonical ride-order store ──
+// Comment-stripped scan target so a "// do not call createRideOrder()" /
+// "// never call updateTripStatus()" disclaimer in the runtime source
+// cannot false-fail this contract pin (BD-RESPOND-ORDER-LINK-WRITESIDE-
+// COMMENT-S).
 for (const fn of ['createRideOrder', 'acceptOrder', 'acceptNearbyOrder', 'updateTripStatus']) {
   expect(`respond does NOT call ${fn}() (no canonical mutation)`,
-    !new RegExp(`\\b${fn}\\s*\\(`).test(respond));
+    !new RegExp(`\\b${fn}\\s*\\(`).test(respondCode));
 }
 
 // ── Invariant 6 — respond → chat link carries responseId (+ role=driver
 // per BD-CHAT-02), never orderId. The role=driver suffix lets /chat render
 // the bubble on the right side of the thread for the responding driver; the
 // link still must NOT leak the canonical orderId (that is /responses' job).
+// Negative scan uses respondCode so a docstring noting
+// "// /chat?orderId=… is reserved for /responses" can't false-fail.
 expect('respond keeps the responseId-only chat link (with BD-CHAT-02 role=driver)',
   /chatHref\s*=\s*`\/chat\?responseId=\$\{encodeURIComponent\(responseId\)\}&role=driver`/.test(respond));
 expect('respond chat links never carry orderId',
-  !/\/chat\?[^`'"\n]*orderId/.test(respond));
+  !/\/chat\?[^`'"\n]*orderId/.test(respondCode));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
