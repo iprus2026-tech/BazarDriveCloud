@@ -91,6 +91,16 @@ globalThis.sessionStorage = {
 const clickHandlers = new Map();
 let renderedHtml = '';
 
+function resetRenderedSurface() {
+  renderedHtml = '';
+  clickHandlers.clear();
+}
+
+// Codex P2 review on PR #490 — the surface-aware set covers the fixed
+// add-sheet AND edit-sheet controls plus a couple of well-known
+// per-vehicle anchors. Dynamic per-vehicle ids that match
+// isSimpleGarageActionSelector below are gated separately, while
+// CSS-escaped / complex selectors remain permissive.
 const SURFACE_AWARE_SELECTORS = new Set([
   '#pf2-garage-add',
   '#pf2-garage-edit-legacy-1',
@@ -103,7 +113,24 @@ const SURFACE_AWARE_SELECTORS = new Set([
   '#pf2-garage-add-backdrop',
   '#pf2-garage-add-cancel',
   '#pf2-garage-add-save',
+  // Edit-sheet fixed controls — Codex P2 (Include the edit-sheet hooks
+  // in the surface gate). S57–S59 invoke these directly.
+  '#pf2-garage-edit-cancel',
+  '#pf2-garage-edit-close',
+  '#pf2-garage-edit-backdrop',
+  '#pf2-garage-edit-save',
 ]);
+
+// Codex P2 (Cover simple per-vehicle handlers) — simple generated
+// per-vehicle selectors with safe alphanumeric suffixes are also
+// surface-gated. The character class `[A-Za-z0-9-]+` deliberately
+// EXCLUDES backslashes, colons, dots, brackets, quotes, spaces, etc.,
+// so CSS-escaped weird-id scenarios (S109 / S116 / S119) stay
+// permissive and continue to pass.
+function isSimpleGarageActionSelector(selector) {
+  return /^#pf2-garage-(?:make-active|edit|archive|archive-cancel|archive-confirm|restore|restore-cancel|restore-confirm)-[A-Za-z0-9-]+$/
+    .test(selector);
+}
 
 function selectorIsRendered(selector) {
   if (typeof selector !== 'string' || !selector.startsWith('#')) return true;
@@ -126,7 +153,28 @@ function makeEl(selectorHint) {
     classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
     style: {},
     set innerHTML(v) {
-      this._html = String(v);
+      const html = String(v);
+      // Codex P2 review on PR #490 — when an innerHTML assignment is
+      // the new garage surface (full render OR in-place
+      // refreshGarageSection call), reset the tracker + click-handler
+      // map BEFORE accumulating. Without this, an in-place refresh
+      // appends the new markup to the old surface and old click
+      // handlers stay reachable via clickHandlers.get(...), letting
+      // stale CTAs satisfy later assertions. The detection looks at
+      // the assigned HTML shape — `id="pf2-garage"` (the canonical
+      // garage section id), the `pf2-garage` word-boundary class
+      // family, and the `data-garage-collection-size=` data attribute
+      // are all signals that this assignment IS the garage surface.
+      // renderProfile() / captureSection() already reset before the
+      // top-level render, so during a full render the first garage-
+      // shaped assignment is a no-op; the load-bearing case is the
+      // in-place refresh path.
+      const isGarageSurface =
+        html.includes('id="pf2-garage"')
+        || /\bpf2-garage\b/.test(html)
+        || html.includes('data-garage-collection-size=');
+      if (isGarageSurface) resetRenderedSurface();
+      this._html = html;
       renderedHtml += this._html;
     },
     get innerHTML() { return this._html; },
@@ -134,10 +182,16 @@ function makeEl(selectorHint) {
     addEventListener(type, fn) {
       if (type === 'click' && this._selector && typeof fn === 'function') {
         const sel = this._selector;
-        // Surface gate ONLY for the known simple-id selectors that the
-        // smoke invokes directly. Everything else is captured as before
-        // so dynamic / CSS-escaped per-vehicle wiring is not perturbed.
-        if (SURFACE_AWARE_SELECTORS.has(sel) && !selectorIsRendered(sel)) return;
+        // Surface gate fires for:
+        //   1) the explicit fixed-control whitelist (SURFACE_AWARE_SELECTORS), AND
+        //   2) simple per-vehicle action selectors with safe suffixes
+        //      (isSimpleGarageActionSelector).
+        // Everything else (dynamic / CSS-escaped / complex selectors)
+        // is captured as before so CSS-escaped per-vehicle wiring used
+        // by S109 / S116 / S119 / S121 is not perturbed.
+        const mustBeRendered =
+          SURFACE_AWARE_SELECTORS.has(sel) || isSimpleGarageActionSelector(sel);
+        if (mustBeRendered && !selectorIsRendered(sel)) return;
         clickHandlers.set(sel, fn);
       }
     },
@@ -190,9 +244,8 @@ function reset() {
   local.clear();
   session.clear();
   user.reset();
-  clickHandlers.clear();
   currentHash = '';
-  renderedHtml = '';
+  resetRenderedSurface();
 }
 
 // Serialize the localStorage Map's contents into a deterministic string so
@@ -208,14 +261,12 @@ function snapshotLocalStorage() {
 function renderProfile(hash) {
   currentHash = hash || '#/profile';
   // BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S — clear BOTH the rendered-HTML
-  // tracker AND the click-handler map before each render. Resetting only
-  // the HTML tracker (Codex P2 review on #490) leaves a stale handler
-  // captured during a previous render() reachable via clickHandlers.get
-  // even when the new surface no longer carries that id — bypassing the
-  // surface-aware gate. Clearing clickHandlers here forces every captured
-  // binding to come from THIS render's wireGarageActions pass.
-  renderedHtml = '';
-  clickHandlers.clear();
+  // tracker AND the click-handler map before each full render. The
+  // refresh-aware `set innerHTML` below clears them again whenever an
+  // in-place garage refresh writes new garage markup; these two entry
+  // points cover full-render scenarios so the surface tracker always
+  // starts clean per render.
+  resetRenderedSurface();
   const section = profile();
   return section._html || '';
 }
@@ -1153,6 +1204,35 @@ user.set({
     String(typeof clickHandlers.get('#pf2-garage-make-active-demo-2')));
 }
 
+// ── Scenario 24c — Refresh clears stale click handlers ─────────────────────
+// BD-PROFILE-GARAGE-SMOKE-SURFACE-CLICK-S Codex P2 review on #490 — prove
+// that an in-place refreshGarageSection (fired from inside a make-active
+// click handler) also discards the old surface's click bindings. After
+// making demo-2 active, the demo-2 make-active CTA disappears from the
+// rendered card (the badge replaces it), so the captured make-active
+// handler for demo-2 must no longer be reachable via clickHandlers.get.
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+});
+{
+  renderProfile('#/profile?role=driver&garage=multi');
+  const fn = clickHandlers.get('#pf2-garage-make-active-demo-2');
+  expect('S24c: multi render captures demo-2 make-active handler before refresh',
+    typeof fn === 'function');
+  // Trigger the in-place refreshGarageSection path; this overwrites the
+  // garage section's innerHTML, which fires the refresh-aware reset in
+  // the stub's `set innerHTML`.
+  fn && fn();
+  expect('S24c: make-active in-place refresh clears stale demo-2 make-active handler',
+    typeof clickHandlers.get('#pf2-garage-make-active-demo-2') !== 'function',
+    String(typeof clickHandlers.get('#pf2-garage-make-active-demo-2')));
+}
+
 // ── Scenario 25 — Stale activeVehicleId falls back to legacy ───────────────
 // If the persisted activeVehicleId points to a vehicle that is no longer
 // in the rebuilt collection (e.g. ?garage=multi turned off, so demo-2 is
@@ -1486,6 +1566,9 @@ user.set({
 });
 {
   renderProfile('#/profile');
+  // Surface pin so a missing CTA fails before the handler-capture assertion.
+  expect('S36 surface: persisted garage renders #pf2-garage-make-active-real-1',
+    renderedHtml.includes('id="pf2-garage-make-active-real-1"'));
   const beforeVehicles = JSON.stringify(user.get().driverGarage.vehicles);
   // real-2 is active by default; click make-active on real-1 to flip.
   const fn = clickHandlers.get('#pf2-garage-make-active-real-1');
@@ -1574,9 +1657,9 @@ function captureSection(hash) {
   currentHash = hash || '#/profile';
   // Same hygiene as renderProfile so the per-render surface tracker AND
   // the click-handler map are both consistent regardless of which entry
-  // point a scenario uses.
-  renderedHtml = '';
-  clickHandlers.clear();
+  // point a scenario uses. The refresh-aware `set innerHTML` covers
+  // in-place garage refreshes within the rendered section.
+  resetRenderedSurface();
   return profile();
 }
 
@@ -2124,6 +2207,13 @@ user.set({
 // ── Scenario 57 — Cancel resets the draft + hides the sheet without write. ─
 {
   const section = captureSection('#/profile');
+  // Surface pins for the edit-sheet fixed controls invoked below.
+  expect('S57 surface: edit sheet renders #pf2-garage-edit-cancel',
+    renderedHtml.includes('id="pf2-garage-edit-cancel"'));
+  expect('S57 surface: edit sheet renders #pf2-garage-edit-close',
+    renderedHtml.includes('id="pf2-garage-edit-close"'));
+  expect('S57 surface: edit sheet renders #pf2-garage-edit-backdrop',
+    renderedHtml.includes('id="pf2-garage-edit-backdrop"'));
   clickHandlers.get('#pf2-garage-edit-real-2')?.();
   setField(section, '#pf2-garage-edit-model', 'Garbage');
   const before = snapshotLocalStorage();
@@ -2149,6 +2239,9 @@ user.set({
 // stay byte-equal, sheet stays open. ─────────────────────────────────────
 {
   const section = captureSection('#/profile');
+  // Surface pin for the edit-save fixed control invoked here and in S59.
+  expect('S58 surface: edit sheet renders #pf2-garage-edit-save',
+    renderedHtml.includes('id="pf2-garage-edit-save"'));
   clickHandlers.get('#pf2-garage-edit-real-2')?.();
   setField(section, '#pf2-garage-edit-model', '');
   const before = snapshotLocalStorage();
@@ -3803,6 +3896,9 @@ user.set({
   // Explicit make-active click flow: clicking the make-active button
   // for real-1 sets activeVehicleId='real-1' (via the existing 05D
   // handler) and the next render gives real-1 the active badge.
+  // Surface pin so a missing CTA fails before the handler invocation.
+  expect('S107 surface: garage renders #pf2-garage-make-active-real-1',
+    renderedHtml.includes('id="pf2-garage-make-active-real-1"'));
   clickHandlers.get('#pf2-garage-make-active-real-1')?.();
   expect('S107: make-active set activeVehicleId to "real-1"',
     user.get().driverGarage?.activeVehicleId === 'real-1');
