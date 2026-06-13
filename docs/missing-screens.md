@@ -12,7 +12,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
 | P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | Register `/notifications`, implement screen, wire passenger `#pfp-notif-btn` + driver bell entry-point |
-| P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · also wire existing report CTAs (Order Detail `data-action="report-order"`) |
+| P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · wire inert standalone report CTAs (Order Detail `data-action="report-order"`) · do NOT reroute the in-ride safety report (BD-RIDE-P-07) — preserve in-sheet behavior |
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
 
@@ -91,11 +91,11 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 
 ### BD-AUTH-01 — Phone / OTP verification (existing onboarding flow audit)
 
-**Status: Done · audit.** Phone / OTP is not a net-new missing screen; it already ships inside the onboarding flow. `/onboarding` has two shipped entries today:
+**Status: Done · audit.** Phone / OTP is not a net-new missing screen; it already ships inside the onboarding flow. `/onboarding` has two shipped entries today with **different completion targets** — do not collapse them into a generic "back to welcome or profile caller" hop:
 
 - **First-run welcome path:** `/welcome` → role / permissions → directly to `/feed` (passenger) or `/driver-map` (driver). This path does **not** route through `/onboarding?step=phone`.
-- **Welcome-login entry:** `welcome.js` `Войти` action (≈ lines 310-315) sets `welcomeSeen = true` and calls `go('/onboarding')`, opening the onboarding step host without `?step=phone`.
-- **Profile re-entry:** `profile.js` verification CTAs route into `/onboarding?step=phone` for the phone / OTP step.
+- **Welcome-login full flow (bare `/onboarding`):** `welcome.js` `Войти` action (≈ lines 310-315) sets `welcomeSeen = true` and calls `go('/onboarding')`, opening the onboarding step host without `?step=phone`. On `finish()`, this **full flow** routes the **passenger → `/feed`** and the **driver → `/profile`**. It does **not** return to `/welcome` — describing it as "back to welcome or profile caller" would send a completed login back to the welcome screen.
+- **Profile-side phone re-entry (`/onboarding?step=phone`):** `profile.js` verification CTAs open the verify-only step. This re-entry path returns to profile / back to the caller after the step completes. It is the only branch where "back to caller" applies.
 - Phone / OTP mock lives in `public/src/screens/onboarding.js` and persists `phoneVerified`.
 - BD-ONBOARDING-01 states in `docs/screen-contracts.md` already cover the phone + OTP step.
 - The production app has no registered `/auth` route in `public/src/app.js`.
@@ -189,14 +189,22 @@ Out of scope:
 
 ## P2 — BD-MOD-01 Moderation / Report
 
-The shipped UI already renders report affordances that are not wired today (notably the Order Detail `Пожаловаться` button — `data-action="report-order"` in `public/src/screens/order_detail.js:664` has no click branch). The missing scope must include wiring those existing CTAs into this gate so they do not stay inert after the moderation screen ships.
+This gate is the standalone moderation / report surface. Its scope is the new `/report` (or modal) entry **plus** wiring for shipped inert standalone report CTAs (notably the Order Detail `Пожаловаться` button — `data-action="report-order"` in `public/src/screens/order_detail.js:664` has no click branch). It does **not** absorb the existing in-ride safety report flow.
 
 Required scope:
 
 - register the `/report` route (or report modal) in `public/src/app.js`
 - implement the moderation / report screen
 - wire the Order Detail report CTA (`data-action="report-order"`) — currently rendered without a listener
-- wire any other existing report entry points (e.g. Safety Sheet report link from BD-RIDE-P-07) into the same gate
+- wire any other shipped **standalone** report CTAs that are inert today (similar to the Order Detail report-order button) into the same gate
+
+**Preserve the existing in-ride safety report flow (BD-RIDE-P-07) — do NOT reroute it to `/report`:**
+
+- `openPassengerSafetySheet` switches to the in-sheet report view
+- submit sets `overlay.dataset.report = 'submitted'`
+- «Готово» returns to the safety sheet / ride **without leaving `/active-ride`**
+
+Rewiring that link into `/report` would break the shipped in-ride safety flow. This backlog item is limited to inert standalone report CTAs; the in-ride safety report behavior stays as shipped.
 
 Required states:
 
@@ -213,3 +221,4 @@ Out of scope:
 
 - admin dashboard
 - real moderation backend
+- rerouting the in-ride safety report flow (BD-RIDE-P-07) — that flow is preserved as shipped, in-sheet, on `/active-ride`
