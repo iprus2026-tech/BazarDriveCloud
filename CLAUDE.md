@@ -573,6 +573,63 @@ Checks:           node scripts/check.mjs result
   Safety statement: no runtime code touched
   ```
 
+### Design ingestion bridge
+
+- **Claude Design access boundary**:
+  - Agents must not assume direct authenticated access to `claude.ai/design`.
+  - Shared Claude Design preview links are human-readable references, not agent-readable API sources.
+  - Do not request or store Claude/Anthropic session cookies, tokens, or private browser credentials.
+
+- **Allowed design inputs**:
+  - Exported HTML artifact from Claude Design.
+  - Exported screenshot / image artifact.
+  - User-provided screen description.
+  - Existing repo patterns from `public/styles/cloud.css` and neighboring screens in `public/src/screens/`.
+  - Existing prototype references under `public/prototypes/`.
+
+- **Supported workflows**:
+  1. **Design → export → repo**
+     - User exports HTML from Claude Design.
+     - Agent reads/parses the exported artifact.
+     - Agent ports scoped components/screens into `public/src/screens/*.js` and `public/styles/cloud.css`.
+
+  2. **Missing screen description → implementation**
+     - User describes a missing screen.
+     - Agent implements it using existing Cloud Design patterns from `cloud.css` and neighboring screens.
+     - The PR must keep the screen clearly scoped and pass `node scripts/check.mjs`.
+
+  3. **Repo → prototype → Design**
+     - Agent creates an HTML prototype or screen draft.
+     - User may paste/import it back into Claude Design for visual refinement.
+
+- **Must not**:
+  - Treat a Claude Design share URL as a parseable source of truth.
+  - Claim the agent imported from Claude Design unless an exported artifact was provided.
+  - Mix broad design extraction with unrelated runtime/backend changes.
+  - Promote planned screens as live behavior unless route and screen file exist.
+
+- **Handoff format**:
+  ```text
+  Design source:
+  - exported artifact / user description / existing repo pattern
+
+  Input files:
+  -
+
+  Output files:
+  -
+
+  Pattern source:
+  - cloud.css classes:
+  - neighboring screens:
+
+  Check result:
+  - node scripts/check.mjs
+
+  Boundary:
+  - no direct claude.ai/design access assumed
+  ```
+
 ## Maintenance policy
 
 `CLAUDE.md` is a living project document.
