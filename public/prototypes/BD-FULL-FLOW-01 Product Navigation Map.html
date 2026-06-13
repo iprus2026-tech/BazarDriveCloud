@@ -245,21 +245,23 @@
       <div class="screen-card">
         <div class="screen-id">BD-ONBOARDING-01</div>
         <div class="screen-name">Welcome / Onboarding</div>
-        <div class="screen-route">/</div>
+        <div class="screen-route">/welcome, /onboarding (empty hash → /welcome)</div>
         <div class="screen-states">5 states · welcome → role → permissions → loading → error</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">onboarding.jsx</div>
+        <div class="screen-file">public/src/screens/onboarding.js</div>
+        <div class="screen-note">Codex P2 (PR #495): registered routes are /welcome and /onboarding; literal #/ is not a registered route</div>
       </div>
 
       <div class="flow-arrow">Role select → feed or driver-map</div>
 
-      <div class="screen-card missing">
+      <div class="screen-card audit">
         <div class="screen-id">BD-AUTH-01</div>
-        <div class="screen-name">Phone / SMS Verification</div>
-        <div class="screen-route">/auth</div>
-        <div class="screen-states">~4 states · phone → code → verify → error</div>
-        <span class="screen-badge missing">MISSING</span>
-        <div class="screen-note">UI contract only, no backend</div>
+        <div class="screen-name">Phone / OTP (inside onboarding)</div>
+        <div class="screen-route">/onboarding?step=phone</div>
+        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified</div>
+        <span class="screen-badge audit">AUDIT</span>
+        <div class="screen-file">public/src/screens/onboarding.js</div>
+        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding; profile verification CTAs route to /onboarding?step=phone. No registered /auth route.</div>
       </div>
 
     </div>
@@ -281,7 +283,7 @@
         <div class="screen-route">/map</div>
         <div class="screen-states">9 states (incl. MAP-02 LocationPermission folded)</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">map-home.jsx</div>
+        <div class="screen-file">public/src/screens/map.js</div>
       </div>
 
       <div class="lane-section">Order creation</div>
@@ -292,7 +294,7 @@
         <div class="screen-route">/route-picker</div>
         <div class="screen-states">8 states + live search</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">route-picker.jsx</div>
+        <div class="screen-file">public/src/screens/route_picker.js</div>
       </div>
 
       <div class="screen-card">
@@ -301,7 +303,7 @@
         <div class="screen-route">/route-preview</div>
         <div class="screen-states">5 states</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">route-preview.jsx</div>
+        <div class="screen-file">public/src/screens/route_preview.js</div>
       </div>
 
       <div class="screen-card">
@@ -310,7 +312,7 @@
         <div class="screen-route">/order-map-draft</div>
         <div class="screen-states">6 states</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">order-map-draft.jsx</div>
+        <div class="screen-file">public/src/screens/order_map_draft.js</div>
       </div>
 
       <div class="lane-section">Driver selection</div>
@@ -321,7 +323,7 @@
         <div class="screen-route">/responses</div>
         <div class="screen-states">4 states · list / selected / accepted / empty</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">responses-inbox.jsx</div>
+        <div class="screen-file">public/src/screens/responses.js</div>
       </div>
 
       <div class="lane-section">Active ride</div>
@@ -332,16 +334,17 @@
         <div class="screen-route">/active-ride?role=passenger</div>
         <div class="screen-states">4 stages · enroute → arrived → transit → arriving</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">active-ride.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
       </div>
 
       <div class="screen-card">
         <div class="screen-id">BD-RIDE-P-06</div>
         <div class="screen-name">Cancel Sheet</div>
         <div class="screen-route">/active-ride?role=passenger (modal)</div>
-        <div class="screen-states">7 states incl. NO_SHOW terminal</div>
+        <div class="screen-states">7 states incl. NO_SHOW terminal · cancel completion → /new or /feed; canceled / no-show fallback → /feed</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">cancel-ride.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /map is not the canceled destination in the shipped UI — top / back / feed actions all route to /feed</div>
       </div>
 
       <div class="screen-card">
@@ -350,7 +353,7 @@
         <div class="screen-route">/active-ride?role=passenger (modal)</div>
         <div class="screen-states">4 states · default / report / submitted / emergency</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">safety-sheet.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
       </div>
 
       <div class="screen-card">
@@ -359,7 +362,7 @@
         <div class="screen-route">/active-ride?role=passenger&amp;status=COMPLETED</div>
         <div class="screen-states">7 states · summary → rating → report → receipt</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">ride-complete.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js (production path audit needed for ride-complete)</div>
       </div>
 
       <div class="lane-section">History</div>
@@ -381,7 +384,7 @@
         <div class="screen-route">/profile</div>
         <div class="screen-states">6 states</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">passenger-profile.jsx</div>
+        <div class="screen-file">public/src/screens/profile.js</div>
       </div>
 
     </div>
@@ -403,7 +406,7 @@
         <div class="screen-route">/driver-map</div>
         <div class="screen-states">3 states · ready / not-ready / non-driver</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-map.jsx</div>
+        <div class="screen-file">public/src/screens/driver_map.js</div>
       </div>
 
       <div class="lane-section">Order acceptance</div>
@@ -414,7 +417,7 @@
         <div class="screen-route">/trip-confirmation</div>
         <div class="screen-states">5 states · waiting / driver-confirmed / pax-confirmed / confirmed / error</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">trip-confirmation.jsx</div>
+        <div class="screen-file">public/src/screens/trip_confirmation.js</div>
       </div>
 
       <div class="lane-section">Active ride</div>
@@ -425,7 +428,7 @@
         <div class="screen-route">/active-ride?role=driver</div>
         <div class="screen-states">5 stages · accepted → enroute → arrived → transit → completing</div>
         <span class="screen-badge partial">PARTIAL</span>
-        <div class="screen-file">driver-ride.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride.js</div>
         <div class="screen-note">No error/offline states yet</div>
       </div>
 
@@ -435,17 +438,17 @@
         <div class="screen-route">/active-ride?role=driver (modal)</div>
         <div class="screen-states">11 states</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-sheets.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
       </div>
 
       <div class="screen-card">
         <div class="screen-id">BD-RIDE-D-NOSHOW-01</div>
         <div class="screen-name">Driver No-Show Flow</div>
         <div class="screen-route">/active-ride?role=driver&amp;status=NO_SHOW</div>
-        <div class="screen-states">terminal NO_SHOW stub wired; full 7-state no-show flow is future dedicated issue</div>
+        <div class="screen-states">terminal NO_SHOW stub wired (renderCanceledStub); full 7-state no-show flow is future dedicated issue · wired exits: primary go('/feed'), history go('/profile')</div>
         <span class="screen-badge partial">PARTIAL</span>
-        <div class="screen-file">driver-noshow.jsx</div>
-        <div class="screen-note">Per docs/design-registry.json + docs/screen-contracts.md; no-show reason/confirm/compensation/support/loading/error not wired in runtime</div>
+        <div class="screen-file">public/src/screens/active_ride.js (terminal stub via renderCanceledStub)</div>
+        <div class="screen-note">Codex P2 (PR #495): no /driver-map exit from this state today; reason / confirm / compensation / support / loading / error remain future dedicated issue per docs/design-registry.json + docs/screen-contracts.md</div>
       </div>
 
       <div class="lane-section">Completion / earnings</div>
@@ -456,7 +459,7 @@
         <div class="screen-route">/active-ride?role=driver&amp;status=COMPLETED</div>
         <div class="screen-states">7 states · summary / cash / noncash / shift / loading / closed / empty</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-earnings.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
       </div>
 
       <div class="screen-card">
@@ -465,7 +468,7 @@
         <div class="screen-route">/active-ride?role=driver&amp;status=COMPLETED</div>
         <div class="screen-states">5 states · default / loading / empty / noncash / cash</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-earnings-completed.jsx</div>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
         <div class="screen-note">Closes #401 reference gap</div>
       </div>
 
@@ -474,10 +477,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-RIDE-HISTORY-D-01</div>
         <div class="screen-name">Receipt / Payouts</div>
-        <div class="screen-route">/profile→payouts</div>
+        <div class="screen-route">/profile?role=driver (payouts list source) → /receipt?tripId=... (receipt screen)</div>
         <div class="screen-states">6 states · history / payouts / receipt_cash / receipt_noncash / empty / loading</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-history.jsx</div>
+        <div class="screen-file">list source: public/src/screens/profile.js · receipt screen: public/src/screens/trip_receipt.js</div>
+        <div class="screen-note">Codex P2 (PR #495): "Открыть чек" must target /receipt?tripId=... (trip_receipt.js); profile payouts pane only deep-links receipt rows</div>
       </div>
 
       <div class="lane-section">Profile / dashboard</div>
@@ -488,7 +492,7 @@
         <div class="screen-route">/profile?role=driver</div>
         <div class="screen-states">10 states · 5 tabs</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">driver-dashboard.jsx</div>
+        <div class="screen-file">public/src/screens/profile.js</div>
       </div>
 
       <div class="screen-card">
@@ -497,7 +501,7 @@
         <div class="screen-route">/profile (legacy)</div>
         <div class="screen-states">overview/taxi/docs/pay/security</div>
         <span class="screen-badge legacy">LEGACY</span>
-        <div class="screen-file">profile.jsx</div>
+        <div class="screen-file">public/src/screens/profile.js</div>
         <div class="screen-note">Superseded by D-03</div>
       </div>
 
@@ -531,7 +535,7 @@
         <div class="screen-route">/feed</div>
         <div class="screen-states">5 filters · all / offers / reqs / market / empty</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">feed.jsx</div>
+        <div class="screen-file">public/src/screens/feed.js</div>
       </div>
 
       <div class="screen-card">
@@ -540,7 +544,7 @@
         <div class="screen-route">/new</div>
         <div class="screen-states">per-type · preview · draft-saved · validation · submit-loading — all shipped</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">composer.js</div>
+        <div class="screen-file">public/src/screens/composer.js</div>
         <div class="screen-note">Audit parity only; not a backlog item</div>
       </div>
 
@@ -550,7 +554,7 @@
         <div class="screen-route">/respond</div>
         <div class="screen-states">1 driver-offer sheet · persists kind: passenger_response with driver snapshot</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">respond.js</div>
+        <div class="screen-file">public/src/screens/respond.js</div>
         <div class="screen-note">Driver context (forces success chat link role=driver). Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
       </div>
 
@@ -562,7 +566,7 @@
         <div class="screen-route">/order/&lt;id&gt;</div>
         <div class="screen-states">9 states · pax P1–P4 / drv D1–D4 / semantics X1</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">order-detail.jsx</div>
+        <div class="screen-file">public/src/screens/order_detail.js</div>
       </div>
 
       <div class="lane-section">Chat</div>
@@ -573,7 +577,7 @@
         <div class="screen-route">/chat</div>
         <div class="screen-states">8 + 7b states · inbox pax/drv · thread pax/drv/done · empty · offline · locked</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">chat-flow.jsx</div>
+        <div class="screen-file">public/src/screens/chat.js</div>
       </div>
 
       <div class="lane-section">Rules</div>
@@ -584,7 +588,8 @@
         <div class="screen-route">/rules</div>
         <div class="screen-states">sections / templates</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">profile.jsx</div>
+        <div class="screen-file">public/src/screens/rules.js</div>
+        <div class="screen-note">Codex P2 (PR #495): registered for /rules in public/src/app.js; profile.js is not the runtime owner</div>
       </div>
 
       <div class="lane-section">Missing</div>
@@ -592,9 +597,10 @@
       <div class="screen-card missing">
         <div class="screen-id">BD-SETTINGS-01</div>
         <div class="screen-name">Settings</div>
-        <div class="screen-route">/settings</div>
-        <div class="screen-states">~language / theme / push / account</div>
+        <div class="screen-route">/settings (not registered)</div>
+        <div class="screen-states">~language / theme / push / account · register route, implement screen, wire passenger #pfp-settings-btn + driver gear CTA</div>
         <span class="screen-badge missing">MISSING</span>
+        <div class="screen-note">Codex P2 (PR #495): not already linked from profile headers — missing scope includes wiring the entry points</div>
       </div>
 
       <div class="screen-card missing">
@@ -645,28 +651,28 @@
     <tbody>
       <tr>
         <td class="t-id">BD-ONBOARDING-01</td>
-        <td class="t-route">/</td>
-        <td><code>onboarding.jsx</code></td>
+        <td class="t-route">/welcome, /onboarding</td>
+        <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>5</td>
         <td>Выбрать роль</td>
-        <td>/map or /driver-map</td>
+        <td>/map or /driver-map (empty hash → /welcome)</td>
       </tr>
-      <tr>
+      <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-AUTH-01</td>
-        <td class="t-route">/auth</td>
-        <td><code>—</code></td>
+        <td class="t-route">/onboarding?step=phone</td>
+        <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
-        <td class="t-missing">Missing</td>
-        <td>~4</td>
+        <td class="t-audit">Done · audit</td>
+        <td>phone / OTP mock shipped; persists phoneVerified</td>
         <td>Войти по телефону</td>
-        <td>/ (onboarding)</td>
+        <td>/onboarding next step (no separate /auth screen)</td>
       </tr>
       <tr>
         <td class="t-id">BD-FEED-01</td>
         <td class="t-route">/feed</td>
-        <td><code>feed.jsx</code></td>
+        <td><code>public/src/screens/feed.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>5 filters</td>
@@ -676,7 +682,7 @@
       <tr>
         <td class="t-id">BD-COMPOSER-01</td>
         <td class="t-route">/new</td>
-        <td><code>composer.js</code></td>
+        <td><code>public/src/screens/composer.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done · audit</td>
         <td>per-type / preview / draft-saved / validation / submit-loading (shipped)</td>
@@ -686,7 +692,7 @@
       <tr>
         <td class="t-id">BD-ORDER-DETAIL-01</td>
         <td class="t-route">/order/&lt;id&gt;</td>
-        <td><code>order-detail.jsx</code></td>
+        <td><code>public/src/screens/order_detail.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>9 (role-split)</td>
@@ -696,7 +702,7 @@
       <tr>
         <td class="t-id">BD-RESPOND-01</td>
         <td class="t-route">/respond</td>
-        <td><code>respond.js</code></td>
+        <td><code>public/src/screens/respond.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>1 driver-offer sheet</td>
@@ -706,7 +712,7 @@
       <tr>
         <td class="t-id">BD-FLOW-INBOX-01</td>
         <td class="t-route">/responses</td>
-        <td><code>responses-inbox.jsx</code></td>
+        <td><code>public/src/screens/responses.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>4</td>
@@ -716,7 +722,7 @@
       <tr>
         <td class="t-id">BD-MAP-01</td>
         <td class="t-route">/map</td>
-        <td><code>map-home.jsx</code></td>
+        <td><code>public/src/screens/map.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>9</td>
@@ -726,7 +732,7 @@
       <tr>
         <td class="t-id">BD-MAP-03</td>
         <td class="t-route">/route-picker</td>
-        <td><code>route-picker.jsx</code></td>
+        <td><code>public/src/screens/route_picker.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>8 + live</td>
@@ -736,7 +742,7 @@
       <tr>
         <td class="t-id">BD-MAP-04</td>
         <td class="t-route">/route-preview</td>
-        <td><code>route-preview.jsx</code></td>
+        <td><code>public/src/screens/route_preview.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>5</td>
@@ -746,7 +752,7 @@
       <tr>
         <td class="t-id">BD-MAP-05</td>
         <td class="t-route">/order-map-draft</td>
-        <td><code>order-map-draft.jsx</code></td>
+        <td><code>public/src/screens/order_map_draft.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>6</td>
@@ -756,7 +762,7 @@
       <tr>
         <td class="t-id">BD-CONFIRM-01</td>
         <td class="t-route">/trip-confirmation</td>
-        <td><code>trip-confirmation.jsx</code></td>
+        <td><code>public/src/screens/trip_confirmation.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>5</td>
@@ -766,7 +772,7 @@
       <tr>
         <td class="t-id">BD-CHAT-02</td>
         <td class="t-route">/chat</td>
-        <td><code>chat-flow.jsx</code></td>
+        <td><code>public/src/screens/chat.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>8 + 7b</td>
@@ -776,7 +782,7 @@
       <tr>
         <td class="t-id">BD-RIDE-P-01…04</td>
         <td class="t-route">/active-ride?role=passenger</td>
-        <td><code>active-ride.jsx</code></td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>4 stages</td>
@@ -786,7 +792,7 @@
       <tr>
         <td class="t-id">BD-RIDE-P-05</td>
         <td class="t-route">…&amp;status=COMPLETED</td>
-        <td><code>ride-complete.jsx</code></td>
+        <td><code>public/src/screens/active_ride_passenger.js</code> (production path audit needed)</td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>7</td>
@@ -796,17 +802,17 @@
       <tr>
         <td class="t-id">BD-RIDE-P-06</td>
         <td class="t-route">…?role=passenger (modal)</td>
-        <td><code>cancel-ride.jsx</code></td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>7</td>
         <td>Отменить поездку</td>
-        <td>/map (CANCELED)</td>
+        <td>cancel completion → /new or /feed; canceled / no-show fallback → /feed (top / back / feed)</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-P-07</td>
         <td class="t-route">…?role=passenger (modal)</td>
-        <td><code>safety-sheet.jsx</code></td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>4</td>
@@ -816,7 +822,7 @@
       <tr>
         <td class="t-id">BD-DRIVER-02</td>
         <td class="t-route">/driver-map</td>
-        <td><code>driver-map.jsx</code></td>
+        <td><code>public/src/screens/driver_map.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>3</td>
@@ -826,7 +832,7 @@
       <tr>
         <td class="t-id">BD-RIDE-D</td>
         <td class="t-route">/active-ride?role=driver</td>
-        <td><code>driver-ride.jsx</code></td>
+        <td><code>public/src/screens/active_ride.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-partial">Partial</td>
         <td>5 stages</td>
@@ -836,7 +842,7 @@
       <tr>
         <td class="t-id">BD-RIDE-D-SHEETS-01</td>
         <td class="t-route">…?role=driver (modal)</td>
-        <td><code>driver-sheets.jsx</code></td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>11</td>
@@ -846,17 +852,17 @@
       <tr>
         <td class="t-id">BD-RIDE-D-NOSHOW-01</td>
         <td class="t-route">…?status=NO_SHOW</td>
-        <td><code>driver-noshow.jsx</code></td>
+        <td><code>public/src/screens/active_ride.js</code> (terminal stub via renderCanceledStub)</td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-partial">Partial</td>
         <td>terminal stub + future full no-show flow</td>
         <td>Показать terminal NO_SHOW / future no-show flow</td>
-        <td>/driver-map</td>
+        <td>primary exit → /feed; history exit → /profile (no /driver-map exit today)</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-D-09</td>
         <td class="t-route">…?status=COMPLETED</td>
-        <td><code>driver-earnings.jsx</code></td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>7</td>
@@ -866,7 +872,7 @@
       <tr>
         <td class="t-id">BD-RIDE-D-11</td>
         <td class="t-route">…?status=COMPLETED</td>
-        <td><code>driver-earnings-completed.jsx</code></td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>5</td>
@@ -875,18 +881,18 @@
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-HISTORY-D-01</td>
-        <td class="t-route">/profile→payouts</td>
-        <td><code>driver-history.jsx</code></td>
+        <td class="t-route">/profile?role=driver (payouts list) → /receipt?tripId=...</td>
+        <td>list source: <code>public/src/screens/profile.js</code> · receipt: <code>public/src/screens/trip_receipt.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>6</td>
         <td>Открыть чек</td>
-        <td>/profile?role=driver</td>
+        <td>/receipt?tripId=... (receipt screen)</td>
       </tr>
       <tr>
         <td class="t-id">BD-PROFILE-PASSENGER-01</td>
         <td class="t-route">/profile</td>
-        <td><code>passenger-profile.jsx</code></td>
+        <td><code>public/src/screens/profile.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>6</td>
@@ -896,7 +902,7 @@
       <tr>
         <td class="t-id">BD-PROFILE-D-03</td>
         <td class="t-route">/profile?role=driver</td>
-        <td><code>driver-dashboard.jsx</code></td>
+        <td><code>public/src/screens/profile.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>10 / 5 tabs</td>
@@ -906,7 +912,7 @@
       <tr>
         <td class="t-id">BD-RULES-01</td>
         <td class="t-route">/rules</td>
-        <td><code>profile.jsx</code></td>
+        <td><code>public/src/screens/rules.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>sections</td>
@@ -916,7 +922,7 @@
       <tr style="opacity:0.5">
         <td class="t-id">BD-PROFILE-01</td>
         <td class="t-route">/profile (legacy)</td>
-        <td><code>profile.jsx</code></td>
+        <td><code>public/src/screens/profile.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-legacy">Legacy</td>
         <td>5 tabs</td>
@@ -945,13 +951,13 @@
       </tr>
       <tr style="background:rgba(248,113,113,0.04)">
         <td class="t-id">BD-SETTINGS-01</td>
-        <td class="t-route">/settings</td>
+        <td class="t-route">/settings (not registered)</td>
         <td><code>—</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-missing">Missing</td>
         <td>~6</td>
         <td>Сохранить</td>
-        <td>—</td>
+        <td>register /settings; wire passenger #pfp-settings-btn + driver gear CTA</td>
       </tr>
       <tr style="background:rgba(248,113,113,0.04)">
         <td class="t-id">BD-NOTIF-01</td>
@@ -991,31 +997,19 @@
   <div class="missing-grid">
 
     <div class="missing-card">
-      <div class="missing-card-id">BD-AUTH-01 · P2</div>
-      <div class="missing-card-name">Phone / SMS Verification</div>
-      <div class="missing-card-desc">
-        Onboarding completeness. Phone input → SMS code → verify → error/retry.
-        UI contract only — no real SMS backend. Returns to role selection.
-      </div>
-      <div class="missing-card-meta">
-        <span class="priority p2">P2</span>
-        <span>~4 states</span>
-        <span>both roles</span>
-        <span>blocks: auth flow</span>
-      </div>
-    </div>
-
-    <div class="missing-card">
       <div class="missing-card-id">BD-SETTINGS-01 · P2</div>
       <div class="missing-card-name">Settings</div>
       <div class="missing-card-desc">
-        Language, push notifications toggle, account actions (logout / delete).
-        Linked from both passenger and driver profile headers.
+        Codex P2 (PR #495): Settings is <b>not</b> already linked from profile headers.
+        Missing scope: register <code>/settings</code> route, implement screen, wire passenger profile settings CTA
+        (<code>#pfp-settings-btn</code>) and driver profile settings / gear CTA. Logout / delete / account actions remain UI-only
+        unless a future backend issue says otherwise.
       </div>
       <div class="missing-card-meta">
         <span class="priority p2">P2</span>
         <span>~6 states</span>
         <span class="role-chip role-both">BOTH</span>
+        <span>+ profile-entry wiring</span>
       </div>
     </div>
 
@@ -1089,7 +1083,7 @@
         <td><span class="priority p1">P1</span></td>
         <td class="t-id">BD-RIDE-D (error states)</td>
         <td>Driver active ride is partial — missing error/offline stages</td>
-        <td>driver-ride.jsx</td>
+        <td>public/src/screens/active_ride.js</td>
         <td>extend existing gate</td>
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
@@ -1102,7 +1096,7 @@
       <tr style="background:rgba(245,158,11,0.05)">
         <td><span class="priority p-audit">AUDIT</span></td>
         <td class="t-id">BD-COMPOSER-01 (states)</td>
-        <td>Per-type / preview / draft-saved / validation / submit-loading already shipped in composer.js — audit parity only</td>
+        <td>Per-type / preview / draft-saved / validation / submit-loading already shipped in public/src/screens/composer.js — audit parity only</td>
         <td>open only on confirmed gap</td>
         <td>audit only</td>
       </tr>
@@ -1113,18 +1107,18 @@
         <td>open only on confirmed gap</td>
         <td>audit only</td>
       </tr>
-      <tr>
-        <td><span class="priority p2">P2</span></td>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td><span class="priority p-audit">AUDIT</span></td>
         <td class="t-id">BD-AUTH-01</td>
-        <td>Onboarding completeness; UI contract only, no backend</td>
-        <td>onboarding.jsx → /auth link</td>
-        <td>1 gate, 4 states</td>
+        <td>Phone / OTP already ships inside onboarding (public/src/screens/onboarding.js, persists phoneVerified). Profile verification CTAs route to /onboarding?step=phone. Audit / reuse only — no new /auth screen unless product confirms a dedicated surface.</td>
+        <td>open only on confirmed gap</td>
+        <td>audit only</td>
       </tr>
       <tr>
         <td><span class="priority p2">P2</span></td>
         <td class="t-id">BD-SETTINGS-01</td>
-        <td>System completeness; linked from both profile screens</td>
-        <td>profile header → /settings</td>
+        <td>Codex P2 (PR #495): /settings is not registered and profile headers are not wired. Missing scope = register /settings, implement screen, wire passenger #pfp-settings-btn + driver gear CTA. Logout / delete / account UI-only.</td>
+        <td>register route + wire profile CTAs</td>
         <td>1 gate, 6 states</td>
       </tr>
       <tr>
@@ -1137,7 +1131,7 @@
       <tr>
         <td><span class="priority p2">P2</span></td>
         <td class="t-id">BD-MOD-01</td>
-        <td>Standalone report surface; ReasonList from cancel-ride.jsx reusable</td>
+        <td>Standalone report surface; ReasonList from cancel sheet (public/src/screens/active_ride_passenger.js) reusable</td>
         <td>BD-RIDE-P-07 report link</td>
         <td>1 gate, 3 states</td>
       </tr>
@@ -1150,7 +1144,7 @@
 <div class="page-footer">
   <span>BD-FULL-FLOW-01 · Product Navigation Map</span>
   <span>Cloud Design artifact · design reference only</span>
-  <span>29 screens designed · 5 missing · 2 partial · 3 audit / consolidation</span>
+  <span>29 screens designed · 4 missing · 2 partial · 4 audit / consolidation</span>
   <span>React/Vite sandbox: /home/claude/bazardrive (not in this PR)</span>
   <span>Generated from chats/chat5.md design session</span>
 </div>
