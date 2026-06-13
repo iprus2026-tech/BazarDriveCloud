@@ -219,6 +219,81 @@ If a script is missing, report that clearly instead of inventing a result.
 - Do not broaden a docs-only task into runtime implementation.
 - Do not merge without explicit user approval.
 
+## Agent roles
+
+Each role below has a specific scope. An agent must not expand into another role's territory.
+
+### Authority order
+
+When instructions conflict, earlier items win:
+
+1. User instruction
+2. GitHub issue / PR scope
+3. CLAUDE.md
+4. `docs/screen-contracts.md` and product contracts
+5. `scripts/check.mjs` / `dispatcher.mjs`
+6. Review comments
+7. Individual agent role notes
+
+No agent may override:
+- explicit user constraints
+- issue scope
+- runtime safety rules
+- failing checks
+- review blockers
+
+### Operational summary
+
+dispatcher-agent routes the work,
+implementation-agent performs the scoped change,
+review-agent catches defects,
+smoke-agent guards regressions,
+css-ux-agent preserves Cloud Design parity,
+sw-offline-agent protects the PWA/offline layer,
+docs-contract-agent keeps the project map and contracts aligned.
+
+### dispatcher-agent
+- **Purpose**: reads `node scripts/dispatcher.mjs` and `node scripts/check.mjs` output; routes work to the correct role; reports repo readiness.
+- **Typical areas**: `scripts/dispatcher.mjs` output, check status, issue/PR scope definition.
+- **Must not**: edit runtime code, CSS, docs, or smoke scripts while dispatching.
+- **Handoff**: target file/area, risk level, role task list, working-tree status.
+
+### review-agent
+- **Purpose**: interprets PR review comments; maps each comment to a minimal, in-scope fix decision.
+- **Typical areas**: GitHub PR review threads, changed files in the diff.
+- **Must not**: widen fix scope beyond the items named in the review; open new issues or touch unrelated code.
+- **Handoff**: per review item — decision (fix / no-fix / clarify), proposed change, verification method.
+
+### implementation-agent
+- **Purpose**: makes the scoped code or docs change named by the issue or PR body.
+- **Typical areas**: files explicitly listed in the task.
+- **Must not**: touch unrelated screens, introduce backend assumptions, change CSP, modify SW precache, or alter runtime flows not in scope.
+- **Handoff**: files changed, `git diff --stat`, check result, proposed commit message.
+
+### smoke-agent
+- **Purpose**: writes and maintains regression guard pins in `scripts/smoke-*.mjs`.
+- **Typical areas**: `scripts/smoke-*.mjs`, `scripts/check.mjs`.
+- **Must not**: add broad brittle snapshot tests; import DOM or network APIs; write pins that fail on unrelated changes.
+- **Handoff**: invariant guarded, smoke file name, new pin label, `node scripts/check.mjs` result.
+
+### css-ux-agent
+- **Purpose**: maintains Cloud Design parity and visual polish.
+- **Typical areas**: `public/styles/cloud.css`, affected screen markup in `public/src/screens/*.js`.
+- **Must not**: change business logic, storage contracts, router behavior, or SW precache.
+- **Handoff**: visual intent, manual test routes, before/after CSS notes.
+
+### sw-offline-agent
+- **Purpose**: keeps the PWA cache, Service Worker, and offline/installability contract sound.
+- **Typical areas**: `public/sw.js`, `public/manifest.webmanifest`, PRECACHE list.
+- **Must not**: cache external Mapbox, API, or tile requests; change app logic.
+- **Handoff**: VERSION bump, PRECACHE diff, offline behavior notes, installability notes.
+
+### docs-contract-agent
+- **Purpose**: owns documentation and screen/product contracts.
+- **Typical areas**: `CLAUDE.md`, `docs/*`, `README.md`, `ROADMAP.md`.
+- **Must not**: change runtime code in docs-only tasks; invent routes or behavior not yet shipped.
+- **Handoff**: changed sections, contract notes, downstream implementation notes.
+
 ## Maintenance policy
 
 `CLAUDE.md` is a living project document.
