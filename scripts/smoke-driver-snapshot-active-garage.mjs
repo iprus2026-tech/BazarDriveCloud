@@ -480,9 +480,10 @@ user.set({
     beforeRaw === afterRaw, `before=${beforeRaw.length}b after=${afterRaw.length}b`);
 }
 
-// ── Scenario 14 — BD-PROFILE-D-05F: stale `activeVehicleId` against the
-// persisted collection falls back to the first persisted vehicle (NOT to
-// the legacy car). The saved id stays intact so the previous selection
+// ── Scenario 14 — BD-PROFILE-GARAGE-ARCHIVE-I2 contract alignment.
+// Stale `activeVehicleId` against the persisted collection now resolves
+// to NO active vehicle (no silent promotion). `getUserVehicle` returns
+// null, and the saved id stays intact so the previous selection
 // re-activates when the matching vehicle reappears. ──────────────────────
 reset();
 user.set({
@@ -502,11 +503,8 @@ user.set({
 {
   const u = user.get();
   const v = getUserVehicle(u);
-  // Fallback: first valid persisted vehicle (real-2), NOT the legacy car.
-  expect('S14: stale activeVehicleId falls back to the FIRST persisted vehicle',
-    v?.name === 'Toyota Prius', String(v?.name));
-  expect('S14: stale activeVehicleId does NOT fall back to the legacy car',
-    v?.name !== 'Hyundai Solaris');
+  expect('S14: stale activeVehicleId resolves to null (no silent promotion)',
+    v === null, String(v?.name));
   expect('S14: stale activeVehicleId is PRESERVED (resolver is read-only)',
     user.get().driverGarage?.activeVehicleId === 'ghost-99');
 }

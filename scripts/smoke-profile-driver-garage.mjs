@@ -1435,8 +1435,11 @@ user.set({
     !slice.includes('id="pf2-garage-active-real-1"'));
 }
 
-// ── Scenario 32 — Stale activeVehicleId falls back to the FIRST persisted
-// vehicle (NOT to the legacy car). The saved id stays intact. ─────────────
+// ── Scenario 32 — BD-PROFILE-GARAGE-ARCHIVE-I2 contract alignment.
+// Stale `activeVehicleId` with a persisted collection now resolves to
+// NO active vehicle (no silent promotion). Both cards render as make-
+// active candidates; the saved id stays intact so the previous
+// selection re-activates when the matching vehicle reappears. ────────────
 reset();
 user.set({
   onboarded: true, role: 'driver',
@@ -1454,10 +1457,15 @@ user.set({
 });
 {
   const slice = garageSlice(renderProfile('#/profile'));
-  expect('S32: stale id falls back to the FIRST persisted vehicle (real-2 active)',
-    slice.includes('id="pf2-garage-active-real-2"'));
+  expect('S32: stale id does NOT silently promote real-2 to active',
+    !slice.includes('id="pf2-garage-active-real-2"'));
+  expect('S32: stale id does NOT silently promote real-3 to active',
+    !slice.includes('id="pf2-garage-active-real-3"'));
   expect('S32: stale id does NOT fall back to the legacy car',
     !slice.includes('data-vehicle="legacy-1"'));
+  expect('S32: both persisted cards render as make-active candidates',
+    slice.includes('id="pf2-garage-make-active-real-2"')
+    && slice.includes('id="pf2-garage-make-active-real-3"'));
   expect('S32: stale activeVehicleId is PRESERVED (resolver is read-only)',
     user.get().driverGarage?.activeVehicleId === 'ghost-99',
     String(user.get().driverGarage?.activeVehicleId));
@@ -4155,19 +4163,21 @@ user.set({
     typeof clickHandlers.get('#pf2-garage-restore-confirm-has\\:colon\\ space') === 'function');
 }
 
-// ── Scenario 110 — BD-PROFILE-D-05J Codex P2 #1 (round 2): normal
-// persisted garage with `activeVehicleId: null` still resolves the
-// first eligible (non-restored) vehicle. The previous round's
-// _synthesized-only fallback broke this — every add-without-makeActive
-// landed without an active badge. This scenario locks down the
-// recovered first-fallback for the add-flow. ─────────────────────────────
+// ── Scenario 110 — BD-PROFILE-GARAGE-ARCHIVE-I2 contract alignment.
+// Normal persisted garage with `activeVehicleId: null` resolves to NO
+// active vehicle (no silent promotion). The card renders as a make-
+// active candidate; the user must explicitly click «Сделать активной»
+// to set an active selection. Previously the first-eligible fallback
+// silently promoted real-1; the contract now requires explicit
+// activation after every archive / add-without-make-active. ──────────────
 reset();
 user.set({
   onboarded: true, role: 'driver',
   firstName: 'Иван', lastName: 'Драйвер',
   phone: '9001234567', phoneVerified: true,
   // No legacy vehicleMake/Model fields → no synthesised legacy entry
-  // can grant the fallback. The first-eligible filter must do it.
+  // can grant the fallback. Under the I2 contract no other branch
+  // promotes a persisted vehicle without an explicit make-active.
   driverGarage: {
     activeVehicleId: null,
     vehicles: [
@@ -4177,11 +4187,13 @@ user.set({
 });
 {
   const slice = garageSlice(renderProfile('#/profile'));
-  expect('S110: normal persisted (no makeActive) gets the active-current span via first-eligible fallback',
-    slice.includes('id="pf2-garage-active-real-1"'));
+  expect('S110: persisted real-1 is NOT silently promoted to active',
+    !slice.includes('id="pf2-garage-active-real-1"'));
+  expect('S110: persisted real-1 renders as a make-active candidate',
+    slice.includes('id="pf2-garage-make-active-real-1"'));
   const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
-  expect('S110: resolveActiveGarageVehicle returns the first eligible non-restored vehicle',
-    resolveFn(user.get())?.id === 'real-1', String(resolveFn(user.get())?.id));
+  expect('S110: resolveActiveGarageVehicle returns null (no explicit active selection)',
+    resolveFn(user.get()) === null, String(resolveFn(user.get())?.id));
 }
 
 // ── Scenario 111 — BD-PROFILE-D-05J Codex P2 #2 (round 2): synthesised
@@ -4358,14 +4370,15 @@ user.set({
     !('restoredFromArchive' in (user.get().driverGarage?.vehicles?.[0] || {})));
 
   // Simulate a later null saved id (e.g., archive of a different
-  // vehicle elsewhere clearing the active selection) — the resolver's
-  // first-eligible fallback must now SELECT real-1 because the marker
-  // is gone.
+  // vehicle elsewhere clearing the active selection). Under the
+  // BD-PROFILE-GARAGE-ARCHIVE-I2 contract alignment, no silent
+  // promotion fires — resolveActiveGarageVehicle returns null and the
+  // user must explicitly re-pick.
   const cur = user.get().driverGarage || {};
   user.set({ driverGarage: { ...cur, activeVehicleId: null } });
   const { resolveActiveGarageVehicle: resolveFn } = await import('../public/src/garage.js');
-  expect('S114: post-clear marker, null-saved fallback picks real-1 again',
-    resolveFn(user.get())?.id === 'real-1',
+  expect('S114: post-clear marker, null-saved resolver returns null (no silent promotion)',
+    resolveFn(user.get()) === null,
     String(resolveFn(user.get())?.id));
 }
 
@@ -4747,6 +4760,212 @@ user.set({
       `S121: wireGarageActions has NO raw \${id}/\${aid} interpolation for ${re.source}`,
       !re.test(bodyCode));
   }
+}
+
+// ── BD-PROFILE-GARAGE-ARCHIVE-I2 — contract-alignment smoke block ─────────
+// Task A–F: docs pins + active-archive render guard + resolver no-active
+// pin + archived-hidden guard + legacy-non-resurrection guard +
+// cross-surface guard + non-scope source guard on garage.js.
+
+// ── Scenario 122 (Task A) — docs/screen-contracts.md carries the I2
+// contract phrases. Row-scoped scan via the section heading so unrelated
+// rows that legitimately mention any of these phrases don't false-
+// positive against the alignment section. ───────────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const contracts = readFileSync(join(projectRoot, 'docs/screen-contracts.md'), 'utf8');
+  const startIdx = contracts.indexOf('### BD-PROFILE-GARAGE-ARCHIVE-I2');
+  const endIdx = startIdx >= 0 ? contracts.indexOf('### ', startIdx + 1) : -1;
+  const section = startIdx >= 0
+    ? contracts.slice(startIdx, endIdx > 0 ? endIdx : undefined)
+    : '';
+  expect('S122: BD-PROFILE-GARAGE-ARCHIVE-I2 section located in screen-contracts.md',
+    section.length > 0, String(section.length));
+  const REQUIRED_PHRASES = [
+    'clears `activeVehicleId`',                   // archive clears active id
+    'No silent promotion',                        // no-silent-promotion field name
+    'active garage list',                         // archived hidden from default list
+    'Legacy fallback non-resurrection',           // legacy materialisation behavior
+    'BD-PROFILE-GARAGE-READY-J',                  // documents/readiness deferred
+  ];
+  for (const phrase of REQUIRED_PHRASES) {
+    expect(`S122: I2 section contains "${phrase}"`,
+      section.includes(phrase));
+  }
+  // Negative pin — the section must NOT say active-vehicle archive is
+  // forbidden (the shipped contract allows it; the helper clears
+  // activeVehicleId rather than refusing).
+  expect('S122: I2 section does NOT say active vehicle archive is forbidden',
+    !/forbid(s|den)\s+(?:archiv|active|the active)/i.test(section));
+}
+
+// ── Scenario 123 (Task B + B2 + C) — Active archive render guard +
+// resolver no-active guard + archived-hidden guard. Seed real-1 active +
+// real-2 non-active, archive real-1, then assert:
+//   • real-1 is soft-archived,
+//   • activeVehicleId is cleared by the helper,
+//   • real-2 is NOT silently promoted,
+//   • no active badge anywhere,
+//   • real-2 renders as a make-active candidate,
+//   • buildGarageVehicles has no vehicle with status === 'active',
+//   • resolveActiveGarageVehicle returns null,
+//   • resolveActiveGarageVehicleId returns null,
+//   • archived real-1 does not appear in the active list. ─────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('real-1');
+  expect('S123: archived real-1 carries archived: true',
+    user.get().driverGarage?.vehicles?.[0]?.archived === true);
+  expect('S123: activeVehicleId cleared to null by the active-archive helper',
+    user.get().driverGarage?.activeVehicleId === null);
+  // Resolver (B2).
+  const { buildGarageVehicles, resolveActiveGarageVehicle, resolveActiveGarageVehicleId }
+    = await import('../public/src/garage.js');
+  const vehicles = buildGarageVehicles(user.get());
+  expect('S123: buildGarageVehicles has no vehicle with status === "active"',
+    vehicles.every((v) => v.status !== 'active'),
+    vehicles.map((v) => `${v.id}=${v.status}`).join(','));
+  const real2 = vehicles.find((v) => v.id === 'real-2');
+  expect('S123: real-2 status === "available" in the rebuilt collection',
+    real2?.status === 'available', String(real2?.status));
+  expect('S123: resolveActiveGarageVehicle returns null (no silent promotion)',
+    resolveActiveGarageVehicle(user.get()) === null,
+    String(resolveActiveGarageVehicle(user.get())?.id));
+  expect('S123: resolveActiveGarageVehicleId returns null',
+    resolveActiveGarageVehicleId(user.get(), vehicles) === null,
+    String(resolveActiveGarageVehicleId(user.get(), vehicles)));
+  // Render (B + C).
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S123: render emits no active-current span anywhere',
+    !/id="pf2-garage-active-/.test(slice));
+  expect('S123: real-2 renders as a make-active candidate',
+    slice.includes('id="pf2-garage-make-active-real-2"'));
+  expect('S123: archived real-1 is NOT in the active list',
+    !/<article class="pf2-garage__car[^"]*"[^>]*data-vehicle="real-1"/.test(slice));
+  expect('S123: archived real-1 has no make-active button',
+    !slice.includes('id="pf2-garage-make-active-real-1"'));
+  expect('S123: archived count surfaces "В архиве: 1" hint',
+    slice.includes('В архиве: 1'));
+}
+
+// ── Scenario 124 (Task D) — Legacy fallback non-resurrection guard.
+// Archive the synthesised legacy fallback; the next render must NOT
+// resurrect a `legacy-1` active card from the legacy user fields.
+// Re-asserts the shipped 05I materialisation pin under the I2
+// contract-alignment label. ──────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // intentionally no driverGarage.vehicles — pure legacy fallback render
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  archiveFn('legacy-1');
+  const persisted = user.get().driverGarage?.vehicles;
+  expect('S124: archived legacy materialised into driverGarage.vehicles',
+    Array.isArray(persisted) && persisted.length === 1 && persisted[0].archived === true);
+  // Legacy user fields preserved verbatim.
+  expect('S124: legacy vehicleMake preserved on the user record',
+    user.get().vehicleMake === 'Hyundai');
+  expect('S124: legacy vehicleModel preserved on the user record',
+    user.get().vehicleModel === 'Solaris');
+  expect('S124: legacy vehiclePlate preserved on the user record',
+    user.get().vehiclePlate === 'А 482 МР 77');
+  // Re-render: legacy does NOT resurrect as an active card.
+  const slice = garageSlice(renderProfile('#/profile'));
+  expect('S124: re-render does NOT resurrect a legacy-1 active card',
+    !slice.includes('id="pf2-garage-active-legacy-1"'));
+  expect('S124: re-render carries the empty-state modifier',
+    slice.includes('pf2-garage--empty'));
+  expect('S124: re-render advertises data-garage-archived-count="1"',
+    slice.includes('data-garage-archived-count="1"'));
+}
+
+// ── Scenario 125 (Task F) — Non-scope source guard on public/src/garage.js.
+// Aligns with the BD-PROFILE-GARAGE-ARCHIVE-I2 boundary: garage.js stays a
+// pure read-only resolver and may not pull in cross-surface or out-of-
+// scope modules. ────────────────────────────────────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const garageSrc = readFileSync(join(projectRoot, 'public/src/garage.js'), 'utf8');
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const garageCode = stripComments(garageSrc);
+  // Forbidden module imports / bare references in code (comments
+  // legitimately mention some of these symbols for documentation).
+  const FORBIDDEN_IMPORTS = [
+    'mapbox',
+    'active_ride',
+    'ride_state',
+    'trip_receipt',
+    'ride_history',
+    'screens/respond',
+    'driver_offer_store',
+    'documents',
+    'readiness',
+  ];
+  for (const needle of FORBIDDEN_IMPORTS) {
+    const pattern = new RegExp(`from\\s*['"][^'"]*${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^'"]*['"]`);
+    expect(`S125: garage.js does NOT import from "${needle}"`,
+      !pattern.test(garageCode));
+  }
+  // Forbidden runtime calls (cross-surface or out-of-scope writers).
+  const FORBIDDEN_CALLS = [
+    'saveActiveRide',
+    'saveRideHistoryEntry',
+    'createRideOrder',
+    'acceptCanonicalRideOrder',
+    'acceptNearbyOrder',
+    'updateTripStatus',
+  ];
+  for (const fn of FORBIDDEN_CALLS) {
+    const pattern = new RegExp(`\\b${fn}\\s*\\(`);
+    expect(`S125: garage.js does NOT call ${fn}() (read-only resolver)`,
+      !pattern.test(garageCode));
+  }
+  // Forbidden storage keys.
+  const FORBIDDEN_KEYS = [
+    'bazardrive.active_ride.v1',
+    'bazardrive.responses.v1',
+    'bazardrive.ride_history.v1',
+    'bazardrive.driver_receipts.v1',
+    'bazardrive.respond.v1',
+  ];
+  for (const k of FORBIDDEN_KEYS) {
+    const pattern = new RegExp(k.replace(/\./g, '\\.'));
+    expect(`S125: garage.js does NOT reference "${k}"`,
+      !pattern.test(garageCode));
+  }
+  // No raw localStorage / sessionStorage writes (canonical writer is
+  // owned by state.js).
+  expect('S125: garage.js does NOT call localStorage.setItem directly',
+    !/\blocalStorage\s*\.\s*setItem\s*\(/.test(garageCode));
+  expect('S125: garage.js does NOT call sessionStorage.setItem directly',
+    !/\bsessionStorage\s*\.\s*setItem\s*\(/.test(garageCode));
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
