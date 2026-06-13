@@ -12,7 +12,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
 | P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | Register `/notifications`, implement screen, wire passenger `#pfp-notif-btn` + driver bell entry-point |
-| P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface |
+| P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · also wire existing report CTAs (Order Detail `data-action="report-order"`) |
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
 
@@ -91,11 +91,13 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 
 ### BD-AUTH-01 — Phone / OTP verification (existing onboarding flow audit)
 
-**Status: Done · audit.** Phone / OTP is not a net-new missing screen; it already ships inside the onboarding flow:
+**Status: Done · audit.** Phone / OTP is not a net-new missing screen; it already ships inside the onboarding flow. `/onboarding` has two shipped entries today:
 
+- **First-run welcome path:** `/welcome` → role / permissions → directly to `/feed` (passenger) or `/driver-map` (driver). This path does **not** route through `/onboarding?step=phone`.
+- **Welcome-login entry:** `welcome.js` `Войти` action (≈ lines 310-315) sets `welcomeSeen = true` and calls `go('/onboarding')`, opening the onboarding step host without `?step=phone`.
+- **Profile re-entry:** `profile.js` verification CTAs route into `/onboarding?step=phone` for the phone / OTP step.
 - Phone / OTP mock lives in `public/src/screens/onboarding.js` and persists `phoneVerified`.
 - BD-ONBOARDING-01 states in `docs/screen-contracts.md` already cover the phone + OTP step.
-- Verification CTAs from `public/src/screens/profile.js` route into `/onboarding?step=phone` rather than a separate `/auth` screen.
 - The production app has no registered `/auth` route in `public/src/app.js`.
 
 **Remaining audit scope** (open the audit gate only if these gaps are confirmed):
@@ -186,6 +188,15 @@ Out of scope:
 - native OS push registration
 
 ## P2 — BD-MOD-01 Moderation / Report
+
+The shipped UI already renders report affordances that are not wired today (notably the Order Detail `Пожаловаться` button — `data-action="report-order"` in `public/src/screens/order_detail.js:664` has no click branch). The missing scope must include wiring those existing CTAs into this gate so they do not stay inert after the moderation screen ships.
+
+Required scope:
+
+- register the `/report` route (or report modal) in `public/src/app.js`
+- implement the moderation / report screen
+- wire the Order Detail report CTA (`data-action="report-order"`) — currently rendered without a listener
+- wire any other existing report entry points (e.g. Safety Sheet report link from BD-RIDE-P-07) into the same gate
 
 Required states:
 

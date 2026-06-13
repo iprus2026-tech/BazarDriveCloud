@@ -255,22 +255,23 @@
       <div class="screen-card">
         <div class="screen-id">BD-ONBOARDING-01 (onboarding step host)</div>
         <div class="screen-name">Onboarding step host</div>
-        <div class="screen-route">/onboarding (?step=phone for OTP)</div>
-        <div class="screen-states">onboarding step host · profile-side re-entry only (not part of first-run welcome path)</div>
+        <div class="screen-route">/onboarding (welcome-login entry) and /onboarding?step=phone (profile OTP re-entry)</div>
+        <div class="screen-states">onboarding step host · two shipped entries: welcome-login from welcome.js «Войти» (sets welcomeSeen + go('/onboarding')) and profile-side phone/OTP re-entry from profile.js</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/onboarding.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /onboarding?step=phone is NOT the only entry into onboarding; welcome.js «Войти» opens /onboarding directly.</div>
       </div>
 
-      <div class="flow-arrow">Welcome → /feed (passenger) or /driver-map (driver)</div>
+      <div class="flow-arrow">First-run Start → /feed or /driver-map · welcome «Войти» → /onboarding</div>
 
       <div class="screen-card audit">
         <div class="screen-id">BD-AUTH-01</div>
-        <div class="screen-name">Phone / OTP (profile re-entry, inside onboarding)</div>
-        <div class="screen-route">/onboarding?step=phone</div>
-        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified · profile re-entry only, not part of first-run welcome path</div>
+        <div class="screen-name">Phone / OTP (inside onboarding)</div>
+        <div class="screen-route">/onboarding (welcome-login entry) and /onboarding?step=phone (profile re-entry)</div>
+        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified · two shipped entries (welcome-login from welcome.js, profile-side re-entry from profile.js)</div>
         <span class="screen-badge audit">AUDIT</span>
         <div class="screen-file">public/src/screens/onboarding.js</div>
-        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding; profile verification CTAs route to /onboarding?step=phone. No registered /auth route. Welcome flow does NOT pass through this step.</div>
+        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding. No registered /auth route. /onboarding?step=phone is the profile re-entry path, NOT the only entry into onboarding.</div>
       </div>
 
     </div>
@@ -371,10 +372,10 @@
         <div class="screen-id">BD-RIDE-P-05</div>
         <div class="screen-name">RideComplete</div>
         <div class="screen-route">/active-ride?role=passenger&amp;status=COMPLETED</div>
-        <div class="screen-states">7 states · summary → rating → report → receipt · rating return / report return / bottom action → /feed; live secondary action → /chat (no /map exit)</div>
+        <div class="screen-states">7 states · summary → rating → report → receipt · rating return / report return / bottom action → /feed; live secondary action → /chat?tripId=&lt;ride.tripId&gt;&amp;role=passenger (openChat() seeds both params)</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/active_ride_passenger.js (production path audit needed for ride-complete)</div>
-        <div class="screen-note">Codex P2 (PR #495): no /map exit from BD-RIDE-P-05 in the shipped UI.</div>
+        <div class="screen-note">Codex P2 (PR #495): no /map exit. Completed-ride chat CTA must preserve tripId + role; bare /chat drops both and falls back to the inbox / demo context.</div>
       </div>
 
       <div class="lane-section">History</div>
@@ -568,12 +569,12 @@
 
       <div class="screen-card">
         <div class="screen-id">BD-RESPOND-01</div>
-        <div class="screen-name">Respond — driver offer sheet</div>
+        <div class="screen-name">Respond — two variants per post kind</div>
         <div class="screen-route">/respond?postId=... (required; missing-state otherwise)</div>
-        <div class="screen-states">1 driver-offer sheet · persists kind: passenger_response with driver snapshot · success → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver</div>
+        <div class="screen-states">2 variants · (a) driver offer response: driver snapshot + kind: passenger_response + success → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver · (b) marketplace seller-message: renderMarketplace(...) + «Написать продавцу» topbar (post detail returns kind: 'respond' for marketplace posts)</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">public/src/screens/respond.js</div>
-        <div class="screen-note">Codex P2 (PR #495): submit handler creates responseId = resp_&lt;post.id&gt; and opens chat with that responseId. Bare /chat?role=driver drops the stored response context and falls back to demo thread. Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
+        <div class="screen-file">public/src/screens/respond.js (driver offer sheet + renderMarketplace for marketplace posts)</div>
+        <div class="screen-note">Codex P2 (PR #495): /respond is not driver-only. Follow-up work must preserve both variants; marking it as only the driver-offer surface would drop or overwrite the marketplace «Написать продавцу» flow. Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
       </div>
 
       <div class="lane-section">Order</div>
@@ -643,9 +644,10 @@
       <div class="screen-card missing">
         <div class="screen-id">BD-MOD-01</div>
         <div class="screen-name">Moderation / Report</div>
-        <div class="screen-route">/report or modal</div>
-        <div class="screen-states">~report form / submitted / moderation queue</div>
+        <div class="screen-route">/report or modal (not registered)</div>
+        <div class="screen-states">~report form / submitted / moderation queue · also wire existing report CTAs (Order Detail `data-action="report-order"` has no click branch today)</div>
         <span class="screen-badge missing">MISSING</span>
+        <div class="screen-note">Codex P2 (PR #495): scope must include wiring the shipped Order Detail `Пожаловаться` button (and other existing report affordances) into this gate — otherwise the affordance stays inert.</div>
       </div>
 
     </div>
@@ -682,23 +684,23 @@
       </tr>
       <tr>
         <td class="t-id">BD-ONBOARDING-01 (onboarding step host)</td>
-        <td class="t-route">/onboarding (?step=phone for OTP)</td>
+        <td class="t-route">/onboarding (welcome-login entry); ?step=phone (profile OTP re-entry)</td>
         <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>onboarding step host</td>
+        <td>onboarding step host · two shipped entries: welcome-login from welcome.js «Войти» + profile-side re-entry</td>
         <td>continue step</td>
-        <td>next onboarding step / back to caller (profile re-entry path)</td>
+        <td>next onboarding step / back to caller (welcome or profile)</td>
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-AUTH-01</td>
-        <td class="t-route">/onboarding?step=phone</td>
+        <td class="t-route">/onboarding (welcome-login entry) and /onboarding?step=phone (profile re-entry)</td>
         <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-audit">Done · audit</td>
-        <td>phone / OTP mock shipped; persists phoneVerified; profile re-entry only — not in first-run welcome path</td>
+        <td>phone / OTP mock shipped; persists phoneVerified; two shipped entries (welcome-login + profile re-entry)</td>
         <td>Войти по телефону</td>
-        <td>back to profile re-entry caller (no separate /auth screen)</td>
+        <td>back to caller — welcome.js or profile.js (no separate /auth screen)</td>
       </tr>
       <tr>
         <td class="t-id">BD-FEED-01</td>
@@ -732,13 +734,13 @@
       </tr>
       <tr>
         <td class="t-id">BD-RESPOND-01</td>
-        <td class="t-route">/respond?postId=... (required; missing-state otherwise)</td>
-        <td><code>public/src/screens/respond.js</code></td>
-        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-route">/respond?postId=... (required; missing-state otherwise) · two variants per post kind</td>
+        <td><code>public/src/screens/respond.js</code> (driver offer sheet + <code>renderMarketplace(...)</code> for marketplace posts)</td>
+        <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>1 driver-offer sheet</td>
-        <td>Отправить предложение/отклик</td>
-        <td>/chat?responseId=resp_&lt;post.id&gt;&amp;role=driver (responseId is produced by submit handler and required to load the stored response thread; bare /chat?role=driver loses context). Passenger board = /responses.</td>
+        <td>2 variants — driver offer response (driver snapshot, kind: passenger_response) + marketplace seller-message (renderMarketplace, «Написать продавцу»)</td>
+        <td>Отправить предложение/отклик (driver) · Написать продавцу (marketplace)</td>
+        <td>driver variant → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver (responseId is produced by submit handler; bare /chat?role=driver loses context); marketplace variant → seller chat per renderMarketplace. Follow-up work must preserve both. Passenger board = /responses.</td>
       </tr>
       <tr>
         <td class="t-id">BD-FLOW-INBOX-01</td>
@@ -828,7 +830,7 @@
         <td class="t-done">Done</td>
         <td>7</td>
         <td>Оценить водителя</td>
-        <td>rating return / report return / bottom action → /feed; live secondary action → /chat (no /map exit)</td>
+        <td>rating return / report return / bottom action → /feed; live secondary action → /chat?tripId=&lt;ride.tripId&gt;&amp;role=passenger (openChat() seeds both params; bare /chat drops trip id + role and falls back to inbox / demo). No /map exit.</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-P-06</td>
@@ -1012,13 +1014,13 @@
       </tr>
       <tr style="background:rgba(248,113,113,0.04)">
         <td class="t-id">BD-MOD-01</td>
-        <td class="t-route">/report or modal</td>
+        <td class="t-route">/report or modal (not registered)</td>
         <td><code>—</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-missing">Missing</td>
         <td>~3</td>
         <td>Отправить жалобу</td>
-        <td>—</td>
+        <td>register /report (or modal); wire existing report CTAs (Order Detail `data-action="report-order"` has no click branch today and would stay inert without this gate)</td>
       </tr>
     </tbody>
   </table>
@@ -1080,13 +1082,17 @@
       <div class="missing-card-id">BD-MOD-01 · P2</div>
       <div class="missing-card-name">Moderation / Report</div>
       <div class="missing-card-desc">
-        Report form for posts, users, and rides. States: report form / submitted / moderation queue (admin only).
-        Safety Sheet (BD-RIDE-P-07) has in-ride reporting — this is the standalone report surface.
+        Codex P2 (PR #495): scope must include wiring shipped report entry points. Order Detail already renders a
+        <code>Пожаловаться</code> button (<code>data-action="report-order"</code> in <code>order_detail.js:664</code>) with no click branch —
+        without this gate wiring it through, the affordance stays inert. Implement <code>/report</code> (or modal),
+        plus listeners for existing report CTAs. States: report form / submitted / moderation queue (admin only).
+        Safety Sheet (BD-RIDE-P-07) has in-ride reporting; this is the standalone surface.
       </div>
       <div class="missing-card-meta">
         <span class="priority p2">P2</span>
         <span>~3 states</span>
         <span class="role-chip role-both">BOTH</span>
+        <span>+ wire shipped report CTAs</span>
         <span>reuse: ReasonList from P-06</span>
       </div>
     </div>
@@ -1137,9 +1143,9 @@
       <tr>
         <td><span class="priority p2">P2</span></td>
         <td class="t-id">BD-MOD-01</td>
-        <td>Standalone report surface; ReasonList from cancel sheet (public/src/screens/active_ride_passenger.js) reusable</td>
-        <td>BD-RIDE-P-07 report link</td>
-        <td>1 gate, 3 states</td>
+        <td>Codex P2 (PR #495): register /report (or modal); wire shipped report CTAs (Order Detail data-action="report-order" in order_detail.js:664 has no click branch today). Standalone report surface; ReasonList from cancel sheet (public/src/screens/active_ride_passenger.js) reusable.</td>
+        <td>Order Detail report-order CTA + BD-RIDE-P-07 report link</td>
+        <td>1 gate, 3 states + wire shipped report CTAs</td>
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
         <td><span class="priority p-audit">AUDIT</span></td>

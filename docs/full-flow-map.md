@@ -87,6 +87,16 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — BD-HISTORY-P-01 broken menu:** passenger profile menu row «История поездок» (`#pfp-menu-history`, `public/src/screens/profile.js:932-934`) currently routes to `/feed`, even though the history pane already renders inside `/profile`. Audit scope now covers fixing this entry-point gap.
 
+> **Codex P2 follow-up — welcome login path:** `/onboarding` has two shipped entries — (a) first-run Start flow routes `/welcome` → role / permissions → directly to `/feed` or `/driver-map`; (b) the welcome screen's «Войти» action (`welcome.js:310-315`) sets `welcomeSeen = true` and calls `go('/onboarding')`, opening the onboarding step host without `?step=phone`. `/onboarding?step=phone` is the profile-side phone-verification re-entry path. Do not treat `/onboarding?step=phone` as the only entry into onboarding.
+
+> **Codex P2 follow-up — BD-RIDE-P-05 chat context:** `openChat()` in `active_ride_passenger.js` navigates to `/chat?tripId=<ride.tripId>&role=passenger`. The completion-screen chat CTA must preserve both query params; bare `/chat` drops trip id + role and falls back to the inbox / demo context.
+
+> **Codex P2 follow-up — driver Key path:** the accepted-driver entry uses `/active-ride?role=driver&tripId=...&status=ACCEPTED` (built by the DriverMap accepted-order card's «К поездке» CTA). Bare `/active-ride?role=driver` may fall into fallback / demo behavior.
+
+> **Codex P2 follow-up — BD-RESPOND-01 marketplace variant:** `/respond?postId=...` is also the shipped marketplace seller-message surface. Post detail returns `kind: 'respond'` for marketplace posts and `respond.js` renders `renderMarketplace(...)` («Написать продавцу»). BD-RESPOND-01 has two variants — driver offer response and marketplace seller-message — and follow-up work must preserve both.
+
+> **Codex P2 follow-up — BD-MOD-01 entry-point wiring:** the Order Detail surface already renders a `Пожаловаться` button (`data-action="report-order"` in `order_detail.js:664`) but has no click branch. BD-MOD-01 missing scope now includes wiring this shipped report CTA (and any other existing report affordances) into the `/report` (or modal) entry, otherwise the affordance stays inert after the moderation gate ships.
+
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.
