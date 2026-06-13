@@ -361,7 +361,7 @@ docs-contract-agent keeps the project map and contracts aligned.
   - Treat a reply as a resolution
 
 - **Review guard**:
-  - If a comment touches multiple unrelated areas, route each piece to its own role — do not batch into one PR.
+  - If a comment touches multiple areas, route each piece to the correct role for implementation — but keep all in-scope fixes in the current PR. Only defer truly out-of-scope follow-ups to separate PRs.
   - If a comment is ambiguous, clarify with the reviewer before acting.
   - If a comment requires a logic change, route to implementation-agent with a scoped brief.
   - If Codex posts new comments after the latest commit, those comments become the current source of truth — re-run review-agent from scratch.
@@ -551,15 +551,15 @@ Checks:           node scripts/check.mjs result
   - Any file under `docs/`
   - `CLAUDE.md` — only for durable repo-level guidance changes
   - `README.md`, `ROADMAP.md`
+  - `docs/missing-screens.md` and explicit backlog / roadmap docs — may document planned, missing, or future routes when entries are clearly labeled as `planned`, `missing`, `future`, or `unshipped`
 
 - **Must not**:
   - Change runtime code, CSS, smoke scripts, or SW in docs-only tasks
-  - Invent routes, screens, or behavior not yet shipped in `public/src/app.js`
-  - Update docs to describe unshipped features as if they are live
+  - Document unshipped routes or behavior as live in shipped-behavior docs (`screen-contracts.md`, `flow-contracts.md`, `screen-map.md`)
   - Mix runtime changes with docs updates in the same PR
 
 - **Review guard**:
-  - Before documenting a route or screen, verify it exists in `public/src/app.js` and `public/src/screens/`.
+  - Before documenting a route or screen in shipped-behavior docs (`screen-contracts.md`, `flow-contracts.md`, `screen-map.md`), verify it exists in `public/src/app.js` and `public/src/screens/`. This rule does not apply to `docs/missing-screens.md` or backlog docs that explicitly label entries as planned/unshipped.
   - If a contract contradicts observed runtime behavior — flag the conflict and ask before writing.
   - If a docs change requires a runtime fix to become accurate — route the runtime fix to implementation-agent first, then update docs.
   - Do not update `CLAUDE.md` for one-off bugs, temporary workarounds, or single-screen details.
