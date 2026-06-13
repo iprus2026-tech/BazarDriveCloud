@@ -11,7 +11,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 | P1 | BD-ERROR-01 | Global Error / Offline | Both | ~4 states | App-level offline/server/timeout overlay |
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
-| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | Register `/notifications`, implement screen, wire passenger `#pfp-notif-btn` + driver bell entry-point |
+| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | **Audit `/inbox` (BD-INBOX-01, shipped) first** · decide reuse `/inbox` as hub OR consciously split `/notifications` after audit · wire bell CTAs (passenger `#pfp-notif-btn` + driver bell) without orphaning `/inbox` |
 | P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · wire inert standalone report CTAs (Order Detail `data-action="report-order"`) · do NOT reroute the in-ride safety report (BD-RIDE-P-07) — preserve in-sheet behavior |
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
@@ -166,16 +166,20 @@ Out of scope:
 
 ## P2 — BD-NOTIF-01 Notifications
 
-Notifications is **not** wired from the existing entry points in the shipped UI. The missing scope includes both the screen and the profile-entry wiring (mirrors BD-SETTINGS-01).
+> **Audit `/inbox` before going net-new.** The production app already ships a registered `/inbox` surface (`public/src/app.js` registers `/inbox`, `public/src/screens/inbox.js` renders list / empty / unread-event states, `docs/screen-contracts.md` lists **BD-INBOX-01** as implemented). Following the previous draft literally would duplicate the existing inbox / notification hub and leave `/inbox` orphaned. BD-NOTIF-01 must not blindly add a separate `/notifications` route without first deciding how it relates to `/inbox`.
+
+Notifications is **not** wired from the existing entry points in the shipped UI. The missing scope includes both the decision-on-relationship-with-`/inbox`, the screen (or reuse), and the profile-entry wiring (mirrors BD-SETTINGS-01).
 
 Required scope:
 
-- register the `/notifications` route in `public/src/app.js`
-- implement the notifications screen
-- wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener (`public/src/screens/profile.js:620-621`)
-- wire the equivalent driver profile bell / notifications entry-point
+- **audit the shipped `/inbox` surface first** (`public/src/screens/inbox.js`, BD-INBOX-01 in `docs/screen-contracts.md`) — its list / empty / unread-event states already cover most of what BD-NOTIF-01 would render
+- decide the relationship between BD-NOTIF-01 and `/inbox`; the two viable outcomes are explicit and must be picked before any new code lands:
+  - **(a) reuse `/inbox` as the notification hub** — point the bell CTAs at `/inbox`, extend `inbox.js` if push-permission / notification-specific states are missing, and treat `/notifications` as redundant (do **not** register it)
+  - **(b) split a separate `/notifications` route after the audit** — register `/notifications`, implement the screen, and document why it is consciously separate from `/inbox` (e.g. push permission flow, system-message channel) so `/inbox` is not orphaned
+- wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener (`public/src/screens/profile.js:620-621`) — to whichever target (a) or (b) chooses
+- wire the equivalent driver profile bell / notifications entry-point to the same target
 
-Required states:
+Required states (regardless of (a) vs (b)):
 
 - notification list
 - empty state
@@ -186,6 +190,7 @@ Out of scope:
 - real push delivery
 - websocket/realtime updates
 - native OS push registration
+- leaving the registered `/inbox` screen orphaned by silently registering `/notifications` alongside it without an audit decision
 
 ## P2 — BD-MOD-01 Moderation / Report
 

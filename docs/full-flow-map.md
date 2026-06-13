@@ -39,7 +39,7 @@ The map is organized into four lanes:
 
 ## Inventory summary
 
-- Designed / ready gates: 29
+- Designed / ready gates: 31 (added: BD-MAP-02 location permission — previously folded into BD-MAP-01; BD-POST-01 post detail — previously treated only as a Feed card target)
 - Missing gates: 4
 - Partial gates: 2
 - Audit / consolidation gates: 4
@@ -65,7 +65,9 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — garage file:** BD-GARAGE-01 shipped UI is rendered from `public/src/screens/profile.js`; the shared helper is `public/src/garage.js`. There is no `public/src/screens/garage.js` and no registered `/garage` route. The audit gate points at the shipped surface, not an invented screen file.
 
-> **Codex P2 follow-up — feed detail route:** BD-FEED-01 card taps route to `/post?id=...` (`public/src/screens/post_detail.js`). `/order/<id>` is the separate canonical order surface (BD-ORDER-DETAIL-01) and Feed cards do not link there.
+> **Codex P2 follow-up — feed detail route:** BD-FEED-01 card taps route to `/post?id=...` (BD-POST-01, `public/src/screens/post_detail.js`). `/order/<id>` is the separate canonical order surface (BD-ORDER-DETAIL-01) and Feed cards do not link there.
+
+> **Codex P2 follow-up — BD-POST-01 own gate:** `/post?id=...` is a registered screen (`public/src/app.js`) backed by `public/src/screens/post_detail.js` — not just a Feed card target. `post_detail.js` owns the primary-action decision per post `kind` / ownership (respond / chat / own post / accept flows). BD-POST-01 has its own row / card and key paths must show `/feed → /post → downstream` (respond / chat / order). Follow-up tests and implementations must not jump from Feed straight to downstream screens while skipping BD-POST-01.
 
 > **Codex P2 follow-up — order detail transitions:** BD-ORDER-DETAIL-01 primary actions do not navigate directly to `/respond` or `/trip-confirmation`. `driver-send-offer` writes a `DriverOffer` and re-renders in place (toast); passenger select-driver writes overlay / selection and re-renders in place. Only the explicit open-trip / open-active-ride CTA navigates: passenger → `/active-ride?role=passenger&tripId=...`; driver → `/active-ride?role=driver&tripId=...` — the Order Detail driver branch in `order_detail.js` does **not** append `status=ACCEPTED`. The `status=ACCEPTED` URL is emitted by the DriverMap accepted-card «К поездке» CTA only (see DriverMap accept flow follow-up).
 
@@ -83,7 +85,7 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — BD-PROFILE-PASSENGER-01 CTAs:** the shipped profile does not route passenger profile CTAs to `/map`. `#pfp-quick-where` calls `go('/feed')` and the empty-history create CTA uses `createIntentRoute(...)` opening `/new?type=passenger_request`. Handoff updated accordingly.
 
-> **Codex P2 follow-up — BD-NOTIF-01 entry-point wiring:** the missing scope now mirrors BD-SETTINGS-01 — register `/notifications`, implement the screen, wire the passenger profile bell CTA `#pfp-notif-btn` (currently rendered without a listener), and wire the equivalent driver entry-point. Otherwise the notification list ships as a dead screen.
+> **Codex P2 follow-up — BD-NOTIF-01 audit `/inbox` first:** the production app already ships a registered `/inbox` surface (`public/src/app.js`, `public/src/screens/inbox.js`, BD-INBOX-01 in `docs/screen-contracts.md`) with list / empty / unread-event states. BD-NOTIF-01 must not blindly register a net-new `/notifications` route — missing scope must (1) audit `/inbox` first, (2) consciously decide between **reuse `/inbox` as the notification hub** (point bell CTAs at `/inbox`, extend if push-permission / notification-specific states missing, no `/notifications` registration) or **split `/notifications` after audit** (document why it is consciously separate from `/inbox`), and (3) wire passenger `#pfp-notif-btn` + driver bell to whichever target is chosen, without orphaning `/inbox`.
 
 > **Codex P2 follow-up — BD-HISTORY-P-01 broken menu:** passenger profile menu row «История поездок» (`#pfp-menu-history`, `public/src/screens/profile.js:932-934`) currently routes to `/feed`, even though the history pane already renders inside `/profile`. Audit scope now covers fixing this entry-point gap.
 
@@ -99,11 +101,17 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
+> **Codex P3 follow-up — BD-RULES-01 static sections:** `public/src/screens/rules.js` renders section cards as **static articles**. Search and document download controls are deliberate no-ops; only the empty-state `[data-go]` button navigates; there is no section-detail route or «open section → back» flow. Handoff must not describe «Открыть раздел» / `back` as the primary action — those flows do not exist today. Section-detail navigation would be a future dedicated issue.
+
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.
 
 > **Codex P2 follow-up — settings:** Settings is **not** already linked from the profile headers in the shipped UI. The missing scope explicitly includes registering `/settings`, implementing the screen, and wiring the passenger profile settings CTA (`#pfp-settings-btn`) plus the driver profile settings / gear CTA. Logout / delete / account actions remain UI-only unless a future backend issue says otherwise.
 
 > **Codex P2 follow-up — passenger cancel exits:** BD-RIDE-P-06 cancel-sheet completion actions route to `/new` or `/feed`, and the direct canceled / no-show fallback sends top / back / feed buttons to `/feed`. `/map` is not the canceled destination in the shipped UI.
+
+> **Codex P2 follow-up — BD-MAP-02 location-permission gate:** `/location-permission` is a real registered screen (`public/src/app.js`) owned by `public/src/screens/location_permission.js` (allow / manual / back actions). `public/src/screens/map.js` sends the my-location action there. The handoff map must surface BD-MAP-02 as its own row / card and must not fold `/map` directly to `/route-picker`. Key paths show two branches: `/map → my-location → /location-permission` (gate) and `/map → choose-route / manual → /route-picker`. Smoke / follow-up implementations cannot skip BD-MAP-02.
+
+> **Codex P2 follow-up — driver earnings closed state:** the completed-driver close actions (BD-RIDE-D-09 «Закрыть поездку» and BD-RIDE-D-11 `#driver-earnings-close`) do **not** immediately navigate. Primary close enters the loading / closed state and the closed card shows «Вы снова на линии». Navigation to `/driver-map` happens later from the closed-card «К заказам» button or sheet close callbacks. Smoke tests and follow-up implementations must assert the closed state («Вы снова на линии») before navigation — describing «Закрыть» as a direct close → `/driver-map` transition would skip the required state.
 
 ## Missing gates
 

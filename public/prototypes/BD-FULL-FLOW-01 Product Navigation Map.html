@@ -291,9 +291,20 @@
         <div class="screen-id">BD-MAP-01</div>
         <div class="screen-name">MapHome Foundation</div>
         <div class="screen-route">/map</div>
-        <div class="screen-states">9 states (incl. MAP-02 LocationPermission folded)</div>
+        <div class="screen-states">9 states · two shipped branches: choose-route / manual → /route-picker; my-location action → /location-permission (BD-MAP-02, surfaced below)</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/map.js</div>
+        <div class="screen-note">Codex P2 (PR #495): handoff must NOT fold /map directly to /route-picker. BD-MAP-02 is its own registered screen — see card / handoff row below.</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-02</div>
+        <div class="screen-name">Location Permission Gate</div>
+        <div class="screen-route">/location-permission (registered in public/src/app.js)</div>
+        <div class="screen-states">allow / manual / back actions · entered from map.js my-location action</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/location_permission.js</div>
+        <div class="screen-note">Codex P2 (PR #495): BD-MAP-02 is a real registered screen — handoff coverage and smoke tests must NOT skip it. allow / manual continue per runtime (to /route-picker or back to /map); back returns to /map.</div>
       </div>
 
       <div class="lane-section">Order creation</div>
@@ -551,10 +562,20 @@
         <div class="screen-id">BD-FEED-01</div>
         <div class="screen-name">Feed V2</div>
         <div class="screen-route">/feed</div>
-        <div class="screen-states">5 filters · all / offers / reqs / market / empty · card tap → /post?id=... (post_detail.js); /new for composer</div>
+        <div class="screen-states">5 filters · all / offers / reqs / market / empty · card tap → /post?id=... (BD-POST-01, post_detail.js); /new for composer</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/feed.js</div>
         <div class="screen-note">Codex P2 (PR #495): Feed cards link to /post?id=..., not /order/&lt;id&gt;. /order/&lt;id&gt; is the separate canonical order surface (BD-ORDER-DETAIL-01).</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-POST-01</div>
+        <div class="screen-name">Post Detail (kind-routed)</div>
+        <div class="screen-route">/post?id=... (registered in public/src/app.js)</div>
+        <div class="screen-states">post detail states · owns primary-action decision per post kind / ownership · respond / chat / own post / accept branches</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/post_detail.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /post is its own registered surface, not just a Feed card target. post_detail.js owns the primary-action decision per kind / ownership — respond kind → /respond?postId=...; chat kind → /chat?... with required context (responseId / tripId) if present; own post → own / order fallback; accept / order flow → shipped accept target. Handoff + key paths must not skip BD-POST-01.</div>
       </div>
 
       <div class="screen-card">
@@ -605,12 +626,12 @@
 
       <div class="screen-card">
         <div class="screen-id">BD-RULES-01</div>
-        <div class="screen-name">Rules &amp; Documents</div>
+        <div class="screen-name">Rules &amp; Documents (static / read-only)</div>
         <div class="screen-route">/rules</div>
-        <div class="screen-states">sections / templates</div>
+        <div class="screen-states">static / read-only · section cards render as static articles · search / document download controls are deliberate no-ops · only the empty-state [data-go] button navigates · NO section-detail route, NO «open section → back» flow today</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/rules.js</div>
-        <div class="screen-note">Codex P2 (PR #495): registered for /rules in public/src/app.js; profile.js is not the runtime owner</div>
+        <div class="screen-note">Codex P2/P3 (PR #495): registered for /rules in public/src/app.js (profile.js is not the runtime owner). Sections are static read-only articles — no «Открыть раздел» action and no section-detail flow exists today. Handoff must not assert a section-detail / back transition. Section-detail navigation would be a future dedicated issue.</div>
       </div>
 
       <div class="lane-section">Missing</div>
@@ -626,11 +647,11 @@
 
       <div class="screen-card missing">
         <div class="screen-id">BD-NOTIF-01</div>
-        <div class="screen-name">Notifications</div>
-        <div class="screen-route">/notifications (not registered)</div>
-        <div class="screen-states">~list / empty / push-permission · register route, implement screen, wire passenger #pfp-notif-btn + driver bell entry-point</div>
+        <div class="screen-name">Notifications (audit /inbox first)</div>
+        <div class="screen-route">/notifications (NOT registered) — but the production app already ships a registered /inbox</div>
+        <div class="screen-states">Audit shipped /inbox (BD-INBOX-01, public/src/screens/inbox.js — list / empty / unread-event states) FIRST · then decide (a) REUSE /inbox as the notification hub (point bells at /inbox, extend if push-permission states are missing, do NOT register /notifications) OR (b) consciously SPLIT a separate /notifications route after audit (document why it is consciously separate from /inbox) · wire passenger #pfp-notif-btn + driver bell to whichever target is picked, without orphaning /inbox · do NOT silently register /notifications alongside /inbox</div>
         <span class="screen-badge missing">MISSING</span>
-        <div class="screen-note">Codex P2 (PR #495): passenger profile already renders #pfp-notif-btn without a listener — without wiring the entry points, the screen would ship as a dead surface.</div>
+        <div class="screen-note">Codex P2 (PR #495): /inbox is a shipped, registered screen (BD-INBOX-01, list / empty / unread-event states). BD-NOTIF-01 must audit /inbox first and either reuse it as the notification hub or consciously split — silently adding /notifications would duplicate the existing inbox / notification hub and orphan /inbox.</div>
       </div>
 
       <div class="screen-card missing">
@@ -710,7 +731,17 @@
         <td class="t-done">Done</td>
         <td>5 filters</td>
         <td>Создать публикацию</td>
-        <td>/new (composer); card tap → /post?id=... (post_detail.js). /order/&lt;id&gt; is the separate canonical order surface, not a Feed card target.</td>
+        <td>/new (composer); card tap → /post?id=... (BD-POST-01, post_detail.js). /order/&lt;id&gt; is the separate canonical order surface, not a Feed card target.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-POST-01</td>
+        <td class="t-route">/post?id=... (registered in public/src/app.js)</td>
+        <td><code>public/src/screens/post_detail.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>post detail · primary-action decision per post kind / ownership (respond / chat / own / accept)</td>
+        <td>resolve action by kind / ownership</td>
+        <td>respond kind → /respond?postId=...; chat / message kind → /chat?... with required context (responseId / tripId) if present; own post → own / order fallback as shipped; accept / order flow → shipped accept target. Feed cards must not skip BD-POST-01 — /post is the surface that resolves these transitions.</td>
       </tr>
       <tr>
         <td class="t-id">BD-COMPOSER-01</td>
@@ -758,9 +789,19 @@
         <td><code>public/src/screens/map.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>9</td>
-        <td>Выбрать маршрут</td>
-        <td>/route-picker</td>
+        <td>9 · two shipped branches</td>
+        <td>choose-route / manual → confirm route flow; my-location action → permission gate</td>
+        <td>choose-route / manual → /route-picker; my-location → /location-permission (BD-MAP-02). Handoff must not fold /map directly to /route-picker.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-02</td>
+        <td class="t-route">/location-permission</td>
+        <td><code>public/src/screens/location_permission.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>allow / manual / back</td>
+        <td>Разрешить геолокацию / Ввести вручную / Назад</td>
+        <td>allow / manual continue per runtime (to /route-picker or back to /map); back → /map. BD-MAP-02 is a real registered screen — smoke / follow-up must not skip it.</td>
       </tr>
       <tr>
         <td class="t-id">BD-MAP-03</td>
@@ -898,9 +939,9 @@
         <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
-        <td>7</td>
+        <td>7 · primary close enters loading / closed state — does NOT immediately navigate</td>
         <td>Закрыть поездку</td>
-        <td>/driver-map</td>
+        <td>closed-state card («Вы снова на линии») → closed-card «К заказам» / sheet close callback → /driver-map. Smoke tests must assert the closed state before navigation, not a direct close → /driver-map jump.</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-D-11</td>
@@ -908,9 +949,9 @@
         <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
-        <td>5</td>
+        <td>5 · <code>#driver-earnings-close</code> enters loading / closed state — does NOT immediately navigate</td>
         <td>Ваш доход / Закрыть</td>
-        <td>/driver-map</td>
+        <td>closed-state card («Вы снова на линии») → closed-card «К заказам» / sheet close callback → /driver-map. Smoke tests must assert the closed state («Вы снова на линии») before navigation, not a direct close → /driver-map jump.</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-HISTORY-D-01</td>
@@ -948,9 +989,9 @@
         <td><code>public/src/screens/rules.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>sections</td>
-        <td>—</td>
-        <td>—</td>
+        <td>static / read-only · section cards render as static articles · search / document download controls are deliberate no-ops · only empty-state [data-go] navigates</td>
+        <td>— (sections are static read-only articles; no «Открыть раздел» action)</td>
+        <td>stays on /rules — no route transition. Empty-state [data-go] returns to caller. Section-detail navigation would be a future dedicated issue.</td>
       </tr>
       <tr style="opacity:0.5">
         <td class="t-id">BD-PROFILE-01</td>
@@ -994,13 +1035,13 @@
       </tr>
       <tr style="background:rgba(248,113,113,0.04)">
         <td class="t-id">BD-NOTIF-01</td>
-        <td class="t-route">/notifications (not registered)</td>
-        <td><code>—</code></td>
+        <td class="t-route">/notifications (not registered) — <b>audit shipped /inbox (BD-INBOX-01) first</b></td>
+        <td><code>—</code> (relate to <code>public/src/screens/inbox.js</code>)</td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-missing">Missing</td>
         <td>~3</td>
         <td>Открыть уведомление</td>
-        <td>register /notifications; wire passenger #pfp-notif-btn + driver bell entry-point (otherwise the screen ships as a dead surface)</td>
+        <td>(1) audit shipped <code>/inbox</code> (BD-INBOX-01 — list / empty / unread-event states); (2) decide <b>reuse</b> <code>/inbox</code> as the notification hub (point bell CTAs at <code>/inbox</code>, extend if push-permission states missing, no <code>/notifications</code> registration) <b>OR</b> consciously <b>split</b> <code>/notifications</code> after audit (document why it is separate from <code>/inbox</code>); (3) wire passenger <code>#pfp-notif-btn</code> + driver bell to whichever target — do NOT silently register <code>/notifications</code> alongside <code>/inbox</code> and orphan it.</td>
       </tr>
       <tr style="background:rgba(248,113,113,0.04)">
         <td class="t-id">BD-ERROR-01</td>
@@ -1048,12 +1089,20 @@
 
     <div class="missing-card">
       <div class="missing-card-id">BD-NOTIF-01 · P2</div>
-      <div class="missing-card-name">Notifications</div>
+      <div class="missing-card-name">Notifications (audit /inbox first)</div>
       <div class="missing-card-desc">
-        Codex P2 (PR #495): <code>/notifications</code> is <b>not</b> registered and the passenger profile bell <code>#pfp-notif-btn</code>
-        renders without a listener. Missing scope: register the route, implement the screen, wire the passenger bell,
-        and wire the equivalent driver bell entry-point. States: list / empty / push-permission prompt.
-        No real push delivery — mock data only.
+        Codex P2 (PR #495): the production app already ships a registered <code>/inbox</code> surface
+        (<code>public/src/app.js</code>, <code>public/src/screens/inbox.js</code>, BD-INBOX-01 in
+        <code>docs/screen-contracts.md</code>) with list / empty / unread-event states. The passenger profile bell
+        <code>#pfp-notif-btn</code> renders without a listener today. BD-NOTIF-01 must:
+        (1) audit the shipped <code>/inbox</code> first;
+        (2) consciously decide <b>(a) reuse <code>/inbox</code> as the notification hub</b> (point bell CTAs at
+        <code>/inbox</code>, extend if push-permission / notification-specific states are missing, do not register
+        <code>/notifications</code>) <b>OR (b) split a separate <code>/notifications</code> route after audit</b>
+        (document why it is consciously separate from <code>/inbox</code>);
+        (3) wire passenger <code>#pfp-notif-btn</code> + driver bell to whichever target is picked, without orphaning
+        <code>/inbox</code>. States: list / empty / push-permission prompt. No real push delivery — mock data only.
+        Silently registering <code>/notifications</code> alongside <code>/inbox</code> is out of scope.
       </div>
       <div class="missing-card-meta">
         <span class="priority p2">P2</span>
@@ -1140,9 +1189,9 @@
       <tr>
         <td><span class="priority p2">P2</span></td>
         <td class="t-id">BD-NOTIF-01</td>
-        <td>Codex P2 (PR #495): /notifications is not registered and #pfp-notif-btn renders without a listener. Missing scope = register /notifications, implement screen, wire passenger bell + driver bell entry-point (otherwise the screen ships as a dead surface).</td>
-        <td>register route + wire profile bell CTAs</td>
-        <td>1 gate, 3 states</td>
+        <td>Codex P2 (PR #495): the production app already ships a registered /inbox (BD-INBOX-01 — list / empty / unread-event states). BD-NOTIF-01 must audit /inbox first, then either <b>reuse</b> /inbox as the notification hub (point bells at /inbox, extend if push-permission states missing, no /notifications registration) or consciously <b>split</b> /notifications after audit (document why it is separate). Wire passenger #pfp-notif-btn + driver bell to the chosen target. Do NOT silently register /notifications alongside /inbox.</td>
+        <td>audit /inbox first + decide reuse vs split + wire bells</td>
+        <td>1 gate, 3 states (audit gate + decision)</td>
       </tr>
       <tr>
         <td><span class="priority p2">P2</span></td>
@@ -1188,7 +1237,7 @@
 <div class="page-footer">
   <span>BD-FULL-FLOW-01 · Product Navigation Map</span>
   <span>Cloud Design artifact · design reference only</span>
-  <span>29 screens designed · 4 missing · 2 partial · 4 audit / consolidation</span>
+  <span>31 screens designed · 4 missing · 2 partial · 4 audit / consolidation</span>
   <span>React/Vite sandbox: /home/claude/bazardrive (not in this PR)</span>
   <span>Generated from chats/chat5.md design session</span>
 </div>
