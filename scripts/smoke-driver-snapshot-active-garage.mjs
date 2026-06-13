@@ -554,6 +554,18 @@ user.set({
     snap?.vehicle?.model !== 'Toyota Prius', String(snap?.vehicle?.model));
   expect('S15: handoff snapshot does NOT fall back to the preserved legacy car',
     snap?.vehicle?.model !== 'Hyundai Solaris', String(snap?.vehicle?.model));
+  // Codex P2 follow-up on #493 — when garage exists + no active, the
+  // snapshot's vehicle fields must carry NON-FALSY neutral placeholders
+  // so passenger surfaces' `vehicle.model || 'Toyota Camry'` fallback
+  // chains do not replace them with demo-car copy.
+  expect('S15: handoff snapshot vehicle.model is the neutral placeholder',
+    snap?.vehicle?.model === 'Авто не выбрано', String(snap?.vehicle?.model));
+  expect('S15: handoff snapshot vehicle.plate is the neutral placeholder',
+    snap?.vehicle?.plate === 'номер не выбран', String(snap?.vehicle?.plate));
+  expect('S15: snapshot vehicle.model is non-empty (defeats demo "Toyota Camry" fallback)',
+    typeof snap?.vehicle?.model === 'string' && snap.vehicle.model.length > 0);
+  expect('S15: snapshot vehicle.plate is non-empty (defeats demo plate fallback)',
+    typeof snap?.vehicle?.plate === 'string' && snap.vehicle.plate.length > 0);
   // Builder helper excludes the archived entry; the I2 contract also
   // suppresses the legacy synthesis whenever the persisted record
   // exists (even when every entry is archived).
@@ -635,8 +647,21 @@ user.set({
     snap?.vehicle?.model !== 'Hyundai Solaris', String(snap?.vehicle?.model));
   expect('S17: handoff snapshot does NOT publish real-1 (no make-active click yet)',
     snap?.vehicle?.model !== 'Toyota Prius', String(snap?.vehicle?.model));
-  expect('S17: handoff snapshot vehicle.plate is empty (no legacy fallback)',
-    !snap?.vehicle?.plate, String(snap?.vehicle?.plate));
+  // Codex P2 follow-up on #493 — neutral, non-falsy placeholders so
+  // passenger surfaces' `|| 'Toyota Camry'` / `|| <demo-plate>` chains
+  // cannot leak demo data into the accepted-ride snapshot.
+  expect('S17: handoff snapshot vehicle.model is the neutral placeholder',
+    snap?.vehicle?.model === 'Авто не выбрано', String(snap?.vehicle?.model));
+  expect('S17: handoff snapshot vehicle.plate is the neutral placeholder',
+    snap?.vehicle?.plate === 'номер не выбран', String(snap?.vehicle?.plate));
+  expect('S17: snapshot vehicle.model is non-empty (defeats demo car fallback)',
+    typeof snap?.vehicle?.model === 'string' && snap.vehicle.model.length > 0);
+  expect('S17: snapshot vehicle.plate is non-empty (defeats demo plate fallback)',
+    typeof snap?.vehicle?.plate === 'string' && snap.vehicle.plate.length > 0);
+  expect('S17: snapshot vehicle.model !== legacy "Hyundai Solaris"',
+    snap?.vehicle?.model !== 'Hyundai Solaris');
+  expect('S17: snapshot vehicle.plate !== legacy "А 482 МР 77"',
+    snap?.vehicle?.plate !== 'А 482 МР 77');
 }
 
 // ── Scenario 18 — BD-PROFILE-GARAGE-ARCHIVE-I2 (P2-2): legacy-only
