@@ -44,6 +44,35 @@ globalThis.sessionStorage = {
 // and observe what route the click navigated to (via the hash spy below).
 const clickHandlers = new Map(); // selector → fn
 
+// BD-PROFILE-ROLE-ISOLATION-SMOKE-SURFACE-CLICK-S — rendered-HTML tracker.
+// Every innerHTML assignment is accumulated here for the duration of a
+// single renderHtml() so the click-capture path can be SURFACE-AWARE: an
+// `#id` selector receives an addEventListener-stored handler ONLY when
+// the rendered surface actually carries `id="…"`. Without this, the
+// permissive querySelector stub fabricates an element for ANY selector
+// and the click-capture map silently holds ghost handlers for ids that
+// were renamed or removed in the runtime markup — exactly the surface
+// regression S7/S8 were meant to catch.
+let renderedHtml = '';
+
+function selectorIsRendered(selector) {
+  if (typeof selector !== 'string') return false;
+  if (selector.startsWith('#')) {
+    // Plain id selectors are what the smoke invokes directly
+    // (#pfp-role-switch, #pf2-act-role-switch, #pf-mypub-create). The
+    // surface check is a substring lookup of `id="…"` — the runtime
+    // renders these buttons as `<button id="X" …>`, so a literal
+    // `id="X"` in the assigned HTML proves the element exists.
+    const id = selector.slice(1);
+    return renderedHtml.includes(`id="${id}"`);
+  }
+  // Other selector shapes (class, attribute, composite) are NOT in this
+  // smoke's direct capture set, so keep the permissive default: any
+  // addEventListener on them still captures so unrelated wiring is not
+  // perturbed. This is the smallest safe change.
+  return true;
+}
+
 function makeEl(selectorHint) {
   return {
     _html: '',
@@ -53,11 +82,17 @@ function makeEl(selectorHint) {
     dataset: {},
     classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
     style: {},
-    set innerHTML(v) { this._html = String(v); },
+    set innerHTML(v) {
+      this._html = String(v);
+      renderedHtml += this._html;
+    },
     get innerHTML() { return this._html; },
     get firstElementChild() { return makeEl(); },
     addEventListener(type, fn) {
-      if (type === 'click' && this._selector && typeof fn === 'function') {
+      if (type === 'click'
+        && this._selector
+        && typeof fn === 'function'
+        && selectorIsRendered(this._selector)) {
         clickHandlers.set(this._selector, fn);
       }
     },
@@ -124,6 +159,7 @@ function reset() {
   clickHandlers.clear();
   hashWrites.length = 0;
   currentHash = '';
+  renderedHtml = '';
 }
 
 function persistedRole() {
@@ -136,6 +172,10 @@ function renderHtml() {
   currentHash = '#/profile';
   clickHandlers.clear();
   hashWrites.length = 0;
+  // Reset the surface tracker so a click handler captured in a previous
+  // render() can't keep its ghost binding when this render's markup no
+  // longer contains the matching id.
+  renderedHtml = '';
   const section = profile();
   return section._html || '';
 }
@@ -261,6 +301,10 @@ user.set({
 setSmokeRole('passenger');
 {
   renderHtml();
+  // Surface pin before the click capture so a missing CTA fails with a
+  // clear "id not rendered" signal instead of an opaque "route null".
+  expect('S7 surface: passenger-view render includes id="pf-mypub-create"',
+    renderedHtml.includes('id="pf-mypub-create"'));
   const myPostsRoute = clickAndCaptureRoute('#pf-mypub-create');
   expect('S7: #pf-mypub-create captured (passenger view rendered the row)',
     myPostsRoute !== null, String(myPostsRoute));
@@ -284,6 +328,10 @@ user.set({
 setSmokeRole('driver');
 {
   renderHtml();
+  // Surface pin mirrors S7's — driver-view CTA must be in the rendered
+  // markup before the click capture is meaningful.
+  expect('S8 surface: driver-view render includes id="pf-mypub-create"',
+    renderedHtml.includes('id="pf-mypub-create"'));
   const myPostsRoute = clickAndCaptureRoute('#pf-mypub-create');
   expect('S8: #pf-mypub-create captured under driver-view (smoke=driver)',
     myPostsRoute !== null, String(myPostsRoute));
