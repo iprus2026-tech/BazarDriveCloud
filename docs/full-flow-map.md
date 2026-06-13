@@ -79,6 +79,14 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — passenger history audit wording:** BD-HISTORY-P-01 has no passenger receipt screen route. Passenger completion-screen receipt viewing is UI-only. Shipped history detail actions are «Повторить маршрут», «В ленту», and «Назад к истории» — not «Открыть чек». Audit scope is inline history detail parity + an optional future passenger receipt route.
 
+> **Codex P2 follow-up — passenger Key path:** `/responses` does not route through `/trip-confirmation`. `public/src/screens/responses.js` (`buildPassengerActiveRide()` + `activeRideUrl()`) navigates directly to `/active-ride?role=passenger&tripId=<tripId>&status=DRIVER_EN_ROUTE`. The Key paths section now reflects the direct transition.
+
+> **Codex P2 follow-up — BD-PROFILE-PASSENGER-01 CTAs:** the shipped profile does not route passenger profile CTAs to `/map`. `#pfp-quick-where` calls `go('/feed')` and the empty-history create CTA uses `createIntentRoute(...)` opening `/new?type=passenger_request`. Handoff updated accordingly.
+
+> **Codex P2 follow-up — BD-NOTIF-01 entry-point wiring:** the missing scope now mirrors BD-SETTINGS-01 — register `/notifications`, implement the screen, wire the passenger profile bell CTA `#pfp-notif-btn` (currently rendered without a listener), and wire the equivalent driver entry-point. Otherwise the notification list ships as a dead screen.
+
+> **Codex P2 follow-up — BD-HISTORY-P-01 broken menu:** passenger profile menu row «История поездок» (`#pfp-menu-history`, `public/src/screens/profile.js:932-934`) currently routes to `/feed`, even though the history pane already renders inside `/profile`. Audit scope now covers fixing this entry-point gap.
+
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.

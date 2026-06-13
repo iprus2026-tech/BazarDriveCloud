@@ -11,7 +11,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 | P1 | BD-ERROR-01 | Global Error / Offline | Both | ~4 states | App-level offline/server/timeout overlay |
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
-| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | List, empty, push-permission prompt |
+| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | Register `/notifications`, implement screen, wire passenger `#pfp-notif-btn` + driver bell entry-point |
 | P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface |
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
@@ -51,6 +51,7 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 
 **Remaining audit scope** (open the audit gate only if these gaps are confirmed):
 
+- **Fix the broken history menu entry** — the passenger profile menu row «История поездок» (`#pfp-menu-history` in `public/src/screens/profile.js:932-934`) currently routes to `/feed` instead of opening the history pane that already renders in `/profile`. This is a shipped entry-point gap, not a new screen.
 - A dedicated `/history` route (today the history is reached via `/profile`).
 - A loading skeleton for the history list (parity with driver history).
 - Inline history detail parity (copy / states alignment with `historyDetailHtml`).
@@ -163,6 +164,15 @@ Out of scope:
 
 ## P2 — BD-NOTIF-01 Notifications
 
+Notifications is **not** wired from the existing entry points in the shipped UI. The missing scope includes both the screen and the profile-entry wiring (mirrors BD-SETTINGS-01).
+
+Required scope:
+
+- register the `/notifications` route in `public/src/app.js`
+- implement the notifications screen
+- wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener (`public/src/screens/profile.js:620-621`)
+- wire the equivalent driver profile bell / notifications entry-point
+
 Required states:
 
 - notification list
@@ -173,6 +183,7 @@ Out of scope:
 
 - real push delivery
 - websocket/realtime updates
+- native OS push registration
 
 ## P2 — BD-MOD-01 Moderation / Report
 
