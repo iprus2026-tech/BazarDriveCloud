@@ -49,25 +49,61 @@ function paneFromSelector(sel) {
   return m ? m[1] : null;
 }
 
-function paneIsRendered(pane) {
-  // Direct substring match — the runtime renders tabs as
-  // `<button class="pf2-tab" … data-pane="X">…`, so a literal
-  // `data-pane="X"` in the assigned HTML proves the tab exists.
-  return typeof pane === 'string'
-    && renderedHtml.includes(`data-pane="${pane}"`);
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// Codex P2 review fix on #487 — verify the rendered surface contains an
+// element with BOTH `class="…pf2-tab…"` AND `data-pane="X"`, not just any
+// `data-pane="X"`. Tolerates attribute order on both sides because the
+// runtime template could shift it: `class` before `data-pane` is what
+// `driverTabsHtml` emits today, but a future refactor could swap order
+// without breaking real-DOM behavior — we shouldn't false-fail on that.
+function tabIsRendered(pane) {
+  if (typeof pane !== 'string') return false;
+  const p = escapeRegExp(pane);
+  const classFirst = new RegExp(
+    `<[^>]+class="[^"]*\\bpf2-tab\\b[^"]*"[^>]+data-pane="${p}"`);
+  const paneFirst = new RegExp(
+    `<[^>]+data-pane="${p}"[^>]+class="[^"]*\\bpf2-tab\\b[^"]*"`);
+  return classFirst.test(renderedHtml) || paneFirst.test(renderedHtml);
+}
+
+// The canonical set of pane ids the runtime tabs render. Used to
+// distinguish "valid pane that the runtime should have rendered" from
+// "unexpected pane id leaking out of a prototype-key regression".
+const CANONICAL_PANES = new Set([
+  'overview',
+  'ip',
+  'docs',
+  'payouts',
+  'security',
+]);
 
 function resolveBySelector(sel) {
   const pane = paneFromSelector(sel);
   // Permissive default — non-tab selectors always resolve so unrelated
   // profile() wiring (renderDriver, garage, status, etc.) is not perturbed.
   if (pane == null) return makeEl();
-  // Surface-aware — a `.pf2-tab[data-pane="X"]` selector resolves to a
-  // CLICKABLE pane element ONLY when the rendered HTML actually contains
-  // `data-pane="X"`. If the tab is missing, return null and the runtime's
-  // `?.click()` becomes a safe no-op (matching real-DOM behavior). This
-  // is what makes the smoke catch a tab-list rename / removal.
-  if (!paneIsRendered(pane)) return null;
+  // Canonical pane — surface-aware. The `.pf2-tab[data-pane="X"]`
+  // selector resolves to a CLICKABLE pane element ONLY when the rendered
+  // surface actually contains a `pf2-tab` element carrying that
+  // data-pane. If the tab is missing (tab-list rename / removal), return
+  // null and the runtime's `?.click()` becomes a safe no-op — matching
+  // real-DOM behavior. This is the new check that catches surface
+  // regressions on valid aliases.
+  if (CANONICAL_PANES.has(pane)) {
+    return tabIsRendered(pane) ? makeEl(pane) : null;
+  }
+  // Codex P1 review fix on #487 — UNEXPECTED / non-canonical pane id.
+  // If the runtime's own-property guard (`Object.hasOwn(PANE_ALIASES, …)`)
+  // is accidentally removed, an inherited value like
+  // `Object.prototype.constructor` can still get interpolated into a
+  // `.pf2-tab[data-pane="…"]` selector. To preserve the prototype-key
+  // regression signal, return a clickable stub for unexpected panes so
+  // the click() records the unexpected deep-link attempt and the bad-
+  // pane assertions below FAIL. Surface-aware null would silently mask
+  // that regression.
   return makeEl(pane);
 }
 
@@ -147,15 +183,17 @@ function run(hash) {
 
 // BD-PROFILE-PANE-ALIAS-SMOKE-TAB-SURFACE-S — direct surface-shape pin: the
 // rendered driver profile must include exactly the five canonical tab
-// `data-pane="…"` markers. If a tab is renamed / removed in the runtime
-// without an accompanying smoke fix, this surface pin fails BEFORE the
-// alias-level pins below, naming the missing tab directly.
+// `.pf2-tab[data-pane="…"]` markers. The check uses `tabIsRendered`
+// (which verifies BOTH the `pf2-tab` class and the `data-pane`
+// attribute) so a future runtime change that renames the tab class but
+// keeps the data-pane attribute fails this pin BEFORE the alias-level
+// pins below, naming the missing tab directly.
 {
-  const { threw, html } = run('#/profile?role=driver');
+  const { threw } = run('#/profile?role=driver');
   expect('surface: driver profile render does not throw', !threw);
   for (const pane of ['overview', 'ip', 'docs', 'payouts', 'security']) {
-    expect(`surface: rendered profile carries data-pane="${pane}"`,
-      html.includes(`data-pane="${pane}"`));
+    expect(`surface: rendered profile carries .pf2-tab[data-pane="${pane}"]`,
+      tabIsRendered(pane));
   }
 }
 
