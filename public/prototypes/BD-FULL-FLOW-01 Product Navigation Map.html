@@ -243,25 +243,34 @@
       <div class="lane-section">App entry</div>
 
       <div class="screen-card">
-        <div class="screen-id">BD-ONBOARDING-01</div>
-        <div class="screen-name">Welcome / Onboarding</div>
-        <div class="screen-route">/welcome, /onboarding (empty hash → /welcome)</div>
-        <div class="screen-states">5 states · welcome → role → permissions → loading → error</div>
+        <div class="screen-id">BD-ONBOARDING-01 (welcome)</div>
+        <div class="screen-name">Welcome gate</div>
+        <div class="screen-route">/welcome (empty hash → /welcome)</div>
+        <div class="screen-states">5 states · welcome → role → permissions → loading → error · persists welcomeSeen + role</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">public/src/screens/onboarding.js</div>
-        <div class="screen-note">Codex P2 (PR #495): registered routes are /welcome and /onboarding; literal #/ is not a registered route</div>
+        <div class="screen-file">public/src/screens/welcome.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /welcome is owned by welcome.js, not onboarding.js. First-run flow routes directly to /feed (passenger) or /driver-map (driver) — does not pass through /onboarding?step=phone.</div>
       </div>
 
-      <div class="flow-arrow">Role select → feed or driver-map</div>
+      <div class="screen-card">
+        <div class="screen-id">BD-ONBOARDING-01 (onboarding step host)</div>
+        <div class="screen-name">Onboarding step host</div>
+        <div class="screen-route">/onboarding (?step=phone for OTP)</div>
+        <div class="screen-states">onboarding step host · profile-side re-entry only (not part of first-run welcome path)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/onboarding.js</div>
+      </div>
+
+      <div class="flow-arrow">Welcome → /feed (passenger) or /driver-map (driver)</div>
 
       <div class="screen-card audit">
         <div class="screen-id">BD-AUTH-01</div>
-        <div class="screen-name">Phone / OTP (inside onboarding)</div>
+        <div class="screen-name">Phone / OTP (profile re-entry, inside onboarding)</div>
         <div class="screen-route">/onboarding?step=phone</div>
-        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified</div>
+        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified · profile re-entry only, not part of first-run welcome path</div>
         <span class="screen-badge audit">AUDIT</span>
         <div class="screen-file">public/src/screens/onboarding.js</div>
-        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding; profile verification CTAs route to /onboarding?step=phone. No registered /auth route.</div>
+        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding; profile verification CTAs route to /onboarding?step=phone. No registered /auth route. Welcome flow does NOT pass through this step.</div>
       </div>
 
     </div>
@@ -310,9 +319,10 @@
         <div class="screen-id">BD-MAP-05</div>
         <div class="screen-name">OrderMapDraft</div>
         <div class="screen-route">/order-map-draft</div>
-        <div class="screen-states">6 states</div>
+        <div class="screen-states">6 states · submit → /responses?orderId=...&amp;state=empty (seeds new order id)</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/order_map_draft.js</div>
+        <div class="screen-note">Codex P2 (PR #495): bare /responses drops the order context; canonical orderId is required for «Выбрать водителя» to build the passenger active ride.</div>
       </div>
 
       <div class="lane-section">Driver selection</div>
@@ -360,9 +370,10 @@
         <div class="screen-id">BD-RIDE-P-05</div>
         <div class="screen-name">RideComplete</div>
         <div class="screen-route">/active-ride?role=passenger&amp;status=COMPLETED</div>
-        <div class="screen-states">7 states · summary → rating → report → receipt</div>
+        <div class="screen-states">7 states · summary → rating → report → receipt · rating return / report return / bottom action → /feed; live secondary action → /chat (no /map exit)</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/active_ride_passenger.js (production path audit needed for ride-complete)</div>
+        <div class="screen-note">Codex P2 (PR #495): no /map exit from BD-RIDE-P-05 in the shipped UI.</div>
       </div>
 
       <div class="lane-section">History</div>
@@ -477,11 +488,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-RIDE-HISTORY-D-01</div>
         <div class="screen-name">Receipt / Payouts</div>
-        <div class="screen-route">/profile?role=driver (payouts list source) → /receipt?tripId=... (receipt screen)</div>
+        <div class="screen-route">/profile?role=driver&amp;pane=payouts (payouts pane deep-link) → /receipt?tripId=... (receipt screen)</div>
         <div class="screen-states">6 states · history / payouts / receipt_cash / receipt_noncash / empty / loading</div>
         <span class="screen-badge done">DONE</span>
-        <div class="screen-file">list source: public/src/screens/profile.js · receipt screen: public/src/screens/trip_receipt.js</div>
-        <div class="screen-note">Codex P2 (PR #495): "Открыть чек" must target /receipt?tripId=... (trip_receipt.js); profile payouts pane only deep-links receipt rows</div>
+        <div class="screen-file">list source: public/src/screens/profile.js (payouts pane) · receipt screen: public/src/screens/trip_receipt.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /profile?role=driver alone opens the overview tab; payouts pane needs ?pane=payouts deep-link (the trip receipt's «К выплатам» action uses it). "Открыть чек" must target /receipt?tripId=... (trip_receipt.js).</div>
       </div>
 
       <div class="lane-section">Profile / dashboard</div>
@@ -490,9 +501,10 @@
         <div class="screen-id">BD-PROFILE-D-03</div>
         <div class="screen-name">Driver Dashboard</div>
         <div class="screen-route">/profile?role=driver</div>
-        <div class="screen-states">10 states · 5 tabs</div>
+        <div class="screen-states">10 states · 5 tabs · «На линию» button (#pf2-ip-go-online) toggles driverOnline; active-shift CTA opens /driver-map</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/profile.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no direct /active-ride?role=driver entry from profile — that route opens only after accepted order / confirmation handoff with a trip id.</div>
       </div>
 
       <div class="screen-card">
@@ -510,10 +522,11 @@
       <div class="screen-card audit">
         <div class="screen-id">BD-GARAGE-01</div>
         <div class="screen-name">Driver Garage</div>
-        <div class="screen-route">/profile?role=driver (garage gate) → /garage (consolidation gap)</div>
-        <div class="screen-states">already ships list/add/edit/archive/restore/readiness in profile.js + garage.js</div>
+        <div class="screen-route">/profile?role=driver (garage gate); no /garage route registered</div>
+        <div class="screen-states">already ships list/add/edit/archive/restore/readiness in profile.js (shipped UI) + public/src/garage.js (shared helper)</div>
         <span class="screen-badge audit">AUDIT</span>
-        <div class="screen-note">Consolidation of active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*); not a new screen</div>
+        <div class="screen-file">public/src/screens/profile.js (shipped UI) + public/src/garage.js (shared helper)</div>
+        <div class="screen-note">Codex P2 (PR #495): there is no public/src/screens/garage.js; consolidation of active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*); not a new screen.</div>
       </div>
 
     </div>
@@ -551,11 +564,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-RESPOND-01</div>
         <div class="screen-name">Respond — driver offer sheet</div>
-        <div class="screen-route">/respond</div>
+        <div class="screen-route">/respond?postId=... (required; missing-state otherwise)</div>
         <div class="screen-states">1 driver-offer sheet · persists kind: passenger_response with driver snapshot</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/respond.js</div>
-        <div class="screen-note">Driver context (forces success chat link role=driver). Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
+        <div class="screen-note">Codex P2 (PR #495): runtime reads getRouteParam('postId'); bare /respond renders the missing state. Feed and post detail link with ?postId=.... Driver context (forces success chat link role=driver). Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
       </div>
 
       <div class="lane-section">Order</div>
@@ -650,14 +663,24 @@
     </thead>
     <tbody>
       <tr>
-        <td class="t-id">BD-ONBOARDING-01</td>
-        <td class="t-route">/welcome, /onboarding</td>
+        <td class="t-id">BD-ONBOARDING-01 (welcome)</td>
+        <td class="t-route">/welcome</td>
+        <td><code>public/src/screens/welcome.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>5 (welcome → role → permissions → loading → error)</td>
+        <td>Выбрать роль</td>
+        <td>/feed (passenger) or /driver-map (driver); persists welcomeSeen + role</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-ONBOARDING-01 (onboarding step host)</td>
+        <td class="t-route">/onboarding (?step=phone for OTP)</td>
         <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>5</td>
-        <td>Выбрать роль</td>
-        <td>/map or /driver-map (empty hash → /welcome)</td>
+        <td>onboarding step host</td>
+        <td>continue step</td>
+        <td>next onboarding step / back to caller (profile re-entry path)</td>
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-AUTH-01</td>
@@ -665,9 +688,9 @@
         <td><code>public/src/screens/onboarding.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-audit">Done · audit</td>
-        <td>phone / OTP mock shipped; persists phoneVerified</td>
+        <td>phone / OTP mock shipped; persists phoneVerified; profile re-entry only — not in first-run welcome path</td>
         <td>Войти по телефону</td>
-        <td>/onboarding next step (no separate /auth screen)</td>
+        <td>back to profile re-entry caller (no separate /auth screen)</td>
       </tr>
       <tr>
         <td class="t-id">BD-FEED-01</td>
@@ -701,7 +724,7 @@
       </tr>
       <tr>
         <td class="t-id">BD-RESPOND-01</td>
-        <td class="t-route">/respond</td>
+        <td class="t-route">/respond?postId=... (required; missing-state otherwise)</td>
         <td><code>public/src/screens/respond.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
@@ -757,7 +780,7 @@
         <td class="t-done">Done</td>
         <td>6</td>
         <td>Разместить заявку</td>
-        <td>/responses</td>
+        <td>/responses?orderId=...&amp;state=empty (submit handler seeds the new order id)</td>
       </tr>
       <tr>
         <td class="t-id">BD-CONFIRM-01</td>
@@ -797,7 +820,7 @@
         <td class="t-done">Done</td>
         <td>7</td>
         <td>Оценить водителя</td>
-        <td>/map or /feed</td>
+        <td>rating return / report return / bottom action → /feed; live secondary action → /chat (no /map exit)</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-P-06</td>
@@ -881,8 +904,8 @@
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-HISTORY-D-01</td>
-        <td class="t-route">/profile?role=driver (payouts list) → /receipt?tripId=...</td>
-        <td>list source: <code>public/src/screens/profile.js</code> · receipt: <code>public/src/screens/trip_receipt.js</code></td>
+        <td class="t-route">/profile?role=driver&amp;pane=payouts (payouts pane deep-link) → /receipt?tripId=...</td>
+        <td>list source: <code>public/src/screens/profile.js</code> (payouts pane) · receipt: <code>public/src/screens/trip_receipt.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>6</td>
@@ -906,8 +929,8 @@
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
         <td>10 / 5 tabs</td>
-        <td>На линию</td>
-        <td>/active-ride?role=driver</td>
+        <td>На линию (toggles driverOnline via #pf2-ip-go-online; active-shift CTA opens /driver-map)</td>
+        <td>/driver-map (no direct /active-ride?role=driver entry — opened only after accepted order / confirmation handoff with a trip id)</td>
       </tr>
       <tr>
         <td class="t-id">BD-RULES-01</td>
@@ -941,8 +964,8 @@
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-GARAGE-01</td>
-        <td class="t-route">/profile?role=driver (garage gate) → /garage gap</td>
-        <td><code>profile.js / garage.js</code></td>
+        <td class="t-route">/profile?role=driver (garage gate); no /garage route registered</td>
+        <td>shipped UI: <code>public/src/screens/profile.js</code> + shared helper <code>public/src/garage.js</code> (no <code>public/src/screens/garage.js</code>)</td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-audit">Done · audit</td>
         <td>consolidation of active garage PR line</td>

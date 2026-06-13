@@ -49,11 +49,21 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — no-show flow:** BD-RIDE-D-NOSHOW-01 is partial, not done. The driver route renders only the terminal NO_SHOW / canceled stub today (`docs/design-registry.json`); the full no-show flow (reason / confirm / compensation / support / loading / error) remains a future dedicated issue per `docs/screen-contracts.md` and is out of scope for this artifact PR. The currently wired exits for the terminal stub are `go('/feed')` (primary) and `go('/profile')` (history) — there is no `/driver-map` exit from this state today.
 
-> **Codex P2 follow-up — onboarding route:** BD-ONBOARDING-01 is registered at `/welcome` and `/onboarding` in `public/src/app.js`; `public/src/router.js` only defaults an empty hash to `#/welcome`. A literal `#/` is not a registered onboarding route and, once `welcomeSeen` is true, falls through to `/feed`. Do not use `/` as the onboarding handoff route.
+> **Codex P2 follow-up — onboarding routes / files split:** `/welcome` is owned by `public/src/screens/welcome.js` (welcome / role / permissions / loading / error states) and `/onboarding` is the onboarding step host (`public/src/screens/onboarding.js`) used for steps like `?step=phone`. Empty hash defaults to `#/welcome` in `public/src/router.js`. A literal `#/` is not a registered onboarding route and, once `welcomeSeen` is true, falls through to `/feed`. The first-run welcome flow persists `welcomeSeen` + role and routes directly to `/feed` (passenger) or `/driver-map` (driver) — it does **not** pass through `/onboarding?step=phone`; the OTP step is the profile-side phone-verification re-entry path.
 
-> **Codex P2 follow-up — phone verification:** BD-AUTH-01 is reclassified from Missing → Done · audit. Phone / OTP already ships inside `public/src/screens/onboarding.js` (persists `phoneVerified`) and `public/src/screens/profile.js` verification CTAs route to `/onboarding?step=phone`. Treat any remaining work as audit / reuse of that flow, not a new `/auth` screen.
+> **Codex P2 follow-up — phone verification:** BD-AUTH-01 is reclassified from Missing → Done · audit. Phone / OTP already ships inside `public/src/screens/onboarding.js` (persists `phoneVerified`) and `public/src/screens/profile.js` verification CTAs route to `/onboarding?step=phone`. This is a profile re-entry path, not part of the first-run welcome transition. Treat any remaining work as audit / reuse of that flow, not a new `/auth` screen.
 
-> **Codex P2 follow-up — driver receipts:** BD-RIDE-HISTORY-D-01 keeps the profile/payouts pane (`public/src/screens/profile.js`) as the list source, but **Открыть чек** must route to `/receipt?tripId=...` and the receipt document surface is `public/src/screens/trip_receipt.js`.
+> **Codex P2 follow-up — driver receipts:** BD-RIDE-HISTORY-D-01 list source is the profile payouts pane deep-link `/profile?role=driver&pane=payouts` (the deep-link the trip receipt's «К выплатам» action uses); `/profile?role=driver` alone opens the overview tab, not the payout rows. **Открыть чек** routes to `/receipt?tripId=...` and the receipt document surface is `public/src/screens/trip_receipt.js`.
+
+> **Codex P2 follow-up — respond required query:** BD-RESPOND-01 runtime reads `getRouteParam('postId')` and renders a missing-state when absent. Handoff route is `/respond?postId=...` (feed and post detail link with that query); a bare `/respond` opens the missing state, not the driver offer sheet.
+
+> **Codex P2 follow-up — order draft submit:** BD-MAP-05 submit handler navigates to `/responses?orderId=...&state=empty` after creating the order. The responses screen needs that canonical order id before «Выбрать водителя» can build the passenger active ride.
+
+> **Codex P2 follow-up — driver online CTA:** BD-PROFILE-D-03 «На линию» button (`#pf2-ip-go-online`) only toggles `driverOnline`. The line-ready active-shift CTA routes to `/driver-map`; `/active-ride?role=driver` is opened only after an accepted order / confirmation handoff with a trip id, not directly from the profile.
+
+> **Codex P2 follow-up — passenger completion exits:** BD-RIDE-P-05 wires rating return / report return / bottom action to `/feed`; the live secondary action is `/chat`. There is no `/map` exit from BD-RIDE-P-05 in the shipped UI.
+
+> **Codex P2 follow-up — garage file:** BD-GARAGE-01 shipped UI is rendered from `public/src/screens/profile.js`; the shared helper is `public/src/garage.js`. There is no `public/src/screens/garage.js` and no registered `/garage` route. The audit gate points at the shipped surface, not an invented screen file.
 
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
