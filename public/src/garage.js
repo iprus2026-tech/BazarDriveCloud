@@ -213,6 +213,105 @@ export function resolveActiveGarageVehicle(u) {
   return vehicles.find((v) => v && v.id === id) || null;
 }
 
+// BD-PROFILE-GARAGE-READY-K — Read-only readiness/documents hook.
+//
+// First slice of the garage→documents bridge. This is INTENTIONALLY tiny:
+// no real document storage, no upload, no readiness scoring, no UI
+// mutation. The two helpers below answer "which vehicle (if any) is the
+// document/readiness anchor right now" so the upcoming documents
+// implementation knows where to attach when it lands. Both helpers are
+// strictly read-only against `profile.driverGarage` and the legacy
+// `vehicleMake / Model / Color / Plate` fields — no `user.set`, no
+// `localStorage.setItem`, no archive / restore / make-active calls, no
+// cross-surface writes.
+//
+// Return shape from `getGarageReadinessState(u)`:
+//   {
+//     state: 'active_vehicle' | 'no_active_vehicle' | 'empty_garage',
+//     vehicle: <resolved vehicle> | null,
+//     reason:
+//       | 'explicit_active'     — saved activeVehicleId matches a
+//                                 non-archived persisted vehicle (incl.
+//                                 a materialised / restored legacy-
+//                                 source vehicle the user explicitly
+//                                 picked)
+//       | 'legacy_fallback'     — synthesised legacy entry only
+//                                 (`_synthesized === true`; no
+//                                 persisted record at all)
+//       | 'no_active_selection' — persisted vehicles exist with at
+//                                 least one non-archived entry but no
+//                                 active selection
+//       | 'archived_only'       — every persisted entry is archived
+//       | 'empty_collection'    — no normalised selectable persisted
+//                                 record AND no synthesised legacy
+//                                 fallback
+//   }
+//
+// Reason matrix:
+//   state === 'active_vehicle'    + active._synthesized === true → 'legacy_fallback'
+//   state === 'active_vehicle'    + active._synthesized !== true → 'explicit_active'
+//   state === 'no_active_vehicle' + every normalised persisted entry archived → 'archived_only'
+//   state === 'no_active_vehicle' + at least one non-archived normalised persisted → 'no_active_selection'
+//   state === 'empty_garage'      → 'empty_collection'
+//
+// READY-K Codex P2-1 — classification follows the same NORMALISED garage
+// truth as `buildGarageVehicles` / `resolveActiveGarageVehicle`, not the
+// raw `driverGarage.vehicles.length`. If every persisted record is
+// dropped by `normalisePersistedVehicle` (e.g. ids without models) and
+// there are no legacy fields, the garage overview renders the
+// empty/add state — and READY-K must report `empty_garage /
+// empty_collection` in lockstep so the Documents pane says
+// «Добавьте авто» instead of stranding the driver on
+// «Выберите активное авто» with no selectable card.
+//
+// READY-K Codex P2-3 — the synthesised-legacy reason hinges on the
+// `_synthesized: true` marker `buildGarageVehicles` stamps on its
+// in-memory legacy entry, NOT on `active.source === 'legacy'`. A
+// materialised / restored legacy-source vehicle the user explicitly
+// makes active is a real persisted record (no `_synthesized` marker;
+// `normalisePersistedVehicle` does not preserve that flag from
+// storage), so it correctly reports `explicit_active`.
+//
+// Archived-only is INTENTIONALLY no_active_vehicle, NOT empty_garage:
+// the user has touched the garage, they just have no usable car right
+// now. The UI hint and the future documents implementation treat the
+// two states differently (archived-only points the user at restore;
+// empty points the user at add). Malformed persisted records that
+// normalise away are treated as empty for READY-K (there is no card
+// to restore or pick).
+export function getGarageReadinessState(u) {
+  const active = resolveActiveGarageVehicle(u);
+  if (active) {
+    return {
+      state: 'active_vehicle',
+      vehicle: active,
+      reason: active._synthesized === true ? 'legacy_fallback' : 'explicit_active',
+    };
+  }
+  // READY-K Codex P2-1 — normalised collection, not raw length. Mirrors
+  // the source of truth `buildGarageVehicles` / `resolveActiveGarageVehicle`
+  // use, so malformed (modelless / non-object) raw entries cannot pin
+  // the Documents pane on «Выберите активное авто» when no selectable
+  // card exists.
+  const normalised = readPersistedGarageVehicles(u);
+  if (normalised.length === 0) {
+    return { state: 'empty_garage', vehicle: null, reason: 'empty_collection' };
+  }
+  const allArchived = normalised.every((v) => v && v.archived === true);
+  return {
+    state: 'no_active_vehicle',
+    vehicle: null,
+    reason: allArchived ? 'archived_only' : 'no_active_selection',
+  };
+}
+
+// Thin wrapper for the future documents implementation — callers that
+// only need the vehicle (not the state/reason metadata) can read it
+// directly without re-deriving via `resolveActiveGarageVehicle`.
+export function resolveGarageReadinessVehicle(u) {
+  return getGarageReadinessState(u).vehicle;
+}
+
 // BD-PROFILE-D-05I — Count archived persisted vehicles. Used by the
 // profile renderer to surface a small "В архиве: N" hint underneath the
 // active-list cards. Strictly read-only — walks the raw persisted

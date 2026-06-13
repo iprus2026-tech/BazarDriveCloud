@@ -25,6 +25,7 @@ import {
   resolveActiveGarageVehicleId,
   countArchivedGarageVehicles,
   listArchivedGarageVehicles,
+  getGarageReadinessState,
 } from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -2411,6 +2412,50 @@ function docCardHtml(key, doc) {
     ${docPanelHtml(key, status)}`;
 }
 
+// BD-PROFILE-GARAGE-READY-K — small read-only garage→documents bridge.
+// Renders ONE of three hint shapes per `getGarageReadinessState(u)`:
+//   • active_vehicle  → «Документы активного авто» + model/plate
+//   • no_active_vehicle → «Выберите активное авто» + helper copy
+//   • empty_garage    → «Добавьте авто» + helper copy
+// Strictly read-only: the rendered hint is a static `<section>` — no
+// inputs, no click handlers, no uploads, no readiness scoring, no
+// `data-garage-action` markers (the future documents implementation
+// will own those when it lands).
+function garageReadinessHintHtml(u) {
+  const readiness = getGarageReadinessState(u);
+  const titleByState = {
+    active_vehicle: 'Документы активного авто',
+    no_active_vehicle: 'Выберите активное авто',
+    empty_garage: 'Добавьте авто',
+  };
+  const helperByState = {
+    active_vehicle: 'Готовность документов будет привязана к этой машине.',
+    no_active_vehicle: 'Документы и готовность не привязываются, пока активная машина не выбрана.',
+    empty_garage: 'После добавления машины здесь появится связь с документами.',
+  };
+  const title = titleByState[readiness.state] || titleByState.empty_garage;
+  const helper = helperByState[readiness.state] || helperByState.empty_garage;
+  let vehicleLine = '';
+  if (readiness.state === 'active_vehicle' && readiness.vehicle) {
+    const model = escapeHtml(readiness.vehicle.model || '');
+    const plate = escapeHtml(readiness.vehicle.plate || '');
+    const colorParts = [];
+    if (model) colorParts.push(`<span class="pf2-garage-ready__model">${model}</span>`);
+    if (plate) colorParts.push(`<span class="pf2-garage-ready__plate">${plate}</span>`);
+    if (colorParts.length > 0) {
+      vehicleLine = `<p class="pf2-garage-ready__vehicle">${colorParts.join(' · ')}</p>`;
+    }
+  }
+  return `
+    <section class="pf2-card pf2-garage-ready" id="pf2-garage-ready"
+      data-garage-ready-state="${readiness.state}"
+      data-garage-ready-reason="${readiness.reason}">
+      <h4 class="pf2-garage-ready__title">${title}</h4>
+      ${vehicleLine}
+      <p class="pf2-garage-ready__helper">${helper}</p>
+    </section>`;
+}
+
 function docsPaneHtml(u) {
   const docs = u.driverDocuments || {};
   // Blocking docs prevent going online; review-only is soft / informational.
@@ -2444,6 +2489,7 @@ function docsPaneHtml(u) {
     .join('');
   return `
     ${alert}
+    ${garageReadinessHintHtml(u)}
     ${cards}
     <button type="button" class="pf2-doc-add-btn" id="pf2-doc-add">
       ${SVG_PLUS} Добавить документ
@@ -3443,6 +3489,14 @@ function wireGarageActions(root, vehicles = []) {
 // surfaces on the page are untouched. The DOM stub in the smoke
 // no-ops `replaceWith`, so smoke-side verification re-renders the
 // whole profile to confirm the persisted change.
+//
+// READY-K Codex P2-2 — after the in-place garage rebuild, refresh the
+// Documents pane's read-only READY-K hint in place so add / make-active
+// / archive / restore / edit handlers that already drive this path keep
+// the active/no-active/empty copy current without a full profile
+// re-render. The hint sits inside the Documents pane (rendered once at
+// renderDriver time and toggled by tab clicks), so without this refresh
+// it would keep the stale `u` snapshot.
 function refreshGarageSection(root) {
   const oldSection = root.querySelector('#pf2-garage');
   if (!oldSection) return;
@@ -3455,6 +3509,28 @@ function refreshGarageSection(root) {
   if (!newSection) return;
   oldSection.replaceWith(newSection);
   wireGarageActions(root, vehicles);
+  refreshGarageReadinessHint(root);
+}
+
+// READY-K Codex P2-2 — Refresh just the Documents pane's read-only
+// READY-K hint in place. Reads the fresh `user.get()`, re-renders the
+// READY-K `<section id="pf2-garage-ready">` markup, and swaps it for
+// the previous one. Does NOT re-render the rest of the Documents pane
+// (the document cards keep their own state), does NOT attach write
+// handlers (the hint stays a static section), and does NOT mutate
+// storage. When the READY-K hint is not in the current DOM (e.g.
+// passenger profile, Documents pane never mounted), this is a no-op —
+// the helper short-circuits on the missing anchor.
+function refreshGarageReadinessHint(root) {
+  if (!root) return;
+  const oldHint = root.querySelector('#pf2-garage-ready');
+  if (!oldHint) return;
+  const u = user.get();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = garageReadinessHintHtml(u);
+  const newHint = tmp.firstElementChild;
+  if (!newHint) return;
+  oldHint.replaceWith(newHint);
 }
 
 function renderDriver(root, u) {
