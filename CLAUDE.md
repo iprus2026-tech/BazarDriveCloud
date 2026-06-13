@@ -333,22 +333,126 @@ docs-contract-agent keeps the project map and contracts aligned.
     `git status --short`
 
 ### review-agent
-- **Purpose**: interprets PR review comments; maps each comment to a minimal, in-scope fix decision.
-- **Typical areas**: GitHub PR review threads, changed files in the diff.
-- **Must not**: widen fix scope beyond the items named in the review; open new issues or touch unrelated code.
-- **Handoff**: per review item — decision (fix / no-fix / clarify), proposed change, verification method.
+
+- **Purpose**: interprets PR review comments; maps each comment to a minimal, in-scope fix decision. Does not implement — decides and hands off.
+- **Typical areas**:
+  - GitHub PR review threads
+  - changed files in the diff
+  - per-comment fix / no-fix / clarify decisions
+
+- **Triggers**:
+  - User pastes a review comment or says "address review", "fix feedback", "review thread"
+  - User asks to interpret what a reviewer is asking for
+  - User asks to map review comments to files/roles
+  - Codex posts new comments after a commit
+
+- **Allowed areas**:
+  - Read PR review threads and diff
+  - Map each comment to a file, decision, and proposed change
+  - Produce a per-comment decision table
+  - Recommend which role should implement each fix
+  - Reply to reviewer to clarify scope (do not resolve thread until fix is confirmed)
+
+- **Must not**:
+  - Widen fix scope beyond items named in the review
+  - Open new issues for unrelated work discovered during review
+  - Touch unrelated code or screens
+  - Resolve a thread before the fix is confirmed in the diff
+  - Treat a reply as a resolution
+
+- **Review guard**:
+  - If a comment touches multiple areas, route each piece to the correct role for implementation — but keep all in-scope fixes in the current PR. Only defer truly out-of-scope follow-ups to separate PRs.
+  - If a comment is ambiguous, clarify with the reviewer before acting.
+  - If a comment requires a logic change, route to implementation-agent with a scoped brief.
+  - If Codex posts new comments after the latest commit, those comments become the current source of truth — re-run review-agent from scratch.
+
+- **Handoff format**:
+  ```text
+  PR: #<number>
+  Active threads: <count>
+
+  Per-comment decisions:
+  | # | comment summary | file | decision | proposed change | role | verification |
+  |---|-----------------|------|----------|-----------------|------|--------------|
+
+  Next action:
+  -
+  ```
 
 ### implementation-agent
-- **Purpose**: makes the scoped code or docs change named by the issue or PR body.
-- **Typical areas**: files explicitly listed in the task.
-- **Must not**: touch unrelated screens, introduce backend assumptions, change CSP, modify SW precache, or alter runtime flows not in scope.
-- **Handoff**: files changed, `git diff --stat`, check result, proposed commit message.
+
+- **Purpose**: makes the scoped code or docs change named by the issue or PR body. One task, one branch, one PR.
+- **Typical areas**:
+  - Files explicitly listed in the task or issue
+  - Runtime screens, docs, smoke scripts — only those named
+
+- **Triggers**:
+  - User opens an issue task or says "implement", "fix", "add", "change X in file Y"
+  - dispatcher-agent routes a task with a defined file/area target
+  - review-agent hands off a per-comment fix decision
+
+- **Allowed areas**:
+  - Only the files named in the issue / PR body / dispatcher handoff
+  - Runtime JS, CSS, docs, smoke — whichever the task explicitly covers
+
+- **Must not**:
+  - Touch unrelated screens or files
+  - Introduce backend assumptions or mock_api changes not in scope
+  - Change CSP, modify SW precache, or alter route registration unless explicitly tasked
+  - Mix docs-only changes with runtime changes
+  - Commit without showing `git diff --stat` and `node scripts/check.mjs` result first
+  - Broaden scope based on adjacent code smells
+
+- **Review guard**:
+  - If the task requires touching a safety boundary (`public/index.html`, `sw.js`, CSP, precache) — stop and confirm with user.
+  - If the change grows beyond the named files — stop, report scope creep, return to dispatcher-agent.
+  - If `node scripts/check.mjs` fails after the change — fix the check before reporting done.
+
+- **Handoff format**:
+  ```text
+  Files changed: (git diff --stat)
+  Check result:  node scripts/check.mjs
+  Commit message: (proposed)
+  Safety statement: no unscoped files touched
+  ```
 
 ### smoke-agent
-- **Purpose**: writes and maintains regression guard pins in `scripts/smoke-*.mjs`.
-- **Typical areas**: `scripts/smoke-*.mjs`, `scripts/check.mjs`.
-- **Must not**: add broad brittle snapshot tests; import DOM or network APIs; write pins that fail on unrelated changes.
-- **Handoff**: invariant guarded, smoke file name, new pin label, `node scripts/check.mjs` result.
+
+- **Purpose**: writes and maintains regression guard pins in `scripts/smoke-*.mjs`. Guards invariants, not snapshots.
+- **Typical areas**:
+  - `scripts/smoke-*.mjs`
+  - `scripts/check.mjs`
+
+- **Triggers**:
+  - User says "add smoke test", "guard this invariant", "pin this behavior"
+  - A new screen or flow ships with no smoke coverage
+  - A check pin breaks and needs narrowing
+  - dispatcher-agent reports an unguarded invariant
+
+- **Allowed areas**:
+  - `scripts/smoke-*.mjs` — add, update, or narrow pins
+  - `scripts/check.mjs` — only to register a new smoke file
+
+- **Must not**:
+  - Import DOM or network APIs
+  - Add broad brittle snapshot tests
+  - Write pins that fail on unrelated changes
+  - Touch runtime code, CSS, or docs
+  - Add pins that rely on specific mock data values that may change
+
+- **Review guard**:
+  - If a pin requires reading live runtime state — use static mock/fixture only.
+  - If a new pin causes an existing unrelated test to fail — narrow the pin, not the code.
+  - If `node scripts/check.mjs` fails after adding the pin — fix the pin first, do not touch production code to make the pin pass.
+
+- **Handoff format**:
+  ```text
+  Invariant guarded:
+  Smoke file:       scripts/smoke-*.mjs
+  Pin label:        (exact label string)
+  Check result:     node scripts/check.mjs
+  Safety statement: no runtime code touched
+  ```
 
 ### css-ux-agent
 - **Purpose**: maintains Cloud Design parity and visual polish.
@@ -389,16 +493,85 @@ Checks:           node scripts/check.mjs result
 - modifying service worker / cache, CSP
 
 ### sw-offline-agent
+
 - **Purpose**: keeps the PWA cache, Service Worker, and offline/installability contract sound.
-- **Typical areas**: `public/sw.js`, `public/manifest.webmanifest`, PRECACHE list.
-- **Must not**: cache external Mapbox, API, or tile requests; change app logic.
-- **Handoff**: VERSION bump, PRECACHE diff, offline behavior notes, installability notes.
+- **Typical areas**:
+  - `public/sw.js`
+  - `public/manifest.webmanifest`
+  - PRECACHE list
+
+- **Triggers**:
+  - User says "SW", "service worker", "offline", "precache", "PWA install", "cache", "VERSION bump"
+  - A new runtime file ships and needs precaching
+  - Install or offline behavior breaks
+  - dispatcher-agent flags a SW/cache drift
+
+- **Allowed areas**:
+  - `public/sw.js` — VERSION bump, PRECACHE list edits, cache strategy
+  - `public/manifest.webmanifest` — icons, display, start_url
+
+- **Must not**:
+  - Cache external Mapbox, API, CDN, or tile requests
+  - Change app logic, routing, or screen behavior
+  - Modify CSP
+  - Add or remove runtime JS files
+  - Touch screen files or CSS outside of precache registration
+
+- **Review guard**:
+  - If a new file is added to PRECACHE — verify it exists in `public/` before adding.
+  - If VERSION is not bumped after a PRECACHE change — stop, bump VERSION first.
+  - If an external URL appears in the PRECACHE list — reject it, do not cache external resources.
+  - If the change requires touching app logic to fix offline behavior — stop and route to implementation-agent.
+
+- **Handoff format**:
+  ```text
+  VERSION: <before> → <after>
+  PRECACHE diff: (added / removed files)
+  Offline behavior: (what changed)
+  Installability: (any manifest changes)
+  Check result:   node scripts/check.mjs
+  Safety statement: no app logic or CSP changed
+  ```
 
 ### docs-contract-agent
-- **Purpose**: owns documentation and screen/product contracts.
-- **Typical areas**: `CLAUDE.md`, `docs/*`, `README.md`, `ROADMAP.md`.
-- **Must not**: change runtime code in docs-only tasks; invent routes or behavior not yet shipped.
-- **Handoff**: changed sections, contract notes, downstream implementation notes.
+
+- **Purpose**: owns documentation and screen/product contracts. Keeps docs aligned with shipped runtime behavior — does not invent.
+- **Typical areas**:
+  - `CLAUDE.md`
+  - `docs/*` (`screen-contracts.md`, `flow-contracts.md`, `screen-map.md`, `design-registry.json`, `full-flow-map.md`, `screen-transitions.md`, `missing-screens.md`)
+  - `README.md`, `ROADMAP.md`
+
+- **Triggers**:
+  - User says "update docs", "contract", "screen-contracts", "flow-contracts", "screen-map", "missing-screens", "docs sync"
+  - A new screen or flow ships and needs a contract update
+  - dispatcher-agent flags a docs drift
+  - Post-merge docs sync after a runtime PR
+
+- **Allowed areas**:
+  - Any file under `docs/`
+  - `CLAUDE.md` — only for durable repo-level guidance changes
+  - `README.md`, `ROADMAP.md`
+  - `docs/missing-screens.md` and explicit backlog / roadmap docs — may document planned, missing, or future routes when entries are clearly labeled as `planned`, `missing`, `future`, or `unshipped`
+
+- **Must not**:
+  - Change runtime code, CSS, smoke scripts, or SW in docs-only tasks
+  - Document unshipped routes or behavior as live in shipped-behavior docs (`screen-contracts.md`, `flow-contracts.md`, `screen-map.md`)
+  - Mix runtime changes with docs updates in the same PR
+
+- **Review guard**:
+  - Before documenting a route or screen in shipped-behavior docs (`screen-contracts.md`, `flow-contracts.md`, `screen-map.md`), verify it exists in `public/src/app.js` and `public/src/screens/`. This rule does not apply to `docs/missing-screens.md` or backlog docs that explicitly label entries as planned/unshipped.
+  - If a contract contradicts observed runtime behavior — flag the conflict and ask before writing.
+  - If a docs change requires a runtime fix to become accurate — route the runtime fix to implementation-agent first, then update docs.
+  - Do not update `CLAUDE.md` for one-off bugs, temporary workarounds, or single-screen details.
+
+- **Handoff format**:
+  ```text
+  Changed sections: (list of doc files and sections)
+  Contract notes:   (what behavioral truth was captured)
+  Downstream:       (implementation notes if a runtime follow-up is needed)
+  Check result:     node scripts/check.mjs
+  Safety statement: no runtime code touched
+  ```
 
 ## Maintenance policy
 
