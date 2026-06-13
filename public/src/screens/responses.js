@@ -698,7 +698,32 @@ function renderOrderMeta(request) {
     </div>`;
 }
 
-function renderEmptyState() {
+// BD-ORDER-P-02A — context-aware empty state. When the order resolved
+// (isFallback=false), assert it is published. When the orderId is unknown,
+// avoid "Заказ опубликован" — the order context was not resolvable. When
+// no orderId was supplied, guide the passenger back to the map.
+function renderEmptyState(request) {
+  const isFallback = !!(request && request.isFallback);
+  const hasOrderId = !!(request && request.orderId);
+
+  let body;
+  let hint1;
+  let hint2;
+
+  if (isFallback && hasOrderId) {
+    body = 'Отклики водителей появятся здесь. Убедитесь, что заказ опубликован, и проверьте снова через минуту.';
+    hint1 = 'Откройте опубликованный заказ с карты или ленты';
+    hint2 = 'Заказ остаётся доступным для водителей рядом';
+  } else if (isFallback) {
+    body = 'Опубликуйте заказ с карты — водители рядом увидят маршрут и смогут откликнуться.';
+    hint1 = 'Вернитесь на карту и опубликуйте маршрут';
+    hint2 = 'Отклики появятся здесь после публикации';
+  } else {
+    body = 'Заказ опубликован. Водители увидят маршрут и смогут откликнуться. Обычно первый отклик приходит за 1–3 минуты.';
+    hint1 = 'Проверьте отклики через минуту или подождите уведомление';
+    hint2 = 'Маршрут и комментарий уже видны водителям рядом';
+  }
+
   return `
     <div class="responses__empty">
       <div class="responses__empty-icon" aria-hidden="true">
@@ -706,19 +731,16 @@ function renderEmptyState() {
         <span class="responses__empty-icon-inner">${CAR_SVG}</span>
       </div>
       <h2 class="responses__empty-title">Ищем водителей</h2>
-      <p class="responses__empty-body">
-        Заказ опубликован. Водители увидят маршрут и смогут откликнуться.
-        Обычно первый отклик приходит за 1–3 минуты.
-      </p>
+      <p class="responses__empty-body">${body}</p>
     </div>
     <div class="responses__hints">
       <div class="responses__hint">
         <span class="responses__hint-icon" aria-hidden="true">${SPARK_SVG}</span>
-        <span class="responses__hint-text">Проверьте отклики через минуту или подождите уведомление</span>
+        <span class="responses__hint-text">${hint1}</span>
       </div>
       <div class="responses__hint">
         <span class="responses__hint-icon responses__hint-icon--info" aria-hidden="true">${INFO_SVG}</span>
-        <span class="responses__hint-text">Маршрут и комментарий уже видны водителям рядом</span>
+        <span class="responses__hint-text">${hint2}</span>
       </div>
     </div>
   `;
@@ -1181,7 +1203,7 @@ export default function responses() {
       </div>
       ${isAccepted
         ? renderAcceptedDriver(handoffRide, request)
-        : (isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState()))}
+        : (isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState(request)))}
       ${footer}
     </div>
 

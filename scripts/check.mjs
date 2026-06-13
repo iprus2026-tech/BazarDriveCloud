@@ -438,6 +438,19 @@ if (exists(respondOrderLinkReadsideSmoke)) {
   }
 }
 
+// BD-ORDER-P-02A — /responses empty/order-context hardening: renderEmptyState
+// accepts request + branches on isFallback; requestFromOrder null path provides
+// context-aware fallback copy; order context fields rendered from request.
+const responsesEmptyContextSmoke = path.join(root, 'scripts', 'smoke-responses-empty-context.mjs');
+if (exists(responsesEmptyContextSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesEmptyContextSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-responses-empty-context.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {
