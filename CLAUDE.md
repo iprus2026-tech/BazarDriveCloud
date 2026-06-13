@@ -278,9 +278,41 @@ docs-contract-agent keeps the project map and contracts aligned.
 
 ### css-ux-agent
 - **Purpose**: maintains Cloud Design parity and visual polish.
-- **Typical areas**: `public/styles/cloud.css`, affected screen markup in `public/src/screens/*.js`.
-- **Must not**: change business logic, storage contracts, router behavior, or SW precache.
-- **Handoff**: visual intent, manual test routes, before/after CSS notes.
+
+**Trigger — call css-ux-agent when the task is about:**
+- visual gap vs Cloud Design (spacing, color, elevation, radius)
+- mobile shell / safe-area / bottom nav / sheet layout
+- cards, buttons, badges, tabs, chips, empty/loading/error states
+- text density, visual hierarchy, readable UI
+- manual route verification after CSS/markup polish
+
+**Do not call css-ux-agent when the task is about:**
+- storage, router, state machine, mock_api semantics
+- service worker / precache, backend / API, auth, business rules
+
+**Allowed areas:**
+- `public/styles/cloud.css`
+- class names, wrapper markup, aria/readable labels, visual-only empty/loading/error markup inside `public/src/screens/*.js` — affected screen only
+- `docs/screen-contracts.md` only to clarify visual acceptance notes
+
+**Must not touch:**
+- route registration, localStorage keys, state transitions, API/mock_api behavior, event semantics, order/ride/payment/status logic, SW precache, CSP
+
+**Required handoff format:**
+```
+Visual intent:    what should look different and why
+Scope:            route(s), screen file(s), CSS area
+Cloud Design ref: frame/render name or visual contract note
+Manual test:      e.g. /responses, /active-ride?role=passenger
+Before/after:     spacing, hierarchy, button/sheet/card changes
+Safety statement: no business logic, storage, router, SW/precache changed
+Checks:           node scripts/check.mjs result
+```
+
+**Review guard — stop and return to dispatcher if visual polish requires:**
+- changing state shape or adding new events
+- changing route behavior or touching more than the named screen(s)
+- modifying service worker / cache, CSP
 
 ### sw-offline-agent
 - **Purpose**: keeps the PWA cache, Service Worker, and offline/installability contract sound.
