@@ -442,9 +442,10 @@
         <div class="screen-id">BD-RIDE-D-NOSHOW-01</div>
         <div class="screen-name">Driver No-Show Flow</div>
         <div class="screen-route">/active-ride?role=driver&amp;status=NO_SHOW</div>
-        <div class="screen-states">7 states</div>
-        <span class="screen-badge done">DONE</span>
+        <div class="screen-states">terminal NO_SHOW stub wired; full 7-state no-show flow is future dedicated issue</div>
+        <span class="screen-badge partial">PARTIAL</span>
         <div class="screen-file">driver-noshow.jsx</div>
+        <div class="screen-note">Per docs/design-registry.json + docs/screen-contracts.md; no-show reason/confirm/compensation/support/loading/error not wired in runtime</div>
       </div>
 
       <div class="lane-section">Completion / earnings</div>
@@ -847,9 +848,9 @@
         <td class="t-route">…?status=NO_SHOW</td>
         <td><code>driver-noshow.jsx</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
-        <td class="t-done">Done</td>
-        <td>7</td>
-        <td>Пассажир не вышел</td>
+        <td class="t-partial">Partial</td>
+        <td>terminal stub + future full no-show flow</td>
+        <td>Показать terminal NO_SHOW / future no-show flow</td>
         <td>/driver-map</td>
       </tr>
       <tr>
@@ -1149,7 +1150,7 @@
 <div class="page-footer">
   <span>BD-FULL-FLOW-01 · Product Navigation Map</span>
   <span>Cloud Design artifact · design reference only</span>
-  <span>29 screens designed · 5 missing · 1 partial · 3 audit / consolidation</span>
+  <span>29 screens designed · 5 missing · 2 partial · 3 audit / consolidation</span>
   <span>React/Vite sandbox: /home/claude/bazardrive (not in this PR)</span>
   <span>Generated from chats/chat5.md design session</span>
 </div>

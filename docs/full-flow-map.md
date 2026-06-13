@@ -41,11 +41,13 @@ The map is organized into four lanes:
 
 - Designed / ready gates: 29
 - Missing gates: 5
-- Partial gates: 1
+- Partial gates: 2
 - Audit / consolidation gates: 3
 - Legacy: 1
 
 > **Codex P2 review follow-up (PR #495):** the previous draft counted BD-HISTORY-P-01, BD-COMPOSER-01 state expansion, and BD-GARAGE-01 as Missing / Partial backlog items. These three are already shipped in the production app and are now classified as **audit / consolidation gates** — opening them only after a confirmed gap audit, not as a from-scratch build.
+
+> **Codex P2 follow-up — no-show flow:** BD-RIDE-D-NOSHOW-01 is partial, not done. The driver route renders only the terminal NO_SHOW / canceled stub today (`docs/design-registry.json`); the full no-show flow (reason / confirm / compensation / support / loading / error) remains a future dedicated issue per `docs/screen-contracts.md` and is out of scope for this artifact PR.
 
 ## Missing gates
 

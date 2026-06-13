@@ -17,7 +17,25 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 
 **Missing-screen count: 5 net-new gates + 1 extension** (BD-AUTH-01, BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states).
 
-See the **Audit / consolidation gates** section below for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds.
+See the **Partial / future issues** section below for partial flows that already render a terminal stub but need future dedicated wiring. See the **Audit / consolidation gates** section for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds.
+
+## Partial / future issues
+
+These flows already render a stub or terminal state in the runtime, but the full state set is a future dedicated issue. They are NOT missing screens and NOT audit gates — they need real wiring work, but that work is scheduled separately and is out of scope for this artifact PR.
+
+### BD-RIDE-D-NOSHOW-01 — Driver No-Show Flow (partial / future issue)
+
+**Status: Partial.** Only the terminal `NO_SHOW` / canceled stub renders on the driver route today (per `docs/design-registry.json`). The full no-show flow is recorded as a future dedicated issue in `docs/screen-contracts.md`.
+
+**Future wiring scope** (own dedicated issue, NOT this artifact PR):
+
+- no-show reason picker
+- driver confirm step
+- compensation / earnings adjustment surface
+- support fallback / dispute path
+- loading and error states for the flow
+
+**Out of scope for this artifact PR:** runtime wiring of the full no-show flow, `active_ride` lifecycle changes, compensation backend, dispatcher.
 
 ## Audit / consolidation gates (shipped, not missing)
 

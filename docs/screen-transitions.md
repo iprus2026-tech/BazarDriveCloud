@@ -24,7 +24,7 @@ Developer handoff table extracted from the BD-FULL-FLOW-01 navigation map.
 | BD-DRIVER-02 | `/driver-map` | `driver-map.jsx` | driver | Done | 3 | Выйти на линию | `/active-ride?role=driver` |
 | BD-RIDE-D | `/active-ride?role=driver` | `driver-ride.jsx` | driver | Partial | 5 stages | lifecycle | `...?status=COMPLETED` |
 | BD-RIDE-D-SHEETS-01 | `...?role=driver` modal | `driver-sheets.jsx` | driver | Done | 11 | Отменить / Проблема | returns to ride |
-| BD-RIDE-D-NOSHOW-01 | `...?status=NO_SHOW` | `driver-noshow.jsx` | driver | Done | 7 | Пассажир не вышел | `/driver-map` |
+| BD-RIDE-D-NOSHOW-01 | `...?status=NO_SHOW` | `driver-noshow.jsx` | driver | Partial / future issue | terminal NO_SHOW stub wired; full no-show flow not wired | Показать terminal NO_SHOW / future no-show flow | `/driver-map` |
 | BD-RIDE-D-09 | `...?status=COMPLETED` | `driver-earnings.jsx` | driver | Done | 7 | Закрыть поездку | `/driver-map` |
 | BD-RIDE-D-11 | `...?status=COMPLETED` | `driver-earnings-completed.jsx` | driver | Done | 5 | Ваш доход / Закрыть | `/driver-map` |
 | BD-RIDE-HISTORY-D-01 | `/profile→payouts` | `driver-history.jsx` | driver | Done | 6 | Открыть чек | `/profile?role=driver` |
@@ -71,3 +71,4 @@ Feed, chat, rules, settings and notifications are shared surfaces and must not l
 - **BD-RESPOND-01 role** is driver (driver offer sheet at `/respond`, persists `kind: 'passenger_response'` with driver snapshot); the passenger-side response board remains `/responses`.
 - **BD-HISTORY-P-01** is Done · audit, not Missing — passenger history already renders in `/profile` and completed rides are persisted by `saveRideHistoryEntry`. The remaining scope is the dedicated `/history` route + loading/detail parity.
 - **BD-GARAGE-01** is Done · audit, not Missing — the driver Garage gate already renders inside `/profile?role=driver`. The remaining scope is consolidation of the active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*).
+- **BD-RIDE-D-NOSHOW-01** is Partial, not Done — `docs/design-registry.json` and `docs/screen-contracts.md` record runtime support as a future dedicated issue. Only the terminal NO_SHOW / canceled stub renders today on the driver route; the full no-show flow (reason / confirm / compensation / support / loading / error) is out of scope for this artifact PR.
