@@ -567,23 +567,52 @@ function offerCard(off, order) {
   const overBudget = typeof off.price === 'number'
     && typeof order.budget === 'number'
     && off.price > order.budget;
-  // Defensive UI fallbacks (BD-ORDER-DETAIL-01D-1): the store now
-  // hydrates fresh offers with renderable demo fields, but the screen
-  // also guards against legacy / future minimal offers so an empty
-  // string never produces a broken "★ " or "  мин" surface.
+  const inBudget = typeof off.price === 'number'
+    && typeof order.budget === 'number'
+    && off.price <= order.budget;
+
+  // Defensive UI fallbacks: never produce broken "★ " or "Подача  мин".
   const driverName = off.driverName || 'Водитель';
-  const rating     = off.rating || '—';
+  const initials   = initialsFrom(driverName);
+  const rating     = off.rating;
   const car        = off.car || '';
-  const etaText    = off.etaMin != null && off.etaMin !== ''
-    ? `${off.etaMin} мин`
-    : '—';
+  const hasEta     = off.etaMin != null && off.etaMin !== '';
   const priceText  = formatRub(off.price) || '—';
+  const hasExpires = !!off.expiresAt;
+
+  const ratingHtml  = rating
+    ? `<div class="od-offer__rating">★ ${escapeHtml(String(rating))}</div>`
+    : '';
+  const budgetChip  = overBudget
+    ? badge('Выше бюджета', 'warn')
+    : inBudget ? badge('В бюджете', 'ok') : '';
+  const etaHtml     = hasEta
+    ? `<div class="od-offer__eta"><span class="od-offer__eta-pill">Подача ${escapeHtml(String(off.etaMin))} мин</span></div>`
+    : '';
+  const msgHtml     = off.message
+    ? `<div class="od-offer__msg">${escapeHtml(off.message)}</div>`
+    : '';
+  const expiresHtml = hasExpires
+    ? `<div class="od-offer__expires">Оффер действует ограниченно</div>`
+    : '';
+
   return `
     <article class="od-offer" data-offer-id="${escapeHtml(off.id)}" role="listitem">
-      <header class="od-offer__head"><div class="od-offer__name">${escapeHtml(driverName)}</div><div class="od-offer__rating">★ ${escapeHtml(rating)}</div></header>
+      <div class="od-offer__hero">
+        <div class="od-offer__avatar" aria-hidden="true">${escapeHtml(initials)}</div>
+        <div class="od-offer__hero-info">
+          <div class="od-offer__name">${escapeHtml(driverName)}</div>
+          ${ratingHtml}
+        </div>
+        <div class="od-offer__price-block">
+          <div class="od-offer__price">${escapeHtml(priceText)}</div>
+          ${budgetChip}
+        </div>
+      </div>
       ${car ? `<div class="od-offer__car">${escapeHtml(car)}</div>` : ''}
-      <div class="od-offer__meta"><span>${escapeHtml(etaText)}</span><span class="od-offer__price">${escapeHtml(priceText)}</span>${overBudget ? '<span class="od-chip od-chip--warn">Выше бюджета</span>' : ''}</div>
-      ${off.message ? `<div class="od-offer__msg">${escapeHtml(off.message)}</div>` : ''}
+      ${etaHtml}
+      ${msgHtml}
+      ${expiresHtml}
       ${actionsRow([
         { label: 'Выбрать водителя', dataAction: 'select-driver', offerId: off.id, variant: 'primary' },
         { label: 'Написать', dataAction: 'message-driver', offerId: off.id },

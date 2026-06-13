@@ -434,11 +434,11 @@ expect('missing order and loading state resolve to S2 / S1',
 }
 {
   const { state, markup } = renderState(orderDetailMod, 'demo-order-offers', 'passenger');
-  expect('P2 passenger render carries offers, over-budget badge, and offer actions',
+  expect('P2 passenger render carries offers, budget badges, and offer actions',
     state === 'P2'
     && markup.includes('Есть предложения')
     && markup.includes('DriverOffer') === false
-    && ['Выбрать водителя', 'Написать', 'Отклонить', 'Выше бюджета'].every((label) => markup.includes(label)));
+    && ['Выбрать водителя', 'Написать', 'Отклонить', 'Выше бюджета', 'В бюджете'].every((label) => markup.includes(label)));
 }
 {
   const { state, markup } = renderState(orderDetailMod, 'demo-order-accepted', 'passenger');
@@ -740,13 +740,134 @@ driverOfferStore.clearDriverOfferStore();
     orderDetailMod.resolveState(order, 'passenger') === 'P2');
   const markup = orderDetailMod.renderOrderDetailMarkup(
     { order, role: 'passenger', state: 'P2' });
-  // No empty rating ("★ " with no value), no empty ETA fragment.
+  // No empty rating ("★ " with no value), no empty ETA pill.
   expect('P2 card has no empty rating glyph',
     !/<div class="od-offer__rating">★ <\/div>/.test(markup));
-  expect('P2 card has no empty ETA cell',
-    !/<span><\/span><span class="od-offer__price">/.test(markup));
+  expect('P2 card has no empty ETA pill (no "Подача  мин" with blank number)',
+    !/Подача\s{2,}мин/.test(markup));
   expect('P2 card exposes the «Выбрать водителя» CTA for the peer offer',
     markup.includes('Выбрать водителя'));
+}
+
+// ── P2B. BD-ORDER-P-02B offer-card visual polish pins ─────────────────
+// Verify the realistic offer card: avatar, hero row, ETA pill, budget
+// chips, expires copy, and unchanged CTA labels.
+{
+  driverOfferStore.clearDriverOfferStore();
+  const { markup } = renderState(orderDetailMod, 'demo-order-offers', 'passenger');
+  // Avatar and hero wrapper
+  expect('P2B — od-offer__hero wrapper rendered',
+    /class="od-offer__hero"/.test(markup));
+  expect('P2B — od-offer__avatar element rendered',
+    /class="od-offer__avatar"/.test(markup));
+  // Avatar contains initials (at least one Cyrillic or Latin letter)
+  expect('P2B — avatar contains driver initials',
+    /class="od-offer__avatar"[^>]*>[\s]*[A-ZА-ЯЁ]/.test(markup));
+  // ETA pill in "Подача N мин" format
+  expect('P2B — ETA rendered as "Подача N мин" pill',
+    /Подача\s+\d+\s+мин/.test(markup));
+  // price-block present
+  expect('P2B — od-offer__price-block rendered',
+    /class="od-offer__price-block"/.test(markup));
+  // "В бюджете" chip for in-budget offer (750 ≤ 800)
+  expect('P2B — «В бюджете» chip present for in-budget offer',
+    markup.includes('В бюджете'));
+  // "Выше бюджета" chip for over-budget offer (950 > 800)
+  expect('P2B — «Выше бюджета» chip present for over-budget offer',
+    markup.includes('Выше бюджета'));
+  // CTA labels unchanged
+  expect('P2B — select-driver CTA label is «Выбрать водителя»',
+    buttonTextForAction(markup, 'select-driver') === 'Выбрать водителя');
+  expect('P2B — reject-offer CTA label is «Отклонить»',
+    buttonTextForAction(markup, 'reject-offer') === 'Отклонить');
+  // No "Принять" or "Принять заказ" wording on any CTA
+  for (const forbidden of ['Принять заказ', 'Принять оффер']) {
+    expect(`P2B — forbidden CTA label "${forbidden}" absent`,
+      !markup.includes(forbidden));
+  }
+}
+
+// ── P2B-expires. expiresAt display copy ───────────────────────────────
+{
+  // offer WITH expiresAt → copy rendered
+  driverOfferStore.clearDriverOfferStore();
+  const baseOrder = orderDetailMod.loadOrder('demo-order-offers');
+  const orderWithExpiry = {
+    ...baseOrder,
+    offers: [{
+      id: 'offer-exp',
+      orderId: 'demo-order-offers',
+      driverId: 'drv-exp',
+      driverName: 'Иван Е.',
+      car: 'Kia Ceed · белый',
+      rating: '4,7',
+      etaMin: 3,
+      price: 700,
+      message: 'Тест',
+      status: 'sent',
+      createdAt: 1_750_000_000_000,
+      expiresAt: 1_750_000_900_000,
+    }],
+  };
+  const markupExp = orderDetailMod.renderOrderDetailMarkup(
+    { order: orderWithExpiry, role: 'passenger', state: 'P2' });
+  expect('P2B-expires — copy «Оффер действует ограниченно» rendered when expiresAt is set',
+    markupExp.includes('Оффер действует ограниченно'));
+
+  // offer WITHOUT expiresAt → no copy
+  const orderNoExpiry = {
+    ...baseOrder,
+    offers: [{
+      id: 'offer-noexp',
+      orderId: 'demo-order-offers',
+      driverId: 'drv-noexp',
+      driverName: 'Тест Т.',
+      car: 'Авто',
+      rating: '4,5',
+      etaMin: 5,
+      price: 600,
+      message: '',
+      status: 'sent',
+      createdAt: 1_750_000_000_000,
+      expiresAt: null,
+    }],
+  };
+  const markupNoExp = orderDetailMod.renderOrderDetailMarkup(
+    { order: orderNoExpiry, role: 'passenger', state: 'P2' });
+  expect('P2B-expires — copy «Оффер действует ограниченно» absent when expiresAt is falsy',
+    !markupNoExp.includes('Оффер действует ограниченно'));
+}
+
+// ── P2B-accept. Acceptance criteria guards ────────────────────────────
+{
+  // select-driver handler refuses non-sent offers (still wired correctly)
+  driverOfferStore.clearDriverOfferStore();
+  const order = orderDetailMod.loadOrder('demo-order-offers');
+  const sentOffers = orderDetailMod.activeSentOffers(order);
+  expect('P2B-accept — activeSentOffers returns only sent offers',
+    sentOffers.every((o) => o.status === 'sent'));
+  expect('P2B-accept — activeSentOffers excludes terminal offers',
+    sentOffers.every((o) => !['rejected', 'withdrawn', 'expired'].includes(o.status)));
+  // "В бюджете" appears when price === budget boundary
+  const boundaryOrder = {
+    ...order,
+    budget: 750,
+    offers: [{ ...sentOffers[0], price: 750 }],
+  };
+  const mBoundary = orderDetailMod.renderOrderDetailMarkup(
+    { order: boundaryOrder, role: 'passenger', state: 'P2' });
+  expect('P2B-accept — «В бюджете» chip at price === budget boundary',
+    mBoundary.includes('В бюджете') && !mBoundary.includes('Выше бюджета'));
+  // "Выше бюджета" appears when price === budget + 1
+  const overOrder = {
+    ...order,
+    budget: 750,
+    offers: [{ ...sentOffers[0], price: 751 }],
+  };
+  const mOver = orderDetailMod.renderOrderDetailMarkup(
+    { order: overOrder, role: 'passenger', state: 'P2' });
+  expect('P2B-accept — «Выше бюджета» chip when price just over budget',
+    mOver.includes('Выше бюджета') && !mOver.includes('В бюджете'));
 }
 
 // ── F2d. Malformed bucket recovery — stale primitive doesn't crash ─
