@@ -213,6 +213,77 @@ export function resolveActiveGarageVehicle(u) {
   return vehicles.find((v) => v && v.id === id) || null;
 }
 
+// BD-PROFILE-GARAGE-READY-K — Read-only readiness/documents hook.
+//
+// First slice of the garage→documents bridge. This is INTENTIONALLY tiny:
+// no real document storage, no upload, no readiness scoring, no UI
+// mutation. The two helpers below answer "which vehicle (if any) is the
+// document/readiness anchor right now" so the upcoming documents
+// implementation knows where to attach when it lands. Both helpers are
+// strictly read-only against `profile.driverGarage` and the legacy
+// `vehicleMake / Model / Color / Plate` fields — no `user.set`, no
+// `localStorage.setItem`, no archive / restore / make-active calls, no
+// cross-surface writes.
+//
+// Return shape from `getGarageReadinessState(u)`:
+//   {
+//     state: 'active_vehicle' | 'no_active_vehicle' | 'empty_garage',
+//     vehicle: <resolved vehicle> | null,
+//     reason:
+//       | 'explicit_active'     — saved activeVehicleId matches a
+//                                 non-archived persisted vehicle
+//       | 'legacy_fallback'     — synthesised legacy entry (no
+//                                 persisted record at all)
+//       | 'no_active_selection' — persisted vehicles exist but no
+//                                 active selection (and not all
+//                                 archived)
+//       | 'archived_only'       — every persisted entry is archived
+//       | 'empty_collection'    — no persisted record AND no legacy
+//                                 fields to synthesise from
+//   }
+//
+// Reason matrix:
+//   state === 'active_vehicle'    + active.source === 'legacy' → 'legacy_fallback'
+//   state === 'active_vehicle'    + active.source !== 'legacy' → 'explicit_active'
+//   state === 'no_active_vehicle' + every persisted entry archived → 'archived_only'
+//   state === 'no_active_vehicle' + at least one non-archived persisted → 'no_active_selection'
+//   state === 'empty_garage'      → 'empty_collection'
+//
+// Archived-only is INTENTIONALLY no_active_vehicle, NOT empty_garage:
+// the user has touched the garage, they just have no usable car right
+// now. The UI hint and the future documents implementation treat the
+// two states differently (archived-only points the user at restore;
+// empty points the user at add).
+export function getGarageReadinessState(u) {
+  const active = resolveActiveGarageVehicle(u);
+  if (active) {
+    return {
+      state: 'active_vehicle',
+      vehicle: active,
+      reason: active.source === 'legacy' ? 'legacy_fallback' : 'explicit_active',
+    };
+  }
+  const rawVehicles = (u && u.driverGarage && Array.isArray(u.driverGarage.vehicles))
+    ? u.driverGarage.vehicles : [];
+  if (rawVehicles.length === 0) {
+    return { state: 'empty_garage', vehicle: null, reason: 'empty_collection' };
+  }
+  const allArchived = rawVehicles.every((v) =>
+    v && typeof v === 'object' && v.archived === true);
+  return {
+    state: 'no_active_vehicle',
+    vehicle: null,
+    reason: allArchived ? 'archived_only' : 'no_active_selection',
+  };
+}
+
+// Thin wrapper for the future documents implementation — callers that
+// only need the vehicle (not the state/reason metadata) can read it
+// directly without re-deriving via `resolveActiveGarageVehicle`.
+export function resolveGarageReadinessVehicle(u) {
+  return getGarageReadinessState(u).vehicle;
+}
+
 // BD-PROFILE-D-05I — Count archived persisted vehicles. Used by the
 // profile renderer to surface a small "В архиве: N" hint underneath the
 // active-list cards. Strictly read-only — walks the raw persisted

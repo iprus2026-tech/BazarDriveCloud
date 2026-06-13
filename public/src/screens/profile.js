@@ -25,6 +25,7 @@ import {
   resolveActiveGarageVehicleId,
   countArchivedGarageVehicles,
   listArchivedGarageVehicles,
+  getGarageReadinessState,
 } from '../garage.js';
 
 // ── SVG constants ─────────────────────────────────────────────────────────────
@@ -2411,6 +2412,50 @@ function docCardHtml(key, doc) {
     ${docPanelHtml(key, status)}`;
 }
 
+// BD-PROFILE-GARAGE-READY-K — small read-only garage→documents bridge.
+// Renders ONE of three hint shapes per `getGarageReadinessState(u)`:
+//   • active_vehicle  → «Документы активного авто» + model/plate
+//   • no_active_vehicle → «Выберите активное авто» + helper copy
+//   • empty_garage    → «Добавьте авто» + helper copy
+// Strictly read-only: the rendered hint is a static `<section>` — no
+// inputs, no click handlers, no uploads, no readiness scoring, no
+// `data-garage-action` markers (the future documents implementation
+// will own those when it lands).
+function garageReadinessHintHtml(u) {
+  const readiness = getGarageReadinessState(u);
+  const titleByState = {
+    active_vehicle: 'Документы активного авто',
+    no_active_vehicle: 'Выберите активное авто',
+    empty_garage: 'Добавьте авто',
+  };
+  const helperByState = {
+    active_vehicle: 'Готовность документов будет привязана к этой машине.',
+    no_active_vehicle: 'Документы и готовность не привязываются, пока активная машина не выбрана.',
+    empty_garage: 'После добавления машины здесь появится связь с документами.',
+  };
+  const title = titleByState[readiness.state] || titleByState.empty_garage;
+  const helper = helperByState[readiness.state] || helperByState.empty_garage;
+  let vehicleLine = '';
+  if (readiness.state === 'active_vehicle' && readiness.vehicle) {
+    const model = escapeHtml(readiness.vehicle.model || '');
+    const plate = escapeHtml(readiness.vehicle.plate || '');
+    const colorParts = [];
+    if (model) colorParts.push(`<span class="pf2-garage-ready__model">${model}</span>`);
+    if (plate) colorParts.push(`<span class="pf2-garage-ready__plate">${plate}</span>`);
+    if (colorParts.length > 0) {
+      vehicleLine = `<p class="pf2-garage-ready__vehicle">${colorParts.join(' · ')}</p>`;
+    }
+  }
+  return `
+    <section class="pf2-card pf2-garage-ready" id="pf2-garage-ready"
+      data-garage-ready-state="${readiness.state}"
+      data-garage-ready-reason="${readiness.reason}">
+      <h4 class="pf2-garage-ready__title">${title}</h4>
+      ${vehicleLine}
+      <p class="pf2-garage-ready__helper">${helper}</p>
+    </section>`;
+}
+
 function docsPaneHtml(u) {
   const docs = u.driverDocuments || {};
   // Blocking docs prevent going online; review-only is soft / informational.
@@ -2444,6 +2489,7 @@ function docsPaneHtml(u) {
     .join('');
   return `
     ${alert}
+    ${garageReadinessHintHtml(u)}
     ${cards}
     <button type="button" class="pf2-doc-add-btn" id="pf2-doc-add">
       ${SVG_PLUS} Добавить документ

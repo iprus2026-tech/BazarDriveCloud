@@ -4789,7 +4789,7 @@ user.set({
     'No silent promotion',                        // no-silent-promotion field name
     'active garage list',                         // archived hidden from default list
     'Legacy fallback non-resurrection',           // legacy materialisation behavior
-    'BD-PROFILE-GARAGE-READY-J',                  // documents/readiness deferred
+    'BD-PROFILE-GARAGE-READY-K',                  // documents/readiness bridge slice
   ];
   for (const phrase of REQUIRED_PHRASES) {
     expect(`S122: I2 section contains "${phrase}"`,
@@ -5040,6 +5040,348 @@ user.set({
     !/\blocalStorage\s*\.\s*setItem\s*\(/.test(garageCode));
   expect('S125: garage.js does NOT call sessionStorage.setItem directly',
     !/\bsessionStorage\s*\.\s*setItem\s*\(/.test(garageCode));
+}
+
+// ── BD-PROFILE-GARAGE-READY-K — Driver Garage readiness/documents hook
+// foundation. Task A–H matrix: read-only bridge between Garage and the
+// future documents implementation. ─────────────────────────────────────
+
+// ── Scenario 126 (Task A) — explicit active vehicle hook ───────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { getGarageReadinessState, resolveGarageReadinessVehicle }
+    = await import('../public/src/garage.js');
+  const readiness = getGarageReadinessState(user.get());
+  expect('S126: readiness state === "active_vehicle"',
+    readiness.state === 'active_vehicle', String(readiness.state));
+  expect('S126: readiness reason === "explicit_active"',
+    readiness.reason === 'explicit_active', String(readiness.reason));
+  expect('S126: readiness vehicle.id === "real-1" (the persisted active)',
+    readiness.vehicle?.id === 'real-1', String(readiness.vehicle?.id));
+  expect('S126: readiness vehicle.model === "Toyota Prius"',
+    readiness.vehicle?.model === 'Toyota Prius');
+  expect('S126: readiness vehicle.plate === "А 123 ВС 77"',
+    readiness.vehicle?.plate === 'А 123 ВС 77');
+  expect('S126: resolveGarageReadinessVehicle mirrors getGarageReadinessState.vehicle',
+    resolveGarageReadinessVehicle(user.get())?.id === 'real-1');
+  // Docs pane render carries the active copy.
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S126: docs pane renders «Документы активного авто»',
+    html.includes('Документы активного авто'));
+  expect('S126: docs pane shows the active model "Toyota Prius"',
+    html.includes('Toyota Prius'));
+  expect('S126: docs pane shows the active plate "А 123 ВС 77"',
+    html.includes('А 123 ВС 77'));
+  expect('S126: docs pane carries data-garage-ready-state="active_vehicle"',
+    html.includes('data-garage-ready-state="active_vehicle"'));
+  expect('S126: docs pane carries data-garage-ready-reason="explicit_active"',
+    html.includes('data-garage-ready-reason="explicit_active"'));
+  // real-2 (available) is NOT the document anchor.
+  expect('S126: readiness vehicle is NOT real-2 (available sibling)',
+    readiness.vehicle?.id !== 'real-2');
+}
+
+// ── Scenario 127 (Task B) — no-active hook ─────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const readiness = getGarageReadinessState(user.get());
+  expect('S127: readiness state === "no_active_vehicle"',
+    readiness.state === 'no_active_vehicle', String(readiness.state));
+  expect('S127: readiness reason === "no_active_selection"',
+    readiness.reason === 'no_active_selection', String(readiness.reason));
+  expect('S127: readiness vehicle === null',
+    readiness.vehicle === null, String(readiness.vehicle?.id));
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S127: docs pane renders «Выберите активное авто»',
+    html.includes('Выберите активное авто'));
+  expect('S127: docs pane carries data-garage-ready-state="no_active_vehicle"',
+    html.includes('data-garage-ready-state="no_active_vehicle"'));
+  expect('S127: docs pane carries data-garage-ready-reason="no_active_selection"',
+    html.includes('data-garage-ready-reason="no_active_selection"'));
+  // No active badge on the garage list either (I2 contract preserved).
+  expect('S127: garage render emits no active-current span',
+    !/id="pf2-garage-active-/.test(html));
+  // The readiness hint section does NOT mention real-1 / real-2 by id.
+  // Extract the readiness section and verify.
+  const sectionMatch = html.match(/<section[^>]*id="pf2-garage-ready"[\s\S]*?<\/section>/);
+  expect('S127: readiness section located in rendered HTML',
+    typeof sectionMatch?.[0] === 'string' && sectionMatch[0].length > 0);
+  const readinessSlice = sectionMatch?.[0] || '';
+  expect('S127: readiness hint does NOT name real-1 as the document anchor',
+    !readinessSlice.includes('real-1') && !readinessSlice.includes('Toyota Prius'));
+  expect('S127: readiness hint does NOT name real-2 as the document anchor',
+    !readinessSlice.includes('real-2') && !readinessSlice.includes('Kia Sportage'));
+}
+
+// ── Scenario 128 (Task C) — archived active vehicle clears the anchor ──────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  archiveFn('real-1');
+  expect('S128: activeVehicleId cleared after archiving the active vehicle',
+    user.get().driverGarage?.activeVehicleId === null);
+  const readiness = getGarageReadinessState(user.get());
+  expect('S128: readiness state flips to "no_active_vehicle" after archive',
+    readiness.state === 'no_active_vehicle', String(readiness.state));
+  expect('S128: readiness reason === "no_active_selection" (real-2 still non-archived)',
+    readiness.reason === 'no_active_selection', String(readiness.reason));
+  expect('S128: readiness vehicle === null (archived real-1 NOT used as anchor)',
+    readiness.vehicle === null, String(readiness.vehicle?.id));
+  expect('S128: readiness vehicle is NOT the archived real-1',
+    readiness.vehicle?.id !== 'real-1');
+  expect('S128: readiness vehicle is NOT the available sibling real-2 (no silent promotion)',
+    readiness.vehicle?.id !== 'real-2');
+}
+
+// ── Scenario 129 (Task D) — archived-only collection: archived_only reason ──
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // Legacy fields preserved — but the I2 contract suppresses legacy
+  // synthesis whenever a persisted record exists.
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted', archived: true },
+    ],
+  },
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const readiness = getGarageReadinessState(user.get());
+  expect('S129: readiness state === "no_active_vehicle" (archived-only is NOT empty)',
+    readiness.state === 'no_active_vehicle', String(readiness.state));
+  expect('S129: readiness reason === "archived_only"',
+    readiness.reason === 'archived_only', String(readiness.reason));
+  expect('S129: readiness vehicle === null',
+    readiness.vehicle === null);
+  // Profile render must NOT advertise the legacy car as the active anchor.
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  const sectionMatch = html.match(/<section[^>]*id="pf2-garage-ready"[\s\S]*?<\/section>/);
+  const readinessSlice = sectionMatch?.[0] || '';
+  expect('S129: readiness hint does NOT advertise the legacy car ("Hyundai Solaris")',
+    !readinessSlice.includes('Hyundai Solaris'));
+  expect('S129: readiness hint carries data-garage-ready-reason="archived_only"',
+    readinessSlice.includes('data-garage-ready-reason="archived_only"'));
+}
+
+// ── Scenario 130 (Task E) — empty garage → empty_collection ────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  // no legacy vehicleMake/Model, no driverGarage.vehicles
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const readiness = getGarageReadinessState(user.get());
+  expect('S130: readiness state === "empty_garage"',
+    readiness.state === 'empty_garage', String(readiness.state));
+  expect('S130: readiness reason === "empty_collection"',
+    readiness.reason === 'empty_collection', String(readiness.reason));
+  expect('S130: readiness vehicle === null',
+    readiness.vehicle === null);
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S130: docs pane renders «Добавьте авто»',
+    html.includes('Добавьте авто'));
+  expect('S130: docs pane carries data-garage-ready-state="empty_garage"',
+    html.includes('data-garage-ready-state="empty_garage"'));
+  expect('S130: docs pane carries data-garage-ready-reason="empty_collection"',
+    html.includes('data-garage-ready-reason="empty_collection"'));
+}
+
+// ── Scenario 131 (Task F) — legacy fallback compatibility ──────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // No persisted garage collection — legacy fallback path.
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const beforeRaw = user.get().driverGarage?.vehicles;
+  const readiness = getGarageReadinessState(user.get());
+  expect('S131: readiness state === "active_vehicle" (legacy is the anchor)',
+    readiness.state === 'active_vehicle', String(readiness.state));
+  expect('S131: readiness reason === "legacy_fallback"',
+    readiness.reason === 'legacy_fallback', String(readiness.reason));
+  expect('S131: readiness vehicle.id === "legacy-1"',
+    readiness.vehicle?.id === 'legacy-1', String(readiness.vehicle?.id));
+  expect('S131: readiness vehicle.source === "legacy"',
+    readiness.vehicle?.source === 'legacy', String(readiness.vehicle?.source));
+  // No persistence happened on the legacy fallback read.
+  const afterRaw = user.get().driverGarage?.vehicles;
+  expect('S131: getGarageReadinessState did NOT write driverGarage.vehicles',
+    JSON.stringify(beforeRaw) === JSON.stringify(afterRaw));
+  const html = renderProfile('#/profile?role=driver&pane=docs');
+  expect('S131: docs pane shows the legacy model "Hyundai Solaris" as the active anchor',
+    html.includes('Hyundai Solaris'));
+  expect('S131: docs pane carries data-garage-ready-reason="legacy_fallback"',
+    html.includes('data-garage-ready-reason="legacy_fallback"'));
+  // Re-confirm no persistence after the full render either.
+  const afterRender = user.get().driverGarage?.vehicles;
+  expect('S131: profile render did NOT persist a legacy entry into driverGarage.vehicles',
+    JSON.stringify(beforeRaw) === JSON.stringify(afterRender));
+}
+
+// ── Scenario 132 (Task G) — cross-surface guard for the READY-K path. The
+// existing S84 covers archive helper writes; this scenario covers the
+// readiness-state read itself. After exercising every reachable readiness
+// branch, no forbidden cross-surface key is present in localStorage. ───
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { getGarageReadinessState } = await import('../public/src/garage.js');
+  const before = snapshotLocalStorage();
+  // Exercise every state via direct reads.
+  getGarageReadinessState(user.get());
+  // No-active branch.
+  const cur = user.get().driverGarage || {};
+  user.set({ driverGarage: { ...cur, activeVehicleId: null } });
+  getGarageReadinessState(user.get());
+  // Render the docs pane through the full profile() call.
+  renderProfile('#/profile?role=driver&pane=docs');
+  const after = snapshotLocalStorage();
+  // No-active resolver read + render should not have written cross-surface keys.
+  for (const k of [
+    'bazardrive.responses.v1',
+    'bazardrive.active_ride.v1',
+    'bazardrive.ride_history.v1',
+    'bazardrive.driver_receipts.v1',
+    'bazardrive.respond.v1',
+  ]) {
+    expect(`S132: ${k} not written by READY-K reads / docs pane render`,
+      !local.has(k), String(local.get(k)));
+  }
+  // The cross-surface key checks above are the load-bearing pin. We
+  // intentionally do NOT byte-equal localStorage here because the smoke
+  // harness called user.set() to flip activeVehicleId for the no-active
+  // branch — that's a TEST-HARNESS write to bazardrive.user.v1, not a
+  // READY-K helper write. The forbidden-key sweep already proves the
+  // READY-K reads stay off the active-ride / responses / history /
+  // receipts / respond surfaces.
+  expect('S132: only bazardrive.user.v1 was touched (no cross-surface key entered storage)',
+    Array.from(local.keys()).every((k) => k === 'bazardrive.user.v1'),
+    Array.from(local.keys()).join(','));
+  void before; void after;
+}
+
+// ── Scenario 133 (Task H) — source-level guard on the READY-K helpers. The
+// READY-K helper bodies must not call writers, document writers, score
+// helpers, or upload helpers. They must not reference cross-surface
+// storage keys either. ─────────────────────────────────────────────────
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const garageSrc = readFileSync(join(projectRoot, 'public/src/garage.js'), 'utf8');
+  const sliceFn = (src, marker) => {
+    const start = src.indexOf(marker);
+    if (start < 0) return '';
+    const closeIdx = src.indexOf('\n}\n', start);
+    if (closeIdx < 0) return '';
+    return src.slice(start, closeIdx + 3);
+  };
+  const stateBody = sliceFn(garageSrc, 'export function getGarageReadinessState(');
+  const vehicleBody = sliceFn(garageSrc, 'export function resolveGarageReadinessVehicle(');
+  expect('S133: getGarageReadinessState body extracted',
+    stateBody.length > 0, String(stateBody.length));
+  expect('S133: resolveGarageReadinessVehicle body extracted',
+    vehicleBody.length > 0, String(vehicleBody.length));
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const stateCode = stripComments(stateBody);
+  const vehicleCode = stripComments(vehicleBody);
+  const FORBIDDEN = [
+    'user.set',
+    'localStorage.setItem',
+    'sessionStorage.setItem',
+    'archiveGarageVehicle',
+    'restoreGarageVehicle',
+    'markGarageVehicleActive',
+    'appendGarageVehicle',
+    'patchGarageVehicle',
+    'setDocumentStatus',
+    'createDocument',
+    'upload',
+    'score',
+    'active_ride',
+    'responses',
+    'ride_history',
+    'driver_receipts',
+    'respond.v1',
+    'saveActiveRide',
+    'saveRideHistoryEntry',
+    'createRideOrder',
+    'acceptCanonicalRideOrder',
+    'acceptNearbyOrder',
+    'updateTripStatus',
+  ];
+  for (const needle of FORBIDDEN) {
+    const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    expect(`S133: getGarageReadinessState body does NOT reference "${needle}"`,
+      !pattern.test(stateCode));
+    expect(`S133: resolveGarageReadinessVehicle body does NOT reference "${needle}"`,
+      !pattern.test(vehicleCode));
+  }
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
