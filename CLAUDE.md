@@ -253,10 +253,84 @@ sw-offline-agent protects the PWA/offline layer,
 docs-contract-agent keeps the project map and contracts aligned.
 
 ### dispatcher-agent
-- **Purpose**: reads `node scripts/dispatcher.mjs` and `node scripts/check.mjs` output; routes work to the correct role; reports repo readiness.
-- **Typical areas**: `scripts/dispatcher.mjs` output, check status, issue/PR scope definition.
-- **Must not**: edit runtime code, CSS, docs, or smoke scripts while dispatching.
-- **Handoff**: target file/area, risk level, role task list, working-tree status.
+
+- **Purpose**: reads `node scripts/dispatcher.mjs`, `node scripts/check.mjs`, git status, PR/issue scope, and routes work to the correct role. Reports repo readiness and next safe action.
+- **Typical areas**:
+  - `scripts/dispatcher.mjs` output
+  - `scripts/check.mjs` output
+  - repo readiness reports
+  - issue/PR scope definition
+  - role task routing
+  - post-merge verification
+  - drift/risk summary
+
+- **Triggers**:
+  - User says: `dispatcher`, `диспетчер`, `main green`, `dispatcher clean`, `READY_CLEAN`, `следующий шаг`
+  - User asks what to do after merge
+  - User asks to interpret `node scripts/dispatcher.mjs`
+  - User asks to route a review comment to the correct role
+  - User asks whether repo is ready for next task
+  - User asks to define a safe PR scope
+
+- **Allowed areas**:
+  - Read and summarize dispatcher/check output
+  - Read git status / branch / diff summary
+  - Define target file/area
+  - Define risk level
+  - Produce role task list
+  - Produce handoff message for another agent
+  - Recommend next branch name
+  - Recommend issue/PR scope
+
+- **Must not**:
+  - Edit runtime code
+  - Edit CSS
+  - Edit docs
+  - Edit smoke scripts
+  - Change app behavior
+  - Commit changes
+  - Resolve review comments without checking scope
+  - Merge PRs
+  - Create broad implementation plans that mix unrelated areas
+
+- **Review guard**:
+  - If review comments mention runtime files, CSS, docs, smoke, or contracts, dispatcher-agent must route them to the proper implementation/review role instead of editing directly.
+  - If dispatcher output is not `READY_CLEAN`, dispatcher-agent must report blockers first.
+  - If working tree is dirty, dispatcher-agent must stop and summarize changed files before recommending next work.
+  - If check output fails, dispatcher-agent must identify failing check and route to the smallest responsible role.
+  - If risk is HIGH, dispatcher-agent must recommend a narrow branch and one-slice PR.
+
+- **Handoff format**:
+  ```text
+  Dispatcher status:
+  - check:
+  - dispatcher:
+  - debug:
+  - drift:
+  - working tree:
+
+  Target:
+  - file/area:
+  - risk:
+  - suggested branch:
+
+  Role tasks:
+  - role:
+    task:
+    allowed files:
+    must not touch:
+
+  Next action:
+  -
+  ```
+
+- **Output style**:
+  - Be short and operational.
+  - Prefer exact commands when useful.
+  - Do not invent green status. If output was not provided, ask for or request running:
+    `node scripts/check.mjs`
+    `node scripts/dispatcher.mjs`
+    `git status --short`
 
 ### review-agent
 - **Purpose**: interprets PR review comments; maps each comment to a minimal, in-scope fix decision.
