@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BD-FULL-FLOW-01 · BazarDrive Product Navigation Map</title>
+<style>
+  /* ── tokens ── */
+  :root {
+    --accent:   #FF6B35;
+    --accent2:  #e05520;
+    --bg-0:     #0a0a0c;
+    --bg-1:     #111115;
+    --bg-2:     #18181e;
+    --bg-3:     #222228;
+    --border:   rgba(255,255,255,0.07);
+    --text:     #f0eeeb;
+    --text-2:   #a09e9a;
+    --text-3:   #5a5856;
+    --success:  #4ADE80;
+    --warning:  #FBBF24;
+    --danger:   #F87171;
+    --info:     #60A5FA;
+    --lane-guest:   rgba(96,165,250,0.10);
+    --lane-pax:     rgba(74,222,128,0.08);
+    --lane-drv:     rgba(255,107,53,0.09);
+    --lane-shared:  rgba(251,191,36,0.07);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg-0); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  /* ── page header ── */
+  .page-header {
+    padding: 40px 48px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 32px;
+  }
+  .page-header-meta { flex: 1; }
+  .page-id { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .page-title { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .page-sub { font-size: 14px; color: var(--text-2); line-height: 1.5; max-width: 560px; }
+  .page-notice {
+    background: rgba(255,107,53,0.08); border: 1px solid rgba(255,107,53,0.22);
+    border-radius: 10px; padding: 12px 16px; font-size: 12px; color: var(--text-2);
+    max-width: 340px; line-height: 1.55;
+  }
+  .page-notice b { color: var(--accent); }
+
+  /* ── legend ── */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    padding: 20px 48px; border-bottom: 1px solid var(--border);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-pill { padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+
+  /* ── lanes container ── */
+  .canvas { padding: 32px 48px 64px; display: flex; gap: 24px; align-items: flex-start; overflow-x: auto; }
+
+  /* ── lane ── */
+  .lane { flex: 1; min-width: 240px; max-width: 300px; }
+  .lane-header {
+    padding: 10px 14px 10px;
+    border-radius: 10px 10px 0 0;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 7px;
+    margin-bottom: 0;
+  }
+  .lane-header-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .lane-body {
+    border-radius: 0 0 10px 10px;
+    padding: 14px 10px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+    min-height: 200px;
+  }
+  .lane.guest   .lane-header { background: rgba(96,165,250,0.14); color: var(--info); }
+  .lane.guest   .lane-body   { background: var(--lane-guest); border: 1px solid rgba(96,165,250,0.12); border-top: none; }
+  .lane.pax     .lane-header { background: rgba(74,222,128,0.13); color: var(--success); }
+  .lane.pax     .lane-body   { background: var(--lane-pax); border: 1px solid rgba(74,222,128,0.10); border-top: none; }
+  .lane.drv     .lane-header { background: rgba(255,107,53,0.14); color: var(--accent); }
+  .lane.drv     .lane-body   { background: var(--lane-drv); border: 1px solid rgba(255,107,53,0.13); border-top: none; }
+  .lane.shared  .lane-header { background: rgba(251,191,36,0.12); color: var(--warning); }
+  .lane.shared  .lane-body   { background: var(--lane-shared); border: 1px solid rgba(251,191,36,0.10); border-top: none; }
+
+  /* ── screen card ── */
+  .screen-card {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 10px 12px; cursor: default;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .screen-card:hover { border-color: rgba(255,255,255,0.16); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+  .screen-card.missing {
+    background: rgba(248,113,113,0.05); border-color: rgba(248,113,113,0.18);
+    border-style: dashed;
+  }
+  .screen-card.missing:hover { border-color: rgba(248,113,113,0.35); }
+  /* Codex P2 follow-up (PR #495) — audit/consolidation gate: shipped surface
+     that still needs a parity/route audit before any new work is opened. */
+  .screen-card.audit {
+    background: rgba(245,158,11,0.04); border-color: rgba(245,158,11,0.22);
+    border-style: dashed;
+  }
+  .screen-card.audit:hover { border-color: rgba(245,158,11,0.42); }
+  .screen-id { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 3px; }
+  .screen-name { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .screen-route { font-size: 11px; color: var(--text-3); font-family: 'SF Mono', 'Fira Code', monospace; margin-top: 4px; }
+  .screen-states { font-size: 11px; color: var(--text-2); margin-top: 5px; }
+  .screen-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; margin-top: 5px; letter-spacing: 0.03em;
+  }
+  .screen-badge.done    { background: rgba(74,222,128,0.15); color: var(--success); }
+  .screen-badge.missing { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .screen-badge.partial { background: rgba(251,191,36,0.15); color: var(--warning); }
+  .screen-badge.audit   { background: rgba(245,158,11,0.18); color: var(--warning); }
+  .screen-badge.legacy  { background: rgba(90,88,86,0.3); color: var(--text-3); }
+  .screen-file { font-size: 10px; font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text-3); margin-top: 4px; }
+  .screen-note { font-size: 10px; color: var(--text-3); margin-top: 4px; font-style: italic; }
+
+  /* ── section divider ── */
+  .lane-section {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-3); padding: 6px 2px 2px;
+    border-top: 1px solid var(--border); margin-top: 4px;
+  }
+  .lane-section:first-child { border-top: none; margin-top: 0; }
+
+  /* ── arrows / flow description ── */
+  .flow-arrow {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--text-3); padding: 0 4px;
+  }
+  .flow-arrow::before { content: '↓'; font-size: 12px; color: var(--text-3); }
+
+  /* ── handoff table ── */
+  .section-wrap { padding: 0 48px 48px; }
+  .section-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--text-2);
+    padding: 32px 0 16px; border-top: 1px solid var(--border); margin-top: 8px;
+  }
+  .handoff-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .handoff-table th {
+    text-align: left; padding: 8px 12px; background: var(--bg-2);
+    border-bottom: 1px solid var(--border); color: var(--text-2);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .handoff-table td {
+    padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: top; line-height: 1.45;
+  }
+  .handoff-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .handoff-table code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--text-2); }
+  .t-done    { color: var(--success); font-weight: 700; }
+  .t-partial { color: var(--warning); font-weight: 700; }
+  .t-missing { color: var(--danger); font-weight: 700; }
+  .t-audit   { color: var(--warning); font-weight: 700; }
+  .t-legacy  { color: var(--text-3); font-style: italic; }
+  .t-id      { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .t-route   { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--text-2); white-space: nowrap; }
+  .role-chip { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+  .role-pax  { background: rgba(74,222,128,0.15); color: var(--success); }
+  .role-drv  { background: rgba(255,107,53,0.15); color: var(--accent); }
+  .role-both { background: rgba(251,191,36,0.12); color: var(--warning); }
+  .priority  { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; }
+  .p0 { background: rgba(248,113,113,0.2); color: var(--danger); }
+  .p1 { background: rgba(251,191,36,0.15); color: var(--warning); }
+  .p2 { background: rgba(96,165,250,0.13); color: var(--info); }
+  .p-audit { background: rgba(245,158,11,0.18); color: var(--warning); letter-spacing: 0.06em; }
+
+  /* ── missing list ── */
+  .missing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .missing-card {
+    background: var(--bg-2); border: 1px dashed rgba(248,113,113,0.25);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .missing-card-id { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--danger); margin-bottom: 4px; }
+  .missing-card-name { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .missing-card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; margin-bottom: 8px; }
+  .missing-card-meta { font-size: 11px; color: var(--text-3); display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* ── footer ── */
+  .page-footer {
+    padding: 24px 48px; border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text-3); display: flex; gap: 24px; flex-wrap: wrap;
+  }
+  .page-footer span + span::before { content: '·'; margin-right: 24px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ HEADER -->
+<div class="page-header">
+  <div class="page-header-meta">
+    <div class="page-id">BD-FULL-FLOW-01</div>
+    <div class="page-title">BazarDrive · Product Navigation Map</div>
+    <div class="page-sub">
+      Cloud Design artifact — design reference only, not a production app shell.<br>
+      Shows all 4 lanes (Guest / Passenger / Driver / Shared), screen inventory,
+      navigation transitions, developer handoff table, and missing screen gates.
+    </div>
+  </div>
+  <div class="page-notice">
+    <b>Design reference only.</b><br>
+    This file is a Cloud Design navigation-map artifact.<br>
+    It does not modify <code>public/index.html</code>, service workers,
+    CSP, Mapbox config, or any production shell.
+    The React/Vite sandbox lives in <code>/home/claude/bazardrive</code>
+    and is not part of this artifact.
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--success)"></div>Done — render gate complete</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--warning)"></div>Partial — gate exists, states incomplete</div>
+  <div class="legend-item"><div class="legend-dot" style="background:rgba(245,158,11,0.55)"></div>Audit — shipped, consolidation/parity review only (not a new screen)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--danger)"></div>Missing — no render gate</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--text-3)"></div>Legacy — superseded</div>
+  <div class="legend-item" style="margin-left:16px">
+    <span class="role-chip role-pax">PAX</span>&nbsp;Passenger
+  </div>
+  <div class="legend-item">
+    <span class="role-chip role-drv">DRV</span>&nbsp;Driver
+  </div>
+  <div class="legend-item">
+    <span class="role-chip role-both">BOTH</span>&nbsp;Both roles
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ LANES -->
+<div class="canvas">
+
+  <!-- ─── GUEST LANE ─── -->
+  <div class="lane guest">
+    <div class="lane-header">
+      <div class="lane-header-dot" style="background:var(--info)"></div>
+      Guest / Entry
+    </div>
+    <div class="lane-body">
+
+      <div class="lane-section">App entry</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-ONBOARDING-01 (welcome)</div>
+        <div class="screen-name">Welcome gate</div>
+        <div class="screen-route">/welcome (empty hash → /welcome)</div>
+        <div class="screen-states">5 states · welcome → role → permissions → loading → error · persists welcomeSeen + role</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/welcome.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /welcome is owned by welcome.js, not onboarding.js. First-run flow routes directly to /feed (passenger) or /driver-map (driver) — does not pass through /onboarding?step=phone.</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-ONBOARDING-01 (onboarding step host)</div>
+        <div class="screen-name">Onboarding step host</div>
+        <div class="screen-route">/onboarding (welcome-login full flow) and /onboarding?step=phone (profile OTP re-entry)</div>
+        <div class="screen-states">onboarding step host · two shipped entries with DIFFERENT completion targets · (a) bare /onboarding full flow from welcome.js «Войти» (sets welcomeSeen + go('/onboarding')) → finish(): passenger → /feed, driver → /profile · (b) /onboarding?step=phone profile-side phone/OTP re-entry from profile.js → returns to profile / back to caller</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/onboarding.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /onboarding?step=phone is NOT the only entry. Completion targets differ: bare /onboarding full flow finishes at /feed (passenger) or /profile (driver) — NOT back to /welcome. Only the ?step=phone re-entry returns to the caller.</div>
+      </div>
+
+      <div class="flow-arrow">First-run Start → /feed or /driver-map · welcome «Войти» → /onboarding</div>
+
+      <div class="screen-card audit">
+        <div class="screen-id">BD-AUTH-01</div>
+        <div class="screen-name">Phone / OTP (inside onboarding)</div>
+        <div class="screen-route">/onboarding (welcome-login full flow) and /onboarding?step=phone (profile re-entry)</div>
+        <div class="screen-states">phone / OTP mock already shipped · persists phoneVerified · two shipped entries with DIFFERENT completion targets · (a) bare /onboarding full flow from welcome.js (passenger finish → /feed; driver finish → /profile; never /welcome) · (b) /onboarding?step=phone profile-side phone-verify re-entry from profile.js (returns to profile / back to caller)</div>
+        <span class="screen-badge audit">AUDIT</span>
+        <div class="screen-file">public/src/screens/onboarding.js</div>
+        <div class="screen-note">Codex P2 (PR #495): not a net-new screen — phone / OTP ships inside onboarding. No registered /auth route. /onboarding?step=phone is the profile re-entry path, NOT the only entry into onboarding. Full /onboarding completion does NOT return to /welcome — describing it as generically "back to welcome or profile caller" would send completed logins back to the welcome screen.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── PASSENGER LANE ─── -->
+  <div class="lane pax">
+    <div class="lane-header">
+      <div class="lane-header-dot" style="background:var(--success)"></div>
+      Passenger
+    </div>
+    <div class="lane-body">
+
+      <div class="lane-section">Home</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-01</div>
+        <div class="screen-name">MapHome Foundation</div>
+        <div class="screen-route">/map</div>
+        <div class="screen-states">9 states · two shipped branches: choose-route / manual → /route-picker; my-location action → /location-permission (BD-MAP-02, surfaced below)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/map.js</div>
+        <div class="screen-note">Codex P2 (PR #495): handoff must NOT fold /map directly to /route-picker. BD-MAP-02 is its own registered screen — see card / handoff row below.</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-02</div>
+        <div class="screen-name">Location Permission Gate</div>
+        <div class="screen-route">/location-permission (registered in public/src/app.js)</div>
+        <div class="screen-states">allow / manual / back actions (three branches with DIFFERENT destinations per location_permission.js:163-170) · entered from map.js my-location action · allow → /map?state=default · manual → /route-picker · back → /map</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/location_permission.js</div>
+        <div class="screen-note">Codex P2 (PR #495): BD-MAP-02 is a real registered screen — handoff and smoke tests must split allow/manual/back. allow → /map?state=default (returns to map with permission granted); manual → /route-picker (skips the map step); back → /map. Do NOT collapse allow + manual into one /route-picker destination.</div>
+      </div>
+
+      <div class="lane-section">Order creation</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-03</div>
+        <div class="screen-name">RoutePicker</div>
+        <div class="screen-route">/route-picker</div>
+        <div class="screen-states">8 states + live search</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/route_picker.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-04</div>
+        <div class="screen-name">RoutePreview</div>
+        <div class="screen-route">/route-preview</div>
+        <div class="screen-states">5 states</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/route_preview.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-MAP-05</div>
+        <div class="screen-name">OrderMapDraft</div>
+        <div class="screen-route">/order-map-draft</div>
+        <div class="screen-states">6 states · «Разместить заявку» → handlePublish creates the order and re-renders the success card with lastOrder in place (submit does NOT navigate) → user taps the success CTA (responses / my-order) → handleAction navigates to /responses?orderId=...&amp;state=empty (success state preserved across the handoff)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/order_map_draft.js</div>
+        <div class="screen-note">Codex P2 (PR #495): submit handler does NOT navigate directly. Smoke tests must assert «Разместить заявку» → success card with lastOrder, then success CTA → /responses?orderId=...&amp;state=empty — not a direct submit→/responses jump. Bare /responses drops the order context; canonical orderId is required for «Выбрать водителя» to build the passenger active ride.</div>
+      </div>
+
+      <div class="lane-section">Driver selection</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-FLOW-INBOX-01</div>
+        <div class="screen-name">ResponsesInbox</div>
+        <div class="screen-route">/responses (deep-link with ?orderId=...&amp;state=empty from the BD-MAP-05 SUCCESS CTA — NOT from submit; handlePublish only creates the order and re-renders the success card with lastOrder; navigation happens in handleAction when the user taps the success CTA «responses» / «my-order» per order_map_draft.js:950-963)</div>
+        <div class="screen-states">4 states · list / selected / accepted / empty · select-driver → buildPassengerActiveRide() + activeRideUrl()</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/responses.js</div>
+        <div class="screen-note">Codex P2 (PR #495): the deep-link source is the BD-MAP-05 success CTA, not submit. Smoke tests must preserve the success-card state with lastOrder before the CTA tap. «Выбрать водителя» → /active-ride?role=passenger&amp;tripId=&lt;tripId&gt;&amp;status=DRIVER_EN_ROUTE. Bare /active-ride?role=passenger drops the seeded trip id and status.</div>
+      </div>
+
+      <div class="lane-section">Active ride</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-P-01…04</div>
+        <div class="screen-name">Passenger Active Ride Shell</div>
+        <div class="screen-route">/active-ride?role=passenger</div>
+        <div class="screen-states">4 stages · enroute → arrived → transit → arriving</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-P-06</div>
+        <div class="screen-name">Cancel Sheet</div>
+        <div class="screen-route">/active-ride?role=passenger (modal)</div>
+        <div class="screen-states">7 states incl. NO_SHOW terminal · cancel completion → /new or /feed; canceled / no-show fallback → /feed</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /map is not the canceled destination in the shipped UI — top / back / feed actions all route to /feed</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-P-07</div>
+        <div class="screen-name">Safety Sheet</div>
+        <div class="screen-route">/active-ride?role=passenger (modal)</div>
+        <div class="screen-states">4 states · default / report / submitted / emergency</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-P-05</div>
+        <div class="screen-name">RideComplete</div>
+        <div class="screen-route">/active-ride?role=passenger&amp;status=COMPLETED</div>
+        <div class="screen-states">7 states · summary → rating → report → receipt · rating return / report return / bottom action → /feed; live secondary action → /chat?tripId=&lt;ride.tripId&gt;&amp;role=passenger (openChat() seeds both params)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_passenger.js (production path audit needed for ride-complete)</div>
+        <div class="screen-note">Codex P2 (PR #495): no /map exit. Completed-ride chat CTA must preserve tripId + role; bare /chat drops both and falls back to the inbox / demo context.</div>
+      </div>
+
+      <div class="lane-section">History</div>
+
+      <div class="screen-card audit">
+        <div class="screen-id">BD-HISTORY-P-01</div>
+        <div class="screen-name">Passenger Trip History</div>
+        <div class="screen-route">/profile (history) → /history (route gap)</div>
+        <div class="screen-states">already shipped · history detail actions: Повторить маршрут / В ленту / Назад к истории · no «Открыть чек» action · no passenger receipt screen route · broken entry-point: profile menu row «История поездок» (#pfp-menu-history) currently routes to /feed instead of the history pane</div>
+        <span class="screen-badge audit">AUDIT</span>
+        <div class="screen-note">Codex P2 (PR #495): passenger completion-screen receipt viewing is UI-only. Audit scope = fix #pfp-menu-history → history pane + inline history detail parity + optional future passenger receipt route, NOT wiring a non-existent receipt path.</div>
+      </div>
+
+      <div class="lane-section">Profile</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-PROFILE-PASSENGER-01</div>
+        <div class="screen-name">Passenger Profile V2</div>
+        <div class="screen-route">/profile</div>
+        <div class="screen-states">6 states · #pfp-quick-where → /feed; empty-history create CTA → /new?type=passenger_request (via createIntentRoute)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/profile.js</div>
+        <div class="screen-note">Codex P2 (PR #495): shipped CTAs do not target /map. Profile menu row «История поездок» (#pfp-menu-history) currently routes to /feed instead of the history pane — see BD-HISTORY-P-01 audit scope.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── DRIVER LANE ─── -->
+  <div class="lane drv">
+    <div class="lane-header">
+      <div class="lane-header-dot" style="background:var(--accent)"></div>
+      Driver
+    </div>
+    <div class="lane-body">
+
+      <div class="lane-section">Entry / readiness</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-DRIVER-02</div>
+        <div class="screen-name">DriverMap — accept-to-trip</div>
+        <div class="screen-route">/driver-map</div>
+        <div class="screen-states">3 states · ready / not-ready / non-driver · accepted-order card (STATE.ACCEPTED) · primary action accepts a nearby order; accepted card's «К поездке» CTA opens the trip</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/driver_map.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no «Выйти на линию» action here — that toggle lives in /profile?role=driver (#pf2-ip-go-online). «К поездке» → /active-ride?role=driver&amp;tripId=...&amp;status=ACCEPTED. Bare /active-ride?role=driver lacks the trip id and falls into fallback / demo behavior.</div>
+      </div>
+
+      <div class="lane-section">Order acceptance</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-CONFIRM-01</div>
+        <div class="screen-name">TripConfirmation Handoff</div>
+        <div class="screen-route">/trip-confirmation?... (seeded with the trip-confirmation handoff)</div>
+        <div class="screen-states">5 states · waiting / driver-confirmed / pax-confirmed / confirmed / error · passenger-confirm first re-renders confirmed state in place; separate open-ride CTA seeds active ride and navigates to /active-ride?role=*&amp;tripId=...</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/trip_confirmation.js</div>
+        <div class="screen-note">Codex P2 (PR #495): confirmation states are not skipped; open-ride CTA is a separate step after the confirmed state.</div>
+      </div>
+
+      <div class="lane-section">Active ride</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-D</div>
+        <div class="screen-name">Driver Active Ride</div>
+        <div class="screen-route">/active-ride?role=driver</div>
+        <div class="screen-states">5 stages · accepted → enroute → arrived → transit → completing</div>
+        <span class="screen-badge partial">PARTIAL</span>
+        <div class="screen-file">public/src/screens/active_ride.js</div>
+        <div class="screen-note">No error/offline states yet</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-D-SHEETS-01</div>
+        <div class="screen-name">Driver Cancel + Problem Sheets</div>
+        <div class="screen-route">/active-ride?role=driver (modal)</div>
+        <div class="screen-states">11 states</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-D-NOSHOW-01</div>
+        <div class="screen-name">Driver No-Show Flow</div>
+        <div class="screen-route">/active-ride?role=driver&amp;status=NO_SHOW</div>
+        <div class="screen-states">terminal NO_SHOW stub wired (renderCanceledStub); full 7-state no-show flow is future dedicated issue · wired exits: primary go('/feed'), history go('/profile')</div>
+        <span class="screen-badge partial">PARTIAL</span>
+        <div class="screen-file">public/src/screens/active_ride.js (terminal stub via renderCanceledStub)</div>
+        <div class="screen-note">Codex P2 (PR #495): no /driver-map exit from this state today; reason / confirm / compensation / support / loading / error remain future dedicated issue per docs/design-registry.json + docs/screen-contracts.md</div>
+      </div>
+
+      <div class="lane-section">Completion / earnings</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-D-09</div>
+        <div class="screen-name">Earnings Sheet · Completion Polish</div>
+        <div class="screen-route">/active-ride?role=driver&amp;status=COMPLETED</div>
+        <div class="screen-states">7 states · summary / cash / noncash / shift / loading / closed / empty</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-D-11</div>
+        <div class="screen-name">Earnings Completed Trip</div>
+        <div class="screen-route">/active-ride?role=driver&amp;status=COMPLETED</div>
+        <div class="screen-states">5 states · default / loading / empty / noncash / cash</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/active_ride_driver_sheets.js</div>
+        <div class="screen-note">Closes #401 reference gap</div>
+      </div>
+
+      <div class="lane-section">History</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RIDE-HISTORY-D-01</div>
+        <div class="screen-name">Receipt / Payouts</div>
+        <div class="screen-route">/profile?role=driver&amp;pane=payouts (payouts pane deep-link) → /receipt?tripId=... (receipt screen)</div>
+        <div class="screen-states">6 states · history / payouts / receipt_cash / receipt_noncash / empty / loading</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">list source: public/src/screens/profile.js (payouts pane) · receipt screen: public/src/screens/trip_receipt.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /profile?role=driver alone opens the overview tab; payouts pane needs ?pane=payouts deep-link (the trip receipt's «К выплатам» action uses it). "Открыть чек" must target /receipt?tripId=... (trip_receipt.js).</div>
+      </div>
+
+      <div class="lane-section">Profile / dashboard</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-PROFILE-D-03</div>
+        <div class="screen-name">Driver Dashboard</div>
+        <div class="screen-route">/profile?role=driver</div>
+        <div class="screen-states">10 states · 5 tabs · «На линию» button (#pf2-ip-go-online) toggles driverOnline; active-shift CTA opens /driver-map</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/profile.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no direct /active-ride?role=driver entry from profile — that route opens only after accepted order / confirmation handoff with a trip id.</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-PROFILE-01</div>
+        <div class="screen-name">Driver Profile (legacy)</div>
+        <div class="screen-route">/profile (legacy)</div>
+        <div class="screen-states">overview/taxi/docs/pay/security</div>
+        <span class="screen-badge legacy">LEGACY</span>
+        <div class="screen-file">public/src/screens/profile.js</div>
+        <div class="screen-note">Superseded by D-03</div>
+      </div>
+
+      <div class="lane-section">Audit / consolidation</div>
+
+      <div class="screen-card audit">
+        <div class="screen-id">BD-GARAGE-01</div>
+        <div class="screen-name">Driver Garage</div>
+        <div class="screen-route">/profile?role=driver (garage gate); no /garage route registered</div>
+        <div class="screen-states">already ships list/add/edit/archive/restore/readiness in profile.js (shipped UI) + public/src/garage.js (shared helper)</div>
+        <span class="screen-badge audit">AUDIT</span>
+        <div class="screen-file">public/src/screens/profile.js (shipped UI) + public/src/garage.js (shared helper)</div>
+        <div class="screen-note">Codex P2 (PR #495): there is no public/src/screens/garage.js; consolidation of active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*); not a new screen.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── SHARED LANE ─── -->
+  <div class="lane shared">
+    <div class="lane-header">
+      <div class="lane-header-dot" style="background:var(--warning)"></div>
+      Shared
+    </div>
+    <div class="lane-body">
+
+      <div class="lane-section">Feed</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-FEED-01</div>
+        <div class="screen-name">Feed V2</div>
+        <div class="screen-route">/feed</div>
+        <div class="screen-states">5 filters · all / offers / reqs / market / empty · card tap → /post?id=... (BD-POST-01, post_detail.js); /new for composer</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/feed.js</div>
+        <div class="screen-note">Codex P2 (PR #495): Feed cards link to /post?id=..., not /order/&lt;id&gt;. /order/&lt;id&gt; is the separate canonical order surface (BD-ORDER-DETAIL-01).</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-POST-01</div>
+        <div class="screen-name">Post Detail (kind-routed)</div>
+        <div class="screen-route">/post?id=... (registered in public/src/app.js)</div>
+        <div class="screen-states">post detail states · owns primary-action decision per post kind / ownership · respond / chat / own post / accept branches</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/post_detail.js</div>
+        <div class="screen-note">Codex P2 (PR #495): /post is its own registered surface, not just a Feed card target. post_detail.js owns the primary-action decision per kind / ownership — respond kind → /respond?postId=...; chat kind → /chat?... with required context (responseId / tripId) if present; own post → own / order fallback; accept / order flow → shipped accept target. Handoff + key paths must not skip BD-POST-01.</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-COMPOSER-01</div>
+        <div class="screen-name">Composer V2</div>
+        <div class="screen-route">/new</div>
+        <div class="screen-states">per-type · preview · draft-saved · validation · submit-loading — all shipped</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/composer.js</div>
+        <div class="screen-note">Audit parity only; not a backlog item</div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RESPOND-01</div>
+        <div class="screen-name">Respond — two variants per post kind</div>
+        <div class="screen-route">/respond?postId=... (required; missing-state otherwise)</div>
+        <div class="screen-states">2 variants with different next-screen contracts · (a) driver offer response: driver snapshot + kind: passenger_response + success → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver · (b) marketplace seller-message: renderMarketplace(...) + «Написать продавцу» topbar (post detail returns kind: 'respond' for marketplace posts) → submit → success overlay → #respond-success-back → /feed · NO chat handoff for marketplace today</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/respond.js (driver offer sheet + renderMarketplace for marketplace posts)</div>
+        <div class="screen-note">Codex P2 (PR #495): /respond is not driver-only and the two variants have different next-screen contracts. Driver offer variant → /chat?responseId=...&amp;role=driver. Marketplace variant → success overlay → /feed; there is NO chat handoff for marketplace today. Follow-up work must preserve both variants and must not retarget the marketplace flow to a seller chat unless a separate marketplace-chat issue is opened. Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
+      </div>
+
+      <div class="lane-section">Order</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-ORDER-DETAIL-01</div>
+        <div class="screen-name">Order Detail (role-split)</div>
+        <div class="screen-route">/order/&lt;id&gt;</div>
+        <div class="screen-states">9 states · pax P1–P4 / drv D1–D4 / semantics X1 · driver-send-offer writes DriverOffer + re-renders in place (toast); passenger select-driver writes overlay/selection + re-renders in place</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/order_detail.js</div>
+        <div class="screen-note">Codex P2 (PR #495): primary actions re-render in place. Only the explicit open-trip / open-active-ride CTA navigates: passenger → /active-ride?role=passenger&amp;tripId=...; driver → /active-ride?role=driver&amp;tripId=... — the Order Detail driver branch does NOT append status=ACCEPTED. The status=ACCEPTED URL is emitted by the DriverMap accepted-card «К поездке» CTA only. Not /respond, not /trip-confirmation.</div>
+      </div>
+
+      <div class="lane-section">Chat</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-CHAT-02</div>
+        <div class="screen-name">Chat Flow</div>
+        <div class="screen-route">/chat (?responseId=... from Respond; ?tripId=... from feed / order CTAs)</div>
+        <div class="screen-states">8 + 7b states · inbox pax/drv · thread pax/drv/done · empty · offline · locked · message send stays in thread (no navigation)</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/chat.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no direct /active-ride transition on send. Ride-context confirmation CTA writes the trip-confirmation handoff and routes to /trip-confirmation?...</div>
+      </div>
+
+      <div class="lane-section">Rules</div>
+
+      <div class="screen-card">
+        <div class="screen-id">BD-RULES-01</div>
+        <div class="screen-name">Rules &amp; Documents (static / read-only)</div>
+        <div class="screen-route">/rules</div>
+        <div class="screen-states">static / read-only · section cards render as static articles · search / document download controls are deliberate no-ops · only the empty-state [data-go] button navigates · NO section-detail route, NO «open section → back» flow today</div>
+        <span class="screen-badge done">DONE</span>
+        <div class="screen-file">public/src/screens/rules.js</div>
+        <div class="screen-note">Codex P2/P3 (PR #495): registered for /rules in public/src/app.js (profile.js is not the runtime owner). Sections are static read-only articles — no «Открыть раздел» action and no section-detail flow exists today. Handoff must not assert a section-detail / back transition. Section-detail navigation would be a future dedicated issue.</div>
+      </div>
+
+      <div class="lane-section">Missing</div>
+
+      <div class="screen-card missing">
+        <div class="screen-id">BD-SETTINGS-01</div>
+        <div class="screen-name">Settings</div>
+        <div class="screen-route">/settings (not registered)</div>
+        <div class="screen-states">~language / theme / push / account · register route, implement screen, wire passenger #pfp-settings-btn + driver gear CTA</div>
+        <span class="screen-badge missing">MISSING</span>
+        <div class="screen-note">Codex P2 (PR #495): not already linked from profile headers — missing scope includes wiring the entry points</div>
+      </div>
+
+      <div class="screen-card missing">
+        <div class="screen-id">BD-NOTIF-01</div>
+        <div class="screen-name">Notifications (audit /inbox first)</div>
+        <div class="screen-route">/notifications (NOT registered) — but the production app already ships a registered /inbox</div>
+        <div class="screen-states">Audit shipped /inbox (BD-INBOX-01, public/src/screens/inbox.js — list / empty / unread-event states) FIRST · then decide (a) REUSE /inbox as the notification hub (point entry points at /inbox, extend if push-permission states are missing, do NOT register /notifications) OR (b) consciously SPLIT a separate /notifications route after audit (document why it is consciously separate from /inbox) · wire shipped entry points to the chosen target: passenger #pfp-notif-btn (no listener today) + DRIVER #pf2-act-notif quick-action row (profile.js:1162) — currently only toggles notificationsEnabled (profile.js:3809-3814); there is NO driver bell in the shipped profile · do NOT silently register /notifications alongside /inbox and do NOT leave #pf2-act-notif as a toggle</div>
+        <span class="screen-badge missing">MISSING</span>
+        <div class="screen-note">Codex P2 (PR #495): /inbox is a shipped, registered screen (BD-INBOX-01). The shipped driver profile has NO bell — the actual driver entry is the quick-action row #pf2-act-notif (currently only toggles notificationsEnabled). BD-NOTIF-01 must audit /inbox first, decide reuse vs split, and rewire #pf2-act-notif to the chosen surface (not leave it as a toggle). Any "driver bell" wording must be explicitly marked as future UI.</div>
+      </div>
+
+      <div class="screen-card missing">
+        <div class="screen-id">BD-ERROR-01</div>
+        <div class="screen-name">Global Error / Offline</div>
+        <div class="screen-route">global overlay</div>
+        <div class="screen-states">~offline / server-error / timeout / retry · recovered</div>
+        <span class="screen-badge missing">MISSING</span>
+      </div>
+
+      <div class="screen-card missing">
+        <div class="screen-id">BD-MOD-01</div>
+        <div class="screen-name">Moderation / Report</div>
+        <div class="screen-route">/report or modal (not registered)</div>
+        <div class="screen-states">~report form / submitted / moderation queue · wire inert STANDALONE report CTAs (Order Detail data-action="report-order" has no click branch today). PRESERVE in-ride safety report (BD-RIDE-P-07): openPassengerSafetySheet → in-sheet report view → submit sets overlay.dataset.report="submitted" → «Готово» returns to safety sheet/ride without leaving /active-ride. Do NOT reroute BD-RIDE-P-07 to /report.</div>
+        <span class="screen-badge missing">MISSING</span>
+        <div class="screen-note">Codex P2 (PR #495): scope is limited to inert standalone report CTAs (e.g. Order Detail `Пожаловаться`). The in-ride safety report flow (BD-RIDE-P-07) is preserved as shipped, in-sheet, on /active-ride — must NOT be rerouted to /report.</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ HANDOFF TABLE -->
+<div class="section-wrap">
+  <div class="section-title">Developer Handoff Table</div>
+  <table class="handoff-table">
+    <thead>
+      <tr>
+        <th>Screen ID</th>
+        <th>Route</th>
+        <th>File</th>
+        <th>Role</th>
+        <th>Status</th>
+        <th>States</th>
+        <th>Primary action</th>
+        <th>Next screen</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="t-id">BD-ONBOARDING-01 (welcome)</td>
+        <td class="t-route">/welcome</td>
+        <td><code>public/src/screens/welcome.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>5 (welcome → role → permissions → loading → error)</td>
+        <td>Выбрать роль</td>
+        <td>/feed (passenger) or /driver-map (driver); persists welcomeSeen + role</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-ONBOARDING-01 (onboarding step host)</td>
+        <td class="t-route">/onboarding (welcome-login full flow); ?step=phone (profile OTP re-entry)</td>
+        <td><code>public/src/screens/onboarding.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>onboarding step host · two shipped entries with different completion targets: welcome-login full flow from welcome.js «Войти» + profile-side phone-verify re-entry</td>
+        <td>continue step</td>
+        <td>bare /onboarding full flow finish: passenger → /feed; driver → /profile (never /welcome). /onboarding?step=phone re-entry: returns to profile / back to caller.</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td class="t-id">BD-AUTH-01</td>
+        <td class="t-route">/onboarding (welcome-login full flow) and /onboarding?step=phone (profile re-entry)</td>
+        <td><code>public/src/screens/onboarding.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-audit">Done · audit</td>
+        <td>phone / OTP mock shipped; persists phoneVerified; two shipped entries with different completion targets — welcome-login full flow + profile re-entry</td>
+        <td>Войти по телефону</td>
+        <td>bare /onboarding full flow finish(): passenger → /feed; driver → /profile (no return to /welcome). /onboarding?step=phone profile re-entry: returns to profile / back to caller. No separate /auth screen.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-FEED-01</td>
+        <td class="t-route">/feed</td>
+        <td><code>public/src/screens/feed.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>5 filters</td>
+        <td>Создать публикацию</td>
+        <td>/new (composer); card tap → /post?id=... (BD-POST-01, post_detail.js). /order/&lt;id&gt; is the separate canonical order surface, not a Feed card target.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-POST-01</td>
+        <td class="t-route">/post?id=... (registered in public/src/app.js)</td>
+        <td><code>public/src/screens/post_detail.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>post detail · primary-action decision per post kind / ownership (respond / chat / own / accept)</td>
+        <td>resolve action by kind / ownership</td>
+        <td>respond kind → /respond?postId=...; chat / message kind → /chat?... with required context (responseId / tripId) if present; own post → own / order fallback as shipped; accept / order flow → shipped accept target. Feed cards must not skip BD-POST-01 — /post is the surface that resolves these transitions.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-COMPOSER-01</td>
+        <td class="t-route">/new</td>
+        <td><code>public/src/screens/composer.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done · audit</td>
+        <td>per-type / preview / draft-saved / validation / submit-loading (shipped)</td>
+        <td>Опубликовать</td>
+        <td>/feed</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-ORDER-DETAIL-01</td>
+        <td class="t-route">/order/&lt;id&gt;</td>
+        <td><code>public/src/screens/order_detail.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>9 (role-split) · driver-send-offer writes DriverOffer + re-renders in place (toast); passenger select-driver re-renders in place</td>
+        <td>Откликнуться / Принять (in-place re-render); explicit open-trip / open-active-ride CTA</td>
+        <td>in-place re-render; the explicit open-trip / open-active-ride CTA navigates: passenger → /active-ride?role=passenger&amp;tripId=...; driver → /active-ride?role=driver&amp;tripId=... — the Order Detail driver branch does NOT append status=ACCEPTED (that URL is emitted by the DriverMap accepted-card «К поездке» CTA only). Primary actions do not jump to /respond or /trip-confirmation.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RESPOND-01</td>
+        <td class="t-route">/respond?postId=... (required; missing-state otherwise) · two variants per post kind</td>
+        <td><code>public/src/screens/respond.js</code> (driver offer sheet + <code>renderMarketplace(...)</code> for marketplace posts)</td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>2 variants with different next-screen contracts — driver offer response (driver snapshot, kind: passenger_response) + marketplace seller-message (renderMarketplace, «Написать продавцу»; submit → success overlay → #respond-success-back → /feed)</td>
+        <td>Отправить предложение/отклик (driver) · Написать продавцу (marketplace)</td>
+        <td>driver offer variant → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver (responseId is produced by submit handler; bare /chat?role=driver loses context); marketplace seller-message variant → success overlay → #respond-success-back → /feed. <b>No chat handoff for marketplace today.</b> Follow-up work must preserve both variants and must not add a marketplace chat handoff unless a separate marketplace-chat issue is opened. Passenger board = /responses.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-FLOW-INBOX-01</td>
+        <td class="t-route">/responses (deep-link with ?orderId=...&amp;state=empty from the BD-MAP-05 <b>success CTA</b>, NOT from submit — handlePublish only creates the order and re-renders the success card with lastOrder; the navigation is in handleAction when the user taps «responses» / «my-order» per <code>order_map_draft.js:950-963</code>)</td>
+        <td><code>public/src/screens/responses.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>4</td>
+        <td>Выбрать водителя</td>
+        <td>/active-ride?role=passenger&amp;tripId=&lt;tripId&gt;&amp;status=DRIVER_EN_ROUTE (buildPassengerActiveRide() + activeRideUrl() seed the trip id and status; bare /active-ride?role=passenger is not enough). Smoke tests must preserve the BD-MAP-05 success-card state before the CTA tap and not assert a direct submit → /responses jump.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-01</td>
+        <td class="t-route">/map</td>
+        <td><code>public/src/screens/map.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>9 · two shipped branches</td>
+        <td>choose-route / manual → confirm route flow; my-location action → permission gate</td>
+        <td>choose-route / manual → /route-picker; my-location → /location-permission (BD-MAP-02). Handoff must not fold /map directly to /route-picker.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-02</td>
+        <td class="t-route">/location-permission</td>
+        <td><code>public/src/screens/location_permission.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>allow / manual / back (three branches with DIFFERENT destinations per <code>location_permission.js:163-170</code>)</td>
+        <td>Разрешить доступ / Ввести вручную / Назад</td>
+        <td><b>allow → /map?state=default</b> (returns to map with permission granted); <b>manual → /route-picker</b> (skips the map step); <b>back → /map</b>. Smoke / handoff must split these — only manual goes to /route-picker. BD-MAP-02 is a real registered screen — smoke / follow-up must not skip it.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-03</td>
+        <td class="t-route">/route-picker</td>
+        <td><code>public/src/screens/route_picker.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>8 + live</td>
+        <td>Подтвердить маршрут</td>
+        <td>/route-preview</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-04</td>
+        <td class="t-route">/route-preview</td>
+        <td><code>public/src/screens/route_preview.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>5</td>
+        <td>Создать заявку</td>
+        <td>/order-map-draft</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-MAP-05</td>
+        <td class="t-route">/order-map-draft</td>
+        <td><code>public/src/screens/order_map_draft.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>6</td>
+        <td>Разместить заявку → handlePublish creates the order and re-renders the success card with lastOrder in place (submit does NOT navigate)</td>
+        <td>success card with lastOrder → success CTA (responses / my-order) tap → handleAction → /responses?orderId=...&amp;state=empty. Smoke tests must preserve the success state through the handoff and not assert a direct submit→/responses jump.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-CONFIRM-01</td>
+        <td class="t-route">/trip-confirmation?... (seeded with the trip-confirmation handoff)</td>
+        <td><code>public/src/screens/trip_confirmation.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>5</td>
+        <td>Подтвердить поездку (passenger-confirm first re-renders the confirmed state in place)</td>
+        <td>separate open-ride CTA seeds the active ride and navigates to /active-ride?role=*&amp;tripId=...; confirmation states are not skipped</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-CHAT-02</td>
+        <td class="t-route">/chat (?responseId=... from Respond; ?tripId=... from feed / order CTAs)</td>
+        <td><code>public/src/screens/chat.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>8 + 7b</td>
+        <td>Отправить сообщение (stays in chat thread; no navigation on send)</td>
+        <td>ride-context confirmation CTA writes the trip-confirmation handoff and routes to /trip-confirmation?...; no direct /active-ride transition</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-P-01…04</td>
+        <td class="t-route">/active-ride?role=passenger</td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>4 stages</td>
+        <td>—</td>
+        <td>…?status=COMPLETED</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-P-05</td>
+        <td class="t-route">…&amp;status=COMPLETED</td>
+        <td><code>public/src/screens/active_ride_passenger.js</code> (production path audit needed)</td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>7</td>
+        <td>Оценить водителя</td>
+        <td>rating return / report return / bottom action → /feed; live secondary action → /chat?tripId=&lt;ride.tripId&gt;&amp;role=passenger (openChat() seeds both params; bare /chat drops trip id + role and falls back to inbox / demo). No /map exit.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-P-06</td>
+        <td class="t-route">…?role=passenger (modal)</td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>7</td>
+        <td>Отменить поездку</td>
+        <td>cancel completion → /new or /feed; canceled / no-show fallback → /feed (top / back / feed)</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-P-07</td>
+        <td class="t-route">…?role=passenger (modal)</td>
+        <td><code>public/src/screens/active_ride_passenger.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>4</td>
+        <td>SOS / Жалоба</td>
+        <td>returns to ride</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-DRIVER-02</td>
+        <td class="t-route">/driver-map</td>
+        <td><code>public/src/screens/driver_map.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>3 + accepted-order card (STATE.ACCEPTED)</td>
+        <td>Принять заказ (nearby); accepted card «К поездке»</td>
+        <td>accepted card's «К поездке» → /active-ride?role=driver&amp;tripId=...&amp;status=ACCEPTED; bare /active-ride?role=driver lacks trip id and falls into fallback / demo behavior</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-D</td>
+        <td class="t-route">/active-ride?role=driver</td>
+        <td><code>public/src/screens/active_ride.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-partial">Partial</td>
+        <td>5 stages</td>
+        <td>—</td>
+        <td>…?status=COMPLETED</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-D-SHEETS-01</td>
+        <td class="t-route">…?role=driver (modal)</td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>11</td>
+        <td>Отменить / Проблема</td>
+        <td>returns to ride</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-D-NOSHOW-01</td>
+        <td class="t-route">…?status=NO_SHOW</td>
+        <td><code>public/src/screens/active_ride.js</code> (terminal stub via renderCanceledStub)</td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-partial">Partial</td>
+        <td>terminal stub + future full no-show flow</td>
+        <td>Показать terminal NO_SHOW / future no-show flow</td>
+        <td>primary exit → /feed; history exit → /profile (no /driver-map exit today)</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-D-09</td>
+        <td class="t-route">…?status=COMPLETED</td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>7 · primary close enters loading / closed state — does NOT immediately navigate</td>
+        <td>Закрыть поездку</td>
+        <td>closed-state card («Вы снова на линии») → closed-card «К заказам» / sheet close callback → /driver-map. Smoke tests must assert the closed state before navigation, not a direct close → /driver-map jump.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-D-11</td>
+        <td class="t-route">…?status=COMPLETED</td>
+        <td><code>public/src/screens/active_ride_driver_sheets.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>5 · <code>#driver-earnings-close</code> enters loading / closed state — does NOT immediately navigate</td>
+        <td>Ваш доход / Закрыть</td>
+        <td>closed-state card («Вы снова на линии») → closed-card «К заказам» / sheet close callback → /driver-map. Smoke tests must assert the closed state («Вы снова на линии») before navigation, not a direct close → /driver-map jump.</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RIDE-HISTORY-D-01</td>
+        <td class="t-route">/profile?role=driver&amp;pane=payouts (payouts pane deep-link) → /receipt?tripId=...</td>
+        <td>list source: <code>public/src/screens/profile.js</code> (payouts pane) · receipt: <code>public/src/screens/trip_receipt.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>6</td>
+        <td>Открыть чек</td>
+        <td>/receipt?tripId=... (receipt screen)</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-PROFILE-PASSENGER-01</td>
+        <td class="t-route">/profile</td>
+        <td><code>public/src/screens/profile.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-done">Done</td>
+        <td>6</td>
+        <td>#pfp-quick-where → /feed; empty-history create CTA → /new?type=passenger_request (createIntentRoute)</td>
+        <td>/feed; /new?type=passenger_request (no /map target from these CTAs)</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-PROFILE-D-03</td>
+        <td class="t-route">/profile?role=driver</td>
+        <td><code>public/src/screens/profile.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-done">Done</td>
+        <td>10 / 5 tabs</td>
+        <td>На линию (toggles driverOnline via #pf2-ip-go-online; active-shift CTA opens /driver-map)</td>
+        <td>/driver-map (no direct /active-ride?role=driver entry — opened only after accepted order / confirmation handoff with a trip id)</td>
+      </tr>
+      <tr>
+        <td class="t-id">BD-RULES-01</td>
+        <td class="t-route">/rules</td>
+        <td><code>public/src/screens/rules.js</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-done">Done</td>
+        <td>static / read-only · section cards render as static articles · search / document download controls are deliberate no-ops · only empty-state [data-go] navigates</td>
+        <td>— (sections are static read-only articles; no «Открыть раздел» action)</td>
+        <td>stays on /rules — no route transition. Empty-state [data-go] returns to caller. Section-detail navigation would be a future dedicated issue.</td>
+      </tr>
+      <tr style="opacity:0.5">
+        <td class="t-id">BD-PROFILE-01</td>
+        <td class="t-route">/profile (legacy)</td>
+        <td><code>public/src/screens/profile.js</code></td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-legacy">Legacy</td>
+        <td>5 tabs</td>
+        <td>—</td>
+        <td>Superseded by D-03</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td class="t-id">BD-HISTORY-P-01</td>
+        <td class="t-route">/profile (history) → /history gap</td>
+        <td><code>public/src/screens/profile.js</code> / <code>public/src/screens/active_ride_passenger.js</code></td>
+        <td><span class="role-chip role-pax">PAX</span></td>
+        <td class="t-audit">Done · audit</td>
+        <td>inline history detail parity; no passenger receipt screen route (completion receipt viewing is UI-only); profile menu row «История поездок» (#pfp-menu-history) currently routes to /feed — broken entry-point</td>
+        <td>Повторить маршрут / В ленту / Назад к истории</td>
+        <td>back to history pane / /feed / route re-create flow; audit scope = fix #pfp-menu-history → history pane + inline detail parity + optional future passenger receipt route (no shipped «Открыть чек»)</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td class="t-id">BD-GARAGE-01</td>
+        <td class="t-route">/profile?role=driver (garage gate); no /garage route registered</td>
+        <td>shipped UI: <code>public/src/screens/profile.js</code> + shared helper <code>public/src/garage.js</code> (no <code>public/src/screens/garage.js</code>)</td>
+        <td><span class="role-chip role-drv">DRV</span></td>
+        <td class="t-audit">Done · audit</td>
+        <td>consolidation of active garage PR line</td>
+        <td>Добавить авто</td>
+        <td>/profile?role=driver</td>
+      </tr>
+      <tr style="background:rgba(248,113,113,0.04)">
+        <td class="t-id">BD-SETTINGS-01</td>
+        <td class="t-route">/settings (not registered)</td>
+        <td><code>—</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-missing">Missing</td>
+        <td>~6</td>
+        <td>Сохранить</td>
+        <td>register /settings; wire passenger #pfp-settings-btn + driver gear CTA</td>
+      </tr>
+      <tr style="background:rgba(248,113,113,0.04)">
+        <td class="t-id">BD-NOTIF-01</td>
+        <td class="t-route">/notifications (not registered) — <b>audit shipped /inbox (BD-INBOX-01) first</b></td>
+        <td><code>—</code> (relate to <code>public/src/screens/inbox.js</code>)</td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-missing">Missing</td>
+        <td>~3</td>
+        <td>Открыть уведомление</td>
+        <td>(1) audit shipped <code>/inbox</code> (BD-INBOX-01 — list / empty / unread-event states); (2) decide <b>reuse</b> <code>/inbox</code> as the notification hub (point entry points at <code>/inbox</code>, extend if push-permission states missing, no <code>/notifications</code> registration) <b>OR</b> consciously <b>split</b> <code>/notifications</code> after audit (document why it is separate from <code>/inbox</code>); (3) wire shipped entry points to the chosen target — passenger <code>#pfp-notif-btn</code> (no listener today) + <b>driver <code>#pf2-act-notif</code></b> quick-action row (<code>profile.js:1162</code>; currently only toggles <code>notificationsEnabled</code> at <code>profile.js:3809-3814</code>). There is NO driver bell in the shipped profile — do not write "driver bell" without a future-UI caveat. Do NOT silently register <code>/notifications</code> alongside <code>/inbox</code> and do NOT leave <code>#pf2-act-notif</code> as a toggle.</td>
+      </tr>
+      <tr style="background:rgba(248,113,113,0.04)">
+        <td class="t-id">BD-ERROR-01</td>
+        <td class="t-route">global overlay</td>
+        <td><code>—</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-missing">Missing</td>
+        <td>~4 (offline / server-error / timeout / retry · recovered)</td>
+        <td>Повторить</td>
+        <td>—</td>
+      </tr>
+      <tr style="background:rgba(248,113,113,0.04)">
+        <td class="t-id">BD-MOD-01</td>
+        <td class="t-route">/report or modal (not registered)</td>
+        <td><code>—</code></td>
+        <td><span class="role-chip role-both">BOTH</span></td>
+        <td class="t-missing">Missing</td>
+        <td>~3</td>
+        <td>Отправить жалобу</td>
+        <td>register /report (or modal); wire inert <b>standalone</b> report CTAs (Order Detail <code>data-action="report-order"</code> has no click branch today and would stay inert without this gate). <b>Preserve</b> the in-ride safety report flow (BD-RIDE-P-07): openPassengerSafetySheet → in-sheet report view → submit sets <code>overlay.dataset.report="submitted"</code> → «Готово» returns to safety sheet/ride without leaving /active-ride. Do NOT reroute BD-RIDE-P-07 to /report.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════ MISSING SCREENS -->
+  <div class="section-title">Missing Screen Gates — Implementation Backlog</div>
+  <div class="missing-grid">
+
+    <div class="missing-card">
+      <div class="missing-card-id">BD-SETTINGS-01 · P2</div>
+      <div class="missing-card-name">Settings</div>
+      <div class="missing-card-desc">
+        Codex P2 (PR #495): Settings is <b>not</b> already linked from profile headers.
+        Missing scope: register <code>/settings</code> route, implement screen, wire passenger profile settings CTA
+        (<code>#pfp-settings-btn</code>) and driver profile settings / gear CTA. Logout / delete / account actions remain UI-only
+        unless a future backend issue says otherwise.
+      </div>
+      <div class="missing-card-meta">
+        <span class="priority p2">P2</span>
+        <span>~6 states</span>
+        <span class="role-chip role-both">BOTH</span>
+        <span>+ profile-entry wiring</span>
+      </div>
+    </div>
+
+    <div class="missing-card">
+      <div class="missing-card-id">BD-NOTIF-01 · P2</div>
+      <div class="missing-card-name">Notifications (audit /inbox first; actual driver entry = #pf2-act-notif)</div>
+      <div class="missing-card-desc">
+        Codex P2 (PR #495): the production app already ships a registered <code>/inbox</code> surface
+        (<code>public/src/app.js</code>, <code>public/src/screens/inbox.js</code>, BD-INBOX-01 in
+        <code>docs/screen-contracts.md</code>) with list / empty / unread-event states. The passenger profile bell
+        <code>#pfp-notif-btn</code> renders without a listener today. The shipped driver profile <b>does not render a
+        notification bell</b> — the actual driver notification affordance is the quick-action row
+        <code>#pf2-act-notif</code> (<code>public/src/screens/profile.js:1162</code>), and today it only toggles
+        <code>notificationsEnabled</code> (<code>public/src/screens/profile.js:3809-3814</code>). BD-NOTIF-01 must:
+        (1) audit the shipped <code>/inbox</code> first;
+        (2) consciously decide <b>(a) reuse <code>/inbox</code> as the notification hub</b> (point entry points at
+        <code>/inbox</code>, extend if push-permission / notification-specific states are missing, do not register
+        <code>/notifications</code>) <b>OR (b) split a separate <code>/notifications</code> route after audit</b>
+        (document why it is consciously separate from <code>/inbox</code>);
+        (3) wire passenger <code>#pfp-notif-btn</code> + <b>driver <code>#pf2-act-notif</code></b> to whichever target
+        is picked — <code>#pf2-act-notif</code> must be replaced with an open-surface handler instead of remaining a
+        <code>notificationsEnabled</code> toggle. Any "driver bell" wording must be marked as future UI.
+        States: list / empty / push-permission prompt. No real push delivery — mock data only.
+        Silently registering <code>/notifications</code> alongside <code>/inbox</code> is out of scope.
+      </div>
+      <div class="missing-card-meta">
+        <span class="priority p2">P2</span>
+        <span>~3 states</span>
+        <span class="role-chip role-both">BOTH</span>
+        <span>+ profile-entry wiring</span>
+      </div>
+    </div>
+
+    <div class="missing-card">
+      <div class="missing-card-id">BD-ERROR-01 · P1</div>
+      <div class="missing-card-name">Global Error / Offline</div>
+      <div class="missing-card-desc">
+        App-level error states: offline banner, server error, timeout, retry / recovered.
+        No per-screen fallbacks (those exist individually); this is the global overlay layer.
+      </div>
+      <div class="missing-card-meta">
+        <span class="priority p1">P1</span>
+        <span>~4 states</span>
+        <span class="role-chip role-both">BOTH</span>
+        <span>global overlay</span>
+      </div>
+    </div>
+
+    <div class="missing-card">
+      <div class="missing-card-id">BD-MOD-01 · P2</div>
+      <div class="missing-card-name">Moderation / Report</div>
+      <div class="missing-card-desc">
+        Codex P2 (PR #495): scope is the standalone <code>/report</code> surface plus wiring for inert <b>standalone</b> report CTAs —
+        Order Detail already renders a <code>Пожаловаться</code> button (<code>data-action="report-order"</code> in <code>order_detail.js:664</code>)
+        with no click branch and would stay inert without this gate. Implement <code>/report</code> (or modal) + listeners for these inert CTAs.
+        States: report form / submitted / moderation queue (admin only).
+        <br/><br/>
+        <b>Preserve the in-ride safety report flow (BD-RIDE-P-07) — do NOT reroute it to <code>/report</code>:</b>
+        <code>openPassengerSafetySheet</code> switches to the in-sheet report view, submit sets
+        <code>overlay.dataset.report = 'submitted'</code>, and «Готово» returns to the safety sheet / ride without leaving <code>/active-ride</code>.
+        Rewiring that link into <code>/report</code> would break the shipped in-ride safety flow.
+      </div>
+      <div class="missing-card-meta">
+        <span class="priority p2">P2</span>
+        <span>~3 states</span>
+        <span class="role-chip role-both">BOTH</span>
+        <span>+ wire shipped report CTAs</span>
+        <span>reuse: ReasonList from P-06</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ IMPLEMENTATION ORDER -->
+  <div class="section-title">Recommended Implementation Order</div>
+  <table class="handoff-table">
+    <thead>
+      <tr>
+        <th>Priority</th>
+        <th>Screen ID</th>
+        <th>Rationale</th>
+        <th>Blocks / Unblocks</th>
+        <th>Est. size</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="priority p1">P1</span></td>
+        <td class="t-id">BD-ERROR-01</td>
+        <td>Driver live-failure UX gap; global offline layer missing across all screens</td>
+        <td>all screens offline safety</td>
+        <td>1 overlay, 4 states</td>
+      </tr>
+      <tr>
+        <td><span class="priority p1">P1</span></td>
+        <td class="t-id">BD-RIDE-D (error states)</td>
+        <td>Driver active ride is partial — missing error/offline stages</td>
+        <td>public/src/screens/active_ride.js</td>
+        <td>extend existing gate</td>
+      </tr>
+      <tr>
+        <td><span class="priority p2">P2</span></td>
+        <td class="t-id">BD-SETTINGS-01</td>
+        <td>Codex P2 (PR #495): /settings is not registered and profile headers are not wired. Missing scope = register /settings, implement screen, wire passenger #pfp-settings-btn + driver gear CTA. Logout / delete / account UI-only.</td>
+        <td>register route + wire profile CTAs</td>
+        <td>1 gate, 6 states</td>
+      </tr>
+      <tr>
+        <td><span class="priority p2">P2</span></td>
+        <td class="t-id">BD-NOTIF-01</td>
+        <td>Codex P2 (PR #495): the production app already ships a registered /inbox (BD-INBOX-01 — list / empty / unread-event states). The shipped driver profile has NO bell — the actual driver entry is the quick-action row <code>#pf2-act-notif</code> (profile.js:1162; currently only toggles <code>notificationsEnabled</code> at profile.js:3809-3814). BD-NOTIF-01 must audit /inbox first, then <b>reuse</b> /inbox as the notification hub or consciously <b>split</b> /notifications after audit. Wire passenger <code>#pfp-notif-btn</code> + driver <code>#pf2-act-notif</code> to the chosen target — rewire <code>#pf2-act-notif</code> to open the surface instead of leaving it as a toggle. Any "driver bell" wording must be marked as future UI. Do NOT silently register /notifications alongside /inbox.</td>
+        <td>audit /inbox first + decide reuse vs split + wire shipped entry points (#pfp-notif-btn passenger, #pf2-act-notif driver)</td>
+        <td>1 gate, 3 states (audit gate + decision)</td>
+      </tr>
+      <tr>
+        <td><span class="priority p2">P2</span></td>
+        <td class="t-id">BD-MOD-01</td>
+        <td>Codex P2 (PR #495): register /report (or modal); wire inert <b>standalone</b> report CTAs (Order Detail data-action="report-order" in order_detail.js:664 has no click branch today). Standalone report surface; ReasonList from cancel sheet (public/src/screens/active_ride_passenger.js) reusable. <b>Preserve</b> the BD-RIDE-P-07 in-ride safety report behavior (openPassengerSafetySheet → in-sheet report view → submit sets overlay.dataset.report="submitted" → «Готово» returns to safety sheet/ride without leaving /active-ride). Do NOT reroute BD-RIDE-P-07 to /report.</td>
+        <td>Order Detail report-order CTA (BD-RIDE-P-07 safety report preserved as-is)</td>
+        <td>1 gate, 3 states + wire inert standalone report CTAs</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td><span class="priority p-audit">AUDIT</span></td>
+        <td class="t-id">BD-HISTORY-P-01</td>
+        <td>Already ships in /profile + saveRideHistoryEntry; audit scope = fix #pfp-menu-history → history pane + inline detail parity + optional future passenger receipt route (not a from-scratch build, no shipped «Открыть чек»)</td>
+        <td>open only on confirmed gap</td>
+        <td>audit only</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td><span class="priority p-audit">AUDIT</span></td>
+        <td class="t-id">BD-COMPOSER-01 (states)</td>
+        <td>Per-type / preview / draft-saved / validation / submit-loading already shipped in public/src/screens/composer.js — audit parity only</td>
+        <td>open only on confirmed gap</td>
+        <td>audit only</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td><span class="priority p-audit">AUDIT</span></td>
+        <td class="t-id">BD-GARAGE-01</td>
+        <td>Garage gate ships in /profile?role=driver; consolidation of active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*) — not a new screen</td>
+        <td>open only on confirmed gap</td>
+        <td>audit only</td>
+      </tr>
+      <tr style="background:rgba(245,158,11,0.05)">
+        <td><span class="priority p-audit">AUDIT</span></td>
+        <td class="t-id">BD-AUTH-01</td>
+        <td>Phone / OTP already ships inside onboarding (public/src/screens/onboarding.js, persists phoneVerified). Profile verification CTAs route to /onboarding?step=phone. Audit / reuse only — no new /auth screen unless product confirms a dedicated surface.</td>
+        <td>open only on confirmed gap</td>
+        <td>audit only</td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ FOOTER -->
+<div class="page-footer">
+  <span>BD-FULL-FLOW-01 · Product Navigation Map</span>
+  <span>Cloud Design artifact · design reference only</span>
+  <span>31 screens designed · 4 missing · 2 partial · 4 audit / consolidation</span>
+  <span>React/Vite sandbox: /home/claude/bazardrive (not in this PR)</span>
+  <span>Generated from chats/chat5.md design session</span>
+</div>
+
+</body>
+</html>

@@ -4,3 +4,9 @@ scripts/.dispatcher-state.json
 # Dispatcher routine — локальный отчёт-карточка (регенерируется на каждом прогоне).
 # Стабильный пример формата лежит в docs/dispatcher-report.example.md
 docs/dispatcher-report.md
+
+# Visual-review tooling — генерируемый Chrome-профиль / скриншоты (большой, транзиентный)
+.visual-review/
+
+# Локальные рабочие дампы комментариев ревью PR (воспроизводимы через `gh`)
+pr*_comments.json
