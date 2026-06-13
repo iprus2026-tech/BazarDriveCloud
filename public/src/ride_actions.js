@@ -217,11 +217,40 @@ export function buildAcceptedDriverSnapshot(u) {
   const make  = pickStr(u.vehicleMake);
   const model = pickStr(u.vehicleModel);
   const legacyVehicleModel = (make && model) ? `${make} ${model}` : (make || model);
-  const vehicleModel    = pickStr(activeVehicle?.model) || legacyVehicleModel;
-  const rawVehicleColor = pickStr(activeVehicle?.color) || pickStr(u.vehicleColor);
+  // BD-PROFILE-GARAGE-ARCHIVE-I2 Codex P2 — legacy-fallback suppression.
+  // When the user has a real persisted garage collection
+  // (`driverGarage.vehicles` non-empty), the legacy `vehicleMake /
+  // Model / Color / Plate` fields are intentionally PRESERVED on the
+  // user record even after archive. If the resolver returns null in
+  // that state, falling back to legacy here would publish the just-
+  // archived car in the accept handoff snapshot even though /respond
+  // and the garage resolver agree there is no active vehicle. Suppress
+  // legacy fallback when a garage collection record exists; an
+  // empty / never-touched garage still uses the legacy fallback (the
+  // partially-onboarded driver path).
+  //
+  // BD-PROFILE-GARAGE-ARCHIVE-I2 Codex P2 follow-up (#493) — when the
+  // garage record exists but no active vehicle is selected, emit
+  // NON-FALSY neutral placeholders instead of empty strings. The
+  // passenger surfaces' `vehicle.model || 'Toyota Camry'` /
+  // `vehicle.plate || …` fallback chains would otherwise replace
+  // empty strings with demo-car copy, leaking demo data into a real
+  // accepted ride snapshot.
+  const garageHasCollection = Array.isArray(u.driverGarage && u.driverGarage.vehicles)
+    && u.driverGarage.vehicles.length > 0;
+  const useLegacy = !activeVehicle && !garageHasCollection;
+  const noActiveWithGarage = !activeVehicle && garageHasCollection;
+  const NEUTRAL_VEHICLE_MODEL = 'Авто не выбрано';
+  const NEUTRAL_VEHICLE_PLATE = 'номер не выбран';
+  const vehicleModel    = pickStr(activeVehicle?.model)
+    || (useLegacy ? legacyVehicleModel
+      : (noActiveWithGarage ? NEUTRAL_VEHICLE_MODEL : ''));
+  const rawVehicleColor = pickStr(activeVehicle?.color)
+    || (useLegacy ? pickStr(u.vehicleColor) : '');
   const vehiclePlate    = activeVehicle
     ? maskDriverPlate(activeVehicle.plate)
-    : maskDriverPlate(u.vehiclePlate);
+    : (useLegacy ? maskDriverPlate(u.vehiclePlate)
+      : (noActiveWithGarage ? NEUTRAL_VEHICLE_PLATE : ''));
   // Nothing usable on the profile → let the caller keep the demo fallback.
   // Use the RAW vehicleColor (pre-fallback) so an entirely empty profile
   // still returns null and does not synthesise a "цвет не указан"-only ride.

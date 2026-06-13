@@ -100,19 +100,19 @@ export function buildGarageVehicles(u, options = {}) {
   // make-active candidate.
   let raw = rawAll.filter((v) => v && v.archived !== true);
 
-  // 05I Codex P2 — the legacy fallback below fires when the active list
-  // is empty AND there is no archived `legacy-1` materialised by
-  // `archiveGarageVehicle` already. That prevents an archived legacy
-  // card from being re-synthesised from the legacy `vehicleMake / Model
-  // / Color / Plate` user fields on the next render. Archived NON-
-  // legacy entries (e.g. an archived persisted `real-2`) keep the
-  // legacy fallback semantics intact for the snapshot consumers and the
-  // garage render — only the explicit "I archived my legacy" gesture
-  // suppresses the fallback.
-  const hasArchivedLegacy = rawAll.some((v) =>
-    v && v.id === 'legacy-1' && v.archived === true);
-
-  if (raw.length === 0 && !hasArchivedLegacy) {
+  // BD-PROFILE-GARAGE-ARCHIVE-I2 Codex P2 — the legacy fallback fires
+  // ONLY when there is no valid persisted garage collection at all
+  // (`rawAll.length === 0`). Previously the condition was
+  // `raw.length === 0 && !hasArchivedLegacy`, which mis-fired when the
+  // user had a real persisted garage and archived every entry — the
+  // next render synthesised a `legacy-1` active card from the
+  // preserved `vehicleMake / Model / Color / Plate` fields, violating
+  // the no-silent-promotion contract and resurrecting a car the user
+  // had effectively retired. The new check naturally subsumes the old
+  // archived-legacy guard: an archived `legacy-1` materialisation
+  // keeps `rawAll.length > 0`, so the legacy fallback stays suppressed
+  // there too.
+  if (rawAll.length === 0) {
     const make  = (u && typeof u.vehicleMake  === 'string') ? u.vehicleMake.trim()  : '';
     const model = (u && typeof u.vehicleModel === 'string') ? u.vehicleModel.trim() : '';
     const color = (u && typeof u.vehicleColor === 'string') ? u.vehicleColor.trim() : '';
@@ -162,8 +162,24 @@ export function buildGarageVehicles(u, options = {}) {
 // Read-only against `profile.driverGarage.activeVehicleId`; never
 // mutates the persisted id (a stale id is silently ignored, not
 // cleared, so the previous selection re-activates when the matching
-// vehicle reappears). Fallback chain on a stale or missing id: legacy
-// entry (`source === 'legacy'`), then the first vehicle, then null.
+// vehicle reappears).
+//
+// BD-PROFILE-GARAGE-ARCHIVE-I2 — contract alignment. Resolution order:
+//   1. saved `activeVehicleId` matches a non-archived vehicle → active.
+//   2. synthesised legacy fallback (`_synthesized === true`, set only
+//      when the persisted collection is empty AND there is no archived
+//      legacy materialisation) → active.
+//   3. otherwise → null (no silent promotion).
+//
+// The previous resolver auto-promoted the first non-restored persisted
+// vehicle when saved was null/empty/stale. That silently picked a new
+// active selection on the user's behalf after an active-vehicle
+// archive or a fresh add-without-make-active, contradicting the
+// archive contract: "the user must explicitly choose another active
+// vehicle later." This slice removes that branch so the contract is
+// consistent end-to-end (archive helper clears `activeVehicleId`,
+// resolver does NOT pick a replacement, render shows the empty /
+// "no active vehicle" state until the user clicks «Сделать активной»).
 export function resolveActiveGarageVehicleId(profile, vehicles) {
   if (!Array.isArray(vehicles) || vehicles.length === 0) return null;
   const saved = profile
@@ -173,18 +189,13 @@ export function resolveActiveGarageVehicleId(profile, vehicles) {
     ? profile.driverGarage.activeVehicleId
     : null;
   if (saved && vehicles.some((v) => v && v.id === saved)) return saved;
-  // 05J Codex P2 #1 (round 2) — restore the normal resolver fallback
-  // chain: saved match → synthesised legacy → first eligible persisted
-  // vehicle → null. Eligibility filters out entries that were just
-  // unarchived by `restoreGarageVehicle` (marker
-  // `restoredFromArchive: true`) so a restored vehicle never
-  // auto-activates; the user must explicitly click `Сделать активной`
-  // and the saved-match branch above will then return its id.
+  // Synthesised legacy fallback — only fires when the persisted
+  // collection is empty AND no archived legacy materialisation exists
+  // (see `buildGarageVehicles`). Truly the legacy fallback path: keep
+  // it so onboarded-but-never-touched-garage users still see their
+  // legacy car as active without an explicit click.
   const synthesised = vehicles.find((v) => v && v._synthesized === true);
   if (synthesised) return synthesised.id;
-  const firstEligible = vehicles.find((v) =>
-    v && v.restoredFromArchive !== true);
-  if (firstEligible) return firstEligible.id;
   return null;
 }
 

@@ -351,7 +351,15 @@ user.set({
     { name: 'acceptNearbyOrder', regex: /\bacceptNearbyOrder\s*\(/ },
     { name: 'saveActiveVehicle', regex: /\bsaveActiveVehicle\s*\(/ },
     { name: 'activeVehicleId', regex: /\bactiveVehicleId\b/ },
-    { name: 'driverGarage', regex: /\bdriverGarage\b/ },
+    // BD-PROFILE-GARAGE-ARCHIVE-I2 — `buildAcceptedDriverSnapshot`
+    // legitimately reads `u.driverGarage.vehicles` to detect whether a
+    // persisted garage record exists (to suppress legacy-vehicle
+    // fallback). The original pin's intent was to block helpers from
+    // bypassing the resolver for ACTIVE-VEHICLE lookup, which is
+    // already covered by the `activeVehicleId` line above. The narrower
+    // pin below forbids any direct active-id read while allowing the
+    // collection-existence check.
+    { name: 'driverGarage.activeVehicleId', regex: /\bdriverGarage\s*\.\s*activeVehicleId\b/ },
     { name: '"bazardrive.responses.v1"', regex: /bazardrive\.responses\.v1/ },
     { name: '"bazardrive.active_ride.v1"', regex: /bazardrive\.active_ride\.v1/ },
     { name: '"bazardrive.ride_history.v1"', regex: /bazardrive\.ride_history\.v1/ },
@@ -480,9 +488,10 @@ user.set({
     beforeRaw === afterRaw, `before=${beforeRaw.length}b after=${afterRaw.length}b`);
 }
 
-// ── Scenario 14 — BD-PROFILE-D-05F: stale `activeVehicleId` against the
-// persisted collection falls back to the first persisted vehicle (NOT to
-// the legacy car). The saved id stays intact so the previous selection
+// ── Scenario 14 — BD-PROFILE-GARAGE-ARCHIVE-I2 contract alignment.
+// Stale `activeVehicleId` against the persisted collection now resolves
+// to NO active vehicle (no silent promotion). `getUserVehicle` returns
+// null, and the saved id stays intact so the previous selection
 // re-activates when the matching vehicle reappears. ──────────────────────
 reset();
 user.set({
@@ -502,20 +511,20 @@ user.set({
 {
   const u = user.get();
   const v = getUserVehicle(u);
-  // Fallback: first valid persisted vehicle (real-2), NOT the legacy car.
-  expect('S14: stale activeVehicleId falls back to the FIRST persisted vehicle',
-    v?.name === 'Toyota Prius', String(v?.name));
-  expect('S14: stale activeVehicleId does NOT fall back to the legacy car',
-    v?.name !== 'Hyundai Solaris');
+  expect('S14: stale activeVehicleId resolves to null (no silent promotion)',
+    v === null, String(v?.name));
   expect('S14: stale activeVehicleId is PRESERVED (resolver is read-only)',
     user.get().driverGarage?.activeVehicleId === 'ghost-99');
 }
 
-// ── Scenario 15 — BD-PROFILE-D-05I: archived vehicles are invisible to
-// the snapshot consumers. An archived vehicle (`archived: true`) is
-// filtered out of `buildGarageVehicles`, so neither `getUserVehicle` nor
-// `buildAcceptedDriverSnapshot` can surface it. When the only persisted
-// vehicle is archived, the resolver falls back to the legacy car. ──────
+// ── Scenario 15 — BD-PROFILE-GARAGE-ARCHIVE-I2: archived vehicles are
+// invisible to the snapshot consumers AND the legacy fallback is
+// SUPPRESSED when a persisted garage collection record exists. The
+// previous behavior promoted the legacy car into both the resolver and
+// the snapshots; under the I2 contract the resolver returns null, the
+// /respond pass-through returns null, and the accept handoff snapshot
+// surfaces neither the archived persisted car nor the preserved
+// legacy fields. ────────────────────────────────────────────────────────
 reset();
 user.set({
   onboarded: true, role: 'driver',
@@ -532,24 +541,45 @@ user.set({
 });
 {
   const u = user.get();
-  // resolver excludes the archived entry → null collection → legacy fallback.
+  // Resolver excludes the archived entry and now returns null (no
+  // silent promotion to legacy because the persisted record exists).
   const active = resolveActiveGarageVehicle(u);
-  expect('S15: resolver falls back to legacy when the only persisted vehicle is archived',
-    active?.id === 'legacy-1', String(active?.id));
+  expect('S15: resolver returns null when the only persisted vehicle is archived (no legacy resurrection)',
+    active === null, String(active?.id));
   const v = getUserVehicle(u);
-  expect('S15: /respond getUserVehicle returns the legacy car (archived persisted is invisible)',
-    v?.name === 'Hyundai Solaris', String(v?.name));
-  expect('S15: /respond getUserVehicle plate is the legacy plate',
-    v?.plate === 'А 482 МР 77', String(v?.plate));
+  expect('S15: /respond getUserVehicle returns null (no archived-legacy fallback)',
+    v === null, String(v?.name));
   const snap = buildAcceptedDriverSnapshot(u);
-  expect('S15: handoff snapshot vehicle.model is the legacy "Hyundai Solaris"',
-    snap?.vehicle?.model === 'Hyundai Solaris', String(snap?.vehicle?.model));
-  // builder helper also excludes the archived entry from the active list.
+  expect('S15: handoff snapshot does NOT publish the archived persisted vehicle',
+    snap?.vehicle?.model !== 'Toyota Prius', String(snap?.vehicle?.model));
+  expect('S15: handoff snapshot does NOT fall back to the preserved legacy car',
+    snap?.vehicle?.model !== 'Hyundai Solaris', String(snap?.vehicle?.model));
+  // Codex P2 follow-up on #493 — when garage exists + no active, the
+  // snapshot's vehicle fields must carry NON-FALSY neutral placeholders
+  // so passenger surfaces' `vehicle.model || 'Toyota Camry'` fallback
+  // chains do not replace them with demo-car copy.
+  expect('S15: handoff snapshot vehicle.model is the neutral placeholder',
+    snap?.vehicle?.model === 'Авто не выбрано', String(snap?.vehicle?.model));
+  expect('S15: handoff snapshot vehicle.plate is the neutral placeholder',
+    snap?.vehicle?.plate === 'номер не выбран', String(snap?.vehicle?.plate));
+  expect('S15: snapshot vehicle.model is non-empty (defeats demo "Toyota Camry" fallback)',
+    typeof snap?.vehicle?.model === 'string' && snap.vehicle.model.length > 0);
+  expect('S15: snapshot vehicle.plate is non-empty (defeats demo plate fallback)',
+    typeof snap?.vehicle?.plate === 'string' && snap.vehicle.plate.length > 0);
+  // Builder helper excludes the archived entry; the I2 contract also
+  // suppresses the legacy synthesis whenever the persisted record
+  // exists (even when every entry is archived).
   const list = buildGarageVehicles(u);
   expect('S15: buildGarageVehicles does NOT include the archived persisted entry',
     !list.some((x) => x.id === 'real-2'));
-  expect('S15: buildGarageVehicles falls back to the single legacy entry',
-    list.length === 1 && list[0]?.id === 'legacy-1');
+  expect('S15: buildGarageVehicles returns [] when every persisted entry is archived (no legacy fallback)',
+    list.length === 0, String(list.length));
+  // Legacy user fields remain preserved (never wiped) — they just
+  // don't drive the garage render any more.
+  expect('S15: legacy vehicleMake preserved on the user record',
+    u.vehicleMake === 'Hyundai');
+  expect('S15: legacy vehiclePlate preserved on the user record',
+    u.vehiclePlate === 'А 482 МР 77');
 }
 
 // ── Scenario 16 — Mixed persisted collection with one archived: the
@@ -584,6 +614,111 @@ user.set({
     v?.name !== 'Toyota Prius');
   expect('S16: handoff does NOT show the archived Toyota Prius',
     snap?.vehicle?.model !== 'Toyota Prius');
+}
+
+// ── Scenario 17 — BD-PROFILE-GARAGE-ARCHIVE-I2 (P2-2): persisted
+// vehicles[] exists + activeVehicleId null + legacy fields exist →
+// buildAcceptedDriverSnapshot must NOT publish the legacy car. The
+// resolver returns null under the no-silent-promotion contract, and
+// the snapshot must respect that by suppressing legacy fallback. ────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: null,
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const u = user.get();
+  expect('S17: resolver returns null (no silent promotion + no legacy fallback)',
+    resolveActiveGarageVehicle(u) === null);
+  const v = getUserVehicle(u);
+  expect('S17: /respond getUserVehicle returns null when no active vehicle is selected',
+    v === null, String(v?.name));
+  const snap = buildAcceptedDriverSnapshot(u);
+  expect('S17: handoff snapshot does NOT publish the legacy car',
+    snap?.vehicle?.model !== 'Hyundai Solaris', String(snap?.vehicle?.model));
+  expect('S17: handoff snapshot does NOT publish real-1 (no make-active click yet)',
+    snap?.vehicle?.model !== 'Toyota Prius', String(snap?.vehicle?.model));
+  // Codex P2 follow-up on #493 — neutral, non-falsy placeholders so
+  // passenger surfaces' `|| 'Toyota Camry'` / `|| <demo-plate>` chains
+  // cannot leak demo data into the accepted-ride snapshot.
+  expect('S17: handoff snapshot vehicle.model is the neutral placeholder',
+    snap?.vehicle?.model === 'Авто не выбрано', String(snap?.vehicle?.model));
+  expect('S17: handoff snapshot vehicle.plate is the neutral placeholder',
+    snap?.vehicle?.plate === 'номер не выбран', String(snap?.vehicle?.plate));
+  expect('S17: snapshot vehicle.model is non-empty (defeats demo car fallback)',
+    typeof snap?.vehicle?.model === 'string' && snap.vehicle.model.length > 0);
+  expect('S17: snapshot vehicle.plate is non-empty (defeats demo plate fallback)',
+    typeof snap?.vehicle?.plate === 'string' && snap.vehicle.plate.length > 0);
+  expect('S17: snapshot vehicle.model !== legacy "Hyundai Solaris"',
+    snap?.vehicle?.model !== 'Hyundai Solaris');
+  expect('S17: snapshot vehicle.plate !== legacy "А 482 МР 77"',
+    snap?.vehicle?.plate !== 'А 482 МР 77');
+}
+
+// ── Scenario 18 — BD-PROFILE-GARAGE-ARCHIVE-I2 (P2-2): legacy-only
+// profile without a persisted garage collection KEEPS the legacy
+// fallback. The partially-onboarded driver path (no `vehicles[]`
+// entries at all) must still surface the legacy car in both /respond
+// and the accept handoff snapshot — only a real garage record
+// suppresses the legacy fallback. ────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  // intentionally no driverGarage.vehicles entries — pure legacy fallback path
+});
+{
+  const u = user.get();
+  expect('S18: resolver returns the synthesised legacy entry',
+    resolveActiveGarageVehicle(u)?.id === 'legacy-1');
+  const v = getUserVehicle(u);
+  expect('S18: /respond getUserVehicle returns the legacy car (no garage collection record)',
+    v?.name === 'Hyundai Solaris', String(v?.name));
+  const snap = buildAcceptedDriverSnapshot(u);
+  expect('S18: handoff snapshot keeps the legacy vehicle.model (legacy-only path)',
+    snap?.vehicle?.model === 'Hyundai Solaris', String(snap?.vehicle?.model));
+}
+
+// ── Scenario 19 — BD-PROFILE-GARAGE-ARCHIVE-I2 (P2-2): explicit active
+// persisted vehicle WINS over legacy in both consumer snapshots. ─────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер', displayName: 'Иван Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  vehicleMake: 'Hyundai', vehicleModel: 'Solaris',
+  vehicleColor: 'белый', vehiclePlate: 'А 482 МР 77',
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const u = user.get();
+  expect('S19: resolver returns the explicit active persisted vehicle',
+    resolveActiveGarageVehicle(u)?.id === 'real-1');
+  const v = getUserVehicle(u);
+  expect('S19: /respond getUserVehicle returns the persisted real-1',
+    v?.name === 'Toyota Prius', String(v?.name));
+  const snap = buildAcceptedDriverSnapshot(u);
+  expect('S19: handoff snapshot vehicle.model is the persisted real-1',
+    snap?.vehicle?.model === 'Toyota Prius', String(snap?.vehicle?.model));
+  expect('S19: handoff snapshot does NOT pick the legacy car',
+    snap?.vehicle?.model !== 'Hyundai Solaris');
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────
