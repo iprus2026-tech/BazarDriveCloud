@@ -20,6 +20,7 @@ const contracts = read('../docs/screen-contracts.md');
 const appJs = read('../public/src/app.js');
 const routerJs = read('../public/src/router.js');
 const swJs = read('../public/sw.js');
+const cloudCss = read('../public/styles/cloud.css');
 const orderDetailPath = '../public/src/screens/order_detail.js';
 const orderDetailSrc = read(orderDetailPath);
 
@@ -4103,6 +4104,16 @@ if (mapPresent) {
 } else {
   expect('docs/screen-map.md not present — skipping mirrored entry check', true);
 }
+
+// ── P2B-scroll. BD-ORDER-P-02B scrollability + safe-area pins ─────────
+expect('public/sw.js VERSION is exactly v120',
+  /VERSION\s*=\s*'v120'/.test(swJs));
+expect('.od-body has overflow-y: auto',
+  /\.od-body\b[^}]*overflow-y\s*:\s*auto/.test(cloudCss));
+expect('.od-body bottom padding references env(safe-area-inset-bottom',
+  /\.od-body\b[^}]*env\s*\(\s*safe-area-inset-bottom/.test(cloudCss));
+expect('.od-notice bottom references env(safe-area-inset-bottom',
+  /\.od-notice\b[^}]*bottom\s*:[^;]*env\s*\(\s*safe-area-inset-bottom/.test(cloudCss));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
