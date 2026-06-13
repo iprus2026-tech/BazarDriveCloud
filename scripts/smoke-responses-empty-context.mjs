@@ -24,10 +24,18 @@ check(
   'renderEmptyState must accept a request parameter',
 );
 
-// Call site passes request
+// Call site passes request — must appear at least twice: once as the function
+// declaration and once as the actual runtime call inside the render branch.
+// A single match would only verify the declaration, not the call site.
 check(
-  /renderEmptyState\s*\(\s*request\s*\)/.test(src),
-  'renderEmptyState call site must pass request',
+  (src.match(/renderEmptyState\s*\(\s*request\s*\)/g) || []).length >= 2,
+  'renderEmptyState(request) must appear at least twice: declaration + call site',
+);
+
+// Targeted call-site shape: the render branch ternary calls renderEmptyState(request)
+check(
+  /:\s*renderEmptyState\s*\(\s*request\s*\)/.test(src),
+  'render branch must call renderEmptyState(request) as a ternary arm',
 );
 
 // Context-aware copy: published-order branch present
@@ -114,7 +122,7 @@ const fallbackNotes = [
   'Когда заказ будет опубликован, здесь появятся маршрут, бюджет, время и комментарий.',
   'Детали заказа недоступны. Можно безопасно проверить отклики или вернуться на карту.',
   'Опубликуйте заказ с карты — водители рядом увидят маршрут и смогут откликнуться.',
-  'Отклики водителей появятся здесь. Убедитесь, что заказ опубликован, и проверьте снова через минуту.',
+  'Не удалось открыть детали заказа. Вернитесь на карту или откройте опубликованный заказ ещё раз.',
 ];
 for (const note of fallbackNotes) {
   for (const term of ['state=', 'CREATED', 'mock', 'isFallback']) {
