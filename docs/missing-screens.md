@@ -47,14 +47,16 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 - Passenger profile renders the history section (`public/src/screens/profile.js`).
 - Passenger history cards / detail UI live in `passengerHistoryEntryHtml` and `historyDetailHtml`.
 - Completed passenger rides persist via `saveRideHistoryEntry` (`public/src/screens/active_ride_passenger.js`).
+- Shipped history detail actions are **Повторить маршрут**, **В ленту**, **Назад к истории**. There is **no** «Открыть чек» action on the passenger history detail and **no passenger receipt screen route** — passenger completion-screen receipt viewing is UI-only.
 
 **Remaining audit scope** (open the audit gate only if these gaps are confirmed):
 
 - A dedicated `/history` route (today the history is reached via `/profile`).
 - A loading skeleton for the history list (parity with driver history).
-- A receipt-detail parity pass with `BD-RIDE-HISTORY-D-01`.
+- Inline history detail parity (copy / states alignment with `historyDetailHtml`).
+- **Optional** future dedicated passenger receipt route, only if product confirms a passenger receipt surface — there is no shipped receipt opening to wire today.
 
-**Out of scope:** new passenger history backend, PDF receipts, payment reconciliation.
+**Out of scope:** new passenger history backend, PDF receipts, payment reconciliation, wiring a non-existent passenger receipt path.
 
 ### BD-COMPOSER-01 states — Composer V2 (shipped, audit parity only)
 

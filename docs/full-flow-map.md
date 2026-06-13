@@ -65,6 +65,20 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — garage file:** BD-GARAGE-01 shipped UI is rendered from `public/src/screens/profile.js`; the shared helper is `public/src/garage.js`. There is no `public/src/screens/garage.js` and no registered `/garage` route. The audit gate points at the shipped surface, not an invented screen file.
 
+> **Codex P2 follow-up — feed detail route:** BD-FEED-01 card taps route to `/post?id=...` (`public/src/screens/post_detail.js`). `/order/<id>` is the separate canonical order surface (BD-ORDER-DETAIL-01) and Feed cards do not link there.
+
+> **Codex P2 follow-up — order detail transitions:** BD-ORDER-DETAIL-01 primary actions do not navigate directly to `/respond` or `/trip-confirmation`. `driver-send-offer` writes a `DriverOffer` and re-renders in place (toast); passenger select-driver writes overlay / selection and re-renders in place. Only the explicit open-trip / open-active-ride CTA navigates to `/active-ride?role=*&tripId=...`.
+
+> **Codex P2 follow-up — respond chat handoff:** BD-RESPOND-01 submit handler creates `responseId = resp_<post.id>` and opens chat as `/chat?responseId=<responseId>&role=driver`. The `responseId` is required to load the stored response thread; a bare `/chat?role=driver` falls back to the demo thread.
+
+> **Codex P2 follow-up — preserve confirmation:** BD-CHAT-02 message send stays in the chat thread (no navigation); the ride-context confirmation CTA writes the trip-confirmation handoff and navigates to `/trip-confirmation?...`. BD-CONFIRM-01 `passenger-confirm` first re-renders the confirmed state in place; a separate open-ride CTA seeds the active ride and navigates to `/active-ride?role=*&tripId=...`. Confirmation states are not skipped, and Chat does not transition directly to `/active-ride`.
+
+> **Codex P2 follow-up — DriverMap accept flow:** BD-DRIVER-02 does not have a «Выйти на линию» action. The primary action accepts a nearby order and renders an accepted card (`STATE.ACCEPTED`); only the accepted card's «К поездке» CTA navigates to `/active-ride?role=driver&tripId=...&status=ACCEPTED`. Bare `/active-ride?role=driver` lacks the trip id and can fall into fallback / demo behavior.
+
+> **Codex P2 follow-up — responses handoff:** BD-FLOW-INBOX-01 select-driver calls `buildPassengerActiveRide()` and `activeRideUrl()`, navigating to `/active-ride?role=passenger&tripId=<tripId>&status=DRIVER_EN_ROUTE`. Bare `/active-ride?role=passenger` drops the seeded trip id and status.
+
+> **Codex P2 follow-up — passenger history audit wording:** BD-HISTORY-P-01 has no passenger receipt screen route. Passenger completion-screen receipt viewing is UI-only. Shipped history detail actions are «Повторить маршрут», «В ленту», and «Назад к истории» — not «Открыть чек». Audit scope is inline history detail parity + an optional future passenger receipt route.
+
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.

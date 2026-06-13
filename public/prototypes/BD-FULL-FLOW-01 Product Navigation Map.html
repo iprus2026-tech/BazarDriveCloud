@@ -330,10 +330,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-FLOW-INBOX-01</div>
         <div class="screen-name">ResponsesInbox</div>
-        <div class="screen-route">/responses</div>
-        <div class="screen-states">4 states · list / selected / accepted / empty</div>
+        <div class="screen-route">/responses (deep-link with ?orderId=...&amp;state=empty from BD-MAP-05 submit)</div>
+        <div class="screen-states">4 states · list / selected / accepted / empty · select-driver → buildPassengerActiveRide() + activeRideUrl()</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/responses.js</div>
+        <div class="screen-note">Codex P2 (PR #495): «Выбрать водителя» → /active-ride?role=passenger&amp;tripId=&lt;tripId&gt;&amp;status=DRIVER_EN_ROUTE. Bare /active-ride?role=passenger drops the seeded trip id and status.</div>
       </div>
 
       <div class="lane-section">Active ride</div>
@@ -382,9 +383,9 @@
         <div class="screen-id">BD-HISTORY-P-01</div>
         <div class="screen-name">Passenger Trip History</div>
         <div class="screen-route">/profile (history) → /history (route gap)</div>
-        <div class="screen-states">already shipped · audit scope = dedicated route + loading + detail parity</div>
+        <div class="screen-states">already shipped · history detail actions: Повторить маршрут / В ленту / Назад к истории · no «Открыть чек» action · no passenger receipt screen route</div>
         <span class="screen-badge audit">AUDIT</span>
-        <div class="screen-note">Renders in /profile + saveRideHistoryEntry; not a from-scratch build</div>
+        <div class="screen-note">Codex P2 (PR #495): passenger completion-screen receipt viewing is UI-only. Audit scope = inline history detail parity + optional future passenger receipt route, NOT wiring a non-existent receipt path.</div>
       </div>
 
       <div class="lane-section">Profile</div>
@@ -413,11 +414,12 @@
 
       <div class="screen-card">
         <div class="screen-id">BD-DRIVER-02</div>
-        <div class="screen-name">DriverMap Gate</div>
+        <div class="screen-name">DriverMap — accept-to-trip</div>
         <div class="screen-route">/driver-map</div>
-        <div class="screen-states">3 states · ready / not-ready / non-driver</div>
+        <div class="screen-states">3 states · ready / not-ready / non-driver · accepted-order card (STATE.ACCEPTED) · primary action accepts a nearby order; accepted card's «К поездке» CTA opens the trip</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/driver_map.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no «Выйти на линию» action here — that toggle lives in /profile?role=driver (#pf2-ip-go-online). «К поездке» → /active-ride?role=driver&amp;tripId=...&amp;status=ACCEPTED. Bare /active-ride?role=driver lacks the trip id and falls into fallback / demo behavior.</div>
       </div>
 
       <div class="lane-section">Order acceptance</div>
@@ -425,10 +427,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-CONFIRM-01</div>
         <div class="screen-name">TripConfirmation Handoff</div>
-        <div class="screen-route">/trip-confirmation</div>
-        <div class="screen-states">5 states · waiting / driver-confirmed / pax-confirmed / confirmed / error</div>
+        <div class="screen-route">/trip-confirmation?... (seeded with the trip-confirmation handoff)</div>
+        <div class="screen-states">5 states · waiting / driver-confirmed / pax-confirmed / confirmed / error · passenger-confirm first re-renders confirmed state in place; separate open-ride CTA seeds active ride and navigates to /active-ride?role=*&amp;tripId=...</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/trip_confirmation.js</div>
+        <div class="screen-note">Codex P2 (PR #495): confirmation states are not skipped; open-ride CTA is a separate step after the confirmed state.</div>
       </div>
 
       <div class="lane-section">Active ride</div>
@@ -546,9 +549,10 @@
         <div class="screen-id">BD-FEED-01</div>
         <div class="screen-name">Feed V2</div>
         <div class="screen-route">/feed</div>
-        <div class="screen-states">5 filters · all / offers / reqs / market / empty</div>
+        <div class="screen-states">5 filters · all / offers / reqs / market / empty · card tap → /post?id=... (post_detail.js); /new for composer</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/feed.js</div>
+        <div class="screen-note">Codex P2 (PR #495): Feed cards link to /post?id=..., not /order/&lt;id&gt;. /order/&lt;id&gt; is the separate canonical order surface (BD-ORDER-DETAIL-01).</div>
       </div>
 
       <div class="screen-card">
@@ -565,10 +569,10 @@
         <div class="screen-id">BD-RESPOND-01</div>
         <div class="screen-name">Respond — driver offer sheet</div>
         <div class="screen-route">/respond?postId=... (required; missing-state otherwise)</div>
-        <div class="screen-states">1 driver-offer sheet · persists kind: passenger_response with driver snapshot</div>
+        <div class="screen-states">1 driver-offer sheet · persists kind: passenger_response with driver snapshot · success → /chat?responseId=resp_&lt;post.id&gt;&amp;role=driver</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/respond.js</div>
-        <div class="screen-note">Codex P2 (PR #495): runtime reads getRouteParam('postId'); bare /respond renders the missing state. Feed and post detail link with ?postId=.... Driver context (forces success chat link role=driver). Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
+        <div class="screen-note">Codex P2 (PR #495): submit handler creates responseId = resp_&lt;post.id&gt; and opens chat with that responseId. Bare /chat?role=driver drops the stored response context and falls back to demo thread. Passenger-side response board remains /responses (BD-FLOW-INBOX-01).</div>
       </div>
 
       <div class="lane-section">Order</div>
@@ -577,9 +581,10 @@
         <div class="screen-id">BD-ORDER-DETAIL-01</div>
         <div class="screen-name">Order Detail (role-split)</div>
         <div class="screen-route">/order/&lt;id&gt;</div>
-        <div class="screen-states">9 states · pax P1–P4 / drv D1–D4 / semantics X1</div>
+        <div class="screen-states">9 states · pax P1–P4 / drv D1–D4 / semantics X1 · driver-send-offer writes DriverOffer + re-renders in place (toast); passenger select-driver writes overlay/selection + re-renders in place</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/order_detail.js</div>
+        <div class="screen-note">Codex P2 (PR #495): primary actions re-render in place. Only explicit open-trip / open-active-ride CTA navigates to /active-ride?role=*&amp;tripId=... — not /respond or /trip-confirmation.</div>
       </div>
 
       <div class="lane-section">Chat</div>
@@ -587,10 +592,11 @@
       <div class="screen-card">
         <div class="screen-id">BD-CHAT-02</div>
         <div class="screen-name">Chat Flow</div>
-        <div class="screen-route">/chat</div>
-        <div class="screen-states">8 + 7b states · inbox pax/drv · thread pax/drv/done · empty · offline · locked</div>
+        <div class="screen-route">/chat (?responseId=... from Respond; ?tripId=... from feed / order CTAs)</div>
+        <div class="screen-states">8 + 7b states · inbox pax/drv · thread pax/drv/done · empty · offline · locked · message send stays in thread (no navigation)</div>
         <span class="screen-badge done">DONE</span>
         <div class="screen-file">public/src/screens/chat.js</div>
+        <div class="screen-note">Codex P2 (PR #495): no direct /active-ride transition on send. Ride-context confirmation CTA writes the trip-confirmation handoff and routes to /trip-confirmation?...</div>
       </div>
 
       <div class="lane-section">Rules</div>
@@ -700,7 +706,7 @@
         <td class="t-done">Done</td>
         <td>5 filters</td>
         <td>Создать публикацию</td>
-        <td>/new, /order/&lt;id&gt;</td>
+        <td>/new (composer); card tap → /post?id=... (post_detail.js). /order/&lt;id&gt; is the separate canonical order surface, not a Feed card target.</td>
       </tr>
       <tr>
         <td class="t-id">BD-COMPOSER-01</td>
@@ -718,9 +724,9 @@
         <td><code>public/src/screens/order_detail.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
-        <td>9 (role-split)</td>
-        <td>Откликнуться / Принять</td>
-        <td>/respond, /trip-confirmation</td>
+        <td>9 (role-split) · driver-send-offer writes DriverOffer + re-renders in place (toast); passenger select-driver re-renders in place</td>
+        <td>Откликнуться / Принять (in-place re-render); explicit open-trip / open-active-ride CTA</td>
+        <td>in-place re-render; only the explicit open-trip / open-active-ride CTA navigates to /active-ride?role=*&amp;tripId=... — primary actions do not jump to /respond or /trip-confirmation</td>
       </tr>
       <tr>
         <td class="t-id">BD-RESPOND-01</td>
@@ -730,17 +736,17 @@
         <td class="t-done">Done</td>
         <td>1 driver-offer sheet</td>
         <td>Отправить предложение/отклик</td>
-        <td>/chat?role=driver (passenger board = /responses)</td>
+        <td>/chat?responseId=resp_&lt;post.id&gt;&amp;role=driver (responseId is produced by submit handler and required to load the stored response thread; bare /chat?role=driver loses context). Passenger board = /responses.</td>
       </tr>
       <tr>
         <td class="t-id">BD-FLOW-INBOX-01</td>
-        <td class="t-route">/responses</td>
+        <td class="t-route">/responses (deep-link with ?orderId=...&amp;state=empty from BD-MAP-05 submit)</td>
         <td><code>public/src/screens/responses.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-done">Done</td>
         <td>4</td>
         <td>Выбрать водителя</td>
-        <td>/active-ride?role=passenger</td>
+        <td>/active-ride?role=passenger&amp;tripId=&lt;tripId&gt;&amp;status=DRIVER_EN_ROUTE (buildPassengerActiveRide() + activeRideUrl() seed the trip id and status; bare /active-ride?role=passenger is not enough)</td>
       </tr>
       <tr>
         <td class="t-id">BD-MAP-01</td>
@@ -784,23 +790,23 @@
       </tr>
       <tr>
         <td class="t-id">BD-CONFIRM-01</td>
-        <td class="t-route">/trip-confirmation</td>
+        <td class="t-route">/trip-confirmation?... (seeded with the trip-confirmation handoff)</td>
         <td><code>public/src/screens/trip_confirmation.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>5</td>
-        <td>Подтвердить поездку</td>
-        <td>/active-ride?role=*</td>
+        <td>Подтвердить поездку (passenger-confirm first re-renders the confirmed state in place)</td>
+        <td>separate open-ride CTA seeds the active ride and navigates to /active-ride?role=*&amp;tripId=...; confirmation states are not skipped</td>
       </tr>
       <tr>
         <td class="t-id">BD-CHAT-02</td>
-        <td class="t-route">/chat</td>
+        <td class="t-route">/chat (?responseId=... from Respond; ?tripId=... from feed / order CTAs)</td>
         <td><code>public/src/screens/chat.js</code></td>
         <td><span class="role-chip role-both">BOTH</span></td>
         <td class="t-done">Done</td>
         <td>8 + 7b</td>
-        <td>Отправить сообщение</td>
-        <td>/active-ride?role=*</td>
+        <td>Отправить сообщение (stays in chat thread; no navigation on send)</td>
+        <td>ride-context confirmation CTA writes the trip-confirmation handoff and routes to /trip-confirmation?...; no direct /active-ride transition</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-P-01…04</td>
@@ -848,9 +854,9 @@
         <td><code>public/src/screens/driver_map.js</code></td>
         <td><span class="role-chip role-drv">DRV</span></td>
         <td class="t-done">Done</td>
-        <td>3</td>
-        <td>Выйти на линию</td>
-        <td>/active-ride?role=driver</td>
+        <td>3 + accepted-order card (STATE.ACCEPTED)</td>
+        <td>Принять заказ (nearby); accepted card «К поездке»</td>
+        <td>accepted card's «К поездке» → /active-ride?role=driver&amp;tripId=...&amp;status=ACCEPTED; bare /active-ride?role=driver lacks trip id and falls into fallback / demo behavior</td>
       </tr>
       <tr>
         <td class="t-id">BD-RIDE-D</td>
@@ -955,12 +961,12 @@
       <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-HISTORY-P-01</td>
         <td class="t-route">/profile (history) → /history gap</td>
-        <td><code>profile.js / active_ride_passenger.js</code></td>
+        <td><code>public/src/screens/profile.js</code> / <code>public/src/screens/active_ride_passenger.js</code></td>
         <td><span class="role-chip role-pax">PAX</span></td>
         <td class="t-audit">Done · audit</td>
-        <td>dedicated route + loading + detail parity</td>
-        <td>Открыть чек</td>
-        <td>/profile (history pane)</td>
+        <td>inline history detail parity; no passenger receipt screen route (completion receipt viewing is UI-only)</td>
+        <td>Повторить маршрут / В ленту / Назад к истории</td>
+        <td>back to history pane / /feed / route re-create flow; audit scope = inline detail parity + optional future passenger receipt route (no shipped «Открыть чек»)</td>
       </tr>
       <tr style="background:rgba(245,158,11,0.05)">
         <td class="t-id">BD-GARAGE-01</td>
