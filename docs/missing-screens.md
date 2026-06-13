@@ -11,7 +11,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 | P1 | BD-ERROR-01 | Global Error / Offline | Both | ~4 states | App-level offline/server/timeout overlay |
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
-| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | **Audit `/inbox` (BD-INBOX-01, shipped) first** · decide reuse `/inbox` as hub OR consciously split `/notifications` after audit · wire bell CTAs (passenger `#pfp-notif-btn` + driver bell) without orphaning `/inbox` |
+| P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | **Audit `/inbox` (BD-INBOX-01, shipped) first** · decide reuse `/inbox` as hub OR consciously split `/notifications` after audit · wire shipped entry points to the chosen target: passenger `#pfp-notif-btn` (no listener today) + **driver `#pf2-act-notif`** quick-action row (currently only toggles `notificationsEnabled` — there is NO driver bell in the shipped profile) · do not orphan `/inbox` |
 | P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · wire inert standalone report CTAs (Order Detail `data-action="report-order"`) · do NOT reroute the in-ride safety report (BD-RIDE-P-07) — preserve in-sheet behavior |
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
@@ -177,7 +177,7 @@ Required scope:
   - **(a) reuse `/inbox` as the notification hub** — point the bell CTAs at `/inbox`, extend `inbox.js` if push-permission / notification-specific states are missing, and treat `/notifications` as redundant (do **not** register it)
   - **(b) split a separate `/notifications` route after the audit** — register `/notifications`, implement the screen, and document why it is consciously separate from `/inbox` (e.g. push permission flow, system-message channel) so `/inbox` is not orphaned
 - wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener (`public/src/screens/profile.js:620-621`) — to whichever target (a) or (b) chooses
-- wire the equivalent driver profile bell / notifications entry-point to the same target
+- wire the **actual driver notification entry point — the quick-action row `#pf2-act-notif`** (`public/src/screens/profile.js:1162`) — to the same target. **There is no driver bell in the shipped profile.** Today `#pf2-act-notif` only toggles `notificationsEnabled` (`public/src/screens/profile.js:3809-3814`); BD-NOTIF-01 must replace that toggle with an open-`/inbox` or open-`/notifications` handler, not leave it as a toggle. Any reference to a "driver bell" must be explicitly marked as future UI
 
 Required states (regardless of (a) vs (b)):
 
