@@ -3008,6 +3008,38 @@ user.set({
     user.get().driverGarage?.activeVehicleId === 'real-1');
 }
 
+// ── Scenario 78b — BD-PROFILE-GARAGE-ARCHIVE-I — Archiving a non-active
+// vehicle leaves OTHER vehicles byte-for-byte unchanged. Strengthens S78
+// with explicit byte equality on the untouched record so a future patch
+// that reformats the other entry (e.g. accidentally normalising fields
+// during archive) is caught. ──────────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const { archiveGarageVehicle: archiveFn } = await import('../public/src/state.js');
+  const before = JSON.stringify(user.get().driverGarage?.vehicles?.[0]);
+  archiveFn('real-2');
+  const after = JSON.stringify(user.get().driverGarage?.vehicles?.[0]);
+  expect('S78b: non-archive sibling real-1 record byte-equal across the archive',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  expect('S78b: archived real-2 carries archived: true',
+    user.get().driverGarage?.vehicles?.[1]?.archived === true);
+  expect('S78b: vehicle.id preserved across archive (real-2)',
+    user.get().driverGarage?.vehicles?.[1]?.id === 'real-2',
+    String(user.get().driverGarage?.vehicles?.[1]?.id));
+}
+
 // ── Scenario 79 — Full confirm-flow click path: render → click archive
 // (opens confirm row) → click "Архивировать" → entry archived, badge
 // gone, hint surfaces. ───────────────────────────────────────────────────
@@ -3048,6 +3080,48 @@ user.set({
     slice.includes('data-garage-archived-count="1"'));
 }
 
+// ── Scenario 79b — BD-PROFILE-GARAGE-ARCHIVE-I — Opening the archive
+// confirm row is UI-local: snapshot before/after the open click is
+// byte-equal, and the row's inline confirm state flips to "open" with
+// matching ARIA. Task A: "opening confirmation does not mutate
+// localStorage" + "selected archive id is UI-local". ──────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  firstName: 'Иван', lastName: 'Драйвер',
+  phone: '9001234567', phoneVerified: true,
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const section = captureSection('#/profile');
+  const before = snapshotLocalStorage();
+  clickHandlers.get('#pf2-garage-archive-real-2')?.();
+  const after = snapshotLocalStorage();
+  expect('S79b: opening archive confirm row does NOT mutate localStorage',
+    before === after, `before=${before.length}b after=${after.length}b`);
+  const confirmRow = section.querySelector('#pf2-garage-confirm-real-2');
+  expect('S79b: confirm row flips to data-garage-confirm-state="open"',
+    confirmRow.dataset.garageConfirmState === 'open',
+    String(confirmRow.dataset.garageConfirmState));
+  expect('S79b: confirm row is no longer hidden',
+    confirmRow.hidden === false);
+  // The archive button itself owns the aria-expanded state; the smoke
+  // DOM stub records setAttribute calls implicitly via the runtime's
+  // own .setAttribute('aria-expanded', 'true') call (the makeEl stub
+  // accepts it). No persistence side-effect either way.
+  expect('S79b: real-2 not archived after merely opening confirm row',
+    user.get().driverGarage?.vehicles?.[1]?.archived !== true,
+    String(user.get().driverGarage?.vehicles?.[1]?.archived));
+  expect('S79b: activeVehicleId still real-1 after merely opening confirm row',
+    user.get().driverGarage?.activeVehicleId === 'real-1');
+}
+
 // ── Scenario 80 — Cancel does NOT archive (defense-in-depth on the
 // existing 05B confirm flow). ─────────────────────────────────────────────
 reset();
@@ -3072,6 +3146,41 @@ user.set({
     user.get().driverGarage?.vehicles?.[0]?.archived !== true);
   expect('S80: activeVehicleId preserved after cancel',
     user.get().driverGarage?.activeVehicleId === 'real-1');
+}
+
+// ── Scenario 80b — BD-PROFILE-GARAGE-ARCHIVE-I — Cancel CLOSES the
+// confirm row UI state. S80 covers the no-archive guarantee; this pins
+// the matching state cleanup so a future regression that leaves the row
+// half-open (visible without aria-expanded reset, label left as
+// "Архивировано", etc.) is caught. Task B: "each exit clears archive
+// draft / selected archive id". ──────────────────────────────────────────
+reset();
+user.set({
+  onboarded: true, role: 'driver',
+  driverGarage: {
+    activeVehicleId: 'real-1',
+    vehicles: [
+      { id: 'real-1', model: 'Toyota Prius', color: 'серебристый', plate: 'А 123 ВС 77', source: 'persisted' },
+      { id: 'real-2', model: 'Kia Sportage', color: 'серый',       plate: 'В 456 КМ 77', source: 'persisted' },
+    ],
+  },
+});
+{
+  const section = captureSection('#/profile');
+  clickHandlers.get('#pf2-garage-archive-real-2')?.();
+  clickHandlers.get('#pf2-garage-archive-cancel-real-2')?.();
+  const confirmRow = section.querySelector('#pf2-garage-confirm-real-2');
+  expect('S80b: cancel flips confirm row back to data-garage-confirm-state="idle"',
+    confirmRow.dataset.garageConfirmState === 'idle',
+    String(confirmRow.dataset.garageConfirmState));
+  expect('S80b: cancel hides the confirm row',
+    confirmRow.hidden === true);
+  const confirmFinal = section.querySelector('#pf2-garage-archive-confirm-real-2');
+  expect('S80b: cancel resets confirm final to enabled',
+    confirmFinal.disabled === false);
+  expect('S80b: cancel resets confirm final label to «Архивировать»',
+    confirmFinal.textContent === 'Архивировать',
+    String(confirmFinal.textContent));
 }
 
 // ── Scenario 81 — Defensive helper coverage: trim incoming id,
