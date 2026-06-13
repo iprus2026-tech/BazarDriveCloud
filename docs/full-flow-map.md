@@ -39,24 +39,33 @@ The map is organized into four lanes:
 
 ## Inventory summary
 
-- Designed / ready gates: 27
-- Missing gates: 7
-- Partial gates: 2
+- Designed / ready gates: 29
+- Missing gates: 5
+- Partial gates: 1
+- Audit / consolidation gates: 3
 - Legacy: 1
+
+> **Codex P2 review follow-up (PR #495):** the previous draft counted BD-HISTORY-P-01, BD-COMPOSER-01 state expansion, and BD-GARAGE-01 as Missing / Partial backlog items. These three are already shipped in the production app and are now classified as **audit / consolidation gates** — opening them only after a confirmed gap audit, not as a from-scratch build.
 
 ## Missing gates
 
 See `docs/missing-screens.md` for the implementation backlog.
 
-Primary missing gates:
+Primary missing gates (5):
 
 1. `BD-AUTH-01` — Phone / SMS verification
-2. `BD-HISTORY-P-01` — Passenger trip history
-3. `BD-GARAGE-01` — Driver Garage consolidation gate
-4. `BD-SETTINGS-01` — Settings
-5. `BD-NOTIF-01` — Notifications
-6. `BD-ERROR-01` — Global error / offline
-7. `BD-MOD-01` — Moderation / Report
+2. `BD-SETTINGS-01` — Settings
+3. `BD-NOTIF-01` — Notifications
+4. `BD-ERROR-01` — Global error / offline
+5. `BD-MOD-01` — Moderation / Report
+
+## Audit / consolidation gates
+
+These are NOT missing — the underlying surface ships in production. The audit gate is opened only for parity / dedicated-route / consolidation work, after a confirmed gap audit:
+
+1. `BD-HISTORY-P-01` — passenger trip history already renders in `/profile` and via `saveRideHistoryEntry`; audit scope = dedicated `/history` route, loading, detail parity.
+2. `BD-COMPOSER-01` state expansion — composer route `/new` already ships per-type / preview / draft-saved / validation / submit-loading states (`public/src/screens/composer.js`); audit scope = parity check, no rebuild.
+3. `BD-GARAGE-01` — driver Garage gate already renders in `/profile?role=driver`; audit scope = consolidation of the active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*), not a new screen.
 
 ## Handoff table
 
@@ -66,15 +75,20 @@ See `docs/screen-transitions.md` for the developer handoff table:
 
 ## Recommended implementation order
 
-1. `BD-HISTORY-P-01` — passenger trip history / receipt symmetry.
-2. `BD-GARAGE-01` — garage consolidation/audit gate, if not already covered by the current garage PR series.
-3. `BD-ERROR-01` — global offline/error overlay.
-4. `BD-COMPOSER-01` state expansion — per-type variants, preview, draft-saved.
-5. `BD-RIDE-D` error/offline states.
-6. `BD-AUTH-01` — UI-only phone verification contract.
-7. `BD-SETTINGS-01`.
-8. `BD-NOTIF-01`.
-9. `BD-MOD-01`.
+Genuine missing-screen backlog first; audit gates are opened only on confirmed scope, not by default.
+
+1. `BD-ERROR-01` — global offline/error overlay (P1).
+2. `BD-RIDE-D` error/offline states (P1 extension).
+3. `BD-AUTH-01` — UI-only phone verification contract (P2).
+4. `BD-SETTINGS-01` (P2).
+5. `BD-NOTIF-01` (P2).
+6. `BD-MOD-01` (P2).
+
+Audit / consolidation gates (open only on confirmed gap, not by default):
+
+- `BD-HISTORY-P-01` — dedicated `/history` route + loading/detail parity, if confirmed.
+- `BD-COMPOSER-01` — parity audit of shipped per-type / preview / draft-saved / validation / submit-loading states.
+- `BD-GARAGE-01` — consolidation of the existing garage PR line.
 
 ## Notes for production implementation
 

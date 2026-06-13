@@ -2,70 +2,72 @@
 
 This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 
+> **Codex P2 review follow-up (PR #495):** BD-HISTORY-P-01, BD-COMPOSER-01 state expansion, and BD-GARAGE-01 are NOT new screens to build. They are reframed as audit / consolidation gates below — sending implementation work to a "build from scratch" interpretation would duplicate shipped surfaces.
+
 ## Summary
 
 | Priority | Screen ID | Name | Role | Size | Notes |
 |---|---|---|---|---|---|
-| P0 | BD-HISTORY-P-01 | Passenger Trip History | Passenger | ~5 states | Closes passenger/driver receipt asymmetry |
-| P0 | BD-GARAGE-01 | Driver Garage | Driver | ~7 states | Marked as missing in Cloud Web map; verify against current garage PR series before implementing |
 | P1 | BD-ERROR-01 | Global Error / Offline | Both | ~4 states | App-level offline/server/timeout overlay |
-| P1 | BD-COMPOSER-01 states | Composer V2 state expansion | Both | extension | Per-type variants, preview, draft-saved |
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
 | P2 | BD-AUTH-01 | Phone / SMS Verification | Both | ~4 states | UI-only, no real SMS backend |
 | P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Language, push toggle, account actions |
 | P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | List, empty, push-permission prompt |
 | P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface |
 
-## P0 — BD-HISTORY-P-01 Passenger Trip History
+**Missing-screen count: 5 net-new gates + 1 extension** (BD-AUTH-01, BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states).
 
-Passenger currently has ride completion and receipt-like surfaces, but the Cloud Web map marks no passenger history gate equivalent to driver history/payouts.
+See the **Audit / consolidation gates** section below for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds.
 
-Required states:
+## Audit / consolidation gates (shipped, not missing)
 
-- list
-- detail
-- receipt
-- empty
-- loading
+These three gates were originally listed as Missing or Partial in earlier drafts. The current production app already ships the underlying screens, so the remaining work is audit / parity / consolidation — not a new screen.
 
-Reuse:
+### BD-HISTORY-P-01 — Passenger Trip History (audit / dedicated route gap)
 
-- route summary atoms
-- receipt atoms
-- money rows / payment badges
-- completed-ride snapshots
+**Status: Done · audit.** Passenger trip history already exists:
 
-Out of scope:
+- Passenger profile renders the history section (`public/src/screens/profile.js`).
+- Passenger history cards / detail UI live in `passengerHistoryEntryHtml` and `historyDetailHtml`.
+- Completed passenger rides persist via `saveRideHistoryEntry` (`public/src/screens/active_ride_passenger.js`).
 
-- real backend history API
-- payment reconciliation
-- PDF receipts
+**Remaining audit scope** (open the audit gate only if these gaps are confirmed):
 
-## P0 — BD-GARAGE-01 Driver Garage
+- A dedicated `/history` route (today the history is reached via `/profile`).
+- A loading skeleton for the history list (parity with driver history).
+- A receipt-detail parity pass with `BD-RIDE-HISTORY-D-01`.
 
-The Cloud Web map marks Garage as missing, but the production repository has an active Driver Garage PR line. Treat this as a **consolidation/audit gate** before implementing a new screen.
+**Out of scope:** new passenger history backend, PDF receipts, payment reconciliation.
 
-Required states if still missing after audit:
+### BD-COMPOSER-01 states — Composer V2 (shipped, audit parity only)
 
-- list
-- add
-- edit
-- archived
-- readiness
-- empty
-- loading
+**Status: Done · audit.** Composer per-type variants, preview, draft-saved badge, validation alert, and submit loading are already shipped:
 
-Reuse:
+- Contract: `docs/screen-contracts.md` documents the state set.
+- Runtime: `public/src/screens/composer.js` implements the preview area / button, draft-saved badge, validation alert, and submit-loading.
+- Route: `/new` (registered in `public/src/app.js`).
 
-- driver dashboard atoms
-- document/readiness cards
-- garage checklist components
+**Remaining audit scope** (open the audit gate only if these gaps are confirmed):
 
-Out of scope:
+- Audit parity across the per-type variants for consistency with the shipped states.
+- Confirm draft-saved / validation copy matches the Cloud Design library.
 
-- VIN validation
-- real document upload
-- backend garage persistence
+**Out of scope:** rebuilding shipped states, backend publishing API, moderation backend, payments.
+
+### BD-GARAGE-01 — Driver Garage (consolidation gate)
+
+**Status: Done · audit.** The driver Garage gate already renders inside `/profile?role=driver`:
+
+- `garageSectionHtml` covers empty/list states with add affordances (`public/src/screens/profile.js`).
+- Add / edit / archive / restore / make-active flows are wired in the same module.
+- The garage→documents readiness hint lives in the Documents pane (BD-PROFILE-GARAGE-READY-K).
+
+**Remaining audit scope** (open the audit gate only if these gaps are confirmed):
+
+- Consolidation of the active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-ARCHIVE-*, BD-PROFILE-GARAGE-READY-K).
+- A dedicated `/garage` route (today the garage is reached via `/profile?role=driver`), only if product confirms the dedicated route is desired.
+
+**Out of scope:** VIN validation, real document upload, backend garage persistence, a new from-scratch `/garage` screen without an audit.
 
 ## P1 — BD-ERROR-01 Global Error / Offline
 
@@ -81,24 +83,6 @@ Scope:
 - app-level overlay
 - reusable across passenger, driver and shared screens
 - must not replace per-screen empty/loading/error states
-
-## P1 — BD-COMPOSER-01 state expansion
-
-Current state is marked partial in the navigation map.
-
-Required additions:
-
-- per-type variants
-- preview
-- draft saved
-- validation error
-- submit loading
-
-Out of scope:
-
-- backend publishing API
-- moderation backend
-- payments
 
 ## P1 — BD-RIDE-D error states
 

@@ -6,10 +6,10 @@ Developer handoff table extracted from the BD-FULL-FLOW-01 navigation map.
 |---|---|---|---|---|---|---|---|
 | BD-ONBOARDING-01 | `/` | `onboarding.jsx` | both | Done | 5 | Выбрать роль | `/map` or `/driver-map` |
 | BD-AUTH-01 | `/auth` | — | both | Missing | ~4 | Войти по телефону | `/` onboarding |
-| BD-FEED-01 | `/feed` | `feed.jsx` | both | Done | 5 filters | Создать публикацию | `/feed→create`, `/order/<id>` |
-| BD-COMPOSER-01 | `/feed→create` | `composer.jsx` | both | Partial | create only | Опубликовать | `/feed` |
+| BD-FEED-01 | `/feed` | `feed.jsx` | both | Done | 5 filters | Создать публикацию | `/new`, `/order/<id>` |
+| BD-COMPOSER-01 | `/new` | `composer.js` | both | Done · audit | per-type / preview / draft-saved / validation / submit-loading already shipped | Опубликовать | `/feed` |
 | BD-ORDER-DETAIL-01 | `/order/<id>` | `order-detail.jsx` | both | Done | 9 role-split states | Откликнуться / Принять | `/respond`, `/trip-confirmation` |
-| BD-RESPOND-01 | `/respond` | `feed.jsx` sheet | passenger | Done | 1 sheet | Отправить отклик | `/responses` |
+| BD-RESPOND-01 | `/respond` | `respond.js` | driver | Done | 1 driver-offer sheet | Отправить предложение/отклик | `/chat?role=driver` (passenger-side board remains `/responses`) |
 | BD-FLOW-INBOX-01 | `/responses` | `responses-inbox.jsx` | passenger | Done | 4 | Выбрать водителя | `/active-ride?role=passenger` |
 | BD-MAP-01 | `/map` | `map-home.jsx` | both | Done | 9 | Выбрать маршрут | `/route-picker` |
 | BD-MAP-03 | `/route-picker` | `route-picker.jsx` | passenger | Done | 8 + live search | Подтвердить маршрут | `/route-preview` |
@@ -32,8 +32,8 @@ Developer handoff table extracted from the BD-FULL-FLOW-01 navigation map.
 | BD-PROFILE-D-03 | `/profile?role=driver` | `driver-dashboard.jsx` | driver | Done | 10 / 5 tabs | На линию | `/active-ride?role=driver` |
 | BD-RULES-01 | `/rules` | `profile.jsx` | both | Done | sections | Открыть раздел | back |
 | BD-PROFILE-01 | `/profile` legacy | `profile.jsx` | driver | Legacy | 5 tabs | — | superseded by D-03 |
-| BD-HISTORY-P-01 | `/history` | — | passenger | Missing | ~5 | Открыть чек | — |
-| BD-GARAGE-01 | `/garage` | — | driver | Missing / audit needed | ~7 | Добавить авто | `/profile?role=driver` |
+| BD-HISTORY-P-01 | `/profile` (history section) → `/history` (route gap) | `profile.js` / `active_ride_passenger.js` | passenger | Done · audit | dedicated `/history` route, loading, detail parity | Открыть чек | `/profile` (history pane) |
+| BD-GARAGE-01 | `/profile?role=driver` (garage gate) → `/garage` (consolidation gap) | `profile.js` / `garage.js` | driver | Done · audit | consolidation of active garage PR line (BD-PROFILE-D-05F+ / BD-PROFILE-GARAGE-*) | Добавить авто | `/profile?role=driver` |
 | BD-SETTINGS-01 | `/settings` | — | both | Missing | ~6 | Сохранить | — |
 | BD-NOTIF-01 | `/notifications` | — | both | Missing | ~3 | Открыть уведомление | target screen |
 | BD-ERROR-01 | global overlay | — | both | Missing | ~4 | Повторить | current screen |
@@ -60,6 +60,14 @@ Feed, chat, rules, settings and notifications are shared surfaces and must not l
 ## Consistency notes
 
 - Driver finance/receipt atoms should remain consistent with passenger receipt work.
-- Passenger trip history should reuse receipt atoms rather than invent new fare labels.
+- Passenger trip history already renders inside `/profile` and the active-ride completion path; the audit-gate scope is a dedicated `/history` route + parity loading/detail states only, not a from-scratch build.
 - Map screens remain placeholder/foundation until a real map adapter lands.
 - Auth is UI-only in this artifact; no SMS backend is implied.
+
+## Codex P2 review follow-up (PR #495)
+
+- **BD-COMPOSER-01 route** is `/new` (`public/src/app.js`), not `/feed→create`; the old route would fall back to `/feed` and never open the composer.
+- **BD-COMPOSER-01 status** is Done · audit because per-type / preview / draft-saved / validation / submit-loading are already shipped in `composer.js`.
+- **BD-RESPOND-01 role** is driver (driver offer sheet at `/respond`, persists `kind: 'passenger_response'` with driver snapshot); the passenger-side response board remains `/responses`.
+- **BD-HISTORY-P-01** is Done · audit, not Missing — passenger history already renders in `/profile` and completed rides are persisted by `saveRideHistoryEntry`. The remaining scope is the dedicated `/history` route + loading/detail parity.
+- **BD-GARAGE-01** is Done · audit, not Missing — the driver Garage gate already renders inside `/profile?role=driver`. The remaining scope is consolidation of the active garage PR line (BD-PROFILE-D-05F+, BD-PROFILE-GARAGE-*).
