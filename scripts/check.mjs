@@ -640,6 +640,21 @@ if (exists(feedErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-C — inbox flow trigger smoke. Guards that an inbox data-load
+// failure is routed through the global app-shell overlay (reportAppShellError)
+// with a working guarded retry, the inbox empty state is preserved (additive,
+// not replacement), both load sites go through the wrapper, and no /error route
+// is introduced.
+const inboxErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-inbox-error-trigger.mjs');
+if (exists(inboxErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [inboxErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-inbox-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
