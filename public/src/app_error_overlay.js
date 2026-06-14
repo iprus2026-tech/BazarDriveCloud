@@ -21,6 +21,11 @@ const RECOVERED_DISMISS_MS = 3000;
 
 let recoveredTimer = null;
 let currentOptions = {};
+// Per-state owner token (BD-ERROR-01C-H). When a caller raises a state with an
+// options.token, it is recorded here so dismissAppShellError can verify the
+// SAME load is clearing it — a stale/deferred load must not clear another load's
+// state on this singleton overlay. null when no token was supplied.
+let currentToken = null;
 
 function shellHost() {
   return document.getElementById('shell') || document.body;
@@ -47,6 +52,10 @@ function exposeWindowApi() {
       if (!el || el.hidden) return null;
       return el.dataset.bdErrorState || null;
     },
+    // The owner token of the currently-shown state (or null). Lets a caller
+    // dismiss ONLY the state it raised, so a stale/deferred load cannot clear a
+    // newer load's state that replaced it on this singleton overlay.
+    token: () => currentToken,
   };
 }
 
@@ -187,6 +196,7 @@ export function showGlobalErrorOverlay(state, options = {}) {
     return null;
   }
   currentOptions = options || {};
+  currentToken = (options && 'token' in options) ? options.token : null;
   const el = getOverlay();
   el.className = 'bd-error-overlay is-visible ' + state;
   el.dataset.bdErrorState = state;
@@ -205,6 +215,7 @@ export function showGlobalErrorOverlay(state, options = {}) {
 export function hideGlobalErrorOverlay() {
   clearRecoveredTimer();
   currentOptions = {};
+  currentToken = null;
   const el = document.getElementById(OVERLAY_ID);
   if (!el) return;
   el.hidden = true;

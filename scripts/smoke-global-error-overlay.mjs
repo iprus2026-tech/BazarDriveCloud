@@ -51,6 +51,14 @@ expect('window.BD.GlobalError.show is wired', /show:\s*\(state[\s\S]{0,80}showGl
 expect('window.BD.GlobalError.hide is wired', /hide:\s*\(\)\s*=>\s*hideGlobalErrorOverlay/.test(overlay));
 expect('window.BD.GlobalError.current() reports the active state (or null when hidden)',
   /current:\s*\(\)\s*=>\s*\{[\s\S]*?dataset\.bdErrorState/.test(overlay) && /el\.hidden\)\s*return\s+null/.test(overlay));
+// BD-ERROR-01C-H — per-state owner token so a stale/deferred load can only
+// dismiss the state IT raised (not a newer one that replaced it).
+expect('window.BD.GlobalError.token() exposes the current state owner token',
+  /token:\s*\(\)\s*=>\s*currentToken/.test(overlay));
+expect('show records the owner token from options.token (null when absent)',
+  /currentToken\s*=\s*\(options\s*&&\s*'token'\s+in\s+options\)\s*\?\s*options\.token\s*:\s*null/.test(overlay));
+expect('hide resets the owner token',
+  /currentToken\s*=\s*null/.test(overlay));
 
 // ── D. singleton + safety contract ───────────────────────────
 expect('init reuses an existing overlay element (no duplicate DOM)',

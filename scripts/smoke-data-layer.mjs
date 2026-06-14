@@ -37,16 +37,18 @@ expect('exports async loadResource(fn, { onRetry, isRetry, fallback = [], isActi
 //        so assertions run against the whole file) ────────────
 expect('defines an active() gate from the optional isActive (default always-active)',
   /const\s+active\s*=\s*\(\)\s*=>\s*\(\s*typeof\s+isActive\s*!==\s*'function'\s*\|\|\s*isActive\(\)\s*\)/.test(dataLayer));
-expect('shows the retrying state only while the resource is active',
-  /if\s*\(isRetry\s*&&\s*active\(\)\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(dataLayer));
+expect('mints a per-call token (unique overlay-state owner)',
+  /const\s+token\s*=\s*\{\s*\}/.test(dataLayer));
+expect('shows the retrying state only while active, tagged with the token',
+  /if\s*\(isRetry\s*&&\s*active\(\)\)\s*reportAppShellError\(\s*'retrying'\s*,\s*\{\s*token\s*\}\s*\)/.test(dataLayer));
 expect('awaits fn() inside a try',
   /try\s*\{[\s\S]*?await\s+fn\(\)/.test(dataLayer));
-expect('dismisses only AFTER a successful load, guarded by onlyIfState:retrying',
-  /await\s+fn\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(dataLayer));
-expect('catch reports server_error ONLY while active (stale loads do not surface over the next screen)',
-  /catch[\s\S]*?if\s*\(active\(\)\)\s*reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}\s*:\s*\{\s*\}\s*\)/.test(dataLayer));
-expect('catch clears a stale retrying (guarded) when no longer active',
-  /catch[\s\S]*?else\s+dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(dataLayer));
+expect('dismisses only AFTER a successful load, guarded by onlyIfState + token',
+  /await\s+fn\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*,\s*token\s*\}\s*\)/.test(dataLayer));
+expect('catch reports server_error ONLY while active, tagged with the token',
+  /catch[\s\S]*?if\s*\(active\(\)\)\s*reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*,\s*token\s*\}\s*:\s*\{\s*token\s*\}\s*\)/.test(dataLayer));
+expect('catch clears a stale retrying (guarded by onlyIfState + token) when no longer active',
+  /catch[\s\S]*?else\s+dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*,\s*token\s*\}\s*\)/.test(dataLayer));
 expect('catch returns the fallback (default [])',
   /catch[\s\S]*?return\s+fallback/.test(dataLayer));
 
