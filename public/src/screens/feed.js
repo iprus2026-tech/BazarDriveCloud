@@ -1,4 +1,5 @@
 import { listFeedPosts } from '../mock_api.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
@@ -19,8 +20,41 @@ const CATS = [
   { key: 'marketplace',  label: 'Маркет' },
 ];
 
+// BD-ERROR-01C-B — first real flow trigger. Route a feed data-load failure
+// through the global app-shell overlay (BD-ERROR-01A/01C-A adapter). This is a
+// defensive wire: today listFeedPosts() resolves from mock/localStorage and
+// does not reject, so the catch is dormant — but a future data-layer/backend
+// failure surfaces the global error instead of silently rendering an empty
+// feed. The per-screen empty state is preserved via the [] fallback (the
+// global overlay is additive, never a replacement for the feed's own UI).
+//
+// onRetry powers the overlay's «Повторить» button. On retry the overlay shows a
+// non-blocking 'retrying' progress state and is only dismissed AFTER a
+// successful reload — a slow/hanging/late-failing refetch keeps an error or
+// progress affordance on screen the whole time (a repeat failure re-surfaces
+// server_error). The overlay deliberately does not auto-dismiss when onRetry is
+// provided, so this wrapper owns the retrying → recovered/error transition.
+async function loadFeedPosts(onRetry, isRetry) {
+  if (isRetry) reportAppShellError('retrying');
+  try {
+    const fresh = await listFeedPosts();
+    // Only clear the overlay if it is still the retrying state we raised — a
+    // newer state (e.g. an offline banner from the connection watcher mid-retry)
+    // must not be clobbered by a fast cache-served success.
+    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
+    return fresh;
+  } catch (err) {
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    return [];
+  }
+}
+
 export default async function feed() {
-  let posts = await listFeedPosts();
+  // Retry re-runs the feed load (isRetry=true → 'retrying' progress, dismiss on
+  // success). refreshList is hoisted, so referencing it here before its
+  // declaration is safe — the arrow only runs when the user taps «Повторить».
+  const onFeedRetry = () => { refreshList(true); };
+  let posts = await loadFeedPosts(onFeedRetry, false);
   let activeKey = 'all';
 
   const root = document.createElement('section');
@@ -61,8 +95,8 @@ export default async function feed() {
   const chipRow  = root.querySelector('.feed-chip-row');
   const feedList = root.querySelector('.feed-list');
 
-  async function refreshList() {
-    posts = await listFeedPosts();
+  async function refreshList(isRetry) {
+    posts = await loadFeedPosts(onFeedRetry, isRetry);
     renderList();
   }
 

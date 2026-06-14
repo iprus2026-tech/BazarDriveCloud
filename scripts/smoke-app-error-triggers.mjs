@@ -29,6 +29,12 @@ function expect(label, cond, detail = '') {
 expect('app_error_triggers.js is non-empty', triggers.length > 0);
 expect('exports reportAppShellError',
   /export\s+function\s+reportAppShellError\b/.test(triggers));
+expect('exports dismissAppShellError',
+  /export\s+function\s+dismissAppShellError\b/.test(triggers));
+expect('dismissAppShellError lazily resolves window.BD.GlobalError and calls hide()',
+  /export\s+function\s+dismissAppShellError[\s\S]*?window\.BD[\s\S]*?\.hide\(\)/.test(triggers));
+expect('dismissAppShellError honours options.onlyIfState (no clobbering a newer state)',
+  /options\.onlyIfState/.test(triggers) && /bd\.current\(\)/.test(triggers) && /current\s*!==\s*options\.onlyIfState[\s\S]{0,20}return/.test(triggers));
 
 // ── B. kinds whitelist + unknown-kind no-op (validated FIRST) ─
 expect('KINDS whitelist defined', /const\s+KINDS\s*=\s*\[/.test(triggers));

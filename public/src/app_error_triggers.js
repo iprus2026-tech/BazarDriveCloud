@@ -43,3 +43,21 @@ export function reportAppShellError(kind, options = {}) {
   const resolved = (navigator.onLine === false) ? 'offline' : kind;
   api.show(resolved, options);
 }
+
+// Dismiss the app-shell overlay — e.g. from a retry callback after a flow has
+// recovered. Lazy + safe (no-op if the overlay is not mounted). Keeps callers
+// on the adapter boundary instead of reaching into window.BD directly.
+//
+// options.onlyIfState: dismiss ONLY when the overlay is still showing that
+// state. This prevents a flow from clobbering a newer state raised by another
+// source mid-recovery — e.g. an offline banner the connection watcher put up
+// while a feed retry was in flight.
+export function dismissAppShellError(options = {}) {
+  const bd = (typeof window !== 'undefined' && window.BD) ? window.BD.GlobalError : null;
+  if (!bd || typeof bd.hide !== 'function') return;
+  if (options.onlyIfState) {
+    const current = (typeof bd.current === 'function') ? bd.current() : null;
+    if (current !== options.onlyIfState) return;
+  }
+  bd.hide();
+}
