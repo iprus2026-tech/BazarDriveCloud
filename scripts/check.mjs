@@ -745,6 +745,19 @@ if (exists(profileReceiptsErrorTriggerSmoke)) {
   }
 }
 
+// BD-HISTORY-P-01 — passenger profile history menu row. Asserts #pfp-menu-history
+// opens the inline trip-history section (scrollIntoView #profile-history-section)
+// instead of navigating to /feed.
+const profileHistoryMenuSmoke = path.join(root, 'scripts', 'smoke-profile-history-menu.mjs');
+if (exists(profileHistoryMenuSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileHistoryMenuSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-history-menu.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
