@@ -16,7 +16,23 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 
 **Missing-screen count: 4 net-new gates + 1 extension** (BD-SETTINGS-01, BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-AUTH-01 is no longer counted — it is reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
 
-See the **Partial / future issues** section below for partial flows that already render a terminal stub but need future dedicated wiring. See the **Audit / consolidation gates** section for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds.
+See the **Partial / future issues** section below for partial flows that already render a terminal stub but need future dedicated wiring. See the **Audit / consolidation gates** section for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds. See the **Render-pending** section for shipped screens that lack a Cloud Design render gate.
+
+## Render-pending (shipped runtime, no Cloud Design render gate)
+
+These screens **ship in runtime and have a `docs/screen-contracts.md` contract**, but are not in the Cloud Design render-gate set (`docs/design-registry.json` → `runtimeOnly[]`, classification `contract-only`, `renderStatus: "render-pending"`). They are **not missing screens** — the gap is a render gate, not code. Recorded here so the design catalog and runtime stay reconciled (BD-DESIGN-REGISTRY-01). Next step per screen: render the frame in Cloud Design, then promote the entry from `runtimeOnly[]` into `screens[]` with a real `renderGate`.
+
+| Priority | Screen ID | Route | File | Gap |
+|---|---|---|---|---|
+| P1 | BD-ORDER-DETAIL-01 | `/order` (`/order/<id>`) | `public/src/screens/order_detail.js` | Runtime shell + full contract + 01D writes landed; no render gate |
+| P1 | BD-POST-01 | `/post` | `public/src/screens/post_detail.js` | Shipped detail gate; no render gate |
+| P1 | BD-INBOX-01 | `/inbox` | `public/src/screens/inbox.js` | Shipped hub; no render gate |
+| P2 | BD-MAP-02 | `/location-permission` | `public/src/screens/location_permission.js` | Shipped mock-permission gate; no render gate |
+| P2 | BD-ONBOARDING-01 | `/welcome` + `/onboarding` | `welcome.js` + `onboarding.js` | Shipped family; no render gate |
+| P2 | BD-COMPOSER-01 | `/new` | `public/src/screens/composer.js` | Shipped composer; no render gate |
+| P2 | BD-RULES-01 | `/rules` | `public/src/screens/rules.js` | Shipped static articles; no render gate |
+
+`BD-RIDE-D-NOSHOW-01` is the inverse case (render gate exists, runtime is a stub) — classified `future-design` and tracked under **Partial / future issues** below.
 
 ## Partial / future issues
 

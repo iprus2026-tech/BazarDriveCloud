@@ -16,6 +16,25 @@
 
 Каждый экран в дисциплине проекта должен иметь: **Cloud Design render/frame → route → файл реализации → контракт данных/состояний → acceptance checklist** (см. диспетчерскую линию в `screen-contracts.md`).
 
+### Классификация по Cloud Design registry (BD-DESIGN-REGISTRY-01)
+
+Каждый экран лежит на одной полке. Полка = массив в [`design-registry.json`](design-registry.json) + поле `classification`:
+
+| Полка | Где в registry | Что значит |
+|---|---|---|
+| `render-gate` | `screens[]` | Есть реальный Cloud Design render gate (каталог визуальной правды). |
+| `future-design` | `screens[]`, `interaction: "design-render-only"` | Render gate есть, но runtime беднее/заглушка → нужен parity follow-up. Сейчас: `BD-RIDE-D-NOSHOW-01`. |
+| `stub-foundation` | `foundationModules[]` | Переиспользуемый не-маршрутный модуль (Mapbox stub). |
+| `contract-only` | `runtimeOnly[]` | Ship + контракт в `screen-contracts.md`, но render gate ещё нет → `render-pending`. |
+| `runtime-only` | `runtimeOnly[]` | Ship без render gate и без контракта → `render-pending`. Сейчас таких нет. |
+
+**Правила сверки:**
+1. Route есть в runtime, но нет в registry → отрисовать в Cloud Design ИЛИ записать в `runtimeOnly[]` как `contract-only`/`runtime-only` с `renderStatus: "render-pending"`.
+2. Cloud Design богаче runtime → завести parity / missing-states задачу (см. [`missing-screens.md`](missing-screens.md)).
+3. Есть и там, и там → только smoke + docs drift-check (`node scripts/check.mjs`).
+
+**Render-pending (есть в runtime, нет render gate)** — `runtimeOnly[]`: `BD-ONBOARDING-01` (`/welcome` + `/onboarding`), `BD-MAP-02` (`/location-permission`), `BD-RULES-01` (`/rules`), `BD-COMPOSER-01` (`/new`), `BD-POST-01` (`/post`), `BD-INBOX-01` (`/inbox`), `BD-ORDER-DETAIL-01` (`/order`). Все имеют контракт → `contract-only`.
+
 > ⚠️ **Важное расхождение с исходным брифом.** Бриф задачи перечислял `MapHome`, `LocationPermission`,
 > `RoutePicker`, `RoutePreview`, `OrderMapDraft`, `DriverMap` как «недостающие / запланированные».
 > По факту в коде **все они уже реализованы** как mock-экраны (см. `app.js`). В таблице ниже они
