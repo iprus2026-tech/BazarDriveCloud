@@ -716,6 +716,20 @@ if (exists(driverMapErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-H — trip-receipt flow trigger. Asserts trip_receipt.js routes its
+// primary getReceipt read through the shared data_layer.loadResource adapter
+// (fallback null), the resolve is async + re-invokable for retry, and the
+// screen's own missing state is preserved (additive, not replacement).
+const tripReceiptErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-trip-receipt-error-trigger.mjs');
+if (exists(tripReceiptErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [tripReceiptErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-trip-receipt-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-01C-G — profile driver-receipts flow trigger. Asserts the payouts
 // pane's listDriverReceipts() load reports server_error through the global
 // overlay adapter on failure (sync-minimal variant), the retry dismisses our own
