@@ -109,6 +109,8 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 
 ## P1 — BD-ERROR-01 Global Error / Offline
 
+> **Design-only render gate exists (PR #505).** A static vanilla render-gate artifact ships at `public/prototypes/BD-ERROR-01-global-error-offline-render-gate.html`, covering all five states below as visual reference. This does **not** close the gate: there is no `/error` route and no app-shell overlay in the runtime yet, so BD-ERROR-01 remains a net-new **runtime** missing screen. The artifact is deliberately **not** added to `docs/design-registry.json` renderGates — that registry enforces section coverage by shipped screens, so an uncovered design-only gate would fail the dispatcher drift selftest; register it there only once a runtime screen exists. The artifact is a design reference only — never copied into `public/index.html` or the SW precache.
+
 Required states:
 
 - offline banner

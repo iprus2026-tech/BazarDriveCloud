@@ -138,7 +138,8 @@
     background: var(--bg-2); border: 1px solid var(--line);
     display: flex; align-items: center; justify-content: center; color: var(--text-3);
   }
-  .feed__scroll { flex: 1; overflow: hidden; padding: 4px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .feed__scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 16px; display: flex; flex-direction: column; gap: 12px; scrollbar-width: none; }
+  .feed__scroll::-webkit-scrollbar { display: none; }
   .post {
     background: var(--bg-1); border: 1px solid var(--line);
     border-radius: var(--radius-lg); padding: 16px;
@@ -228,8 +229,8 @@
   .gx-sheet__code--warning { background: rgba(251,191,36,0.10); color: var(--warning); }
   .gx-sheet__actions { display: flex; gap: 10px; }
   .btn {
-    flex: 1; height: 48px; border-radius: var(--radius-md);
-    font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    flex: 1; height: 48px; border: none; border-radius: var(--radius-md);
+    font-family: inherit; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
     display: flex; align-items: center; justify-content: center; gap: 7px;
     cursor: pointer;
   }
@@ -268,22 +269,19 @@
     padding: 13px 16px;
     z-index: 60;
     box-shadow: 0 8px 28px rgba(0,0,0,0.5);
-    animation: toast-life 3s ease-in-out forwards;
+    animation: toast-in 0.32s ease both;
   }
-  @keyframes toast-life {
-    0%   { opacity: 0; transform: translateY(8px); }
-    12%  { opacity: 1; transform: translateY(0); }
-    85%  { opacity: 1; transform: translateY(0); }
-    100% { opacity: 0.35; transform: translateY(4px); }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
   .gx-recovered__ic { width: 20px; height: 20px; color: var(--success); flex-shrink: 0; }
   .gx-recovered__txt { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
   .gx-recovered__bar {
-    position: absolute; left: 0; bottom: 0; height: 2px;
+    position: absolute; left: 0; bottom: 0; height: 2px; width: 62%;
     background: var(--success); border-bottom-left-radius: var(--radius-md);
-    animation: toast-bar 3s linear forwards;
+    opacity: 0.7;
   }
-  @keyframes toast-bar { from { width: 100%; } to { width: 0%; } }
 
   /* ── States summary cards ── */
   .summary {
