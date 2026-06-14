@@ -48,6 +48,13 @@ expect('the initial resolve runs via setTimeout with isRetry=false',
   /setTimeout\(\s*\(\)\s*=>\s*renderResolved\([\s\S]*?,\s*onReceiptRetry\s*,\s*false\s*\)/.test(receipt));
 expect('onReceiptRetry does NOT pre-emptively dismiss before the reload result is known',
   !/onReceiptRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(/.test(receipt));
+// the deferred resolve must bail if the screen was navigated away from, so a
+// stale load can't report a server_error overlay over a different screen.
+expect('renderResolved guards on content.isConnected before resolving (no stale overlay after navigation)',
+  /async\s+function\s+renderResolved\([\s\S]{0,800}?if\s*\(\s*!content\.isConnected\s*\)\s*return/.test(receipt));
+expect('renderResolved re-checks content.isConnected after the await before painting',
+  (receipt.match(/if\s*\(\s*!content\.isConnected\s*\)\s*return/g) || []).length >= 2,
+  'one guard before the load, one after the await');
 
 // ── D. per-screen missing state preserved (additive, not replaced) ─
 expect('trip_receipt.js still renders its own missing state (receiptMissingHtml)',

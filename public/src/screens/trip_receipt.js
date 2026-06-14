@@ -178,6 +178,12 @@ function bindReceiptActions(root) {
 // the overlay is always available. Forced cash/noncash/missing previews are
 // render-gate designer states and stay unwrapped.
 async function renderResolved(content, tripId, forced, onRetry, isRetry) {
+  // BD-ERROR-01C-H — this resolve is DEFERRED (setTimeout) and re-invokable on
+  // «Повторить». Bail if the receipt screen was navigated away from before it
+  // fires: a stale load that reports through loadResource would otherwise pop a
+  // server_error overlay over a different screen. content is detached from the
+  // document once the router swaps in the next view, so isConnected is the guard.
+  if (!content.isConnected) return;
   let receipt;
   if (forced === 'missing') {
     receipt = null;
@@ -189,6 +195,9 @@ async function renderResolved(content, tripId, forced, onRetry, isRetry) {
     receipt = base ? { ...base, paymentMode: forced } : null;
   } else {
     receipt = await loadResource(() => getReceipt(tripId), { onRetry, isRetry, fallback: null });
+    // A late (future-async) load may resolve after navigation — don't paint a
+    // detached node.
+    if (!content.isConnected) return;
   }
   content.innerHTML = receipt ? receiptDocHtml(receipt) : receiptMissingHtml(tripId);
 }
