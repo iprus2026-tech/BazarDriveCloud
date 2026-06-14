@@ -60,17 +60,21 @@ expect('loadFeedPosts() passes an onRetry option to the overlay',
 expect('loadFeedPosts() falls back to [] (preserves the feed empty state)',
   !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
 
-// ── B2. retry actually re-runs the load + dismisses the overlay ─
-expect('feed defines an onFeedRetry that dismisses the overlay and reloads',
-  /onFeedRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)[\s\S]*?refreshList\(\)/.test(feed));
-expect('the retry callback is threaded into loadFeedPosts(onFeedRetry)',
-  /loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
+// ── B2. retry shows progress and dismisses only on success ───
+expect('loadFeedPosts() shows a non-blocking retrying state while retrying',
+  !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
+expect('loadFeedPosts() dismisses the overlay only AFTER a successful reload',
+  !!loadBody && /await\s+listFeedPosts\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\)/.test(loadBody));
+expect('onFeedRetry re-runs the load as a retry (refreshList(true))',
+  /onFeedRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?refreshList\(\s*true\s*\)/.test(feed));
+expect('onFeedRetry does NOT pre-emptively dismiss before the reload result is known',
+  !/onFeedRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(feed));
 
 // ── C. both load sites go through the wrapper ────────────────
-expect('initial render loads via loadFeedPosts(onFeedRetry)',
-  /let\s+posts\s*=\s*await\s+loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
-expect('refreshList() loads via loadFeedPosts(onFeedRetry)',
-  /async\s+function\s+refreshList\(\)[\s\S]{0,80}await\s+loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
+expect('initial render loads via loadFeedPosts(onFeedRetry, false)',
+  /let\s+posts\s*=\s*await\s+loadFeedPosts\(\s*onFeedRetry\s*,\s*false\s*\)/.test(feed));
+expect('refreshList(isRetry) loads via loadFeedPosts(onFeedRetry, isRetry)',
+  /async\s+function\s+refreshList\(\s*isRetry\s*\)[\s\S]{0,90}await\s+loadFeedPosts\(\s*onFeedRetry\s*,\s*isRetry\s*\)/.test(feed));
 expect('feed.js no longer calls listFeedPosts() directly outside the wrapper',
   (feed.match(/await\s+listFeedPosts\(\)/g) || []).length === 1,
   'direct await count should be 1 (only inside loadFeedPosts)');

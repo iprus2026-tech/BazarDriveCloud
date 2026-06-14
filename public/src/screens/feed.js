@@ -28,12 +28,18 @@ const CATS = [
 // feed. The per-screen empty state is preserved via the [] fallback (the
 // global overlay is additive, never a replacement for the feed's own UI).
 //
-// onRetry powers the overlay's «Повторить» button: it re-runs the load and
-// dismisses the overlay on success (or re-surfaces server_error on a repeat
-// failure), so retry actually attempts recovery instead of just closing.
-async function loadFeedPosts(onRetry) {
+// onRetry powers the overlay's «Повторить» button. On retry the overlay shows a
+// non-blocking 'retrying' progress state and is only dismissed AFTER a
+// successful reload — a slow/hanging/late-failing refetch keeps an error or
+// progress affordance on screen the whole time (a repeat failure re-surfaces
+// server_error). The overlay deliberately does not auto-dismiss when onRetry is
+// provided, so this wrapper owns the retrying → recovered/error transition.
+async function loadFeedPosts(onRetry, isRetry) {
+  if (isRetry) reportAppShellError('retrying');
   try {
-    return await listFeedPosts();
+    const fresh = await listFeedPosts();
+    if (isRetry) dismissAppShellError();
+    return fresh;
   } catch (err) {
     reportAppShellError('server_error', onRetry ? { onRetry } : {});
     return [];
@@ -41,11 +47,11 @@ async function loadFeedPosts(onRetry) {
 }
 
 export default async function feed() {
-  // Retry re-runs the feed load and clears the overlay on success. refreshList
-  // is hoisted, so referencing it here (before its declaration) is safe — the
-  // arrow only runs when the user taps «Повторить».
-  const onFeedRetry = () => { dismissAppShellError(); refreshList(); };
-  let posts = await loadFeedPosts(onFeedRetry);
+  // Retry re-runs the feed load (isRetry=true → 'retrying' progress, dismiss on
+  // success). refreshList is hoisted, so referencing it here before its
+  // declaration is safe — the arrow only runs when the user taps «Повторить».
+  const onFeedRetry = () => { refreshList(true); };
+  let posts = await loadFeedPosts(onFeedRetry, false);
   let activeKey = 'all';
 
   const root = document.createElement('section');
@@ -86,8 +92,8 @@ export default async function feed() {
   const chipRow  = root.querySelector('.feed-chip-row');
   const feedList = root.querySelector('.feed-list');
 
-  async function refreshList() {
-    posts = await loadFeedPosts(onFeedRetry);
+  async function refreshList(isRetry) {
+    posts = await loadFeedPosts(onFeedRetry, isRetry);
     renderList();
   }
 
