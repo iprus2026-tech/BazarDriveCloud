@@ -174,6 +174,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | `bazardrive.user.v1`, profile demo helpers, user-scoped stores read-only where needed. |
 | Main states | Guest prompt, passenger dashboard, phone verification banner, stats, saved actions, safety. |
 | Actions | Verify phone mock, edit profile, create ride, view inbox/history/favorites. |
+| Entry points | **Notification bell** `#pfp-notif-btn` (topbar) → `go('/inbox')` (BD-NOTIF-01, reuse the `/inbox` hub — no separate `/notifications` route). **History menu row** `#pfp-menu-history` → `scrollIntoView` of the inline trip-history section `#profile-history-section` (BD-HISTORY-P-01 — **not** `/feed`). **Settings gear** `#pfp-settings-btn` is still inert (BD-SETTINGS-01, unshipped / design-gated). Pinned by `scripts/smoke-profile-notif-bell.mjs` and `scripts/smoke-profile-history-menu.mjs`. |
 | Acceptance | Guest/passenger surfaces do not expose driver-only controls unless role switches. |
 
 ### BD-PROFILE-02 - Driver dashboard profile
@@ -185,6 +186,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | `bazardrive.user.v1`, driver document flags. |
 | Main states | Overview, Taxi IP, Documents, Payouts, Safety. |
 | Actions | Online toggle, driver/passenger mode, readiness checklist, document mock updates. |
+| Entry points | **Notification quick-action row** `#pf2-act-notif` (the «Уведомления» row, renders a chevron) → `go('/inbox')` (BD-NOTIF-01). This replaced a prior `notificationsEnabled` toggle stub; there is **no driver notification bell** in the shipped profile. Pinned by `scripts/smoke-profile-notif-bell.mjs`. |
 | Acceptance | Driver readiness gates Feed/Post Detail accept CTAs and `/driver-map` (BD-DRIVER-02): all accept surfaces now enforce `isDriverLineReady()` via the shared rule in `state.js`. |
 
 ### BD-PROFILE-D-05B - Driver Garage actions
