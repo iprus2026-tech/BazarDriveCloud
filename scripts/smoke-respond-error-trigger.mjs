@@ -1,15 +1,13 @@
-// BD-ERROR-01C-E — static regression smoke for the respond flow trigger.
+// BD-ERROR-01C-E / BD-ERROR-02A-d — static regression smoke for the respond flow trigger.
 //
-// respond.js routes a post-lookup data-load failure through the global
-// app-shell overlay via the BD-ERROR-01C-A adapter (reportAppShellError),
-// mirroring the feed (01C-B), inbox (01C-C) and post-detail (01C-D) triggers.
-// This is a defensive wire: listFeedPosts() does not reject today, so the catch
-// is dormant — but the wiring must stay in place so a future data-layer/backend
-// failure surfaces the global error instead of silently rendering the "not
-// found" state. The screen's own missing/unsupported state must be preserved
-// (the global overlay is additive, not a replacement). A refactor could drop the
-// try/catch, swallow the error without reporting, replace the missing state, or
-// re-route the global error — and `node scripts/check.mjs` would still pass.
+// respond.js routes a post-lookup data-load failure through the global app-shell
+// overlay via the shared data_layer.loadResource adapter (the per-screen
+// loadRespondPosts wrapper was consolidated into data_layer.js in 02A). This
+// smoke asserts the DELEGATION — the renderRespond load goes through
+// loadResource(listFeedPosts, …) and respond never reads listFeedPosts() outside
+// that wrapper; the screen's own missing state is preserved. The guarded-retry
+// CONTRACT (retrying / onlyIfState dismiss / server_error / [] fallback) is
+// pinned once in scripts/smoke-data-layer.mjs.
 //
 // This script is intentionally STATIC: it reads source and asserts the
 // contract holds. No browser, no DOM, no network.
@@ -45,40 +43,28 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── A. adapter import (report + dismiss) ─────────────────────
-expect('respond.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
-  /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(respond));
+// ── A. delegation to the shared adapter ──────────────────────
+expect('respond.js imports loadResource from ../data_layer.js',
+  /import\s*\{\s*loadResource\s*\}\s*from\s*'\.\.\/data_layer\.js'/.test(respond));
+expect('respond.js no longer defines its own loadRespondPosts wrapper (consolidated in 02A)',
+  !functionBody(respond, 'loadRespondPosts'));
+expect('respond.js no longer imports the overlay adapter directly (it goes through data_layer)',
+  !/from\s*'\.\.\/app_error_triggers\.js'/.test(respond));
 
-// ── B. the data load is wrapped in try/catch that reports ────
-const loadBody = functionBody(respond, 'loadRespondPosts');
-expect('respond.js has a loadRespondPosts() wrapper', !!loadBody);
-expect('loadRespondPosts() awaits listFeedPosts() inside a try',
-  !!loadBody && /try\s*\{[\s\S]*?await\s+listFeedPosts\(\)/.test(loadBody));
-expect('loadRespondPosts() catch reports server_error to the global overlay',
-  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(loadBody));
-expect('loadRespondPosts() passes an onRetry option to the overlay',
-  !!loadBody && /reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}/.test(loadBody));
-expect('loadRespondPosts() falls back to [] (preserves the missing/empty state)',
-  !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
+// ── B. the load goes through loadResource(listFeedPosts, …) ──
+expect('initial render runs via renderRespond(false)',
+  /await\s+renderRespond\(\s*false\s*\)/.test(respond));
+expect('renderRespond(isRetry) loads via loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry })',
+  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onRespondRetry\s*,\s*isRetry\s*\}\s*\)/.test(respond));
+expect('respond.js reads only through the adapter (no direct listFeedPosts() call)',
+  (respond.match(/await\s+listFeedPosts\(\)/g) || []).length === 0,
+  'listFeedPosts is passed by reference to loadResource, never called directly in respond.js');
 
-// ── B2. retry shows progress and dismisses only on success ───
-expect('loadRespondPosts() shows a non-blocking retrying state while retrying',
-  !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
-expect('loadRespondPosts() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
-  !!loadBody && /await\s+listFeedPosts\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
+// ── B2. retry closure re-runs the load, does not pre-dismiss ──
 expect('onRespondRetry re-runs the load as a retry (renderRespond(true))',
   /onRespondRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?renderRespond\(\s*true\s*\)/.test(respond));
 expect('onRespondRetry does NOT pre-emptively dismiss before the reload result is known',
   !/onRespondRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(respond));
-
-// ── C. both load sites go through the wrapper ────────────────
-expect('initial render runs via renderRespond(false)',
-  /await\s+renderRespond\(\s*false\s*\)/.test(respond));
-expect('renderRespond(isRetry) loads via loadRespondPosts(onRespondRetry, isRetry)',
-  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,120}await\s+loadRespondPosts\(\s*onRespondRetry\s*,\s*isRetry\s*\)/.test(respond));
-expect('respond.js no longer calls listFeedPosts() directly outside the wrapper',
-  (respond.match(/await\s+listFeedPosts\(\)/g) || []).length === 1,
-  'direct await count should be 1 (only inside loadRespondPosts)');
 
 // ── D. per-screen missing state preserved (additive, not replaced) ─
 expect("respond.js still renders its own missing state",
@@ -93,10 +79,10 @@ expect('app.js does NOT register an /error route (any quote style)',
 // ── F. sw precache + version bump ────────────────────────────
 expect('sw.js still precaches ./src/screens/respond.js',
   /['"]\.\/src\/screens\/respond\.js['"]/.test(sw));
-expect('sw.js still precaches the adapter ./src/app_error_triggers.js',
-  /['"]\.\/src\/app_error_triggers\.js['"]/.test(sw));
-expect('sw.js VERSION bumped to v130+',
-  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 130);
+expect('sw.js precaches the shared adapter ./src/data_layer.js',
+  /['"]\.\/src\/data_layer\.js['"]/.test(sw));
+expect('sw.js VERSION bumped to v136+',
+  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 136);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
