@@ -574,6 +574,22 @@ if (exists(mapboxFoundationStubsSmoke)) {
   }
 }
 
+// BD-ERROR-01A — static regression smoke for the Global Error / Offline
+// runtime overlay: singleton app-shell mount, five-state whitelist + safe
+// unknown-state no-op, window.BD.GlobalError API, recovered auto-dismiss
+// pinned by source wording, non-mutating contract (no ride/order/storage/
+// backend imports or vocabulary), app.js wiring with no /error route,
+// .bd-error-* CSS namespace, and SW precache (without the prototype gate).
+const globalErrorOverlaySmoke = path.join(root, 'scripts', 'smoke-global-error-overlay.mjs');
+if (exists(globalErrorOverlaySmoke)) {
+  try {
+    execFileSync(process.execPath, [globalErrorOverlaySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-global-error-overlay.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

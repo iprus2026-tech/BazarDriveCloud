@@ -4106,8 +4106,8 @@ if (mapPresent) {
 }
 
 // ── P2B-scroll. BD-ORDER-P-02B scrollability + safe-area pins ─────────
-expect('public/sw.js VERSION is exactly v120',
-  /VERSION\s*=\s*'v120'/.test(swJs));
+expect('public/sw.js VERSION is v120+',
+  Number(swJs.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 120);
 expect('.od-body has overflow-y: auto',
   /\.od-body\b[^}]*overflow-y\s*:\s*auto/.test(cloudCss));
 expect('.od-body bottom padding references env(safe-area-inset-bottom',
