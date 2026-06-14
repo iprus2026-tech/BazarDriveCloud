@@ -655,6 +655,21 @@ if (exists(inboxErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-D — post-detail flow trigger smoke. Guards that a post-detail
+// data-load failure is routed through the global app-shell overlay
+// (reportAppShellError) with a working guarded retry, the screen's own missing
+// state is preserved (additive, not replacement), the load+render closure runs
+// both load sites through the wrapper, and no /error route is introduced.
+const postDetailErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-post-detail-error-trigger.mjs');
+if (exists(postDetailErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [postDetailErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-post-detail-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
