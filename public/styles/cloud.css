@@ -14019,7 +14019,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .bd-error-overlay {
   position: absolute;
   inset: 0;
-  z-index: 90;
+  /* Above every in-app modal/notice layer (garage add sheet is the current
+     ceiling at z-index 1300) so a global error always sits over the current
+     screen, never under an open dialog. */
+  z-index: 2000;
   pointer-events: none;
 }
 .bd-error-overlay[hidden] { display: none; }
@@ -14045,7 +14048,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   align-items: center;
   gap: 10px;
   padding: calc(12px + env(safe-area-inset-top, 0px)) 18px 12px;
-  pointer-events: auto;
+  /* Passive informational banner — no actions. Inherit the root overlay's
+     pointer-events: none so taps fall through to the screen's topbar controls
+     underneath (offline / retrying are non-blocking). */
   z-index: 2;
   animation: bd-error-slide-down 0.22s ease both;
 }
@@ -14176,7 +14181,8 @@ button.pfp-menu-row:active { opacity: 0.7; }
   gap: 10px;
   padding: 13px 16px;
   border-radius: var(--radius-md);
-  pointer-events: auto;
+  /* Passive auto-dismissing toast — no actions. Inherit pointer-events: none
+     from the root overlay so it never blocks taps underneath. */
   z-index: 2;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
   animation: bd-error-toast-in 0.3s ease both;

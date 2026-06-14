@@ -95,8 +95,8 @@ expect('module documents its non-mutating contract', /non-mutating contract/i.te
 expect('app.js imports initGlobalErrorOverlay from ./app_error_overlay.js',
   /import\s*\{\s*initGlobalErrorOverlay\s*\}\s*from\s*'\.\/app_error_overlay\.js'/.test(app));
 expect('app.js initializes the overlay singleton', /initGlobalErrorOverlay\(\)/.test(app));
-expect("app.js does NOT register an /error route",
-  !/register\(\s*'\/error'/.test(app));
+expect("app.js does NOT register an /error route (any quote style)",
+  !/register\(\s*['"`]\/error/.test(app));
 
 // ── J. cloud.css namespace ───────────────────────────────────
 for (const cls of ['.bd-error-overlay', '.bd-error-banner', '.bd-error-sheet', '.bd-error-toast', '.bd-error-scrim']) {
