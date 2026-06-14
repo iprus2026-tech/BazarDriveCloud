@@ -624,6 +624,22 @@ if (exists(appErrorTriggersSmoke)) {
   }
 }
 
+// BD-ERROR-01C-B — static regression smoke for the first real flow trigger:
+// feed.js wraps its listFeedPosts() data load in a try/catch that routes a
+// failure through reportAppShellError('server_error') while preserving the
+// feed's own empty state via the [] fallback (additive global overlay, not a
+// replacement), both load sites go through the wrapper, and no /error route is
+// introduced.
+const feedErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-feed-error-trigger.mjs');
+if (exists(feedErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [feedErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

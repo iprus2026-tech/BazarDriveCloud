@@ -1,4 +1,5 @@
 import { listFeedPosts } from '../mock_api.js';
+import { reportAppShellError } from '../app_error_triggers.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
@@ -19,8 +20,24 @@ const CATS = [
   { key: 'marketplace',  label: 'Маркет' },
 ];
 
+// BD-ERROR-01C-B — first real flow trigger. Route a feed data-load failure
+// through the global app-shell overlay (BD-ERROR-01A/01C-A adapter). This is a
+// defensive wire: today listFeedPosts() resolves from mock/localStorage and
+// does not reject, so the catch is dormant — but a future data-layer/backend
+// failure surfaces the global error instead of silently rendering an empty
+// feed. The per-screen empty state is preserved via the [] fallback (the
+// global overlay is additive, never a replacement for the feed's own UI).
+async function loadFeedPosts() {
+  try {
+    return await listFeedPosts();
+  } catch (err) {
+    reportAppShellError('server_error');
+    return [];
+  }
+}
+
 export default async function feed() {
-  let posts = await listFeedPosts();
+  let posts = await loadFeedPosts();
   let activeKey = 'all';
 
   const root = document.createElement('section');
@@ -62,7 +79,7 @@ export default async function feed() {
   const feedList = root.querySelector('.feed-list');
 
   async function refreshList() {
-    posts = await listFeedPosts();
+    posts = await loadFeedPosts();
     renderList();
   }
 
