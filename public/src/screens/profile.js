@@ -15,6 +15,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
@@ -2652,9 +2653,19 @@ function ipPaneHtml(u) {
 // canonical receipt store. Each row shows net straight from receipt.net (no
 // recalculation) and deep-links to the trip receipt at /receipt?tripId=…. The
 // balance / weekly cards above stay demo/static.
-function driverReceiptPayoutSectionHtml() {
+function driverReceiptPayoutSectionHtml(onRetry) {
   let receipts = [];
-  try { receipts = listDriverReceipts(); } catch { receipts = []; }
+  // BD-ERROR-01C-G — route a receipts load failure through the global overlay
+  // instead of silently swallowing it. Defensive/dormant: mock listDriverReceipts()
+  // does not reject today, so the catch is dormant; a future backend failure
+  // surfaces server_error with a guarded retry. The [] fallback preserves the
+  // pane's own static balance/weekly cards (empty receipts → '').
+  try {
+    receipts = listDriverReceipts();
+  } catch (err) {
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    receipts = [];
+  }
   if (!Array.isArray(receipts) || !receipts.length) return '';
   const rows = receipts.map((r) => {
     const tripId  = String(r.tripId);
@@ -2814,7 +2825,7 @@ function payoutsPaneHtml(previewEmpty = false) {
         <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
       </div>
     </div>
-    ${driverReceiptPayoutSectionHtml()}
+    <div id="pf2-po-trips-mount"></div>
     ${taxCards}
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">Способы вывода</span>
@@ -3557,6 +3568,27 @@ function renderDriver(root, u) {
   const garageForce = getHashQuery().get('garage') || '';
   const garageVehicles = buildGarageVehicles(u, { force: garageForce });
 
+  // BD-ERROR-01C-G — the driver-receipts load is LAZY: it runs only when the
+  // payouts pane is shown (see the tab handler below), not eagerly at mount.
+  // This keeps an off-screen receipts failure from popping a global error while
+  // the user is on another tab, and the deferral lets the load run after
+  // window.BD.GlobalError is initialised (app.js runs start() before
+  // initGlobalErrorOverlay()). fillReceipts injects ONLY into the persistent
+  // #pf2-po-trips-mount (not a full pane swap), so the other payouts controls
+  // keep their handlers; the receipt-row click is delegated on the mount so it
+  // survives re-injection. «Повторить» (onReceiptsRetry) dismisses our own
+  // server_error guarded by onlyIfState and re-fills. (Async retrying/dismiss is
+  // deferred to BD-ERROR-02A.)
+  const onReceiptsRetry = () => {
+    dismissAppShellError({ onlyIfState: 'server_error' });
+    fillReceipts();
+  };
+  function fillReceipts() {
+    const mount = root.querySelector('#pf2-po-trips-mount');
+    if (!mount) return;
+    mount.innerHTML = driverReceiptPayoutSectionHtml(onReceiptsRetry);
+  }
+
   root.innerHTML = `
     <div class="pf2-topbar">
       <h1 class="pf2-topbar__title">Профиль</h1>
@@ -3598,6 +3630,12 @@ function renderDriver(root, u) {
       tab.setAttribute('aria-selected', 'true');
       const pane = root.querySelector(`#pf2-pane-${tab.dataset.pane}`);
       if (pane) pane.classList.add('pf2-pane--active');
+      // BD-ERROR-01C-G — load receipts only when the payouts pane is shown, and
+      // defer past the synchronous mount/programmatic ?pane=payouts click so
+      // window.BD.GlobalError already exists (app.js runs start() before
+      // initGlobalErrorOverlay()). queueMicrotask runs after the current task's
+      // overlay init, flash-free.
+      if (tab.dataset.pane === 'payouts') queueMicrotask(fillReceipts);
     });
   });
 
@@ -3972,7 +4010,9 @@ function renderDriver(root, u) {
   });
 
   // BD-RIDE-HISTORY-D-01 — a completed-ride payout row opens its trip receipt.
-  root.querySelector('#pf2-po-trips-block')?.addEventListener('click', (e) => {
+  // BD-ERROR-01C-G — delegated on the persistent #pf2-po-trips-mount (not the
+  // re-injected #pf2-po-trips-block) so the handler survives a lazy fill / retry.
+  root.querySelector('#pf2-po-trips-mount')?.addEventListener('click', (e) => {
     const row = e.target.closest('[data-receipt-trip]');
     if (!row) return;
     const tripId = row.dataset.receiptTrip;
