@@ -931,7 +931,12 @@ function renderPassenger(root, u, previewState) {
   });
 
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
-  root.querySelector('#pfp-menu-history')?.addEventListener('click', () => go('/feed'));
+  // BD-HISTORY-P-01 — «История поездок» opens the trip-history section that
+  // already renders in this profile (historySectionHtml, id profile-history-section),
+  // not /feed. Mirrors the driver payouts «История» row → scrollIntoView pattern.
+  root.querySelector('#pfp-menu-history')?.addEventListener('click', () => {
+    root.querySelector('#profile-history-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
 
   // Drafts row only navigates when a draft exists; the disabled state above

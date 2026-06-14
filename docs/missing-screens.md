@@ -67,7 +67,7 @@ These three gates were originally listed as Missing or Partial in earlier drafts
 
 **Remaining audit scope** (open the audit gate only if these gaps are confirmed):
 
-- **Fix the broken history menu entry** — the passenger profile menu row «История поездок» (`#pfp-menu-history` in `public/src/screens/profile.js:932-934`) currently routes to `/feed` instead of opening the history pane that already renders in `/profile`. This is a shipped entry-point gap, not a new screen.
+- ~~**Fix the broken history menu entry**~~ — **DONE (BD-HISTORY-P-01).** The passenger profile menu row «История поездок» (`#pfp-menu-history`) now scrolls the inline trip-history section (`#profile-history-section`, rendered by `historySectionHtml`) into view instead of routing to `/feed` — mirroring the driver payouts «История» row. Guarded by `scripts/smoke-profile-history-menu.mjs`.
 - A dedicated `/history` route (today the history is reached via `/profile`).
 - A loading skeleton for the history list (parity with driver history).
 - Inline history detail parity (copy / states alignment with `historyDetailHtml`).
