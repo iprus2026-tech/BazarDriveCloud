@@ -3853,14 +3853,13 @@ function renderDriver(root, u) {
   const contractsBtn = root.querySelector('#pf2-act-contracts');
   contractsBtn?.addEventListener('click', () => stubActionRow(contractsBtn, 'Скоро здесь'));
 
-  // Quick action "Уведомления" → toggle notificationsEnabled and show feedback.
+  // BD-NOTIF-01 — driver «Уведомления» quick-action row opens the existing
+  // /inbox hub. The row renders a chevron (a navigation affordance), so this
+  // replaces the prior notificationsEnabled toggle stub with navigation,
+  // mirroring the passenger bell (#pfp-notif-btn → /inbox). Reuse /inbox; do
+  // not split a separate /notifications route.
   const notifBtn = root.querySelector('#pf2-act-notif');
-  notifBtn?.addEventListener('click', () => {
-    const current = user.get();
-    const next = !current.notificationsEnabled;
-    user.set({ notificationsEnabled: next });
-    stubActionRow(notifBtn, next ? 'Уведомления включены' : 'Уведомления выключены');
-  });
+  notifBtn?.addEventListener('click', () => go('/inbox'));
 
   // BD-ROLE-05 — per-tab role view switch (driver → passenger). Mirror of
   // #pfp-role-switch in the passenger view: sessionStorage-only via
