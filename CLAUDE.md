@@ -111,6 +111,7 @@ Use registered runtime routes from `public/src/app.js`. Important routes:
 - `/route-picker`
 - `/route-preview`
 - `/order-map-draft`
+- `/order/<id>` (Order Detail; `/order` is the exact-registration anchor — see Order Detail flow note)
 - `/responses`
 - `/respond?postId=...`
 - `/chat?tripId=...`
