@@ -2,6 +2,7 @@ import { register, start, go, setPendingAction } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
+import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 
 import welcome    from './screens/welcome.js';
@@ -95,3 +96,6 @@ document.getElementById('fab').addEventListener('click', () => {
 start();
 initSwUpdate();
 initFavoriteRoutes();
+// BD-ERROR-01A — app-shell singleton error/offline overlay. Not a route:
+// it mounts above #app and is driven via window.BD.GlobalError.
+initGlobalErrorOverlay();
