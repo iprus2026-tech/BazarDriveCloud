@@ -607,6 +607,23 @@ if (exists(appConnectionStatusSmoke)) {
   }
 }
 
+// BD-ERROR-01C-A — static regression smoke for the fetch-failure trigger
+// adapter contract: reportAppShellError(kind, options) maps a flow's error kind
+// to window.BD.GlobalError, validates the unknown-kind no-op BEFORE the offline
+// override, coerces any valid kind to 'offline' while the device is offline,
+// resolves the overlay lazily (no direct overlay import), and stays decoupled
+// (no fetch / storage / ride-order mutation, no app.js wiring, no /error
+// route), with the module precached.
+const appErrorTriggersSmoke = path.join(root, 'scripts', 'smoke-app-error-triggers.mjs');
+if (exists(appErrorTriggersSmoke)) {
+  try {
+    execFileSync(process.execPath, [appErrorTriggersSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-app-error-triggers.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
