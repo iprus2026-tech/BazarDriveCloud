@@ -165,7 +165,9 @@ Selecting a driver builds active ride:
 
 ### Respond
 `/respond` requires postId: `/respond?postId=...`
-Driver offer variant: success -> `/chat?responseId=resp_<post.id>&role=driver`
+Driver offer variant: success overlay with two CTAs (not an auto-redirect):
+- `Открыть чат` -> `/chat?responseId=resp_<post.id>&role=driver`
+- `В ленту` -> `/feed`
 Marketplace variant: success overlay -> `/feed`
 No marketplace chat handoff today.
 
