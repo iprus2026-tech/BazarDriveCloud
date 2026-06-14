@@ -49,6 +49,8 @@ expect('exposes window.BD.GlobalError', /w\.BD\.GlobalError\s*=/.test(overlay)
   || /window\.BD\.GlobalError\s*=/.test(overlay));
 expect('window.BD.GlobalError.show is wired', /show:\s*\(state[\s\S]{0,80}showGlobalErrorOverlay/.test(overlay));
 expect('window.BD.GlobalError.hide is wired', /hide:\s*\(\)\s*=>\s*hideGlobalErrorOverlay/.test(overlay));
+expect('window.BD.GlobalError.current() reports the active state (or null when hidden)',
+  /current:\s*\(\)\s*=>\s*\{[\s\S]*?dataset\.bdErrorState/.test(overlay) && /el\.hidden\)\s*return\s+null/.test(overlay));
 
 // ── D. singleton + safety contract ───────────────────────────
 expect('init reuses an existing overlay element (no duplicate DOM)',

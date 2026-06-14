@@ -39,6 +39,14 @@ function exposeWindowApi() {
   w.BD.GlobalError = {
     show: (state, options) => showGlobalErrorOverlay(state, options),
     hide: () => hideGlobalErrorOverlay(),
+    // The active state string while the overlay is visible, else null. Lets a
+    // caller dismiss only the state it raised, without clobbering a newer one
+    // (e.g. an offline banner raised mid-retry).
+    current: () => {
+      const el = document.getElementById(OVERLAY_ID);
+      if (!el || el.hidden) return null;
+      return el.dataset.bdErrorState || null;
+    },
   };
 }
 

@@ -63,8 +63,8 @@ expect('loadFeedPosts() falls back to [] (preserves the feed empty state)',
 // ── B2. retry shows progress and dismisses only on success ───
 expect('loadFeedPosts() shows a non-blocking retrying state while retrying',
   !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
-expect('loadFeedPosts() dismisses the overlay only AFTER a successful reload',
-  !!loadBody && /await\s+listFeedPosts\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\)/.test(loadBody));
+expect('loadFeedPosts() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
+  !!loadBody && /await\s+listFeedPosts\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
 expect('onFeedRetry re-runs the load as a retry (refreshList(true))',
   /onFeedRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?refreshList\(\s*true\s*\)/.test(feed));
 expect('onFeedRetry does NOT pre-emptively dismiss before the reload result is known',

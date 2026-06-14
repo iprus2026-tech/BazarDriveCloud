@@ -38,7 +38,10 @@ async function loadFeedPosts(onRetry, isRetry) {
   if (isRetry) reportAppShellError('retrying');
   try {
     const fresh = await listFeedPosts();
-    if (isRetry) dismissAppShellError();
+    // Only clear the overlay if it is still the retrying state we raised — a
+    // newer state (e.g. an offline banner from the connection watcher mid-retry)
+    // must not be clobbered by a fast cache-served success.
+    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
     return fresh;
   } catch (err) {
     reportAppShellError('server_error', onRetry ? { onRetry } : {});
