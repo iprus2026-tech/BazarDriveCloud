@@ -640,6 +640,21 @@ if (exists(feedErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
+// contract in public/src/data_layer.js (the single guarded-retry wrapper that
+// replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
+// onlyIfState dismiss on success, server_error + guarded onRetry on failure, and
+// the fallback return. Per-screen smokes now only assert delegation.
+const dataLayerSmoke = path.join(root, 'scripts', 'smoke-data-layer.mjs');
+if (exists(dataLayerSmoke)) {
+  try {
+    execFileSync(process.execPath, [dataLayerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-data-layer.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-01C-C — inbox flow trigger smoke. Guards that an inbox data-load
 // failure is routed through the global app-shell overlay (reportAppShellError)
 // with a working guarded retry, the inbox empty state is preserved (additive,
