@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BD-ERROR-01 Global Error / Offline — Render Gate</title>
+<style>
+  /* ── Cloud Design tokens ── */
+  :root {
+    --accent:       #FF6B35;
+    --accent-soft:  rgba(255,107,53,0.13);
+    --bg-0:         #0a0a0c;
+    --bg-1:         #131316;
+    --bg-2:         #1a1a1f;
+    --bg-3:         #222228;
+    --line:         rgba(255,255,255,0.07);
+    --line-strong:  rgba(255,255,255,0.12);
+    --text:         #f3f3f5;
+    --text-2:       #a8a8b3;
+    --text-3:       #6c6c78;
+    --success:      #4ADE80;
+    --warning:      #FBBF24;
+    --danger:       #F87171;
+    --info:         #60A5FA;
+    --radius-sm:    10px;
+    --radius-md:    14px;
+    --radius-lg:    20px;
+    --pad:          16px;
+
+    /* phone geometry + scale — frame-box keeps real layout width */
+    --phone-w:      390px;
+    --phone-h:      780px;
+    --scale:        0.60;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #08080a;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 40px 32px 64px;
+  }
+
+  /* ── Header ── */
+  .page-id {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
+  }
+  .page-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .page-sub   { font-size: 14px; color: var(--text-2); line-height: 1.55; max-width: 620px; }
+  .page-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .badge {
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+  }
+  .badge--p1     { background: rgba(248,113,113,0.14); color: var(--danger); }
+  .badge--layer  { background: rgba(96,165,250,0.12);  color: var(--info); }
+  .badge--both   { background: rgba(251,191,36,0.12);  color: var(--warning); }
+  .badge--dark   { background: var(--bg-2); color: var(--text-2); border: 1px solid var(--line-strong); }
+
+  .section-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-3);
+    margin: 40px 0 18px;
+  }
+
+  /* ── Comparison row of 5 phones ── */
+  .frames {
+    display: flex;
+    gap: 20px;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+  .frame {
+    display: flex;
+    flex-direction: column;
+    width: calc(var(--phone-w) * var(--scale));
+    flex: 0 0 auto;
+  }
+  .frame__num {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-3); margin-bottom: 4px;
+  }
+  .frame__name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .frame__desc { font-size: 11px; color: var(--text-2); line-height: 1.45; margin-bottom: 12px; min-height: 32px; }
+
+  /* frame-box has the REAL scaled layout footprint; inner is the 1:1 phone */
+  .frame-box {
+    width: calc(var(--phone-w) * var(--scale));
+    height: calc(var(--phone-h) * var(--scale));
+    overflow: hidden;
+    transform-origin: top left;
+    border-radius: calc(34px * var(--scale));
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.04),
+      0 22px 50px rgba(0,0,0,0.6),
+      0 4px 16px rgba(0,0,0,0.4);
+  }
+  .frame-inner {
+    width: var(--phone-w);
+    height: var(--phone-h);
+    transform: scale(var(--scale));
+    transform-origin: top left;
+  }
+
+  /* ── Phone shell ── */
+  .shell {
+    position: relative;
+    width: var(--phone-w);
+    height: var(--phone-h);
+    border-radius: 34px;
+    background:
+      radial-gradient(700px 350px at 50% -4%, rgba(255,107,53,0.06), transparent 60%),
+      var(--bg-0);
+    overflow: hidden;
+  }
+
+  /* ── Feed mock (visible under every overlay) ── */
+  .feed { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  .feed__statusbar {
+    height: 44px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; font-size: 13px; font-weight: 600; color: var(--text-2);
+  }
+  .feed__statusbar-dots { display: flex; gap: 4px; align-items: center; }
+  .feed__statusbar-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); }
+  .feed__topbar { padding: 8px 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+  .feed__title { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .feed__sub   { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .feed__avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--bg-2); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; color: var(--text-3);
+  }
+  .feed__scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 16px; display: flex; flex-direction: column; gap: 12px; scrollbar-width: none; }
+  .feed__scroll::-webkit-scrollbar { display: none; }
+  .post {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+  .post__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .post__pic  { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-3); flex-shrink: 0; }
+  .post__who  { font-size: 14px; font-weight: 600; }
+  .post__when { font-size: 12px; color: var(--text-3); }
+  .post__route { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .post__pin { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .post__pin--from { background: var(--success); }
+  .post__pin--to   { background: var(--accent); }
+  .post__line { font-size: 15px; font-weight: 600; }
+  .post__meta { display: flex; gap: 14px; font-size: 13px; color: var(--text-2); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .post__price { margin-left: auto; color: var(--accent); font-weight: 700; }
+  .feed__tabbar {
+    height: 72px; background: rgba(10,10,12,0.92);
+    border-top: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-around; padding: 0 12px 10px;
+  }
+  .feed__tab { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-3); font-size: 10px; }
+  .feed__tab svg { width: 24px; height: 24px; }
+  .feed__tab--active { color: var(--accent); }
+
+  /* ── Scrim (blocking states only) ── */
+  .scrim {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.58);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 40;
+  }
+
+  /* ── STATE 1 — Offline banner (top, non-blocking, red) ── */
+  .gx-offline {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: rgba(36,16,18,0.97);
+    border-bottom: 1px solid rgba(248,113,113,0.32);
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 18px calc(12px); padding-top: 14px;
+    z-index: 60;
+  }
+  .gx-offline__dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex-shrink: 0;
+    box-shadow: 0 0 0 0 rgba(248,113,113,0.5);
+    animation: pulse-dot 1.6s ease-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%   { box-shadow: 0 0 0 0 rgba(248,113,113,0.55); opacity: 1; }
+    70%  { box-shadow: 0 0 0 7px rgba(248,113,113,0);  opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0 rgba(248,113,113,0);    opacity: 1; }
+  }
+  .gx-offline__txt { flex: 1; min-width: 0; }
+  .gx-offline__title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .gx-offline__hint  { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+  .gx-offline__ic { width: 20px; height: 20px; color: var(--danger); flex-shrink: 0; }
+
+  /* ── STATE 2 / 3 — bottom sheet card (blocking) ── */
+  .gx-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--bg-1);
+    border-top-left-radius: 24px; border-top-right-radius: 24px;
+    border-top: 1px solid var(--line-strong);
+    padding: 20px 20px 28px;
+    z-index: 60;
+    box-shadow: 0 -12px 40px rgba(0,0,0,0.55);
+  }
+  .gx-sheet__grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 0 auto 16px; }
+  .gx-sheet__icon {
+    width: 52px; height: 52px; border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px;
+  }
+  .gx-sheet__icon--danger  { background: rgba(248,113,113,0.13); }
+  .gx-sheet__icon--warning { background: rgba(251,191,36,0.12); }
+  .gx-sheet__icon svg { width: 26px; height: 26px; }
+  .gx-sheet__title { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .gx-sheet__body  { font-size: 14px; color: var(--text-2); line-height: 1.5; margin-bottom: 14px; }
+  .gx-sheet__code {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 4px 10px; border-radius: 8px;
+    margin-bottom: 18px;
+  }
+  .gx-sheet__code--danger  { background: rgba(248,113,113,0.10); color: var(--danger); }
+  .gx-sheet__code--warning { background: rgba(251,191,36,0.10); color: var(--warning); }
+  .gx-sheet__actions { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; height: 48px; border: none; border-radius: var(--radius-md);
+    font-family: inherit; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    cursor: pointer;
+  }
+  .btn--primary { background: var(--accent); color: #1a0a04; }
+  .btn--ghost   { background: var(--bg-2); color: var(--text); border: 1px solid var(--line-strong); }
+  .btn svg { width: 17px; height: 17px; }
+
+  /* ── STATE 4 — Retrying banner (top, blue, non-blocking) ── */
+  .gx-retry {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: rgba(14,22,38,0.97);
+    border-bottom: 1px solid rgba(96,165,250,0.32);
+    display: flex; align-items: center; gap: 11px;
+    padding: 14px 18px 12px;
+    z-index: 60;
+  }
+  .gx-retry__spin {
+    width: 18px; height: 18px; flex-shrink: 0;
+    border: 2.4px solid rgba(96,165,250,0.25);
+    border-top-color: var(--info);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .gx-retry__txt   { flex: 1; }
+  .gx-retry__title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .gx-retry__hint  { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+
+  /* ── STATE 5 — Recovered toast (bottom, green, auto-dismiss feel) ── */
+  .gx-recovered {
+    position: absolute; left: 16px; right: 16px; bottom: 88px;
+    background: rgba(14,26,16,0.97);
+    border: 1px solid rgba(74,222,128,0.30);
+    border-radius: var(--radius-md);
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px;
+    z-index: 60;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    animation: toast-in 0.32s ease both;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .gx-recovered__ic { width: 20px; height: 20px; color: var(--success); flex-shrink: 0; }
+  .gx-recovered__txt { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+  .gx-recovered__bar {
+    position: absolute; left: 0; bottom: 0; height: 2px; width: 62%;
+    background: var(--success); border-bottom-left-radius: var(--radius-md);
+    opacity: 0.7;
+  }
+
+  /* ── States summary cards ── */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px;
+  }
+  .sum-card {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+  .sum-card__top { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .sum-card__chip {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .sum-card__chip--danger  { background: rgba(248,113,113,0.14); color: var(--danger); }
+  .sum-card__chip--warning { background: rgba(251,191,36,0.13); color: var(--warning); }
+  .sum-card__chip--info    { background: rgba(96,165,250,0.13); color: var(--info); }
+  .sum-card__chip--success { background: rgba(74,222,128,0.13); color: var(--success); }
+  .sum-card__name { font-size: 14px; font-weight: 700; }
+  .sum-card__kind { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+  .sum-card__list { list-style: none; display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+  .sum-card__list li { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; line-height: 1.4; }
+  .sum-card__list li::before { content: '·'; color: var(--text-3); }
+
+  /* ── Contract notes ── */
+  .contract {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 22px 24px;
+  }
+  .contract ul { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .contract li { display: flex; gap: 9px; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+  .contract li::before { content: '—'; color: var(--accent); flex-shrink: 0; }
+  .contract code {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    background: var(--bg-2); padding: 1px 6px; border-radius: 5px; color: var(--accent);
+  }
+  .contract b { color: var(--text); font-weight: 600; }
+
+  .footer {
+    margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--text-3);
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between;
+  }
+
+  /* ── Responsive: let frames wrap on narrow viewports ── */
+  @media (max-width: 1340px) {
+    .frames { flex-wrap: wrap; gap: 24px 20px; }
+  }
+
+  /* ── Print / A4 — smaller scale, no clipping ── */
+  @media print {
+    :root { --scale: 0.34; }
+    body { background: #fff; }
+    .page { max-width: none; padding: 16px; }
+    .frames { flex-wrap: nowrap; gap: 10px; }
+    .gx-offline__dot, .gx-retry__spin, .gx-recovered, .gx-recovered__bar { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ── -->
+  <div class="page-id">BD-ERROR-01 · Render Gate</div>
+  <h1 class="page-title">Global Error / Offline</h1>
+  <p class="page-sub">
+    App-level overlay system rendered above any active screen by the app shell. A sample Лента (Feed) screen stays
+    visible beneath each overlay to show this is a global transport layer — not a replacement screen. It never
+    suppresses a screen's own inline empty / loading / error states.
+  </p>
+  <div class="page-badges">
+    <span class="badge badge--p1">P1</span>
+    <span class="badge badge--layer">App-shell singleton</span>
+    <span class="badge badge--both">Both roles</span>
+    <span class="badge badge--dark">430px shell</span>
+    <span class="badge badge--dark">Dark · #FF6B35</span>
+  </div>
+
+  <!-- ── 5-state comparison ── -->
+  <div class="section-label">5 States · Comparison View</div>
+  <div class="frames">
+
+    <!-- STATE 1 — Offline banner -->
+    <div class="frame">
+      <div class="frame__num">State 1</div>
+      <div class="frame__name">Offline Banner</div>
+      <div class="frame__desc">Compact red top banner, pulsing dot. Non-blocking — feed stays scrollable.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <!-- overlay -->
+          <div class="gx-offline">
+            <svg class="gx-offline__ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/><path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/><path d="M5 12.5A10 10 0 0 1 9.14 10"/><circle cx="12" cy="20" r="1"/></svg>
+            <div class="gx-offline__txt">
+              <div class="gx-offline__title">Нет соединения</div>
+              <div class="gx-offline__hint">Проверьте интернет — данные обновятся автоматически</div>
+            </div>
+            <span class="gx-offline__dot"></span>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 2 — Server error -->
+    <div class="frame">
+      <div class="frame__num">State 2</div>
+      <div class="frame__name">Server Error</div>
+      <div class="frame__desc">Dimmed feed + bottom sheet. Traps interaction until Повторить or dismiss.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="scrim"></div>
+          <div class="gx-sheet">
+            <div class="gx-sheet__grip"></div>
+            <div class="gx-sheet__icon gx-sheet__icon--danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="gx-sheet__title">Что-то пошло не так</div>
+            <div class="gx-sheet__body">Не удалось загрузить данные. Попробуйте снова или напишите в поддержку.</div>
+            <div class="gx-sheet__code gx-sheet__code--danger">SERVER · 500</div>
+            <div class="gx-sheet__actions">
+              <button class="btn btn--primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Повторить</button>
+              <button class="btn btn--ghost">Поддержка</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 3 — Timeout -->
+    <div class="frame">
+      <div class="frame__num">State 3</div>
+      <div class="frame__name">Timeout</div>
+      <div class="frame__desc">Same blocking sheet, amber clock. Secondary action: Позже.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="scrim"></div>
+          <div class="gx-sheet">
+            <div class="gx-sheet__grip"></div>
+            <div class="gx-sheet__icon gx-sheet__icon--warning">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+            </div>
+            <div class="gx-sheet__title">Превышено время ожидания</div>
+            <div class="gx-sheet__body">Сервер слишком долго не отвечает. Проверьте соединение и попробуйте снова.</div>
+            <div class="gx-sheet__code gx-sheet__code--warning">TIMEOUT · 504</div>
+            <div class="gx-sheet__actions">
+              <button class="btn btn--primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Повторить</button>
+              <button class="btn btn--ghost">Позже</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 4 — Retrying -->
+    <div class="frame">
+      <div class="frame__num">State 4</div>
+      <div class="frame__name">Retrying</div>
+      <div class="frame__desc">Blue top banner, spinner. Non-blocking — auto-resolves to recovered or error.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="gx-retry">
+            <span class="gx-retry__spin"></span>
+            <div class="gx-retry__txt">
+              <div class="gx-retry__title">Переподключение…</div>
+              <div class="gx-retry__hint">Восстанавливаем соединение</div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 5 — Recovered -->
+    <div class="frame">
+      <div class="frame__num">State 5</div>
+      <div class="frame__name">Recovered</div>
+      <div class="frame__desc">Green bottom toast, ~3s auto-dismiss. No action required.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="gx-recovered">
+            <svg class="gx-recovered__ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
+            <div class="gx-recovered__txt">Соединение восстановлено</div>
+            <span class="gx-recovered__bar"></span>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+  </div><!-- /frames -->
+
+  <!-- ── States summary ── -->
+  <div class="section-label">States Summary</div>
+  <div class="summary">
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--danger">1</div><div><div class="sum-card__name">Offline Banner</div><div class="sum-card__kind">Top · non-blocking</div></div></div>
+      <ul class="sum-card__list"><li>Нет соединения</li><li>Pulsing red dot</li><li>Auto-recovers when online</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--danger">2</div><div><div class="sum-card__name">Server Error</div><div class="sum-card__kind">Bottom sheet · blocking</div></div></div>
+      <ul class="sum-card__list"><li>Что-то пошло не так</li><li>SERVER · 500</li><li>Повторить / Поддержка</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--warning">3</div><div><div class="sum-card__name">Timeout</div><div class="sum-card__kind">Bottom sheet · blocking</div></div></div>
+      <ul class="sum-card__list"><li>Превышено время ожидания</li><li>TIMEOUT · 504</li><li>Повторить / Позже</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--info">4</div><div><div class="sum-card__name">Retrying</div><div class="sum-card__kind">Top banner · non-blocking</div></div></div>
+      <ul class="sum-card__list"><li>Переподключение…</li><li>Spinner</li><li>Resolves → recovered / error</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--success">5</div><div><div class="sum-card__name">Recovered</div><div class="sum-card__kind">Bottom toast · auto</div></div></div>
+      <ul class="sum-card__list"><li>Соединение восстановлено</li><li>Auto-dismiss ~3s</li><li>No action required</li></ul>
+    </div>
+  </div>
+
+  <!-- ── Contract notes ── -->
+  <div class="section-label">Screen Contract Notes</div>
+  <div class="contract">
+    <ul>
+      <li><b>Singleton overlay</b> owned by the app shell — mounted above <code>#app</code> inside <code>#shell</code>, one instance for the whole app.</li>
+      <li>Driven by a <b>global connection / lastError store</b> — screens do not own these states; they read connection state from the shell.</li>
+      <li><b>Banners are non-blocking</b> — offline (state 1) and retrying (state 4) pin to the top and leave the screen interactive and scrollable.</li>
+      <li><b>Server error and timeout cards use a scrim</b> and trap interaction until <code>Повторить</code> or a dismiss action (Поддержка / Позже).</li>
+      <li><b>Recovered toast auto-dismisses</b> (~3s) and requires no action.</li>
+      <li><code>Повторить</code> <b>re-runs the last failed action</b> — it does not reload the whole app or reset navigation.</li>
+      <li><b>Never mutates ride / order state</b> — this layer is read-only with respect to trips, orders, and payments.</li>
+      <li><b>Must not suppress a screen's own inline empty / loading / error states</b> — those remain per-screen; this gate is additive.</li>
+      <li><b>Transport-level failures only</b> — offline, timeout, 5xx. Not validation errors, not business rejects, not Mapbox tile errors.</li>
+      <li>Connection state is <b>mock / <code>navigator.onLine</code></b> in implementation — no backend, no real push, no socket.</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    <span>BD-ERROR-01 · Global Error / Offline — Render Gate</span>
+    <span>Static vanilla HTML/CSS · Cloud Design · Dark · #FF6B35</span>
+    <span>Design artifact — no runtime route, no app wiring</span>
+  </div>
+
+</div>
+</body>
+</html>
