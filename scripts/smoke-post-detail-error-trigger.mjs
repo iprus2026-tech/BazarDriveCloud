@@ -1,15 +1,13 @@
-// BD-ERROR-01C-D — static regression smoke for the post-detail flow trigger.
+// BD-ERROR-01C-D / BD-ERROR-02A-c — static regression smoke for the post-detail flow trigger.
 //
 // post_detail.js routes a post-detail data-load failure through the global
-// app-shell overlay via the BD-ERROR-01C-A adapter (reportAppShellError),
-// mirroring the feed (01C-B) and inbox (01C-C) triggers. This is a defensive
-// wire: listFeedPosts() does not reject today, so the catch is dormant — but the
-// wiring must stay in place so a future data-layer/backend failure surfaces the
-// global error instead of silently rendering the "not found" state. The screen's
-// own missing/empty state must be preserved (the global overlay is additive, not
-// a replacement). A refactor could drop the try/catch, swallow the error without
-// reporting, replace the missing state, or re-route the global error — and
-// `node scripts/check.mjs` would still pass.
+// app-shell overlay via the shared data_layer.loadResource adapter (the per-screen
+// loadDetailPosts wrapper was consolidated into data_layer.js in 02A). This smoke
+// asserts the DELEGATION — the renderDetail load goes through
+// loadResource(listFeedPosts, …) and post_detail never reads listFeedPosts()
+// outside that wrapper; the screen's own missing state is preserved. The
+// guarded-retry CONTRACT (retrying / onlyIfState dismiss / server_error / []
+// fallback) is pinned once in scripts/smoke-data-layer.mjs.
 //
 // This script is intentionally STATIC: it reads source and asserts the
 // contract holds. No browser, no DOM, no network.
@@ -45,40 +43,28 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── A. adapter import (report + dismiss) ─────────────────────
-expect('post_detail.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
-  /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(detail));
+// ── A. delegation to the shared adapter ──────────────────────
+expect('post_detail.js imports loadResource from ../data_layer.js',
+  /import\s*\{\s*loadResource\s*\}\s*from\s*'\.\.\/data_layer\.js'/.test(detail));
+expect('post_detail.js no longer defines its own loadDetailPosts wrapper (consolidated in 02A)',
+  !functionBody(detail, 'loadDetailPosts'));
+expect('post_detail.js no longer imports the overlay adapter directly (it goes through data_layer)',
+  !/from\s*'\.\.\/app_error_triggers\.js'/.test(detail));
 
-// ── B. the data load is wrapped in try/catch that reports ────
-const loadBody = functionBody(detail, 'loadDetailPosts');
-expect('post_detail.js has a loadDetailPosts() wrapper', !!loadBody);
-expect('loadDetailPosts() awaits listFeedPosts() inside a try',
-  !!loadBody && /try\s*\{[\s\S]*?await\s+listFeedPosts\(\)/.test(loadBody));
-expect('loadDetailPosts() catch reports server_error to the global overlay',
-  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(loadBody));
-expect('loadDetailPosts() passes an onRetry option to the overlay',
-  !!loadBody && /reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}/.test(loadBody));
-expect('loadDetailPosts() falls back to [] (preserves the missing/empty state)',
-  !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
+// ── B. the load goes through loadResource(listFeedPosts, …) ──
+expect('initial render runs via renderDetail(false)',
+  /await\s+renderDetail\(\s*false\s*\)/.test(detail));
+expect('renderDetail(isRetry) loads via loadResource(listFeedPosts, { onRetry: onDetailRetry, isRetry })',
+  /async\s+function\s+renderDetail\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onDetailRetry\s*,\s*isRetry\s*\}\s*\)/.test(detail));
+expect('post_detail.js reads only through the adapter (no direct listFeedPosts() call)',
+  (detail.match(/await\s+listFeedPosts\(\)/g) || []).length === 0,
+  'listFeedPosts is passed by reference to loadResource, never called directly in post_detail.js');
 
-// ── B2. retry shows progress and dismisses only on success ───
-expect('loadDetailPosts() shows a non-blocking retrying state while retrying',
-  !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
-expect('loadDetailPosts() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
-  !!loadBody && /await\s+listFeedPosts\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
+// ── B2. retry closure re-runs the load, does not pre-dismiss ──
 expect('onDetailRetry re-runs the load as a retry (renderDetail(true))',
   /onDetailRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?renderDetail\(\s*true\s*\)/.test(detail));
 expect('onDetailRetry does NOT pre-emptively dismiss before the reload result is known',
   !/onDetailRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(detail));
-
-// ── C. both load sites go through the wrapper ────────────────
-expect('initial render runs via renderDetail(false)',
-  /await\s+renderDetail\(\s*false\s*\)/.test(detail));
-expect('renderDetail(isRetry) loads via loadDetailPosts(onDetailRetry, isRetry)',
-  /async\s+function\s+renderDetail\(\s*isRetry\s*\)[\s\S]{0,120}await\s+loadDetailPosts\(\s*onDetailRetry\s*,\s*isRetry\s*\)/.test(detail));
-expect('post_detail.js no longer calls listFeedPosts() directly outside the wrapper',
-  (detail.match(/await\s+listFeedPosts\(\)/g) || []).length === 1,
-  'direct await count should be 1 (only inside loadDetailPosts)');
 
 // ── D. per-screen missing state preserved (additive, not replaced) ─
 expect("post_detail.js still renders its own missing/empty state",
@@ -93,10 +79,10 @@ expect('app.js does NOT register an /error route (any quote style)',
 // ── F. sw precache + version bump ────────────────────────────
 expect('sw.js still precaches ./src/screens/post_detail.js',
   /['"]\.\/src\/screens\/post_detail\.js['"]/.test(sw));
-expect('sw.js still precaches the adapter ./src/app_error_triggers.js',
-  /['"]\.\/src\/app_error_triggers\.js['"]/.test(sw));
-expect('sw.js VERSION bumped to v129+',
-  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 129);
+expect('sw.js precaches the shared adapter ./src/data_layer.js',
+  /['"]\.\/src\/data_layer\.js['"]/.test(sw));
+expect('sw.js VERSION bumped to v135+',
+  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 135);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
