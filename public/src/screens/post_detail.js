@@ -1,4 +1,5 @@
 import { listFeedPosts } from '../mock_api.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { user } from '../state.js';
@@ -346,19 +347,58 @@ function renderPost(root, post) {
   }
 }
 
+// BD-ERROR-01C-D — per-flow trigger. Route a post-detail data-load failure
+// through the global app-shell overlay (BD-ERROR-01A/01C-A adapter), mirroring
+// the feed (01C-B) and inbox (01C-C) triggers. This is a defensive wire: today
+// listFeedPosts() resolves from mock/localStorage and does not reject, so the
+// catch is dormant — but a future data-layer/backend failure surfaces the global
+// error instead of silently rendering the "not found" state. The per-screen
+// missing/empty state is preserved via the [] fallback (the global overlay is
+// additive, never a replacement for the screen's own UI). A genuine not-found
+// (load succeeds, id absent) reports no error — only renderMissing.
+//
+// onRetry powers the overlay's «Повторить» button. On retry the overlay shows a
+// non-blocking 'retrying' progress state and is only dismissed AFTER a
+// successful reload — a slow/hanging/late-failing refetch keeps an error or
+// progress affordance on screen the whole time (a repeat failure re-surfaces
+// server_error). The overlay deliberately does not auto-dismiss when onRetry is
+// provided, so this wrapper owns the retrying → recovered/error transition.
+async function loadDetailPosts(onRetry, isRetry) {
+  if (isRetry) reportAppShellError('retrying');
+  try {
+    const fresh = await listFeedPosts();
+    // Only clear the overlay if it is still the retrying state we raised — a
+    // newer state (e.g. an offline banner from the connection watcher mid-retry)
+    // must not be clobbered by a fast cache-served success.
+    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
+    return fresh;
+  } catch (err) {
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    return [];
+  }
+}
+
 export default async function postDetail() {
   const root = document.createElement('section');
   root.className = 'screen screen--post-detail';
 
   const id = getRouteParam('id');
-  const posts = await listFeedPosts();
-  const post = id ? posts.find((p) => String(p.id) === String(id)) : null;
 
-  if (!post) {
-    renderMissing(root);
-    return root;
+  // Retry re-runs the load and re-renders into the same root (renderMissing /
+  // renderPost both replace root.innerHTML). renderDetail is hoisted, so
+  // referencing it from onDetailRetry before its declaration is safe — the arrow
+  // only runs when the user taps «Повторить».
+  const onDetailRetry = () => { renderDetail(true); };
+  async function renderDetail(isRetry) {
+    const posts = await loadDetailPosts(onDetailRetry, isRetry);
+    const post = id ? posts.find((p) => String(p.id) === String(id)) : null;
+    if (!post) {
+      renderMissing(root);
+      return;
+    }
+    renderPost(root, post);
   }
 
-  renderPost(root, post);
+  await renderDetail(false);
   return root;
 }
