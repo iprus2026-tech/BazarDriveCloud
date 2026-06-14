@@ -1,5 +1,5 @@
 import { listFeedPosts } from '../mock_api.js';
-import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
+import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go, setPendingAction } from '../router.js';
 import { user } from '../state.js';
@@ -347,36 +347,15 @@ function renderPost(root, post) {
   }
 }
 
-// BD-ERROR-01C-D — per-flow trigger. Route a post-detail data-load failure
-// through the global app-shell overlay (BD-ERROR-01A/01C-A adapter), mirroring
-// the feed (01C-B) and inbox (01C-C) triggers. This is a defensive wire: today
-// listFeedPosts() resolves from mock/localStorage and does not reject, so the
-// catch is dormant — but a future data-layer/backend failure surfaces the global
-// error instead of silently rendering the "not found" state. The per-screen
-// missing/empty state is preserved via the [] fallback (the global overlay is
-// additive, never a replacement for the screen's own UI). A genuine not-found
-// (load succeeds, id absent) reports no error — only renderMissing.
-//
-// onRetry powers the overlay's «Повторить» button. On retry the overlay shows a
-// non-blocking 'retrying' progress state and is only dismissed AFTER a
-// successful reload — a slow/hanging/late-failing refetch keeps an error or
-// progress affordance on screen the whole time (a repeat failure re-surfaces
-// server_error). The overlay deliberately does not auto-dismiss when onRetry is
-// provided, so this wrapper owns the retrying → recovered/error transition.
-async function loadDetailPosts(onRetry, isRetry) {
-  if (isRetry) reportAppShellError('retrying');
-  try {
-    const fresh = await listFeedPosts();
-    // Only clear the overlay if it is still the retrying state we raised — a
-    // newer state (e.g. an offline banner from the connection watcher mid-retry)
-    // must not be clobbered by a fast cache-served success.
-    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
-    return fresh;
-  } catch (err) {
-    reportAppShellError('server_error', onRetry ? { onRetry } : {});
-    return [];
-  }
-}
+// BD-ERROR-01C-D / BD-ERROR-02A — route a post-detail data-load failure through
+// the global app-shell overlay via the shared data_layer.loadResource adapter
+// (the per-screen wrapper was consolidated in 02A). Defensive wire: today
+// listFeedPosts() resolves from mock/localStorage and does not reject. loadResource
+// shows 'retrying' on retry, dismisses only on a successful reload (guarded by
+// onlyIfState), reports server_error with the guarded onRetry on failure, and
+// falls back to [] so the screen's own missing/empty state is preserved (the
+// overlay is additive). A genuine not-found (load OK, id absent) reports no error
+// — only renderMissing.
 
 export default async function postDetail() {
   const root = document.createElement('section');
@@ -390,7 +369,7 @@ export default async function postDetail() {
   // only runs when the user taps «Повторить».
   const onDetailRetry = () => { renderDetail(true); };
   async function renderDetail(isRetry) {
-    const posts = await loadDetailPosts(onDetailRetry, isRetry);
+    const posts = await loadResource(listFeedPosts, { onRetry: onDetailRetry, isRetry });
     const post = id ? posts.find((p) => String(p.id) === String(id)) : null;
     if (!post) {
       renderMissing(root);
