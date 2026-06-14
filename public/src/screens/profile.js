@@ -2716,7 +2716,7 @@ function payoutsEmptyPaneHtml() {
     </div>`;
 }
 
-function payoutsPaneHtml(previewEmpty = false, onRetry) {
+function payoutsPaneHtml(previewEmpty = false) {
   if (previewEmpty) return payoutsEmptyPaneHtml();
   const s          = MOCK_PAYOUT_SUMMARY;
   const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
@@ -2825,7 +2825,7 @@ function payoutsPaneHtml(previewEmpty = false, onRetry) {
         <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
       </div>
     </div>
-    ${driverReceiptPayoutSectionHtml(onRetry)}
+    <div id="pf2-po-trips-mount"></div>
     ${taxCards}
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">Способы вывода</span>
@@ -3568,22 +3568,25 @@ function renderDriver(root, u) {
   const garageForce = getHashQuery().get('garage') || '';
   const garageVehicles = buildGarageVehicles(u, { force: garageForce });
 
-  // BD-ERROR-01C-G — guarded retry for the driver-receipts load in the payouts
-  // pane. Sync-minimal (the pane is a synchronous HTML string): «Повторить»
-  // dismisses our own server_error (onlyIfState, so a mid-flight offline banner
-  // is not clobbered) and re-renders the pane in place — a repeat failure
-  // re-reports server_error in the same tick, a success leaves it cleared.
-  // refreshPayoutsPane is hoisted; onReceiptsRetry must be initialised before the
-  // pane is first rendered below. (Async retrying/dismiss is deferred to
-  // BD-ERROR-02A.)
+  // BD-ERROR-01C-G — the driver-receipts load is LAZY: it runs only when the
+  // payouts pane is shown (see the tab handler below), not eagerly at mount.
+  // This keeps an off-screen receipts failure from popping a global error while
+  // the user is on another tab, and the deferral lets the load run after
+  // window.BD.GlobalError is initialised (app.js runs start() before
+  // initGlobalErrorOverlay()). fillReceipts injects ONLY into the persistent
+  // #pf2-po-trips-mount (not a full pane swap), so the other payouts controls
+  // keep their handlers; the receipt-row click is delegated on the mount so it
+  // survives re-injection. «Повторить» (onReceiptsRetry) dismisses our own
+  // server_error guarded by onlyIfState and re-fills. (Async retrying/dismiss is
+  // deferred to BD-ERROR-02A.)
   const onReceiptsRetry = () => {
     dismissAppShellError({ onlyIfState: 'server_error' });
-    refreshPayoutsPane();
+    fillReceipts();
   };
-  function refreshPayoutsPane() {
-    const pane = root.querySelector('#pf2-pane-payouts');
-    if (!pane) return;
-    pane.innerHTML = payoutsPaneHtml(payoutsEmpty, onReceiptsRetry);
+  function fillReceipts() {
+    const mount = root.querySelector('#pf2-po-trips-mount');
+    if (!mount) return;
+    mount.innerHTML = driverReceiptPayoutSectionHtml(onReceiptsRetry);
   }
 
   root.innerHTML = `
@@ -3607,7 +3610,7 @@ function renderDriver(root, u) {
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty, onReceiptsRetry)}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty)}</div>
       <div class="pf2-pane" id="pf2-pane-security">${securityPaneHtml()}</div>
     </div>`;
 
@@ -3627,6 +3630,12 @@ function renderDriver(root, u) {
       tab.setAttribute('aria-selected', 'true');
       const pane = root.querySelector(`#pf2-pane-${tab.dataset.pane}`);
       if (pane) pane.classList.add('pf2-pane--active');
+      // BD-ERROR-01C-G — load receipts only when the payouts pane is shown, and
+      // defer past the synchronous mount/programmatic ?pane=payouts click so
+      // window.BD.GlobalError already exists (app.js runs start() before
+      // initGlobalErrorOverlay()). queueMicrotask runs after the current task's
+      // overlay init, flash-free.
+      if (tab.dataset.pane === 'payouts') queueMicrotask(fillReceipts);
     });
   });
 
@@ -4001,7 +4010,9 @@ function renderDriver(root, u) {
   });
 
   // BD-RIDE-HISTORY-D-01 — a completed-ride payout row opens its trip receipt.
-  root.querySelector('#pf2-po-trips-block')?.addEventListener('click', (e) => {
+  // BD-ERROR-01C-G — delegated on the persistent #pf2-po-trips-mount (not the
+  // re-injected #pf2-po-trips-block) so the handler survives a lazy fill / retry.
+  root.querySelector('#pf2-po-trips-mount')?.addEventListener('click', (e) => {
     const row = e.target.closest('[data-receipt-trip]');
     if (!row) return;
     const tripId = row.dataset.receiptTrip;
