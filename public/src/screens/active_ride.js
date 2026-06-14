@@ -12,6 +12,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { user } from '../state.js';
 import { resolveRole } from '../smoke_role.js';
 import {
@@ -381,7 +382,12 @@ export default function activeRide() {
   }
   ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
+  // BD-RIDE-D-ERROR-01B — per-screen-instance token so the status-sync error
+  // sheet this screen raises can only be cleared by this screen (never clobbers
+  // another screen's server_error on the singleton overlay).
+  const statusSyncToken = {};
   function persistDriverRideStatus(nextStatus, patch = {}) {
+   try {
     // BD-ACTIVE-RIDE-TERM-01 P2 follow-up — when the driver is on a
     // status-simulated demo (loadCanonicalActiveRide returned null
     // and we built `ride` via createDemoActiveRide / handoff
@@ -411,7 +417,24 @@ export default function activeRide() {
     if (nextRide && nextRide.status === nextStatus) {
       syncCanonicalOrderStatus(nextRide, nextStatus);
     }
+    // BD-RIDE-D-ERROR-01B — a successful (re)sync clears our own status-sync
+    // error sheet (guarded by onlyIfState + token so it never clobbers another
+    // screen's server_error). A no-op on a normal first-attempt success.
+    dismissAppShellError({ onlyIfState: 'server_error', token: statusSyncToken });
     return nextRide || ride;
+   } catch (err) {
+    // BD-RIDE-D-ERROR-01B — retry status sync. Defensive/dormant: the persist +
+    // canonical-order sync are sync localStorage today and do not reject, but a
+    // future ride-events backend could fail to sync the status change. Surface a
+    // global server_error with a guarded retry that repeats THIS same status
+    // change; keep the current ride until it succeeds. The retry re-renders via
+    // the driver lifecycle's own renderSheet — driver renderers are unchanged.
+    reportAppShellError('server_error', {
+      onRetry: () => { ride = persistDriverRideStatus(nextStatus, patch); renderSheet(); },
+      token: statusSyncToken,
+    });
+    return ride;
+   }
   }
   // BD-RIDE-D-10 — Driver-initiated cancel and no-show persist the same
   // `cancel: { by, reason }` metadata shape passenger cancel already uses

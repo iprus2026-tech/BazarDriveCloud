@@ -730,6 +730,20 @@ if (exists(tripReceiptErrorTriggerSmoke)) {
   }
 }
 
+// BD-RIDE-D-ERROR-01B — driver status-sync guard. Asserts active_ride.js wraps the
+// driver status-change mutation boundary (persistDriverRideStatus) so a failed
+// status sync reports server_error with a guarded retry that repeats the same
+// change (token-scoped, success-dismissed), with the driver renderers unchanged.
+const rideDErrorStatusSyncSmoke = path.join(root, 'scripts', 'smoke-ride-d-error-status-sync.mjs');
+if (exists(rideDErrorStatusSyncSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideDErrorStatusSyncSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-d-error-status-sync.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-01C-G — profile driver-receipts flow trigger. Asserts the payouts
 // pane's listDriverReceipts() load reports server_error through the global
 // overlay adapter on failure (sync-minimal variant), the retry dismisses our own
