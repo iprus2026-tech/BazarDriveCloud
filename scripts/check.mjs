@@ -670,6 +670,21 @@ if (exists(postDetailErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-E — respond flow trigger. Asserts respond.js routes its
+// post-lookup load failure through the global overlay adapter, the screen's own
+// missing state is preserved (additive, not replacement), the load+render
+// closure runs both load sites through the wrapper, and no /error route is
+// introduced.
+const respondErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-respond-error-trigger.mjs');
+if (exists(respondErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [respondErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-respond-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
