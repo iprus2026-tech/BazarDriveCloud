@@ -2,7 +2,7 @@ import { user } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listFeedPosts } from '../mock_api.js';
-import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
+import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
 
 const RESPOND_KEY    = 'bazardrive.respond.v1';
@@ -726,28 +726,15 @@ function renderPassengerRide(root, post) {
   }
 }
 
-// BD-ERROR-01C-E — route the post lookup load through the global overlay
-// (continuation of feed 01C-B, inbox 01C-C, post-detail 01C-D). respond is a
-// single-shot render screen, so the load+resolve+render runs inside a
-// re-invokable renderRespond(isRetry) closure that the retry callback re-runs
-// (every render variant replaces root.innerHTML). On failure it reports
-// server_error with a guarded retry and falls back to [] — the screen's own
-// missing state is preserved (the overlay is additive). A genuine not-found
-// (load OK, postId absent) reports no error. On retry the overlay shows a
-// non-blocking 'retrying' state, dismissed only after a successful reload and
-// guarded by onlyIfState so a mid-retry offline banner is not clobbered.
-// Defensive/dormant wire — mock listFeedPosts() does not reject today.
-async function loadRespondPosts(onRetry, isRetry) {
-  if (isRetry) reportAppShellError('retrying');
-  try {
-    const fresh = await listFeedPosts();
-    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
-    return fresh;
-  } catch (err) {
-    reportAppShellError('server_error', onRetry ? { onRetry } : {});
-    return [];
-  }
-}
+// BD-ERROR-01C-E / BD-ERROR-02A — route the post-lookup load through the global
+// overlay via the shared data_layer.loadResource adapter (the per-screen wrapper
+// was consolidated in 02A). respond is a single-shot render screen, so the
+// load+resolve+render runs inside a re-invokable renderRespond(isRetry) closure
+// that the retry callback re-runs (every render variant replaces root.innerHTML).
+// loadResource reports server_error with a guarded retry and falls back to [] —
+// the screen's own missing state is preserved (the overlay is additive); a
+// genuine not-found (load OK, postId absent) reports no error. Defensive/dormant
+// — mock listFeedPosts() does not reject today.
 
 export default async function respond() {
   const root = document.createElement('section');
@@ -765,7 +752,7 @@ export default async function respond() {
   // safe — the arrow only runs when the user taps «Повторить».
   const onRespondRetry = () => { renderRespond(true); };
   async function renderRespond(isRetry) {
-    const posts = await loadRespondPosts(onRespondRetry, isRetry);
+    const posts = await loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry });
     const post = posts.find((p) => String(p.id) === String(postId));
 
     if (!post) {
