@@ -685,6 +685,22 @@ if (exists(respondErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-F — driver-map flow trigger. Asserts driver_map.js routes its
+// nearby-orders load through the global overlay adapter (awaited so the wrapper
+// holds when the read becomes a real backend call), all three reads go through
+// loadNearbyOrders, the screen's own empty state is preserved (additive, not
+// replacement), the load+render closure runs through the wrapper, and no /error
+// route is introduced.
+const driverMapErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-driver-map-error-trigger.mjs');
+if (exists(driverMapErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [driverMapErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-driver-map-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

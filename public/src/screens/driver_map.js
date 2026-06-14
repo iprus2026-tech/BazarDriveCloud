@@ -17,6 +17,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders, createRideOrder } from '../mock_api.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { user, isDriverLineReady } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
@@ -466,7 +467,29 @@ function renderPassengerGuard() {
   return root;
 }
 
-export default function driverMapScreen() {
+// BD-ERROR-01C-F — route the nearby-orders load through the global overlay
+// (continuation of feed 01C-B, inbox 01C-C, post-detail 01C-D, respond 01C-E).
+// The load is awaited so the same wrapper holds when listNearbyOrders() becomes
+// a real (async, rejectable) backend call — today it resolves from the mock
+// store and does not reject, so the catch is dormant/defensive. On failure it
+// reports server_error with a guarded retry and falls back to [] — the screen's
+// own empty state (buildEmptyCard) is preserved (the overlay is additive). On
+// retry the overlay shows a non-blocking 'retrying' state, dismissed only after
+// a successful reload and guarded by onlyIfState so a mid-retry offline banner
+// is not clobbered.
+async function loadNearbyOrders(onRetry, isRetry) {
+  if (isRetry) reportAppShellError('retrying');
+  try {
+    const live = await listNearbyOrders();
+    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
+    return live;
+  } catch (err) {
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    return [];
+  }
+}
+
+export default async function driverMapScreen() {
   // BD-ROLE-01 — only role=driver sees the working DriverMap. Any other
   // role (passenger, guest, null) gets a safe Cloud fallback so the
   // passenger flow can never leak into driver-side actions like
@@ -496,10 +519,22 @@ export default function driverMapScreen() {
   // render LOCKED, and "Завершить готовность" routes to /profile. No accept
   // wiring is attached in this branch, so an order can't be taken from here.
   const u = user.get();
-  if (!isDriverLineReady(u)) {
+
+  // BD-ERROR-01C-F — the readiness gate's locked-order decoration is also a
+  // nearby-orders read, so it carries the same guarded retry as the working
+  // list: a failed load reports server_error with onReadinessRetry, and tapping
+  // «Повторить» re-renders the gate (without a retry callback the overlay button
+  // would just dismiss — app_error_overlay.js). renderReadinessGate is hoisted;
+  // the const onReadinessRetry must be initialised before the first gate render.
+  const onReadinessRetry = () => { renderReadinessGate(true); };
+  async function renderReadinessGate(isRetry) {
     root.dataset.state = STATE.NOT_READY;
     stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-    sheetSlot.replaceChildren(buildReadinessGate(u, listNearbyOrders()));
+    sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadNearbyOrders(onReadinessRetry, isRetry)));
+  }
+
+  if (!isDriverLineReady(u)) {
+    await renderReadinessGate(false);
 
     root.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action]');
@@ -517,8 +552,13 @@ export default function driverMapScreen() {
     return root;
   }
 
-  function renderList() {
-    const live = listNearbyOrders();
+  // Retry re-runs the load and re-renders into the same root (renderList
+  // replaces stage + sheetSlot). renderList is hoisted, so referencing it from
+  // onDriverMapRetry before its declaration is safe — the arrow only runs when
+  // the user taps «Повторить».
+  const onDriverMapRetry = () => { renderList(true); };
+  async function renderList(isRetry) {
+    const live = await loadNearbyOrders(onDriverMapRetry, isRetry);
     const hasLive = live.length > 0;
 
     stage.replaceChildren(buildMapPlaceholder(live.length, {
@@ -534,7 +574,7 @@ export default function driverMapScreen() {
     root.dataset.state = STATE.ACCEPTED;
   }
 
-  root.addEventListener('click', (e) => {
+  root.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.disabled) return;
     const action = btn.dataset.action;
@@ -546,9 +586,7 @@ export default function driverMapScreen() {
       // and bail WITHOUT calling acceptCanonicalRideOrder — the order must not
       // be mutated by a no-longer-ready driver.
       if (!isDriverLineReady(user.get())) {
-        root.dataset.state = STATE.NOT_READY;
-        stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-        sheetSlot.replaceChildren(buildReadinessGate(user.get(), listNearbyOrders()));
+        await renderReadinessGate(false);
         return;
       }
       const id = btn.dataset.orderId;
@@ -611,6 +649,6 @@ export default function driverMapScreen() {
     }
   });
 
-  renderList();
+  await renderList(false);
   return root;
 }
