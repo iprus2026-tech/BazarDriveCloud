@@ -1005,6 +1005,21 @@ Runtime route exists: `register('/order', orderDetail)` plus dynamic `/order/<id
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
 | Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. |
 
+### BD-RIDE-D-ERROR-01 - Driver active-ride error states
+
+**Status: Partial — `retry status sync` wired (01B); the dedicated in-screen error UI is Cloud Design render-needed / not implemented.** Error/offline handling for the live driver ride. Distinct from BD-ERROR-01A (the app-shell overlay) and from BD-RIDE-D-NOSHOW-01 (the terminal no-show flow). No own route — these states layer onto `/active-ride?role=driver`.
+
+| Field | Contract |
+|---|---|
+| Route | `/active-ride?role=driver` (in-screen states; no own route) |
+| File | `public/src/screens/active_ride.js` (+ `public/src/app_error_triggers.js` for the status-sync guard) |
+| Storage | `bazardrive.active_ride.v1` (status persisted via `ride_state.js` → `mock_api.updateTripStatus`) |
+| Data source | mock / localStorage today; a real ride-events backend is out of scope |
+| Main states (4) | 1. **offline while on ride** — already surfaced by the **global app-shell offline overlay** (BD-ERROR-01B connection watcher on `navigator.onLine`); **no in-screen UI is added** for it here. 2. **GPS unavailable** — **out of scope until a Mapbox/geolocation slice** (no real geolocation is wired; not mocked). 3. **retry status sync** — a driver status-change mutation that fails to sync routes through the global `server_error` overlay with a guarded retry that re-runs the same status change (implemented in **BD-RIDE-D-ERROR-01B**; defensive/dormant — `updateTripStatus` is sync localStorage and does not reject today). 4. **support fallback** — a "contact support" escalation from an error state; **described only — Cloud Design render-needed / not implemented**. |
+| Actions | retry status sync: «Повторить» on the overlay re-attempts the same status change. (offline/GPS/support have no new in-screen affordances in this slice.) |
+| Acceptance | (a) No new in-screen error UI is invented without a Cloud Design render frame. (b) `offline while on ride` stays owned by the global offline overlay — not re-implemented in-screen. (c) `GPS unavailable` remains out of scope pending a Mapbox/geolocation slice. (d) `support fallback` is contract-only / render-pending. (e) The only runtime change is the **status-sync guard** (01B): a status mutation failure reports `server_error` with a retry that repeats the action; driver renderers, the passenger flow, and `ride_state.js` statuses are unchanged. (f) Guarded by a smoke on the failure/retry path. |
+| Out of scope | Real Mapbox live tracking; backend ride-events API; real GPS/geolocation; any new bespoke in-screen error UI without a Cloud Design frame; BD-RIDE-D-NOSHOW-01 (separate). |
+
 ### BD-RIDE-D-SHEETS-01 - Driver cancel + problem sheets
 
 | Field | Contract |

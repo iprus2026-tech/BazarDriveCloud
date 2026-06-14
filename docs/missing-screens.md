@@ -147,18 +147,23 @@ Scope:
 ## P1 — BD-RIDE-D error states
 
 Driver active ride is marked partial because error/offline states are missing.
+Contract: **BD-RIDE-D-ERROR-01** in [`screen-contracts.md`](screen-contracts.md#bd-ride-d-error-01---driver-active-ride-error-states). Split into a docs slice (**01A**, that contract) and a runtime slice (**01B**, the status-sync guard only).
 
-Required additions:
+The four states, by disposition:
 
-- offline while on ride
-- GPS unavailable
-- retry status sync
-- support fallback
+- **offline while on ride** — already covered by the global app-shell offline overlay (BD-ERROR-01B). No in-screen UI added.
+- **GPS unavailable** — out of scope until a Mapbox/geolocation slice (no real geolocation wired).
+- **retry status sync** — the only runtime slice (**01B**): a driver status-change mutation that fails to sync routes through the global `server_error` overlay with a guarded retry; defensive/dormant.
+- **support fallback** — contract-only / **render-pending** (Cloud Design render-needed; not implemented).
+
+A dedicated **in-screen** driver error UI (cards/states beyond reusing the global overlay) is **Cloud Design render-needed / not implemented** — do not invent bespoke in-screen error UI without a render frame.
 
 Out of scope:
 
 - real Mapbox live tracking
 - backend ride-events API
+- real GPS / geolocation
+- new in-screen error UI without a Cloud Design frame
 
 ## P2 — BD-SETTINGS-01 Settings
 
