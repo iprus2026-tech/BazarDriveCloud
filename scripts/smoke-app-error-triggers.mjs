@@ -35,6 +35,11 @@ expect('dismissAppShellError lazily resolves window.BD.GlobalError and calls hid
   /export\s+function\s+dismissAppShellError[\s\S]*?window\.BD[\s\S]*?\.hide\(\)/.test(triggers));
 expect('dismissAppShellError honours options.onlyIfState (no clobbering a newer state)',
   /options\.onlyIfState/.test(triggers) && /bd\.current\(\)/.test(triggers) && /current\s*!==\s*options\.onlyIfState[\s\S]{0,20}return/.test(triggers));
+// BD-ERROR-01C-H — token guard: dismiss only when the overlay's current state
+// was raised by this same token, so a stale/deferred load cannot clear a newer
+// load's same-kind state.
+expect('dismissAppShellError honours options.token (only the owner may dismiss)',
+  /'token'\s+in\s+options[\s\S]{0,80}bd\.token\(\)\s*!==\s*options\.token[\s\S]{0,20}return/.test(triggers));
 
 // ── B. kinds whitelist + unknown-kind no-op (validated FIRST) ─
 expect('KINDS whitelist defined', /const\s+KINDS\s*=\s*\[/.test(triggers));

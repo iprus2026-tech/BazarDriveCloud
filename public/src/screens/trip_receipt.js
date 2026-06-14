@@ -24,6 +24,7 @@
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { getReceipt } from '../mock_api.js';
+import { loadResource } from '../data_layer.js';
 
 const DEMO_RECEIPT_TRIP_ID = '48-321';
 const RECEIPT_SYNC_MS = 280;
@@ -165,9 +166,24 @@ function bindReceiptActions(root) {
   });
 }
 
-// Resolve the receipt and swap the skeleton for the settled document, the
-// missing fallback, or — for the render gate — a forced payment-mode preview.
-function renderResolved(content, tripId, forced) {
+// BD-ERROR-01C-H — resolve the receipt and swap the skeleton for the settled
+// document, the missing fallback, or — for the render gate — a forced
+// payment-mode preview. The real (non-forced) read routes through the shared
+// data_layer.loadResource adapter so a future backend failure surfaces the
+// global overlay with a guarded retry instead of silently showing the missing
+// state; fallback is `null` (getReceipt returns object|null, not a list) so a
+// load failure falls back to the screen's own missing state (additive overlay).
+// A genuine not-found (load OK, no receipt) reports no error — only the missing
+// document. The resolve runs off a setTimeout (after mount + overlay init), so
+// the overlay is always available. Forced cash/noncash/missing previews are
+// render-gate designer states and stay unwrapped.
+async function renderResolved(content, tripId, forced, onRetry, isRetry) {
+  // BD-ERROR-01C-H — this resolve is DEFERRED (setTimeout) and re-invokable on
+  // «Повторить». Bail if the receipt screen was navigated away from before it
+  // fires: a stale load that reports through loadResource would otherwise pop a
+  // server_error overlay over a different screen. content is detached from the
+  // document once the router swaps in the next view, so isConnected is the guard.
+  if (!content.isConnected) return;
   let receipt;
   if (forced === 'missing') {
     receipt = null;
@@ -178,7 +194,15 @@ function renderResolved(content, tripId, forced) {
     const base = getReceipt(tripId) || getReceipt(DEMO_RECEIPT_TRIP_ID);
     receipt = base ? { ...base, paymentMode: forced } : null;
   } else {
-    receipt = getReceipt(tripId);
+    // isActive gates the overlay INSIDE loadResource — a future-async getReceipt
+    // that rejects after the user has navigated away must not report
+    // server_error over the next screen (the report happens in the catch, before
+    // the post-await check below could run). The post-await check additionally
+    // skips painting a detached node.
+    receipt = await loadResource(() => getReceipt(tripId), {
+      onRetry, isRetry, fallback: null, isActive: () => content.isConnected,
+    });
+    if (!content.isConnected) return;
   }
   content.innerHTML = receipt ? receiptDocHtml(receipt) : receiptMissingHtml(tripId);
 }
@@ -202,8 +226,15 @@ export default function tripReceipt() {
   // ?state=loading holds the syncing skeleton for the render gate.
   if (forced === 'loading') return root;
 
+  // «Повторить» re-runs the resolve as a retry (isRetry → 'retrying' progress,
+  // dismiss on success). onReceiptRetry references itself only when tapped, by
+  // which time the const is initialised.
+  const onReceiptRetry = () => { renderResolved(content, tripId, forced, onReceiptRetry, true); };
+
   // Resolve on a short timer so the syncing skeleton (state F) paints first,
-  // mirroring an async receipt fetch. Mock only — no network.
-  setTimeout(() => renderResolved(content, tripId, forced), RECEIPT_SYNC_MS);
+  // mirroring an async receipt fetch. Mock only — no network. The setTimeout
+  // also guarantees the resolve (and any error report) runs after the app-shell
+  // overlay is initialised.
+  setTimeout(() => renderResolved(content, tripId, forced, onReceiptRetry, false), RECEIPT_SYNC_MS);
   return root;
 }

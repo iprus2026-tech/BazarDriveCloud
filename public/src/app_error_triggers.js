@@ -59,5 +59,12 @@ export function dismissAppShellError(options = {}) {
     const current = (typeof bd.current === 'function') ? bd.current() : null;
     if (current !== options.onlyIfState) return;
   }
+  // options.token: dismiss ONLY when the overlay's current state was raised by
+  // this same token. A stale/deferred load (e.g. a receipt read that resolves
+  // after the user navigated away) must not clear a newer load's state that has
+  // since replaced it — onlyIfState alone cannot tell two same-kind loads apart.
+  if ('token' in options && typeof bd.token === 'function') {
+    if (bd.token() !== options.token) return;
+  }
   bd.hide();
 }
