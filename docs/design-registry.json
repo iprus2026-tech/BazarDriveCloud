@@ -1,7 +1,20 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-05",
+  "updatedAt": "2026-06-14",
   "source": "Claude Design",
+  "classifications": {
+    "_legend": "BD-DESIGN-REGISTRY-01 — every screen sits on exactly one shelf. The shelf is the array it lives in plus its classification field.",
+    "render-gate": "Shipped screen backed by a real Cloud Design render gate. Lives in screens[]; classification 'render-gate'.",
+    "future-design": "Render gate exists but runtime is a stub / poorer than the design. Lives in screens[] with interaction 'design-render-only'; classification 'future-design'. Needs a runtime parity follow-up.",
+    "stub-foundation": "Reused non-routed foundation module (e.g. Mapbox stub). Lives in foundationModules[]; classification 'stub-foundation'.",
+    "contract-only": "Ships in runtime with a docs/screen-contracts.md contract but no Cloud Design render gate yet. Lives in runtimeOnly[]; classification 'contract-only'; renderStatus 'render-pending'.",
+    "runtime-only": "Ships in runtime with neither a render gate nor a contract yet. Lives in runtimeOnly[]; classification 'runtime-only'; renderStatus 'render-pending'. Currently none.",
+    "_rules": [
+      "runtime route AND not in this registry -> render in Cloud Design OR record in runtimeOnly[] as contract-only/runtime-only with renderStatus 'render-pending'.",
+      "Cloud Design richer than runtime -> open a parity / missing-states backlog item (docs/missing-screens.md).",
+      "present in both (render gate + runtime) -> smoke + docs drift-check only (node scripts/check.mjs)."
+    ]
+  },
   "renderGates": [
     {
       "id": "BD-RENDER-GATES-2026-06-03",
@@ -40,6 +53,7 @@
       "route": "/feed",
       "file": "public/src/screens/feed.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Feed"
     },
     {
@@ -48,6 +62,7 @@
       "route": "/profile",
       "file": "public/src/screens/profile.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Profile"
     },
     {
@@ -56,6 +71,7 @@
       "route": "/profile?role=driver",
       "file": "public/src/screens/profile.js",
       "renderGate": "BD-PROFILE-D-03-RENDER-GATE",
+      "classification": "render-gate",
       "section": "Profile",
       "role": "driver",
       "tabs": ["Обзор", "Такси·ИП", "Документы", "Выплаты", "Безопасность"],
@@ -79,6 +95,7 @@
       "route": "/map",
       "file": "public/src/screens/map.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Map Flow"
     },
     {
@@ -87,6 +104,7 @@
       "route": "/route-picker",
       "file": "public/src/screens/route_picker.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Map Flow"
     },
     {
@@ -95,6 +113,7 @@
       "route": "/route-preview",
       "file": "public/src/screens/route_preview.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Map Flow"
     },
     {
@@ -103,6 +122,7 @@
       "route": "/driver-map",
       "file": "public/src/screens/driver_map.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Map Flow"
     },
     {
@@ -111,6 +131,7 @@
       "route": "/order-map-draft",
       "file": "public/src/screens/order_map_draft.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Map Flow"
     },
     {
@@ -119,6 +140,7 @@
       "route": "/active-ride?role=driver",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Active Ride"
     },
     {
@@ -127,6 +149,7 @@
       "route": "/active-ride?role=driver&status=NO_SHOW",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "future-design",
       "section": "Active Ride",
       "role": "driver",
       "status": "NO_SHOW",
@@ -139,6 +162,7 @@
       "route": "/active-ride?role=passenger",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Active Ride"
     },
     {
@@ -147,6 +171,7 @@
       "route": "/trip-confirmation",
       "file": "public/src/screens/trip_confirmation.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Confirm"
     },
     {
@@ -155,6 +180,7 @@
       "route": "/respond?postId=trip-2",
       "file": "public/src/screens/respond.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Confirm"
     },
     {
@@ -163,6 +189,7 @@
       "route": "/responses",
       "file": "public/src/screens/responses.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Inbox"
     },
     {
@@ -171,6 +198,7 @@
       "route": "/active-ride?role=driver",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Safety",
       "interaction": "manual-interaction",
       "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
@@ -181,6 +209,7 @@
       "route": "/active-ride?role=passenger",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Safety",
       "interaction": "manual-interaction",
       "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
@@ -191,6 +220,7 @@
       "route": "/active-ride?role=driver&status=CANCELED",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Cancel"
     },
     {
@@ -199,6 +229,7 @@
       "route": "/active-ride?role=passenger&status=CANCELED",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Cancel"
     },
     {
@@ -207,6 +238,7 @@
       "route": "/active-ride?role=driver&status=COMPLETED",
       "file": "public/src/screens/active_ride.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Ride Complete"
     },
     {
@@ -215,6 +247,7 @@
       "route": "/active-ride?role=driver&status=COMPLETED",
       "file": "public/src/screens/active_ride_driver_sheets.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Ride Complete",
       "role": "driver",
       "status": "COMPLETED",
@@ -226,6 +259,7 @@
       "route": "/active-ride?role=driver&status=COMPLETED",
       "file": "public/src/screens/active_ride_driver_sheets.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Ride Complete",
       "role": "driver",
       "status": "COMPLETED",
@@ -252,6 +286,7 @@
       "route": "/active-ride?role=passenger&status=COMPLETED",
       "file": "public/src/screens/active_ride_passenger.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Ride Complete"
     },
     {
@@ -260,6 +295,7 @@
       "route": "/receipt?tripId=48-321",
       "file": "public/src/screens/trip_receipt.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "section": "Ride Complete",
       "states": {
         "C": "/receipt?tripId=48-321 — trip receipt · cash",
@@ -275,6 +311,7 @@
       "route": "/chat",
       "file": "public/src/screens/chat.js",
       "renderGate": "BD-RENDER-GATES-2026-06-03",
+      "classification": "render-gate",
       "note": "Screen/contract entry only — references the existing BD-RENDER-GATES-2026-06-03 render gate (no new standaloneExport is added). Bridge contract: chat hydrates header + trip bar from bazardrive.active_ride.v1 when tripId+role present, from bazardrive.responses.v1 (response.driverPrice + MOCK_DRIVER) when only responseId, MOCK_DRIVER/MOCK_TRIP fallback for demo. Back deep-link returns to /active-ride?role=&tripId= when both present, /respond?postId= when response has requestId, /feed otherwise. Outgoing send writes { senderRole: viewerRole, dir: 'out' }; readers prefer senderRole via directionForMessage. BD-CHAT-01 confirmation flow (/chat → trip_confirmation.v1 → /trip-confirmation) is preserved unchanged. No section pin — chat is not a render-gate section in the 2026-06-03 PDF."
     }
   ],
@@ -284,6 +321,7 @@
       "title": "Driver Markers Layer",
       "file": "public/src/mapbox/driver_markers.js",
       "type": "foundation-stub",
+      "classification": "stub-foundation",
       "status": "stub",
       "route": null,
       "exports": [
@@ -299,6 +337,7 @@
       "title": "Trip Status Layer",
       "file": "public/src/mapbox/trip_status_layer.js",
       "type": "foundation-stub",
+      "classification": "stub-foundation",
       "status": "stub",
       "route": null,
       "exports": [
@@ -319,6 +358,87 @@
         "NO_SHOW"
       ],
       "note": "No-op / pure-helper foundation layer reflecting active-ride status on the MapShell placeholder. Status vocabulary mirrors RIDE_STATUS in public/src/ride_state.js. No real Mapbox SDK, no token, no network, no CDN, no inline style. Safe no-op without a real map. BD-MAP-FOUND-01 will replace the body with real Mapbox GL layers; the export contract stays stable. Not a routed screen — reused module, so it is intentionally listed here rather than in screens[]."
+    }
+  ],
+  "runtimeOnly": [
+    {
+      "id": "BD-ONBOARDING-01",
+      "title": "Welcome + Onboarding",
+      "route": "/welcome",
+      "additionalRoutes": ["/onboarding"],
+      "file": "public/src/screens/welcome.js",
+      "additionalFiles": ["public/src/screens/onboarding.js"],
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-onboarding-01",
+      "note": "Shipped welcome + onboarding family (welcome.js role/permissions/loading/error + onboarding.js step host incl. ?step=phone OTP). Has a screen-contracts.md contract but no Cloud Design render gate in the 2026-06-03 set. Render-pending."
+    },
+    {
+      "id": "BD-MAP-02",
+      "title": "LocationPermission",
+      "route": "/location-permission",
+      "file": "public/src/screens/location_permission.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-map-02",
+      "note": "Shipped mock-permission gate (allow → /map?state=default, manual → /route-picker, back → /map). Contract present; no render gate yet. Render-pending — named for Cloud Design render."
+    },
+    {
+      "id": "BD-RULES-01",
+      "title": "Rules",
+      "route": "/rules",
+      "file": "public/src/screens/rules.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-rules-01",
+      "note": "Shipped static read-only rules articles (search/download are UI-only no-ops). Contract present; no render gate yet. Render-pending."
+    },
+    {
+      "id": "BD-COMPOSER-01",
+      "title": "Composer V2",
+      "route": "/new",
+      "file": "public/src/screens/composer.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-composer-01",
+      "note": "Shipped feed-post composer (per-type / preview / draft-saved / validation / submit-loading). Contract present; no render gate yet. Render-pending."
+    },
+    {
+      "id": "BD-POST-01",
+      "title": "Post detail",
+      "route": "/post",
+      "file": "public/src/screens/post_detail.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-post-01",
+      "note": "Shipped /post?id=... detail gate; post_detail.js owns the primary-action decision per kind/ownership. Contract present; no render gate yet. Render-pending — named for Cloud Design render."
+    },
+    {
+      "id": "BD-INBOX-01",
+      "title": "Inbox hub",
+      "route": "/inbox",
+      "file": "public/src/screens/inbox.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-inbox-01",
+      "note": "Shipped notifications/inbox hub (list / empty / unread states). Contract present; no render gate yet. Render-pending — named for Cloud Design render."
+    },
+    {
+      "id": "BD-ORDER-DETAIL-01",
+      "title": "Order Detail",
+      "route": "/order",
+      "file": "public/src/screens/order_detail.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-order-detail-01",
+      "note": "Shipped runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Full contract present; no Cloud Design render gate yet. Render-pending — named for Cloud Design render."
     }
   ]
 }
