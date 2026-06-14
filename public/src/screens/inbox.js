@@ -3,39 +3,18 @@ import {
   INBOX_STATUS_LABEL,
   INBOX_STATUS_TONE,
 } from '../mock_api.js';
-import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
+import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 
-// BD-ERROR-01C-C — per-flow trigger. Route an inbox data-load failure through
-// the global app-shell overlay (BD-ERROR-01A/01C-A adapter), mirroring the feed
-// trigger (BD-ERROR-01C-B). This is a defensive wire: today listInboxItems()
-// resolves from mock/localStorage and does not reject, so the catch is dormant —
-// but a future data-layer/backend failure surfaces the global error instead of
-// silently rendering an empty inbox. The per-screen empty state is preserved via
-// the [] fallback (the global overlay is additive, never a replacement for the
-// inbox's own UI).
-//
-// onRetry powers the overlay's «Повторить» button. On retry the overlay shows a
-// non-blocking 'retrying' progress state and is only dismissed AFTER a
-// successful reload — a slow/hanging/late-failing refetch keeps an error or
-// progress affordance on screen the whole time (a repeat failure re-surfaces
-// server_error). The overlay deliberately does not auto-dismiss when onRetry is
-// provided, so this wrapper owns the retrying → recovered/error transition.
-async function loadInboxItems(onRetry, isRetry) {
-  if (isRetry) reportAppShellError('retrying');
-  try {
-    const fresh = await listInboxItems();
-    // Only clear the overlay if it is still the retrying state we raised — a
-    // newer state (e.g. an offline banner from the connection watcher mid-retry)
-    // must not be clobbered by a fast cache-served success.
-    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
-    return fresh;
-  } catch (err) {
-    reportAppShellError('server_error', onRetry ? { onRetry } : {});
-    return [];
-  }
-}
+// BD-ERROR-01C-C / BD-ERROR-02A — route an inbox data-load failure through the
+// global app-shell overlay via the shared data_layer.loadResource adapter (the
+// per-screen wrapper was consolidated in 02A). Defensive wire: today
+// listInboxItems() resolves from mock/localStorage and does not reject, so the
+// failure path is dormant. loadResource shows 'retrying' on retry, dismisses only
+// on a successful reload (guarded by onlyIfState), reports server_error with the
+// guarded onRetry on failure, and falls back to [] so the inbox's own empty state
+// is preserved (the overlay is additive).
 
 const TABS = [
   { key: 'all',       label: 'Все' },
@@ -227,7 +206,7 @@ export default async function inbox() {
   // success). refreshInbox is hoisted, so referencing it here before its
   // declaration is safe — the arrow only runs when the user taps «Повторить».
   const onInboxRetry = () => { refreshInbox(true); };
-  let items = await loadInboxItems(onInboxRetry, false);
+  let items = await loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry: false });
   let activeTab = resolveActiveTab();
 
   const root = document.createElement('section');
@@ -278,7 +257,7 @@ export default async function inbox() {
   // the list is re-rendered, while the static topbar (unread sub/badge) is left
   // as-is — the retry path is a dormant defensive wire.
   async function refreshInbox(isRetry) {
-    items = await loadInboxItems(onInboxRetry, isRetry);
+    items = await loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry });
     renderList();
   }
 

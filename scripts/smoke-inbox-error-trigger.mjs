@@ -1,15 +1,12 @@
-// BD-ERROR-01C-C — static regression smoke for the inbox flow trigger.
+// BD-ERROR-01C-C / BD-ERROR-02A-b — static regression smoke for the inbox flow trigger.
 //
 // inbox.js routes an inbox data-load failure through the global app-shell overlay
-// via the BD-ERROR-01C-A adapter (reportAppShellError), mirroring the feed
-// trigger (BD-ERROR-01C-B). This is a defensive wire: listInboxItems() does not
-// reject today, so the catch is dormant — but the wiring must stay in place so a
-// future data-layer/backend failure surfaces the global error instead of
-// silently rendering an empty inbox. The inbox's own empty state must be
-// preserved (the global overlay is additive, not a replacement). A refactor
-// could drop the try/catch, swallow the error without reporting, replace the
-// inbox empty state, or re-route the global error — and `node scripts/check.mjs`
-// would still pass.
+// via the shared data_layer.loadResource adapter (the per-screen loadInboxItems
+// wrapper was consolidated into data_layer.js in 02A). This smoke asserts the
+// DELEGATION — both inbox load sites go through loadResource(listInboxItems, …)
+// and inbox never reads listInboxItems() outside that wrapper. The guarded-retry
+// CONTRACT itself (retrying / onlyIfState dismiss / server_error / [] fallback)
+// is pinned once in scripts/smoke-data-layer.mjs.
 //
 // This script is intentionally STATIC: it reads source and asserts the
 // contract holds. No browser, no DOM, no network.
@@ -45,40 +42,31 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── A. adapter import (report + dismiss) ─────────────────────
-expect('inbox.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
-  /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(inbox));
+// ── A. delegation to the shared adapter ──────────────────────
+expect('inbox.js imports loadResource from ../data_layer.js',
+  /import\s*\{\s*loadResource\s*\}\s*from\s*'\.\.\/data_layer\.js'/.test(inbox));
+expect('inbox.js no longer defines its own loadInboxItems wrapper (consolidated in 02A)',
+  !functionBody(inbox, 'loadInboxItems'));
+expect('inbox.js no longer imports the overlay adapter directly (it goes through data_layer)',
+  !/from\s*'\.\.\/app_error_triggers\.js'/.test(inbox));
 
-// ── B. the data load is wrapped in try/catch that reports ────
-const loadBody = functionBody(inbox, 'loadInboxItems');
-expect('inbox.js has a loadInboxItems() wrapper', !!loadBody);
-expect('loadInboxItems() awaits listInboxItems() inside a try',
-  !!loadBody && /try\s*\{[\s\S]*?await\s+listInboxItems\(\)/.test(loadBody));
-expect('loadInboxItems() catch reports server_error to the global overlay',
-  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(loadBody));
-expect('loadInboxItems() passes an onRetry option to the overlay',
-  !!loadBody && /reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}/.test(loadBody));
-expect('loadInboxItems() falls back to [] (preserves the inbox empty state)',
-  !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
+// ── B. both load sites go through loadResource(listInboxItems, …) ──
+expect('initial render loads via loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry: false })',
+  /let\s+items\s*=\s*await\s+loadResource\(\s*listInboxItems\s*,\s*\{\s*onRetry:\s*onInboxRetry\s*,\s*isRetry:\s*false\s*\}\s*\)/.test(inbox));
+expect('refreshInbox(isRetry) loads via loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry })',
+  /async\s+function\s+refreshInbox\(\s*isRetry\s*\)[\s\S]{0,140}await\s+loadResource\(\s*listInboxItems\s*,\s*\{\s*onRetry:\s*onInboxRetry\s*,\s*isRetry\s*\}\s*\)/.test(inbox));
+expect('both load sites route through loadResource(listInboxItems, …)',
+  (inbox.match(/loadResource\(\s*listInboxItems\s*,/g) || []).length === 2,
+  'expected initial + refreshInbox');
+expect('inbox.js reads the inbox only through the adapter (no direct listInboxItems() call)',
+  (inbox.match(/await\s+listInboxItems\(\)/g) || []).length === 0,
+  'listInboxItems is passed by reference to loadResource, never called directly in inbox.js');
 
-// ── B2. retry shows progress and dismisses only on success ───
-expect('loadInboxItems() shows a non-blocking retrying state while retrying',
-  !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
-expect('loadInboxItems() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
-  !!loadBody && /await\s+listInboxItems\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
+// ── B2. retry closure re-runs the load, does not pre-dismiss ──
 expect('onInboxRetry re-runs the load as a retry (refreshInbox(true))',
   /onInboxRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?refreshInbox\(\s*true\s*\)/.test(inbox));
 expect('onInboxRetry does NOT pre-emptively dismiss before the reload result is known',
   !/onInboxRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(inbox));
-
-// ── C. both load sites go through the wrapper ────────────────
-expect('initial render loads via loadInboxItems(onInboxRetry, false)',
-  /let\s+items\s*=\s*await\s+loadInboxItems\(\s*onInboxRetry\s*,\s*false\s*\)/.test(inbox));
-expect('refreshInbox(isRetry) loads via loadInboxItems(onInboxRetry, isRetry)',
-  /async\s+function\s+refreshInbox\(\s*isRetry\s*\)[\s\S]{0,120}await\s+loadInboxItems\(\s*onInboxRetry\s*,\s*isRetry\s*\)/.test(inbox));
-expect('inbox.js no longer calls listInboxItems() directly outside the wrapper',
-  (inbox.match(/await\s+listInboxItems\(\)/g) || []).length === 1,
-  'direct await count should be 1 (only inside loadInboxItems)');
 
 // ── D. per-screen empty state preserved (additive, not replaced) ─
 expect("inbox.js still renders its own inbox-empty state",
@@ -93,10 +81,10 @@ expect('app.js does NOT register an /error route (any quote style)',
 // ── F. sw precache + version bump ────────────────────────────
 expect('sw.js still precaches ./src/screens/inbox.js',
   /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw));
-expect('sw.js still precaches the adapter ./src/app_error_triggers.js',
-  /['"]\.\/src\/app_error_triggers\.js['"]/.test(sw));
-expect('sw.js VERSION bumped to v128+',
-  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 128);
+expect('sw.js precaches the shared adapter ./src/data_layer.js',
+  /['"]\.\/src\/data_layer\.js['"]/.test(sw));
+expect('sw.js VERSION bumped to v134+',
+  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 134);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
