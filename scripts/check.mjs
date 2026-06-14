@@ -701,6 +701,21 @@ if (exists(driverMapErrorTriggerSmoke)) {
   }
 }
 
+// BD-ERROR-01C-G — profile driver-receipts flow trigger. Asserts the payouts
+// pane's listDriverReceipts() load reports server_error through the global
+// overlay adapter on failure (sync-minimal variant), the retry dismisses our own
+// server_error (guarded) and re-renders the pane, the screen's own empty/balance
+// cards are preserved, and no /error route is introduced.
+const profileReceiptsErrorTriggerSmoke = path.join(root, 'scripts', 'smoke-profile-receipts-error-trigger.mjs');
+if (exists(profileReceiptsErrorTriggerSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileReceiptsErrorTriggerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-receipts-error-trigger.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

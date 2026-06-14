@@ -15,6 +15,7 @@ import {
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
 import { readRideHistoryStatus, clearRideHistory } from '../ride_history.js';
@@ -2652,9 +2653,19 @@ function ipPaneHtml(u) {
 // canonical receipt store. Each row shows net straight from receipt.net (no
 // recalculation) and deep-links to the trip receipt at /receipt?tripId=…. The
 // balance / weekly cards above stay demo/static.
-function driverReceiptPayoutSectionHtml() {
+function driverReceiptPayoutSectionHtml(onRetry) {
   let receipts = [];
-  try { receipts = listDriverReceipts(); } catch { receipts = []; }
+  // BD-ERROR-01C-G — route a receipts load failure through the global overlay
+  // instead of silently swallowing it. Defensive/dormant: mock listDriverReceipts()
+  // does not reject today, so the catch is dormant; a future backend failure
+  // surfaces server_error with a guarded retry. The [] fallback preserves the
+  // pane's own static balance/weekly cards (empty receipts → '').
+  try {
+    receipts = listDriverReceipts();
+  } catch (err) {
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    receipts = [];
+  }
   if (!Array.isArray(receipts) || !receipts.length) return '';
   const rows = receipts.map((r) => {
     const tripId  = String(r.tripId);
@@ -2705,7 +2716,7 @@ function payoutsEmptyPaneHtml() {
     </div>`;
 }
 
-function payoutsPaneHtml(previewEmpty = false) {
+function payoutsPaneHtml(previewEmpty = false, onRetry) {
   if (previewEmpty) return payoutsEmptyPaneHtml();
   const s          = MOCK_PAYOUT_SUMMARY;
   const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
@@ -2814,7 +2825,7 @@ function payoutsPaneHtml(previewEmpty = false) {
         <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
       </div>
     </div>
-    ${driverReceiptPayoutSectionHtml()}
+    ${driverReceiptPayoutSectionHtml(onRetry)}
     ${taxCards}
     <div class="pf2-po-sect-hdr">
       <span class="pf2-po-sect-title">Способы вывода</span>
@@ -3557,6 +3568,24 @@ function renderDriver(root, u) {
   const garageForce = getHashQuery().get('garage') || '';
   const garageVehicles = buildGarageVehicles(u, { force: garageForce });
 
+  // BD-ERROR-01C-G — guarded retry for the driver-receipts load in the payouts
+  // pane. Sync-minimal (the pane is a synchronous HTML string): «Повторить»
+  // dismisses our own server_error (onlyIfState, so a mid-flight offline banner
+  // is not clobbered) and re-renders the pane in place — a repeat failure
+  // re-reports server_error in the same tick, a success leaves it cleared.
+  // refreshPayoutsPane is hoisted; onReceiptsRetry must be initialised before the
+  // pane is first rendered below. (Async retrying/dismiss is deferred to
+  // BD-ERROR-02A.)
+  const onReceiptsRetry = () => {
+    dismissAppShellError({ onlyIfState: 'server_error' });
+    refreshPayoutsPane();
+  };
+  function refreshPayoutsPane() {
+    const pane = root.querySelector('#pf2-pane-payouts');
+    if (!pane) return;
+    pane.innerHTML = payoutsPaneHtml(payoutsEmpty, onReceiptsRetry);
+  }
+
   root.innerHTML = `
     <div class="pf2-topbar">
       <h1 class="pf2-topbar__title">Профиль</h1>
@@ -3578,7 +3607,7 @@ function renderDriver(root, u) {
       </div>
       <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty)}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty, onReceiptsRetry)}</div>
       <div class="pf2-pane" id="pf2-pane-security">${securityPaneHtml()}</div>
     </div>`;
 
