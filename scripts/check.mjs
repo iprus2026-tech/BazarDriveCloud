@@ -590,6 +590,23 @@ if (exists(globalErrorOverlaySmoke)) {
   }
 }
 
+// BD-ERROR-01B — static regression smoke for the app-shell connection trigger
+// wiring: online/offline listeners forward offline / retrying / recovered to
+// window.BD.GlobalError, initial offline state is reflected, init is
+// idempotent (no duplicate listeners), the reconnection timer is always
+// cleared, and the module stays decoupled (no fetch / storage / ride-order
+// mutation, no /error route), with app.js init ordered after the overlay and
+// the module precached.
+const appConnectionStatusSmoke = path.join(root, 'scripts', 'smoke-app-connection-status.mjs');
+if (exists(appConnectionStatusSmoke)) {
+  try {
+    execFileSync(process.execPath, [appConnectionStatusSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-app-connection-status.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

@@ -3,6 +3,7 @@ import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
 import { initGlobalErrorOverlay } from './app_error_overlay.js';
+import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 
 import welcome    from './screens/welcome.js';
@@ -99,3 +100,6 @@ initFavoriteRoutes();
 // BD-ERROR-01A — app-shell singleton error/offline overlay. Not a route:
 // it mounts above #app and is driven via window.BD.GlobalError.
 initGlobalErrorOverlay();
+// BD-ERROR-01B — wire browser online/offline events to the overlay. Must run
+// after initGlobalErrorOverlay() so window.BD.GlobalError already exists.
+initAppConnectionStatus();
