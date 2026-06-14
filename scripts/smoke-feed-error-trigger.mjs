@@ -44,9 +44,9 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── A. adapter import ────────────────────────────────────────
-expect('feed.js imports reportAppShellError from ../app_error_triggers.js',
-  /import\s*\{\s*reportAppShellError\s*\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(feed));
+// ── A. adapter import (report + dismiss) ─────────────────────
+expect('feed.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
+  /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(feed));
 
 // ── B. the data load is wrapped in try/catch that reports ────
 const loadBody = functionBody(feed, 'loadFeedPosts');
@@ -54,15 +54,23 @@ expect('feed.js has a loadFeedPosts() wrapper', !!loadBody);
 expect('loadFeedPosts() awaits listFeedPosts() inside a try',
   !!loadBody && /try\s*\{[\s\S]*?await\s+listFeedPosts\(\)/.test(loadBody));
 expect('loadFeedPosts() catch reports server_error to the global overlay',
-  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*\)/.test(loadBody));
+  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(loadBody));
+expect('loadFeedPosts() passes an onRetry option to the overlay',
+  !!loadBody && /reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}/.test(loadBody));
 expect('loadFeedPosts() falls back to [] (preserves the feed empty state)',
   !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
 
+// ── B2. retry actually re-runs the load + dismisses the overlay ─
+expect('feed defines an onFeedRetry that dismisses the overlay and reloads',
+  /onFeedRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)[\s\S]*?refreshList\(\)/.test(feed));
+expect('the retry callback is threaded into loadFeedPosts(onFeedRetry)',
+  /loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
+
 // ── C. both load sites go through the wrapper ────────────────
-expect('initial render loads via loadFeedPosts()',
-  /let\s+posts\s*=\s*await\s+loadFeedPosts\(\)/.test(feed));
-expect('refreshList() loads via loadFeedPosts()',
-  /async\s+function\s+refreshList\(\)[\s\S]{0,80}await\s+loadFeedPosts\(\)/.test(feed));
+expect('initial render loads via loadFeedPosts(onFeedRetry)',
+  /let\s+posts\s*=\s*await\s+loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
+expect('refreshList() loads via loadFeedPosts(onFeedRetry)',
+  /async\s+function\s+refreshList\(\)[\s\S]{0,80}await\s+loadFeedPosts\(\s*onFeedRetry\s*\)/.test(feed));
 expect('feed.js no longer calls listFeedPosts() directly outside the wrapper',
   (feed.match(/await\s+listFeedPosts\(\)/g) || []).length === 1,
   'direct await count should be 1 (only inside loadFeedPosts)');

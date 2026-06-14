@@ -29,6 +29,10 @@ function expect(label, cond, detail = '') {
 expect('app_error_triggers.js is non-empty', triggers.length > 0);
 expect('exports reportAppShellError',
   /export\s+function\s+reportAppShellError\b/.test(triggers));
+expect('exports dismissAppShellError',
+  /export\s+function\s+dismissAppShellError\b/.test(triggers));
+expect('dismissAppShellError lazily calls the overlay hide()',
+  /dismissAppShellError\(\)[\s\S]{0,200}window\.BD[\s\S]{0,80}\.hide\(\)/.test(triggers));
 
 // ── B. kinds whitelist + unknown-kind no-op (validated FIRST) ─
 expect('KINDS whitelist defined', /const\s+KINDS\s*=\s*\[/.test(triggers));

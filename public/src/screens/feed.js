@@ -1,5 +1,5 @@
 import { listFeedPosts } from '../mock_api.js';
-import { reportAppShellError } from '../app_error_triggers.js';
+import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
@@ -27,17 +27,25 @@ const CATS = [
 // failure surfaces the global error instead of silently rendering an empty
 // feed. The per-screen empty state is preserved via the [] fallback (the
 // global overlay is additive, never a replacement for the feed's own UI).
-async function loadFeedPosts() {
+//
+// onRetry powers the overlay's «Повторить» button: it re-runs the load and
+// dismisses the overlay on success (or re-surfaces server_error on a repeat
+// failure), so retry actually attempts recovery instead of just closing.
+async function loadFeedPosts(onRetry) {
   try {
     return await listFeedPosts();
   } catch (err) {
-    reportAppShellError('server_error');
+    reportAppShellError('server_error', onRetry ? { onRetry } : {});
     return [];
   }
 }
 
 export default async function feed() {
-  let posts = await loadFeedPosts();
+  // Retry re-runs the feed load and clears the overlay on success. refreshList
+  // is hoisted, so referencing it here (before its declaration) is safe — the
+  // arrow only runs when the user taps «Повторить».
+  const onFeedRetry = () => { dismissAppShellError(); refreshList(); };
+  let posts = await loadFeedPosts(onFeedRetry);
   let activeKey = 'all';
 
   const root = document.createElement('section');
@@ -79,7 +87,7 @@ export default async function feed() {
   const feedList = root.querySelector('.feed-list');
 
   async function refreshList() {
-    posts = await loadFeedPosts();
+    posts = await loadFeedPosts(onFeedRetry);
     renderList();
   }
 

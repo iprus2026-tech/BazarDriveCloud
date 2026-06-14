@@ -43,3 +43,11 @@ export function reportAppShellError(kind, options = {}) {
   const resolved = (navigator.onLine === false) ? 'offline' : kind;
   api.show(resolved, options);
 }
+
+// Dismiss the app-shell overlay — e.g. from a retry callback after a flow has
+// recovered. Lazy + safe (no-op if the overlay is not mounted). Keeps callers
+// on the adapter boundary instead of reaching into window.BD directly.
+export function dismissAppShellError() {
+  const bd = (typeof window !== 'undefined' && window.BD) ? window.BD.GlobalError : null;
+  if (bd && typeof bd.hide === 'function') bd.hide();
+}
