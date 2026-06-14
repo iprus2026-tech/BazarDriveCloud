@@ -8978,6 +8978,64 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .responses__declined-restore:active { opacity: 0.7; }
 
+/* ── BD-RESPONSES-01 — segmented sort chips ─────────────── */
+.responses__sortbar {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.responses__chip {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 6px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+}
+.responses__chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.responses__chip:active { transform: scale(0.97); }
+
+/* Per-driver «Отклонено» badge (replaces the best ribbon on a declined card) */
+.responses__declined-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* All-declined notice action («Вернуть все») */
+.responses__notice-action {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 4px 2px;
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.responses__notice-action:active { opacity: 0.7; }
+
 /* ─────────────────────────────────────────────────────────
    BD-RIDE-P-06 — Passenger cancel ride sheet
    Sheet states A (opened) / B (reason selected) share the

@@ -770,6 +770,19 @@ if (exists(profileNotifBellSmoke)) {
   }
 }
 
+// BD-RESPONSES-01 — /responses decline + sort. Asserts the segmented sort
+// chips, the in-memory per-driver declined Set (session-only, no localStorage),
+// single-driver restore + restore-all, and the all-declined notice.
+const responsesDeclineSortSmoke = path.join(root, 'scripts', 'smoke-responses-decline-sort.mjs');
+if (exists(responsesDeclineSortSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesDeclineSortSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-responses-decline-sort.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

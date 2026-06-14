@@ -172,13 +172,6 @@ const CLOSE_SVG = `
     <line x1="6" y1="18" x2="18" y2="6"/>
   </svg>`;
 
-const CHEVRON_SVG = `
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-       width="14" height="14">
-    <polyline points="6 9 12 15 18 9"/>
-  </svg>`;
-
 const QUOTE_SVG = `
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
        width="14" height="14">
@@ -574,17 +567,74 @@ function renderEtaBars(active) {
   return html;
 }
 
-function renderDriverCard(driver, selectedDriverId, allDeclined) {
-  const isDeclined = !!allDeclined;
+// BD-RESPONSES-01 — inline segmented sort. Modes reorder the driver board in
+// place (no route, no backend). Sorting is a derived VIEW: it never mutates the
+// `drivers` array built by buildDriversForOrder, so the read-side board source
+// of truth is preserved.
+const SORT_MODES = [
+  { key: 'best',   label: 'Лучшие'  },
+  { key: 'eta',    label: 'Быстрее' },
+  { key: 'price',  label: 'Дешевле' },
+  { key: 'rating', label: 'Рейтинг' },
+];
+
+// Parse a rating string into a comparable number. Mock cards use a comma
+// decimal ("4,92"); response-derived cards use a dot ("4.8") or "—" when the
+// snapshot had no numeric rating. Non-numeric ratings sort to the bottom.
+function ratingValue(driver) {
+  const n = parseFloat(String(driver && driver.rating).replace(',', '.'));
+  return Number.isFinite(n) ? n : -Infinity;
+}
+
+// Lower ETA = faster. `etaBars` (3 = fastest … 1 = slowest) is the reliable
+// numeric signal on both card shapes; parse the "N мин" string as a tiebreak.
+function etaMinutes(driver) {
+  const m = String(driver && driver.eta).match(/\d+/);
+  return m ? Number(m[0]) : Infinity;
+}
+
+// Cheaper first: a saved-money offer (down) beats par (same) beats over (up).
+const PRICE_RANK = { down: 0, same: 1, up: 2 };
+function priceRank(driver) {
+  const r = PRICE_RANK[driver && driver.priceTone];
+  return Number.isInteger(r) ? r : 1;
+}
+
+// Stable derived sort. Every comparator falls back to the original index so the
+// board order is deterministic and ties never reshuffle on re-render.
+function sortDrivers(drivers, mode) {
+  const indexed = drivers.map((driver, index) => ({ driver, index }));
+  const byIndex = (a, b) => a.index - b.index;
+  let cmp;
+  if (mode === 'eta') {
+    cmp = (a, b) => (etaMinutes(a.driver) - etaMinutes(b.driver))
+      || (b.driver.etaBars - a.driver.etaBars) || byIndex(a, b);
+  } else if (mode === 'price') {
+    cmp = (a, b) => (priceRank(a.driver) - priceRank(b.driver)) || byIndex(a, b);
+  } else if (mode === 'rating') {
+    cmp = (a, b) => (ratingValue(b.driver) - ratingValue(a.driver)) || byIndex(a, b);
+  } else {
+    // 'best' (default): recommended cards first, otherwise original order.
+    cmp = (a, b) => (Number(!!b.driver.isBest) - Number(!!a.driver.isBest)) || byIndex(a, b);
+  }
+  return indexed.sort(cmp).map((entry) => entry.driver);
+}
+
+function renderDriverCard(driver, selectedDriverId, declinedFlag) {
+  const isDeclined = !!declinedFlag;
   const isSelected = !isDeclined && selectedDriverId && driver.id === selectedDriverId;
   const isDimmed   = !isDeclined && selectedDriverId && !isSelected;
 
-  const bestBadge = driver.isBest
-    ? `<div class="responses__driver-best">
-         ${SPARK_SVG}
-         <span>Лучший вариант</span>
-       </div>`
-    : '';
+  // A declined card swaps the best ribbon for an «Отклонено» badge so the
+  // muted state is legible at a glance (BD-RESPONSES-01).
+  const topBadge = isDeclined
+    ? `<div class="responses__declined-badge">Отклонено</div>`
+    : (driver.isBest
+        ? `<div class="responses__driver-best">
+             ${SPARK_SVG}
+             <span>Лучший вариант</span>
+           </div>`
+        : '');
 
   const noteBlock = driver.note
     ? `<div class="responses__driver-note">
@@ -643,7 +693,7 @@ function renderDriverCard(driver, selectedDriverId, allDeclined) {
     <article class="${classes}"
              data-driver-id="${escapeHtml(driver.id)}"
              data-response-id="${escapeHtml(driver.responseId)}">
-      ${bestBadge}
+      ${topBadge}
       <div class="responses__driver-head">
         <div class="responses__avatar responses__avatar--${escapeHtml(driver.avatarTone)}" aria-hidden="true">${escapeHtml(driver.initials)}</div>
         <div class="responses__driver-info">
@@ -822,13 +872,27 @@ function renderAllDeclinedNotice() {
       <span class="responses__notice-icon" aria-hidden="true">${CLOSE_SVG}</span>
       <div class="responses__notice-body">
         <div class="responses__notice-title">Все отклики отклонены</div>
-        <div class="responses__notice-text">Поднимите цену или дождитесь новых откликов — заказ остаётся опубликованным.</div>
+        <div class="responses__notice-text">Можно вернуть водителя или дождаться новых предложений.</div>
+        <button type="button" class="responses__notice-action" data-action="restore-all">Вернуть все</button>
       </div>
     </div>
   `;
 }
 
-function renderList(drivers, selectedDriverId, allDeclined) {
+// Renders the inner board: count toolbar, segmented sort chips, the optional
+// all-declined notice, and the (sorted) driver cards. Declined state is
+// per-driver and read from the in-memory `declined` Set, which is the source of
+// truth after first render (see responses() factory). Returned as inner markup
+// for the stable #responses-board shell so refreshBoard() can re-render it
+// without rebinding the delegated listener.
+function renderList(drivers, selectedDriverId, declined, sortMode) {
+  const sorted = sortDrivers(drivers, sortMode);
+  const allDeclined = drivers.length > 0 && declined.size === drivers.length;
+  const chips = SORT_MODES.map((m) => {
+    const active = m.key === sortMode;
+    return `<button type="button" class="responses__chip${active ? ' is-active' : ''}"
+              data-sort="${m.key}" aria-pressed="${active ? 'true' : 'false'}">${escapeHtml(m.label)}</button>`;
+  }).join('');
   return `
     <div class="responses__toolbar">
       <div class="responses__count">
@@ -839,15 +903,13 @@ function renderList(drivers, selectedDriverId, allDeclined) {
         <span class="responses__status-dot" aria-hidden="true"></span>
         <span>Принимаем отклики</span>
       </div>
-      <button type="button" class="responses__sort" id="responses-sort">
-        ${SPARK_SVG}
-        <span>Лучшие</span>
-        ${CHEVRON_SVG}
-      </button>
+    </div>
+    <div class="responses__sortbar" role="group" aria-label="Сортировка откликов">
+      ${chips}
     </div>
     ${allDeclined ? renderAllDeclinedNotice() : ''}
     <div class="responses__drivers">
-      ${drivers.map((d) => renderDriverCard(d, selectedDriverId, allDeclined)).join('')}
+      ${sorted.map((d) => renderDriverCard(d, selectedDriverId, declined.has(d.id))).join('')}
     </div>
   `;
 }
@@ -1139,6 +1201,14 @@ export default function responses() {
   const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
   const selectedDriverId = selectedDriver ? selectedDriver.id : null;
 
+  // BD-RESPONSES-01 — in-memory sort + decline state. Session-only: never
+  // persisted to localStorage, so a reload returns every card to normal. The
+  // `?state=all-declined` deep-link is an initial SEED only — it fills the set
+  // once on first render; thereafter the Set is the sole source of truth.
+  let sortMode = 'best';
+  const declined = new Set();
+  if (isAllDeclined) drivers.forEach((d) => declined.add(d.id));
+
   const root = document.createElement('section');
   root.className = 'screen screen--responses';
   root.dataset.postId = postId;
@@ -1203,7 +1273,9 @@ export default function responses() {
       </div>
       ${isAccepted
         ? renderAcceptedDriver(handoffRide, request)
-        : (isOffer ? renderOffer(drivers[0]) : (isList ? renderList(drivers, selectedDriverId, isAllDeclined) : renderEmptyState(request)))}
+        : (isOffer ? renderOffer(drivers[0]) : (isList
+            ? `<div class="responses__board" id="responses-board">${renderList(drivers, selectedDriverId, declined, sortMode)}</div>`
+            : renderEmptyState(request)))}
       ${footer}
     </div>
 
@@ -1243,16 +1315,33 @@ export default function responses() {
     });
   }
 
-  const sortBtn = root.querySelector('#responses-sort');
-  if (sortBtn) {
-    sortBtn.addEventListener('click', () => {
-      toast('Сортировка откликов будет добавлена позже');
-    });
+  // BD-RESPONSES-01 — one delegated listener on the stable #responses-board
+  // shell drives sort chips, per-driver decline/restore, and restore-all.
+  // refreshBoard re-renders only the board inner markup from the in-memory
+  // sortMode + declined state; the shell element (and this listener) survive,
+  // so there is no rebinding and no full screen rebuild.
+  const boardEl = root.querySelector('#responses-board');
+  function refreshBoard() {
+    if (boardEl) boardEl.innerHTML = renderList(drivers, selectedDriverId, declined, sortMode);
   }
+  if (boardEl) {
+    boardEl.addEventListener('click', (event) => {
+      const chip = event.target.closest('[data-sort]');
+      if (chip) {
+        const mode = chip.dataset.sort;
+        if (mode && mode !== sortMode && SORT_MODES.some((m) => m.key === mode)) {
+          sortMode = mode;
+          refreshBoard();
+        }
+        return;
+      }
 
-  const driversWrap = root.querySelector('.responses__drivers');
-  if (driversWrap) {
-    driversWrap.addEventListener('click', (event) => {
+      if (event.target.closest('[data-action="restore-all"]')) {
+        declined.clear();
+        refreshBoard();
+        return;
+      }
+
       const btn = event.target.closest('[data-action]');
       if (!btn) return;
       const card = btn.closest('.responses__driver');
@@ -1279,8 +1368,14 @@ export default function responses() {
         go(responseUrl(request, 'list'));
         return;
       }
+      if (action === 'decline') {
+        declined.add(driverId);
+        refreshBoard();
+        return;
+      }
       if (action === 'restore') {
-        go(responseUrl(request, 'list'));
+        declined.delete(driverId);
+        refreshBoard();
         return;
       }
       if (action === 'chat') {
@@ -1289,17 +1384,13 @@ export default function responses() {
       }
       if (action === 'call') {
         toast('Звонок будет доступен после подтверждения поездки');
-        return;
-      }
-      if (action === 'decline') {
-        toast('Отклонение отклика будет добавлено позже');
       }
     });
   }
 
-  // BD-DRIVER-MAP-X-15 — accepted-driver handoff CTA. The driversWrap listener
-  // above only binds inside `.responses__drivers` driver cards; the accepted
-  // state needs its own handler to open the linked passenger active ride.
+  // BD-DRIVER-MAP-X-15 — accepted-driver handoff CTA. The #responses-board
+  // listener above only covers the list/declined board; the accepted state
+  // renders outside that shell and needs its own handler to open the ride.
   const openActiveRideBtn = root.querySelector('[data-action="open-active-ride"]');
   if (openActiveRideBtn && handoffTripId) {
     openActiveRideBtn.addEventListener('click', () => go(activeRideUrl(handoffTripId)));
