@@ -17,7 +17,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders, createRideOrder } from '../mock_api.js';
-import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
+import { loadResource } from '../data_layer.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
 import { user, isDriverLineReady } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
@@ -467,27 +467,16 @@ function renderPassengerGuard() {
   return root;
 }
 
-// BD-ERROR-01C-F — route the nearby-orders load through the global overlay
-// (continuation of feed 01C-B, inbox 01C-C, post-detail 01C-D, respond 01C-E).
-// The load is awaited so the same wrapper holds when listNearbyOrders() becomes
-// a real (async, rejectable) backend call — today it resolves from the mock
-// store and does not reject, so the catch is dormant/defensive. On failure it
-// reports server_error with a guarded retry and falls back to [] — the screen's
-// own empty state (buildEmptyCard) is preserved (the overlay is additive). On
-// retry the overlay shows a non-blocking 'retrying' state, dismissed only after
-// a successful reload and guarded by onlyIfState so a mid-retry offline banner
-// is not clobbered.
-async function loadNearbyOrders(onRetry, isRetry) {
-  if (isRetry) reportAppShellError('retrying');
-  try {
-    const live = await listNearbyOrders();
-    if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
-    return live;
-  } catch (err) {
-    reportAppShellError('server_error', onRetry ? { onRetry } : {});
-    return [];
-  }
-}
+// BD-ERROR-01C-F / BD-ERROR-02A — the nearby-orders load goes through the shared
+// data_layer.loadResource adapter (the per-screen wrapper was consolidated in
+// 02A). The read is passed by reference and awaited inside loadResource, so the
+// same contract holds when listNearbyOrders() becomes a real (async, rejectable)
+// backend call — today it resolves from the mock store and does not reject, so
+// the failure path is dormant. loadResource reports server_error with a guarded
+// retry and falls back to [] — the screen's own empty state (buildEmptyCard) is
+// preserved (the overlay is additive); 'retrying' on retry, dismiss only on a
+// successful reload (guarded by onlyIfState). Both reads — the working-surface
+// renderList and the readiness gate — pass their own retry callback.
 
 export default async function driverMapScreen() {
   // BD-ROLE-01 — only role=driver sees the working DriverMap. Any other
@@ -530,7 +519,7 @@ export default async function driverMapScreen() {
   async function renderReadinessGate(isRetry) {
     root.dataset.state = STATE.NOT_READY;
     stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-    sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadNearbyOrders(onReadinessRetry, isRetry)));
+    sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadResource(listNearbyOrders, { onRetry: onReadinessRetry, isRetry })));
   }
 
   if (!isDriverLineReady(u)) {
@@ -558,7 +547,7 @@ export default async function driverMapScreen() {
   // the user taps «Повторить».
   const onDriverMapRetry = () => { renderList(true); };
   async function renderList(isRetry) {
-    const live = await loadNearbyOrders(onDriverMapRetry, isRetry);
+    const live = await loadResource(listNearbyOrders, { onRetry: onDriverMapRetry, isRetry });
     const hasLive = live.length > 0;
 
     stage.replaceChildren(buildMapPlaceholder(live.length, {

@@ -1,16 +1,14 @@
-// BD-ERROR-01C-F — static regression smoke for the driver-map flow trigger.
+// BD-ERROR-01C-F / BD-ERROR-02A-e — static regression smoke for the driver-map flow trigger.
 //
 // driver_map.js routes its nearby-orders data load through the global app-shell
-// overlay via the BD-ERROR-01C-A adapter (reportAppShellError), mirroring feed
-// (01C-B), inbox (01C-C), post-detail (01C-D) and respond (01C-E). The load is
-// awaited inside loadNearbyOrders() so the same wrapper holds when
-// listNearbyOrders() becomes a real (async, rejectable) backend call — today it
-// resolves from the mock store and does not reject, so the catch is dormant.
-// The screen's own empty state (buildEmptyCard) must be preserved (the global
-// overlay is additive, not a replacement). A refactor could drop the try/catch,
-// swallow the error without reporting, replace the empty state, re-route the
-// global error, or re-introduce a raw unwrapped read — and
-// `node scripts/check.mjs` would still pass without this pin.
+// overlay via the shared data_layer.loadResource adapter (the per-screen
+// loadNearbyOrders wrapper was consolidated into data_layer.js in 02A). This
+// smoke asserts the DELEGATION — BOTH reads (the working-surface renderList and
+// the readiness gate) go through loadResource(listNearbyOrders, …) each with its
+// own retry callback, driver_map never reads listNearbyOrders() directly, and the
+// screen's own empty state (buildEmptyCard) is preserved. The guarded-retry
+// CONTRACT (retrying / onlyIfState dismiss / server_error / [] fallback) is pinned
+// once in scripts/smoke-data-layer.mjs.
 //
 // This script is intentionally STATIC: it reads source and asserts the
 // contract holds. No browser, no DOM, no network.
@@ -46,27 +44,15 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── A. adapter import (report + dismiss) ─────────────────────
-expect('driver_map.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
-  /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(driverMap));
+// ── A. delegation to the shared adapter ──────────────────────
+expect('driver_map.js imports loadResource from ../data_layer.js',
+  /import\s*\{\s*loadResource\s*\}\s*from\s*'\.\.\/data_layer\.js'/.test(driverMap));
+expect('driver_map.js no longer defines its own loadNearbyOrders wrapper (consolidated in 02A)',
+  !functionBody(driverMap, 'loadNearbyOrders'));
+expect('driver_map.js no longer imports the overlay adapter directly (it goes through data_layer)',
+  !/from\s*'\.\.\/app_error_triggers\.js'/.test(driverMap));
 
-// ── B. the data load is wrapped in try/catch that reports ────
-const loadBody = functionBody(driverMap, 'loadNearbyOrders');
-expect('driver_map.js has a loadNearbyOrders() wrapper', !!loadBody);
-expect('loadNearbyOrders() awaits listNearbyOrders() inside a try',
-  !!loadBody && /try\s*\{[\s\S]*?await\s+listNearbyOrders\(\)/.test(loadBody));
-expect('loadNearbyOrders() catch reports server_error to the global overlay',
-  !!loadBody && /catch[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(loadBody));
-expect('loadNearbyOrders() passes an onRetry option to the overlay',
-  !!loadBody && /reportAppShellError\(\s*'server_error'\s*,\s*onRetry\s*\?\s*\{\s*onRetry\s*\}/.test(loadBody));
-expect('loadNearbyOrders() falls back to [] (preserves the empty state)',
-  !!loadBody && /catch[\s\S]*?return\s*\[\s*\]/.test(loadBody));
-
-// ── B2. retry shows progress and dismisses only on success ───
-expect('loadNearbyOrders() shows a non-blocking retrying state while retrying',
-  !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
-expect('loadNearbyOrders() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
-  !!loadBody && /await\s+listNearbyOrders\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
+// ── B. both retry closures re-run their render, neither pre-dismisses ──
 expect('onDriverMapRetry re-runs the working list as a retry (renderList(true))',
   /onDriverMapRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?renderList\(\s*true\s*\)/.test(driverMap));
 expect('onReadinessRetry re-runs the readiness gate as a retry (renderReadinessGate(true))',
@@ -74,25 +60,22 @@ expect('onReadinessRetry re-runs the readiness gate as a retry (renderReadinessG
 expect('neither retry closure pre-emptively dismisses before the reload result is known',
   !/on(?:DriverMap|Readiness)Retry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(driverMap));
 
-// ── C. all load sites go through the wrapper WITH a retry callback ─────
+// ── C. BOTH load sites go through loadResource(listNearbyOrders, …) WITH a retry callback ──
 expect('initial working surface renders via renderList(false)',
   /await\s+renderList\(\s*false\s*\)/.test(driverMap));
-expect('renderList(isRetry) loads via loadNearbyOrders(onDriverMapRetry, isRetry)',
-  /async\s+function\s+renderList\(\s*isRetry\s*\)[\s\S]{0,140}await\s+loadNearbyOrders\(\s*onDriverMapRetry\s*,\s*isRetry\s*\)/.test(driverMap));
-expect('renderReadinessGate(isRetry) loads via loadNearbyOrders(onReadinessRetry, isRetry)',
-  /async\s+function\s+renderReadinessGate\(\s*isRetry\s*\)[\s\S]{0,320}await\s+loadNearbyOrders\(\s*onReadinessRetry\s*,\s*isRetry\s*\)/.test(driverMap));
+expect('renderList(isRetry) loads via loadResource(listNearbyOrders, { onRetry: onDriverMapRetry, isRetry })',
+  /async\s+function\s+renderList\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listNearbyOrders\s*,\s*\{\s*onRetry:\s*onDriverMapRetry\s*,\s*isRetry\s*\}\s*\)/.test(driverMap));
+expect('renderReadinessGate(isRetry) loads via loadResource(listNearbyOrders, { onRetry: onReadinessRetry, isRetry })',
+  /async\s+function\s+renderReadinessGate\(\s*isRetry\s*\)[\s\S]{0,360}await\s+loadResource\(\s*listNearbyOrders\s*,\s*\{\s*onRetry:\s*onReadinessRetry\s*,\s*isRetry\s*\}\s*\)/.test(driverMap));
 expect('both readiness-gate sites render via renderReadinessGate(false) (not-ready branch + accept-recheck)',
   (driverMap.match(/await\s+renderReadinessGate\(\s*false\s*\)/g) || []).length === 2,
   'expected 2 gate render sites');
-expect('every nearby-orders read passes a retry callback — no zero-arg loadNearbyOrders() remains',
-  !/loadNearbyOrders\(\s*\)/.test(driverMap),
-  'gate reads must carry onReadinessRetry so the overlay retry button reloads, not just dismisses');
-expect('both load closures route through the wrapper (await loadNearbyOrders( appears 2x: renderList + renderReadinessGate)',
-  (driverMap.match(/await\s+loadNearbyOrders\(/g) || []).length === 2,
-  'expected 2 wrapper call sites');
-expect('driver_map.js calls listNearbyOrders() only inside the wrapper (await listNearbyOrders() appears once)',
-  (driverMap.match(/await\s+listNearbyOrders\(\)/g) || []).length === 1,
-  'direct awaited call count should be 1 (only inside loadNearbyOrders)');
+expect('both reads route through loadResource(listNearbyOrders, …) (appears 2x: renderList + renderReadinessGate)',
+  (driverMap.match(/loadResource\(\s*listNearbyOrders\s*,/g) || []).length === 2,
+  'expected 2 adapter call sites');
+expect('driver_map.js reads only through the adapter (no direct listNearbyOrders() call)',
+  (driverMap.match(/await\s+listNearbyOrders\(\)/g) || []).length === 0,
+  'listNearbyOrders is passed by reference to loadResource, never called directly in driver_map.js');
 
 // ── D. per-screen empty state preserved (additive, not replaced) ─
 expect("driver_map.js still renders its own empty state (buildEmptyCard)",
@@ -107,10 +90,10 @@ expect('app.js does NOT register an /error route (any quote style)',
 // ── F. sw precache + version bump ────────────────────────────
 expect('sw.js still precaches ./src/screens/driver_map.js',
   /['"]\.\/src\/screens\/driver_map\.js['"]/.test(sw));
-expect('sw.js still precaches the adapter ./src/app_error_triggers.js',
-  /['"]\.\/src\/app_error_triggers\.js['"]/.test(sw));
-expect('sw.js VERSION bumped to v131+',
-  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 131);
+expect('sw.js precaches the shared adapter ./src/data_layer.js',
+  /['"]\.\/src\/data_layer\.js['"]/.test(sw));
+expect('sw.js VERSION bumped to v137+',
+  Number(sw.match(/VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 137);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
