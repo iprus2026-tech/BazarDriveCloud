@@ -198,6 +198,8 @@ Out of scope:
 
 > **Audit `/inbox` before going net-new.** The production app already ships a registered `/inbox` surface (`public/src/app.js` registers `/inbox`, `public/src/screens/inbox.js` renders list / empty / unread-event states, `docs/screen-contracts.md` lists **BD-INBOX-01** as implemented). Following the previous draft literally would duplicate the existing inbox / notification hub and leave `/inbox` orphaned. BD-NOTIF-01 must not blindly add a separate `/notifications` route without first deciding how it relates to `/inbox`.
 
+> **Entry-point status (passenger bell DONE).** The relationship decision is settled in favour of **(a) reuse `/inbox` as the hub**, and the passenger bell entry point is now wired: `#pfp-notif-btn` calls `go('/inbox')` (`public/src/screens/profile.js`, pinned by `scripts/smoke-profile-notif-bell.mjs`). The remaining BD-NOTIF-01 scope — the **driver** entry point (`#pf2-act-notif`, still a `notificationsEnabled` toggle), any push-permission / notification-specific states inside `inbox.js`, and the push-permission prompt — is unchanged and still open.
+
 Notifications is **not** wired from the existing entry points in the shipped UI. The missing scope includes both the decision-on-relationship-with-`/inbox`, the screen (or reuse), and the profile-entry wiring (mirrors BD-SETTINGS-01).
 
 Required scope:
@@ -206,7 +208,7 @@ Required scope:
 - decide the relationship between BD-NOTIF-01 and `/inbox`; the two viable outcomes are explicit and must be picked before any new code lands:
   - **(a) reuse `/inbox` as the notification hub** — point the bell CTAs at `/inbox`, extend `inbox.js` if push-permission / notification-specific states are missing, and treat `/notifications` as redundant (do **not** register it)
   - **(b) split a separate `/notifications` route after the audit** — register `/notifications`, implement the screen, and document why it is consciously separate from `/inbox` (e.g. push permission flow, system-message channel) so `/inbox` is not orphaned
-- wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener (`public/src/screens/profile.js:620-621`) — to whichever target (a) or (b) chooses
+- ~~wire the passenger profile bell CTA (`#pfp-notif-btn`) — currently rendered without a listener — to whichever target (a) or (b) chooses~~ **DONE** — wired to `go('/inbox')` (decision (a)); pinned by `scripts/smoke-profile-notif-bell.mjs`
 - wire the **actual driver notification entry point — the quick-action row `#pf2-act-notif`** (`public/src/screens/profile.js:1162`) — to the same target. **There is no driver bell in the shipped profile.** Today `#pf2-act-notif` only toggles `notificationsEnabled` (`public/src/screens/profile.js:3809-3814`); BD-NOTIF-01 must replace that toggle with an open-`/inbox` or open-`/notifications` handler, not leave it as a toggle. Any reference to a "driver bell" must be explicitly marked as future UI
 
 Required states (regardless of (a) vs (b)):

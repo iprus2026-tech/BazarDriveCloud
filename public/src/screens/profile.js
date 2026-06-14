@@ -930,6 +930,11 @@ function renderPassenger(root, u, previewState) {
     go('/profile');
   });
 
+  // BD-NOTIF-01 — passenger notification bell opens the existing /inbox hub
+  // (the shipped notifications surface). Reuses /inbox rather than splitting a
+  // new /notifications route, per the missing-screens entry-point decision.
+  root.querySelector('#pfp-notif-btn')?.addEventListener('click', () => go('/inbox'));
+
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   // BD-HISTORY-P-01 — «История поездок» opens the trip-history section that
   // already renders in this profile (historySectionHtml, id profile-history-section),
