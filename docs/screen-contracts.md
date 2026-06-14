@@ -1005,6 +1005,32 @@ Runtime route exists: `register('/order', orderDetail)` plus dynamic `/order/<id
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
 | Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. |
 
+### BD-RIDE-D-ERROR-01 - Driver active-ride error states
+
+**Status: Planned / contract-only — none of the four states are wired in runtime.** `retry status sync` is **deferred until a backend ride-events / async mutation contract** exists; the dedicated in-screen error UI is Cloud Design render-needed. Error/offline handling for the live driver ride. Distinct from BD-ERROR-01A (the app-shell overlay) and from BD-RIDE-D-NOSHOW-01 (the terminal no-show flow). No own route — these states would layer onto `/active-ride?role=driver`.
+
+| Field | Contract |
+|---|---|
+| Route | `/active-ride?role=driver` (in-screen states; no own route) |
+| File | `public/src/screens/active_ride.js` (no runtime change shipped under this contract) |
+| Storage | `bazardrive.active_ride.v1` (status persisted via `ride_state.js` → `mock_api.updateTripStatus`) |
+| Data source | mock / localStorage today; a real ride-events backend is out of scope |
+| Main states (4) | 1. **offline while on ride** — already surfaced by the **global app-shell offline overlay** (BD-ERROR-01B connection watcher on `navigator.onLine`); **no in-screen UI is added** for it here. 2. **GPS unavailable** — **out of scope until a Mapbox/geolocation slice** (no real geolocation is wired; not mocked). 3. **retry status sync** — **deferred, not wired in runtime.** A driver status-change mutation that fails to sync *would* route through the global `server_error` overlay with a guarded retry. A first synchronous attempt (BD-RIDE-D-ERROR-01B) was **closed unmerged as premature** — a correct guard requires a real backend / async mutation contract: (i) **async** mutations (a sync `try/catch` cannot catch a future Promise rejection); (ii) **rollback on a partial write** (`updateActiveRideStatus` saves before `syncCanonicalOrderStatus`/`updateTripStatus` could fail, so the screen and the persisted record would diverge); (iii) a **stale-route retry guard** (a captured `onRetry` survives navigation on the singleton overlay and would mutate a detached ride); (iv) **side-effect ordering** (the approaching auto-chat write must follow a successful sync, not precede it). Sync localStorage gives no real reject path today. Tracked as **BD-RIDE-D-ERROR-02**. 4. **support fallback** — a "contact support" escalation from an error state; **described only — Cloud Design render-needed / not implemented**. |
+| Actions | None wired in this slice — all four states are deferred / render-pending / backend-needed. |
+| Acceptance | (a) No new in-screen error UI is invented without a Cloud Design render frame. (b) `offline while on ride` stays owned by the global offline overlay — not re-implemented in-screen. (c) `GPS unavailable` remains out of scope pending a Mapbox/geolocation slice. (d) `support fallback` is contract-only / render-pending. (e) `retry status sync` is **deferred** to BD-RIDE-D-ERROR-02 (backend / async mutation contract) — **no runtime guard is shipped here**; the synchronous attempt was closed as premature for the reasons in state 3. |
+| Out of scope | Real Mapbox live tracking; backend ride-events API; real GPS/geolocation; any new bespoke in-screen error UI without a Cloud Design frame; the synchronous status-sync guard (closed unmerged); BD-RIDE-D-NOSHOW-01 (separate). |
+
+### BD-RIDE-D-ERROR-02 - Backend-backed driver status-sync failure semantics (planned / backend-needed)
+
+**Status: Planned — backend-needed.** The correct home for `retry status sync` once a real ride-events backend / async mutation contract exists. Captures the obligations a synchronous guard cannot meet (the BD-RIDE-D-ERROR-01B attempt was closed unmerged because retrofitting backend-failure handling onto the synchronous, side-effect-laden lifecycle generates these as real requirements).
+
+| Field | Contract |
+|---|---|
+| Route | `/active-ride?role=driver` (no own route) |
+| File | `public/src/screens/active_ride.js` (+ a real status-sync data layer, when it exists) |
+| Scope | (1) an **async status-mutation contract** for the driver lifecycle; (2) **rollback / transactional** status updates so a failed canonical sync does not leave the active-ride record advanced while the order stays stale; (3) a **stale-route retry guard** (route/`isActive`) so a retry captured on the singleton overlay cannot mutate a ride the driver has navigated away from; (4) **side-effect ordering** so notices like the approaching auto-chat fire only after a successful sync; (5) **cancel / no-show sheet failure semantics** so the cancel sheet does not advance to its success card on a failed sync. |
+| Out of scope (until backend) | Any of the above on the current sync localStorage path — there is no real reject path to handle, so wiring it now is premature (see the closed BD-RIDE-D-ERROR-01B). |
+
 ### BD-RIDE-D-SHEETS-01 - Driver cancel + problem sheets
 
 | Field | Contract |
