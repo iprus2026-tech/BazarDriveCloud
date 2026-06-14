@@ -34,17 +34,31 @@ function expect(label, cond, detail = '') {
 expect('active_ride.js imports reportAppShellError + dismissAppShellError from ../app_error_triggers.js',
   /import\s*\{[\s\S]*?reportAppShellError[\s\S]*?dismissAppShellError[\s\S]*?\}\s*from\s*'\.\.\/app_error_triggers\.js'/.test(ride));
 
-// ── B. per-screen token + wrapped mutation boundary ──────────
+// ── B. per-screen token + guarded helper for the DIRECT actions only ──
 expect('mints a per-screen statusSyncToken',
   /const\s+statusSyncToken\s*=\s*\{\s*\}/.test(ride));
-expect('persistDriverRideStatus(nextStatus, patch) wraps its body in a try',
-  /function\s+persistDriverRideStatus\(\s*nextStatus\s*,\s*patch\s*=\s*\{\s*\}\s*\)\s*\{[\s\S]{0,80}try\s*\{/.test(ride));
+expect('guardedDriverStatusChange(nextStatus, patch) wraps the persist in a try',
+  /function\s+guardedDriverStatusChange\(\s*nextStatus\s*,\s*patch\s*=\s*\{\s*\}\s*\)\s*\{[\s\S]{0,80}try\s*\{[\s\S]{0,160}persistDriverRideStatus\(/.test(ride));
+expect('the 6 direct lifecycle actions route through guardedDriverStatusChange',
+  (ride.match(/=\s*guardedDriverStatusChange\(RIDE_STATUS\./g) || []).length === 6,
+  'accept / start-pickup / approaching / arrived / start / finish');
+
+// ── B2. the cancel/no-show sheet path is NOT routed through the guard ──
+expect('the overlay guard lives in ONE place — reportAppShellError appears once',
+  (ride.match(/reportAppShellError\(/g) || []).length === 1,
+  'only guardedDriverStatusChange reports; persistDriverRideStatus stays unguarded');
+expect('persistDriverRideStatus itself does not report (cancel/no-show keeps its own sheet flow)',
+  !/function\s+persistDriverRideStatus\([\s\S]*?reportAppShellError\(/.test(
+    ride.slice(ride.indexOf('function persistDriverRideStatus'), ride.indexOf('function guardedDriverStatusChange'))),
+  'no reportAppShellError between persistDriverRideStatus and guardedDriverStatusChange');
+expect('the cancel/no-show path goes through persistDriverCancel (unguarded by design)',
+  /persistDriverCancel\(/.test(ride) && /persistDriverCancel\([\s\S]{0,80}return\s+persistDriverRideStatus\(/.test(ride.slice(ride.indexOf('function persistDriverCancel'))));
 
 // ── C. failure → server_error with a guarded retry repeating THE SAME change ──
 expect('on failure reports server_error to the global overlay',
   /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?reportAppShellError\(\s*'server_error'\s*,/.test(ride));
-expect('the retry repeats the SAME status change (persistDriverRideStatus(nextStatus, patch)) then re-renders',
-  /onRetry:\s*\(\)\s*=>\s*\{\s*ride\s*=\s*persistDriverRideStatus\(\s*nextStatus\s*,\s*patch\s*\)\s*;\s*renderSheet\(\)/.test(ride));
+expect('the retry repeats the SAME status change (guardedDriverStatusChange(nextStatus, patch)) then re-renders',
+  /onRetry:\s*\(\)\s*=>\s*\{\s*ride\s*=\s*guardedDriverStatusChange\(\s*nextStatus\s*,\s*patch\s*\)\s*;\s*renderSheet\(\)/.test(ride));
 expect('the server_error report is tagged with the per-screen token',
   /reportAppShellError\(\s*'server_error'\s*,\s*\{[\s\S]*?token:\s*statusSyncToken/.test(ride));
 expect('the catch keeps the current ride (status change does not apply on failure)',

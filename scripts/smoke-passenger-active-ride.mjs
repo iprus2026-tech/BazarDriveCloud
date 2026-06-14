@@ -515,7 +515,7 @@ expect('driver branch still defines renderCompleted()',
 expect('driver branch still dispatches COMPLETED to renderCompleted()',
   /RIDE_STATUS\.COMPLETED\)\s*renderCompleted\(\)/.test(dispatcher));
 expect('driver finish CTA still persists COMPLETED',
-  /persistDriverRideStatus\(RIDE_STATUS\.COMPLETED\)/.test(dispatcher));
+  /(?:persistDriverRideStatus|guardedDriverStatusChange)\(RIDE_STATUS\.COMPLETED\)/.test(dispatcher));
 
 // ── F. Cross-check vs ride_state.js ──────────────────────────
 // Guard against the RIDE_STATUS enum drifting from what the passenger
