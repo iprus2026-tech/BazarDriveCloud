@@ -1,4 +1,4 @@
-const VERSION    = 'v132';
+const VERSION    = 'v133';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -16,6 +16,7 @@ const PRECACHE = [
   './src/app_error_overlay.js',
   './src/app_connection_status.js',
   './src/app_error_triggers.js',
+  './src/data_layer.js',
   './src/router.js',
   './src/state.js',
   './src/smoke_role.js',
