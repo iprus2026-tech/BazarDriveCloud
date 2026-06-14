@@ -758,6 +758,18 @@ if (exists(profileHistoryMenuSmoke)) {
   }
 }
 
+// BD-NOTIF-01 — passenger profile notification bell entry point. Asserts
+// #pfp-notif-btn opens the existing /inbox hub (reuse, not a split route).
+const profileNotifBellSmoke = path.join(root, 'scripts', 'smoke-profile-notif-bell.mjs');
+if (exists(profileNotifBellSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileNotifBellSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-notif-bell.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
