@@ -19,16 +19,26 @@
 // (today's mock/localStorage) or a real async, rejectable backend later. This
 // module owns the load orchestration; the overlay protocol itself stays in the
 // non-mutating app_error_triggers.js adapter, which this imports.
+//
+// isActive (optional) gates the OVERLAY for a deferred/navigable load: a stale
+// load — one whose screen was navigated away from before it settles — must not
+// pop a 'retrying'/'server_error' sheet over whichever screen is now current.
+// The report itself happens inside this catch (before any caller-side post-await
+// check could run), so the guard belongs here. When omitted (in-place loads) the
+// resource is always active. On a stale failure we clear any 'retrying' we raised
+// (guarded by onlyIfState) instead of surfacing a new error.
 import { reportAppShellError, dismissAppShellError } from './app_error_triggers.js';
 
-export async function loadResource(fn, { onRetry, isRetry, fallback = [] } = {}) {
-  if (isRetry) reportAppShellError('retrying');
+export async function loadResource(fn, { onRetry, isRetry, fallback = [], isActive } = {}) {
+  const active = () => (typeof isActive !== 'function' || isActive());
+  if (isRetry && active()) reportAppShellError('retrying');
   try {
     const value = await fn();
     if (isRetry) dismissAppShellError({ onlyIfState: 'retrying' });
     return value;
   } catch (err) {
-    reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    if (active()) reportAppShellError('server_error', onRetry ? { onRetry } : {});
+    else dismissAppShellError({ onlyIfState: 'retrying' });
     return fallback;
   }
 }

@@ -34,10 +34,12 @@ expect('trip_receipt.js does not import the overlay adapter directly (it goes th
   !/from\s*'\.\.\/app_error_triggers\.js'/.test(receipt));
 
 // ── B. the primary receipt read goes through loadResource ────
-expect('the real receipt read routes through loadResource(() => getReceipt(tripId), { onRetry, isRetry, fallback: null })',
-  /await\s+loadResource\(\s*\(\)\s*=>\s*getReceipt\(\s*tripId\s*\)\s*,\s*\{\s*onRetry\s*,\s*isRetry\s*,\s*fallback:\s*null\s*\}\s*\)/.test(receipt));
+expect('the real receipt read routes through loadResource(() => getReceipt(tripId), …)',
+  /await\s+loadResource\(\s*\(\)\s*=>\s*getReceipt\(\s*tripId\s*\)\s*,\s*\{[\s\S]*?\}\s*\)/.test(receipt));
 expect('the adapter fallback is null (getReceipt returns object|null, not a list)',
   /fallback:\s*null/.test(receipt));
+expect('the load is gated by isActive: () => content.isConnected (so a stale load cannot report over the next screen)',
+  /isActive:\s*\(\)\s*=>\s*content\.isConnected/.test(receipt));
 
 // ── C. the resolve is async + re-invokable for retry ─────────
 expect('renderResolved is async and takes (content, tripId, forced, onRetry, isRetry)',

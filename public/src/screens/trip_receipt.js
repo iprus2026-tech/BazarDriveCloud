@@ -194,9 +194,14 @@ async function renderResolved(content, tripId, forced, onRetry, isRetry) {
     const base = getReceipt(tripId) || getReceipt(DEMO_RECEIPT_TRIP_ID);
     receipt = base ? { ...base, paymentMode: forced } : null;
   } else {
-    receipt = await loadResource(() => getReceipt(tripId), { onRetry, isRetry, fallback: null });
-    // A late (future-async) load may resolve after navigation — don't paint a
-    // detached node.
+    // isActive gates the overlay INSIDE loadResource — a future-async getReceipt
+    // that rejects after the user has navigated away must not report
+    // server_error over the next screen (the report happens in the catch, before
+    // the post-await check below could run). The post-await check additionally
+    // skips painting a detached node.
+    receipt = await loadResource(() => getReceipt(tripId), {
+      onRetry, isRetry, fallback: null, isActive: () => content.isConnected,
+    });
     if (!content.isConnected) return;
   }
   content.innerHTML = receipt ? receiptDocHtml(receipt) : receiptMissingHtml(tripId);
