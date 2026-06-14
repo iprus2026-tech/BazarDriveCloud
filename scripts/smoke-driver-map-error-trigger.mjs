@@ -67,19 +67,29 @@ expect('loadNearbyOrders() shows a non-blocking retrying state while retrying',
   !!loadBody && /if\s*\(isRetry\)\s*reportAppShellError\(\s*'retrying'\s*\)/.test(loadBody));
 expect('loadNearbyOrders() dismisses the overlay only AFTER a successful reload, guarded by onlyIfState',
   !!loadBody && /await\s+listNearbyOrders\(\)[\s\S]*?if\s*\(isRetry\)\s*dismissAppShellError\(\s*\{\s*onlyIfState:\s*'retrying'\s*\}\s*\)/.test(loadBody));
-expect('onDriverMapRetry re-runs the load as a retry (renderList(true))',
+expect('onDriverMapRetry re-runs the working list as a retry (renderList(true))',
   /onDriverMapRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?renderList\(\s*true\s*\)/.test(driverMap));
-expect('onDriverMapRetry does NOT pre-emptively dismiss before the reload result is known',
-  !/onDriverMapRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(driverMap));
+expect('onReadinessRetry re-runs the readiness gate as a retry (renderReadinessGate(true))',
+  /onReadinessRetry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?renderReadinessGate\(\s*true\s*\)/.test(driverMap));
+expect('neither retry closure pre-emptively dismisses before the reload result is known',
+  !/on(?:DriverMap|Readiness)Retry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(driverMap));
 
-// ── C. all load sites go through the wrapper ─────────────────
+// ── C. all load sites go through the wrapper WITH a retry callback ─────
 expect('initial working surface renders via renderList(false)',
   /await\s+renderList\(\s*false\s*\)/.test(driverMap));
 expect('renderList(isRetry) loads via loadNearbyOrders(onDriverMapRetry, isRetry)',
   /async\s+function\s+renderList\(\s*isRetry\s*\)[\s\S]{0,140}await\s+loadNearbyOrders\(\s*onDriverMapRetry\s*,\s*isRetry\s*\)/.test(driverMap));
-expect('all three nearby-orders reads route through loadNearbyOrders (await loadNearbyOrders( appears 3x)',
-  (driverMap.match(/await\s+loadNearbyOrders\(/g) || []).length === 3,
-  'expected 3 call sites: not-ready gate, renderList, accept-recheck gate');
+expect('renderReadinessGate(isRetry) loads via loadNearbyOrders(onReadinessRetry, isRetry)',
+  /async\s+function\s+renderReadinessGate\(\s*isRetry\s*\)[\s\S]{0,320}await\s+loadNearbyOrders\(\s*onReadinessRetry\s*,\s*isRetry\s*\)/.test(driverMap));
+expect('both readiness-gate sites render via renderReadinessGate(false) (not-ready branch + accept-recheck)',
+  (driverMap.match(/await\s+renderReadinessGate\(\s*false\s*\)/g) || []).length === 2,
+  'expected 2 gate render sites');
+expect('every nearby-orders read passes a retry callback — no zero-arg loadNearbyOrders() remains',
+  !/loadNearbyOrders\(\s*\)/.test(driverMap),
+  'gate reads must carry onReadinessRetry so the overlay retry button reloads, not just dismisses');
+expect('both load closures route through the wrapper (await loadNearbyOrders( appears 2x: renderList + renderReadinessGate)',
+  (driverMap.match(/await\s+loadNearbyOrders\(/g) || []).length === 2,
+  'expected 2 wrapper call sites');
 expect('driver_map.js calls listNearbyOrders() only inside the wrapper (await listNearbyOrders() appears once)',
   (driverMap.match(/await\s+listNearbyOrders\(\)/g) || []).length === 1,
   'direct awaited call count should be 1 (only inside loadNearbyOrders)');

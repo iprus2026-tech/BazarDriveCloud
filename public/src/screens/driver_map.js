@@ -519,10 +519,22 @@ export default async function driverMapScreen() {
   // render LOCKED, and "Завершить готовность" routes to /profile. No accept
   // wiring is attached in this branch, so an order can't be taken from here.
   const u = user.get();
-  if (!isDriverLineReady(u)) {
+
+  // BD-ERROR-01C-F — the readiness gate's locked-order decoration is also a
+  // nearby-orders read, so it carries the same guarded retry as the working
+  // list: a failed load reports server_error with onReadinessRetry, and tapping
+  // «Повторить» re-renders the gate (without a retry callback the overlay button
+  // would just dismiss — app_error_overlay.js). renderReadinessGate is hoisted;
+  // the const onReadinessRetry must be initialised before the first gate render.
+  const onReadinessRetry = () => { renderReadinessGate(true); };
+  async function renderReadinessGate(isRetry) {
     root.dataset.state = STATE.NOT_READY;
     stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-    sheetSlot.replaceChildren(buildReadinessGate(u, await loadNearbyOrders()));
+    sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadNearbyOrders(onReadinessRetry, isRetry)));
+  }
+
+  if (!isDriverLineReady(u)) {
+    await renderReadinessGate(false);
 
     root.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action]');
@@ -574,9 +586,7 @@ export default async function driverMapScreen() {
       // and bail WITHOUT calling acceptCanonicalRideOrder — the order must not
       // be mutated by a no-longer-ready driver.
       if (!isDriverLineReady(user.get())) {
-        root.dataset.state = STATE.NOT_READY;
-        stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-        sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadNearbyOrders()));
+        await renderReadinessGate(false);
         return;
       }
       const id = btn.dataset.orderId;
