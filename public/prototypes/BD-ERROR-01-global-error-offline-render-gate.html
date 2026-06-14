@@ -1,182 +1,663 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <title>BD-ERROR-01 Global Error / Offline — Render Gate</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #08080a; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
-    #__bundler_loading { position: fixed; bottom: 20px; right: 20px; font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; color: #666; background: #fff; padding: 8px 14px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); z-index: 10000; }
-    #__bundler_thumbnail { position: fixed; inset: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #08080a; z-index: 9999; }
-    #__bundler_thumbnail svg { width: 100%; height: 100%; object-fit: contain; }
-    #__bundler_placeholder { color: #999; font-size: 14px; }
-  </style>
-  <noscript>
-    <style>#__bundler_loading { display: none; }</style>
-    <div style="position:fixed;bottom:12px;left:12px;font:13px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;color:#999;background:rgba(255,255,255,0.9);padding:6px 12px;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,0.08);z-index:10000;">
-      This page requires JavaScript to display.
-    </div>
-  </noscript>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BD-ERROR-01 Global Error / Offline — Render Gate</title>
+<style>
+  /* ── Cloud Design tokens ── */
+  :root {
+    --accent:       #FF6B35;
+    --accent-soft:  rgba(255,107,53,0.13);
+    --bg-0:         #0a0a0c;
+    --bg-1:         #131316;
+    --bg-2:         #1a1a1f;
+    --bg-3:         #222228;
+    --line:         rgba(255,255,255,0.07);
+    --line-strong:  rgba(255,255,255,0.12);
+    --text:         #f3f3f5;
+    --text-2:       #a8a8b3;
+    --text-3:       #6c6c78;
+    --success:      #4ADE80;
+    --warning:      #FBBF24;
+    --danger:       #F87171;
+    --info:         #60A5FA;
+    --radius-sm:    10px;
+    --radius-md:    14px;
+    --radius-lg:    20px;
+    --pad:          16px;
+
+    /* phone geometry + scale — frame-box keeps real layout width */
+    --phone-w:      390px;
+    --phone-h:      780px;
+    --scale:        0.60;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #08080a;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 40px 32px 64px;
+  }
+
+  /* ── Header ── */
+  .page-id {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
+  }
+  .page-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .page-sub   { font-size: 14px; color: var(--text-2); line-height: 1.55; max-width: 620px; }
+  .page-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .badge {
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+  }
+  .badge--p1     { background: rgba(248,113,113,0.14); color: var(--danger); }
+  .badge--layer  { background: rgba(96,165,250,0.12);  color: var(--info); }
+  .badge--both   { background: rgba(251,191,36,0.12);  color: var(--warning); }
+  .badge--dark   { background: var(--bg-2); color: var(--text-2); border: 1px solid var(--line-strong); }
+
+  .section-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-3);
+    margin: 40px 0 18px;
+  }
+
+  /* ── Comparison row of 5 phones ── */
+  .frames {
+    display: flex;
+    gap: 20px;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+  .frame {
+    display: flex;
+    flex-direction: column;
+    width: calc(var(--phone-w) * var(--scale));
+    flex: 0 0 auto;
+  }
+  .frame__num {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-3); margin-bottom: 4px;
+  }
+  .frame__name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .frame__desc { font-size: 11px; color: var(--text-2); line-height: 1.45; margin-bottom: 12px; min-height: 32px; }
+
+  /* frame-box has the REAL scaled layout footprint; inner is the 1:1 phone */
+  .frame-box {
+    width: calc(var(--phone-w) * var(--scale));
+    height: calc(var(--phone-h) * var(--scale));
+    overflow: hidden;
+    transform-origin: top left;
+    border-radius: calc(34px * var(--scale));
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.04),
+      0 22px 50px rgba(0,0,0,0.6),
+      0 4px 16px rgba(0,0,0,0.4);
+  }
+  .frame-inner {
+    width: var(--phone-w);
+    height: var(--phone-h);
+    transform: scale(var(--scale));
+    transform-origin: top left;
+  }
+
+  /* ── Phone shell ── */
+  .shell {
+    position: relative;
+    width: var(--phone-w);
+    height: var(--phone-h);
+    border-radius: 34px;
+    background:
+      radial-gradient(700px 350px at 50% -4%, rgba(255,107,53,0.06), transparent 60%),
+      var(--bg-0);
+    overflow: hidden;
+  }
+
+  /* ── Feed mock (visible under every overlay) ── */
+  .feed { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  .feed__statusbar {
+    height: 44px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; font-size: 13px; font-weight: 600; color: var(--text-2);
+  }
+  .feed__statusbar-dots { display: flex; gap: 4px; align-items: center; }
+  .feed__statusbar-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); }
+  .feed__topbar { padding: 8px 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+  .feed__title { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .feed__sub   { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .feed__avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--bg-2); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center; color: var(--text-3);
+  }
+  .feed__scroll { flex: 1; overflow: hidden; padding: 4px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .post {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+  .post__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .post__pic  { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-3); flex-shrink: 0; }
+  .post__who  { font-size: 14px; font-weight: 600; }
+  .post__when { font-size: 12px; color: var(--text-3); }
+  .post__route { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .post__pin { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .post__pin--from { background: var(--success); }
+  .post__pin--to   { background: var(--accent); }
+  .post__line { font-size: 15px; font-weight: 600; }
+  .post__meta { display: flex; gap: 14px; font-size: 13px; color: var(--text-2); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .post__price { margin-left: auto; color: var(--accent); font-weight: 700; }
+  .feed__tabbar {
+    height: 72px; background: rgba(10,10,12,0.92);
+    border-top: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-around; padding: 0 12px 10px;
+  }
+  .feed__tab { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-3); font-size: 10px; }
+  .feed__tab svg { width: 24px; height: 24px; }
+  .feed__tab--active { color: var(--accent); }
+
+  /* ── Scrim (blocking states only) ── */
+  .scrim {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.58);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 40;
+  }
+
+  /* ── STATE 1 — Offline banner (top, non-blocking, red) ── */
+  .gx-offline {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: rgba(36,16,18,0.97);
+    border-bottom: 1px solid rgba(248,113,113,0.32);
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 18px calc(12px); padding-top: 14px;
+    z-index: 60;
+  }
+  .gx-offline__dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex-shrink: 0;
+    box-shadow: 0 0 0 0 rgba(248,113,113,0.5);
+    animation: pulse-dot 1.6s ease-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%   { box-shadow: 0 0 0 0 rgba(248,113,113,0.55); opacity: 1; }
+    70%  { box-shadow: 0 0 0 7px rgba(248,113,113,0);  opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0 rgba(248,113,113,0);    opacity: 1; }
+  }
+  .gx-offline__txt { flex: 1; min-width: 0; }
+  .gx-offline__title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .gx-offline__hint  { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+  .gx-offline__ic { width: 20px; height: 20px; color: var(--danger); flex-shrink: 0; }
+
+  /* ── STATE 2 / 3 — bottom sheet card (blocking) ── */
+  .gx-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--bg-1);
+    border-top-left-radius: 24px; border-top-right-radius: 24px;
+    border-top: 1px solid var(--line-strong);
+    padding: 20px 20px 28px;
+    z-index: 60;
+    box-shadow: 0 -12px 40px rgba(0,0,0,0.55);
+  }
+  .gx-sheet__grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 0 auto 16px; }
+  .gx-sheet__icon {
+    width: 52px; height: 52px; border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px;
+  }
+  .gx-sheet__icon--danger  { background: rgba(248,113,113,0.13); }
+  .gx-sheet__icon--warning { background: rgba(251,191,36,0.12); }
+  .gx-sheet__icon svg { width: 26px; height: 26px; }
+  .gx-sheet__title { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .gx-sheet__body  { font-size: 14px; color: var(--text-2); line-height: 1.5; margin-bottom: 14px; }
+  .gx-sheet__code {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 4px 10px; border-radius: 8px;
+    margin-bottom: 18px;
+  }
+  .gx-sheet__code--danger  { background: rgba(248,113,113,0.10); color: var(--danger); }
+  .gx-sheet__code--warning { background: rgba(251,191,36,0.10); color: var(--warning); }
+  .gx-sheet__actions { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; height: 48px; border-radius: var(--radius-md);
+    font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    cursor: pointer;
+  }
+  .btn--primary { background: var(--accent); color: #1a0a04; }
+  .btn--ghost   { background: var(--bg-2); color: var(--text); border: 1px solid var(--line-strong); }
+  .btn svg { width: 17px; height: 17px; }
+
+  /* ── STATE 4 — Retrying banner (top, blue, non-blocking) ── */
+  .gx-retry {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: rgba(14,22,38,0.97);
+    border-bottom: 1px solid rgba(96,165,250,0.32);
+    display: flex; align-items: center; gap: 11px;
+    padding: 14px 18px 12px;
+    z-index: 60;
+  }
+  .gx-retry__spin {
+    width: 18px; height: 18px; flex-shrink: 0;
+    border: 2.4px solid rgba(96,165,250,0.25);
+    border-top-color: var(--info);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .gx-retry__txt   { flex: 1; }
+  .gx-retry__title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .gx-retry__hint  { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+
+  /* ── STATE 5 — Recovered toast (bottom, green, auto-dismiss feel) ── */
+  .gx-recovered {
+    position: absolute; left: 16px; right: 16px; bottom: 88px;
+    background: rgba(14,26,16,0.97);
+    border: 1px solid rgba(74,222,128,0.30);
+    border-radius: var(--radius-md);
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px;
+    z-index: 60;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    animation: toast-life 3s ease-in-out forwards;
+  }
+  @keyframes toast-life {
+    0%   { opacity: 0; transform: translateY(8px); }
+    12%  { opacity: 1; transform: translateY(0); }
+    85%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0.35; transform: translateY(4px); }
+  }
+  .gx-recovered__ic { width: 20px; height: 20px; color: var(--success); flex-shrink: 0; }
+  .gx-recovered__txt { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+  .gx-recovered__bar {
+    position: absolute; left: 0; bottom: 0; height: 2px;
+    background: var(--success); border-bottom-left-radius: var(--radius-md);
+    animation: toast-bar 3s linear forwards;
+  }
+  @keyframes toast-bar { from { width: 100%; } to { width: 0%; } }
+
+  /* ── States summary cards ── */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px;
+  }
+  .sum-card {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+  .sum-card__top { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .sum-card__chip {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .sum-card__chip--danger  { background: rgba(248,113,113,0.14); color: var(--danger); }
+  .sum-card__chip--warning { background: rgba(251,191,36,0.13); color: var(--warning); }
+  .sum-card__chip--info    { background: rgba(96,165,250,0.13); color: var(--info); }
+  .sum-card__chip--success { background: rgba(74,222,128,0.13); color: var(--success); }
+  .sum-card__name { font-size: 14px; font-weight: 700; }
+  .sum-card__kind { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+  .sum-card__list { list-style: none; display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+  .sum-card__list li { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; line-height: 1.4; }
+  .sum-card__list li::before { content: '·'; color: var(--text-3); }
+
+  /* ── Contract notes ── */
+  .contract {
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 22px 24px;
+  }
+  .contract ul { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .contract li { display: flex; gap: 9px; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+  .contract li::before { content: '—'; color: var(--accent); flex-shrink: 0; }
+  .contract code {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    background: var(--bg-2); padding: 1px 6px; border-radius: 5px; color: var(--accent);
+  }
+  .contract b { color: var(--text); font-weight: 600; }
+
+  .footer {
+    margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--text-3);
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between;
+  }
+
+  /* ── Responsive: let frames wrap on narrow viewports ── */
+  @media (max-width: 1340px) {
+    .frames { flex-wrap: wrap; gap: 24px 20px; }
+  }
+
+  /* ── Print / A4 — smaller scale, no clipping ── */
+  @media print {
+    :root { --scale: 0.34; }
+    body { background: #fff; }
+    .page { max-width: none; padding: 16px; }
+    .frames { flex-wrap: nowrap; gap: 10px; }
+    .gx-offline__dot, .gx-retry__spin, .gx-recovered, .gx-recovered__bar { animation: none; }
+  }
+</style>
 </head>
 <body>
-  <div id="__bundler_thumbnail">
-  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100" height="100" fill="#0a0a0c"></rect>
-    <rect x="22" y="26" width="56" height="14" rx="5" fill="#2a1416" stroke="#F87171" stroke-width="1.5"></rect>
-    <circle cx="31" cy="33" r="2.4" fill="#F87171"></circle>
-    <rect x="30" y="58" width="40" height="22" rx="6" fill="#131316" stroke="#FF6B35" stroke-width="1.5"></rect>
-    <rect x="37" y="68" width="26" height="5" rx="2.5" fill="#FF6B35"></rect>
-  </svg>
+<div class="page">
+
+  <!-- ── Header ── -->
+  <div class="page-id">BD-ERROR-01 · Render Gate</div>
+  <h1 class="page-title">Global Error / Offline</h1>
+  <p class="page-sub">
+    App-level overlay system rendered above any active screen by the app shell. A sample Лента (Feed) screen stays
+    visible beneath each overlay to show this is a global transport layer — not a replacement screen. It never
+    suppresses a screen's own inline empty / loading / error states.
+  </p>
+  <div class="page-badges">
+    <span class="badge badge--p1">P1</span>
+    <span class="badge badge--layer">App-shell singleton</span>
+    <span class="badge badge--both">Both roles</span>
+    <span class="badge badge--dark">430px shell</span>
+    <span class="badge badge--dark">Dark · #FF6B35</span>
+  </div>
+
+  <!-- ── 5-state comparison ── -->
+  <div class="section-label">5 States · Comparison View</div>
+  <div class="frames">
+
+    <!-- STATE 1 — Offline banner -->
+    <div class="frame">
+      <div class="frame__num">State 1</div>
+      <div class="frame__name">Offline Banner</div>
+      <div class="frame__desc">Compact red top banner, pulsing dot. Non-blocking — feed stays scrollable.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <!-- overlay -->
+          <div class="gx-offline">
+            <svg class="gx-offline__ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/><path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/><path d="M5 12.5A10 10 0 0 1 9.14 10"/><circle cx="12" cy="20" r="1"/></svg>
+            <div class="gx-offline__txt">
+              <div class="gx-offline__title">Нет соединения</div>
+              <div class="gx-offline__hint">Проверьте интернет — данные обновятся автоматически</div>
+            </div>
+            <span class="gx-offline__dot"></span>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 2 — Server error -->
+    <div class="frame">
+      <div class="frame__num">State 2</div>
+      <div class="frame__name">Server Error</div>
+      <div class="frame__desc">Dimmed feed + bottom sheet. Traps interaction until Повторить or dismiss.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="scrim"></div>
+          <div class="gx-sheet">
+            <div class="gx-sheet__grip"></div>
+            <div class="gx-sheet__icon gx-sheet__icon--danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="gx-sheet__title">Что-то пошло не так</div>
+            <div class="gx-sheet__body">Не удалось загрузить данные. Попробуйте снова или напишите в поддержку.</div>
+            <div class="gx-sheet__code gx-sheet__code--danger">SERVER · 500</div>
+            <div class="gx-sheet__actions">
+              <button class="btn btn--primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Повторить</button>
+              <button class="btn btn--ghost">Поддержка</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 3 — Timeout -->
+    <div class="frame">
+      <div class="frame__num">State 3</div>
+      <div class="frame__name">Timeout</div>
+      <div class="frame__desc">Same blocking sheet, amber clock. Secondary action: Позже.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="scrim"></div>
+          <div class="gx-sheet">
+            <div class="gx-sheet__grip"></div>
+            <div class="gx-sheet__icon gx-sheet__icon--warning">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+            </div>
+            <div class="gx-sheet__title">Превышено время ожидания</div>
+            <div class="gx-sheet__body">Сервер слишком долго не отвечает. Проверьте соединение и попробуйте снова.</div>
+            <div class="gx-sheet__code gx-sheet__code--warning">TIMEOUT · 504</div>
+            <div class="gx-sheet__actions">
+              <button class="btn btn--primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Повторить</button>
+              <button class="btn btn--ghost">Позже</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 4 — Retrying -->
+    <div class="frame">
+      <div class="frame__num">State 4</div>
+      <div class="frame__name">Retrying</div>
+      <div class="frame__desc">Blue top banner, spinner. Non-blocking — auto-resolves to recovered or error.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="gx-retry">
+            <span class="gx-retry__spin"></span>
+            <div class="gx-retry__txt">
+              <div class="gx-retry__title">Переподключение…</div>
+              <div class="gx-retry__hint">Восстанавливаем соединение</div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- STATE 5 — Recovered -->
+    <div class="frame">
+      <div class="frame__num">State 5</div>
+      <div class="frame__name">Recovered</div>
+      <div class="frame__desc">Green bottom toast, ~3s auto-dismiss. No action required.</div>
+      <div class="frame-box"><div class="frame-inner">
+        <div class="shell">
+          <div class="feed">
+            <div class="feed__statusbar"><span>9:41</span><div class="feed__statusbar-dots"><span></span><span></span><span></span></div></div>
+            <div class="feed__topbar">
+              <div><div class="feed__title">Лента</div><div class="feed__sub">12 поездок рядом</div></div>
+              <div class="feed__avatar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+            </div>
+            <div class="feed__scroll">
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Алина М.</div><div class="post__when">5 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Алматы, Абая</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Аэропорт</span></div>
+                <div class="post__meta"><span>2 места</span><span>14:30</span><span class="post__price">2 500 ₸</span></div>
+              </div>
+              <div class="post">
+                <div class="post__head"><div class="post__pic"></div><div><div class="post__who">Данияр К.</div><div class="post__when">12 мин назад</div></div></div>
+                <div class="post__route"><span class="post__pin post__pin--from"></span><span class="post__line">Достык</span></div>
+                <div class="post__route"><span class="post__pin post__pin--to"></span><span class="post__line">Мега Парк</span></div>
+                <div class="post__meta"><span>1 место</span><span>15:00</span><span class="post__price">900 ₸</span></div>
+              </div>
+            </div>
+            <div class="feed__tabbar">
+              <div class="feed__tab feed__tab--active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Лента</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>Карта</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</div>
+              <div class="feed__tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Профиль</div>
+            </div>
+          </div>
+          <div class="gx-recovered">
+            <svg class="gx-recovered__ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
+            <div class="gx-recovered__txt">Соединение восстановлено</div>
+            <span class="gx-recovered__bar"></span>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+  </div><!-- /frames -->
+
+  <!-- ── States summary ── -->
+  <div class="section-label">States Summary</div>
+  <div class="summary">
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--danger">1</div><div><div class="sum-card__name">Offline Banner</div><div class="sum-card__kind">Top · non-blocking</div></div></div>
+      <ul class="sum-card__list"><li>Нет соединения</li><li>Pulsing red dot</li><li>Auto-recovers when online</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--danger">2</div><div><div class="sum-card__name">Server Error</div><div class="sum-card__kind">Bottom sheet · blocking</div></div></div>
+      <ul class="sum-card__list"><li>Что-то пошло не так</li><li>SERVER · 500</li><li>Повторить / Поддержка</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--warning">3</div><div><div class="sum-card__name">Timeout</div><div class="sum-card__kind">Bottom sheet · blocking</div></div></div>
+      <ul class="sum-card__list"><li>Превышено время ожидания</li><li>TIMEOUT · 504</li><li>Повторить / Позже</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--info">4</div><div><div class="sum-card__name">Retrying</div><div class="sum-card__kind">Top banner · non-blocking</div></div></div>
+      <ul class="sum-card__list"><li>Переподключение…</li><li>Spinner</li><li>Resolves → recovered / error</li></ul>
+    </div>
+    <div class="sum-card">
+      <div class="sum-card__top"><div class="sum-card__chip sum-card__chip--success">5</div><div><div class="sum-card__name">Recovered</div><div class="sum-card__kind">Bottom toast · auto</div></div></div>
+      <ul class="sum-card__list"><li>Соединение восстановлено</li><li>Auto-dismiss ~3s</li><li>No action required</li></ul>
+    </div>
+  </div>
+
+  <!-- ── Contract notes ── -->
+  <div class="section-label">Screen Contract Notes</div>
+  <div class="contract">
+    <ul>
+      <li><b>Singleton overlay</b> owned by the app shell — mounted above <code>#app</code> inside <code>#shell</code>, one instance for the whole app.</li>
+      <li>Driven by a <b>global connection / lastError store</b> — screens do not own these states; they read connection state from the shell.</li>
+      <li><b>Banners are non-blocking</b> — offline (state 1) and retrying (state 4) pin to the top and leave the screen interactive and scrollable.</li>
+      <li><b>Server error and timeout cards use a scrim</b> and trap interaction until <code>Повторить</code> or a dismiss action (Поддержка / Позже).</li>
+      <li><b>Recovered toast auto-dismisses</b> (~3s) and requires no action.</li>
+      <li><code>Повторить</code> <b>re-runs the last failed action</b> — it does not reload the whole app or reset navigation.</li>
+      <li><b>Never mutates ride / order state</b> — this layer is read-only with respect to trips, orders, and payments.</li>
+      <li><b>Must not suppress a screen's own inline empty / loading / error states</b> — those remain per-screen; this gate is additive.</li>
+      <li><b>Transport-level failures only</b> — offline, timeout, 5xx. Not validation errors, not business rejects, not Mapbox tile errors.</li>
+      <li>Connection state is <b>mock / <code>navigator.onLine</code></b> in implementation — no backend, no real push, no socket.</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    <span>BD-ERROR-01 · Global Error / Offline — Render Gate</span>
+    <span>Static vanilla HTML/CSS · Cloud Design · Dark · #FF6B35</span>
+    <span>Design artifact — no runtime route, no app wiring</span>
+  </div>
+
 </div>
-  <div id="__bundler_loading">Unpacking...</div>
-
-  <script>
-    
-document.addEventListener('DOMContentLoaded', async function() {
-  const loading = document.getElementById('__bundler_loading');
-  function setStatus(msg) { if (loading) loading.textContent = msg; }
-
-  // Error sink persists across replaceWith since it's on window, not the DOM.
-  window.addEventListener('error', function(e) {
-    var p = document.body || document.documentElement;
-    var d = document.getElementById('__bundler_err') || p.appendChild(document.createElement('div'));
-    d.id = '__bundler_err';
-    d.style.cssText = 'position:fixed;bottom:12px;left:12px;right:12px;font:12px/1.4 ui-monospace,monospace;background:#2a1215;color:#ff8a80;padding:10px 14px;border-radius:8px;border:1px solid #5c2b2e;z-index:99999;white-space:pre-wrap;max-height:40vh;overflow:auto';
-    d.textContent = (d.textContent ? d.textContent + String.fromCharCode(10) : '') +
-      '[bundle] ' + (e.message || e.type) +
-      (e.filename ? ' (' + e.filename.slice(0, 60) + ':' + e.lineno + ')' : '');
-  }, true);
-
-  try {
-    const manifestEl = document.querySelector('script[type="__bundler/manifest"]');
-    const templateEl = document.querySelector('script[type="__bundler/template"]');
-    if (!manifestEl || !templateEl) {
-      setStatus('Error: missing bundle data');
-      console.error('[bundler] Missing script tags — manifestEl:', !!manifestEl, 'templateEl:', !!templateEl);
-      return;
-    }
-
-    const manifest = JSON.parse(manifestEl.textContent);
-    let template = JSON.parse(templateEl.textContent);
-
-    const uuids = Object.keys(manifest);
-    setStatus('Unpacking ' + uuids.length + ' assets...');
-
-    const blobUrls = {};
-    await Promise.all(uuids.map(async (uuid) => {
-      const entry = manifest[uuid];
-      try {
-        const binaryStr = atob(entry.data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-
-        let finalBytes = bytes;
-        if (entry.compressed) {
-          if (typeof DecompressionStream !== 'undefined') {
-            const ds = new DecompressionStream('gzip');
-            const writer = ds.writable.getWriter();
-            const reader = ds.readable.getReader();
-            writer.write(bytes);
-            writer.close();
-            const chunks = [];
-            let totalLen = 0;
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              chunks.push(value);
-              totalLen += value.length;
-            }
-            finalBytes = new Uint8Array(totalLen);
-            let offset = 0;
-            for (const chunk of chunks) { finalBytes.set(chunk, offset); offset += chunk.length; }
-          } else {
-            console.warn('DecompressionStream not available, asset ' + uuid + ' may not render');
-          }
-        }
-
-        blobUrls[uuid] = URL.createObjectURL(new Blob([finalBytes], { type: entry.mime }));
-      } catch (err) {
-        console.error('Failed to decode asset ' + uuid + ':', err);
-        blobUrls[uuid] = URL.createObjectURL(new Blob([], { type: entry.mime }));
-      }
-    }));
-
-    const extResEl = document.querySelector('script[type="__bundler/ext_resources"]');
-    const extResources = extResEl ? JSON.parse(extResEl.textContent) : [];
-    const resourceMap = {};
-    for (const entry of extResources) {
-      if (blobUrls[entry.uuid]) resourceMap[entry.id] = blobUrls[entry.uuid];
-    }
-
-    setStatus('Rendering...');
-    for (const uuid of uuids) template = template.split(uuid).join(blobUrls[uuid]);
-
-    // Strip integrity + crossorigin — blob URLs from a file:// document inherit
-    // a null origin, so crossorigin forces a CORS fetch that SRI then rejects.
-    // The manifest bytes are ours; SRI protects against CDN compromise, not this.
-    template = template.replace(/\s+integrity="[^"]*"/gi, '').replace(/\s+crossorigin="[^"]*"/gi, '');
-
-    const resourceScript = '<script>window.__resources = ' +
-      JSON.stringify(resourceMap).split('</' + 'script>').join('<\\/' + 'script>') +
-      ';</' + 'script>';
-    // Inject after <head> so the DOCTYPE stays first; prepending the script
-    // would push the parser into quirks mode. DOMParser always emits a <head>
-    // (synthesizing one if the source HTML omitted it) but may carry
-    // attributes through, so match the full opening tag. slice() rather than
-    // replace() keeps us clear of $-pattern substitution in resourceScript.
-    const headOpen = template.match(/<head[^>]*>/i);
-    if (headOpen) {
-      const i = headOpen.index + headOpen[0].length;
-      template = template.slice(0, i) + resourceScript + template.slice(i);
-    }
-
-    // Parse the template and swap the root element. Scripts inserted via
-    // DOMParser/replaceWith are inert per spec — re-create each with
-    // createElement so they execute, awaiting onload for src scripts to
-    // preserve ordering (React before ReactDOM before Babel before text/babel).
-    const doc = new DOMParser().parseFromString(template, 'text/html');
-    document.documentElement.replaceWith(doc.documentElement);
-    const dead = Array.from(document.scripts);
-    for (const old of dead) {
-      const s = document.createElement('script');
-      for (const a of old.attributes) s.setAttribute(a.name, a.value);
-      s.textContent = old.textContent;
-      // text/babel scripts with a src: fetch and inline. transformScriptTags
-      // does XHR against the src, but blob:null/ from a file:// origin is
-      // silently dropped. Inlining makes it a plain inline babel script,
-      // which transformScriptTags handles unconditionally.
-      if ((s.type === 'text/babel' || s.type === 'text/jsx') && s.src) {
-        const r = await fetch(s.src);
-        s.textContent = await r.text();
-        s.removeAttribute('src');
-      }
-      const p = s.src ? new Promise(function(r) { s.onload = s.onerror = r; }) : null;
-      old.replaceWith(s);
-      if (p) await p;
-    }
-    // Babel standalone auto-transforms type=text/babel on DOMContentLoaded,
-    // which fired before we swapped the document. Trigger manually if present.
-    if (window.Babel && typeof window.Babel.transformScriptTags === 'function') {
-      window.Babel.transformScriptTags();
-    }
-  } catch (err) {
-    setStatus('Error unpacking: ' + err.message);
-    console.error('Bundle unpack error:', err);
-  }
-});
-
-  </script>
-
-  <script type="__bundler/manifest">
-{}
-  </script>
-
-  <script type="__bundler/ext_resources">
-[]
-  </script>
-
-  <script type="__bundler/template">
-"<!DOCTYPE html>\n<html lang=\"ru\"><head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>BD-ERROR-01 Global Error / Offline — Render Gate<\u002Ftitle>\n<style>\n  :root{\n    --bg-0:#050507; --bg-1:#131316; --bg-2:#1a1a1f; --bg-3:#222228;\n    --line:rgba(255,255,255,0.08); --line-strong:rgba(255,255,255,0.14);\n    --text:#e8e8ee; --text-2:#a8a8b3; --text-3:#6c6c78;\n    --accent:#FF6B35; --accent-soft:rgba(255,107,53,0.14);\n    --success:#4ADE80; --warning:#FBBF24; --danger:#F87171; --info:#60A5FA;\n    --phone-w:390px; --phone-h:780px; --scale:0.62;\n    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter',system-ui,sans-serif;\n  }\n  *{box-sizing:border-box;}\n  html,body{margin:0;background:var(--bg-0);color:var(--text);-webkit-font-smoothing:antialiased;}\n  .head{padding:26px 28px 4px;max-width:1320px;margin:0 auto;}\n  .accent{display:inline-block;width:72px;height:5px;background:var(--accent);border-radius:3px;margin-bottom:14px;}\n  h1{font-size:23px;margin:0 0 6px;letter-spacing:-0.02em;}\n  .sub{font-size:13px;color:var(--text-2);line-height:1.55;max-width:780px;}\n\n  /* FIX A: layout box matches the scaled visual width, no transform-only overflow */\n  .grid{\n    display:grid;\n    grid-template-columns:repeat(5, calc(var(--phone-w) * var(--scale)));\n    gap:20px; justify-content:center;\n    max-width:1320px; margin:0 auto; padding:22px 28px 40px;\n  }\n  .cell{display:flex;flex-direction:column;align-items:center;}\n  .frame-box{\n    width:calc(var(--phone-w) * var(--scale));\n    height:calc(var(--phone-h) * var(--scale));\n    overflow:hidden; border-radius:calc(34px * var(--scale));\n  }\n  .frame{\n    width:var(--phone-w); height:var(--phone-h);\n    transform:scale(var(--scale)); transform-origin:top left;\n    position:relative; background:#000; overflow:hidden;\n    border-radius:34px; box-shadow:0 0 0 8px #1a1a1d,0 0 0 9px #2a2a2e;\n  }\n  .label{font-size:12.5px;font-weight:600;color:#cfcfd8;margin-top:12px;text-align:center;}\n\n  /* ---- phone shell ---- */\n  .scr{position:absolute;inset:0;background:var(--bg-0);overflow:hidden;}\n  .statusbar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:12px;font-weight:600;color:var(--text-2);}\n  .topbar{padding:6px 16px 10px;}\n  .topbar h2{font-size:21px;margin:0;letter-spacing:-0.02em;}\n  .topbar .ts{font-size:12px;color:var(--text-3);margin-top:1px;}\n  .feed{position:absolute;top:78px;left:0;right:0;bottom:60px;overflow:hidden;padding:0 14px;}\n  .fcard{background:var(--bg-1);border:1px solid var(--line);border-radius:16px;padding:13px;margin-bottom:10px;}\n  .frow{display:flex;align-items:center;gap:10px;margin-bottom:9px;}\n  .av{width:34px;height:34px;border-radius:50%;flex-shrink:0;}\n  .ln{height:9px;border-radius:5px;background:var(--bg-3);}\n  .pill{display:inline-block;height:18px;padding:0 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:10.5px;font-weight:700;line-height:18px;}\n  .navbar{position:absolute;left:0;right:0;bottom:0;height:60px;background:var(--bg-1);border-top:1px solid var(--line);display:flex;}\n  .nav{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--text-3);font-size:10px;}\n  .nav.on{color:var(--accent);}\n  .nav i{width:20px;height:20px;border-radius:6px;background:currentColor;opacity:0.85;}\n\n  /* ---- overlay layer (mirrors .ge-* contract) ---- */\n  .dim{position:absolute;inset:0;background:rgba(5,5,7,0.55);z-index:40;}\n  .banner{position:absolute;left:10px;right:10px;top:42px;z-index:60;display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:15px;backdrop-filter:blur(8px);}\n  .banner.offline{background:rgba(248,113,113,0.16);border:1px solid rgba(248,113,113,0.4);}\n  .banner.retry{background:rgba(96,165,250,0.14);border:1px solid rgba(96,165,250,0.36);}\n  .bn-title{font-size:13px;font-weight:700;color:var(--text);}\n  .bn-sub{font-size:11.5px;color:var(--text-2);margin-top:1px;}\n  .flex1{flex:1;min-width:0;}\n  .pulse-dot{width:9px;height:9px;border-radius:50%;background:var(--danger);box-shadow:0 0 10px var(--danger);animation:pulse 1.4s ease-in-out infinite;flex-shrink:0;}\n  @keyframes pulse{50%{opacity:.35;}}\n  .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(96,165,250,.3);border-top-color:var(--info);animation:spin .8s linear infinite;flex-shrink:0;}\n  @keyframes spin{to{transform:rotate(360deg);}}\n  .ico{flex-shrink:0;display:flex;}\n  .toast{position:absolute;left:14px;right:14px;bottom:74px;z-index:60;display:flex;align-items:center;gap:10px;padding:13px 15px;border-radius:15px;background:rgba(74,222,128,0.14);border:1px solid rgba(74,222,128,0.36);color:var(--text);font-size:13px;font-weight:600;}\n  .toast-ic{width:24px;height:24px;border-radius:50%;background:var(--success);color:#062611;display:flex;align-items:center;justify-content:center;flex-shrink:0;}\n  .sheet-wrap{position:absolute;inset:0;z-index:60;display:flex;flex-direction:column;justify-content:flex-end;}\n  .scrim{position:absolute;inset:0;background:rgba(5,5,7,0.5);}\n  .card{position:relative;background:var(--bg-1);border-top:1px solid var(--line-strong);border-radius:26px 26px 0 0;padding:6px 20px 24px;text-align:center;box-shadow:0 -20px 50px rgba(0,0,0,.5);}\n  .grab{width:38px;height:4px;border-radius:2px;background:var(--bg-3);margin:8px auto 12px;}\n  .card-ic{width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:6px auto 14px;position:relative;}\n  .card-ic::before{content:'';position:absolute;inset:-7px;border-radius:50%;border:1px solid currentColor;opacity:.18;}\n  .card-ic.danger{background:rgba(248,113,113,0.12);color:var(--danger);}\n  .card-ic.warning{background:rgba(251,191,36,0.12);color:var(--warning);}\n  .card-title{font-size:20px;font-weight:800;letter-spacing:-0.01em;}\n  .card-body{font-size:13.5px;color:var(--text-2);line-height:1.5;max-width:300px;margin:8px auto 12px;}\n  .card-code{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--text-3);padding:3px 9px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;margin-bottom:16px;}\n  .acts{display:flex;flex-direction:column;gap:8px;}\n  .btn{width:100%;height:48px;border-radius:14px;border:1px solid var(--line);background:var(--bg-2);color:var(--text);font-size:15px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;}\n  .btn.primary{background:var(--accent);color:#1a0a04;border-color:transparent;}\n  svg{display:block;}\n\n  .notes{max-width:1320px;margin:0 auto;padding:8px 28px 64px;}\n  .notes h3{font-size:14px;margin:24px 0 10px;letter-spacing:-0.01em;}\n  .ncols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;}\n  .ncard{background:var(--bg-1);border:1px solid var(--line);border-radius:14px;padding:15px 17px;}\n  .ncard b{font-size:12.5px;}\n  .ncard ul{margin:8px 0 0;padding-left:17px;}\n  .ncard li{font-size:12px;color:var(--text-2);line-height:1.65;}\n\n  @media print{\n    @page{size:A4 landscape;margin:7mm;}\n    :root{--scale:0.34;}\n    *,*::before,*::after{animation:none !important;}\n    body{background:#fff;color:#0a0a0c;}\n    h1{color:#0a0a0c;} .sub{color:#555;} .label{color:#333;}\n    .grid{gap:8px;max-width:none;page-break-inside:avoid;}\n    .frame{box-shadow:0 0 0 2px #2a2a2e;}\n    .notes{page-break-before:always;}\n  }\n\n  .nojs{display:none;color:var(--warning);padding:20px 28px;font-size:13px;}\n<\u002Fstyle>\n\n<\u002Fhead>\n<body>\n<div class=\"head\">\n  <span class=\"accent\"><\u002Fspan>\n  <h1>BD-ERROR-01 · Global Error / Offline — Render Gate<\u002Fh1>\n  <div class=\"sub\">App-level overlay layer (singleton <code>window.BD.GlobalError<\u002Fcode>) shown above any screen — a sample Feed stays visible behind every state. Self-contained: no external scripts, no JSX-transform runtime, no compressed/stream-decoded assets. Five states compared side-by-side; each cell's layout box matches its scaled visual width so nothing overflows or clips in browser or A4 print.<\u002Fdiv>\n<\u002Fdiv>\n\n<noscript><div class=\"nojs\" style=\"display:block\">Для интерактивности включите JavaScript. Статичная разметка состояний рендерится без него.<\u002Fdiv><\u002Fnoscript>\n\n<div class=\"grid\" id=\"grid\"><\u002Fdiv>\n\n<div class=\"notes\">\n  <h3>Состояния<\u002Fh3>\n  <div class=\"ncols\">\n    <div class=\"ncard\"><b>1 · Offline banner<\u002Fb><ul><li>Компактный красный верхний баннер, пульсирующая точка<\u002Fli><li>«Нет соединения» + авто-обновление<\u002Fli><li>Non-blocking<\u002Fli><\u002Ful><\u002Fdiv>\n    <div class=\"ncard\"><b>2 · Server error<\u002Fb><ul><li>Затемнение + нижний лист<\u002Fli><li>Красная иконка, SERVER · 500<\u002Fli><li>Повторить / Поддержка<\u002Fli><\u002Ful><\u002Fdiv>\n    <div class=\"ncard\"><b>3 · Timeout<\u002Fb><ul><li>Нижний лист, янтарные часы<\u002Fli><li>TIMEOUT · 504<\u002Fli><li>Повторить / Позже<\u002Fli><\u002Ful><\u002Fdiv>\n    <div class=\"ncard\"><b>4 · Retrying<\u002Fb><ul><li>Синий верхний баннер, спиннер<\u002Fli><li>«Переподключение…»<\u002Fli><li>Non-blocking<\u002Fli><\u002Ful><\u002Fdiv>\n    <div class=\"ncard\"><b>5 · Recovered<\u002Fb><ul><li>Зелёный нижний тост<\u002Fli><li>«Соединение восстановлено»<\u002Fli><li>Авто-скрытие ~3 c<\u002Fli><\u002Ful><\u002Fdiv>\n  <\u002Fdiv>\n  <h3>Screen-contract<\u002Fh3>\n  <div class=\"ncard\">\n    <ul>\n      <li>Singleton overlay, владелец — app shell; управляется глобальным connection / lastError store, не per-route.<\u002Fli>\n      <li>Монтируется идентично над Feed, Profile, Order Detail, Driver Map, Active Ride.<\u002Fli>\n      <li>Offline / Retrying — non-blocking баннеры; Server / Timeout — scrim + bottom sheet, перехватывают взаимодействие до Повторить/dismiss.<\u002Fli>\n      <li>Recovered toast авто-скрывается ~3 c. «Повторить» повторяет последнее упавшее действие.<\u002Fli>\n      <li>Никогда не мутирует ride/order state; не подавляет собственные empty/loading/error экрана. Только транспортные сбои. Connection state — mock / navigator.onLine.<\u002Fli>\n    <\u002Ful>\n  <\u002Fdiv>\n<\u002Fdiv>\n\n<script>\n(function(){\n  \"use strict\";\n  var NS=\"http://www.w3.org/2000/svg\";\n  function svg(paths,size,stroke){\n    var s=document.createElementNS(NS,\"svg\");\n    s.setAttribute(\"viewBox\",\"0 0 24 24\");s.setAttribute(\"width\",size||16);s.setAttribute(\"height\",size||16);\n    s.setAttribute(\"fill\",\"none\");s.setAttribute(\"stroke\",\"currentColor\");\n    s.setAttribute(\"stroke-width\",stroke||2);s.setAttribute(\"stroke-linecap\",\"round\");s.setAttribute(\"stroke-linejoin\",\"round\");\n    paths.forEach(function(d){var p=document.createElementNS(NS,\"path\");p.setAttribute(\"d\",d);s.appendChild(p);});\n    return s;\n  }\n  var IC={\n    warn:[\"M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z\",\"M12 9v4\",\"M12 17h.01\"],\n    clock:[\"M12 12 12 7\",\"M12 12 15 14\"], // plus circle added separately\n    check:[\"M20 6 9 17l-5-5\"],\n    sparkle:[\"M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8\"]\n  };\n  function icon(name,size,stroke){\n    if(name===\"clock\"){\n      var s=document.createElementNS(NS,\"svg\");\n      s.setAttribute(\"viewBox\",\"0 0 24 24\");s.setAttribute(\"width\",size);s.setAttribute(\"height\",size);\n      s.setAttribute(\"fill\",\"none\");s.setAttribute(\"stroke\",\"currentColor\");s.setAttribute(\"stroke-width\",stroke||2);\n      s.setAttribute(\"stroke-linecap\",\"round\");s.setAttribute(\"stroke-linejoin\",\"round\");\n      var c=document.createElementNS(NS,\"circle\");c.setAttribute(\"cx\",\"12\");c.setAttribute(\"cy\",\"12\");c.setAttribute(\"r\",\"9\");s.appendChild(c);\n      var p=document.createElementNS(NS,\"path\");p.setAttribute(\"d\",\"M12 7v5l3 2\");s.appendChild(p);\n      return s;\n    }\n    return svg(IC[name],size,stroke);\n  }\n  function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}\n\n  // ---- base feed backdrop ----\n  function feedBase(){\n    var scr=el(\"div\",\"scr\");\n    var sb=el(\"div\",\"statusbar\");sb.appendChild(el(\"span\",null,\"9:41\"));sb.appendChild(el(\"span\",null,\"BazarDrive\"));scr.appendChild(sb);\n    var tb=el(\"div\",\"topbar\");var h=el(\"h2\",null,\"Лента\");tb.appendChild(h);var ts=el(\"div\",\"ts\",\"Поездки · попутчики · маркет\");tb.appendChild(ts);scr.appendChild(tb);\n    var feed=el(\"div\",\"feed\");\n    var grads=[\"linear-gradient(135deg,#FF8a5c,#C2410C)\",\"linear-gradient(135deg,#6BCBFF,#3A7BD5)\",\"linear-gradient(135deg,#A78BFA,#7C3AED)\",\"linear-gradient(135deg,#4ADE80,#16A34A)\"];\n    for(var i=0;i<4;i++){\n      var c=el(\"div\",\"fcard\");\n      var row=el(\"div\",\"frow\");\n      var av=el(\"div\",\"av\");av.style.background=grads[i%grads.length];row.appendChild(av);\n      var col=el(\"div\",\"flex1\");\n      var l1=el(\"div\",\"ln\");l1.style.width=(55+i*8)+\"%\";l1.style.marginBottom=\"6px\";col.appendChild(l1);\n      var l2=el(\"div\",\"ln\");l2.style.width=\"36%\";l2.style.opacity=\"0.6\";col.appendChild(l2);\n      row.appendChild(col);\n      row.appendChild(el(\"span\",\"pill\",i%2?\"Попутчик\":\"Поездка\"));\n      c.appendChild(row);\n      var b1=el(\"div\",\"ln\");b1.style.width=\"92%\";b1.style.marginBottom=\"7px\";c.appendChild(b1);\n      var b2=el(\"div\",\"ln\");b2.style.width=\"74%\";b2.style.opacity=\"0.55\";c.appendChild(b2);\n      feed.appendChild(c);\n    }\n    scr.appendChild(feed);\n    var nav=el(\"div\",\"navbar\");\n    [[\"Лента\",1],[\"Карта\",0],[\"Правила\",0],[\"Профиль\",0]].forEach(function(n){\n      var v=el(\"div\",\"nav\"+(n[1]?\" on\":\"\"));v.appendChild(el(\"i\"));v.appendChild(el(\"span\",null,n[0]));nav.appendChild(v);\n    });\n    scr.appendChild(nav);\n    return scr;\n  }\n\n  function topBanner(kind){\n    var b=el(\"div\",\"banner \"+(kind===\"retry\"?\"retry\":\"offline\"));\n    if(kind===\"retry\"){b.appendChild(el(\"span\",\"spin\"));}\n    else{b.appendChild(el(\"span\",\"pulse-dot\"));}\n    var c=el(\"div\",\"flex1\");\n    c.appendChild(el(\"div\",\"bn-title\",kind===\"retry\"?\"Переподключение…\":\"Нет соединения\"));\n    c.appendChild(el(\"div\",\"bn-sub\",kind===\"retry\"?\"Пытаемся восстановить связь\":\"Проверьте интернет — данные обновятся автоматически\"));\n    b.appendChild(c);\n    if(kind!==\"retry\"){var ic=el(\"span\",\"ico\");ic.style.color=\"var(--danger)\";ic.style.opacity=\"0.8\";ic.appendChild(icon(\"warn\",16,2));b.appendChild(ic);}\n    return b;\n  }\n  function toast(){\n    var t=el(\"div\",\"toast\");\n    var ic=el(\"span\",\"toast-ic\");ic.appendChild(icon(\"check\",15,2.6));t.appendChild(ic);\n    t.appendChild(el(\"span\",\"flex1\",\"Соединение восстановлено\"));\n    return t;\n  }\n  function errorCard(kind){\n    var timeout=kind===\"timeout\";\n    var wrap=el(\"div\",\"sheet-wrap\");\n    wrap.appendChild(el(\"div\",\"scrim\"));\n    var card=el(\"div\",\"card\");\n    card.appendChild(el(\"div\",\"grab\"));\n    var ic=el(\"div\",\"card-ic \"+(timeout?\"warning\":\"danger\"));ic.appendChild(icon(timeout?\"clock\":\"warn\",26,2.1));card.appendChild(ic);\n    card.appendChild(el(\"div\",\"card-title\",timeout?\"Превышено время ожидания\":\"Что-то пошло не так\"));\n    card.appendChild(el(\"div\",\"card-body\",timeout?\"Сервер не ответил вовремя. Попробуйте ещё раз — это обычно временно.\":\"Не удалось загрузить данные. Мы уже знаем о проблеме — попробуйте повторить.\"));\n    card.appendChild(el(\"div\",\"card-code\",timeout?\"TIMEOUT · 504\":\"SERVER · 500\"));\n    var acts=el(\"div\",\"acts\");\n    var b1=el(\"button\",\"btn primary\");b1.appendChild(icon(\"sparkle\",16,2));b1.appendChild(el(\"span\",null,\"Повторить\"));acts.appendChild(b1);\n    var b2=el(\"button\",\"btn\",timeout?\"Позже\":\"Поддержка\");acts.appendChild(b2);\n    card.appendChild(acts);\n    wrap.appendChild(card);\n    return wrap;\n  }\n\n  var STATES=[\n    {v:\"offline\",label:\"1 · Offline banner\",build:function(s){s.appendChild(topBanner(\"offline\"));}},\n    {v:\"server_error\",label:\"2 · Server error card\",build:function(s){var d=el(\"div\",\"dim\");s.appendChild(d);s.appendChild(errorCard(\"server\"));}},\n    {v:\"timeout\",label:\"3 · Timeout card\",build:function(s){var d=el(\"div\",\"dim\");s.appendChild(d);s.appendChild(errorCard(\"timeout\"));}},\n    {v:\"retrying\",label:\"4 · Retrying\",build:function(s){s.appendChild(topBanner(\"retry\"));}},\n    {v:\"recovered\",label:\"5 · Recovered toast\",build:function(s){s.appendChild(toast());}}\n  ];\n\n  var grid=document.getElementById(\"grid\");\n  STATES.forEach(function(st){\n    var cell=el(\"div\",\"cell\");\n    var box=el(\"div\",\"frame-box\");\n    var frame=el(\"div\",\"frame\");\n    frame.appendChild(feedBase());\n    st.build(frame);\n    box.appendChild(frame);\n    cell.appendChild(box);\n    cell.appendChild(el(\"div\",\"label\",st.label));\n    grid.appendChild(cell);\n  });\n})();\n<\u002Fscript>\n\n\n<\u002Fbody><\u002Fhtml>"
-  </script>
 </body>
 </html>
