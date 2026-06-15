@@ -134,6 +134,19 @@ if (exists(welcomeLoadingTimerSmoke)) {
   }
 }
 
+// BD-SETTINGS-01 — static regression smoke for the new Settings screen
+// (route registration, both profile-gear entry points, gate states, UI-only
+// boundary, SW precache).
+const settingsSmoke = path.join(root, 'scripts', 'smoke-settings.mjs');
+if (exists(settingsSmoke)) {
+  try {
+    execFileSync(process.execPath, [settingsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-settings.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-01 — static regression smoke for the driver-map role guard.
 const driverMapGuardSmoke = path.join(root, 'scripts', 'smoke-driver-map-guard.mjs');
 if (exists(driverMapGuardSmoke)) {
