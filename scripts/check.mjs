@@ -796,6 +796,19 @@ if (exists(responsesSafetySheetSmoke)) {
   }
 }
 
+// BD-MOD-01 — Order Detail moderation report sheet. Asserts report-order opens
+// the 2-view sheet, the report-submit stub, and the standalone boundary (no
+// in-ride safety reuse, no /report reroute, tabbar blocked while open).
+const orderDetailReportSheetSmoke = path.join(root, 'scripts', 'smoke-order-detail-report-sheet.mjs');
+if (exists(orderDetailReportSheetSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderDetailReportSheetSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-detail-report-sheet.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

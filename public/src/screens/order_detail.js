@@ -817,6 +817,15 @@ function rerenderInPlace(rootEl, ctx) {
   rootEl.dataset.state = next.dataset.state || '';
   rootEl.dataset.role  = next.dataset.role  || '';
   rootEl.dataset.orderId = next.dataset.orderId || '';
+  // BD-MOD-01 — a report sheet open during an in-place re-render would be wiped
+  // by replaceChildren below. That cannot happen via the UI today (the modal
+  // covers the screen and hides the tabbar, blocking the actions that
+  // re-render), but guard it so the chrome can never be stranded hidden: when a
+  // stray overlay is present, restore the tabbar (/order always shows chrome).
+  if (rootEl.querySelector('.od-report-overlay')) {
+    const tb = document.getElementById('tabbar');
+    if (tb) tb.hidden = false;
+  }
   rootEl.replaceChildren(...Array.from(next.childNodes));
   // The order/state captured in the click closure must follow the new
   // state so subsequent clicks see the up-to-date values.
@@ -824,9 +833,102 @@ function rerenderInPlace(rootEl, ctx) {
   ctx.state = state;
 }
 
+// BD-MOD-01 — moderation report sheet for the standalone «Пожаловаться»
+// (report-order) CTA. A small modal layer over Order Detail: report reasons →
+// submitted (a UI stub — no backend, no localStorage; the "после подключения
+// backend" copy makes the mock explicit). This is a STANDALONE moderation
+// surface — it does NOT touch or reroute the in-ride BD-RIDE-P-07 safety
+// report, and Order Detail's primary actions still re-render in place.
+const REPORT_REASONS = [
+  'Мошеннический или подозрительный заказ',
+  'Оскорбления или угрозы',
+  'Спам или реклама',
+  'Другое',
+];
+function reportSheetHtml() {
+  const reasons = REPORT_REASONS.map((r, i) => `
+        <button type="button" class="od-report-reason" data-report-reason="${i}">
+          <span class="od-report-reason__text">${escapeHtml(r)}</span>
+          <span class="od-report-reason__radio" aria-hidden="true"></span>
+        </button>`).join('');
+  return `
+  <div class="od-report-overlay" data-view="report" role="dialog" aria-modal="true" aria-labelledby="od-report-title">
+    <div class="od-report-overlay__backdrop" data-report="dismiss" aria-hidden="true"></div>
+    <div class="od-report-sheet" role="document">
+      <div class="od-report-sheet__handle" aria-hidden="true"></div>
+
+      <!-- REPORT — reason -->
+      <div class="od-report-view od-report-view--report">
+        <div class="od-report-header">
+          <div class="od-report-title" id="od-report-title">Пожаловаться на заказ</div>
+          <button type="button" class="od-report-close" data-report="dismiss" aria-label="Закрыть">×</button>
+        </div>
+        <div class="od-report-sub">Расскажите, что не так — модерация проверит заказ.</div>
+        <div class="od-report-reasons">${reasons}</div>
+        <div class="od-report-actions">
+          <button type="button" class="bd-btn primary od-report-act" data-report="submit">Отправить жалобу</button>
+        </div>
+      </div>
+
+      <!-- SUBMITTED — UI stub (no backend) -->
+      <div class="od-report-view od-report-view--submitted">
+        <div class="od-report-done-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="26" height="26"><polyline points="20 6 9 17 4 12"/></svg></div>
+        <div class="od-report-title od-report-title--center">Спасибо, жалоба отправлена</div>
+        <div class="od-report-sub od-report-sub--center">Мы рассмотрим её в модерации после подключения backend.</div>
+        <div class="od-report-actions">
+          <button type="button" class="bd-btn od-report-act" data-report="dismiss">Закрыть</button>
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
 function bindEvents(rootEl, initialCtx) {
   // Keep a mutable context so re-renders update what the closure sees.
   const ctx = { ...initialCtx };
+
+  // BD-MOD-01 — report sheet open/close + 2-view machine (report → submitted),
+  // in-memory only. The overlay is appended to rootEl; its controls use a
+  // distinct `data-report` attribute, so the screen's [data-action] listener
+  // never fires on them. #tabbar is a sibling of #app and /order is not in
+  // HIDE_CHROME, so hide the tabbar while the modal is open (restore on close)
+  // to actually block background navigation.
+  let reportOverlayEl = null;
+  let reportTabbar = null;
+  let reportTabbarPrevHidden = false;
+  function closeReportSheet() {
+    if (reportOverlayEl) { reportOverlayEl.remove(); reportOverlayEl = null; }
+    if (reportTabbar) { reportTabbar.hidden = reportTabbarPrevHidden; reportTabbar = null; }
+  }
+  function setReportView(view) {
+    if (reportOverlayEl) reportOverlayEl.dataset.view = view;
+  }
+  function openReportSheet() {
+    // DOM-based guard: the source of truth is the mounted overlay, so a stray
+    // wipe (e.g. an in-place re-render) can never strand a stale ref that blocks
+    // re-opening the sheet.
+    if (rootEl.querySelector('.od-report-overlay')) return;
+    reportTabbar = document.getElementById('tabbar');
+    if (reportTabbar) { reportTabbarPrevHidden = reportTabbar.hidden; reportTabbar.hidden = true; }
+    rootEl.insertAdjacentHTML('beforeend', reportSheetHtml());
+    reportOverlayEl = rootEl.querySelector('.od-report-overlay');
+    reportOverlayEl.addEventListener('click', (event) => {
+      const reasonBtn = event.target.closest('[data-report-reason]');
+      if (reasonBtn) {
+        reportOverlayEl.querySelectorAll('[data-report-reason]')
+          .forEach((b) => b.classList.toggle('is-selected', b === reasonBtn));
+        return;
+      }
+      const ctl = event.target.closest('[data-report]');
+      if (!ctl) return;
+      const a = ctl.dataset.report;
+      if (a === 'dismiss') { closeReportSheet(); return; }
+      // Report submit is a UI stub — no backend, no localStorage.
+      if (a === 'submit')  { setReportView('submitted'); return; }
+    });
+  }
+
   rootEl.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-action]');
     if (!btn) return;
@@ -1180,6 +1282,13 @@ function bindEvents(rootEl, initialCtx) {
       }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Оффер отклонён');
+      return;
+    }
+
+    // BD-MOD-01 — standalone moderation report. Opens the report sheet over
+    // Order Detail (no route change, no /report reroute, BD-RIDE-P-07 untouched).
+    if (action === 'report-order') {
+      openReportSheet();
       return;
     }
 

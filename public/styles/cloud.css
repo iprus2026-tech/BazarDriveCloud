@@ -14307,6 +14307,128 @@ button.pfp-menu-row:active { opacity: 0.7; }
   z-index: 200;
 }
 
+/* ─────────────────────────────────────────────────────────
+   BD-MOD-01 — Order Detail moderation report sheet
+   Standalone modal layer over /order for the «Пожаловаться»
+   (report-order) CTA. Two views via [data-view]: report →
+   submitted. Self-contained od-report-* namespace; mirrors the
+   shipped bottom-sheet convention. NOT the in-ride BD-RIDE-P-07
+   safety report.
+   ───────────────────────────────────────────────────────── */
+.od-report-overlay {
+  position: absolute;
+  inset: 0;
+  /* Above .od-notice (z-index 200) — a modal must never sit under a toast. */
+  z-index: 210;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  animation: screen-in 0.16s ease both;
+}
+.od-report-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 7, 0.62);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.od-report-sheet {
+  position: relative;
+  margin-top: auto;
+  background: var(--bg-1);
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  padding: 10px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 18px);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+  max-height: 92%;
+  overflow-y: auto;
+}
+.od-report-sheet__handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  margin: 4px auto 12px;
+}
+.od-report-view { display: none; flex-direction: column; gap: 14px; }
+.od-report-overlay[data-view="report"]    .od-report-view--report,
+.od-report-overlay[data-view="submitted"] .od-report-view--submitted { display: flex; }
+.od-report-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.od-report-title {
+  flex: 1;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.od-report-title--center { text-align: center; flex: none; font-size: 20px; }
+.od-report-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.od-report-sub--center { text-align: center; }
+.od-report-close {
+  width: 30px; height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.od-report-close:active { opacity: 0.7; }
+.od-report-reasons { display: flex; flex-direction: column; gap: 6px; }
+.od-report-reason {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.od-report-reason__text { flex: 1; font-size: 14px; color: var(--text); }
+.od-report-reason__radio {
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+}
+.od-report-reason.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.od-report-reason.is-selected .od-report-reason__radio {
+  border-color: var(--accent);
+  background:
+    radial-gradient(circle at center, var(--accent) 0 5px, transparent 6px);
+}
+.od-report-actions { display: flex; margin-top: 2px; }
+.od-report-act { width: 100%; justify-content: center; font-size: 14px; font-weight: 600; }
+.od-report-done-ic {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  margin: 6px auto 4px;
+}
+
 /* ═══════════════════════════════════════════════════════════
    BD-ERROR-01A — Global Error / Offline runtime overlay
    App-shell singleton above #app. Non-blocking banners/toast let
