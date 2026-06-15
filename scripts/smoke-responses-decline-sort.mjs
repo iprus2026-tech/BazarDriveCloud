@@ -104,6 +104,14 @@ expect('price sort uses a numeric price value, not priceTone alone',
   /function priceValue\(driver\)/.test(responses)
   && /mode === 'price'[\s\S]{0,120}priceValue\(a\.driver\)\s*-\s*priceValue\(b\.driver\)/.test(responses));
 
+// ── I2. «Быстрее» ranks real pickup timings (real offers share etaBars) ─────
+expect('eta sort falls back to a pickup-timing rank for real offers',
+  /const PICKUP_TIMING_RANK = \{ earlier: 0, at_time: 1, negotiate: 2 \}/.test(responses)
+  && /function etaRank\(driver\)/.test(responses)
+  && /mode === 'eta'[\s\S]{0,160}etaRank\(a\.driver\)\s*-\s*etaRank\(b\.driver\)/.test(responses));
+expect('real response cards carry an etaRank derived from pickupTiming',
+  /etaRank:\s*Number\.isInteger\(PICKUP_TIMING_RANK\[response\.pickupTiming\]\)/.test(responses));
+
 // ── J. declining the selected driver clears the selection ───
 expect('selectedDriverId is reassignable (let)', /\blet\s+selectedDriverId\b/.test(responses));
 expect('declining the selected driver clears selectedDriverId',

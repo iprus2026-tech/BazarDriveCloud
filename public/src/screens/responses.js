@@ -490,6 +490,10 @@ const PICKUP_TIMING_LABELS = {
 function timingLabel(timing) {
   return PICKUP_TIMING_LABELS[timing] || '—';
 }
+// Fastest → slowest pickup intent, used as the «Быстрее» tiebreak for real
+// responses (which all share etaBars and carry a non-numeric label, so
+// etaMinutes cannot separate them). Lower rank = sooner.
+const PICKUP_TIMING_RANK = { earlier: 0, at_time: 1, negotiate: 2 };
 
 // Map a real passenger_response into the exact card shape renderDriverCard /
 // renderOffer consume. Real fields: price (driverPrice), note (message) and a
@@ -539,6 +543,10 @@ function mapResponseToDriverCard(response, request, index) {
     eta:        timingLabel(response.pickupTiming),
     etaTone:    'mid',
     etaBars:    2,
+    // Sort signal for «Быстрее»: real cards share a non-numeric eta label, so
+    // the pickup-timing rank is what orders them (earlier < at_time < negotiate).
+    etaRank:    Number.isInteger(PICKUP_TIMING_RANK[response.pickupTiming])
+                  ? PICKUP_TIMING_RANK[response.pickupTiming] : 1,
     note,
     isBest:     index === 0,
   };
@@ -593,6 +601,13 @@ function etaMinutes(driver) {
   return m ? Number(m[0]) : Infinity;
 }
 
+// Pickup-timing rank tiebreak for «Быстрее». Mock cards have a numeric eta so
+// etaMinutes already separates them (etaRank stays the neutral 1); real cards
+// share etaMinutes=Infinity, so this rank is what orders them.
+function etaRank(driver) {
+  return Number.isInteger(driver && driver.etaRank) ? driver.etaRank : 1;
+}
+
 // Cheaper first. The reliable signal is the formatted absolute price on every
 // card ("1 200 ₽", real or mock) — parse its digits. Real passenger_response
 // cards all carry priceTone:'same', so priceTone alone cannot order them; the
@@ -616,6 +631,7 @@ function sortDrivers(drivers, mode) {
   let cmp;
   if (mode === 'eta') {
     cmp = (a, b) => (etaMinutes(a.driver) - etaMinutes(b.driver))
+      || (etaRank(a.driver) - etaRank(b.driver))
       || (b.driver.etaBars - a.driver.etaBars) || byIndex(a, b);
   } else if (mode === 'price') {
     cmp = (a, b) => (priceValue(a.driver) - priceValue(b.driver))
