@@ -147,6 +147,17 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// BD-RIDE-D-NOSHOW-01 — static regression smoke for the driver no-show sub-flow.
+const noShowSmoke = path.join(root, 'scripts', 'smoke-active-ride-noshow.mjs');
+if (exists(noShowSmoke)) {
+  try {
+    execFileSync(process.execPath, [noShowSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-active-ride-noshow.mjs failed\n${msg}`);
+  }
+}
+
 // BD-NOTIF-01 — static regression smoke for the /inbox push-permission prompt.
 const notifPromptSmoke = path.join(root, 'scripts', 'smoke-notif-prompt.mjs');
 if (exists(notifPromptSmoke)) {

@@ -360,8 +360,11 @@ expect('DRIVER_APPROACHING_PICKUP stage opens the cancel sheet via #ar-cancel',
   /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(approaching));
 const waiting = functionBody(screen, 'renderWaiting') || '';
 expect('renderWaiting() body resolved', waiting.length > 0);
-expect('WAITING_PASSENGER #ar-no-show opens cancel sheet with passenger_no_show preset',
-  /ar-no-show['"]\)[\s\S]{0,400}openDriverCancelSheet\s*\(\s*root\s*,\s*\{[\s\S]{0,200}reason:\s*'passenger_no_show'/.test(waiting));
+// BD-RIDE-D-NOSHOW-01 — #ar-no-show now opens the dedicated no-show sub-flow
+// (active_ride_driver_noshow.js), replacing the cancel-sheet passenger_no_show
+// preset. The NO_SHOW persist pin below still holds (fired via onConfirmNoShow).
+expect('WAITING_PASSENGER #ar-no-show opens the no-show flow (openDriverNoShowFlow)',
+  /ar-no-show['"]\)[\s\S]{0,400}openDriverNoShowFlow\s*\(\s*sheet/.test(waiting));
 expect('WAITING_PASSENGER no-show persists RIDE_STATUS.NO_SHOW',
   /ar-no-show[\s\S]{0,800}RIDE_STATUS\.NO_SHOW/.test(waiting));
 const inProgress = functionBody(screen, 'renderInProgress') || '';
