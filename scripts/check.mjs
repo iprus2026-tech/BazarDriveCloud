@@ -809,6 +809,19 @@ if (exists(orderDetailReportSheetSmoke)) {
   }
 }
 
+// BD-ORDER-DETAIL-CHAT-GUARD-01 — driver «Написать» state-aware guard notices.
+// Asserts message-passenger shows a D1/D2/D3 notice instead of the generic
+// stub, and never navigates to /chat or invents a chat thread.
+const orderDetailChatGuardSmoke = path.join(root, 'scripts', 'smoke-order-detail-chat-guard.mjs');
+if (exists(orderDetailChatGuardSmoke)) {
+  try {
+    execFileSync(process.execPath, [orderDetailChatGuardSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-order-detail-chat-guard.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
