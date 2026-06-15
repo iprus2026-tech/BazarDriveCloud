@@ -701,6 +701,7 @@ export default function activeRide() {
     // are demo values, no backend.
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
+      paidWaitAmount: 0,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,
@@ -737,6 +738,9 @@ export default function activeRide() {
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
+      // Pass the LIVE paid-wait accrual so the no-show receipt matches the
+      // sheet (Codex P2 — same calc on both screens).
+      paidWaitAmount: Math.round(Math.max(0, Math.floor((Date.now() - waitPaidStart) / 1000)) / 60 * ratePerMin),
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,

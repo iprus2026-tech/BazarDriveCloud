@@ -26,11 +26,15 @@ const I_CAR   = '<path d="M5 17h14M7 17v2M17 17v2"/><path d="M5 17v-3l2-5h10l2 5
 const I_INFO  = '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>';
 const I_CLOSE = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>';
 
-// Fixed demo figures (UI-only — no real billing). Mirrors the render gate.
-const DEMO = { paidWait: '180 ₽', pickupComp: '120 ₽', commission: '− 24 ₽', net: '276 ₽' };
+// Fixed demo parts of the no-show compensation (UI-only — no real billing):
+// the pickup compensation and the service commission. The «платное ожидание»
+// line is the LIVE accrued amount passed in via opts.paidWaitAmount so it
+// matches the paid-wait sheet (Codex P2 — both screens use this one calc).
+const PICKUP_COMP = 120;
+const COMMISSION = 24;
 
 // BD-RIDE-D-NOSHOW-01 — render the no-show sub-flow into the driver sheet.
-// opts: { ride, orderLabel, onConfirmNoShow, onBack, go, showNotice }
+// opts: { ride, orderLabel, paidWaitAmount, onConfirmNoShow, onBack, go, showNotice }
 export function openDriverNoShowFlow(sheet, opts = {}) {
   if (!sheet) return;
   const ride = opts.ride || {};
@@ -40,6 +44,16 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
   const back = typeof opts.onBack === 'function' ? opts.onBack : () => {};
   const showNotice = typeof opts.showNotice === 'function' ? opts.showNotice : () => {};
   const confirmNoShow = typeof opts.onConfirmNoShow === 'function' ? opts.onConfirmNoShow : () => {};
+
+  // Compensation receipt — paid wait is live (from the paid-wait sheet), the
+  // rest is fixed demo. net = paid wait + pickup compensation − commission.
+  const paidWaitNum = Number.isFinite(opts.paidWaitAmount) ? Math.max(0, Math.round(opts.paidWaitAmount)) : 0;
+  const comp = {
+    paidWait: `${paidWaitNum} ₽`,
+    pickupComp: `${PICKUP_COMP} ₽`,
+    commission: `− ${COMMISSION} ₽`,
+    net: `${Math.max(0, paidWaitNum + PICKUP_COMP - COMMISSION)} ₽`,
+  };
 
   const $ = (id) => sheet.querySelector(id);
 
@@ -57,7 +71,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
         <div class="ns-sub">Отметьте «не вышел», только если пассажир не появился и не отвечает. Что произойдёт:</div>
         <div class="ns-bullets">
           <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CHECK, 13, 2.6)}</div><span>Поездка закроется со статусом <b>«Пассажир не вышел»</b></span></div>
-          <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CARD, 13, 2.2)}</div><span>Вам начислят компенсацию за ожидание <b>${escapeHtml(DEMO.pickupComp)}</b></span></div>
+          <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CARD, 13, 2.2)}</div><span>Вам начислят компенсацию за ожидание <b>${escapeHtml(comp.pickupComp)}</b></span></div>
           <div class="ns-bullet"><div class="ns-bullet-ic">${svg(I_CAR, 13, 2)}</div><span>Вы сразу вернётесь к приёму новых заказов</span></div>
         </div>
         <div class="ns-hint">${svg(I_INFO, 14, 1.9)}<span>Частые ложные отметки влияют на рейтинг. Убедитесь, что связались с пассажиром.</span></div>
@@ -115,11 +129,11 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
           </div>
         </div>
         <div class="ns-receipt">
-          <div class="ns-receipt-row"><span class="ns-receipt-key">Платное ожидание</span><span class="ns-receipt-val">${escapeHtml(DEMO.paidWait)}</span></div>
-          <div class="ns-receipt-row"><span class="ns-receipt-key">Компенсация за подачу</span><span class="ns-receipt-val">${escapeHtml(DEMO.pickupComp)}</span></div>
-          <div class="ns-receipt-row"><span class="ns-receipt-key">Комиссия сервиса</span><span class="ns-receipt-val ns-receipt-val--muted">${escapeHtml(DEMO.commission)}</span></div>
+          <div class="ns-receipt-row"><span class="ns-receipt-key">Платное ожидание</span><span class="ns-receipt-val">${escapeHtml(comp.paidWait)}</span></div>
+          <div class="ns-receipt-row"><span class="ns-receipt-key">Компенсация за подачу</span><span class="ns-receipt-val">${escapeHtml(comp.pickupComp)}</span></div>
+          <div class="ns-receipt-row"><span class="ns-receipt-key">Комиссия сервиса</span><span class="ns-receipt-val ns-receipt-val--muted">${escapeHtml(comp.commission)}</span></div>
           <div class="ns-receipt-div" aria-hidden="true"></div>
-          <div class="ns-receipt-row"><span class="ns-receipt-key ns-receipt-key--total">К начислению</span><span class="ns-receipt-total">${escapeHtml(DEMO.net)}</span></div>
+          <div class="ns-receipt-row"><span class="ns-receipt-key ns-receipt-key--total">К начислению</span><span class="ns-receipt-total">${escapeHtml(comp.net)}</span></div>
         </div>
         <div class="ns-hint">${svg(I_INFO, 14, 1.9)}<span>Сумма зачислится в баланс смены. Поездка не учитывается как завершённая.</span></div>
         <div class="ns-actions-stack">
@@ -134,7 +148,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
       <div class="ns-flow ns-flow--pad ns-flow--center">
         <div class="ns-result-badge success">${svg(I_CAR, 26, 2)}</div>
         <div class="ns-title ns-title--center">Вы снова на линии</div>
-        <div class="ns-sub ns-sub--center">${escapeHtml(DEMO.net)} добавлены к смене. Ищем для вас следующий заказ рядом.</div>
+        <div class="ns-sub ns-sub--center">${escapeHtml(comp.net)} добавлены к смене. Ищем для вас следующий заказ рядом.</div>
         <div class="ns-searching" aria-hidden="true"><span class="ns-search-dot"></span><span class="ns-search-dot"></span><span class="ns-search-dot"></span><span class="ns-searching-text">Поиск заказов…</span></div>
         <div class="ns-actions-stack">
           <button type="button" class="bd-btn primary" id="ns-to-orders">К списку заказов</button>
