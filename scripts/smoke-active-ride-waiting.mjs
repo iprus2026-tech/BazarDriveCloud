@@ -78,6 +78,13 @@ expect('timer ticks via setInterval and auto-transitions to the paid view at 0:0
 expect('timer self-clears on detach or leaving WAITING_PASSENGER (no leak)',
   /root\.isConnected/.test(timerBody) && /ride\.status\s*!==\s*RIDE_STATUS\.WAITING_PASSENGER/.test(timerBody));
 expect('free ring exposes .ns-timer-arc for live offset updates', /ns-timer-arc/.test(waiting));
+// Codex P2 fixes (PR #544 review).
+expect('timer computes remaining from a wall-clock deadline (not callback count)',
+  /Date\.now\(\)/.test(timerBody) && !/waitFreeSec\s*-=\s*1/.test(timerBody));
+expect('timer stops if a subflow replaced the free-wait ring (no overwrite)',
+  /!sheet\.querySelector\('\.ns-timer-arc'\)/.test(timerBody));
+expect('tick keeps the progressbar aria-valuenow in sync',
+  /aria-valuenow/.test(timerBody));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

@@ -598,20 +598,24 @@ export default function activeRide() {
   function clearWaitTimer() {
     if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
   }
-  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown. Ticks the ring /
-  // progress / value down each second and auto-transitions to the paid view at
-  // 0:00. Self-clears when the screen detaches or leaves WAITING_PASSENGER so it
-  // never leaks past navigation. The paid view stays static (mock). No DOM
-  // rebuild per tick — only textContent / data-step / the SVG offset attribute.
+  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown. Drives the ring /
+  // progress / value down toward a WALL-CLOCK deadline (Codex P2: not callback
+  // count — a backgrounded/throttled tab would otherwise drift past the
+  // deadline and delay the paid auto-transition), and switches to the paid view
+  // at 0:00. The tick self-clears when the screen detaches, the ride leaves
+  // WAITING_PASSENGER, OR the free-wait ring is no longer in the sheet (Codex
+  // P2: a subflow like the no-show sheet replaced it — never overwrite it). No
+  // DOM rebuild per tick — only textContent / data-step / aria / offset attrs.
   function startWaitTimer() {
     clearWaitTimer();
     if (waitExpired) return;
     const waiting = ride.waiting || {};
     const freeLimitSec = parseWaitClock(waiting.freeLimit || '3:00') || 180;
-    waitFreeSec = parseWaitClock(waiting.remaining || '2:30');
+    const deadline = Date.now() + parseWaitClock(waiting.remaining || '2:30') * 1000;
     waitTimer = setInterval(() => {
-      if (!root.isConnected || ride.status !== RIDE_STATUS.WAITING_PASSENGER || waitExpired) { clearWaitTimer(); return; }
-      waitFreeSec -= 1;
+      if (!root.isConnected || ride.status !== RIDE_STATUS.WAITING_PASSENGER
+          || waitExpired || !sheet.querySelector('.ns-timer-arc')) { clearWaitTimer(); return; }
+      waitFreeSec = Math.ceil((deadline - Date.now()) / 1000);
       if (waitFreeSec <= 0) {
         waitFreeSec = 0;
         clearWaitTimer();
@@ -620,14 +624,17 @@ export default function activeRide() {
         return;
       }
       const pct = Math.max(0, Math.min(1, waitFreeSec / freeLimitSec));
+      const step = Math.round(pct * 10);
       const clock = formatWaitClock(waitFreeSec);
       const val = sheet.querySelector('.ns-timer-val');
       const arc = sheet.querySelector('.ns-timer-arc');
       const fill = sheet.querySelector('.active-ride__progress-bar-fill');
+      const bar = sheet.querySelector('.active-ride__progress-bar');
       const cardVal = sheet.querySelector('.active-ride__waiting-card-value');
       if (val) val.textContent = clock;
       if (arc) arc.setAttribute('stroke-dashoffset', (163.36 * (1 - pct)).toFixed(2));
-      if (fill) fill.dataset.step = String(Math.round(pct * 10));
+      if (fill) fill.dataset.step = String(step);
+      if (bar) bar.setAttribute('aria-valuenow', String(step * 10));
       if (cardVal) cardVal.textContent = `${clock} / ${waiting.freeLimit || '3:00'}`;
     }, 1000);
   }
