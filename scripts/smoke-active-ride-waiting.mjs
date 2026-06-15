@@ -90,6 +90,17 @@ expect('deadline anchored to the persisted arrival time (survives reload) [Codex
 expect('renderWaiting short-circuits an already-expired ride to the paid view (no 0:00 flash)',
   /remSec\s*<=\s*0[\s\S]{0,80}renderWaitingExpired\(\)/.test(waiting));
 
+// ── G. Live paid-wait counter (BD-RIDE-D-PAID-TIMER-01) ──
+expect('screen has startPaidTimer + waitPaidStart anchor',
+  /function\s+startPaidTimer\s*\(/.test(screen) && /let\s+waitPaidStart\s*=/.test(screen));
+expect('renderWaitingExpired starts the paid timer + exposes #ar-paid-accrued',
+  /startPaidTimer\(\);/.test(expired) && /id="ar-paid-accrued"/.test(expired));
+const paidBody = functionBody(screen, 'startPaidTimer');
+expect('paid timer ticks elapsed up + accrues at the displayed rate',
+  /Date\.now\(\)\s*-\s*waitPaidStart/.test(paidBody) && /ratePerMin/.test(paidBody) && /ar-paid-accrued/.test(paidBody));
+expect('paid timer self-clears on detach / leaving WAITING_PASSENGER / subflow',
+  /root\.isConnected/.test(paidBody) && /!sheet\.querySelector\('\.ns-timer-val'\)/.test(paidBody));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
