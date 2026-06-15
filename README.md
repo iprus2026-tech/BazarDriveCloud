@@ -46,20 +46,34 @@ archived`. Стандарт и словари описаны в разделе *
 `docs/**/*.md` (шаблоны в `docs/_templates/` пропускаются) и роняет сборку при
 ошибке.
 
+### Legacy-реестр документов (BD-DOCS-SITE-03)
+
+Mini-Yonder теперь **видит legacy-документы**, которые ещё не перенесены в
+`docs-site/` (`README.md`, `ROADMAP.md`, `docs/**`). Реестр
+`docs-site/governance/document-registry.json` перечисляет учтённые legacy-доки,
+а `docs-site/scripts/validate-document-registry.mjs` (`npm run validate:registry`):
+
+- **строго** проверяет структуру реестра (обязательные поля, уникальность `id`,
+  существование `path`, словари, дата `reviewAfter`) — падает с ошибкой;
+- **сканирует** legacy-документы и **предупреждает** о неучтённых
+  (`UNACCOUNTED_DOCUMENT`). На этом этапе предупреждения warn-only — сборка не
+  падает.
+
 Локально (требуется **Node ≥ 20** — этого требует Docusaurus 3.10):
 
 ```bash
 cd docs-site
 npm install               # первый раз — создаёт package-lock.json
 npm start                 # dev-сервер с hot-reload
-npm run validate:frontmatter   # проверка паспортов метаданных
+npm run validate:frontmatter   # проверка паспортов метаданных (docs-site/docs)
+npm run validate:registry      # проверка legacy-реестра + неучтённые legacy-доки
 npm run build             # production-сборка в docs-site/build
-npm run check             # validate:frontmatter + build (как в CI)
+npm run check             # validate:frontmatter + validate:registry + build (как в CI)
 ```
 
 CI `docs-site-ci` запускается на `pull_request` и `push`, затрагивающих
-`docs-site/`, и выполняет `npm ci` + `npm run check` (валидация frontmatter +
-build) внутри `docs-site/`.
+`docs-site/`, и выполняет `npm ci` + `npm run check` (паспорта frontmatter +
+legacy-реестр + build) внутри `docs-site/`.
 
 ---
 

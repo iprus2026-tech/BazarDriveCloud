@@ -57,6 +57,17 @@ every governed document and fails the build (`npm run check`, and CI) when a
 passport is missing or malformed. Templates under `docs/_templates/` are
 exempt — they are scaffolds, not governed documents.
 
+## Seeing the legacy documents
+
+Many documents still live outside `docs-site/` — `README.md`, `ROADMAP.md`, and
+everything under `docs/`. Mini-Yonder tracks them through the
+[legacy docs registry](legacy-docs-registry.md)
+(`docs-site/governance/document-registry.json`). A second validator,
+`validate-document-registry.mjs` (`npm run validate:registry`), checks the
+registry's structure strictly and **warns** about any legacy file that has no
+registry entry (`UNACCOUNTED_DOCUMENT`). This first pass is warn-only, so the
+build still passes while the legacy backlog is triaged incrementally.
+
 ## Scope and boundaries
 
 - This layer governs **`docs-site/` only**. It does not touch the runtime PWA
