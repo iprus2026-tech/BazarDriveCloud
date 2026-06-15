@@ -35,7 +35,7 @@ Vanilla HTML / CSS / ES-модули. Без сборщика, без фрейм
 - Runtime PWA **не затрагивается** — `docs-site/` не меняет `public/`, service worker, CSP или текущий GitHub Pages workflow для PWA.
 - Документация переносится постепенно; пока это shell со стартовыми разделами (Project / Contracts / Processes).
 
-Локально:
+Локально (требуется **Node ≥ 20** — этого требует Docusaurus 3.10):
 
 ```bash
 cd docs-site
