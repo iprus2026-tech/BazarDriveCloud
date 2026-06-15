@@ -55,6 +55,17 @@ export const DRIVER_PRIMARY_CTA = 'Откликнуться на заказ';
 export const STUB_TOAST_ACTION = 'Действие будет подключено в 01D';
 export const STUB_TOAST_OFFER  = 'Оффер будет подключён в 01D';
 
+// BD-ORDER-DETAIL-CHAT-GUARD-01 — state-aware guard notices for the driver
+// «Написать» (message-passenger) CTA. Product decision: do NOT create a
+// driver→passenger marketplace chat handoff yet; chat stays responseId-only.
+// So instead of navigating or inventing a thread, each driver state explains
+// when/why messaging opens. Keyed by the resolved driver state (D1/D2/D3).
+export const MESSAGE_GUARD_NOTICES = {
+  D1: 'Сначала отправьте отклик, чтобы открыть связь с пассажиром.',
+  D2: 'Предложение отправлено. Чат откроется после выбора водителя пассажиром.',
+  D3: 'Чат поездки будет доступен через активную поездку.',
+};
+
 const TS = 1_750_000_000_000;
 
 function offer(overrides = {}) {
@@ -1282,6 +1293,15 @@ function bindEvents(rootEl, initialCtx) {
       }
       rerenderInPlace(rootEl, ctx);
       showNotice(rootEl, 'Оффер отклонён');
+      return;
+    }
+
+    // BD-ORDER-DETAIL-CHAT-GUARD-01 — the driver «Написать» CTA does not open a
+    // chat (no driver→passenger marketplace handoff exists yet). Surface a
+    // state-aware notice explaining when messaging becomes available; never
+    // navigate to /chat and never create an order chat thread.
+    if (action === 'message-passenger') {
+      showNotice(rootEl, MESSAGE_GUARD_NOTICES[ctx.state] || STUB_TOAST_ACTION);
       return;
     }
 
