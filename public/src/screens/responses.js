@@ -1442,14 +1442,24 @@ export default function responses() {
   // BD-RIDE-P-07 safety sheet (no driver card, no share-trip, no SOS, no
   // call-during-trip). It needs no selected driver — pre-ride context only.
   let safetyOverlayEl = null;
+  // The overlay mounts inside #app; the bottom #tabbar is a SIBLING of #app, so
+  // an inset:0 backdrop confined to #app cannot cover it. Hide the tabbar while
+  // the modal is open so it actually blocks background navigation, and restore
+  // its prior state on close. (The router also resets tabbar.hidden on the next
+  // navigation, so this never leaks even if the screen is torn down while open.)
+  let safetyTabbar = null;
+  let safetyTabbarPrevHidden = false;
   function closeSafetySheet() {
     if (safetyOverlayEl) { safetyOverlayEl.remove(); safetyOverlayEl = null; }
+    if (safetyTabbar) { safetyTabbar.hidden = safetyTabbarPrevHidden; safetyTabbar = null; }
   }
   function setSafetyView(view) {
     if (safetyOverlayEl) safetyOverlayEl.dataset.view = view;
   }
   function openSafetySheet() {
     if (safetyOverlayEl) return;
+    safetyTabbar = document.getElementById('tabbar');
+    if (safetyTabbar) { safetyTabbarPrevHidden = safetyTabbar.hidden; safetyTabbar.hidden = true; }
     // Appended to `root` (a sibling of .responses__scroll), so the board's
     // delegated listener never sees the sheet, and the sheet's own controls use
     // a distinct data-rsafe attribute — fully isolated from the board.

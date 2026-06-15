@@ -83,6 +83,13 @@ expect('no driver ride-card / in-ride coupling in the sheet',
 expect('the sheet needs no selected driver (open takes no args)',
   /function openSafetySheet\(\)/.test(responses));
 
+// ── E2. modal blocks background nav (tabbar is a sibling of #app) ──
+expect('opening the sheet hides the #tabbar (so it cannot be clicked behind the modal)',
+  /getElementById\('tabbar'\)/.test(responses)
+  && /safetyTabbar\.hidden\s*=\s*true/.test(responses));
+expect('closing the sheet restores the tabbar to its prior state',
+  /safetyTabbar\.hidden\s*=\s*safetyTabbarPrevHidden/.test(responses));
+
 // ── F. styles ported + namespaced ───────────────────────────
 expect('overlay + ported .rsafe-* content styles exist',
   /\.responses-safety-overlay\s*\{/.test(css) && /\.rsafe-tip\s*\{/.test(css)
