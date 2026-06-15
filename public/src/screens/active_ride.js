@@ -47,6 +47,7 @@ import {
   openDriverEarningsSheet,
   DRIVER_CANCEL_REASON_LABEL_BY_CODE,
 } from './active_ride_driver_sheets.js';
+import { openDriverNoShowFlow } from './active_ride_driver_noshow.js';
 
 const CHAT_STORAGE_KEY = 'bazardrive.chat.v1';
 const DRIVER_SHEETS_CSS_ID = 'driver-sheets-css';
@@ -584,15 +585,18 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="active-ride__waiting-badge"><div class="active-ride__waiting-badge-value">${escapeHtml(remaining)}</div><div class="active-ride__waiting-badge-label">осталось</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressStep(remaining, freeLimit) * 10}"><div class="active-ride__progress-bar-fill" data-step="${progressStep(remaining, freeLimit)}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
-    // No-show stays reachable via the cancel sheet (passenger_no_show reason),
-    // keeping the NO_SHOW transition out of the now placeholder-only problem sheet.
-    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverCancelSheet(root, {
-      reason: 'passenger_no_show',
-      outcomeLabel: (code) => (code === 'passenger_no_show' ? 'NO_SHOW' : 'CANCELED'),
-      onConfirm: (code) => {
-        ride = persistDriverCancel(code === 'passenger_no_show' ? RIDE_STATUS.NO_SHOW : RIDE_STATUS.CANCELED, code);
-      },
-      onClose: () => renderSheet(),
+    // BD-RIDE-D-NOSHOW-01 — «Не приехал» opens the dedicated no-show sub-flow
+    // (action → confirm → result → compensation → done), replacing the prior
+    // cancel-sheet preset. The flow renders in place over this sheet and fires
+    // the SAME NO_SHOW persist at its confirm step; «Вернуться к ожиданию» /
+    // close re-render the waiting state. Mock-only: the compensation figures
+    // are demo values, no backend.
+    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
+      ride,
+      onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
+      onBack: () => renderSheet(),
+      go,
+      showNotice,
     }));
     bindPassengerActions();
   }
