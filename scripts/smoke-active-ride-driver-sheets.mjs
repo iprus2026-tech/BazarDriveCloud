@@ -131,11 +131,13 @@ for (const code of ['passenger_no_show', 'wrong_pickup', 'car_problem', 'unsafe_
 const problemTypes = arrayBody(sheets, 'DRIVER_PROBLEM_TYPES');
 expect('DRIVER_PROBLEM_TYPES array resolved', !!problemTypes);
 const problemCount = problemTypes ? (problemTypes.match(/\n\s*\[/g) || []).length : 0;
-expect('DRIVER_PROBLEM_TYPES has exactly 6 types', problemCount === 6, 'count=' + problemCount);
-for (const code of ['passenger_no_show', 'cannot_reach', 'wrong_pickup', 'car_problem', 'safety', 'contact_support']) {
+expect('DRIVER_PROBLEM_TYPES has exactly 5 types (BD-RIDE-D-08 redesign)', problemCount === 5, 'count=' + problemCount);
+for (const code of ['passenger_no_show', 'unsafe_situation', 'route_problem', 'payment_problem', 'other']) {
   expect(`DRIVER_PROBLEM_TYPES includes '${code}'`,
     new RegExp(`'${code}'`).test(problemTypes || ''));
 }
+expect("unsafe_situation carries the danger/safety flag (true)",
+  /\['unsafe_situation'[^\]]*,\s*true\s*\]/.test(problemTypes || ''));
 
 // ── D. Cancel state machine + copy ──
 // default → reason_selected → validation_error → loading → canceled.
@@ -158,21 +160,28 @@ expect('cancel sheet shows the canceled-state title "Поездка отмене
 expect('cancel sheet canceled card returns to the feed ("Вернуться в ленту")',
   sheets.includes('Вернуться в ленту'));
 
-// ── E. Problem state machine + safety visual state + copy ──
-for (const stage of ['type_selected', 'loading', 'sent']) {
+// ── E. Problem state machine (redesigned BD-RIDE-D-08) + safety + copy ──
+for (const stage of ['type_selected', 'validation_error']) {
   expect(`problem sheet knows the '${stage}' stage`,
     new RegExp(`'${stage}'`).test(sheets));
 }
-expect('problem sheet transitions into loading then the sent state',
-  /dataset\.stage\s*=\s*'loading'/.test(sheets) && /dataset\.stage\s*=\s*'sent'/.test(sheets));
+expect('problem sheet uses the redesign title / eyebrow / subtitle',
+  sheets.includes('Проблема в поездке') && sheets.includes('Активная поездка')
+  && sheets.includes('Выберите, что произошло. Это пока демо-режим: поездка не изменится.'));
 expect('problem sheet drives a safety visual state via data-safety',
   /dataset\.safety\s*=/.test(sheets) && sheets.includes('driver-problem-sheet__safety-note'));
-expect('problem sheet has an optional comment field',
-  sheets.includes('driver-problem-sheet__comment'));
-expect('problem sheet shows the submit loading copy "Отправляем…"',
-  sheets.includes('Отправляем…'));
-expect('problem sheet shows the sent-state title "Сигнал отправлен"',
-  sheets.includes('Сигнал отправлен'));
+expect('problem sheet shows the status-neutral helper note',
+  sheets.includes('Сообщение останется внутри текущей сессии и не изменит статус поездки.'));
+expect('empty submit flags validation_error + shows "Выберите причину обращения"',
+  /dataset\.stage\s*=\s*'validation_error'/.test(sheets) && sheets.includes('Выберите причину обращения'));
+expect('submit surfaces the demo toast via onAction + dismisses the sheet',
+  sheets.includes('Обращение сохранено в демо-режиме')
+  && /onAction\(DRIVER_PROBLEM_TOAST\)/.test(sheets)
+  && /overlay\.__closeSheet/.test(sheets));
+expect('problem sheet drops the loading/sent stages + in-sheet done card',
+  !/dataset\.stage\s*=\s*'sent'/.test(sheets)
+  && !sheets.includes('driver-problem-sheet__done')
+  && !sheets.includes('Сигнал отправлен'));
 
 // ── F. The problem sheet is a pure UI placeholder ──
 // It must never persist ride state or import the data layer; persistence
@@ -204,20 +213,21 @@ expect('driver screen still persists CANCELED via persistDriverCancel',
 expect('driver screen still routes the no-show path to NO_SHOW',
   /RIDE_STATUS\.NO_SHOW/.test(screen) && screen.includes('passenger_no_show'));
 
-// ── H. Problem type stays frozen once the signal is in flight ──
-// Re-selecting a type during loading/sent must NOT roll dataset.stage back to
-// 'type_selected'; that would unlock the in-flight card (backdrop/Esc/re-submit).
-// The guard must live in the type-button click handler itself — the submit
-// handler already references those stages, so a bare source search isn't enough.
+// ── H. Problem reason selection (redesigned BD-RIDE-D-08) ──
+// The redesign has no in-flight (loading/sent) stage — submit emits one demo
+// toast and dismisses — so the old "freeze while sending" guard no longer
+// applies. Pin the selection behaviour instead: choosing a reason sets
+// aria-checked, updates the stage (clearing any validation error), and toggles
+// the data-safety visual.
 const problemTypeHandler = sheets.match(
   /typeBtns\.forEach\(\(btn\) => btn\.addEventListener\('click', \(\) => \{([\s\S]*?)\}\)\);/);
 expect('problem-type click handler is resolved', !!problemTypeHandler);
-expect('problem-type click is ignored while stage is loading/sent',
+expect('selecting a reason sets aria-checked + updates the stage',
   !!problemTypeHandler
-  && /dataset\.stage === 'loading'/.test(problemTypeHandler[1])
-  && /dataset\.stage === 'sent'/.test(problemTypeHandler[1]));
-expect('submit freezes the type buttons while loading',
-  /typeBtns\.forEach\(\(btn\) => \{\s*btn\.disabled = true;?\s*\}\);/.test(sheets));
+  && /setAttribute\('aria-checked'/.test(problemTypeHandler[1])
+  && /dataset\.stage\s*=\s*selectedType \? 'type_selected' : 'default'/.test(problemTypeHandler[1]));
+expect('selecting a reason toggles the data-safety visual',
+  !!problemTypeHandler && /dataset\.safety\s*=/.test(problemTypeHandler[1]));
 
 // ── J. Terminal renderers never expose cancel / problem triggers (BD-RIDE-D-SHEETS-02) ──
 // renderCanceledStub() handles both CANCELED and NO_SHOW, and renderCompleted()
