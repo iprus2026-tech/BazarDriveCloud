@@ -67,6 +67,19 @@ export const DRIVER_CANCEL_REASON_LABEL_BY_CODE = Object.fromEntries(
   DRIVER_CANCEL_REASONS.map(([code, label]) => [code, label]),
 );
 
+// BD-RIDE-D-07 redesign — per-reason leading glyph (18×18, stroke 1.8) that
+// fills each reason row's icon box. Ported verbatim from the render gate:
+// noshow=Warn, pickup=Pin, car=Car, unsafe=Shield, contact=Phone, other=Comment.
+const cancelIcon = (inner) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const CANCEL_REASON_ICON = {
+  passenger_no_show: cancelIcon('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
+  wrong_pickup: cancelIcon('<path d="M12 22s7-7 7-12a7 7 0 1 0-14 0c0 5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+  car_problem: cancelIcon('<path d="M5 17h14M7 17v2M17 17v2"/><path d="M5 17v-3l2-5h10l2 5v3"/><circle cx="8" cy="14" r="1.2" fill="currentColor"/><circle cx="16" cy="14" r="1.2" fill="currentColor"/>'),
+  unsafe_situation: cancelIcon('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'),
+  cannot_reach_passenger: cancelIcon('<path d="M22 16v3a2 2 0 0 1-2 2 18 18 0 0 1-17-17 2 2 0 0 1 2-2h3a2 2 0 0 1 2 2c.1 1.2.3 2.4.6 3.6a2 2 0 0 1-.4 2L9 9a16 16 0 0 0 6 6l.8-1.2a2 2 0 0 1 2-.4c1.2.3 2.4.5 3.6.6a2 2 0 0 1 2 2z"/>'),
+  other: cancelIcon('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+};
+
 // BD-RIDE-D-08 — Driver problem reasons. Pure UI: selecting a reason and
 // submitting only surfaces a single session toast — it NEVER changes ride
 // status, never persists, never touches the data layer. `unsafe_situation`
@@ -122,15 +135,21 @@ function focusableIn(overlay) {
 // onConfirm(reasonCode, customText) is the data-layer hook owned by the
 // driver screen; outcomeLabel keeps the no-show vs cancel copy accurate.
 function cancelOptionsHtml(selected) {
-  return DRIVER_CANCEL_REASONS.map(([value, label, meta]) => `
-    <button type="button" class="driver-cancel-sheet__option${selected === value ? ' driver-cancel-sheet__option--selected' : ''}" role="radio" aria-checked="${selected === value ? 'true' : 'false'}" data-value="${escapeHtml(value)}">
-      <span class="driver-cancel-sheet__radio" aria-hidden="true"></span>
+  return DRIVER_CANCEL_REASONS.map(([value, label, meta]) => {
+    const on = selected === value;
+    const safety = value === 'unsafe_situation';
+    return `
+    <button type="button" class="driver-cancel-sheet__option${on ? ' driver-cancel-sheet__option--selected' : ''}${safety ? ' driver-cancel-sheet__option--safety' : ''}" role="radio" aria-checked="${on ? 'true' : 'false'}" data-value="${escapeHtml(value)}">
+      <span class="driver-cancel-sheet__icon" aria-hidden="true">${CANCEL_REASON_ICON[value] || ''}</span>
       <span class="driver-cancel-sheet__option-copy">
         <span class="driver-cancel-sheet__option-label">${escapeHtml(label)}</span>
         <span class="driver-cancel-sheet__option-meta">${escapeHtml(meta)}</span>
       </span>
+      ${safety ? '<span class="driver-cancel-sheet__safety-tag">SOS</span>' : ''}
+      <span class="driver-cancel-sheet__radio" aria-hidden="true"></span>
     </button>
-  `).join('');
+  `;
+  }).join('');
 }
 
 export function renderDriverCancelSheet(selected = '') {
