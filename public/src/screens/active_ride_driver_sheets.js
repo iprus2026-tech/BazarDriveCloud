@@ -43,6 +43,11 @@ const ALERT_TRI_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
   <line x1="12" y1="9" x2="12" y2="13"/>
   <line x1="12" y1="17" x2="12.01" y2="17"/>
 </svg>`;
+// BD-RIDE-D-SAFETY-01 glyphs.
+const SHIELD_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
+const SHARE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+const SUPPORT_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>`;
+const CHEVRON_R_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 // BD-RIDE-D-07 — Driver cancel reasons. The internal codes are fixed by
 // the issue #265 contract; the second/third columns are Russian UI copy.
@@ -209,6 +214,66 @@ export function renderDriverProblemSheet() {
   return sheetShell('problem', 'driver-problem-title', 'Активная поездка', 'Проблема в поездке', body);
 }
 
+// ── BD-RIDE-D-SAFETY-01 DriverSafetySheet ────────────────────
+// Driver in-ride SAFETY ACTIONS — distinct from the problem sheet (#ar-issue /
+// BD-RIDE-D-08, which owns the problem-report) and from the passenger
+// BD-RIDE-P-07 sheet (never reused here). Stage lives in overlay.dataset.stage:
+//   "default"   — action list (share / emergency / support)
+//   "emergency" — 112 demo confirm
+// Every action is a demo session toast (via the screen's onAction → showNotice).
+// Pure UI: no ride-status change, no real telephony/share, no backend.
+const DRIVER_SAFETY_ACTIONS = [
+  ['share', 'Поделиться поездкой', SHARE_SVG, '', false],
+  ['emergency', 'Экстренная помощь · 112', ALERT_TRI_SVG, '', true],
+  ['support', 'Связаться с поддержкой', SUPPORT_SVG, '8 800 · круглосуточно · демо', false],
+];
+const DRIVER_SAFETY_TOAST = {
+  share: 'Ссылка на поездку скопирована (демо)',
+  support: 'Поддержка: 8 800 · демо-режим',
+  call: 'Демо: экстренный вызов не выполняется',
+};
+function safetyActionsHtml() {
+  return DRIVER_SAFETY_ACTIONS.map(([action, label, icon, sub, danger]) => `
+    <button type="button" class="driver-safety-sheet__action${danger ? ' driver-safety-sheet__action--danger' : ''}" data-safety-action="${escapeHtml(action)}">
+      <span class="driver-safety-sheet__action-ic" aria-hidden="true">${icon}</span>
+      <span class="driver-safety-sheet__action-body">
+        <span class="driver-safety-sheet__action-label">${escapeHtml(label)}</span>
+        ${sub ? `<span class="driver-safety-sheet__action-sub">${escapeHtml(sub)}</span>` : ''}
+      </span>
+      <span class="driver-safety-sheet__action-chev" aria-hidden="true">${CHEVRON_R_SVG}</span>
+    </button>
+  `).join('');
+}
+
+export function renderDriverSafetySheet() {
+  const body = `
+    <div class="active-ride-driver-sheet__form driver-safety-sheet__form">
+      <div class="driver-safety-sheet__intro">
+        <span class="driver-safety-sheet__intro-ic" aria-hidden="true">${SHIELD_SVG}</span>
+        <p class="driver-safety-sheet__lead">Быстрые действия на случай проблемы. Это демо-режим.</p>
+      </div>
+      <div class="driver-safety-sheet__actions">${safetyActionsHtml()}</div>
+      <div class="driver-safety-sheet__note" role="note">
+        <span class="driver-safety-sheet__note-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
+        При реальной угрозе звоните 112. Это демо-режим, реальный вызов не выполняется.
+      </div>
+      <div class="active-ride-driver-sheet__actions driver-safety-sheet__cta">
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" data-driver-sheet-close="true">Закрыть</button>
+      </div>
+    </div>
+    <div class="driver-safety-sheet__emergency" role="group" aria-label="Экстренная помощь">
+      <div class="driver-safety-sheet__emergency-ic" aria-hidden="true">${ALERT_TRI_SVG}</div>
+      <div class="driver-safety-sheet__emergency-title">Экстренная помощь · 112</div>
+      <div class="driver-safety-sheet__emergency-text">Это демо-режим, реальный вызов не выполняется.</div>
+      <div class="driver-safety-sheet__emergency-actions">
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--danger" id="driver-safety-call">Позвонить 112 (демо)</button>
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" data-safety-action="back">Отмена</button>
+      </div>
+    </div>
+  `;
+  return sheetShell('safety', 'driver-safety-title', 'Активная поездка', 'Безопасность', body);
+}
+
 // ── Shared behaviour wiring ──────────────────────────────────
 // Wires selection / validation / confirm / loading / submit for whichever
 // sheet kind the overlay carries. Kept as a single exported entry point so
@@ -217,6 +282,7 @@ export function bindDriverSheetEvents(overlay, options = {}) {
   const kind = overlay.dataset.kind;
   if (kind === 'cancel') bindCancelEvents(overlay, options);
   else if (kind === 'problem') bindProblemEvents(overlay, options);
+  else if (kind === 'safety') bindSafetyEvents(overlay, options);
   else if (kind === 'earnings') bindEarningsEvents(overlay, options);
   bindSheetChrome(overlay, options);
 }
@@ -351,6 +417,35 @@ function bindProblemEvents(overlay, options) {
   });
 }
 
+function bindSafetyEvents(overlay, options) {
+  const toast = (msg) => { if (typeof options.onAction === 'function') options.onAction(msg); };
+  const close = () => { if (typeof overlay.__closeSheet === 'function') overlay.__closeSheet(); };
+
+  overlay.addEventListener('click', (ev) => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return;
+    // The 112 demo-call button (only in the emergency view).
+    if (target.closest('#driver-safety-call')) {
+      toast(DRIVER_SAFETY_TOAST.call);
+      close();
+      return;
+    }
+    const actionBtn = target.closest('[data-safety-action]');
+    if (!actionBtn) return;
+    const action = actionBtn.dataset.safetyAction;
+    // View transitions: 112 opens the demo confirm, "Отмена" returns. Neither
+    // changes ride status. (The shell's data-driver-sheet-close handles
+    // X / backdrop / "Закрыть" separately.)
+    if (action === 'emergency') { overlay.dataset.stage = 'emergency'; return; }
+    if (action === 'back') { overlay.dataset.stage = 'default'; return; }
+    // Demo actions: a session toast + dismiss. Never real telephony/share.
+    if (action === 'share' || action === 'support') {
+      toast(DRIVER_SAFETY_TOAST[action]);
+      close();
+    }
+  });
+}
+
 function openDriverSheet(root, kind, markup, options) {
   if (!root) return null;
   // Single-instance guard — only one driver sheet open at a time.
@@ -377,6 +472,14 @@ function openDriverSheet(root, kind, markup, options) {
 // function of the code) keeps the terminal-card copy accurate.
 export function openDriverCancelSheet(root, options = {}) {
   return openDriverSheet(root, 'cancel', renderDriverCancelSheet(options.reason || ''), options);
+}
+
+// BD-RIDE-D-SAFETY-01 — open the driver safety sheet. SAFETY ACTIONS only
+// (share / emergency-112 demo / support); never the problem-report (that is
+// #ar-issue / BD-RIDE-D-08) and never the passenger sheet. Pure UI: toast
+// feedback via onAction, no ride-status change.
+export function openDriverSafetySheet(root, options = {}) {
+  return openDriverSheet(root, 'safety', renderDriverSafetySheet(), options);
 }
 
 // BD-RIDE-D-08 — open the driver problem sheet. Pure UI placeholder:
