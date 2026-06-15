@@ -5,14 +5,25 @@ name: docs-site-ci
 # fully separate from the existing GitHub Pages PWA workflow (which it does not
 # touch). It only builds — no deploy at this step.
 on:
+  # Also trigger on the legacy documents scanned by
+  # validate-document-registry.mjs (README, ROADMAP, docs/**) so a legacy-doc-only
+  # change still runs `npm run check` and surfaces UNACCOUNTED_DOCUMENT warnings.
   pull_request:
     paths:
       - 'docs-site/**'
       - '.github/workflows/docs-site-ci.yml'
+      - 'README.md'
+      - 'ROADMAP.md'
+      - 'docs/**/*.md'
+      - 'docs/**/*.json'
   push:
     paths:
       - 'docs-site/**'
       - '.github/workflows/docs-site-ci.yml'
+      - 'README.md'
+      - 'ROADMAP.md'
+      - 'docs/**/*.md'
+      - 'docs/**/*.json'
 
 jobs:
   build:
