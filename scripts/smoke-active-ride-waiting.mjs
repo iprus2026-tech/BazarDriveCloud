@@ -1,0 +1,72 @@
+// BD-RIDE-D-WAITING-01 — static smoke for the driver waiting redesign.
+//
+// renderWaiting now shows a circular ns-timer ring (free wait) and gains a
+// paid-wait variant (renderWaitingExpired) reachable via ?wait=expired. A
+// refactor could drop the ring, the expired variant, or unwire its actions.
+// STATIC source assertions only — no browser, no DOM.
+
+import fs from 'node:fs';
+
+const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+const screen = read('../public/src/screens/active_ride.js');
+const css = read('../public/styles/cloud.css');
+
+const issues = [];
+function expect(label, cond, detail = '') {
+  console.log((cond ? 'PASS' : 'FAIL') + ' — ' + label + (detail ? ' (' + detail + ')' : ''));
+  if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
+}
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start === -1) return '';
+  const open = source.indexOf('{', start);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return source.slice(open, i + 1); }
+  }
+  return '';
+}
+
+// ── A. ?wait=expired entry + the two renderers ──
+expect('driver factory reads ?wait= into a mutable waitExpired',
+  /query\.get\('wait'\)/.test(screen) && /let\s+waitExpired\s*=/.test(screen));
+const waiting = functionBody(screen, 'renderWaiting');
+const expired = functionBody(screen, 'renderWaitingExpired');
+expect('renderWaiting() resolved', waiting.length > 0);
+expect('renderWaitingExpired() resolved', expired.length > 0);
+expect('renderWaiting guards into the expired variant',
+  /if\s*\(\s*waitExpired\s*\)\s*\{\s*renderWaitingExpired\(\);\s*return;/.test(waiting));
+
+// ── B. Free state — circular timer ring ──
+expect('free wait renders the success-tone ns-timer ring',
+  /ns-timer tone-success/.test(waiting) && /stroke-dashoffset="\$\{/.test(waiting));
+expect('ring value is the remaining free time', /ns-timer-val">\$\{escapeHtml\(remaining\)\}/.test(waiting));
+
+// ── C. Paid/expired variant ──
+expect('expired variant shows the paid-wait alert',
+  /ns-alert warning/.test(expired) && expired.includes('Бесплатное ожидание закончилось'));
+expect('expired variant uses the warning-tone ring + status copy',
+  /ns-timer tone-warning/.test(expired) && expired.includes('Пассажир не выходит'));
+expect('expired «Ещё подождать» returns to the free wait',
+  /ar-wait-more['"]\)[\s\S]{0,160}waitExpired\s*=\s*false;\s*renderWaiting\(\)/.test(expired));
+expect('expired «Пассажир не вышел» opens the no-show flow + persists NO_SHOW',
+  /ar-no-show['"]\)[\s\S]{0,400}openDriverNoShowFlow\s*\(\s*sheet/.test(expired)
+  && /persistDriverCancel\(RIDE_STATUS\.NO_SHOW,\s*'passenger_no_show'\)/.test(expired));
+
+// ── D. Free state keeps its existing contract ──
+expect('free wait keeps #ar-start → IN_PROGRESS',
+  /ar-start['"]\)[\s\S]{0,160}RIDE_STATUS\.IN_PROGRESS/.test(waiting));
+expect('free wait keeps the no-show entry (#ar-no-show → flow)',
+  /ar-no-show['"]\)[\s\S]{0,400}openDriverNoShowFlow\s*\(\s*sheet/.test(waiting));
+
+// ── E. CSS ──
+expect('cloud.css defines the timer ring', /\.ns-timer\s*\{/.test(css) && /\.ns-timer\.tone-warning\b/.test(css));
+expect('cloud.css defines the paid-wait alert', /\.ns-alert\s*\{/.test(css) && /\.ns-alert\.warning\b/.test(css));
+
+console.log('\n' + (issues.length
+  ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
+  : 'ALL PASSED'));
+process.exit(issues.length ? 1 : 0);
