@@ -8,7 +8,9 @@
     "start": "docusaurus start",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
-    "clear": "docusaurus clear"
+    "clear": "docusaurus clear",
+    "validate:frontmatter": "node scripts/validate-frontmatter.mjs",
+    "check": "npm run validate:frontmatter && npm run build"
   },
   "dependencies": {
     "@docusaurus/core": "^3.6.0",
@@ -17,6 +19,10 @@
     "prism-react-renderer": "^2.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0"
   },
   "browserslist": {
     "production": [">0.5%", "not dead", "not op_mini all"],

@@ -1,12 +1,20 @@
 ---
-id: index
+id: BD-DOCS-001
+docType: project-overview
 title: BazarDrive Docs
 owner: docs-contract-agent
-status: draft
-revision: "0.1.0"
-effectiveFrom: "2026-06-15"
-visibleFor: ["internal", "contributors"]
-tags: ["index", "overview"]
+status: current
+revision: 2026-06-15
+effectiveFrom: 2026-06-15
+reviewAfter: 2026-12-16
+visibleFor: [developer, designer, dispatcher, product, qa]
+sourceOfTruth: docs-site
+related:
+  routes: []
+  files: ["docs-site/scripts/validate-frontmatter.mjs"]
+  issues: ["BD-DOCS-SITE-01", "BD-DOCS-SITE-02"]
+  prs: []
+tags: [index, overview]
 slug: /
 ---
 
@@ -25,7 +33,27 @@ This site (`docs-site/`) is a **separate documentation shell** built with Docusa
 - **Project** — what BazarDriveCloud is.
 - **Contracts** — a pointer to the screen/flow contracts that govern shipped behaviour.
 - **Processes** — how Cloud Design exports become PRs, and how release notes work.
+- **Governance** — the Mini-Yonder model that governs this site.
 
-:::note Scope — BD-DOCS-SITE-01
-This is the **shell only**. Documentation is migrated incrementally — not all at once.
+## Mini-Yonder governance layer
+
+Every document on this site is a **governed object** with a machine-readable
+**metadata passport** (its frontmatter) and a **lifecycle**. A validator
+(`docs-site/scripts/validate-frontmatter.mjs`) enforces the passport on
+`npm run check` and in CI, so docs can't silently drift.
+
+Start here:
+
+- [Mini-Yonder Model](governance/mini-yonder-model.md) — what the layer is and why.
+- [Document Types](governance/document-types.md) — the `docType` vocabulary.
+- [Document Lifecycle](governance/document-lifecycle.md) — the `status` vocabulary.
+- [Frontmatter Standard](governance/frontmatter-standard.md) — the passport fields and rules.
+
+Reusable scaffolds live in `docs/_templates/` (screen-contract, flow-contract,
+audit, decision-record, release-note, runbook); they are exempt from validation.
+
+:::note Scope
+This is the docs-site governance layer (BD-DOCS-SITE-02). It governs
+`docs-site/` only — never the runtime PWA in `public/`. Documentation is
+migrated incrementally, not all at once.
 :::

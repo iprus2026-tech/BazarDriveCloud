@@ -1,12 +1,21 @@
 ---
-id: release-notes
+id: BD-DOCS-005
+docType: process
 title: Release Notes Process
 owner: docs-contract-agent
-status: draft
-revision: "0.1.0"
-effectiveFrom: "2026-06-15"
-visibleFor: ["internal", "contributors"]
-tags: ["process", "release"]
+status: current
+revision: 2026-06-15
+effectiveFrom: 2026-06-15
+reviewAfter: 2026-12-16
+visibleFor: [developer, product, dispatcher]
+sourceOfTruth: CLAUDE.md
+related:
+  routes: []
+  files: ["CLAUDE.md"]
+  issues: []
+  prs: []
+tags: [process, release]
+slug: /processes/release-notes
 ---
 
 # Release Notes Process
