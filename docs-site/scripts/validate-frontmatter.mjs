@@ -12,10 +12,22 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
+import yaml from 'js-yaml';
 
 const SCRIPTS_DIR = fileURLToPath(new URL('.', import.meta.url));
 const SITE_ROOT = join(SCRIPTS_DIR, '..');
 const DOCS_DIR = join(SITE_ROOT, 'docs');
+
+// Parse frontmatter with the JSON schema so YAML does NOT coerce an unquoted
+// YYYY-MM-DD scalar into a JS Date. Date coercion silently normalises an
+// impossible value (e.g. 2026-02-30 → March 2) before the validator sees it,
+// which would defeat the calendar-date check. Keeping dates as raw strings lets
+// isRealDate reject typos whether or not the author quoted the value.
+const MATTER_OPTS = {
+  engines: {
+    yaml: (s) => yaml.load(s, { schema: yaml.JSON_SCHEMA }),
+  },
+};
 
 // Allowed controlled-vocabulary values (see governance/document-types.md).
 const DOC_TYPES = [
@@ -53,22 +65,14 @@ const REQUIRED = [
   'tags',
 ];
 
+// Free-string passport fields. `isEmpty` treats a non-empty array/object/number
+// as "present", so without an explicit type check a value like
+// `owner: [docs-contract-agent]` would pass — leaving the passport malformed.
+const STRING_FIELDS = ['title', 'owner', 'sourceOfTruth'];
+
 // Fields validated as ISO calendar dates when present.
 const DATE_FIELDS = ['revision', 'effectiveFrom', 'reviewAfter'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// gray-matter (js-yaml default schema) turns an unquoted YYYY-MM-DD into a JS
-// Date. Normalise such values back to a UTC date string before the regex test
-// so authors may quote or not quote dates without breaking validation.
-function asDateStr(v) {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    const y = v.getUTCFullYear();
-    const m = String(v.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(v.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  return typeof v === 'string' ? v : String(v);
-}
 
 // A YYYY-MM-DD string can match the shape yet be an impossible calendar date
 // (e.g. 2026-99-99). Confirm the components round-trip through a real UTC date.
@@ -116,7 +120,7 @@ function validateFile(file) {
 
   let data;
   try {
-    ({ data } = matter(readFileSync(file, 'utf8')));
+    ({ data } = matter(readFileSync(file, 'utf8'), MATTER_OPTS));
   } catch (err) {
     return { rel, errors: [`${rel}: cannot parse frontmatter — ${err.message}`], id: null };
   }
@@ -135,6 +139,17 @@ function validateFile(file) {
     errors.push(`${rel}: id must be a string, got ${typeof data.id}`);
   } else if (typeof data.id === 'string' && !data.id.startsWith('BD-')) {
     errors.push(`${rel}: id "${data.id}" must start with "BD-"`);
+  }
+
+  // Free-string fields must actually be strings (see STRING_FIELDS note).
+  for (const field of STRING_FIELDS) {
+    if (
+      data[field] !== undefined &&
+      data[field] !== null &&
+      typeof data[field] !== 'string'
+    ) {
+      errors.push(`${rel}: ${field} must be a string, got ${typeof data[field]}`);
+    }
   }
 
   // Controlled vocabularies.
@@ -170,9 +185,11 @@ function validateFile(file) {
   }
 
   // Date-shaped fields, when present, must be a real YYYY-MM-DD calendar date.
+  // MATTER_OPTS keeps these as raw strings (no YAML Date coercion), so the
+  // round-trip in isRealDate sees exactly what the author wrote.
   for (const field of DATE_FIELDS) {
     if (data[field] === undefined || data[field] === null) continue;
-    const str = asDateStr(data[field]);
+    const str = String(data[field]);
     if (!DATE_RE.test(str)) {
       errors.push(`${rel}: ${field} "${str}" must match YYYY-MM-DD`);
     } else if (!isRealDate(str)) {

@@ -21,7 +21,8 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0"
   },
   "browserslist": {
     "production": [">0.5%", "not dead", "not op_mini all"],

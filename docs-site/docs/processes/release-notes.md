@@ -4,7 +4,7 @@ docType: process
 title: Release Notes Process
 owner: docs-contract-agent
 status: current
-revision: 2026-06-16
+revision: 2026-06-15
 effectiveFrom: 2026-06-15
 reviewAfter: 2026-12-16
 visibleFor: [developer, product, dispatcher]

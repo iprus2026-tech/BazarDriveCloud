@@ -4,8 +4,8 @@ docType: process
 title: Frontmatter Standard
 owner: docs-contract-agent
 status: current
-revision: 2026-06-16
-effectiveFrom: 2026-06-16
+revision: 2026-06-15
+effectiveFrom: 2026-06-15
 reviewAfter: 2026-12-16
 visibleFor: [developer, designer, dispatcher, product, qa]
 sourceOfTruth: docs-site
@@ -36,8 +36,8 @@ docType: project-overview
 title: BazarDrive Docs
 owner: docs-contract-agent
 status: current
-revision: 2026-06-16
-effectiveFrom: 2026-06-16
+revision: 2026-06-15
+effectiveFrom: 2026-06-15
 reviewAfter: 2026-12-16
 visibleFor: [developer, designer, dispatcher, product]
 sourceOfTruth: docs-site
