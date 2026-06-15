@@ -27,6 +27,7 @@ import inbox      from './screens/inbox.js';
 import driverMap  from './screens/driver_map.js';
 import tripReceipt from './screens/trip_receipt.js';
 import orderDetail from './screens/order_detail.js';
+import settings    from './screens/settings.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -52,6 +53,8 @@ register('/receipt',     tripReceipt);
 // router resolves /order/<id> (any id) to this loader and the screen
 // reads the id off location.hash itself.
 register('/order',       orderDetail);
+// BD-SETTINGS-01 — passenger #pfp-settings-btn + driver #pf2-gear open this.
+register('/settings',    settings);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {

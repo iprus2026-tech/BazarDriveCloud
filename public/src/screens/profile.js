@@ -934,6 +934,8 @@ function renderPassenger(root, u, previewState) {
   // (the shipped notifications surface). Reuses /inbox rather than splitting a
   // new /notifications route, per the missing-screens entry-point decision.
   root.querySelector('#pfp-notif-btn')?.addEventListener('click', () => go('/inbox'));
+  // BD-SETTINGS-01 — passenger gear opens the new /settings screen (was inert).
+  root.querySelector('#pfp-settings-btn')?.addEventListener('click', () => go('/settings'));
 
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   // BD-HISTORY-P-01 — «История поездок» opens the trip-history section that
@@ -3823,9 +3825,10 @@ function renderDriver(root, u) {
     go('/driver-map');
   });
 
-  // Gear icon: switch to security pane.
+  // BD-SETTINGS-01 — gear opens the new /settings screen (was: switch to the
+  // security pane). Security stays reachable via its own pf2-tab[data-pane].
   root.querySelector('#pf2-gear')?.addEventListener('click', () => {
-    root.querySelector('.pf2-tab[data-pane="security"]')?.click();
+    go('/settings?role=driver');
   });
 
   root.querySelector('#pf2-edit').addEventListener('click', () => go('/onboarding'));
