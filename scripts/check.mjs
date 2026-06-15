@@ -147,6 +147,17 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// BD-NOTIF-01 — static regression smoke for the /inbox push-permission prompt.
+const notifPromptSmoke = path.join(root, 'scripts', 'smoke-notif-prompt.mjs');
+if (exists(notifPromptSmoke)) {
+  try {
+    execFileSync(process.execPath, [notifPromptSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-notif-prompt.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-01 — static regression smoke for the driver-map role guard.
 const driverMapGuardSmoke = path.join(root, 'scripts', 'smoke-driver-map-guard.mjs');
 if (exists(driverMapGuardSmoke)) {

@@ -6,6 +6,7 @@ import {
 import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { user } from '../state.js';
 
 // BD-ERROR-01C-C / BD-ERROR-02A — route an inbox data-load failure through the
 // global app-shell overlay via the shared data_layer.loadResource adapter (the
@@ -49,6 +50,47 @@ const ARROW_SVG = `
     <line x1="5" y1="12" x2="19" y2="12"/>
     <polyline points="13 6 19 12 13 18"/>
   </svg>`;
+
+// BD-NOTIF-01 — push-permission prompt glyphs.
+const BELL_SVG = `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+       width="18" height="18">
+    <path d="M6 8a6 6 0 0112 0c0 6 3 7 3 7H3s3-1 3-7"/>
+    <path d="M10 21a2 2 0 004 0"/>
+  </svg>`;
+const CHECK_SVG = `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+       width="14" height="14">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>`;
+
+// BD-NOTIF-01 — push-permission prompt. UI-only: «Включить» flips the existing
+// notificationsEnabled flag (no native OS registration, no backend); «Позже»
+// dismisses for the session. Two views (prompt → done) toggled by [data-view].
+function promptHtml(view) {
+  return `
+    <div class="bd-card inbox-pushprompt" data-view="${escapeHtml(view)}" role="region" aria-label="Push-уведомления">
+      <div class="inbox-pushprompt__main">
+        <span class="inbox-pushprompt__ic" aria-hidden="true">${BELL_SVG}</span>
+        <div class="inbox-pushprompt__copy">
+          <div class="inbox-pushprompt__title">Включите push-уведомления</div>
+          <p class="inbox-pushprompt__text">Чтобы не пропустить новые отклики и сообщения. Демо-режим — реальные push не отправляются.</p>
+        </div>
+        <button type="button" class="inbox-pushprompt__close" data-notif-prompt="later" aria-label="Скрыть">×</button>
+      </div>
+      <div class="inbox-pushprompt__actions">
+        <button type="button" class="bd-btn primary sm" data-notif-prompt="enable">Включить</button>
+        <button type="button" class="bd-btn ghost sm" data-notif-prompt="later">Позже</button>
+      </div>
+      <div class="inbox-pushprompt__done" role="status">
+        <span class="inbox-pushprompt__done-ic" aria-hidden="true">${CHECK_SVG}</span>
+        <span>Push-уведомления включены</span>
+      </div>
+    </div>
+  `;
+}
 
 function getRouteParam(name) {
   const hash = window.location.hash || '';
@@ -246,11 +288,24 @@ export default async function inbox() {
   const chipRow = root.querySelector('.feed-chip-row');
   const listEl  = root.querySelector('.inbox-list');
 
+  // BD-NOTIF-01 — push-permission prompt state. Session-only: dismiss/enable
+  // never reappear within the session. `?prompt=1` force-shows it for QA even
+  // when notificationsEnabled is already true (the default). `promptDone`
+  // shows the brief "enabled" confirmation right after «Включить».
+  const forcePrompt = getRouteParam('prompt') === '1';
+  let promptDismissed = false;
+  let promptDone = false;
+  function promptShown() {
+    return promptDone || ((forcePrompt || !user.get().notificationsEnabled) && !promptDismissed);
+  }
+
   function renderList() {
     const visible = filterItems(items, activeTab);
-    listEl.innerHTML = visible.length
+    const body = visible.length
       ? visible.map(renderItem).join('')
       : renderEmpty(activeTab);
+    const prompt = promptShown() ? promptHtml(promptDone ? 'done' : 'prompt') : '';
+    listEl.innerHTML = prompt + body;
   }
 
   // Re-run the inbox load and re-render the list. Mirrors feed's refreshList:
@@ -288,6 +343,22 @@ export default async function inbox() {
   }
 
   listEl.addEventListener('click', (e) => {
+    // BD-NOTIF-01 — push-permission prompt controls (own data-notif-prompt
+    // attribute so they never collide with the item [data-inbox-action]/card).
+    const promptBtn = e.target.closest('[data-notif-prompt]');
+    if (promptBtn) {
+      e.stopPropagation();
+      const act = promptBtn.dataset.notifPrompt;
+      if (act === 'later') { promptDismissed = true; renderList(); return; }
+      if (act === 'enable') {
+        // UI-only: flip the persisted preference, no native push registration.
+        user.set({ notificationsEnabled: true });
+        promptDone = true;
+        renderList();
+        setTimeout(() => { promptDone = false; promptDismissed = true; renderList(); }, 2400);
+      }
+      return;
+    }
     const actionBtn = e.target.closest('[data-inbox-action]');
     if (actionBtn) {
       e.stopPropagation();

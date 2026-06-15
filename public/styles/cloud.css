@@ -11974,6 +11974,66 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .inbox-empty__cta { align-self: stretch; max-width: 260px; }
 
+/* ── BD-NOTIF-01 — push-permission prompt banner ──────────── */
+.inbox-pushprompt {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(96, 165, 250, 0.06);
+  border-color: rgba(96, 165, 250, 0.22);
+}
+.inbox-pushprompt__main { display: flex; align-items: flex-start; gap: 12px; }
+.inbox-pushprompt__ic {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(96, 165, 250, 0.14);
+  color: var(--info);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.inbox-pushprompt__copy { flex: 1; min-width: 0; }
+.inbox-pushprompt__title { font-size: 14px; font-weight: 700; color: var(--text); }
+.inbox-pushprompt__text { margin: 4px 0 0; font-size: 12.5px; color: var(--text-2); line-height: 1.4; }
+.inbox-pushprompt__close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.inbox-pushprompt__actions { display: flex; gap: 8px; }
+.inbox-pushprompt__actions .bd-btn { flex: 1; }
+.inbox-pushprompt__done {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+}
+.inbox-pushprompt__done-ic {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--success);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.inbox-pushprompt[data-view="done"] .inbox-pushprompt__main,
+.inbox-pushprompt[data-view="done"] .inbox-pushprompt__actions { display: none; }
+.inbox-pushprompt[data-view="done"] .inbox-pushprompt__done { display: flex; }
+
 /* BD-RIDE-COMPLETE-01 — Passenger post-ride history actions */
 /* BD-RIDE-P-05 parity — history block reads as a bordered card with a
    green icon chip + bold note (instead of a centered pill). */
