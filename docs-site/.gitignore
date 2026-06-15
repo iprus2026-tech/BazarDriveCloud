@@ -1,0 +1,12 @@
+# Docusaurus + node — never commit build output or dependencies.
+/node_modules
+/build
+/.docusaurus
+/.cache-loader
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
