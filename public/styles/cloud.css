@@ -6442,20 +6442,28 @@ body {
   gap: 8px;
   padding: 14px 12px 4px;
 }
+/* BD-RIDE-P-05 parity — check badge: halo ring instead of a solid border. */
 .passenger-complete__check {
-  width: 64px;
-  height: 64px;
+  position: relative;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
-  background: rgba(74, 222, 128, 0.12);
+  background: rgba(74, 222, 128, 0.14);
   color: var(--success);
-  border: 1px solid rgba(74, 222, 128, 0.32);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
+.passenger-complete__check::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px solid rgba(74, 222, 128, 0.18);
+}
 .passenger-complete__check svg {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
 }
 .passenger-complete__hero-title {
   font-size: 22px;
@@ -6504,10 +6512,10 @@ body {
   border: 1px solid var(--line-strong);
 }
 .passenger-complete__pay-total {
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 700;
   color: var(--text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   margin: 10px 0 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -7074,8 +7082,8 @@ body {
   flex-direction: column;
   gap: 12px;
   padding: 16px;
-  background: rgba(74, 222, 128, 0.04);
-  border: 1px solid rgba(74, 222, 128, 0.28);
+  background: linear-gradient(180deg, rgba(74, 222, 128, 0.08), var(--bg-1) 72%);
+  border: 1px solid rgba(74, 222, 128, 0.22);
 }
 .passenger-complete__submitted-head {
   display: inline-flex;
@@ -11726,35 +11734,44 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .inbox-empty__cta { align-self: stretch; max-width: 260px; }
 
 /* BD-RIDE-COMPLETE-01 — Passenger post-ride history actions */
+/* BD-RIDE-P-05 parity — history block reads as a bordered card with a
+   green icon chip + bold note (instead of a centered pill). */
 .passenger-complete__history-row {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-top: 4px;
+  padding: 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
 }
 .passenger-complete__history-row[data-history-saved="false"] .passenger-complete__history-note {
   display: none;
 }
 .passenger-complete__history-note {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  align-self: center;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(74, 222, 128, 0.12);
-  color: var(--success);
-  font-size: 12px;
+  gap: 10px;
+  align-self: stretch;
+  color: var(--text);
+  font-size: 13px;
   font-weight: 600;
 }
 .passenger-complete__history-note-ic {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(74, 222, 128, 0.10);
+  color: var(--success);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .passenger-complete__history-note-ic svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 .passenger-complete__history-actions {
   display: grid;
