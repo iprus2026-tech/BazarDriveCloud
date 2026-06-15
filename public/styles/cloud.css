@@ -13094,11 +13094,6 @@ button.pfp-menu-row:active { opacity: 0.7; }
   font-weight: 700;
   line-height: 1.25;
 }
-.driver-problem-sheet__action-meta {
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.35;
-}
 .driver-problem-sheet__action-radio {
   width: 18px;
   height: 18px;
@@ -13114,68 +13109,50 @@ button.pfp-menu-row:active { opacity: 0.7; }
   border-color: var(--danger);
   background: radial-gradient(circle at center, var(--danger) 0 40%, transparent 44%);
 }
-/* Optional comment — revealed once a type is selected. */
-.driver-problem-sheet__comment { display: none; flex-direction: column; gap: 6px; }
-.active-ride-driver-sheet--problem[data-stage="type_selected"] .driver-problem-sheet__comment,
-.active-ride-driver-sheet--problem[data-stage="loading"] .driver-problem-sheet__comment { display: flex; }
-.driver-problem-sheet__comment-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-3);
-}
-.driver-problem-sheet__comment-input {
-  width: 100%;
-  resize: none;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  padding: 10px 12px;
-  line-height: 1.35;
-}
-.driver-problem-sheet__comment-input::placeholder { color: var(--text-3); }
-.driver-problem-sheet__comment-input:focus { outline: none; border-color: var(--accent); }
-/* In-sheet sent card (sent stage). */
-.driver-problem-sheet__done {
-  display: none;
-  flex-direction: column;
+/* BD-RIDE-D-08 — label row carries the «SOS» safety tag for the unsafe reason. */
+.driver-problem-sheet__action-labelrow {
+  display: flex;
   align-items: center;
   gap: 8px;
-  text-align: center;
-  padding: 8px 6px 4px;
 }
-.active-ride-driver-sheet--problem[data-stage="sent"] .driver-problem-sheet__form { display: none; }
-.active-ride-driver-sheet--problem[data-stage="sent"] .driver-problem-sheet__done { display: flex; }
-.driver-problem-sheet__done-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: rgba(74, 222, 128, 0.14);
-  color: var(--success);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.driver-problem-sheet__done-title {
-  font-size: 20px;
+.driver-problem-sheet__safety-tag {
+  font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: -0.01em;
-  color: var(--text);
-  line-height: 1.15;
+  letter-spacing: 0.06em;
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.14);
+  padding: 2px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
 }
-.driver-problem-sheet__done-text {
-  font-size: 13px;
-  color: var(--text-2);
+/* Helper note — always visible, status-neutral. */
+.driver-problem-sheet__helper {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text-3);
+  font-size: 11.5px;
   line-height: 1.4;
 }
-.driver-problem-sheet__done-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-  margin-top: 8px;
+/* Validation error — revealed when "Отправить" is tapped with no reason. */
+.driver-problem-sheet__error {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--danger);
+  padding: 10px 12px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--radius-md);
+}
+.driver-problem-sheet__error-ic { display: inline-flex; flex-shrink: 0; }
+.active-ride-driver-sheet--problem[data-stage="validation_error"] .driver-problem-sheet__error { display: flex; }
+.active-ride-driver-sheet--problem[data-stage="validation_error"] .driver-problem-sheet__action {
+  border-color: rgba(248, 113, 113, 0.4);
 }
 
 /* BD-MAP-02 LocationPermission */

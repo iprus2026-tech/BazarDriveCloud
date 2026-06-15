@@ -62,29 +62,21 @@ export const DRIVER_CANCEL_REASON_LABEL_BY_CODE = Object.fromEntries(
   DRIVER_CANCEL_REASONS.map(([code, label]) => [code, label]),
 );
 
-// BD-RIDE-D-08 — Driver problem types are pure UI placeholders. None of
-// them changes ride status; each only surfaces local/toast feedback. The
-// safety-class types flip the sheet into the danger visual state.
+// BD-RIDE-D-08 — Driver problem reasons. Pure UI: selecting a reason and
+// submitting only surfaces a single session toast — it NEVER changes ride
+// status, never persists, never touches the data layer. `unsafe_situation`
+// carries the danger/safety visual treatment (SOS tag + safety warning).
 const DRIVER_PROBLEM_TYPES = [
-  ['passenger_no_show', 'Пассажир не выходит', 'Уведомим пассажира, что вы ждёте', false],
-  ['cannot_reach', 'Не могу дозвониться', 'Отметим, что связи с пассажиром нет', false],
-  ['wrong_pickup', 'Неверная точка подачи', 'Передадим, что адрес подачи неверный', false],
-  ['car_problem', 'Проблема с авто', 'Зафиксируем неполадку с автомобилем', true],
-  ['safety', 'Угроза безопасности', 'Сообщим в поддержку о небезопасной ситуации', true],
-  ['contact_support', 'Связаться с поддержкой', 'Откроем обращение в поддержку', false],
+  ['passenger_no_show', 'Пассажир не выходит', false],
+  ['unsafe_situation', 'Небезопасная ситуация', true],
+  ['route_problem', 'Проблема с маршрутом', false],
+  ['payment_problem', 'Проблема с оплатой', false],
+  ['other', 'Другое', false],
 ];
 
-function problemActionNotice(code) {
-  switch (code) {
-    case 'passenger_no_show': return 'Пассажиру отправлено напоминание, что вы ждёте';
-    case 'cannot_reach': return 'Поддержка увидит, что связи с пассажиром нет';
-    case 'wrong_pickup': return 'Жалоба на точку подачи отправлена';
-    case 'car_problem': return 'Проблема с авто зафиксирована';
-    case 'safety': return 'Сигнал о безопасности отправлен в поддержку';
-    case 'contact_support': return 'Обращение в поддержку открыто';
-    default: return 'Сообщение отправлено в поддержку';
-  }
-}
+// Single demo toast on submit (delivered via the driver screen's onAction →
+// showNotice). Session-only; the message is intentionally status-neutral.
+const DRIVER_PROBLEM_TOAST = 'Обращение сохранено в демо-режиме';
 
 // Default head-right slot for cancel + problem sheets. Earnings sheet (D-11)
 // passes a per-variant status pill instead — dismiss is still available via
@@ -173,17 +165,21 @@ export function renderDriverCancelSheet(selected = '') {
 
 // ── BD-RIDE-D-08 DriverProblemSheet ──────────────────────────
 // Stage lives in overlay.dataset.stage:
-//   "default"        — no type selected
-//   "type_selected"  — a type is chosen → comment field revealed
-//   "loading"        — "Отправляем…" while the signal is "sent"
-//   "sent"           — terminal in-sheet card
-// overlay.dataset.safety === "true" when a safety-class type is selected.
+//   "default"          — no reason selected
+//   "type_selected"    — a reason is chosen
+//   "validation_error" — "Отправить" tapped with no reason → inline error
+// Submit is a demo-only action: it surfaces a single session toast (via the
+// driver screen's onAction → showNotice) and dismisses the sheet. There is no
+// loading/sent stage and no ride-status change.
+// overlay.dataset.safety === "true" when the safety-class reason is selected.
 function problemTypesHtml() {
-  return DRIVER_PROBLEM_TYPES.map(([value, label, meta, safety]) => `
+  return DRIVER_PROBLEM_TYPES.map(([value, label, safety]) => `
     <button type="button" class="driver-problem-sheet__action" role="radio" aria-checked="false" data-value="${escapeHtml(value)}" data-safety="${safety ? 'true' : 'false'}">
       <span class="driver-problem-sheet__action-copy">
-        <span class="driver-problem-sheet__action-label">${escapeHtml(label)}</span>
-        <span class="driver-problem-sheet__action-meta">${escapeHtml(meta)}</span>
+        <span class="driver-problem-sheet__action-labelrow">
+          <span class="driver-problem-sheet__action-label">${escapeHtml(label)}</span>
+          ${safety ? '<span class="driver-problem-sheet__safety-tag">SOS</span>' : ''}
+        </span>
       </span>
       <span class="driver-problem-sheet__action-radio" aria-hidden="true"></span>
     </button>
@@ -193,34 +189,24 @@ function problemTypesHtml() {
 export function renderDriverProblemSheet() {
   const body = `
     <div class="active-ride-driver-sheet__form driver-problem-sheet__form">
-      <p class="driver-problem-sheet__lead">Отправьте сигнал поддержке. Поездка останется активной — статус не изменится.</p>
+      <p class="driver-problem-sheet__lead">Выберите, что произошло. Это пока демо-режим: поездка не изменится.</p>
+      <div class="driver-problem-sheet__actions" role="radiogroup" aria-label="Что произошло">${problemTypesHtml()}</div>
       <div class="driver-problem-sheet__safety-note" role="note">
         <span class="driver-problem-sheet__safety-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
         Если есть угроза безопасности — сначала звоните 112. Это демо-режим, реальный вызов не выполняется.
       </div>
-      <div class="driver-problem-sheet__actions" role="radiogroup" aria-label="Тип проблемы">${problemTypesHtml()}</div>
-      <div class="driver-problem-sheet__comment">
-        <label class="driver-problem-sheet__comment-label" for="driver-problem-comment">Комментарий (необязательно)</label>
-        <textarea class="driver-problem-sheet__comment-input" id="driver-problem-comment" rows="2" placeholder="Добавьте детали для поддержки"></textarea>
+      <div class="driver-problem-sheet__error" id="driver-problem-error" role="alert">
+        <span class="driver-problem-sheet__error-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
+        Выберите причину обращения
       </div>
+      <p class="driver-problem-sheet__helper">Сообщение останется внутри текущей сессии и не изменит статус поездки.</p>
       <div class="active-ride-driver-sheet__actions driver-problem-sheet__cta">
         <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--ghost" data-driver-sheet-close="true">Закрыть</button>
-        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-problem-submit" disabled>
-          <span class="active-ride-driver-sheet__btn-default">Отправить сигнал</span>
-          <span class="active-ride-driver-sheet__btn-loading"><span class="active-ride-driver-sheet__spinner" aria-hidden="true">${SPINNER_SVG}</span>Отправляем…</span>
-        </button>
-      </div>
-    </div>
-    <div class="driver-problem-sheet__done" role="status" aria-live="polite">
-      <div class="driver-problem-sheet__done-icon" aria-hidden="true">${CHECK_SVG}</div>
-      <div class="driver-problem-sheet__done-title">Сигнал отправлен</div>
-      <div class="driver-problem-sheet__done-text" id="driver-problem-done-text">Поддержка получила ваше сообщение.</div>
-      <div class="driver-problem-sheet__done-actions">
-        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-problem-done-close">Готово</button>
+        <button type="button" class="active-ride-driver-sheet__btn active-ride-driver-sheet__btn--accent" id="driver-problem-submit">Отправить</button>
       </div>
     </div>
   `;
-  return sheetShell('problem', 'driver-problem-title', 'Сообщить о проблеме', 'Что случилось?', body);
+  return sheetShell('problem', 'driver-problem-title', 'Активная поездка', 'Проблема в поездке', body);
 }
 
 // ── Shared behaviour wiring ──────────────────────────────────
@@ -344,35 +330,24 @@ function bindProblemEvents(overlay, options) {
   const submit = overlay.querySelector('#driver-problem-submit');
 
   typeBtns.forEach((btn) => btn.addEventListener('click', () => {
-    // Once the signal is in flight (loading) or delivered (sent) the type is
-    // frozen — re-selecting must not roll dataset.stage back and unlock the card.
-    if (overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'sent') return;
     selectedType = btn.dataset.value || '';
     typeBtns.forEach((b) => b.setAttribute('aria-checked', b === btn ? 'true' : 'false'));
-    overlay.dataset.stage = selectedType ? 'type_selected' : 'default';
     overlay.dataset.safety = btn.dataset.safety === 'true' ? 'true' : 'false';
-    if (submit) submit.disabled = !selectedType;
+    // Selecting a reason also clears any prior validation error.
+    overlay.dataset.stage = selectedType ? 'type_selected' : 'default';
   }));
 
   submit.addEventListener('click', () => {
-    if (!selectedType || overlay.dataset.stage === 'loading' || overlay.dataset.stage === 'sent') return;
-    overlay.dataset.stage = 'loading';
-    // Belt-and-suspenders: disable inputs so nothing can mutate the in-flight sheet.
-    typeBtns.forEach((btn) => { btn.disabled = true; });
-    submit.disabled = true;
-    const message = problemActionNotice(selectedType);
-    setTimeout(() => {
-      const doneText = overlay.querySelector('#driver-problem-done-text');
-      if (doneText) doneText.textContent = message;
-      overlay.dataset.stage = 'sent';
-      if (typeof options.onAction === 'function') options.onAction(message);
-    }, 600);
-  });
-
-  // The terminal "Готово" is an explicit exit: the shared close handler is
-  // locked during the sent stage so the backdrop/Esc can't dismiss the card.
-  overlay.querySelector('#driver-problem-done-close').addEventListener('click', () => {
-    overlay.__closeSheet && overlay.__closeSheet();
+    if (!selectedType) {
+      // Required state: "Отправить" tapped with nothing selected → inline error.
+      overlay.dataset.stage = 'validation_error';
+      return;
+    }
+    // BD-RIDE-D-08 is demo-only: NEVER mutate ride status, never persist. Surface
+    // a single session toast (via the driver screen's onAction → showNotice) and
+    // dismiss the sheet.
+    if (typeof options.onAction === 'function') options.onAction(DRIVER_PROBLEM_TOAST);
+    if (typeof overlay.__closeSheet === 'function') overlay.__closeSheet();
   });
 }
 
