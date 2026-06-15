@@ -160,6 +160,22 @@ expect('cancel sheet shows the canceled-state title "Поездка отмене
 expect('cancel sheet canceled card returns to the feed ("Вернуться в ленту")',
   sheets.includes('Вернуться в ленту'));
 
+// ── D2. Cancel sheet redesign (BD-RIDE-D-07) — icon box + SOS + JS hooks ──
+// The reason rows gained a leading icon box and an always-on «SOS» tag on the
+// unsafe reason. The JS hooks (.driver-cancel-sheet__option / --selected /
+// data-value) and the bindCancelEvents state machine are unchanged, so the
+// section-D stage/copy pins above still hold.
+expect('cancel reason rows render a leading icon box backed by the per-reason icon set',
+  sheets.includes('driver-cancel-sheet__icon') && /CANCEL_REASON_ICON\s*=/.test(sheets));
+expect('cancel icon set covers all 6 reason codes',
+  ['passenger_no_show', 'wrong_pickup', 'car_problem', 'unsafe_situation', 'cannot_reach_passenger', 'other']
+    .every((code) => new RegExp(`${code}:\\s*cancelIcon\\(`).test(sheets)));
+expect('unsafe reason carries the always-on «SOS» tag (danger visual, cancel-only)',
+  sheets.includes('driver-cancel-sheet__safety-tag') && /value === 'unsafe_situation'/.test(sheets));
+expect('cancel option keeps the JS hook class + data-value (state machine intact)',
+  sheets.includes('driver-cancel-sheet__option--selected')
+  && /data-value="\$\{escapeHtml\(value\)\}"/.test(sheets));
+
 // ── E. Problem state machine (redesigned BD-RIDE-D-08) + safety + copy ──
 for (const stage of ['type_selected', 'validation_error']) {
   expect(`problem sheet knows the '${stage}' stage`,
