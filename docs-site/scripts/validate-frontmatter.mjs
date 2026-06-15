@@ -70,6 +70,19 @@ function asDateStr(v) {
   return typeof v === 'string' ? v : String(v);
 }
 
+// A YYYY-MM-DD string can match the shape yet be an impossible calendar date
+// (e.g. 2026-99-99). Confirm the components round-trip through a real UTC date.
+function isRealDate(str) {
+  const [y, m, d] = str.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
 function isEmpty(v) {
   if (v === undefined || v === null) return true;
   if (typeof v === 'string') return v.trim() === '';
@@ -77,7 +90,9 @@ function isEmpty(v) {
   return false;
 }
 
-// Recursively collect *.md files, skipping any path segment named _templates.
+// Recursively collect Markdown/MDX docs, skipping the _templates scaffolds.
+// Docusaurus serves both .md and .mdx, so both must be governed — otherwise an
+// .mdx page would skip the frontmatter gate while still being built.
 function collectMarkdown(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
@@ -86,7 +101,7 @@ function collectMarkdown(dir) {
     if (st.isDirectory()) {
       if (entry === '_templates') continue;
       out.push(...collectMarkdown(full));
-    } else if (entry.endsWith('.md')) {
+    } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
       out.push(full);
     }
   }
@@ -101,7 +116,7 @@ function validateFile(file) {
   try {
     ({ data } = matter(readFileSync(file, 'utf8')));
   } catch (err) {
-    return [`${rel}: cannot parse frontmatter — ${err.message}`];
+    return { rel, errors: [`${rel}: cannot parse frontmatter — ${err.message}`], id: null };
   }
 
   // Required presence.
@@ -148,16 +163,18 @@ function validateFile(file) {
     errors.push(`${rel}: tags must be an array`);
   }
 
-  // Date-shaped fields, when present, must be YYYY-MM-DD.
+  // Date-shaped fields, when present, must be a real YYYY-MM-DD calendar date.
   for (const field of DATE_FIELDS) {
     if (data[field] === undefined || data[field] === null) continue;
     const str = asDateStr(data[field]);
     if (!DATE_RE.test(str)) {
       errors.push(`${rel}: ${field} "${str}" must match YYYY-MM-DD`);
+    } else if (!isRealDate(str)) {
+      errors.push(`${rel}: ${field} "${str}" is not a valid calendar date`);
     }
   }
 
-  return errors;
+  return { rel, errors, id: typeof data.id === 'string' ? data.id : null };
 }
 
 function main() {
@@ -170,8 +187,22 @@ function main() {
   }
 
   const allErrors = [];
+  const idOwners = new Map(); // passport id -> first file that claimed it
   for (const file of files) {
-    allErrors.push(...validateFile(file));
+    const { rel, errors, id } = validateFile(file);
+    allErrors.push(...errors);
+    // Passport ids are the machine-readable document identity and must be
+    // unique across the whole site, even though Docusaurus would route two
+    // same-id docs in different folders without complaint.
+    if (id !== null) {
+      if (idOwners.has(id)) {
+        allErrors.push(
+          `${rel}: duplicate passport id "${id}" — already used by ${idOwners.get(id)}`,
+        );
+      } else {
+        idOwners.set(id, rel);
+      }
+    }
   }
 
   if (allErrors.length > 0) {
