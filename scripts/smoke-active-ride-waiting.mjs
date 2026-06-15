@@ -66,6 +66,19 @@ expect('free wait keeps the no-show entry (#ar-no-show → flow)',
 expect('cloud.css defines the timer ring', /\.ns-timer\s*\{/.test(css) && /\.ns-timer\.tone-warning\b/.test(css));
 expect('cloud.css defines the paid-wait alert', /\.ns-alert\s*\{/.test(css) && /\.ns-alert\.warning\b/.test(css));
 
+// ── F. Live free-wait countdown (BD-RIDE-D-WAIT-TIMER-01) ──
+expect('screen has start/clear wait-timer helpers',
+  /function\s+startWaitTimer\s*\(/.test(screen) && /function\s+clearWaitTimer\s*\(/.test(screen));
+expect('renderWaiting starts the live timer', /startWaitTimer\(\);/.test(waiting));
+expect('renderSheet clears the timer on every dispatch',
+  /function\s+renderSheet[\s\S]{0,60}clearWaitTimer\(\)/.test(screen));
+const timerBody = functionBody(screen, 'startWaitTimer');
+expect('timer ticks via setInterval and auto-transitions to the paid view at 0:00',
+  /setInterval\(/.test(timerBody) && /waitFreeSec\s*<=\s*0[\s\S]{0,140}renderWaitingExpired\(\)/.test(timerBody));
+expect('timer self-clears on detach or leaving WAITING_PASSENGER (no leak)',
+  /root\.isConnected/.test(timerBody) && /ride\.status\s*!==\s*RIDE_STATUS\.WAITING_PASSENGER/.test(timerBody));
+expect('free ring exposes .ns-timer-arc for live offset updates', /ns-timer-arc/.test(waiting));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

@@ -352,6 +352,9 @@ export default function activeRide() {
   // WAITING_PASSENGER sheet (mock/demo entry; no live timer drives it). Mutable
   // so «Ещё подождать» can return to the free-wait view in the same session.
   let waitExpired = (query.get('wait') || '').toLowerCase() === 'expired';
+  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown state.
+  let waitTimer = null;
+  let waitFreeSec = 0;
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
   // handoff for either role so driver and passenger converge on one
@@ -506,6 +509,7 @@ export default function activeRide() {
   }
 
   function renderSheet() {
+    clearWaitTimer();
     sheet.replaceChildren();
     sheet.dataset.status = ride.status;
     mapShell.dataset.status = ride.status;
@@ -581,13 +585,60 @@ export default function activeRide() {
     return b > 0 ? Math.max(0, Math.min(10, Math.round((a / b) * 10))) : 10;
   }
 
+  function parseWaitClock(s) {
+    const parts = String(s || '').split(':').map(Number);
+    return parts.length === 2 && parts.every(Number.isFinite) ? parts[0] * 60 + parts[1] : 0;
+  }
+  function formatWaitClock(sec) {
+    const t = Math.max(0, sec | 0);
+    const m = Math.floor(t / 60);
+    const s = t % 60;
+    return `${m}:${s < 10 ? '0' + s : s}`;
+  }
+  function clearWaitTimer() {
+    if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  }
+  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown. Ticks the ring /
+  // progress / value down each second and auto-transitions to the paid view at
+  // 0:00. Self-clears when the screen detaches or leaves WAITING_PASSENGER so it
+  // never leaks past navigation. The paid view stays static (mock). No DOM
+  // rebuild per tick — only textContent / data-step / the SVG offset attribute.
+  function startWaitTimer() {
+    clearWaitTimer();
+    if (waitExpired) return;
+    const waiting = ride.waiting || {};
+    const freeLimitSec = parseWaitClock(waiting.freeLimit || '3:00') || 180;
+    waitFreeSec = parseWaitClock(waiting.remaining || '2:30');
+    waitTimer = setInterval(() => {
+      if (!root.isConnected || ride.status !== RIDE_STATUS.WAITING_PASSENGER || waitExpired) { clearWaitTimer(); return; }
+      waitFreeSec -= 1;
+      if (waitFreeSec <= 0) {
+        waitFreeSec = 0;
+        clearWaitTimer();
+        waitExpired = true;
+        renderWaitingExpired();
+        return;
+      }
+      const pct = Math.max(0, Math.min(1, waitFreeSec / freeLimitSec));
+      const clock = formatWaitClock(waitFreeSec);
+      const val = sheet.querySelector('.ns-timer-val');
+      const arc = sheet.querySelector('.ns-timer-arc');
+      const fill = sheet.querySelector('.active-ride__progress-bar-fill');
+      const cardVal = sheet.querySelector('.active-ride__waiting-card-value');
+      if (val) val.textContent = clock;
+      if (arc) arc.setAttribute('stroke-dashoffset', (163.36 * (1 - pct)).toFixed(2));
+      if (fill) fill.dataset.step = String(Math.round(pct * 10));
+      if (cardVal) cardVal.textContent = `${clock} / ${waiting.freeLimit || '3:00'}`;
+    }, 1000);
+  }
+
   function renderWaiting() {
     if (waitExpired) { renderWaitingExpired(); return; }
     const waiting = ride.waiting || {};
     const remaining = waiting.remaining || '2:30';
     const freeLimit = waiting.freeLimit || '3:00';
     setMapBanner('Пассажир уведомлён · ждёт у подъезда');
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - progressStep(remaining, freeLimit) / 10)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressStep(remaining, freeLimit) * 10}"><div class="active-ride__progress-bar-fill" data-step="${progressStep(remaining, freeLimit)}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - progressStep(remaining, freeLimit) / 10)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressStep(remaining, freeLimit) * 10}"><div class="active-ride__progress-bar-fill" data-step="${progressStep(remaining, freeLimit)}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     // BD-RIDE-D-NOSHOW-01 — «Не приехал» opens the dedicated no-show sub-flow
@@ -604,6 +655,7 @@ export default function activeRide() {
       showNotice,
     }));
     bindPassengerActions();
+    startWaitTimer();
   }
 
   // BD-RIDE-D-WAITING-01 — paid-wait variant (free wait elapsed). Reached via
