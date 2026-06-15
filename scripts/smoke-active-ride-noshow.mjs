@@ -37,6 +37,14 @@ for (const copy of [
 ]) {
   expect(`flow carries copy «${copy}»`, flow.includes(copy));
 }
+// Codex P2 (PR #545) — the «платное ожидание» line is the live amount passed in,
+// not a hardcoded figure, so it matches the paid-wait sheet.
+expect('compensation paid-wait is computed from opts.paidWaitAmount (not hardcoded 180)',
+  /opts\.paidWaitAmount/.test(flow) && !/paidWait:\s*'180/.test(flow));
+expect('net is derived (paidWait + pickup − commission)',
+  /paidWaitNum\s*\+\s*PICKUP_COMP\s*-\s*COMMISSION/.test(flow));
+expect('paid wait is frozen at the confirm step (counts dwell time) [Codex P2]',
+  /comp\s*=\s*buildComp\(resolvePaidWait\(\)\)/.test(flow) && /typeof p === 'function'/.test(flow));
 
 // ── C. Persistence isolation — the ONLY mutation is the onConfirmNoShow hook ──
 expect('flow module never imports ride_state', !/from\s+'[^']*ride_state/.test(flow));

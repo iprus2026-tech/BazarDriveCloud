@@ -355,6 +355,7 @@ export default function activeRide() {
   let waitTimer = null;
   let waitFreeSec = 0;
   let waitDeadline = 0;
+  let waitPaidStart = 0;
   // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
   // active-ride record first, then tries to seed from a confirmed
   // handoff for either role so driver and passenger converge on one
@@ -653,6 +654,41 @@ export default function activeRide() {
     }, 1000);
   }
 
+  function parsePaidRatePerMin(s) {
+    const m = String(s || '').match(/\d+/);
+    return m ? Number(m[0]) : 0;
+  }
+  // BD-RIDE-D-PAID-TIMER-01 (Codex P2) — live accrued paid-wait amount, anchored
+  // to when paid wait began: waitPaidStart once the paid view set it, else the
+  // free deadline. So a no-show opened from FREE wait but confirmed AFTER the
+  // deadline still counts the paid time (0 ₽ before the deadline). Passed as the
+  // resolver to both #ar-no-show entries so the no-show receipt matches the sheet.
+  function paidWaitAnchorMs() {
+    return waitPaidStart || waitDeadlineMs();
+  }
+  function liveAccruedPaid() {
+    const sec = Math.max(0, Math.floor((Date.now() - paidWaitAnchorMs()) / 1000));
+    return Math.round(sec / 60 * (parsePaidRatePerMin((ride.waiting || {}).paidRate) || 8));
+  }
+  // BD-RIDE-D-PAID-TIMER-01 — live paid-wait counter. Ticks the elapsed paid
+  // time UP and grows the accrued amount at the displayed rate (mock, no real
+  // billing). Anchored via waitPaidStart (set in renderWaitingExpired) so a
+  // reload reflects real elapsed paid time. Same guards as the free timer
+  // (detach / status / a subflow replaced the sheet).
+  function startPaidTimer() {
+    clearWaitTimer();
+    const ratePerMin = parsePaidRatePerMin((ride.waiting || {}).paidRate) || 8;
+    waitTimer = setInterval(() => {
+      if (!root.isConnected || ride.status !== RIDE_STATUS.WAITING_PASSENGER
+          || !waitExpired || !sheet.querySelector('.ns-timer-val')) { clearWaitTimer(); return; }
+      const paidSec = Math.max(0, Math.floor((Date.now() - waitPaidStart) / 1000));
+      const val = sheet.querySelector('.ns-timer-val');
+      const accruedEl = sheet.querySelector('#ar-paid-accrued');
+      if (val) val.textContent = formatWaitClock(paidSec);
+      if (accruedEl) accruedEl.textContent = `${Math.round(paidSec / 60 * ratePerMin)} ₽`;
+    }, 1000);
+  }
+
   function renderWaiting() {
     if (waitExpired) { renderWaitingExpired(); return; }
     const waiting = ride.waiting || {};
@@ -677,6 +713,7 @@ export default function activeRide() {
     // are demo values, no backend.
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
+      paidWaitAmount: liveAccruedPaid,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,
@@ -691,23 +728,39 @@ export default function activeRide() {
   // сел» starts the trip, «Пассажир не вышел» opens the no-show flow.
   function renderWaitingExpired() {
     const waiting = ride.waiting || {};
-    const accrued = waiting.paidAccrued || '180 ₽';
-    const paidElapsed = waiting.paidElapsed || '2:14';
+    const ratePerMin = parsePaidRatePerMin(waiting.paidRate) || 8;
+    // Anchor paid wait to when the free wait expired; on a pure ?wait=expired
+    // demo jump (deadline still in the future, no real expiry) seed a synthetic
+    // start from the demo paidElapsed so the counter shows a plausible value.
+    if (!waitPaidStart) {
+      const deadline = waitDeadlineMs();
+      waitPaidStart = deadline <= Date.now()
+        ? deadline
+        : Date.now() - parseWaitClock(waiting.paidElapsed || '2:14') * 1000;
+    }
+    const paidSec = Math.max(0, Math.floor((Date.now() - waitPaidStart) / 1000));
+    const paidElapsed = formatWaitClock(paidSec);
+    const accrued = `${Math.round(paidSec / 60 * ratePerMin)} ₽`;
     const paidRate = waiting.paidRate || '8 ₽/мин';
     setMapBanner('Платное ожидание · пассажир не выходит');
-    sheet.innerHTML = `<div class="ns-alert warning"><span class="ns-alert-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><div class="ns-alert-body"><div class="ns-alert-title">Бесплатное ожидание закончилось</div><div class="ns-alert-sub">Идёт платное ожидание · начислено ${escapeHtml(accrued)}</div></div></div><div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Пассажир не выходит</div><div class="active-ride__sheet-sub">Платное ожидание · ${escapeHtml(paidRate)}</div></div><div class="ns-timer tone-warning"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="62.08" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(paidElapsed)}</div></div><div class="ns-timer-lbl">платно</div></div></div>${passengerRowHtml(ride.passenger || {})}<div class="ns-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Позвоните пассажиру перед тем, как отметить, что он не вышел.</span></div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Пассажир сел — начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Пассажир не вышел</button></div></div>`;
+    sheet.innerHTML = `<div class="ns-alert warning"><span class="ns-alert-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><div class="ns-alert-body"><div class="ns-alert-title">Бесплатное ожидание закончилось</div><div class="ns-alert-sub">Идёт платное ожидание · начислено <span id="ar-paid-accrued">${escapeHtml(accrued)}</span></div></div></div><div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Пассажир не выходит</div><div class="active-ride__sheet-sub">Платное ожидание · ${escapeHtml(paidRate)}</div></div><div class="ns-timer tone-warning"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="62.08" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(paidElapsed)}</div></div><div class="ns-timer-lbl">платно</div></div></div>${passengerRowHtml(ride.passenger || {})}<div class="ns-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Позвоните пассажиру перед тем, как отметить, что он не вышел.</span></div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Пассажир сел — начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Пассажир не вышел</button></div></div>`;
     // Codex P2 — keep a direct start-trip path if the passenger arrives during
     // paid wait (the auto-expired view previously had no IN_PROGRESS action).
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
+      // Same resolver as the free-wait entry — recomputed at the no-show confirm
+      // step (Codex P2), anchored to when paid wait began, so it matches the
+      // sheet and counts dwell time across the deadline.
+      paidWaitAmount: liveAccruedPaid,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,
       showNotice,
     }));
     bindPassengerActions();
+    startPaidTimer();
   }
 
   function renderInProgress() {
