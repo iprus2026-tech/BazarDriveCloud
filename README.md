@@ -33,18 +33,33 @@ Vanilla HTML / CSS / ES-модули. Без сборщика, без фрейм
 
 - Это **отдельный сайт**: своя `package.json`, свой build, свой CI-workflow (`.github/workflows/docs-site-ci.yml`).
 - Runtime PWA **не затрагивается** — `docs-site/` не меняет `public/`, service worker, CSP или текущий GitHub Pages workflow для PWA.
-- Документация переносится постепенно; пока это shell со стартовыми разделами (Project / Contracts / Processes).
+- Документация переносится постепенно; разделы: Project / Contracts / Processes / Governance.
+
+### Mini-Yonder governance layer (BD-DOCS-SITE-02)
+
+Каждый документ — это управляемый объект с машиночитаемым **паспортом метаданных**
+(frontmatter): `id` (`BD-…`), `docType`, `status`, `owner`, `visibleFor`, даты
+ревизии и др. Жизненный цикл документа: `draft → review → current → superseded →
+archived`. Стандарт и словари описаны в разделе **Governance** на сайте.
+
+Валидатор `docs-site/scripts/validate-frontmatter.mjs` проверяет паспорт у всех
+`docs/**/*.md` (шаблоны в `docs/_templates/` пропускаются) и роняет сборку при
+ошибке.
 
 Локально (требуется **Node ≥ 20** — этого требует Docusaurus 3.10):
 
 ```bash
 cd docs-site
-npm install      # первый раз — создаёт package-lock.json
-npm start        # dev-сервер с hot-reload
-npm run build    # production-сборка в docs-site/build
+npm install               # первый раз — создаёт package-lock.json
+npm start                 # dev-сервер с hot-reload
+npm run validate:frontmatter   # проверка паспортов метаданных
+npm run build             # production-сборка в docs-site/build
+npm run check             # validate:frontmatter + build (как в CI)
 ```
 
-CI `docs-site-ci` запускается на `pull_request` и `push`, затрагивающих `docs-site/`, и выполняет `npm ci` + `npm run build` внутри `docs-site/`.
+CI `docs-site-ci` запускается на `pull_request` и `push`, затрагивающих
+`docs-site/`, и выполняет `npm ci` + `npm run check` (валидация frontmatter +
+build) внутри `docs-site/`.
 
 ---
 

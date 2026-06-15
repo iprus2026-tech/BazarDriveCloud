@@ -1,12 +1,21 @@
 ---
-id: screen-contracts-overview
+id: BD-DOCS-003
+docType: screen-contract
 title: Screen Contracts — Overview
 owner: docs-contract-agent
-status: draft
-revision: "0.1.0"
-effectiveFrom: "2026-06-15"
-visibleFor: ["internal", "contributors"]
-tags: ["contracts", "screens"]
+status: current
+revision: 2026-06-16
+effectiveFrom: 2026-06-15
+reviewAfter: 2026-12-16
+visibleFor: [developer, designer, qa]
+sourceOfTruth: docs/screen-contracts.md
+related:
+  routes: []
+  files: ["docs/screen-contracts.md", "docs/flow-contracts.md", "docs/screen-map.md"]
+  issues: []
+  prs: []
+tags: [contracts, screens]
+slug: /contracts/screen-contracts-overview
 ---
 
 # Screen Contracts — Overview

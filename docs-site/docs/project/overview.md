@@ -1,12 +1,21 @@
 ---
-id: overview
+id: BD-DOCS-002
+docType: project-overview
 title: Project Overview
 owner: docs-contract-agent
-status: draft
-revision: "0.1.0"
-effectiveFrom: "2026-06-15"
-visibleFor: ["internal", "contributors"]
-tags: ["project", "overview"]
+status: current
+revision: 2026-06-16
+effectiveFrom: 2026-06-15
+reviewAfter: 2026-12-16
+visibleFor: [developer, designer, dispatcher, product, qa]
+sourceOfTruth: public/src/app.js
+related:
+  routes: []
+  files: ["public/src/app.js", "public/src/router.js"]
+  issues: []
+  prs: []
+tags: [project, overview]
+slug: /project/overview
 ---
 
 # Project Overview

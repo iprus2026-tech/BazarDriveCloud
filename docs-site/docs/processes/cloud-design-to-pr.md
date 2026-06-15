@@ -1,12 +1,21 @@
 ---
-id: cloud-design-to-pr
+id: BD-DOCS-004
+docType: process
 title: Cloud Design → PR
 owner: docs-contract-agent
-status: draft
-revision: "0.1.0"
-effectiveFrom: "2026-06-15"
-visibleFor: ["internal", "contributors"]
-tags: ["process", "cloud-design"]
+status: current
+revision: 2026-06-16
+effectiveFrom: 2026-06-15
+reviewAfter: 2026-12-16
+visibleFor: [developer, designer, dispatcher]
+sourceOfTruth: docs-site
+related:
+  routes: []
+  files: ["scripts/check.mjs", "scripts/dispatcher.mjs"]
+  issues: []
+  prs: []
+tags: [process, cloud-design]
+slug: /processes/cloud-design-to-pr
 ---
 
 # Cloud Design → PR
