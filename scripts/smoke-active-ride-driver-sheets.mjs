@@ -183,6 +183,41 @@ expect('problem sheet drops the loading/sent stages + in-sheet done card',
   && !sheets.includes('driver-problem-sheet__done')
   && !sheets.includes('Сигнал отправлен'));
 
+// ── E2. Driver safety sheet (BD-RIDE-D-SAFETY-01) ──
+expect('module exports openDriverSafetySheet + renderDriverSafetySheet',
+  /export\s+function\s+openDriverSafetySheet\s*\(/.test(sheets)
+  && /export\s+function\s+renderDriverSafetySheet\s*\(/.test(sheets));
+expect("bindDriverSheetEvents registers kind === 'safety'",
+  /kind === 'safety'\)\s*bindSafetyEvents/.test(sheets));
+expect('#ar-shield opens the safety sheet (no longer the showNotice stub)',
+  /#ar-shield'\)[\s\S]{0,200}openDriverSafetySheet\s*\(/.test(screen)
+  && !screen.includes('Безопасность будет добавлена позже'));
+expect('#ar-shield passes onAction: showNotice (toast-only)',
+  /#ar-shield'\)[\s\S]{0,200}openDriverSafetySheet\(\s*root\s*,\s*\{[\s\S]{0,80}onAction:\s*showNotice/.test(screen));
+expect('safety sheet has exactly the 3 actions (share / emergency / support)',
+  /\['share'[\s\S]{0,80}'Поделиться поездкой'/.test(sheets)
+  && /\['emergency'[\s\S]{0,90}'Экстренная помощь · 112'[\s\S]{0,60},\s*true\s*\]/.test(sheets)
+  && /\['support'[\s\S]{0,90}'Связаться с поддержкой'/.test(sheets));
+expect('safety sheet title / eyebrow / subtitle use the spec copy',
+  sheets.includes('Безопасность') && sheets.includes('Активная поездка')
+  && sheets.includes('Быстрые действия на случай проблемы. Это демо-режим.'));
+expect('emergency view: 112 demo confirm + disclaimer + 112-call button',
+  /dataset\.stage\s*=\s*'emergency'/.test(sheets)
+  && sheets.includes('Это демо-режим, реальный вызов не выполняется.')
+  && sheets.includes('Позвонить 112 (демо)')
+  && /driver-safety-call/.test(sheets));
+expect('every safety action is a demo session toast (onAction) + dismiss',
+  sheets.includes('Ссылка на поездку скопирована (демо)')
+  && sheets.includes('Демо: экстренный вызов не выполняется')
+  && /options\.onAction\(/.test(sheets));
+// Boundary: distinct from the problem sheet, the passenger sheet, and reality.
+expect('safety sheet does NOT host the problem-report radio rows (stays distinct from #ar-issue)',
+  !/driver-problem-sheet__action/.test(
+    (sheets.match(/function renderDriverSafetySheet\(\)[\s\S]*?return sheetShell\('safety'[^;]*;/) || [''])[0]));
+expect('safety sheet never reuses the passenger sheet + no real telephony/share/backend',
+  !/passenger-safety/.test(sheets) && !/\btel:/.test(sheets)
+  && !/navigator\.share/.test(sheets) && !/fetch\s*\(/.test(sheets));
+
 // ── F. The problem sheet is a pure UI placeholder ──
 // It must never persist ride state or import the data layer; persistence
 // (CANCELED / NO_SHOW) is owned by the driver screen's onConfirm callback.

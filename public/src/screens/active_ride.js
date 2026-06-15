@@ -43,6 +43,7 @@ import {
 import {
   openDriverCancelSheet,
   openDriverProblemSheet,
+  openDriverSafetySheet,
   openDriverEarningsSheet,
   DRIVER_CANCEL_REASON_LABEL_BY_CODE,
 } from './active_ride_driver_sheets.js';
@@ -481,7 +482,11 @@ export default function activeRide() {
     mapBanner.hidden = !text;
   }
   top.querySelector('#ar-gear').addEventListener('click', () => showNotice('Настройки смены будут добавлены позже'));
-  top.querySelector('#ar-shield').addEventListener('click', () => showNotice('Безопасность будет добавлена позже'));
+  // BD-RIDE-D-SAFETY-01 — the top-bar shield opens the driver safety sheet
+  // (share / emergency-112 demo / support). Demo-only: toast feedback via
+  // onAction → showNotice, no ride-status change, no problem-report (that is
+  // #ar-issue), no passenger-sheet reuse.
+  top.querySelector('#ar-shield').addEventListener('click', () => openDriverSafetySheet(root, { onAction: showNotice }));
 
   function passengerRowHtml(passenger) {
     const note = passenger.note || passenger.comment || '';
