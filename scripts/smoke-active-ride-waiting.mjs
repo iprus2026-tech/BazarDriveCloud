@@ -87,6 +87,8 @@ expect('tick keeps the progressbar aria-valuenow in sync',
   /aria-valuenow/.test(timerBody));
 expect('deadline anchored to the persisted arrival time (survives reload) [Codex P2]',
   /function\s+waitDeadlineMs/.test(screen) && /timestamps[\s\S]{0,40}arrivedAt/.test(screen));
+expect('renderWaiting short-circuits an already-expired ride to the paid view (no 0:00 flash)',
+  /remSec\s*<=\s*0[\s\S]{0,80}renderWaitingExpired\(\)/.test(waiting));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

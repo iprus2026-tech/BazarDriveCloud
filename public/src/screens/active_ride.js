@@ -659,6 +659,9 @@ export default function activeRide() {
     const freeLimit = waiting.freeLimit || '3:00';
     const freeLimitSec = parseWaitClock(freeLimit) || 180;
     const remSec = Math.max(0, Math.ceil((waitDeadlineMs() - Date.now()) / 1000));
+    // Already-expired ride loaded fresh (arrivedAt + freeLimit already past) →
+    // go straight to paid instead of flashing a 0:00 free-wait view for a tick.
+    if (remSec <= 0) { waitExpired = true; renderWaitingExpired(); return; }
     const remaining = formatWaitClock(remSec);
     const waitPct = Math.max(0, Math.min(1, remSec / freeLimitSec));
     const waitStep = Math.round(waitPct * 10);
