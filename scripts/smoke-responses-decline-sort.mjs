@@ -89,6 +89,35 @@ expect('?state=all-declined seeds the Set once on first render',
 expect('call action remains a toast stub (out of scope)',
   /if \(action === 'call'\)[\s\S]{0,80}toast\('Звонок/.test(responses));
 
+// ── H. delegated listener covers ALL card states (offer regression) ──
+// The click delegation must bind to the cross-state scroll container, NOT to
+// #responses-board (which only exists in list state) — otherwise the offer
+// card's select/chat/call buttons go dead (Codex P1).
+expect('the click delegation binds to the cross-state .responses__scroll',
+  /const\s+scrollEl\s*=\s*root\.querySelector\('\.responses__scroll'\)/.test(responses)
+  && /scrollEl\.addEventListener\(\s*'click'/.test(responses));
+expect('the click delegation is NOT bound to #responses-board (offer state has none)',
+  !/querySelector\('#responses-board'\)[\s\S]{0,40}addEventListener\(\s*'click'/.test(responses));
+
+// ── I. «Дешевле» sorts by numeric price (real offers are all priceTone:same) ──
+expect('price sort uses a numeric price value, not priceTone alone',
+  /function priceValue\(driver\)/.test(responses)
+  && /mode === 'price'[\s\S]{0,120}priceValue\(a\.driver\)\s*-\s*priceValue\(b\.driver\)/.test(responses));
+
+// ── J. declining the selected driver clears the selection ───
+expect('selectedDriverId is reassignable (let)', /\blet\s+selectedDriverId\b/.test(responses));
+expect('declining the selected driver clears selectedDriverId',
+  /if \(driverId === selectedDriverId\) selectedDriverId = null/.test(responses));
+
+// ── K. header reconciles after sort/decline/restore ─────────
+expect('refreshBoard reconciles the header via syncHeader()',
+  /function syncHeader\(\)/.test(responses)
+  && /function refreshBoard\(\)[\s\S]{0,160}syncHeader\(\)/.test(responses));
+expect('syncHeader updates subtitle + status chip + dataset.state',
+  /root\.dataset\.state\s*=\s*liveState/.test(responses)
+  && /\.responses__sub/.test(responses)
+  && /renderStatusChip\(liveStatus\)/.test(responses));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

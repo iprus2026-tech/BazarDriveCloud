@@ -593,7 +593,15 @@ function etaMinutes(driver) {
   return m ? Number(m[0]) : Infinity;
 }
 
-// Cheaper first: a saved-money offer (down) beats par (same) beats over (up).
+// Cheaper first. The reliable signal is the formatted absolute price on every
+// card ("1 200 ₽", real or mock) — parse its digits. Real passenger_response
+// cards all carry priceTone:'same', so priceTone alone cannot order them; the
+// numeric price is the primary key and priceTone is only a tiebreak. A card
+// with no numeric price ("По договорённости") sorts last.
+function priceValue(driver) {
+  const digits = String(driver && driver.price).replace(/[^\d]/g, '');
+  return digits ? Number(digits) : Infinity;
+}
 const PRICE_RANK = { down: 0, same: 1, up: 2 };
 function priceRank(driver) {
   const r = PRICE_RANK[driver && driver.priceTone];
@@ -610,7 +618,8 @@ function sortDrivers(drivers, mode) {
     cmp = (a, b) => (etaMinutes(a.driver) - etaMinutes(b.driver))
       || (b.driver.etaBars - a.driver.etaBars) || byIndex(a, b);
   } else if (mode === 'price') {
-    cmp = (a, b) => (priceRank(a.driver) - priceRank(b.driver)) || byIndex(a, b);
+    cmp = (a, b) => (priceValue(a.driver) - priceValue(b.driver))
+      || (priceRank(a.driver) - priceRank(b.driver)) || byIndex(a, b);
   } else if (mode === 'rating') {
     cmp = (a, b) => (ratingValue(b.driver) - ratingValue(a.driver)) || byIndex(a, b);
   } else {
@@ -1199,7 +1208,9 @@ export default function responses() {
   const isList = !isAccepted && (state === 'list' || state === 'selected' || isAllDeclined);
   const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
   const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
-  const selectedDriverId = selectedDriver ? selectedDriver.id : null;
+  // `let`: declining the currently-selected driver clears the selection so the
+  // board drops the dimming + stale "selected" header (BD-RESPONSES-01 fix).
+  let selectedDriverId = selectedDriver ? selectedDriver.id : null;
 
   // BD-RESPONSES-01 — in-memory sort + decline state. Session-only: never
   // persisted to localStorage, so a reload returns every card to normal. The
@@ -1315,17 +1326,36 @@ export default function responses() {
     });
   }
 
-  // BD-RESPONSES-01 — one delegated listener on the stable #responses-board
-  // shell drives sort chips, per-driver decline/restore, and restore-all.
-  // refreshBoard re-renders only the board inner markup from the in-memory
-  // sortMode + declined state; the shell element (and this listener) survive,
-  // so there is no rebinding and no full screen rebuild.
+  // BD-RESPONSES-01 — sort + decline are re-rendered in place on the
+  // #responses-board shell (list/declined state only). syncHeader keeps the
+  // topbar subtitle + status chip + root.dataset.state aligned with the live
+  // declined/selected state — otherwise restoring a card seeded from
+  // ?state=all-declined (or declining the selected driver) would leave a stale
+  // header.
   const boardEl = root.querySelector('#responses-board');
+  function syncHeader() {
+    if (!boardEl) return;
+    const allDeclinedNow = drivers.length > 0 && declined.size === drivers.length;
+    const liveState = allDeclinedNow ? 'all-declined' : (selectedDriverId ? 'selected' : 'list');
+    root.dataset.state = liveState;
+    const liveStatus = responseStatus(liveState);
+    const subEl = root.querySelector('.responses__sub');
+    if (subEl) subEl.textContent = liveStatus.subtitle;
+    const chipEl = root.querySelector('.responses__status-chip');
+    if (chipEl) chipEl.outerHTML = renderStatusChip(liveStatus);
+  }
   function refreshBoard() {
     if (boardEl) boardEl.innerHTML = renderList(drivers, selectedDriverId, declined, sortMode);
+    syncHeader();
   }
-  if (boardEl) {
-    boardEl.addEventListener('click', (event) => {
+
+  // One delegated listener on the stable scroll container — present in EVERY
+  // card state — so the offer card (renderOffer, rendered outside
+  // #responses-board) keeps its select/chat/call handlers. The chip / decline /
+  // restore branches self-guard: those controls only exist on the list board.
+  const scrollEl = root.querySelector('.responses__scroll');
+  if (scrollEl) {
+    scrollEl.addEventListener('click', (event) => {
       const chip = event.target.closest('[data-sort]');
       if (chip) {
         const mode = chip.dataset.sort;
@@ -1370,6 +1400,9 @@ export default function responses() {
       }
       if (action === 'decline') {
         declined.add(driverId);
+        // Declining the selected driver drops the selection so the board
+        // clears the dimming on the rest and the header stops saying "выбран".
+        if (driverId === selectedDriverId) selectedDriverId = null;
         refreshBoard();
         return;
       }
