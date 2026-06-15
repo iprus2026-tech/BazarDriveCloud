@@ -9037,6 +9037,246 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .responses__notice-action:active { opacity: 0.7; }
 
 /* ─────────────────────────────────────────────────────────
+   BD-RESPONSES-SAFETY-01 — pre-ride safety sheet
+   A standalone modal layer over /responses. NOT the in-ride
+   BD-RIDE-P-07 sheet: no driver card, no share-trip, no SOS.
+   Four views toggled by [data-view]: default / report /
+   submitted / help. .rsafe-* are the content styles ported
+   from the Cloud Design frame; the shell mirrors the shipped
+   bottom-sheet convention (cf. passenger-cancel-overlay).
+   ───────────────────────────────────────────────────────── */
+.responses-safety-overlay {
+  position: absolute;
+  inset: 0;
+  /* Above the screen's #responses-toast (z-index 50) — a modal must never sit
+     under transient toasts. */
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  animation: screen-in 0.16s ease both;
+}
+.responses-safety-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 7, 0.62);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.responses-safety-sheet {
+  position: relative;
+  margin-top: auto;
+  background: var(--bg-1);
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  padding: 10px var(--pad) calc(env(safe-area-inset-bottom, 0px) + 18px);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+  max-height: 92%;
+  overflow-y: auto;
+}
+.responses-safety-sheet__handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  margin: 4px auto 12px;
+}
+
+/* View machine — only the active [data-view] is shown */
+.responses-safety-view { display: none; flex-direction: column; gap: 14px; }
+.responses-safety-overlay[data-view="default"]   .responses-safety-view--default,
+.responses-safety-overlay[data-view="report"]    .responses-safety-view--report,
+.responses-safety-overlay[data-view="submitted"] .responses-safety-view--submitted,
+.responses-safety-overlay[data-view="help"]      .responses-safety-view--help { display: flex; }
+
+/* Shared sheet bits */
+.responses-safety-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--success);
+  margin-bottom: 2px;
+}
+.responses-safety-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.responses-safety-title--center { text-align: center; }
+.responses-safety-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.responses-safety-sub--center { text-align: center; }
+.responses-safety-sheet__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.responses-safety-sheet__header .responses-safety-title { flex: 1; font-size: 18px; }
+.responses-safety-back,
+.responses-safety-close {
+  width: 30px; height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.responses-safety-back:active,
+.responses-safety-close:active { opacity: 0.7; }
+.responses-safety-back svg,
+.responses-safety-close svg { width: 16px; height: 16px; }
+
+/* Actions */
+.responses-safety-actions { display: flex; gap: 8px; margin-top: 2px; }
+.responses-safety-actions--stack { flex-direction: column; }
+.responses-safety-act {
+  width: 100%;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+.responses-safety-act--report {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.30);
+  color: var(--danger);
+}
+.responses-safety-act--ghost {
+  background: transparent;
+  border: 0;
+  color: var(--text-3);
+  padding: 8px;
+  cursor: pointer;
+}
+.responses-safety-act--ghost:active { opacity: 0.7; }
+
+/* Report reasons (radio rows) */
+.responses-safety-reasons { display: flex; flex-direction: column; gap: 6px; }
+.responses-safety-reason {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.responses-safety-reason__text { flex: 1; font-size: 14px; color: var(--text); }
+.responses-safety-reason__radio {
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+}
+.responses-safety-reason.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.responses-safety-reason.is-selected .responses-safety-reason__radio {
+  border-color: var(--accent);
+  background:
+    radial-gradient(circle at center, var(--accent) 0 5px, transparent 6px);
+}
+
+/* Help — reference rows */
+.responses-safety-refs { display: flex; flex-direction: column; gap: 8px; }
+.responses-safety-ref {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+}
+.responses-safety-ref__ic {
+  width: 34px; height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.responses-safety-ref__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.responses-safety-ref__title { font-size: 14px; font-weight: 600; color: var(--text); }
+.responses-safety-ref__sub { font-size: 12.5px; color: var(--text-2); line-height: 1.35; }
+
+/* Content styles ported verbatim from the BD-RESPONSES-SAFETY-01 frame */
+.rsafe-head { display: flex; align-items: flex-start; gap: 12px; padding: 2px 0 4px; }
+.rsafe-head-ic {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.rsafe-head-text { flex: 1; min-width: 0; }
+.rsafe-tips { display: flex; flex-direction: column; gap: 8px; }
+.rsafe-tip {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.35;
+}
+.rsafe-tip-ic {
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.rsafe-done-ic {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  margin: 6px auto 14px;
+  position: relative;
+}
+.rsafe-done-ic::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 1px solid rgba(74, 222, 128, 0.20);
+}
+.rsafe-help-note {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 11px 13px;
+  background: rgba(96, 165, 250, 0.07);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  border-radius: 12px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.rsafe-help-note svg { color: var(--info); flex-shrink: 0; margin-top: 1px; }
+
+/* ─────────────────────────────────────────────────────────
    BD-RIDE-P-06 — Passenger cancel ride sheet
    Sheet states A (opened) / B (reason selected) share the
    .passenger-cancel-sheet card; state C (confirm) shows the
