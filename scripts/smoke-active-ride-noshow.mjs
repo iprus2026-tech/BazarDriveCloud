@@ -43,6 +43,8 @@ expect('compensation paid-wait is computed from opts.paidWaitAmount (not hardcod
   /opts\.paidWaitAmount/.test(flow) && !/paidWait:\s*'180/.test(flow));
 expect('net is derived (paidWait + pickup − commission)',
   /paidWaitNum\s*\+\s*PICKUP_COMP\s*-\s*COMMISSION/.test(flow));
+expect('paid wait is frozen at the confirm step (counts dwell time) [Codex P2]',
+  /comp\s*=\s*buildComp\(resolvePaidWait\(\)\)/.test(flow) && /typeof p === 'function'/.test(flow));
 
 // ── C. Persistence isolation — the ONLY mutation is the onConfirmNoShow hook ──
 expect('flow module never imports ride_state', !/from\s+'[^']*ride_state/.test(flow));

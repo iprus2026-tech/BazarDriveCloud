@@ -45,15 +45,25 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
   const showNotice = typeof opts.showNotice === 'function' ? opts.showNotice : () => {};
   const confirmNoShow = typeof opts.onConfirmNoShow === 'function' ? opts.onConfirmNoShow : () => {};
 
-  // Compensation receipt — paid wait is live (from the paid-wait sheet), the
-  // rest is fixed demo. net = paid wait + pickup compensation − commission.
-  const paidWaitNum = Number.isFinite(opts.paidWaitAmount) ? Math.max(0, Math.round(opts.paidWaitAmount)) : 0;
-  const comp = {
-    paidWait: `${paidWaitNum} ₽`,
-    pickupComp: `${PICKUP_COMP} ₽`,
-    commission: `− ${COMMISSION} ₽`,
-    net: `${Math.max(0, paidWaitNum + PICKUP_COMP - COMMISSION)} ₽`,
-  };
+  // Compensation receipt — the «платное ожидание» line is the LIVE accrued
+  // amount (Codex P2). opts.paidWaitAmount may be a number or a resolver fn; we
+  // freeze it at the no-show CONFIRM step (Codex P2 — not at flow entry) so any
+  // dwell time on the action/confirm screens is counted. net = paid wait +
+  // pickup(120) − commission(24).
+  function resolvePaidWait() {
+    const p = opts.paidWaitAmount;
+    const v = typeof p === 'function' ? Number(p()) : Number(p);
+    return Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+  }
+  function buildComp(paidWaitNum) {
+    return {
+      paidWait: `${paidWaitNum} ₽`,
+      pickupComp: `${PICKUP_COMP} ₽`,
+      commission: `− ${COMMISSION} ₽`,
+      net: `${Math.max(0, paidWaitNum + PICKUP_COMP - COMMISSION)} ₽`,
+    };
+  }
+  let comp = buildComp(0);
 
   const $ = (id) => sheet.querySelector(id);
 
@@ -98,6 +108,9 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
       </div>`;
     $('#ns-cancel').addEventListener('click', renderAction);
     $('#ns-confirm').addEventListener('click', () => {
+      // Freeze the live paid-wait accrual at the moment of confirmation (Codex
+      // P2 — counts any dwell time on the action/confirm screens).
+      comp = buildComp(resolvePaidWait());
       // The ONLY persistence in this flow — fires the existing NO_SHOW transition.
       confirmNoShow();
       renderResult();
