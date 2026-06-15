@@ -783,6 +783,19 @@ if (exists(responsesDeclineSortSmoke)) {
   }
 }
 
+// BD-RESPONSES-SAFETY-01 — pre-ride safety sheet on /responses. Asserts the
+// shield opens the 4-view sheet, the exact strings, the report-submit stub, and
+// the BD-RIDE-P-07 non-reuse boundary (no SOS / share-trip / driver coupling).
+const responsesSafetySheetSmoke = path.join(root, 'scripts', 'smoke-responses-safety-sheet.mjs');
+if (exists(responsesSafetySheetSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesSafetySheetSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-responses-safety-sheet.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

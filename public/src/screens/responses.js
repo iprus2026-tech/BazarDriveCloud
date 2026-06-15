@@ -904,6 +904,122 @@ function renderAllDeclinedNotice() {
   `;
 }
 
+// BD-RESPONSES-SAFETY-01 — pre-ride safety sheet markup. A standalone modal
+// layer over /responses, intentionally distinct from the in-ride BD-RIDE-P-07
+// PassengerSafetySheet: NO driver card, NO share-trip, NO SOS, NO in-ride call.
+// Four in-memory views toggled by the overlay's [data-view] (default → report →
+// submitted; default → help). Controls carry a distinct `data-rsafe` attribute
+// so they never collide with the board's [data-action]/[data-sort] delegation.
+const SAFETY_TIPS = [
+  'Проверяйте рейтинг и данные водителя',
+  'Не переводите деньги заранее',
+  'Согласуйте маршрут и цену в чате',
+  'Не сообщайте коды и личные данные',
+];
+const SAFETY_REPORT_REASONS = [
+  'Подозрительный профиль',
+  'Просит оплату заранее',
+  'Давит или торопит',
+  'Другое',
+];
+function responsesSafetySheetHtml() {
+  const tips = SAFETY_TIPS.map((t) => `
+    <div class="rsafe-tip">
+      <span class="rsafe-tip-ic" aria-hidden="true">${CHECK_SVG}</span>
+      <span>${escapeHtml(t)}</span>
+    </div>`).join('');
+  const reasons = SAFETY_REPORT_REASONS.map((r, i) => `
+    <button type="button" class="responses-safety-reason" data-rsafe-reason="${i}">
+      <span class="responses-safety-reason__text">${escapeHtml(r)}</span>
+      <span class="responses-safety-reason__radio" aria-hidden="true"></span>
+    </button>`).join('');
+  return `
+  <div class="responses-safety-overlay" data-view="default" role="dialog" aria-modal="true" aria-labelledby="rsafe-title">
+    <div class="responses-safety-overlay__backdrop" data-rsafe="dismiss" aria-hidden="true"></div>
+    <div class="responses-safety-sheet" role="document">
+      <div class="responses-safety-sheet__handle" aria-hidden="true"></div>
+
+      <!-- DEFAULT — safety tips -->
+      <div class="responses-safety-view responses-safety-view--default">
+        <div class="rsafe-head">
+          <span class="rsafe-head-ic" aria-hidden="true">${SHIELD_SVG}</span>
+          <div class="rsafe-head-text">
+            <div class="responses-safety-eyebrow">Безопасность</div>
+            <div class="responses-safety-title" id="rsafe-title">Перед выбором водителя</div>
+          </div>
+          <button type="button" class="responses-safety-close" data-rsafe="dismiss" aria-label="Закрыть">${CLOSE_SVG}</button>
+        </div>
+        <div class="rsafe-tips">${tips}</div>
+        <div class="responses-safety-actions responses-safety-actions--stack">
+          <button type="button" class="bd-btn responses-safety-act responses-safety-act--report" data-rsafe="to-report">Сообщить о подозрительном отклике</button>
+          <button type="button" class="bd-btn responses-safety-act" data-rsafe="to-help">Открыть правила безопасности</button>
+          <button type="button" class="responses-safety-act responses-safety-act--ghost" data-rsafe="dismiss">Закрыть</button>
+        </div>
+      </div>
+
+      <!-- REPORT — reason -->
+      <div class="responses-safety-view responses-safety-view--report">
+        <div class="responses-safety-sheet__header">
+          <button type="button" class="responses-safety-back" data-rsafe="to-default" aria-label="Назад">${BACK_SVG}</button>
+          <div class="responses-safety-title">Сообщить об отклике</div>
+          <button type="button" class="responses-safety-close" data-rsafe="dismiss" aria-label="Закрыть">${CLOSE_SVG}</button>
+        </div>
+        <div class="responses-safety-reasons">${reasons}</div>
+        <div class="responses-safety-actions">
+          <button type="button" class="bd-btn primary responses-safety-act" data-rsafe="submit">Отправить сигнал</button>
+        </div>
+      </div>
+
+      <!-- SUBMITTED — UI stub (no backend) -->
+      <div class="responses-safety-view responses-safety-view--submitted">
+        <div class="rsafe-done-ic" aria-hidden="true">${CHECK_SVG}</div>
+        <div class="responses-safety-title responses-safety-title--center">Спасибо, сигнал принят</div>
+        <div class="responses-safety-sub responses-safety-sub--center">Мы сохраним это в модерации после подключения backend.</div>
+        <div class="responses-safety-actions">
+          <button type="button" class="bd-btn responses-safety-act" data-rsafe="dismiss">Закрыть</button>
+        </div>
+      </div>
+
+      <!-- HELP — правила безопасности (справка) -->
+      <div class="responses-safety-view responses-safety-view--help">
+        <div class="responses-safety-sheet__header">
+          <button type="button" class="responses-safety-back" data-rsafe="to-default" aria-label="Назад">${BACK_SVG}</button>
+          <div class="responses-safety-title">Правила безопасности</div>
+          <button type="button" class="responses-safety-close" data-rsafe="dismiss" aria-label="Закрыть">${CLOSE_SVG}</button>
+        </div>
+        <div class="rsafe-help-note">
+          ${INFO_SVG}
+          <span>Это справка перед поездкой — выберите водителя осознанно. Дополнительные инструменты безопасности доступны во время поездки.</span>
+        </div>
+        <div class="responses-safety-refs">
+          <div class="responses-safety-ref">
+            <span class="responses-safety-ref__ic" aria-hidden="true">${STAR_SVG}</span>
+            <span class="responses-safety-ref__body">
+              <span class="responses-safety-ref__title">Выбор водителя</span>
+              <span class="responses-safety-ref__sub">Сравните рейтинг, цену и время подачи</span>
+            </span>
+          </div>
+          <div class="responses-safety-ref">
+            <span class="responses-safety-ref__ic" aria-hidden="true">${INFO_SVG}</span>
+            <span class="responses-safety-ref__body">
+              <span class="responses-safety-ref__title">Оплата</span>
+              <span class="responses-safety-ref__sub">Платите в поездке — не переводите деньги заранее</span>
+            </span>
+          </div>
+          <div class="responses-safety-ref">
+            <span class="responses-safety-ref__ic" aria-hidden="true">${PHONE_SVG}</span>
+            <span class="responses-safety-ref__body">
+              <span class="responses-safety-ref__title">Поддержка</span>
+              <span class="responses-safety-ref__sub">8 800 — круглосуточно</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
 // Renders the inner board: count toolbar, segmented sort chips, the optional
 // all-declined notice, and the (sorted) driver cards. Declined state is
 // per-driver and read from the in-memory `declined` Set, which is the source of
@@ -1320,9 +1436,56 @@ export default function responses() {
 
   root.querySelector('#responses-back').addEventListener('click', () => go('/feed'));
 
-  root.querySelector('#responses-shield').addEventListener('click', () => {
-    toast('Безопасность будет добавлена позже');
-  });
+  // BD-RESPONSES-SAFETY-01 — open the pre-ride safety sheet as a modal layer
+  // over /responses (no route change, no /report reroute). This is a NEW,
+  // standalone sheet — it deliberately does not import or reuse the in-ride
+  // BD-RIDE-P-07 safety sheet (no driver card, no share-trip, no SOS, no
+  // call-during-trip). It needs no selected driver — pre-ride context only.
+  let safetyOverlayEl = null;
+  // The overlay mounts inside #app; the bottom #tabbar is a SIBLING of #app, so
+  // an inset:0 backdrop confined to #app cannot cover it. Hide the tabbar while
+  // the modal is open so it actually blocks background navigation, and restore
+  // its prior state on close. (The router also resets tabbar.hidden on the next
+  // navigation, so this never leaks even if the screen is torn down while open.)
+  let safetyTabbar = null;
+  let safetyTabbarPrevHidden = false;
+  function closeSafetySheet() {
+    if (safetyOverlayEl) { safetyOverlayEl.remove(); safetyOverlayEl = null; }
+    if (safetyTabbar) { safetyTabbar.hidden = safetyTabbarPrevHidden; safetyTabbar = null; }
+  }
+  function setSafetyView(view) {
+    if (safetyOverlayEl) safetyOverlayEl.dataset.view = view;
+  }
+  function openSafetySheet() {
+    if (safetyOverlayEl) return;
+    safetyTabbar = document.getElementById('tabbar');
+    if (safetyTabbar) { safetyTabbarPrevHidden = safetyTabbar.hidden; safetyTabbar.hidden = true; }
+    // Appended to `root` (a sibling of .responses__scroll), so the board's
+    // delegated listener never sees the sheet, and the sheet's own controls use
+    // a distinct data-rsafe attribute — fully isolated from the board.
+    root.insertAdjacentHTML('beforeend', responsesSafetySheetHtml());
+    safetyOverlayEl = root.querySelector('.responses-safety-overlay');
+    safetyOverlayEl.addEventListener('click', (event) => {
+      const reasonBtn = event.target.closest('[data-rsafe-reason]');
+      if (reasonBtn) {
+        safetyOverlayEl.querySelectorAll('[data-rsafe-reason]')
+          .forEach((b) => b.classList.toggle('is-selected', b === reasonBtn));
+        return;
+      }
+      const ctl = event.target.closest('[data-rsafe]');
+      if (!ctl) return;
+      const a = ctl.dataset.rsafe;
+      if (a === 'dismiss')    { closeSafetySheet(); return; }
+      if (a === 'to-report')  { setSafetyView('report'); return; }
+      if (a === 'to-help')    { setSafetyView('help'); return; }
+      if (a === 'to-default') { setSafetyView('default'); return; }
+      // Report submit is a UI stub — no backend, no localStorage. The
+      // "после подключения backend" copy on the submitted view makes the mock
+      // explicit; wire to the moderation queue later.
+      if (a === 'submit')     { setSafetyView('submitted'); return; }
+    });
+  }
+  root.querySelector('#responses-shield').addEventListener('click', openSafetySheet);
 
   root.querySelector('#responses-edit').addEventListener('click', () => {
     go('/order-map-draft');
