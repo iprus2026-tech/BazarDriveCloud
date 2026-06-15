@@ -147,6 +147,17 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// BD-RIDE-D-WAITING-01 — static regression smoke for the driver waiting redesign.
+const waitingSmoke = path.join(root, 'scripts', 'smoke-active-ride-waiting.mjs');
+if (exists(waitingSmoke)) {
+  try {
+    execFileSync(process.execPath, [waitingSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-active-ride-waiting.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-NOSHOW-01 — static regression smoke for the driver no-show sub-flow.
 const noShowSmoke = path.join(root, 'scripts', 'smoke-active-ride-noshow.mjs');
 if (exists(noShowSmoke)) {
