@@ -658,6 +658,18 @@ export default function activeRide() {
     const m = String(s || '').match(/\d+/);
     return m ? Number(m[0]) : 0;
   }
+  // BD-RIDE-D-PAID-TIMER-01 (Codex P2) — live accrued paid-wait amount, anchored
+  // to when paid wait began: waitPaidStart once the paid view set it, else the
+  // free deadline. So a no-show opened from FREE wait but confirmed AFTER the
+  // deadline still counts the paid time (0 ₽ before the deadline). Passed as the
+  // resolver to both #ar-no-show entries so the no-show receipt matches the sheet.
+  function paidWaitAnchorMs() {
+    return waitPaidStart || waitDeadlineMs();
+  }
+  function liveAccruedPaid() {
+    const sec = Math.max(0, Math.floor((Date.now() - paidWaitAnchorMs()) / 1000));
+    return Math.round(sec / 60 * (parsePaidRatePerMin((ride.waiting || {}).paidRate) || 8));
+  }
   // BD-RIDE-D-PAID-TIMER-01 — live paid-wait counter. Ticks the elapsed paid
   // time UP and grows the accrued amount at the displayed rate (mock, no real
   // billing). Anchored via waitPaidStart (set in renderWaitingExpired) so a
@@ -701,7 +713,7 @@ export default function activeRide() {
     // are demo values, no backend.
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
-      paidWaitAmount: 0,
+      paidWaitAmount: liveAccruedPaid,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,
@@ -738,10 +750,10 @@ export default function activeRide() {
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
-      // Resolver so the no-show flow can recompute the LIVE paid-wait accrual
-      // at the confirm step (Codex P2 — counts dwell time), and it matches the
-      // sheet (same calc on both screens).
-      paidWaitAmount: () => Math.round(Math.max(0, Math.floor((Date.now() - waitPaidStart) / 1000)) / 60 * ratePerMin),
+      // Same resolver as the free-wait entry — recomputed at the no-show confirm
+      // step (Codex P2), anchored to when paid wait began, so it matches the
+      // sheet and counts dwell time across the deadline.
+      paidWaitAmount: liveAccruedPaid,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
       go,

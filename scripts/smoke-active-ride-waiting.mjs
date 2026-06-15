@@ -100,9 +100,10 @@ expect('paid timer ticks elapsed up + accrues at the displayed rate',
   /Date\.now\(\)\s*-\s*waitPaidStart/.test(paidBody) && /ratePerMin/.test(paidBody) && /ar-paid-accrued/.test(paidBody));
 expect('paid timer self-clears on detach / leaving WAITING_PASSENGER / subflow',
   /root\.isConnected/.test(paidBody) && /!sheet\.querySelector\('\.ns-timer-val'\)/.test(paidBody));
-expect('paid-wait no-show passes a live-accrual resolver to the flow [Codex P2]',
-  /paidWaitAmount:\s*\(\)\s*=>\s*Math\.round[\s\S]{0,90}waitPaidStart/.test(expired));
-expect('free-wait no-show passes paidWaitAmount: 0', /paidWaitAmount:\s*0/.test(waiting));
+expect('both no-show entries pass the same live-accrual resolver [Codex P2]',
+  /paidWaitAmount:\s*liveAccruedPaid/.test(expired) && /paidWaitAmount:\s*liveAccruedPaid/.test(waiting));
+expect('liveAccruedPaid anchors to waitPaidStart or the free deadline [Codex P2]',
+  /function\s+liveAccruedPaid/.test(screen) && /waitPaidStart\s*\|\|\s*waitDeadlineMs\(\)/.test(screen));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
