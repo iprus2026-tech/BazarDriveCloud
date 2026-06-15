@@ -27,6 +27,27 @@ Vanilla HTML / CSS / ES-модули. Без сборщика, без фрейм
 
 ---
 
+## Documentation site / `docs-site`
+
+`docs-site/` — отдельный слой документации (docs-as-code) на **Docusaurus**, добавленный в BD-DOCS-SITE-01.
+
+- Это **отдельный сайт**: своя `package.json`, свой build, свой CI-workflow (`.github/workflows/docs-site-ci.yml`).
+- Runtime PWA **не затрагивается** — `docs-site/` не меняет `public/`, service worker, CSP или текущий GitHub Pages workflow для PWA.
+- Документация переносится постепенно; пока это shell со стартовыми разделами (Project / Contracts / Processes).
+
+Локально (требуется **Node ≥ 20** — этого требует Docusaurus 3.10):
+
+```bash
+cd docs-site
+npm install      # первый раз — создаёт package-lock.json
+npm start        # dev-сервер с hot-reload
+npm run build    # production-сборка в docs-site/build
+```
+
+CI `docs-site-ci` запускается на `pull_request` и `push`, затрагивающих `docs-site/`, и выполняет `npm ci` + `npm run build` внутри `docs-site/`.
+
+---
+
 ## Структура
 
 ```text
