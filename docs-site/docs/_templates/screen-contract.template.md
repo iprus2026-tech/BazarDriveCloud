@@ -21,7 +21,7 @@ slug: /contracts/<screen>
 # <Screen name> — Screen Contract
 
 > Template. Copy into `docs/contracts/`, replace every placeholder, and set
-> `status` per the [lifecycle](/governance/document-lifecycle).
+> `status` per the [lifecycle](../governance/document-lifecycle.md).
 
 ## Route & file
 

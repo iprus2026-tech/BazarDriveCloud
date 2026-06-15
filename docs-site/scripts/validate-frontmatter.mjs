@@ -90,16 +90,18 @@ function isEmpty(v) {
   return false;
 }
 
-// Recursively collect Markdown/MDX docs, skipping the _templates scaffolds.
-// Docusaurus serves both .md and .mdx, so both must be governed — otherwise an
-// .mdx page would skip the frontmatter gate while still being built.
+// Recursively collect Markdown/MDX docs. Docusaurus serves both .md and .mdx,
+// so both must be governed — otherwise an .mdx page would skip the frontmatter
+// gate while still being built. Underscore-prefixed paths (_templates,
+// _partials, _foo.mdx, …) are excluded to match Docusaurus' own default: they
+// are scaffolds/partials, not governed pages, so they carry no passport.
 function collectMarkdown(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
+    if (entry.startsWith('_')) continue;
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === '_templates') continue;
       out.push(...collectMarkdown(full));
     } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
       out.push(full);
@@ -126,8 +128,12 @@ function validateFile(file) {
     }
   }
 
-  // id must be a BazarDrive passport id.
-  if (typeof data.id === 'string' && !data.id.startsWith('BD-')) {
+  // id must be a string BazarDrive passport id. A non-string YAML value (e.g.
+  // `id: 123`) passes the presence check above but is not a valid passport, so
+  // reject it explicitly before the prefix check.
+  if (data.id !== undefined && data.id !== null && typeof data.id !== 'string') {
+    errors.push(`${rel}: id must be a string, got ${typeof data.id}`);
+  } else if (typeof data.id === 'string' && !data.id.startsWith('BD-')) {
     errors.push(`${rel}: id "${data.id}" must start with "BD-"`);
   }
 

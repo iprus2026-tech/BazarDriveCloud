@@ -56,10 +56,10 @@ slug: /
 | Field | Required | Type | Rule |
 | --- | --- | --- | --- |
 | `id` | yes | string | Must start with `BD-` (e.g. `BD-DOCS-001`). Unique per document. |
-| `docType` | yes | string | One of the [document types](/governance/document-types). |
+| `docType` | yes | string | One of the [document types](document-types.md). |
 | `title` | yes | string | Human-readable title. |
 | `owner` | yes | string | The role or agent accountable for the document. |
-| `status` | yes | string | One of the [lifecycle](/governance/document-lifecycle) statuses. |
+| `status` | yes | string | One of the [lifecycle](document-lifecycle.md) statuses. |
 | `revision` | yes | date | `YYYY-MM-DD`. Date of the latest substantive edit. |
 | `effectiveFrom` | yes | date | `YYYY-MM-DD`. When the content became effective. |
 | `reviewAfter` | no | date | `YYYY-MM-DD`. When the owner should re-review. |

@@ -20,7 +20,7 @@ slug: /releases/<release>
 # <Release / change> — Release Note
 
 > Template. Copy into `docs/releases/`, replace every placeholder. Keep notes
-> short and factual (see the [Release Notes process](/processes/release-notes)).
+> short and factual (see the [Release Notes process](../processes/release-notes.md)).
 
 ## Summary
 

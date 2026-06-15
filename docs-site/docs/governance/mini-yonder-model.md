@@ -44,11 +44,11 @@ this, is it current, who is it for, and what is it the source of truth for*.
 
 1. **Document types** — a closed vocabulary of `docType` values, so every page
    declares what kind of artifact it is. See
-   [Document Types](/governance/document-types).
+   [Document Types](document-types.md).
 2. **Lifecycle** — a closed vocabulary of `status` values and the transitions
-   between them. See [Document Lifecycle](/governance/document-lifecycle).
+   between them. See [Document Lifecycle](document-lifecycle.md).
 3. **Frontmatter standard** — the required passport fields and how they are
-   validated. See [Frontmatter Standard](/governance/frontmatter-standard).
+   validated. See [Frontmatter Standard](frontmatter-standard.md).
 
 ## Enforcement
 

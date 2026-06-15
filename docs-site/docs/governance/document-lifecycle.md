@@ -56,4 +56,4 @@ draft ──▶ review ──▶ current ──▶ superseded ──▶ archived
   not an automatic failure.
 
 All three use `YYYY-MM-DD`. See the
-[Frontmatter Standard](/governance/frontmatter-standard) for full field rules.
+[Frontmatter Standard](frontmatter-standard.md) for full field rules.

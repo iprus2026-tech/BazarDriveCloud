@@ -44,10 +44,10 @@ Every document on this site is a **governed object** with a machine-readable
 
 Start here:
 
-- [Mini-Yonder Model](/governance/mini-yonder-model) — what the layer is and why.
-- [Document Types](/governance/document-types) — the `docType` vocabulary.
-- [Document Lifecycle](/governance/document-lifecycle) — the `status` vocabulary.
-- [Frontmatter Standard](/governance/frontmatter-standard) — the passport fields and rules.
+- [Mini-Yonder Model](governance/mini-yonder-model.md) — what the layer is and why.
+- [Document Types](governance/document-types.md) — the `docType` vocabulary.
+- [Document Lifecycle](governance/document-lifecycle.md) — the `status` vocabulary.
+- [Frontmatter Standard](governance/frontmatter-standard.md) — the passport fields and rules.
 
 Reusable scaffolds live in `docs/_templates/` (screen-contract, flow-contract,
 audit, decision-record, release-note, runbook); they are exempt from validation.

@@ -51,4 +51,4 @@ validator rejects any other value.
 
 `docType` is orthogonal to `status`. A `screen-contract` can be `draft`,
 `current`, or `superseded`; the type never changes as the document moves
-through its [lifecycle](/governance/document-lifecycle).
+through its [lifecycle](document-lifecycle.md).
