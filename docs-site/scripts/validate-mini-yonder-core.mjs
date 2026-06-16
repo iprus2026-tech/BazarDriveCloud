@@ -46,8 +46,10 @@ const REQUIRED_GENERATED = [
   'docs-site/build/',
   'docs-site/node_modules/',
   'docs-site/.docusaurus/',
+  'docs-site/.cache/',
+  'coverage/',
 ];
-const REQUIRED_IGNORED = ['.git/', 'node_modules/'];
+const REQUIRED_IGNORED = ['.git/', 'node_modules/', 'build/'];
 
 const REQUIRED = ['id', 'path', 'kind', 'area', 'criticality', 'requires', 'reason'];
 const ID_PREFIX = 'BD-MY-CORE-';
