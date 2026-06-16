@@ -1,0 +1,86 @@
+[
+  {
+    "id": "BD-LEGACY-001",
+    "path": "README.md",
+    "title": "BazarDriveCloud README",
+    "docType": "project-overview",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-002",
+    "path": "ROADMAP.md",
+    "title": "BazarDriveCloud Roadmap",
+    "docType": "roadmap",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-003",
+    "path": "docs/screen-contracts.md",
+    "title": "Screen Contracts",
+    "docType": "screen-contract",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-004",
+    "path": "docs/flow-contracts.md",
+    "title": "Flow Contracts",
+    "docType": "flow-contract",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-005",
+    "path": "docs/missing-screens.md",
+    "title": "Missing Screen Gates (backlog)",
+    "docType": "roadmap",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-006",
+    "path": "docs/design-registry.json",
+    "title": "Cloud Design Render-Gate Registry",
+    "docType": "design-registry",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-007",
+    "path": "docs/active-ride-plan.md",
+    "title": "Active Ride Contract / Plan",
+    "docType": "flow-contract",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2026-07-15",
+    "reason": "Legacy source kept until incremental docs-site migration."
+  }
+]

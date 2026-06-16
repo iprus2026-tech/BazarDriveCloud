@@ -48,9 +48,14 @@ Start here:
 - [Document Types](governance/document-types.md) — the `docType` vocabulary.
 - [Document Lifecycle](governance/document-lifecycle.md) — the `status` vocabulary.
 - [Frontmatter Standard](governance/frontmatter-standard.md) — the passport fields and rules.
+- [Legacy Docs Registry](governance/legacy-docs-registry.md) — how Mini-Yonder tracks docs not yet migrated, and flags unaccounted ones.
 
 Reusable scaffolds live in `docs/_templates/` (screen-contract, flow-contract,
 audit, decision-record, release-note, runbook); they are exempt from validation.
+
+Mini-Yonder also **sees the legacy documents** outside this site (`README.md`,
+`ROADMAP.md`, `docs/**`): `npm run validate:registry` validates the legacy
+registry and warns about any unaccounted document.
 
 :::note Scope
 This is the docs-site governance layer (BD-DOCS-SITE-02). It governs
