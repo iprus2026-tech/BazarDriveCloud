@@ -49,13 +49,16 @@ Start here:
 - [Document Lifecycle](governance/document-lifecycle.md) — the `status` vocabulary.
 - [Frontmatter Standard](governance/frontmatter-standard.md) — the passport fields and rules.
 - [Legacy Docs Registry](governance/legacy-docs-registry.md) — how Mini-Yonder tracks docs not yet migrated, and flags unaccounted ones.
+- [Mini-Yonder Self Inventory](governance/mini-yonder-self-inventory.md) — how Mini-Yonder sees its own core files without a self-reference loop.
 
 Reusable scaffolds live in `docs/_templates/` (screen-contract, flow-contract,
 audit, decision-record, release-note, runbook); they are exempt from validation.
 
 Mini-Yonder also **sees the legacy documents** outside this site (`README.md`,
 `ROADMAP.md`, `docs/**`): `npm run validate:registry` validates the legacy
-registry and warns about any unaccounted document.
+registry and warns about any unaccounted document. And it **inventories its own
+core** (`mini-yonder-core.json`): `npm run validate:self` checks it without
+creating a self-reference loop.
 
 :::note Scope
 This is the docs-site governance layer (BD-DOCS-SITE-02). It governs

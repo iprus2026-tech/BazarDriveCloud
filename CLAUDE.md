@@ -217,8 +217,8 @@ If a script is missing, report that clearly instead of inventing a result.
 ## Mini-Yonder documentation governance
 
 The `docs-site/` Docusaurus layer is governed by Mini-Yonder (added in
-BD-DOCS-SITE-01/02/03). It has two validators, wired into `docs-site` `npm run
-check` and the `docs-site-ci` workflow:
+BD-DOCS-SITE-01/02/03/04B). It has three validators, wired into `docs-site`
+`npm run check` and the `docs-site-ci` workflow:
 
 - `docs-site/scripts/validate-frontmatter.mjs` (`npm run validate:frontmatter`)
   — enforces the metadata-passport frontmatter on `docs-site/docs/**/*.{md,mdx}`.
@@ -226,9 +226,13 @@ check` and the `docs-site-ci` workflow:
   — strictly validates `docs-site/governance/document-registry.json` and
   warns (`UNACCOUNTED_DOCUMENT`, warn-only today) about legacy docs not yet
   registered.
+- `docs-site/scripts/validate-mini-yonder-core.mjs` (`npm run validate:self`)
+  — strictly validates `docs-site/governance/mini-yonder-core.json`, the
+  inventory of Mini-Yonder's own core files (no self-reference loop; generated
+  output may never be a core file).
 
-Do not change validator logic or the registry in a docs-content task — that is
-a separate, explicitly-scoped change.
+Do not change validator logic, the registry, or the core manifest in a
+docs-content task — that is a separate, explicitly-scoped change.
 
 ### A. Docs-site documents
 
@@ -271,12 +275,39 @@ full sequence:
 cd docs-site
 npm run validate:frontmatter
 npm run validate:registry
+npm run validate:self
 npm run check
 npm run build
 cd ..
 node scripts/check.mjs
 node scripts/dispatcher.mjs
 ```
+
+### C2. Mini-Yonder core files
+
+Mini-Yonder's own core files are listed in
+`docs-site/governance/mini-yonder-core.json` (the validators, the registry, the
+core manifest, the governance docs, the docs-site config/shell, the
+`docs-site-ci.yml` workflow, and `CLAUDE.md`).
+
+If a PR touches any Mini-Yonder core file, Claude Code must run the full
+sequence:
+
+```
+cd docs-site
+npm run validate:frontmatter
+npm run validate:registry
+npm run validate:self
+npm run check
+npm run build
+cd ..
+node scripts/check.mjs
+node scripts/dispatcher.mjs
+```
+
+For **validator changes** (`docs-site/scripts/validate-*.mjs`), the report must
+additionally include **negative tests** showing the validator rejects malformed
+input (exit 1) and then accepts the restored, valid input.
 
 ### D. Runtime PR docs impact
 
@@ -292,6 +323,7 @@ Do not merge a documentation PR if any of these is true:
 
 - docs-site validation fails (`validate:frontmatter`),
 - registry structural validation fails (`validate:registry`),
+- core self-inventory validation fails (`validate:self`),
 - CI is not green,
 - Codex has unresolved P0/P1/P2 findings,
 - active (non-outdated, unresolved) review threads remain.

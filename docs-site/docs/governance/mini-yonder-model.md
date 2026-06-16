@@ -68,6 +68,17 @@ registry's structure strictly and **warns** about any legacy file that has no
 registry entry (`UNACCOUNTED_DOCUMENT`). This first pass is warn-only, so the
 build still passes while the legacy backlog is triaged incrementally.
 
+## Seeing its own files
+
+Mini-Yonder also inventories **itself**. `docs-site/governance/mini-yonder-core.json`
+lists the governance layer's own core files (validators, registry, governance
+docs, config, the CI workflow, and `CLAUDE.md`), and a third validator,
+`validate-mini-yonder-core.mjs` (`npm run validate:self`), checks it strictly.
+The manifest may list itself once as `core-manifest`, but generated output is
+never a core file and nothing auto-generates the inventory — so the layer sees
+its own core without a self-reference loop. See
+[Mini-Yonder Self Inventory](mini-yonder-self-inventory.md).
+
 ## Scope and boundaries
 
 - This layer governs **`docs-site/` only**. It does not touch the runtime PWA
