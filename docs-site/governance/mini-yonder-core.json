@@ -221,6 +221,19 @@
         "npm run check"
       ],
       "reason": "The repository-file-inventory standard that scan-repository-inventory.mjs implements."
+    },
+    {
+      "id": "BD-MY-CORE-019",
+      "path": "docs-site/scripts/validate-navigation.mjs",
+      "kind": "validator",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:nav",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Docs-site navigation validator. Locks the repository file inventory page into the sidebar + index and guards against dangling/template sidebar entries. Validator changes require negative tests."
     }
   ],
   "generatedPaths": [
