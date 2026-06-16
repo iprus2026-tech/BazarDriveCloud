@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "description": "Mini-Yonder core file inventory.",
+  "coreFiles": [
+    {
+      "id": "BD-MY-CORE-001",
+      "path": "docs-site/governance/mini-yonder-core.json",
+      "kind": "core-manifest",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Self inventory manifest. It is visible to Mini-Yonder but must not generate recursive inventory output."
+    },
+    {
+      "id": "BD-MY-CORE-002",
+      "path": "docs-site/governance/document-registry.json",
+      "kind": "registry",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:registry",
+        "npm run check"
+      ],
+      "reason": "Legacy document registry that Mini-Yonder uses to account for un-migrated docs."
+    },
+    {
+      "id": "BD-MY-CORE-003",
+      "path": "docs-site/scripts/validate-frontmatter.mjs",
+      "kind": "validator",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Frontmatter passport validator. Validator changes require negative tests."
+    },
+    {
+      "id": "BD-MY-CORE-004",
+      "path": "docs-site/scripts/validate-document-registry.mjs",
+      "kind": "validator",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:registry",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Legacy registry validator. Validator changes require negative tests."
+    },
+    {
+      "id": "BD-MY-CORE-005",
+      "path": "docs-site/scripts/validate-mini-yonder-core.mjs",
+      "kind": "validator",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Self-inventory validator for this manifest. Validator changes require negative tests."
+    },
+    {
+      "id": "BD-MY-CORE-006",
+      "path": "docs-site/package.json",
+      "kind": "config",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run check"
+      ],
+      "reason": "Defines the validate:* and check scripts that wire the governance gates together."
+    },
+    {
+      "id": "BD-MY-CORE-007",
+      "path": "docs-site/docusaurus.config.js",
+      "kind": "docusaurus-shell",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run build",
+        "npm run check"
+      ],
+      "reason": "Docusaurus shell configuration for the docs-as-code site."
+    },
+    {
+      "id": "BD-MY-CORE-008",
+      "path": "docs-site/sidebars.js",
+      "kind": "docusaurus-shell",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run build",
+        "npm run check"
+      ],
+      "reason": "Sidebar wiring; references governance documents by BD passport id."
+    },
+    {
+      "id": "BD-MY-CORE-009",
+      "path": "docs-site/docs/governance/mini-yonder-model.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run check"
+      ],
+      "reason": "The Mini-Yonder model overview document."
+    },
+    {
+      "id": "BD-MY-CORE-010",
+      "path": "docs-site/docs/governance/frontmatter-standard.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run check"
+      ],
+      "reason": "The frontmatter passport standard the validator enforces."
+    },
+    {
+      "id": "BD-MY-CORE-011",
+      "path": "docs-site/docs/governance/document-types.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run check"
+      ],
+      "reason": "The docType controlled vocabulary."
+    },
+    {
+      "id": "BD-MY-CORE-012",
+      "path": "docs-site/docs/governance/document-lifecycle.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run check"
+      ],
+      "reason": "The status lifecycle controlled vocabulary."
+    },
+    {
+      "id": "BD-MY-CORE-013",
+      "path": "docs-site/docs/governance/legacy-docs-registry.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run validate:registry",
+        "npm run check"
+      ],
+      "reason": "Explains the legacy registry and the UNACCOUNTED_DOCUMENT warning."
+    },
+    {
+      "id": "BD-MY-CORE-016",
+      "path": "docs-site/docs/governance/mini-yonder-self-inventory.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "The self-inventory standard that validate-mini-yonder-core.mjs enforces."
+    },
+    {
+      "id": "BD-MY-CORE-014",
+      "path": ".github/workflows/docs-site-ci.yml",
+      "kind": "workflow",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "npm run check"
+      ],
+      "reason": "CI workflow that runs npm run check (frontmatter + registry + self + build) for docs-site and legacy-doc changes."
+    },
+    {
+      "id": "BD-MY-CORE-015",
+      "path": "CLAUDE.md",
+      "kind": "policy",
+      "area": "mini-yonder",
+      "criticality": "high",
+      "requires": [
+        "node scripts/check.mjs",
+        "node scripts/dispatcher.mjs"
+      ],
+      "reason": "Repo policy, including the Mini-Yonder documentation governance rules Claude Code must follow."
+    }
+  ],
+  "generatedPaths": [
+    "docs-site/build/",
+    "docs-site/node_modules/",
+    "docs-site/.docusaurus/",
+    "docs-site/.cache/",
+    "coverage/"
+  ],
+  "ignoredPaths": [
+    ".git/",
+    "node_modules/",
+    "build/"
+  ]
+}

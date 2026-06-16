@@ -6,8 +6,9 @@ name: docs-site-ci
 # touch). It only builds — no deploy at this step.
 on:
   # Also trigger on the legacy documents scanned by
-  # validate-document-registry.mjs (README, ROADMAP, docs/**) so a legacy-doc-only
-  # change still runs `npm run check` and surfaces UNACCOUNTED_DOCUMENT warnings.
+  # validate-document-registry.mjs (README, ROADMAP, docs/**) and on CLAUDE.md
+  # (a declared Mini-Yonder core file), so a legacy-doc-only or CLAUDE.md-only
+  # change still runs `npm run check` (frontmatter + registry + self + build).
   pull_request:
     paths:
       - 'docs-site/**'
@@ -16,6 +17,7 @@ on:
       - 'ROADMAP.md'
       - 'docs/**/*.md'
       - 'docs/**/*.json'
+      - 'CLAUDE.md'
   push:
     paths:
       - 'docs-site/**'
@@ -24,6 +26,7 @@ on:
       - 'ROADMAP.md'
       - 'docs/**/*.md'
       - 'docs/**/*.json'
+      - 'CLAUDE.md'
 
 jobs:
   build:
