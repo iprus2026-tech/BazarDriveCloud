@@ -231,8 +231,15 @@ BD-DOCS-SITE-01/02/03/04B). It has three validators, wired into `docs-site`
   inventory of Mini-Yonder's own core files (no self-reference loop; generated
   output may never be a core file).
 
-Do not change validator logic, the registry, or the core manifest in a
-docs-content task — that is a separate, explicitly-scoped change.
+It also has a report-only repository inventory,
+`docs-site/scripts/scan-repository-inventory.mjs` (`npm run inventory:repo`,
+BD-DOCS-SITE-05), which scans and classifies the whole repository tree (code/docs
+awareness) and warns about unaccounted legacy docs and unlinked runtime files. It
+is **not** a validator — it never fails the build and is **not** part of
+`npm run check`.
+
+Do not change validator logic, the registry, the core manifest, or the inventory
+scanner in a docs-content task — that is a separate, explicitly-scoped change.
 
 ### A. Docs-site documents
 
@@ -311,11 +318,24 @@ input (exit 1) and then accepts the restored, valid input.
 
 ### D. Runtime PR docs impact
 
-If a PR touches `public/**` or `scripts/**/*.mjs`, the report must state:
+If a PR touches runtime (`public/**`) or scripts (`scripts/**/*.mjs`), Claude
+Code should run the report-only repository inventory:
 
-- docs impact checked: yes/no,
+```
+cd docs-site
+npm run inventory:repo
+cd ..
+```
+
+and the report must state:
+
+- docs impact checked: yes,
 - related docs updated: yes/no,
-- if docs were not updated, why.
+- unlinked runtime warnings, if any (the `UNLINKED_RUNTIME` count from the scan),
+- why docs were not updated, if applicable.
+
+`inventory:repo` is **report-only** — it never fails the build and is not part
+of `npm run check`; its warnings are informational, not a merge blocker.
 
 ### E. Merge gate
 
