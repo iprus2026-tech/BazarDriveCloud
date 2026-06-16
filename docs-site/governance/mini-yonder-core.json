@@ -195,6 +195,32 @@
         "node scripts/dispatcher.mjs"
       ],
       "reason": "Repo policy, including the Mini-Yonder documentation governance rules Claude Code must follow."
+    },
+    {
+      "id": "BD-MY-CORE-017",
+      "path": "docs-site/scripts/scan-repository-inventory.mjs",
+      "kind": "validator",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run inventory:repo",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "Report-only repository inventory scanner (code/docs awareness). Classed as the closest existing script kind 'validator'; it never fails the build (warn-only) and writes no output. Kind allowlist intentionally not expanded."
+    },
+    {
+      "id": "BD-MY-CORE-018",
+      "path": "docs-site/docs/governance/repository-file-inventory.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "The repository-file-inventory standard that scan-repository-inventory.mjs implements."
     }
   ],
   "generatedPaths": [

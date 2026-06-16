@@ -79,6 +79,22 @@ never a core file and nothing auto-generates the inventory — so the layer sees
 its own core without a self-reference loop. See
 [Mini-Yonder Self Inventory](mini-yonder-self-inventory.md).
 
+## Repository file awareness
+
+Beyond docs, Mini-Yonder can now **scan the whole repository tree**.
+`docs-site/scripts/scan-repository-inventory.mjs` (`npm run inventory:repo`)
+classifies every file onto a shelf — Mini-Yonder core, docs-site doc, legacy
+doc, runtime, smoke, workflow, config, asset, generated, or unknown — and
+reports which legacy docs are unaccounted and which runtime files no document
+links to.
+
+This is **code awareness, not code governance**: code files are *classified*,
+never *passported* — a `.js` or `.mjs` carries no frontmatter. The scan is
+**report-only**: it never fails the build and writes no file. It is the raw
+material for a future **impact graph** (which docs to revisit when a given file
+changes); the graph and any enforcement are future work. See
+[Repository File Inventory](repository-file-inventory.md).
+
 ## Scope and boundaries
 
 - This layer governs **`docs-site/` only**. It does not touch the runtime PWA
