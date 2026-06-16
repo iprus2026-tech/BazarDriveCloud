@@ -49,6 +49,7 @@ const IGNORE_PREFIXES = [
 const CLASSES = [
   'mini-yonder-core',
   'docs-site-doc',
+  'template',
   'legacy-doc',
   'runtime',
   'smoke',
@@ -98,6 +99,19 @@ function isLegacyDoc(rel) {
   return rel.startsWith('docs/') && (rel.endsWith('.md') || rel.endsWith('.json'));
 }
 
+// Underscore-prefixed names under docs-site/docs are templates/partials —
+// authoring scaffolds, not governed pages. collectSiteDocs() and the frontmatter
+// validator both skip them; classify them separately so they never inflate the
+// docs-site-doc shelf.
+const SITE_DOCS_PREFIX = 'docs-site/docs/';
+function isSiteTemplate(rel) {
+  if (!rel.startsWith(SITE_DOCS_PREFIX)) return false;
+  return rel
+    .slice(SITE_DOCS_PREFIX.length)
+    .split('/')
+    .some((seg) => seg.startsWith('_'));
+}
+
 // --- Tree walk -------------------------------------------------------------
 
 function walk(absDir, files) {
@@ -143,6 +157,8 @@ function classify(rel, coreSet, registeredSet, generatedPrefixes) {
   if (base === 'package-lock.json' || generatedPrefixes.some((p) => rel === p || rel.startsWith(p))) {
     return 'generated';
   }
+  // Templates/partials (underscore-prefixed) are scaffolds, not governed pages.
+  if (isSiteTemplate(rel)) return 'template';
   if (rel.startsWith('docs-site/docs/') && (ext === '.md' || ext === '.mdx')) return 'docs-site-doc';
   if (isLegacyDoc(rel)) return 'legacy-doc';
   // Non-doc artifacts under docs/ (design PDFs, prototype HTML exports, images)
@@ -150,6 +166,10 @@ function classify(rel, coreSet, registeredSet, generatedPrefixes) {
   if (rel.startsWith('docs/')) return 'asset';
   if (rel.startsWith('.github/workflows/') && (ext === '.yml' || ext === '.yaml')) return 'workflow';
   if (rel.startsWith('scripts/') && ext === '.mjs') return 'smoke';
+  // public/prototypes/** are Cloud Design reference artifacts (HTML/PDF exports),
+  // not SW-cached PWA runtime — scripts/check.mjs skips this directory too, so
+  // they must not pollute the runtime / UNLINKED_RUNTIME signal.
+  if (rel.startsWith('public/prototypes/')) return 'asset';
   if (rel.startsWith('public/')) return ASSET_EXT.has(ext) ? 'asset' : 'runtime';
   if (rel.startsWith('docs-site/src/') || rel.startsWith('docs-site/static/')) {
     return ASSET_EXT.has(ext) ? 'asset' : 'config';

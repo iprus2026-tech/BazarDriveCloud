@@ -23,6 +23,7 @@ tags:
   - governance
   - repository-inventory
   - code-awareness
+slug: /governance/repository-file-inventory
 ---
 
 # Repository File Inventory
@@ -64,12 +65,13 @@ Every scanned file is placed in exactly one class:
 |---|---|
 | `mini-yonder-core` | A file listed in `mini-yonder-core.json` (validators, the manifest, governance docs, the CI workflow, `CLAUDE.md`, config). |
 | `docs-site-doc` | A governed Markdown/MDX page under `docs-site/docs/**` (carries a frontmatter passport). |
+| `template` | An authoring scaffold under an underscore-prefixed `docs-site/docs/**` path (e.g. `_templates/`). `collectSiteDocs()` and the frontmatter validator skip these, so they are classified separately rather than counted as governed pages. |
 | `legacy-doc` | A legacy document — `README.md`, `ROADMAP.md`, or `docs/**/*.{md,json}` — tracked by the legacy registry. |
-| `runtime` | Runtime PWA code under `public/` (JS/CSS/HTML/JSON, the service worker). |
+| `runtime` | Runtime PWA code under `public/` (JS/CSS/HTML/JSON, the service worker). Excludes `public/prototypes/**`. |
 | `smoke` | A check/smoke script under `scripts/**/*.mjs`. |
 | `workflow` | A GitHub Actions workflow under `.github/workflows/`. |
 | `config` | Configuration (root/docs-site `*.json`/`*.yml`, dotfiles, issue templates). |
-| `asset` | Images, fonts, media, and design artifacts (e.g. design PDFs/HTML under `docs/`). |
+| `asset` | Images, fonts, media, and design artifacts (e.g. design PDFs/HTML under `docs/`, and Cloud Design reference exports under `public/prototypes/**`). |
 | `generated` | Machine-generated artifacts that are not in an ignored directory (e.g. `package-lock.json`). |
 | `unknown` | Anything that does not match a known shelf — surfaced honestly rather than forced into a bucket. |
 
