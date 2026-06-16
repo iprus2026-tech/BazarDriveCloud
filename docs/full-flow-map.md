@@ -35,7 +35,7 @@ The map is organized into four lanes:
 | Guest / Entry | Welcome, role selection, permissions, phone/OTP step inside onboarding |
 | Passenger | Map, route picker, order creation, driver selection, active ride, cancel/safety, completion, profile |
 | Driver | Driver readiness, driver map, confirmation handoff, active ride, cancel/problem/no-show, earnings, history, dashboard |
-| Shared | Feed, composer, respond, order detail, chat, rules, settings/notifications/error/moderation gaps |
+| Shared | Feed, composer, respond, order detail, chat, rules, settings; notifications/error/moderation gaps |
 
 ## Inventory summary
 
@@ -107,7 +107,7 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.
 
-> **Codex P2 follow-up — settings:** Settings is **not** already linked from the profile headers in the shipped UI. The missing scope explicitly includes registering `/settings`, implementing the screen, and wiring the passenger profile settings CTA (`#pfp-settings-btn`) plus the driver profile settings / gear CTA. Logout / delete / account actions remain UI-only unless a future backend issue says otherwise.
+> **Settings (shipped):** `/settings` is registered and linked from both profile gears — passenger `#pfp-settings-btn` → `go('/settings')`, driver `#pf2-gear` → `go('/settings?role=driver')`. UI-only (logout / delete / payment / push are demo-only). Contract: `screen-contracts.md#bd-settings-01`; render-pending (no render-gate artifact yet).
 
 > **Codex P2 follow-up — passenger cancel exits:** BD-RIDE-P-06 cancel-sheet completion actions route to `/new` or `/feed`, and the direct canceled / no-show fallback sends top / back / feed buttons to `/feed`. `/map` is not the canceled destination in the shipped UI.
 
@@ -119,12 +119,13 @@ The map is organized into four lanes:
 
 See `docs/missing-screens.md` for the implementation backlog.
 
-Primary missing gates (4):
+Primary missing gates (3):
 
-1. `BD-SETTINGS-01` — Settings (route + screen + profile-header CTA wiring)
-2. `BD-NOTIF-01` — Notifications
-3. `BD-ERROR-01` — Global error / offline
-4. `BD-MOD-01` — Moderation / Report
+1. `BD-NOTIF-01` — Notifications
+2. `BD-ERROR-01` — Global error / offline
+3. `BD-MOD-01` — Moderation / Report
+
+(`BD-SETTINGS-01` is **shipped** — contract + `design-registry.json` `runtimeOnly` render-pending; no longer a missing gate.)
 
 ## Audit / consolidation gates
 
@@ -147,9 +148,10 @@ Genuine missing-screen backlog first; audit gates are opened only on confirmed s
 
 1. `BD-ERROR-01` — global offline/error overlay (P1).
 2. `BD-RIDE-D` error/offline states (P1 extension).
-3. `BD-SETTINGS-01` (P2) — register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA.
-4. `BD-NOTIF-01` (P2).
-5. `BD-MOD-01` (P2).
+3. `BD-NOTIF-01` (P2).
+4. `BD-MOD-01` (P2).
+
+(`BD-SETTINGS-01` removed — shipped; remaining work is an optional render gate, render-pending.)
 
 Audit / consolidation gates (open only on confirmed gap, not by default):
 

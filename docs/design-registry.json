@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-14",
+  "updatedAt": "2026-06-17",
   "source": "Claude Design",
   "classifications": {
     "_legend": "BD-DESIGN-REGISTRY-01 — every screen sits on exactly one shelf. The shelf is the array it lives in plus its classification field.",
@@ -439,6 +439,17 @@
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-order-detail-01",
       "note": "Shipped runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Full contract present; no Cloud Design render gate yet. Render-pending — named for Cloud Design render."
+    },
+    {
+      "id": "BD-SETTINGS-01",
+      "title": "Settings",
+      "route": "/settings",
+      "file": "public/src/screens/settings.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-settings-01",
+      "note": "Shipped shared role-aware settings shell (issue #539). /settings registered; reached from passenger #pfp-settings-btn (go('/settings')) and driver #pf2-gear (go('/settings?role=driver')); settings.js reads ?role= to send «Назад» back to /profile?role=driver. Driver security pane stays reachable via its pf2-tab[data-pane=security] tab. UI-only — no persistence, no fetch, no native push, no backend logout/delete/payment; pinned by scripts/smoke-settings.mjs and precached in public/sw.js. Listed in runtimeOnly (not screens[]) because no Cloud Design render-gate artifact exists yet — render-pending."
     }
   ]
 }
