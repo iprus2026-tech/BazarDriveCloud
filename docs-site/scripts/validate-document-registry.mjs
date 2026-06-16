@@ -85,7 +85,7 @@ function repoRel(absPath) {
 
 // --- Structural validation (STRICT) ---------------------------------------
 
-function validateRegistry(registry) {
+function validateRegistry(registry, legacySet) {
   const errors = [];
 
   if (!Array.isArray(registry)) {
@@ -126,15 +126,23 @@ function validateRegistry(registry) {
       }
     }
 
-    // path: string that exists in the repo.
+    // path: string, exists, and is inside the legacy document set. Existence
+    // alone is not enough — a path like docs-site/docs/index.md or
+    // public/src/app.js exists but is outside the README/ROADMAP + docs/**.md|json
+    // universe this registry is meant to account for.
     if (entry.path !== undefined && entry.path !== null) {
       if (typeof entry.path !== 'string') {
         errors.push(`${at}: path must be a string`);
       } else {
         paths.push(entry.path);
+        const norm = entry.path.replace(/\\/g, '/');
         const abs = join(REPO_ROOT, entry.path);
         if (!existsSync(abs)) {
           errors.push(`${at}: path "${entry.path}" does not exist in the repo`);
+        } else if (!legacySet.has(norm)) {
+          errors.push(
+            `${at}: path "${entry.path}" is outside the legacy document set (README.md, ROADMAP.md, docs/**/*.{md,json})`,
+          );
         }
       }
     }
@@ -152,9 +160,15 @@ function validateRegistry(registry) {
       );
     }
 
-    // reviewAfter must be a real calendar date.
-    if (!isEmpty(entry.reviewAfter) && !isRealDate(String(entry.reviewAfter))) {
-      errors.push(`${at}: reviewAfter "${entry.reviewAfter}" must be a real YYYY-MM-DD date`);
+    // reviewAfter must be a string, real YYYY-MM-DD calendar date. A non-string
+    // (e.g. ["2026-07-15"]) is non-empty and would stringify to a date-looking
+    // value, so reject by type before the date check.
+    if (!isEmpty(entry.reviewAfter)) {
+      if (typeof entry.reviewAfter !== 'string') {
+        errors.push(`${at}: reviewAfter must be a string, got ${typeof entry.reviewAfter}`);
+      } else if (!isRealDate(entry.reviewAfter)) {
+        errors.push(`${at}: reviewAfter "${entry.reviewAfter}" must be a real YYYY-MM-DD date`);
+      }
     }
   });
 
@@ -205,11 +219,15 @@ function main() {
     process.exit(1);
   }
 
-  const { errors, paths } = validateRegistry(registry);
-
-  // Scan legacy docs and diff against registered paths.
-  const registered = new Set(paths.map((p) => p.split(sep).join('/')));
+  // Scan the legacy universe once: it is both the diff target for
+  // UNACCOUNTED_DOCUMENT and the allowlist that registry paths must belong to.
   const legacy = collectLegacyDocs().map(repoRel);
+  const legacySet = new Set(legacy);
+
+  const { errors, paths } = validateRegistry(registry, legacySet);
+
+  // Diff registered paths against the scanned set.
+  const registered = new Set(paths.map((p) => p.replace(/\\/g, '/')));
   const unaccounted = legacy.filter((p) => !registered.has(p)).sort();
 
   // Report.
