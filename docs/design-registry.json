@@ -449,7 +449,7 @@
       "classification": "contract-only",
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-settings-01",
-      "note": "Shipped shared role-aware settings shell (issue #539). /settings registered; reached from passenger #pfp-settings-btn and driver #pf2-gear (both go('/settings')); driver security pane stays reachable via its pf2-tab[data-pane=security] tab. UI-only — no persistence, no fetch, no native push, no backend logout/delete/payment; pinned by scripts/smoke-settings.mjs and precached in public/sw.js. Listed in runtimeOnly (not screens[]) because no Cloud Design render-gate artifact exists yet — render-pending."
+      "note": "Shipped shared role-aware settings shell (issue #539). /settings registered; reached from passenger #pfp-settings-btn (go('/settings')) and driver #pf2-gear (go('/settings?role=driver')); settings.js reads ?role= to send «Назад» back to /profile?role=driver. Driver security pane stays reachable via its pf2-tab[data-pane=security] tab. UI-only — no persistence, no fetch, no native push, no backend logout/delete/payment; pinned by scripts/smoke-settings.mjs and precached in public/sw.js. Listed in runtimeOnly (not screens[]) because no Cloud Design render-gate artifact exists yet — render-pending."
     }
   ]
 }

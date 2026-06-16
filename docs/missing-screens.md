@@ -31,6 +31,7 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 | P2 | BD-ONBOARDING-01 | `/welcome` + `/onboarding` | `welcome.js` + `onboarding.js` | Shipped family; no render gate |
 | P2 | BD-COMPOSER-01 | `/new` | `public/src/screens/composer.js` | Shipped composer; no render gate |
 | P2 | BD-RULES-01 | `/rules` | `public/src/screens/rules.js` | Shipped static articles; no render gate |
+| P2 | BD-SETTINGS-01 | `/settings` | `public/src/screens/settings.js` | Shipped shared shell + contract; no render-gate artifact |
 
 `BD-RIDE-D-NOSHOW-01` is the inverse case (render gate exists, runtime is a stub) — classified `future-design` and tracked under **Partial / future issues** below.
 
