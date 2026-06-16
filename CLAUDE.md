@@ -217,7 +217,7 @@ If a script is missing, report that clearly instead of inventing a result.
 ## Mini-Yonder documentation governance
 
 The `docs-site/` Docusaurus layer is governed by Mini-Yonder (added in
-BD-DOCS-SITE-01/02/03/04B). It has three validators, wired into `docs-site`
+BD-DOCS-SITE-01/02/03/04B/06). It has four validators, wired into `docs-site`
 `npm run check` and the `docs-site-ci` workflow:
 
 - `docs-site/scripts/validate-frontmatter.mjs` (`npm run validate:frontmatter`)
@@ -230,6 +230,11 @@ BD-DOCS-SITE-01/02/03/04B). It has three validators, wired into `docs-site`
   — strictly validates `docs-site/governance/mini-yonder-core.json`, the
   inventory of Mini-Yonder's own core files (no self-reference loop; generated
   output may never be a core file).
+- `docs-site/scripts/validate-navigation.mjs` (`npm run validate:nav`,
+  BD-DOCS-SITE-06) — strictly validates docs-site navigation: every `sidebars.js`
+  entry must resolve to a governed doc (no dangling or `_templates/` scaffold
+  entries), and the repository file inventory page must stay in the sidebar,
+  linked from the index, and keep its clean slug.
 
 It also has a report-only repository inventory,
 `docs-site/scripts/scan-repository-inventory.mjs` (`npm run inventory:repo`,
@@ -283,6 +288,7 @@ cd docs-site
 npm run validate:frontmatter
 npm run validate:registry
 npm run validate:self
+npm run validate:nav
 npm run check
 npm run build
 cd ..
@@ -305,6 +311,7 @@ cd docs-site
 npm run validate:frontmatter
 npm run validate:registry
 npm run validate:self
+npm run validate:nav
 npm run check
 npm run build
 cd ..
@@ -344,6 +351,7 @@ Do not merge a documentation PR if any of these is true:
 - docs-site validation fails (`validate:frontmatter`),
 - registry structural validation fails (`validate:registry`),
 - core self-inventory validation fails (`validate:self`),
+- navigation validation fails (`validate:nav`),
 - CI is not green,
 - Codex has unresolved P0/P1/P2 findings,
 - active (non-outdated, unresolved) review threads remain.
