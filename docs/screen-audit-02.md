@@ -74,7 +74,7 @@ Status legend: **render-gate** = shipped + backed by a Cloud Design render gate 
 
 | Module | ID | Type | In registry? | Note |
 |---|---|---|---|---|
-| `screens/active_ride_driver_sheets.js` | BD-RIDE-D-09/D-11 | driver completion sheets | ✅ (as D-09/D-11) | Mounted by `active_ride.js` renderCompleted |
+| `screens/active_ride_driver_sheets.js` | BD-RIDE-D-09/D-11 (+ cancel/problem/safety) | driver completion **and** cancel/problem/safety sheets | ⚠️ registry maps only D-09/D-11; `active_ride.js` also imports `openDriverCancelSheet`/`openDriverProblemSheet`/`openDriverSafetySheet` from it | Mounted by `active_ride.js` (renderCompleted + cancel/safety flows) |
 | `screens/active_ride_passenger_sheets.js` | BD-RIDE-SHEETS-01 (P-06/P-07) | passenger safety+cancel sheets | ⚠️ render gates attributed to parent `active_ride_passenger.js`, not this file | Sheet UI owner; persistence stays in the screen callback |
 | `screens/active_ride_driver_noshow.js` | BD-RIDE-D-NOSHOW-01 | driver no-show sub-flow | ⚠️ registry maps NOSHOW to `active_ride.js`; module exists separately | See §2 (future-design parity) |
 | `screens/driver_handoff_snapshot.js` | BD-HANDOFF-05 | storage helper (no DOM) | n/a (data module) | Not a screen — confirmation→active-ride driver snapshot |
@@ -83,7 +83,10 @@ Status legend: **render-gate** = shipped + backed by a Cloud Design render gate 
 | `mapbox/trip_status_layer.js` | BD-MAP-FOUND-04 | foundation stub | ✅ foundationModules | No-op until real Mapbox |
 
 Every registered route in `app.js` is accounted for above. No registered route is
-undocumented; the only screen *file* missing from the registry is `settings.js`.
+undocumented. The only screen file with **no registry entry at all** is
+`settings.js`; separately, modules are **mis-attributed** in the registry —
+`active_ride_driver_noshow.js` (registry still points BD-RIDE-D-NOSHOW-01 at
+`active_ride.js`) and the driver/passenger sheet modules (see §2).
 
 ---
 
@@ -93,7 +96,7 @@ undocumented; the only screen *file* missing from the registry is `settings.js`.
 |---|---|---|---|
 | **BD-SETTINGS-01** | Shipped + wired in runtime, but `design-registry.json` omits it and `screen-contracts.md` (L177) + `missing-screens.md` (P2) still call it "inert / unshipped / to implement" | **High** (docs lie about live state; #539 scope looks bigger than it is) | Register under **`runtimeOnly` as `contract-only`** (render-pending) — **NOT `screens[]`**: the dispatcher (`scripts/dispatcher.mjs:527-530,565-571`) requires every `screens[]` entry to carry a `renderGate` matching `renderGates[]`, and no Settings gate exists yet. Write `screen-contracts.md#bd-settings-01`; correct L177 + the missing-screens row. **Issue #539 is a contract/registry sync, not new implementation** (add a real gate only when an artifact ships). |
 | BD-RIDE-D-NOSHOW-01 | Render gate has 7 states (waiting/expired/action/confirm/result/compensation/done); runtime `active_ride_driver_noshow.js` ships 5 (action→confirm→result→compensation→done); registry still attributes the gate to `active_ride.js` and notes "runtime not wired" | Medium (parity gap + stale attribution; compensation ₽ are mock placeholders) | Re-point registry to `active_ride_driver_noshow.js`; document the waiting/expired delta; confirm comp values with product before any wiring |
-| Passenger safety/cancel sheets | `active_ride_passenger_sheets.js` (BD-RIDE-P-06/07) owns the sheet UI, but registry pins P-SAFETY/P-CANCEL render gates to `active_ride_passenger.js` | Low (file attribution only) | Add `additionalFiles` / sheet note to the two registry entries |
+| Sheet-module attribution (driver + passenger) | `active_ride_passenger_sheets.js` (BD-RIDE-P-06/07) and `active_ride_driver_sheets.js` (driver cancel/problem/safety, imported by `active_ride.js`) own the sheet UI, but the registry pins the safety/cancel render gates to the parent `active_ride*.js` files | Low (file attribution only) | Add `additionalFiles` / sheet notes to the driver **and** passenger safety/cancel registry entries |
 | BD-ORDER-DETAIL-01 | Runtime shell + full contract + 01D writes shipped; **no render gate** (render-pending). Role-split (driver-offer vs passenger-select) risks visually mixing role data | Medium | Render gate covering both role variants; open issue #454 |
 | BD-POST-01 | Shipped gate owns primary-action per kind/ownership; no render gate; the accept/order branch is logic-dense | Medium | Render gate per kind (request/offer/marketplace) + ownership |
 | BD-INBOX-01 / BD-NOTIF-01 | `/inbox` shipped **and** already hosts the BD-NOTIF-01 push-permission prompt (`inbox.js:69-72,291-307`, `smoke-notif-prompt.mjs`). **Both** entry points reuse it: passenger `#pfp-notif-btn` and driver `#pf2-act-notif` → `go('/inbox')` (`profile.js:3865`, pinned by `smoke-profile-notif-bell.mjs`). The reuse decision is **resolved** | Low | Remaining work is push-permission / notification-state polish, **not** routing; do not add a `/notifications` route or orphan `/inbox` |
@@ -165,7 +168,7 @@ stay out of scope (future notes only).
 | P1 | BD-ORDER-DETAIL-01 render gate | Shipped + contract; render-pending; role-split risk | settings docs sync | Render gate: driver-offer vs passenger-select variants (#454) |
 | P1 | BD-POST-01 render gate | Shipped gate owns primary actions; logic-dense; no render | — | Render gate per post kind + ownership |
 | P1 | BD-RIDE-D-NOSHOW-01 parity | Module ships 5/7 states; registry stale | product sign-off on comp ₽ | Re-point registry; document waiting/expired delta (no wiring) |
-| P2 | BD-INBOX-01 render gate + BD-NOTIF-01 decision | Notif entry points split; risk of orphaning `/inbox` | inbox audit | Render gate for `/inbox`; decide reuse vs split before any new route |
+| P2 | BD-INBOX-01 render gate + push/notif-state polish | `/inbox` shipped and both notif entry points already reuse it (routing **resolved**); no render gate yet | — | Render gate for `/inbox` + push-permission / notification-state polish; **do not** add a `/notifications` route |
 | P2 | BD-COMPOSER-01 render gate | Shipped; render-pending | — | Composer render gate (per-type/preview/draft/validation) |
 | P2 | BD-MAP-02 / BD-ONBOARDING-01 / BD-RULES-01 gates | Shipped; render-pending | — | One render gate each |
 | P3 | BD-GARAGE-01 | Foundation in progress | profile readiness | Garage add/edit/archive/readiness gate |
@@ -184,9 +187,11 @@ stay out of scope (future notes only).
 - **Role:** both (role read from `?role=` for the «Назад» target)
 - **Goal:** Make the docs match shipped runtime — register the screen and write its
   contract; stop describing it as unshipped.
-- **Required states:** mirror the shipped `settings__*` sections (profile/account,
-  notifications toggles, appearance/language, privacy, about, logout/delete — all
-  mock/no-op).
+- **Required states:** mirror the **actually shipped** `settings__*` sections —
+  «Приложение» (Язык, Тема), «Уведомления» (toggles), «Аккаунт» (оплата / выход /
+  удалить аккаунт + confirm), error/toast, and the version footer
+  («BazarDrive · v1.0 · демо»). **There are no privacy/about rows — do not invent
+  them.** All mock/no-op.
 - **Required UI:** reuse `bd-card` / `bd-scroll` / `bd-btn` / `bd-list-icon` /
   `bd-section-h`; accent `#FF6B35`; Russian labels; mobile shell ≤ `430px`.
 - **Buttons/actions:** gear entry points (passenger `#pfp-settings-btn`, driver
@@ -220,8 +225,10 @@ stay out of scope (future notes only).
 - **Required UI:** route + price + ETA summary; role-specific primary action block;
   inert report CTA (`data-action="report-order"`) styled but not rerouted.
 - **Buttons/actions:** driver open-active-ride → `/active-ride?role=driver&tripId=…`
-  (no `status=ACCEPTED` appended by `order_detail.js`); passenger select → responses /
-  active ride; actions re-render in place.
+  (no `status=ACCEPTED` appended by `order_detail.js`); passenger `select-driver`
+  only **commits the selection and re-renders in place** (→ P3) — the active-ride
+  write/handoff happens later from the **P3 «Открыть поездку» (`open-trip`)** CTA,
+  not from selection. Actions re-render in place.
 - **Empty/loading/error states:** missing-order fallback; loading skeleton.
 - **Reusable components:** Cloud Design atoms; existing order_detail markup.
 - **Out of scope:** backend, real pricing, Mapbox, changing route registration or
@@ -239,7 +246,7 @@ stay out of scope (future notes only).
   decision (respond / chat / own-post / accept-order).
 - **Required states:** request (passenger ask), offer (driver/marketplace), own post,
   marketplace item, **and the no-primary fallback for announcement / system posts**
-  (`primaryActionSpec` → `kind:'none'`, no CTA) — each with its correct (or absent)
+  (`pickCtaSpec` → `kind:'none'`, no CTA) — each with its correct (or absent)
   primary CTA.
 - **Required UI:** post header/body; author row; primary-action block keyed to
   kind/ownership; secondary nav.
