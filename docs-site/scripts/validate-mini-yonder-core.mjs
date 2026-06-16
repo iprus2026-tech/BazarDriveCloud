@@ -38,6 +38,17 @@ const KINDS = [
 ];
 const CRITICALITY = ['high', 'medium', 'low'];
 
+// Mandatory exclusion prefixes. The manifest supplies generatedPaths/ignoredPaths,
+// so the validator requires these baselines to be present — otherwise a manifest
+// edit could empty the lists and inventory a generated/ignored artifact as a core
+// file, disabling the self-reference guard from inside the file it validates.
+const REQUIRED_GENERATED = [
+  'docs-site/build/',
+  'docs-site/node_modules/',
+  'docs-site/.docusaurus/',
+];
+const REQUIRED_IGNORED = ['.git/', 'node_modules/'];
+
 const REQUIRED = ['id', 'path', 'kind', 'area', 'criticality', 'requires', 'reason'];
 const ID_PREFIX = 'BD-MY-CORE-';
 
@@ -68,6 +79,10 @@ function manifestRel() {
 // `docs-site/../docs-site/node_modules/x` cannot slip past the prefixes.
 function canonRel(p) {
   if (typeof p !== 'string') return null;
+  // Reject absolute inputs up front: an absolute path that happens to point
+  // inside this checkout would otherwise resolve back to a repo-relative value
+  // and be accepted as a non-portable, machine-specific entry.
+  if (isAbsolute(p)) return null;
   const rel = relative(REPO_ROOT, resolve(REPO_ROOT, p));
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
   return toPosix(rel);
@@ -85,12 +100,13 @@ function validate(manifest) {
     errors.push(`mini-yonder-core.json: version must be a positive integer`);
   }
 
-  // generatedPaths / ignoredPaths: arrays of strings.
-  if (!isStringArray(manifest.generatedPaths)) {
-    errors.push('mini-yonder-core.json: generatedPaths must be an array of strings');
+  // generatedPaths / ignoredPaths: NON-EMPTY arrays of strings, each containing
+  // its mandatory baseline prefixes (see REQUIRED_GENERATED / REQUIRED_IGNORED).
+  if (!isNonEmptyStringArray(manifest.generatedPaths)) {
+    errors.push('mini-yonder-core.json: generatedPaths must be a non-empty array of strings');
   }
-  if (!isStringArray(manifest.ignoredPaths)) {
-    errors.push('mini-yonder-core.json: ignoredPaths must be an array of strings');
+  if (!isNonEmptyStringArray(manifest.ignoredPaths)) {
+    errors.push('mini-yonder-core.json: ignoredPaths must be a non-empty array of strings');
   }
   const generated = isStringArray(manifest.generatedPaths)
     ? manifest.generatedPaths.map(toPosix)
@@ -98,6 +114,16 @@ function validate(manifest) {
   const ignored = isStringArray(manifest.ignoredPaths)
     ? manifest.ignoredPaths.map(toPosix)
     : [];
+  for (const req of REQUIRED_GENERATED) {
+    if (!generated.includes(req)) {
+      errors.push(`mini-yonder-core.json: generatedPaths must include the mandatory prefix "${req}"`);
+    }
+  }
+  for (const req of REQUIRED_IGNORED) {
+    if (!ignored.includes(req)) {
+      errors.push(`mini-yonder-core.json: ignoredPaths must include the mandatory prefix "${req}"`);
+    }
+  }
   // Generated build output AND ignored repo artifacts (.git/, node_modules/, …)
   // must never be inventoried as a core file.
   const forbiddenPrefixes = [

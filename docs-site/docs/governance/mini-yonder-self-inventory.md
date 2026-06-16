@@ -114,6 +114,8 @@ node scripts/dispatcher.mjs
 For **validator changes specifically**, the report must also include
 **negative tests** proving the validator rejects malformed input (duplicate id,
 duplicate path — including the same file under a different spelling, missing
-path, a path that escapes the repo root, a generated **or ignored** path used as
-a core file, an empty `coreFiles` inventory, a non-string `reason`, an invalid
-`kind`, an invalid `criticality`) and then accepts the restored manifest.
+path, a path that escapes the repo root, an **absolute** core path, a generated
+**or ignored** path used as a core file, an empty `coreFiles` inventory, an
+empty or baseline-incomplete `generatedPaths`/`ignoredPaths`, a non-string
+`reason`, an invalid `kind`, an invalid `criticality`) and then accepts the
+restored manifest.
