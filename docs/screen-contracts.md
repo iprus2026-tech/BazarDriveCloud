@@ -60,6 +60,7 @@ Registered in `public/src/app.js`.
 | `/post` | BD-POST-01 | `public/src/screens/post_detail.js` | implemented |
 | `/inbox` | BD-INBOX-01 | `public/src/screens/inbox.js` | implemented |
 | `/receipt` | BD-RIDE-HISTORY-D-01 | `public/src/screens/trip_receipt.js` | implemented, driver completed-ride receipt by `?tripId=` |
+| `/settings` | BD-SETTINGS-01 | `public/src/screens/settings.js` | implemented, shared shell, role-aware back via `?role=` |
 
 ### Shell invariants
 
@@ -174,7 +175,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Storage | `bazardrive.user.v1`, profile demo helpers, user-scoped stores read-only where needed. |
 | Main states | Guest prompt, passenger dashboard, phone verification banner, stats, saved actions, safety. |
 | Actions | Verify phone mock, edit profile, create ride, view inbox/history/favorites. |
-| Entry points | **Notification bell** `#pfp-notif-btn` (topbar) → `go('/inbox')` (BD-NOTIF-01, reuse the `/inbox` hub — no separate `/notifications` route). **History menu row** `#pfp-menu-history` → `scrollIntoView` of the inline trip-history section `#profile-history-section` (BD-HISTORY-P-01 — **not** `/feed`). **Settings gear** `#pfp-settings-btn` is still inert (BD-SETTINGS-01, unshipped / design-gated). Pinned by `scripts/smoke-profile-notif-bell.mjs` and `scripts/smoke-profile-history-menu.mjs`. |
+| Entry points | **Notification bell** `#pfp-notif-btn` (topbar) → `go('/inbox')` (BD-NOTIF-01, reuse the `/inbox` hub — no separate `/notifications` route). **History menu row** `#pfp-menu-history` → `scrollIntoView` of the inline trip-history section `#profile-history-section` (BD-HISTORY-P-01 — **not** `/feed`). **Settings gear** `#pfp-settings-btn` → `go('/settings')` (BD-SETTINGS-01, **shipped**). Pinned by `scripts/smoke-profile-notif-bell.mjs`, `scripts/smoke-profile-history-menu.mjs` and `scripts/smoke-settings.mjs`. |
 | Acceptance | Guest/passenger surfaces do not expose driver-only controls unless role switches. |
 
 ### BD-PROFILE-02 - Driver dashboard profile
@@ -935,6 +936,20 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Main states | Rules sections. |
 | Actions | Navigation only. |
 | Acceptance | Bottom tab highlights `Правила`. |
+
+### BD-SETTINGS-01 - Settings
+
+| Field | Contract |
+|---|---|
+| Route | `/settings` (shared shell; `?role=driver` only steers the «Назад» target — there is **no** separate passenger/driver settings route) |
+| File | `public/src/screens/settings.js` |
+| Entry points | Passenger `#pfp-settings-btn` → `go('/settings')`; driver `#pf2-gear` → `go('/settings?role=driver')`. Driver security pane stays reachable via its own `pf2-tab[data-pane="security"]` tab (not orphaned). |
+| Storage | **None — UI-only.** Controls persist nothing; no `fetch`, no `localStorage`, no native push registration (enforced by `scripts/smoke-settings.mjs`). |
+| Sections | **ПРИЛОЖЕНИЕ** — `Язык` (value «Русский» + chevron, `#settings-lang-row`), `Тема` (segmented Светлая/Тёмная/Системная, default Тёмная). **УВЕДОМЛЕНИЯ** — `Push-уведомления` toggle (`#settings-push-row`); `Звук` toggle (`#settings-sound-row`, revealed when push is on); delivery is mock. **АККАУНТ** — `Профиль` → `go(profileRoute(role))`, `Способы оплаты` (toast), `Выйти` (danger, demo toast), `Удалить аккаунт` (danger, `#settings-delete-confirm` confirm → demo toast). |
+| Main states | A default list · B language/theme controls · C push on + sound row revealed · D account actions (logout/delete confirm) · E save feedback (`Сохранить` → «Сохранено» toast `#settings-toast`) · F error notice (`?state=error` → `#settings-error` «Не удалось сохранить — попробуйте ещё раз»). |
+| Actions | `Сохранить` shows the «Сохранено» toast; all account actions are UI-only demo toasts/confirms; «Назад» (`#settings-back`) → role-correct profile. |
+| Precache | `public/src/screens/settings.js` is in the `public/sw.js` PRECACHE list. |
+| Acceptance | Reachable from both profile gears; no real logout/delete/push/payment/backend; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs`. |
 
 ### BD-MAP-01 - MapHome
 

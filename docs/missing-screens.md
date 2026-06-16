@@ -10,7 +10,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 |---|---|---|---|---|---|
 | P1 | BD-ERROR-01 | Global Error / Offline | Both | ~4 states | App-level offline/server/timeout overlay |
 | P1 | BD-RIDE-D error states | Driver active ride error states | Driver | extension | Error/offline stages for driver live flow |
-| P2 | BD-SETTINGS-01 | Settings | Both | ~6 states | Register `/settings`, implement screen, wire passenger `#pfp-settings-btn` + driver gear CTA |
+| ~~P2~~ | BD-SETTINGS-01 | Settings | Both | 6 states | ✅ **DONE (shipped)** — `/settings` registered, `settings.js` implemented, both gears wired, precached, `scripts/smoke-settings.mjs`. Contract: `screen-contracts.md#bd-settings-01` |
 | P2 | BD-NOTIF-01 | Notifications | Both | ~3 states | **Audit `/inbox` (BD-INBOX-01, shipped) first** · decide reuse `/inbox` as hub OR consciously split `/notifications` after audit · wire shipped entry points to the chosen target: passenger `#pfp-notif-btn` (no listener today) + **driver `#pf2-act-notif`** quick-action row (currently only toggles `notificationsEnabled` — there is NO driver bell in the shipped profile) · do not orphan `/inbox` |
 | P2 | BD-MOD-01 | Moderation / Report | Both | ~3 states | Standalone report surface · wire inert standalone report CTAs (Order Detail `data-action="report-order"`) · do NOT reroute the in-ride safety report (BD-RIDE-P-07) — preserve in-sheet behavior |
 
@@ -168,31 +168,25 @@ Out of scope:
 - new in-screen error UI without a Cloud Design frame
 - the synchronous status-sync guard (closed unmerged — premature without a backend)
 
-## P2 — BD-SETTINGS-01 Settings
+## ~~P2 — BD-SETTINGS-01 Settings~~ — DONE (shipped)
 
-Settings is **not** already linked from the profile headers in the shipped UI. The missing scope includes both the screen and its profile-entry wiring.
+**DONE (BD-SETTINGS-01).** Settings shipped and wired (issue #539 closed). The
+`/settings` route is registered in `public/src/app.js`, `public/src/screens/settings.js`
+implements the shared role-aware shell, the passenger gear `#pfp-settings-btn` and the
+driver gear `#pf2-gear` both `go('/settings')` (driver security pane still reachable via
+its `pf2-tab[data-pane="security"]` tab), the file is precached in `public/sw.js`, and
+`scripts/smoke-settings.mjs` pins route + entry wiring + UI-only boundaries. The full
+contract lives at `screen-contracts.md#bd-settings-01` and the screen is registered in
+`design-registry.json` (`runtimeOnly`, contract-only / render-pending — no render-gate
+artifact yet).
 
-Required scope:
+Shipped states: default · language/theme · push toggle (+ revealed sound row) ·
+account actions (logout/delete confirm) · save feedback («Сохранено» toast) ·
+error notice (`?state=error`). All controls are **UI-only** (no persistence, no
+fetch, no native push, no backend logout/delete/payment).
 
-- register the `/settings` route in `public/src/app.js`
-- implement the settings screen
-- wire the passenger profile settings CTA (`#pfp-settings-btn`) — currently rendered without a listener
-- wire the driver profile settings / gear CTA — currently switches to the security pane instead of navigating to settings
-
-Required states:
-
-- default settings
-- language/theme controls
-- push notifications toggle
-- account/logout actions (UI-only unless a future backend issue says otherwise)
-- save feedback
-- error
-
-Out of scope:
-
-- real account deletion backend
-- native OS notification registration
-- backend wiring for logout / delete / account actions (UI-only unless a future backend issue says otherwise)
+Remaining (optional, future): a real Cloud Design render-gate artifact for Settings
+(today it is contract-only / render-pending).
 
 ## P2 — BD-NOTIF-01 Notifications
 
