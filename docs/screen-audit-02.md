@@ -68,7 +68,7 @@ Status legend: **render-gate** = shipped + backed by a Cloud Design render gate 
 | BD-RIDE-P-COMPLETE-01 | `…role=passenger&status=COMPLETED` | `screens/active_ride_passenger.js` | passenger | render-gate | completed | ✅ 2026-06-03 | |
 | BD-CONFIRM-01 | `/trip-confirmation` | `screens/trip_confirmation.js` | both | render-gate | confirm/handoff | ✅ 2026-06-03 | |
 | BD-RIDE-HISTORY-D-01 | `/receipt?tripId=` | `screens/trip_receipt.js` | driver | render-gate | cash/noncash/missing/loading | ✅ 2026-06-03 | Read-only canonical receipt; net computed once upstream |
-| **BD-SETTINGS-01** | **`/settings`** (`?role=driver`) | **`screens/settings.js`** | both | **render-gate (UNREGISTERED in registry)** | ported gate states | ✅ st-* gate (ported) | **Shipped + wired + `smoke-settings.mjs`, but absent from `design-registry.json` and mislabeled "unshipped" in `screen-contracts.md`/`missing-screens.md`.** See §2. |
+| **BD-SETTINGS-01** | **`/settings`** (`?role=driver`) | **`screens/settings.js`** | both | **shipped — UNREGISTERED (→ `runtimeOnly` contract-only)** | settings list (mock) | ⏳ no registered gate | **Shipped + wired + `smoke-settings.mjs`, but absent from `design-registry.json` and mislabeled "unshipped" in `screen-contracts.md`/`missing-screens.md`.** Belongs in `runtimeOnly` (contract-only) until a real render-gate artifact exists — see §2. |
 
 ### Non-routed modules (exist, but not standalone screens)
 
@@ -91,12 +91,12 @@ undocumented; the only screen *file* missing from the registry is `settings.js`.
 
 | Screen | Problem | Risk | Recommended Cloud Design action |
 |---|---|---|---|
-| **BD-SETTINGS-01** | Shipped + wired in runtime, but `design-registry.json` omits it and `screen-contracts.md` (L177) + `missing-screens.md` (P2) still call it "inert / unshipped / to implement" | **High** (docs lie about live state; #539 scope looks bigger than it is) | Add a `screens[]` registry entry + write `screen-contracts.md#bd-settings-01`; correct L177 + the missing-screens row. **Issue #539 is now a contract/registry sync, not new implementation.** |
+| **BD-SETTINGS-01** | Shipped + wired in runtime, but `design-registry.json` omits it and `screen-contracts.md` (L177) + `missing-screens.md` (P2) still call it "inert / unshipped / to implement" | **High** (docs lie about live state; #539 scope looks bigger than it is) | Register under **`runtimeOnly` as `contract-only`** (render-pending) — **NOT `screens[]`**: the dispatcher (`scripts/dispatcher.mjs:527-530,565-571`) requires every `screens[]` entry to carry a `renderGate` matching `renderGates[]`, and no Settings gate exists yet. Write `screen-contracts.md#bd-settings-01`; correct L177 + the missing-screens row. **Issue #539 is a contract/registry sync, not new implementation** (add a real gate only when an artifact ships). |
 | BD-RIDE-D-NOSHOW-01 | Render gate has 7 states (waiting/expired/action/confirm/result/compensation/done); runtime `active_ride_driver_noshow.js` ships 5 (action→confirm→result→compensation→done); registry still attributes the gate to `active_ride.js` and notes "runtime not wired" | Medium (parity gap + stale attribution; compensation ₽ are mock placeholders) | Re-point registry to `active_ride_driver_noshow.js`; document the waiting/expired delta; confirm comp values with product before any wiring |
 | Passenger safety/cancel sheets | `active_ride_passenger_sheets.js` (BD-RIDE-P-06/07) owns the sheet UI, but registry pins P-SAFETY/P-CANCEL render gates to `active_ride_passenger.js` | Low (file attribution only) | Add `additionalFiles` / sheet note to the two registry entries |
 | BD-ORDER-DETAIL-01 | Runtime shell + full contract + 01D writes shipped; **no render gate** (render-pending). Role-split (driver-offer vs passenger-select) risks visually mixing role data | Medium | Render gate covering both role variants; open issue #454 |
 | BD-POST-01 | Shipped gate owns primary-action per kind/ownership; no render gate; the accept/order branch is logic-dense | Medium | Render gate per kind (request/offer/marketplace) + ownership |
-| BD-INBOX-01 vs BD-NOTIF-01 | `/inbox` shipped; notification entry points are split (passenger `#pfp-notif-btn` → `/inbox`; driver `#pf2-act-notif` only toggles a flag, no bell) | Medium (could orphan `/inbox` if `/notifications` is added blindly) | Decide reuse `/inbox` as the notif hub **before** any `/notifications` screen; do not orphan `/inbox` |
+| BD-INBOX-01 / BD-NOTIF-01 | `/inbox` shipped **and** already hosts the BD-NOTIF-01 push-permission prompt (`inbox.js:69-72,291-307`, `smoke-notif-prompt.mjs`). **Both** entry points reuse it: passenger `#pfp-notif-btn` and driver `#pf2-act-notif` → `go('/inbox')` (`profile.js:3865`, pinned by `smoke-profile-notif-bell.mjs`). The reuse decision is **resolved** | Low | Remaining work is push-permission / notification-state polish, **not** routing; do not add a `/notifications` route or orphan `/inbox` |
 | Composer / Rules / Map / Onboarding | Shipped, contract-only, render-pending (no gate) | Low–Medium | Sequence render gates (see §4) |
 | Global error / offline | `BD-ERROR-01` is an app-shell overlay (not a route) with a prototype HTML; runtime overlay exists but driver-live error/offline states are thin | Medium | Driver active-ride error/offline stages (`missing-screens.md` P1) |
 
@@ -114,8 +114,8 @@ Reconciled with `docs/missing-screens.md` (MS) — ✅ already tracked there ·
 - waiting for driver response — ✔ shipped (`/responses` empty, BD-FLOW-INBOX-01); polish open (#305)
 - accepted driver card — ✔ shipped (`/responses` → active ride handoff)
 - passenger trip history — ✅ MS BD-HISTORY-P-01 (inline section in profile today; dedicated route gap)
-- passenger receipt — ⚠️ only the **driver** receipt ships (BD-RIDE-HISTORY-D-01). 🆕 **passenger receipt is genuinely missing.**
-- passenger rating / review — 🆕 missing (no post-trip rating screen)
+- passenger receipt — ⚙️ **optional / product-gated** (MS lines 64-76): the completed passenger screen's «Посмотреть чек» is a UI-only stub (`#arp-receipt-view`, `data-action="view-receipt"`) with no route; a dedicated receipt route is future scope **only if product confirms**. Not a net-missing screen.
+- passenger rating / review — ✔ **shipped**: `renderPassengerRideComplete` renders the rating card / stars / tags / comment / «Спасибо за отзыв» (`active_ride_passenger.js:983-1053`), pinned by `smoke-passenger-active-ride.mjs` (`#arp-submit-rating`)
 - passenger safety / cancel — ✔ shipped (sheets, BD-RIDE-P-06/07)
 
 ### B. Driver flow
@@ -131,21 +131,25 @@ Reconciled with `docs/missing-screens.md` (MS) — ✅ already tracked there ·
 
 ### C. Shared / system
 - AuthPhone / verification — ✔ shipped inside onboarding (`?step=phone` OTP); MS BD-AUTH-01 audit
-- notification center — ✅ MS BD-NOTIF-01 (decide `/inbox` reuse first)
+- notification center — ✔ **shipped** in `/inbox` (BD-NOTIF-01 push-permission prompt, `inbox.js:69-72`); both passenger and driver entry points already reuse `/inbox`
 - inbox / chat list — ✔ shipped (`/inbox`, BD-INBOX-01)
 - empty / offline / error / loading skeletons — ✅ MS BD-ERROR-01 (global overlay) + driver error states
 - moderation / report — ✅ MS BD-MOD-01 (wire inert report CTAs; preserve in-ride safety report)
 - settings — ✔ **shipped** (BD-SETTINGS-01) — docs out of sync (§2)
-- permissions: location — ✔ shipped (`/location-permission`); notifications permission — 🆕 no dedicated screen (toggle only)
+- permissions: location — ✔ shipped (`/location-permission`); notifications permission — ✔ shipped as the `/inbox` push-permission prompt (`?prompt=1`, `smoke-notif-prompt.mjs`)
 
 ### D. Map / route
 - MapHome ✔ (`/map`) · LocationPermission ✔ · RoutePicker ✔ · RoutePreview ✔ · OrderMapDraft ✔ · DriverMap ✔ · ActiveRide map states ✔ (via MapShell + trip-status stub)
 - Map fallback without Mapbox token — ✔ shipped as the MapShell placeholder/stub (BD-MAP-FOUND-03/04); real Mapbox is future (`db-mapbox-readiness.md`, #105)
 
-**Net genuinely-missing screens (not already shipped or tracked in MS):**
-1. Passenger receipt / trip summary (mirror of BD-RIDE-HISTORY-D-01)
-2. Passenger rating / review (post-trip)
-3. Notifications permission screen (currently a toggle only) — low priority
+**Net genuinely-missing screens:** after verification, **none** beyond what
+`missing-screens.md` already tracks. Items first suspected as missing turned out to
+be shipped (passenger rating; the `/inbox` notification prompt + permission; both
+notif entry points reuse `/inbox`) or optional/product-gated (a dedicated passenger
+receipt route — «Посмотреть чек» is a UI-only stub today). Remaining real work is
+**render gates for shipped render-pending screens** (§4) plus the items already
+queued in `missing-screens.md` (BD-ERROR-01, BD-MOD-01, BD-GARAGE-01,
+BD-HISTORY-P-01 polish).
 
 ---
 
@@ -157,15 +161,15 @@ stay out of scope (future notes only).
 
 | Priority | Screen ID | Why now | Depends on | Suggested PR slice |
 |---|---|---|---|---|
-| P0 | BD-SETTINGS-01 (docs sync) | Shipped but undocumented/contradicted — docs lie about live state | none (docs only) | Registry `screens[]` entry + `screen-contracts.md#bd-settings-01` + fix L177/MS row (issue #539) |
+| P0 | BD-SETTINGS-01 (docs sync) | Shipped but undocumented/contradicted — docs lie about live state | none (docs only) | Registry **`runtimeOnly` contract-only** entry (not `screens[]` — no gate yet) + `screen-contracts.md#bd-settings-01` + fix L177/MS row (issue #539) |
 | P1 | BD-ORDER-DETAIL-01 render gate | Shipped + contract; render-pending; role-split risk | settings docs sync | Render gate: driver-offer vs passenger-select variants (#454) |
 | P1 | BD-POST-01 render gate | Shipped gate owns primary actions; logic-dense; no render | — | Render gate per post kind + ownership |
 | P1 | BD-RIDE-D-NOSHOW-01 parity | Module ships 5/7 states; registry stale | product sign-off on comp ₽ | Re-point registry; document waiting/expired delta (no wiring) |
 | P2 | BD-INBOX-01 render gate + BD-NOTIF-01 decision | Notif entry points split; risk of orphaning `/inbox` | inbox audit | Render gate for `/inbox`; decide reuse vs split before any new route |
 | P2 | BD-COMPOSER-01 render gate | Shipped; render-pending | — | Composer render gate (per-type/preview/draft/validation) |
 | P2 | BD-MAP-02 / BD-ONBOARDING-01 / BD-RULES-01 gates | Shipped; render-pending | — | One render gate each |
-| P3 | Passenger receipt + rating | Genuinely missing; mirrors driver receipt | receipt store | New passenger receipt screen + rating sheet |
 | P3 | BD-GARAGE-01 | Foundation in progress | profile readiness | Garage add/edit/archive/readiness gate |
+| P3 (optional) | Passenger receipt route | **Only if product confirms** — «Посмотреть чек» is a UI-only stub today; rating is already shipped | product sign-off + receipt store | New passenger receipt screen (mirror BD-RIDE-HISTORY-D-01) |
 | Future | Real Mapbox, backend, payments, real auth | Out of scope | — | Notes only (`db-mapbox-readiness.md`, #105) |
 
 ---
@@ -191,9 +195,12 @@ stay out of scope (future notes only).
 - **Reusable components:** Cloud Design atoms above; no new component layer.
 - **Out of scope:** real logout/delete, real push registration, backend, CSP change,
   inline script/style, copying prototype HTML into runtime.
-- **Definition of Done:** `design-registry.json` has a `screens[]` BD-SETTINGS-01
-  entry; `screen-contracts.md#bd-settings-01` exists; L177 + `missing-screens.md`
-  row corrected; `node scripts/check.mjs` green (incl. `smoke-settings.mjs`).
+- **Definition of Done:** `design-registry.json` lists BD-SETTINGS-01 under
+  **`runtimeOnly` as `contract-only` / render-pending** (NOT `screens[]` — the
+  dispatcher requires `screens[]` entries to carry a `renderGate` in
+  `renderGates[]`, which Settings lacks); `screen-contracts.md#bd-settings-01`
+  exists; L177 + `missing-screens.md` row corrected; `node scripts/check.mjs`
+  **and** `node scripts/dispatcher.mjs` green.
 
 ### Prompt 2 — BD-ORDER-DETAIL-01 render gate (P1)
 
@@ -203,8 +210,13 @@ stay out of scope (future notes only).
 - **Role:** role-split (driver-offer vs passenger-select; Model B locked)
 - **Goal:** Add a Cloud Design render gate for the shipped Order Detail shell, with a
   clear visual split so role data never mixes.
-- **Required states:** passenger-owned order; driver viewing an order (offer);
-  passenger reviewing a driver's offer (select); empty/missing order; loading.
+- **Required states:** passenger **P1** own-order-created · **P2** has-offers ·
+  **P3** driver-selected · **P4 terminal (отменён / истёк)**; driver **D1**
+  available · **D2** offer-sent · **D3** accepted/assigned · **D4
+  locked/unavailable** (заказ принят / пассажир выбрал другого / отменён / истёк);
+  plus missing-order fallback and loading. **Forbidden CTAs must stay hidden in the
+  terminal/locked states** (`order_detail.js` resolveState `P4`/`D4`; contract
+  `screen-contracts.md` P1–P4 / D1–D4).
 - **Required UI:** route + price + ETA summary; role-specific primary action block;
   inert report CTA (`data-action="report-order"`) styled but not rerouted.
 - **Buttons/actions:** driver open-active-ride → `/active-ride?role=driver&tripId=…`
@@ -226,7 +238,9 @@ stay out of scope (future notes only).
 - **Goal:** Render gate for the shipped post-detail gate that owns the primary-action
   decision (respond / chat / own-post / accept-order).
 - **Required states:** request (passenger ask), offer (driver/marketplace), own post,
-  marketplace item; each with its correct primary CTA.
+  marketplace item, **and the no-primary fallback for announcement / system posts**
+  (`primaryActionSpec` → `kind:'none'`, no CTA) — each with its correct (or absent)
+  primary CTA.
 - **Required UI:** post header/body; author row; primary-action block keyed to
   kind/ownership; secondary nav.
 - **Buttons/actions:** respond → `/respond?postId=…`; chat handoff where defined;
@@ -244,7 +258,7 @@ stay out of scope (future notes only).
 
 ```text
 Recommended next screen slice:
-BD-SETTINGS-01 documentation sync — add the registry screens[] entry +
+BD-SETTINGS-01 documentation sync — add the registry runtimeOnly (contract-only) entry +
 screen-contracts.md#bd-settings-01, and correct the "unshipped/inert" claims in
 screen-contracts.md (L177) and missing-screens.md. Docs-only; closes issue #539.
 
