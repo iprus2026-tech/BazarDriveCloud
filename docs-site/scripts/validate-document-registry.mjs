@@ -54,6 +54,11 @@ const REQUIRED = [
   'reason',
 ];
 
+// Free-text fields that must be strings. `isEmpty` treats a non-empty
+// array/object as "present", so without an explicit type check a value like
+// owner: ["docs"] would pass the required-field gate while being malformed.
+const STRING_FIELDS = ['title', 'owner', 'sourceOfTruth', 'reason'];
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Directories never scanned for legacy documents.
@@ -93,6 +98,7 @@ function validateRegistry(registry, legacySet) {
   }
 
   const seenIds = new Map();
+  const seenPaths = new Map();
   const paths = [];
 
   registry.forEach((entry, i) => {
@@ -126,16 +132,36 @@ function validateRegistry(registry, legacySet) {
       }
     }
 
-    // path: string, exists, and is inside the legacy document set. Existence
-    // alone is not enough — a path like docs-site/docs/index.md or
+    // Free-text fields must actually be strings (see STRING_FIELDS note).
+    for (const field of STRING_FIELDS) {
+      if (
+        entry[field] !== undefined &&
+        entry[field] !== null &&
+        typeof entry[field] !== 'string'
+      ) {
+        errors.push(`${at}: ${field} must be a string, got ${typeof entry[field]}`);
+      }
+    }
+
+    // path: string, unique, exists, and inside the legacy document set.
+    // Existence alone is not enough — a path like docs-site/docs/index.md or
     // public/src/app.js exists but is outside the README/ROADMAP + docs/**.md|json
-    // universe this registry is meant to account for.
+    // universe this registry is meant to account for. Duplicate paths must fail
+    // too: otherwise two entries collapse to one registered file with
+    // conflicting owners/statuses while another legacy file stays unaccounted.
     if (entry.path !== undefined && entry.path !== null) {
       if (typeof entry.path !== 'string') {
         errors.push(`${at}: path must be a string`);
       } else {
         paths.push(entry.path);
         const norm = entry.path.replace(/\\/g, '/');
+        if (seenPaths.has(norm)) {
+          errors.push(
+            `${at}: duplicate path "${entry.path}" — already used by entry[${seenPaths.get(norm)}]`,
+          );
+        } else {
+          seenPaths.set(norm, i);
+        }
         const abs = join(REPO_ROOT, entry.path);
         if (!existsSync(abs)) {
           errors.push(`${at}: path "${entry.path}" does not exist in the repo`);
