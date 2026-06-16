@@ -214,6 +214,96 @@ node scripts/dispatcher.mjs
 ```
 If a script is missing, report that clearly instead of inventing a result.
 
+## Mini-Yonder documentation governance
+
+The `docs-site/` Docusaurus layer is governed by Mini-Yonder (added in
+BD-DOCS-SITE-01/02/03). It has two validators, wired into `docs-site` `npm run
+check` and the `docs-site-ci` workflow:
+
+- `docs-site/scripts/validate-frontmatter.mjs` (`npm run validate:frontmatter`)
+  — enforces the metadata-passport frontmatter on `docs-site/docs/**/*.{md,mdx}`.
+- `docs-site/scripts/validate-document-registry.mjs` (`npm run validate:registry`)
+  — strictly validates `docs-site/governance/document-registry.json` and
+  warns (`UNACCOUNTED_DOCUMENT`, warn-only today) about legacy docs not yet
+  registered.
+
+Do not change validator logic or the registry in a docs-content task — that is
+a separate, explicitly-scoped change.
+
+### A. Docs-site documents
+
+If a PR touches `docs-site/docs/**/*.md` or `docs-site/docs/**/*.mdx`, Claude
+Code must run:
+
+```
+cd docs-site
+npm run validate:frontmatter
+npm run check
+```
+
+and must confirm every new/changed document carries a valid **BD passport**
+(frontmatter `id` starting with `BD-`, plus the required `docType`, `title`,
+`owner`, `status`, `revision`, `effectiveFrom`, `visibleFor`, `tags`).
+
+### B. Legacy documents
+
+If a PR touches `README.md`, `ROADMAP.md`, `docs/**/*.md`, or `docs/**/*.json`,
+Claude Code must run:
+
+```
+cd docs-site
+npm run validate:registry
+```
+
+and must report:
+
+- the registered legacy docs count,
+- the `UNACCOUNTED_DOCUMENT` count (and list), and
+- an explanation if a newly added/changed legacy doc is left unaccounted
+  (warn-only is acceptable for now, but the choice must be stated).
+
+### C. Documentation PR checks
+
+If a PR touches `docs-site/`, `README.md`, `ROADMAP.md`, or `docs/**`, run the
+full sequence:
+
+```
+cd docs-site
+npm run validate:frontmatter
+npm run validate:registry
+npm run check
+npm run build
+cd ..
+node scripts/check.mjs
+node scripts/dispatcher.mjs
+```
+
+### D. Runtime PR docs impact
+
+If a PR touches `public/**` or `scripts/**/*.mjs`, the report must state:
+
+- docs impact checked: yes/no,
+- related docs updated: yes/no,
+- if docs were not updated, why.
+
+### E. Merge gate
+
+Do not merge a documentation PR if any of these is true:
+
+- docs-site validation fails (`validate:frontmatter`),
+- registry structural validation fails (`validate:registry`),
+- CI is not green,
+- Codex has unresolved P0/P1/P2 findings,
+- active (non-outdated, unresolved) review threads remain.
+
+### F. Review threads
+
+Resolve a review thread only after:
+
+- the fix is present in the diff,
+- the relevant negative/positive checks pass, and
+- the user has allowed resolving / merging.
+
 ## Working style
 - Keep changes small.
 - Audit first when unsure.
