@@ -173,8 +173,9 @@ Out of scope:
 
 **DONE (BD-SETTINGS-01).** Settings shipped and wired (issue #539 closed). The
 `/settings` route is registered in `public/src/app.js`, `public/src/screens/settings.js`
-implements the shared role-aware shell, the passenger gear `#pfp-settings-btn` and the
-driver gear `#pf2-gear` both `go('/settings')` (driver security pane still reachable via
+implements the shared role-aware shell, the passenger gear `#pfp-settings-btn` →
+`go('/settings')` and the driver gear `#pf2-gear` → `go('/settings?role=driver')`
+(driver security pane still reachable via
 its `pf2-tab[data-pane="security"]` tab), the file is precached in `public/sw.js`, and
 `scripts/smoke-settings.mjs` pins route + entry wiring + UI-only boundaries. The full
 contract lives at `screen-contracts.md#bd-settings-01` and the screen is registered in
