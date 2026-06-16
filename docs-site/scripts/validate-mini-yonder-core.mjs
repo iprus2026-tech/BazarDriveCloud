@@ -61,6 +61,18 @@ function manifestRel() {
   return relative(REPO_ROOT, MANIFEST_PATH).split(sep).join('/');
 }
 
+// Canonical repo-relative path: resolves `.`/`..` and POSIX-normalizes it.
+// Returns null when the path escapes the repository root. Uniqueness,
+// generated/ignored prefix checks and self-entry detection all compare on this
+// canonical form, so two spellings of one file collide and a path such as
+// `docs-site/../docs-site/node_modules/x` cannot slip past the prefixes.
+function canonRel(p) {
+  if (typeof p !== 'string') return null;
+  const rel = relative(REPO_ROOT, resolve(REPO_ROOT, p));
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return toPosix(rel);
+}
+
 function validate(manifest) {
   const errors = [];
 
@@ -83,10 +95,24 @@ function validate(manifest) {
   const generated = isStringArray(manifest.generatedPaths)
     ? manifest.generatedPaths.map(toPosix)
     : [];
+  const ignored = isStringArray(manifest.ignoredPaths)
+    ? manifest.ignoredPaths.map(toPosix)
+    : [];
+  // Generated build output AND ignored repo artifacts (.git/, node_modules/, …)
+  // must never be inventoried as a core file.
+  const forbiddenPrefixes = [
+    ...generated.map((g) => ['generated', g]),
+    ...ignored.map((g) => ['ignored', g]),
+  ];
 
-  // coreFiles: array.
+  // coreFiles: a NON-EMPTY array. An empty inventory would exit 0 while
+  // silently protecting nothing — that defeats the whole validator.
   if (!Array.isArray(manifest.coreFiles)) {
     errors.push('mini-yonder-core.json: coreFiles must be an array');
+    return errors;
+  }
+  if (manifest.coreFiles.length === 0) {
+    errors.push('mini-yonder-core.json: coreFiles must inventory at least one core file (empty inventory disables the guard)');
     return errors;
   }
 
@@ -126,32 +152,36 @@ function validate(manifest) {
       }
     }
 
-    // path: string, unique, a real file inside the repo, and not generated.
+    // path: string, unique, a real file inside the repo, and not
+    // generated/ignored. All comparisons use the canonical repo-relative path.
     if (entry.path !== undefined && entry.path !== null) {
       if (typeof entry.path !== 'string') {
         errors.push(`${at}: path must be a string`);
       } else {
-        const norm = toPosix(entry.path);
-        if (seenPaths.has(norm)) {
-          errors.push(`${at}: duplicate path "${entry.path}" — already used by coreFiles[${seenPaths.get(norm)}]`);
-        } else {
-          seenPaths.set(norm, i);
-        }
-        // Resolve and confirm the target stays inside the repo and is a file —
-        // existence alone would accept ../../escapes or a directory.
-        const abs = resolve(REPO_ROOT, entry.path);
-        const relToRepo = relative(REPO_ROOT, abs);
-        if (relToRepo === '' || relToRepo.startsWith('..') || isAbsolute(relToRepo)) {
+        const canon = canonRel(entry.path);
+        if (canon === null) {
+          // Escapes the repo root (../.. or absolute) — never a core file.
           errors.push(`${at}: path "${entry.path}" escapes the repository root`);
-        } else if (!existsSync(abs)) {
-          errors.push(`${at}: path "${entry.path}" does not exist in the repo`);
-        } else if (!statSync(abs).isFile()) {
-          errors.push(`${at}: path "${entry.path}" is not a file`);
-        }
-        // Self-reference guard: generated output must never be a core file.
-        const gen = generated.find((g) => norm === g || norm.startsWith(g));
-        if (gen) {
-          errors.push(`${at}: path "${entry.path}" is a generated path ("${gen}") and must not be a core file`);
+        } else {
+          // Uniqueness on the canonical path, so two spellings of the same file
+          // collide instead of both being accepted.
+          if (seenPaths.has(canon)) {
+            errors.push(`${at}: duplicate path "${entry.path}" — already used by coreFiles[${seenPaths.get(canon)}]`);
+          } else {
+            seenPaths.set(canon, i);
+          }
+          const abs = resolve(REPO_ROOT, entry.path);
+          if (!existsSync(abs)) {
+            errors.push(`${at}: path "${entry.path}" does not exist in the repo`);
+          } else if (!statSync(abs).isFile()) {
+            errors.push(`${at}: path "${entry.path}" is not a file`);
+          }
+          // Self-reference guard: generated output AND ignored artifacts must
+          // never be a core file (compared on the canonical path).
+          const hit = forbiddenPrefixes.find(([, prefix]) => canon === prefix || canon.startsWith(prefix));
+          if (hit) {
+            errors.push(`${at}: path "${entry.path}" is a ${hit[0]} path ("${hit[1]}") and must not be a core file`);
+          }
         }
       }
     }
@@ -188,13 +218,13 @@ function validate(manifest) {
   // the "may list itself only once as core-manifest" contract.
   const manifestPath = manifestRel();
   const selfEntry = manifest.coreFiles.find(
-    (e) => e && typeof e.path === 'string' && toPosix(e.path) === manifestPath,
+    (e) => e && canonRel(e.path) === manifestPath,
   );
   if (selfEntry && selfEntry.kind !== 'core-manifest') {
     errors.push(`coreFiles: the manifest's own entry ("${manifestPath}") must have kind "core-manifest"`);
   }
   manifest.coreFiles.forEach((e, i) => {
-    if (e && e.kind === 'core-manifest' && (typeof e.path !== 'string' || toPosix(e.path) !== manifestPath)) {
+    if (e && e.kind === 'core-manifest' && canonRel(e.path) !== manifestPath) {
       errors.push(`coreFiles[${i}]: only "${manifestPath}" may have kind "core-manifest" (got "${e && e.path}")`);
     }
   });
