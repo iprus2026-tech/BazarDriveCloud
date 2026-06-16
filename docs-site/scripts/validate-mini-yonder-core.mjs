@@ -16,8 +16,8 @@
 //
 // Standard: docs-site/docs/governance/mini-yonder-self-inventory.md.
 
-import { readFileSync, existsSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, relative, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = fileURLToPath(new URL('.', import.meta.url));
@@ -126,7 +126,7 @@ function validate(manifest) {
       }
     }
 
-    // path: string, unique, exists, and not a generated path.
+    // path: string, unique, a real file inside the repo, and not generated.
     if (entry.path !== undefined && entry.path !== null) {
       if (typeof entry.path !== 'string') {
         errors.push(`${at}: path must be a string`);
@@ -137,8 +137,16 @@ function validate(manifest) {
         } else {
           seenPaths.set(norm, i);
         }
-        if (!existsSync(join(REPO_ROOT, entry.path))) {
+        // Resolve and confirm the target stays inside the repo and is a file —
+        // existence alone would accept ../../escapes or a directory.
+        const abs = resolve(REPO_ROOT, entry.path);
+        const relToRepo = relative(REPO_ROOT, abs);
+        if (relToRepo === '' || relToRepo.startsWith('..') || isAbsolute(relToRepo)) {
+          errors.push(`${at}: path "${entry.path}" escapes the repository root`);
+        } else if (!existsSync(abs)) {
           errors.push(`${at}: path "${entry.path}" does not exist in the repo`);
+        } else if (!statSync(abs).isFile()) {
+          errors.push(`${at}: path "${entry.path}" is not a file`);
         }
         // Self-reference guard: generated output must never be a core file.
         const gen = generated.find((g) => norm === g || norm.startsWith(g));
@@ -148,15 +156,20 @@ function validate(manifest) {
       }
     }
 
-    // kind / area / criticality.
-    if (isNonEmptyString(entry.kind) && !KINDS.includes(entry.kind)) {
-      errors.push(`${at}: kind "${entry.kind}" is not one of ${KINDS.join(', ')}`);
+    // kind / area / criticality. A truthy non-string (e.g. ["validator"]) must
+    // be rejected too, not just unknown strings.
+    if (entry.kind !== undefined && entry.kind !== null) {
+      if (typeof entry.kind !== 'string' || !KINDS.includes(entry.kind)) {
+        errors.push(`${at}: kind "${entry.kind}" is not one of ${KINDS.join(', ')}`);
+      }
     }
     if (entry.area !== undefined && entry.area !== 'mini-yonder') {
       errors.push(`${at}: area must be "mini-yonder", got "${entry.area}"`);
     }
-    if (isNonEmptyString(entry.criticality) && !CRITICALITY.includes(entry.criticality)) {
-      errors.push(`${at}: criticality "${entry.criticality}" is not one of ${CRITICALITY.join(', ')}`);
+    if (entry.criticality !== undefined && entry.criticality !== null) {
+      if (typeof entry.criticality !== 'string' || !CRITICALITY.includes(entry.criticality)) {
+        errors.push(`${at}: criticality "${entry.criticality}" is not one of ${CRITICALITY.join(', ')}`);
+      }
     }
 
     // requires: array of non-empty strings.
@@ -167,6 +180,22 @@ function validate(manifest) {
     // reason: non-empty string.
     if (entry.reason !== undefined && entry.reason !== null && !isNonEmptyString(entry.reason)) {
       errors.push(`${at}: reason must be a non-empty string`);
+    }
+  });
+
+  // Bounded self-reference: the manifest's own entry, if present, must be
+  // kind core-manifest, and no other file may claim that kind. This enforces
+  // the "may list itself only once as core-manifest" contract.
+  const manifestPath = manifestRel();
+  const selfEntry = manifest.coreFiles.find(
+    (e) => e && typeof e.path === 'string' && toPosix(e.path) === manifestPath,
+  );
+  if (selfEntry && selfEntry.kind !== 'core-manifest') {
+    errors.push(`coreFiles: the manifest's own entry ("${manifestPath}") must have kind "core-manifest"`);
+  }
+  manifest.coreFiles.forEach((e, i) => {
+    if (e && e.kind === 'core-manifest' && (typeof e.path !== 'string' || toPosix(e.path) !== manifestPath)) {
+      errors.push(`coreFiles[${i}]: only "${manifestPath}" may have kind "core-manifest" (got "${e && e.path}")`);
     }
   });
 

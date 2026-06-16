@@ -161,6 +161,19 @@
       "reason": "Explains the legacy registry and the UNACCOUNTED_DOCUMENT warning."
     },
     {
+      "id": "BD-MY-CORE-016",
+      "path": "docs-site/docs/governance/mini-yonder-self-inventory.md",
+      "kind": "governance-doc",
+      "area": "mini-yonder",
+      "criticality": "medium",
+      "requires": [
+        "npm run validate:frontmatter",
+        "npm run validate:self",
+        "npm run check"
+      ],
+      "reason": "The self-inventory standard that validate-mini-yonder-core.mjs enforces."
+    },
+    {
       "id": "BD-MY-CORE-014",
       "path": ".github/workflows/docs-site-ci.yml",
       "kind": "workflow",
