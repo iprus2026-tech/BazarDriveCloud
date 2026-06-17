@@ -147,6 +147,19 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// BD-POST-01 — static regression smoke for the post-detail primary-action
+// resolver (pickCtaSpec kinds + runCtaAction per-kind routing). Audit #455
+// flagged this resolver had no behavioural pin.
+const postDetailCtaSmoke = path.join(root, 'scripts', 'smoke-post-detail-cta-resolver.mjs');
+if (exists(postDetailCtaSmoke)) {
+  try {
+    execFileSync(process.execPath, [postDetailCtaSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-post-detail-cta-resolver.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-WAITING-01 — static regression smoke for the driver waiting redesign.
 const waitingSmoke = path.join(root, 'scripts', 'smoke-active-ride-waiting.mjs');
 if (exists(waitingSmoke)) {
