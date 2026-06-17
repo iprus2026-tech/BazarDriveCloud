@@ -51,6 +51,7 @@ Start here:
 - [Legacy Docs Registry](governance/legacy-docs-registry.md) — how Mini-Yonder tracks docs not yet migrated, and flags unaccounted ones.
 - [Mini-Yonder Self Inventory](governance/mini-yonder-self-inventory.md) — how Mini-Yonder sees its own core files without a self-reference loop.
 - [Repository File Inventory](governance/repository-file-inventory.md) — how Mini-Yonder scans and classifies the whole repository tree (code/docs awareness), report-only.
+- [Mini-Yonder Background Services](governance/mini-yonder-background-services.md) — target multi-driver dispatch architecture (draft) + how it maps to the current backless PWA.
 
 Reusable scaffolds live in `docs/_templates/` (screen-contract, flow-contract,
 audit, decision-record, release-note, runbook); they are exempt from validation.
