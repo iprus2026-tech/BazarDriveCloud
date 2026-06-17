@@ -33,6 +33,7 @@ This site (`docs-site/`) is a **separate documentation shell** built with Docusa
 - **Project** — what BazarDriveCloud is.
 - **Contracts** — a pointer to the screen/flow contracts that govern shipped behaviour.
 - **Processes** — how Cloud Design exports become PRs, and how release notes work.
+- **Decisions** — architecture decision records (ADRs) for the target platform.
 - **Governance** — the Mini-Yonder model that governs this site.
 
 ## Mini-Yonder governance layer
