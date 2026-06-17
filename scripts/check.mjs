@@ -160,6 +160,19 @@ if (exists(postDetailCtaSmoke)) {
   }
 }
 
+// BD-MAP-01 / BD-MAP-02 — static regression smoke for the /map and
+// /location-permission branch destinations. Audit #455 flagged the map-flow
+// branches had no dedicated pin.
+const mapFlowSmoke = path.join(root, 'scripts', 'smoke-map-flow-branches.mjs');
+if (exists(mapFlowSmoke)) {
+  try {
+    execFileSync(process.execPath, [mapFlowSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-map-flow-branches.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-WAITING-01 — static regression smoke for the driver waiting redesign.
 const waitingSmoke = path.join(root, 'scripts', 'smoke-active-ride-waiting.mjs');
 if (exists(waitingSmoke)) {
