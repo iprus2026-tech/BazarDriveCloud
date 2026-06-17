@@ -148,12 +148,13 @@
       "title": "Driver No-show flow",
       "route": "/active-ride?role=driver&status=NO_SHOW",
       "file": "public/src/screens/active_ride.js",
+      "additionalFiles": ["public/src/screens/active_ride_driver_noshow.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "future-design",
       "section": "Active Ride",
       "role": "driver",
       "status": "NO_SHOW",
-      "note": "Cloud Design render gate contains seven no-show states: waiting, expired, action, confirm, result, compensation, done. Runtime support is not wired yet: the current driver route only renders the terminal NO_SHOW/canceled stub. Compensation values 180 / 120 / 276 ₽ are mock placeholders and must be confirmed with product/finance before code wiring.",
+      "note": "Split ownership: active_ride.js owns the waiting/expired entry states + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). Still future-design: the render gate has 7 states — waiting + expired are gate-only and not yet wired. Compensation values 180 / 120 / 276 ₽ are mock placeholders and must be confirmed with product/finance before further wiring.",
       "interaction": "design-render-only"
     },
     {
@@ -197,40 +198,46 @@
       "title": "Driver Safety",
       "route": "/active-ride?role=driver",
       "file": "public/src/screens/active_ride.js",
+      "additionalFiles": ["public/src/screens/active_ride_driver_sheets.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "render-gate",
       "section": "Safety",
       "interaction": "manual-interaction",
-      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride. Sheet UI lives in active_ride_driver_sheets.js (openDriverSafetySheet), mounted by active_ride.js."
     },
     {
       "id": "BD-RIDE-P-SAFETY-01",
       "title": "Passenger Safety",
       "route": "/active-ride?role=passenger",
       "file": "public/src/screens/active_ride_passenger.js",
+      "additionalFiles": ["public/src/screens/active_ride_passenger_sheets.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "render-gate",
       "section": "Safety",
       "interaction": "manual-interaction",
-      "note": "No query route renders the safety sheet; open it via the shield control inside active ride."
+      "note": "No query route renders the safety sheet; open it via the shield control inside active ride. Sheet UI lives in active_ride_passenger_sheets.js (BD-RIDE-P-07 openPassengerSafetySheet), mounted by active_ride_passenger.js."
     },
     {
       "id": "BD-RIDE-D-CANCEL-01",
       "title": "Driver Cancel",
       "route": "/active-ride?role=driver&status=CANCELED",
       "file": "public/src/screens/active_ride.js",
+      "additionalFiles": ["public/src/screens/active_ride_driver_sheets.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "render-gate",
-      "section": "Cancel"
+      "section": "Cancel",
+      "note": "Cancel sheet UI lives in active_ride_driver_sheets.js (openDriverCancelSheet); CANCELED persistence + canonical ride-order sync stay in active_ride.js."
     },
     {
       "id": "BD-RIDE-P-CANCEL-01",
       "title": "Passenger Cancel",
       "route": "/active-ride?role=passenger&status=CANCELED",
       "file": "public/src/screens/active_ride_passenger.js",
+      "additionalFiles": ["public/src/screens/active_ride_passenger_sheets.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "render-gate",
-      "section": "Cancel"
+      "section": "Cancel",
+      "note": "Cancel sheet UI lives in active_ride_passenger_sheets.js (BD-RIDE-P-06 openPassengerCancelSheet); CANCELED persistence + canonical ride-order sync stay in active_ride_passenger.js."
     },
     {
       "id": "BD-RIDE-D-COMPLETE-01",
