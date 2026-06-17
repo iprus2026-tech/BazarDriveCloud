@@ -157,6 +157,58 @@ Legend: ✅ shipped (real client-side equivalent) · ◐ placeholder / mock / st
 | 8. History & Receipt | **Shipped** — `bazardrive.ride_history.v1` + the canonical receipt (`public/src/screens/trip_receipt.js`, BD-RIDE-HISTORY-D-01) + the profile calendar history. | ✅ |
 | 9. Monitoring & Audit | Today this is **build/CI-time**, not runtime: `scripts/check.mjs`, `scripts/dispatcher.mjs`, and the Mini-Yonder docs-site validators. No live ops dashboard. | ◐ |
 
+## From one car to a fleet (growth path)
+
+> **Target / planning only (🔮).** This section is the intended evolution, not a
+> shipped roadmap commitment. Today the repo sits at **Phase 0** (see
+> [Current state today](#current-state-today)); only services #5 and #8 ship for
+> real. Each phase below promotes one or more ◐ / 🔮 services and would be its own
+> explicitly-scoped change.
+
+### Why it is "one car" today
+
+A bigger UI does not make a fleet. The single-car ceiling comes from three
+missing pieces, not from the screens:
+
+1. **No shared source of truth** — every client reads its own `localStorage`
+   (`ride_orders.v1`, `driver_offers.v1`, `active_ride.v1`, `ride_history.v1`).
+   Vehicles cannot see each other.
+2. **No broadcast** — an order is not dispatched; a driver "sees" it only because
+   they read the same store, not because it was routed to them.
+3. **No presence** — there is no live online / free / busy signal per vehicle
+   (only a local `driverOnline` flag).
+
+Until those exist, N drawn cars are N isolated copies of the prototype, not a
+fleet.
+
+### Phases — each removes one single-car limitation
+
+| Phase | Single-car limit removed | Key transition | Services |
+|---|---|---|---|
+| 1 | Isolated `localStorage` | `mock_api.js` becomes an API client; stores move to a shared DB | Data layer |
+| 2 | No presence | Local `driverOnline` → heartbeat; `isDriverLineReady()` becomes a live shift/compliance status | #2 |
+| 3 | No broadcast | Dispatcher queues + broadcasts; Matching ranks (distance, ETA, rating, vehicle class) and assigns | #1, #3 |
+| 4 | Mock map / price | Mapbox stub (`public/src/mapbox/*`) → real route / ETA / price | #4 |
+| 5 | No network events | `/inbox` permission prompt → real-time push / Telegram / SMS to many | #6 |
+| 6 | Trust "on trust" | In-ride safety UI → fraud / no-show / compliance backend | #7 |
+| 7 | Build-time monitoring only | `check.mjs` / `dispatcher.mjs` → runtime ops dashboard (fleet view) | #9 |
+
+### Anchors that survive the growth
+
+Two contracts are designed to scale from 1 vehicle to many **without changing
+meaning** — they are the load-bearing points the rest grows around:
+
+- ✅ **#5 Ride State Machine** — `RIDE_STATUS` with terminal-status freeze: the
+  same canon for one car or ten thousand. Phase 1 moves it from client to server
+  as the authority, but the enum and transitions do not change.
+- ✅ **#8 History & Receipt** — `ride_history.v1` + the canonical receipt: the
+  record-a-ride contract does not depend on fleet size.
+
+**In one line:** a fleet grows from a **coordinator server**, not from more cars
+in the UI — shared source of truth (Phase 1) + presence (Phase 2) +
+dispatcher/matching (Phase 3) turn N isolated prototypes into one managed fleet;
+later phases make it fast, trustworthy and observable.
+
 ## Out of scope / future work
 
 This page is a **planning reference**, not a record of shipped behavior. None of
