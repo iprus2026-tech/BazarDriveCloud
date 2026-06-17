@@ -33,6 +33,7 @@ const sidebars = {
         'governance/BD-DOCS-020',
         'governance/BD-DOCS-021',
         'governance/BD-DOCS-022',
+        'governance/BD-DOCS-023',
       ],
     },
   ],
