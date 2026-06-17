@@ -24,6 +24,11 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Decisions',
+      items: ['decisions/BD-DOCS-030'],
+    },
+    {
+      type: 'category',
       label: 'Governance',
       items: [
         'governance/BD-DOCS-010',
