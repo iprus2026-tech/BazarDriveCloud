@@ -59,13 +59,14 @@ server (client today).
 | `bazardrive.ride_orders.v1` | `mock_api.js` | **orders** | S |
 | `bazardrive.respond.v1`, `bazardrive.responses.v1` | `respond.js`, `responses.js`, `chat.js` | **responses** | S |
 | `bazardrive.driver_offers.v1` | `driver_offer_store.js` | **offers** | S |
-| `bazardrive.order_overlay.v1` ⚠ *(not in `storage_boundary.js`)* | `driver_offer_store.js` | **assignment** (selected driver / `Order.status=ACCEPTED`) | S |
+| `bazardrive.order_overlay.v1` ⚠ *(not in `storage_boundary.js`)* | `driver_offer_store.js` | **assignment** (selected driver / `ACCEPTED` **and** cancellation: `CANCELED`, `canceledBy`, `canceledAt`) | S |
 | `bazardrive.active_ride.v1` | `ride_state.js` (+ `ride_actions.js`, `driver_offer_store.js`, `trip_confirmation_handoff.js`, `active_ride.js`, `order_detail.js`) | **rides** (status via `RIDE_STATUS`) | S |
-| `bazardrive.trip_confirmation.v1`, `bazardrive.driver_handoff_snapshot.v1` | `chat.js`, `trip_confirmation_handoff.js`, `driver_handoff_snapshot.js` | **ride_events** (confirmation / handoff timeline) | S |
+| `bazardrive.trip_confirmation.v1`, `bazardrive.driver_handoff_snapshot.v1` | `chat.js`, `trip_confirmation.js` (`TRIP_CONFIRM_KEY`), `trip_confirmation_handoff.js`, `driver_handoff_snapshot.js` | **ride_events** (confirmation / handoff timeline) | S |
 | `bazardrive.chat.v1` | `chat.js`, `active_ride.js` | **messages** | S |
 | `bazardrive.driver_receipts.v1` | `mock_api.js` | **receipts** | S |
 | `bazardrive.ride_history.v1` | `ride_history.js` | **ride history** (derivable from rides + events) | S |
-| `bazardrive.favorite_routes.v1`, `bazardrive.favorite_route_notice.v1`, `bazardrive.repeat_route.v1` | `favorite_routes.js`, `repeat_route.js` | **favorites / saved routes** | S? |
+| `bazardrive.favorite_routes.v1` | `favorite_routes.js` | **favorites / saved routes** (durable) | S? |
+| `bazardrive.favorite_route_notice.v1`, `bazardrive.repeat_route.v1` | `favorite_routes.js`, `repeat_route.js` | *(one-time navigation handoff — read-and-clear banner / prefill; must NOT sync)* | C |
 | `bazardrive.draft.v2`, `bazardrive.order_form.v1`, `bazardrive.route_draft.v1` | `composer.js`, `route_picker.js`, `order_map_draft.js` | *(composer / route drafts)* | C |
 | `bazardrive.map_prefs.v1` | `mapbox_state.js` | *(map UI prefs)* | C |
 | `bazardrive.smoke_role.v1` | `smoke_role.js` | *(test harness)* | C (dev) |
@@ -80,11 +81,17 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
   be split out.
 - **orders** — `id`, `passengerId`, route (from/to), price estimate, `createdAt`,
   lifecycle pointer.
-- **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`
-  (driver-offer / marketplace), payload, `createdAt`.
+- **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`, payload,
+  `createdAt`. **`kind` must keep the persisted literals** written today by
+  `/respond` — `'passenger_response'` (ride response) and `'marketplace_message'`
+  (marketplace) — since `/responses` filters ride offers by `'passenger_response'`;
+  renaming them would break existing readers / imported rows.
 - **offers** — `id`, `orderId`, `driverId`, `vehicleId`, terms, `state`.
-- **assignment** — `orderId`, `selectedDriverId`, `acceptedAt` (the
-  `order_overlay.v1` surface; makes acceptance shared, not per-browser).
+- **assignment** — `orderId`, `selectedDriverId`, `acceptedAt`, **and the
+  cancellation fields** the overlay also records: `status` (`ACCEPTED` /
+  `CANCELED`), `canceledBy` (`passenger` / `driver`), `canceledAt` — order-detail
+  views rely on the actor + terminal status. (The `order_overlay.v1` surface;
+  makes both acceptance and cancellation shared, not per-browser.)
 - **rides** — `id`, `orderId`, `driverId`, `vehicleId`, **`status` ∈ `RIDE_STATUS`**
   with the terminal-status freeze (canon carries over from
   `public/src/ride_state.js`, unchanged).
