@@ -147,6 +147,47 @@ The following checks still require real manual browser/device smoke, preferably 
 - Keep #261 open until real mobile/GitHub Pages smoke results are appended.
 - Do not close #261 based only on this static audit.
 
+## Result — headless smoke (2026-06-17)
+
+Date: 2026-06-17
+Device/browser: **headless Chrome (desktop)** — `--headless=new --window-size=430,920 --force-device-scale-factor=1`, against a local static server serving `public/`. **Not a real Android device** (desktop headless; mobile safe-area still device-pending — see below).
+Build/source: local `main` @ `bc1f1b6` (current HEAD, many merges after the 2026-05-28 static pass).
+
+Method: a throwaway harness seeded `localStorage` with a fixture user + a `bazardrive.ride_history.v1` set of **5 records** — 3 valid across 2 local days, **1 with no `completedAt`**, and **1 with a malformed `completedAt`** — then mounted the real screen modules (`profile.js`, `active_ride.js`, `feed.js`) and captured rendered DOM markers + screenshots. Harness + temp server removed after the run (`git status` clean; no runtime/precache change).
+
+### Passed — live render on current main
+
+- `/profile?role=driver` and `/profile?role=passenger` both render **without crash** (harness reported `SMOKE_OK`, `#app` populated).
+- Profile history is the **compact calendar** (`profile-history-calendar` present; ~101 day cells rendered across months), not a long inline list.
+- **Latest ride summary visible** with seeded data — passenger summary rendered `1 поездка · 1 540 ₽ потрачено`.
+- **Driver income/earnings wording** present (`Заработок` / `Доход`; dashboard «18 420 ₽ За неделю»). **Passenger cost wording** present (`Стоимость` / «… ₽ потрачено»). Role isolation holds (driver-earnings tokens absent from the passenger view).
+- **Defensive data:** with the no-`completedAt` and malformed-`completedAt` records in history, Profile still rendered `SMOKE_OK` — `getRideCompletedAt()` null-skips bad records (live confirmation of the calendar's "one bad record can't crash" guard).
+- `/active-ride?role=driver&status=COMPLETED` and `/active-ride?role=passenger&status=COMPLETED` render **without crash** (completed summary markers present).
+- `/feed` renders **without crash**.
+
+### Re-verified on current main (code + CI)
+
+- `historySectionHtml()` → `groupRidesByDate()` / `getRideCompletedAt()` / `getLocalDateKey()` still drive the date-keyed compact calendar + selected-day list + malformed-storage recovery card.
+- Completed ActiveRide still seeds/reads history via `buildDriverHistoryEntry` / `buildPassengerHistoryEntry` + `saveRideHistoryEntry` (`bazardrive.ride_history.v1`).
+- Existing pins green: `smoke-passenger-active-ride`, `smoke-ride-history-terminal`, `smoke-profile-history-menu`, `smoke-driver-receipt-no-drift` — all via `node scripts/check.mjs` (All checks passed; `node scripts/dispatcher.mjs` 56/56, Drift CLEAN).
+
+### Not verified here (device-only)
+
+- **Bottom safe-area / tabbar not hiding selected-day content on real Android Chrome** — headless desktop cannot faithfully reproduce mobile safe-area insets. This remains the only residual check; it is a low-risk CSS concern (`viewport-fit=cover` + safe-area padding already shipped).
+- Live finger-tap day selection and the empty-month visual state were not interactively clicked (the calendar + selection handler + empty branch are code-verified, and the default selected-day rows rendered with seeded data).
+
+### Regressions found
+
+- **None.** All functional checks pass live on current `main`; no crash on any of the 5 smoke routes; defensive records handled.
+
+### Follow-up issues opened
+
+- None.
+
+### Decision
+
+- **Recommend closing #261.** The calendar history and nearby ride-completion surfaces are verified non-regressed on current `main` by live headless render + code + CI. The single residual (Android safe-area) is device-specific, low-risk, and already addressed by shipped `viewport-fit`/safe-area CSS — a maintainer may keep #261 open if a real-device pass is still required before closing.
+
 ## Agent handoff prompt
 
 ```text
