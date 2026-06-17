@@ -14,7 +14,9 @@ related:
   files:
     - public/src/storage_boundary.js
     - public/src/mock_api.js
+    - public/src/driver_offer_store.js
     - public/src/ride_state.js
+    - public/src/ride_history.js
   issues: []
   prs: []
 tags: [decision-record, adr, architecture, data-layer, target]
@@ -36,10 +38,13 @@ The growth path in BD-DOCS-023 names **Phase 1 — shared source of truth** as t
 foundation every later phase (presence, dispatch, matching) depends on. The
 single-car ceiling is not a UI limit; it comes from how data lives today:
 
-- All ride state persists to **per-client `localStorage`**. The known keys are
-  enumerated in `public/src/storage_boundary.js` (e.g. `bazardrive.ride_orders.v1`,
-  `bazardrive.driver_offers.v1`, `bazardrive.active_ride.v1`,
-  `bazardrive.ride_history.v1`), read/written through `public/src/mock_api.js`.
+- All ride state persists to **per-client `localStorage`**. `public/src/storage_boundary.js`
+  enumerates the known keys, but they are **owned by several modules**, not one:
+  - `bazardrive.ride_orders.v1`, `bazardrive.posts.v1`, `bazardrive.driver_receipts.v1`
+    → `public/src/mock_api.js`
+  - `bazardrive.driver_offers.v1` → `public/src/driver_offer_store.js`
+  - `bazardrive.active_ride.v1` → `public/src/ride_state.js`
+  - `bazardrive.ride_history.v1` → `public/src/ride_history.js`
 - Because each device owns its own copy, **two clients cannot see the same
   order**. There is no authority, no broadcast, no presence.
 
@@ -59,13 +64,18 @@ Forces at play:
 Introduce a **backend with a shared database as the single source of truth**,
 and turn the client into a consumer of it:
 
-1. **`mock_api.js` becomes an API client.** Its function surface (create order,
-   list orders, post offer, advance ride, read history) is preserved; the
-   implementation moves from `localStorage` reads/writes to network calls.
-2. **`storage_boundary.js` is the migration seam.** Each enumerated store maps to
-   a server-owned entity (orders, responses/offers, active ride, ride events,
-   history). The boundary file stays the single inventory of what is persisted,
-   gaining a "client cache vs server-owned" column.
+1. **Every owning module becomes an API client (behind one persistence facade).**
+   The seam is **not** `mock_api.js` alone — each store's owner migrates from
+   `localStorage` reads/writes to network calls, preserving its function surface:
+   `mock_api.js` (orders/posts/receipts), `driver_offer_store.js` (offers),
+   `ride_state.js` (active ride), `ride_history.js` (history). Introducing a
+   single persistence facade these modules call is the recommended way to avoid
+   leaving any store localStorage-backed.
+2. **`storage_boundary.js` is the migration inventory, not the write path.** It
+   stays the single enumeration of what is persisted — gaining a "client cache vs
+   server-owned" column — and is the checklist that every key in it has an owning
+   module migrated. Each store maps to a server-owned entity (orders,
+   responses/offers, active ride, ride events, history).
 3. **The ride state machine stays the canon.** `RIDE_STATUS` and its transitions
    move from client-authority to **server-authority** unchanged — same enum,
    same terminal freeze. History/receipt records keep their shape.
