@@ -153,7 +153,7 @@ Date: 2026-06-17
 Device/browser: **headless Chrome (desktop)** — `--headless=new --window-size=430,920 --force-device-scale-factor=1`, against a local static server serving `public/`. **Not a real Android device** (desktop headless; mobile safe-area still device-pending — see below).
 Build/source: local `main` @ `bc1f1b6` (current HEAD, many merges after the 2026-05-28 static pass).
 
-Method: a throwaway harness seeded `localStorage` with a fixture user + a `bazardrive.ride_history.v1` set of **5 records** — 3 valid across 2 local days, **1 with no `completedAt`**, and **1 with a malformed `completedAt`** — then mounted the real screen modules (`profile.js`, `active_ride.js`, `feed.js`) and captured rendered DOM markers + screenshots. Harness + temp server removed after the run (`git status` clean; no runtime/precache change).
+Method: a throwaway harness seeded `localStorage` then **mounted the real screen modules** (`profile.js`, `active_ride.js`, `feed.js`) into a `#shell>#app` mirror of `index.html` and read rendered DOM markers. The app router is **hash-based** (`public/src/router.js` reads `location.hash`), so the routes below are exercised at the screen/module level (and via the `#/active-ride?...` hash that `getHashQuery()` parses) — **not** by navigating bare path URLs. The history fixture used: **5 rides dated today** (to exercise the >3-per-day `«Все поездки за день»` show-all expander), **1 ride ~40 days ago** (previous-month boundary), **1 with no `completedAt`** and **1 with a malformed `completedAt`** (defensive). Harness + temp server removed after the run (`git status` clean; no runtime/precache change).
 
 ### Passed — live render on current main
 
@@ -161,8 +161,11 @@ Method: a throwaway harness seeded `localStorage` with a fixture user + a `bazar
 - Profile history is the **compact calendar** (`profile-history-calendar` present; ~101 day cells rendered across months), not a long inline list.
 - **Latest ride summary visible** with seeded data — passenger summary rendered `1 поездка · 1 540 ₽ потрачено`.
 - **Driver income/earnings wording** present (`Заработок` / `Доход`; dashboard «18 420 ₽ За неделю»). **Passenger cost wording** present (`Стоимость` / «… ₽ потрачено»). Role isolation holds (driver-earnings tokens absent from the passenger view).
+- **Multiple rides on one day → show-all expansion (live):** with 5 rides on the selected (today) day, the `«Все поездки за день»` expander (`data-cal-action="show-all"`) rendered, and clicking it grew the visible `data-history-index` rows (4 → 6) — the compact `slice(0,3)` cap and its expander both work.
+- **Month-boundary record:** the ~40-day-old (previous-month) ride was grouped by its local date alongside today's rides with no crash (`groupRidesByDate` keys by local completion date).
 - **Defensive data:** with the no-`completedAt` and malformed-`completedAt` records in history, Profile still rendered `SMOKE_OK` — `getRideCompletedAt()` null-skips bad records (live confirmation of the calendar's "one bad record can't crash" guard).
 - `/active-ride?role=driver&status=COMPLETED` and `/active-ride?role=passenger&status=COMPLETED` render **without crash** (completed summary markers present).
+- **ActiveRide write path proven (not just read):** starting from an **empty** `bazardrive.ride_history.v1`, mounting the completed driver and passenger ActiveRide each **persisted exactly one new history entry** (`historyWrittenFromEmpty = 1`) — `saveRideHistoryEntry` is actually called, not just read back from a pre-seeded store.
 - `/feed` renders **without crash**.
 
 ### Re-verified on current main (code + CI)
@@ -174,7 +177,7 @@ Method: a throwaway harness seeded `localStorage` with a fixture user + a `bazar
 ### Not verified here (device-only)
 
 - **Bottom safe-area / tabbar not hiding selected-day content on real Android Chrome** — headless desktop cannot faithfully reproduce mobile safe-area insets. This remains the only residual check; it is a low-risk CSS concern (`viewport-fit=cover` + safe-area padding already shipped).
-- Live finger-tap day selection and the empty-month visual state were not interactively clicked (the calendar + selection handler + empty branch are code-verified, and the default selected-day rows rendered with seeded data).
+- Tapping a **different** day cell to change `selectedKey`, and the **empty-month** visual state, were not interactively exercised (the show-all expander click was; the day-select handler + empty branch are code-verified, and the default selected-day rows rendered with seeded data).
 
 ### Regressions found
 
@@ -186,7 +189,7 @@ Method: a throwaway harness seeded `localStorage` with a fixture user + a `bazar
 
 ### Decision
 
-- **Recommend closing #261.** The calendar history and nearby ride-completion surfaces are verified non-regressed on current `main` by live headless render + code + CI. The single residual (Android safe-area) is device-specific, low-risk, and already addressed by shipped `viewport-fit`/safe-area CSS — a maintainer may keep #261 open if a real-device pass is still required before closing.
+- **Keep #261 open** until the one required device check is run. Everything functional is verified non-regressed on current `main` (live headless render + edge cases + write-path + code + CI), but the checklist's **real Android-Chrome bottom safe-area / tabbar** check is device-only and remains **unverified** here — desktop headless cannot reproduce mobile safe-area insets. Close #261 only after a real-device (or GitHub Pages on Android Chrome) pass appends a result, or a maintainer explicitly waives it as a low-risk CSS concern (`viewport-fit=cover` + safe-area padding already shipped).
 
 ## Agent handoff prompt
 
