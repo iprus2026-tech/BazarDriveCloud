@@ -1,0 +1,124 @@
+---
+id: BD-DOCS-031
+docType: process
+title: "Data Layer Contract — Target Schema (Phase 1 Design)"
+owner: docs-contract-agent
+status: draft
+revision: 2026-06-17
+effectiveFrom: 2026-06-17
+reviewAfter: 2026-12-17
+visibleFor: [developer, dispatcher, product]
+sourceOfTruth: docs-site
+related:
+  routes: []
+  files:
+    - public/src/storage_boundary.js
+    - public/src/mock_api.js
+    - public/src/driver_offer_store.js
+    - public/src/ride_state.js
+    - public/src/ride_history.js
+  issues: []
+  prs: []
+tags: [design, data-layer, architecture, target, phase-1]
+slug: /design/data-layer-contract
+---
+
+# Data Layer Contract — Target Schema (Phase 1 Design)
+
+> **Target / planning design — not implemented (`status: draft`).** This document
+> turns the *direction* decided in
+> [ADR BD-DOCS-030 — Shared Source of Truth](../decisions/shared-source-of-truth.md)
+> into a concrete **entity model**. BazarDrive **today** is a backless vanilla PWA
+> (`mock_api` + `localStorage`); no backend, schema, or API exists yet. Field
+> lists below are a **proposal**, not a shipped schema.
+
+## Context
+
+ADR BD-DOCS-030 decided to replace per-client `localStorage` with a backend +
+shared database, and named the migration **seam** (every owning module, behind
+one persistence facade) and the **completeness rule** (every persisted
+server-owned key — those in `public/src/storage_boundary.js` **plus any defined
+outside it**, today `order_overlay.v1`). It deliberately deferred the **schema**.
+
+This design fills that gap: it maps each current store to a **target server-owned
+entity** and proposes the entities' core fields. It **inherits the ADR-030
+completeness rule** — this is a design over the same key set, not a new authority.
+
+## Current stores → target entities
+
+Derived from the live key inventory (`public/src/storage_boundary.js` + the
+known out-of-inventory key `order_overlay.v1`). Legend for the target column:
+**S** = server-owned, **C** = client-only (stays local), **S?** = candidate
+server (client today).
+
+| Current key | Owning module | Target entity | Kind |
+|---|---|---|---|
+| `bazardrive.user.v1` | `state.js` / `mock_api.js` | **users** (identity → see auth ADR) + local session cache | S + C |
+| *(no store today; in driver profile)* | — | **vehicles** (plate, class, docs) | S |
+| `bazardrive.posts.v1`, `bazardrive.myposts.v1` | `mock_api.js` | **posts** (marketplace) | S |
+| `bazardrive.ride_orders.v1` | `mock_api.js` | **orders** | S |
+| `bazardrive.respond.v1`, `bazardrive.responses.v1` | `respond.js`, `responses.js`, `chat.js` | **responses** | S |
+| `bazardrive.driver_offers.v1` | `driver_offer_store.js` | **offers** | S |
+| `bazardrive.order_overlay.v1` ⚠ *(not in `storage_boundary.js`)* | `driver_offer_store.js` | **assignment** (selected driver / `Order.status=ACCEPTED`) | S |
+| `bazardrive.active_ride.v1` | `ride_state.js` (+ `ride_actions.js`, `driver_offer_store.js`, `trip_confirmation_handoff.js`, `active_ride.js`, `order_detail.js`) | **rides** (status via `RIDE_STATUS`) | S |
+| `bazardrive.trip_confirmation.v1`, `bazardrive.driver_handoff_snapshot.v1` | `chat.js`, `trip_confirmation_handoff.js`, `driver_handoff_snapshot.js` | **ride_events** (confirmation / handoff timeline) | S |
+| `bazardrive.chat.v1` | `chat.js`, `active_ride.js` | **messages** | S |
+| `bazardrive.driver_receipts.v1` | `mock_api.js` | **receipts** | S |
+| `bazardrive.ride_history.v1` | `ride_history.js` | **ride history** (derivable from rides + events) | S |
+| `bazardrive.favorite_routes.v1`, `bazardrive.favorite_route_notice.v1`, `bazardrive.repeat_route.v1` | `favorite_routes.js`, `repeat_route.js` | **favorites / saved routes** | S? |
+| `bazardrive.draft.v2`, `bazardrive.order_form.v1`, `bazardrive.route_draft.v1` | `composer.js`, `route_picker.js`, `order_map_draft.js` | *(composer / route drafts)* | C |
+| `bazardrive.map_prefs.v1` | `mapbox_state.js` | *(map UI prefs)* | C |
+| `bazardrive.smoke_role.v1` | `smoke_role.js` | *(test harness)* | C (dev) |
+
+## Proposed entities (core fields)
+
+Proposal only; IDs, types, and indexes are deferred (see Open questions).
+
+- **users** — `id`, `role` (passenger/driver), profile, compliance/doc state.
+- **vehicles** — `id`, `ownerUserId`, `plate`, `class` (econom/…), `docsState`.
+  *No store exists today;* vehicle data lives inside the driver profile and must
+  be split out.
+- **orders** — `id`, `passengerId`, route (from/to), price estimate, `createdAt`,
+  lifecycle pointer.
+- **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`
+  (driver-offer / marketplace), payload, `createdAt`.
+- **offers** — `id`, `orderId`, `driverId`, `vehicleId`, terms, `state`.
+- **assignment** — `orderId`, `selectedDriverId`, `acceptedAt` (the
+  `order_overlay.v1` surface; makes acceptance shared, not per-browser).
+- **rides** — `id`, `orderId`, `driverId`, `vehicleId`, **`status` ∈ `RIDE_STATUS`**
+  with the terminal-status freeze (canon carries over from
+  `public/src/ride_state.js`, unchanged).
+- **ride_events** — append-only timeline (`rideId`, `type`, `at`, payload);
+  absorbs confirmation + handoff state.
+- **messages** — `rideId`/`threadId`, `senderId`, `body`, `at`.
+- **receipts** — `rideId`, fare breakdown, payout. **history** is a read model
+  over **rides** + **ride_events** (or materialized).
+
+## Invariants carried from the runtime (must not change)
+
+- **`RIDE_STATUS` and its terminal freeze** (`ride_state.js`) — the **rides**
+  entity adopts the same enum and transitions; client→server authority only.
+- **Receipt / history shape** stays compatible with `trip_receipt.js`
+  (BD-RIDE-HISTORY-D-01) and the profile calendar.
+
+## Open questions (deferred)
+
+- **ID strategy** — server-generated vs client-proposed (offline create).
+- **Auth / identity** — `users` identity is owned by the **auth ADR**, not here.
+- **`storage_boundary.js` reconciliation** — `order_overlay.v1` (and any other
+  out-of-inventory key) must be folded into the inventory first (ADR-030
+  follow-up, runtime prerequisite).
+- **Vehicles split** — extracting vehicle data out of the driver profile.
+- **Offline conflict handling** — optimistic create/reconcile semantics.
+
+## Out of scope
+
+No backend, schema DDL, API shape, or runtime change is part of this document.
+Promoting any entity to a real store flips BD-DOCS-023 service #1 (Order
+Dispatcher) and the data layer from ◐/🔮 toward ✅, with its own issue, contract
+and tests.
+
+See [ADR BD-DOCS-030](../decisions/shared-source-of-truth.md) for the decision
+this design implements, and
+[Mini-Yonder Background Services](../governance/mini-yonder-background-services.md)
+for the full target architecture.
