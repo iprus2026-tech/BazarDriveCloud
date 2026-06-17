@@ -566,7 +566,7 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
-**Render gate:** `BD-ORDER-DETAIL-01-RENDER-GATE` shipped (issue #454; artifact `public/prototypes/order/BD-ORDER-DETAIL-01-order-detail-render-gate.{pdf,html}`, registered in `docs/design-registry.json` → `screens[]`). The gate is **visual reference only** — this contract stays the source of truth for chip/CTA copy. Known gate↔contract deltas are recorded in the design-registry note (notably the gate's P3 chip reads «Водитель выбран» vs runtime «Заказ принят», a single terminal «Отменён» chip, and some icon-only/shortened CTAs).
+**Render gate:** `BD-ORDER-DETAIL-01-RENDER-GATE` shipped (issue #454; artifact `public/prototypes/order/BD-ORDER-DETAIL-01-order-detail-render-gate.{pdf,html}`, registered in `docs/design-registry.json` → `screens[]`). The gate is **visual reference only** — this contract stays the source of truth for chip/CTA copy. Known gate↔contract deltas are recorded in the design-registry note. The P3 chip is now **aligned to the gate** — the passenger P3 view renders «Водитель выбран» (driver D3 keeps «Заказ принят»); remaining deltas (single terminal «Отменён» chip, some icon-only/shortened CTAs) are visual-only and not adopted in runtime.
 
 **Status:** runtime shell · Model B locked · scoped local 01D writes landed (driver send/withdraw offer, passenger select-driver commit, passenger open-trip active_ride handoff, passenger cancel order, passenger reject offer, passenger cancel sent-offer sync, driver cancel accepted order); backend / Mapbox / payment out of scope.
 This entry locks the Cloud Design / Codex audit decisions captured in
@@ -819,7 +819,7 @@ either):
 |---|---|---|---|---|
 | P1 | **Passenger Own Order Created** | «Ждём водителя» · empty offers state | order summary, route, price, comment | Изменить · Отменить заказ · Поделиться · Скопировать |
 | P2 | **Passenger Has Driver Offers** | «Есть предложения» | `DriverOffer[]` cards: driver name · car · rating · ETA · offered price · message. **P2 renders active `DriverOffer(status='sent')` candidates only.** Terminal offers (`rejected`, `withdrawn`, `expired`) remain preserved in data for write-side history (BD-ORDER-DETAIL-01D) but do not expose «Выбрать водителя» and do not trigger P2 on their own. | Выбрать водителя · Написать · Отклонить |
-| P3 | **Passenger Driver Selected** | «Заказ принят» | assigned driver card · timeline | **«Открыть поездку»** (primary, hands off to `/active-ride?role=passenger`) |
+| P3 | **Passenger Driver Selected** | «Водитель выбран» (passenger-view label for the ACCEPTED order; driver D3 shows «Заказ принят») | assigned driver card · timeline | **«Открыть поездку»** (primary, hands off to `/active-ride?role=passenger`) |
 | P4 | **Passenger Terminal State** | «Отменён» **or** «Истёк» | terminal copy | Создать новый заказ · Вернуться в ленту |
 
 #### Driver states
@@ -901,7 +901,7 @@ mutating CTAs as non-mutating toast stubs.
 #### P0 product rules
 
 1. **Over-budget offers are allowed.** If `offer.price > order.budget`, the offer card MUST render the badge `«Выше бюджета»`. The passenger still picks the winner; budget is informational.
-2. **Order Detail remains accessible after accept.** Once `Order.status = 'ACCEPTED'` (rendered as the UI chip «Заказ принят»), the screen does NOT redirect to active ride. The primary action becomes **«Открыть поездку»**; the canonical active-ride runtime (`/active-ride`) stays the source of truth for the trip lifecycle.
+2. **Order Detail remains accessible after accept.** Once `Order.status = 'ACCEPTED'` (rendered as the UI chip «Водитель выбран» on the passenger P3 view and «Заказ принят» on the driver D3 view), the screen does NOT redirect to active ride. The primary action becomes **«Открыть поездку»**; the canonical active-ride runtime (`/active-ride`) stays the source of truth for the trip lifecycle.
 3. **`DriverOffer` carries its own `expiresAt`.** Suggested default: `expiresAt = min(Order.expiresAt ?? Infinity, createdAt + 15 minutes)`. `Order.expiresAt` is optional in today's mock orders; when absent, the offer falls back to `createdAt + 15 minutes`. Expired offers transition to `status='expired'` and stop counting as candidates.
 
 #### Status language (canonical Russian)

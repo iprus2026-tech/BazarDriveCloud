@@ -43,7 +43,7 @@ export const ROLE_CHIP = Object.freeze({
 export const STATE_CHIP = Object.freeze({
   P1: 'Ждём водителя',
   P2: 'Есть предложения',
-  P3: 'Заказ принят',
+  P3: 'Водитель выбран',
   D2: 'Оффер отправлен',
   D3: 'Заказ принят',
   D4: 'Недоступен',
