@@ -29,6 +29,11 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Design',
+      items: ['design/BD-DOCS-031'],
+    },
+    {
+      type: 'category',
       label: 'Governance',
       items: [
         'governance/BD-DOCS-010',
