@@ -53,9 +53,13 @@ meaningful.
 
 Introduce **server-side identity and authentication**:
 
-1. **One account, role as an attribute.** Keep the existing model: a single
-   identity carries `role` (`passenger` / `driver`); a user may be both. No
-   separate passenger/driver accounts.
+1. **One account, a roles set plus an active role.** A single identity carries
+   `roles` (the set of granted roles, e.g. `[passenger, driver]`) plus
+   `activeRole` (the currently selected one). The runtime's **scalar `role`** in
+   `user.v1` (`state.js:46`) maps to `activeRole`, so a passenger who also drives
+   is representable without overwriting. No separate passenger/driver accounts.
+   *(This refines the scalar `users.role` sketched in BD-DOCS-031 into
+   `roles` + `activeRole`; reconciling that field is a follow-up below.)*
 2. **Phone + OTP is the auth method.** It matches the surface already in the
    runtime (`phone`, `phoneVerified`). Verification moves from a client flag to a
    **server-issued, verified session** — `phoneVerified` becomes a server fact.
@@ -101,6 +105,8 @@ format, OTP provider, and session lifetime are deferred (see Open questions).
     (BD-DOCS-031 follow-up).
   - Phase 2 presence (BD-DOCS-023) keys heartbeat to the authenticated driver
     identity.
+  - Reconcile the **`users.role`** field in BD-DOCS-031 (scalar) into
+    `roles` + `activeRole` to match this decision.
 
 See [ADR BD-DOCS-030](shared-source-of-truth.md) for the shared-source-of-truth
 decision this supports, and the
