@@ -43,12 +43,15 @@ The growth path in BD-DOCS-023 names **Phase 1 — shared source of truth** as t
 foundation every later phase (presence, dispatch, matching) depends on. The
 single-car ceiling is not a UI limit; it comes from how data lives today:
 
-- All ride state persists to **per-client `localStorage`**. The **authoritative,
-  complete enumeration of persisted keys is `public/src/storage_boundary.js`** —
-  that file, not this ADR, is the source of truth for *what* is stored. The keys
-  are **owned by many modules**, not one. Grouped by the server-owned entity each
-  would map to (owners listed are illustrative, **not exhaustive** — see
-  `storage_boundary.js` for the full set):
+- All ride state persists to **per-client `localStorage`**. The **primary
+  inventory of persisted keys is `public/src/storage_boundary.js`** — that file,
+  not this ADR, is the reference for *what* is stored. It is **not currently
+  exhaustive**, though: at least one server-owned store, `bazardrive.order_overlay.v1`
+  (`ORDER_OVERLAY_STORAGE_KEY` in `driver_offer_store.js`), is **not** in its
+  audited-key list. Closing that gap is a Phase-1 prerequisite (a runtime
+  follow-up, out of scope for this ADR). The keys are **owned by many modules**,
+  not one. Grouped by the server-owned entity each would map to (owners listed are
+  illustrative, **not exhaustive**):
   - **Orders / posts / receipts** — `bazardrive.ride_orders.v1`,
     `bazardrive.posts.v1`, `bazardrive.myposts.v1`, `bazardrive.driver_receipts.v1`
     → `public/src/mock_api.js`
@@ -56,7 +59,8 @@ single-car ceiling is not a UI limit; it comes from how data lives today:
     → `public/src/screens/respond.js`, `public/src/screens/responses.js`,
     `public/src/screens/chat.js`
   - **Offers / assignment** — `bazardrive.driver_offers.v1`,
-    `bazardrive.order_overlay.v1` (passenger selection / `Order.status=ACCEPTED`)
+    `bazardrive.order_overlay.v1` (passenger selection / `Order.status=ACCEPTED`;
+    **⚠ not in `storage_boundary.js`** — owned solely by `driver_offer_store.js`)
     → `public/src/driver_offer_store.js` (+ read in `ride_state.js`, `order_detail.js`)
   - **Active ride + confirmation / handoff (ride events)** —
     `bazardrive.active_ride.v1`, `bazardrive.trip_confirmation.v1`,
@@ -91,20 +95,22 @@ and turn the client into a consumer of it:
 
 1. **Every server-relevant key in `storage_boundary.js` migrates — behind one
    persistence facade.** The seam is **not** `mock_api.js` alone, and **not** any
-   hand-maintained subset. The completeness rule is: *every key enumerated in
-   `storage_boundary.js` that is not client-only (see the Context grouping) must
-   have its owning module migrated from `localStorage` to network calls.* That
+   hand-maintained subset. The completeness rule is: *every persisted server-owned
+   key — those enumerated in `storage_boundary.js` **plus any store key defined
+   outside it** (today `order_overlay.v1` in `driver_offer_store.js`) — must have
+   its owning module migrated from `localStorage` to network calls.* That
    spans `mock_api.js`, `driver_offer_store.js`, `ride_state.js`, `ride_history.js`,
    and the response/confirmation/handoff owners (`respond.js`, `responses.js`,
    `chat.js`, `trip_confirmation_handoff.js`, `driver_handoff_snapshot.js`) —
    among others. Introducing a single persistence facade these modules call is the
    recommended way to guarantee no store (offers, overlay, responses, active ride,
    confirmation, handoff snapshot, history) is left localStorage-backed.
-2. **`storage_boundary.js` is the migration inventory and completeness checklist,
-   not the write path.** It stays the single enumeration of what is persisted —
-   gaining a "client cache vs server-owned" column — and is the checklist that
-   every server-owned key in it has an owning
-   module migrated. Each store maps to a server-owned entity (orders,
+2. **`storage_boundary.js` is the migration inventory, not the write path —
+   and Phase 1 first makes it actually exhaustive.** A Phase-1 prerequisite is to
+   reconcile it so it enumerates **every** persisted key (adding the known gap
+   `order_overlay.v1`, and auditing for any other store defined outside it). Only
+   then is it a trustworthy completeness checklist; it also gains a "client cache
+   vs server-owned" column. Each store maps to a server-owned entity (orders,
    responses/offers, active ride, ride events, history).
 3. **The ride state machine stays the canon.** `RIDE_STATUS` and its transitions
    move from client-authority to **server-authority** unchanged — same enum,
@@ -141,6 +147,9 @@ auth ADR.
   - Offline behaviour shifts from "localStorage is truth" to "cache + reconcile";
     conflict handling must be designed.
 - **Follow-ups:**
+  - **Reconcile `storage_boundary.js` to be truly exhaustive** (add the known gap
+    `order_overlay.v1`; audit for any other store key defined outside it) — a
+    runtime prerequisite before it can serve as the migration checklist.
   - Data-layer contract design doc — current stores → target entities
     (users/vehicles/orders/rides/events). *(BD-DOCS Design option.)*
   - Auth/identity ADR.
