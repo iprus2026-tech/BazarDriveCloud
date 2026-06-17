@@ -18,6 +18,11 @@ related:
   routes: []
   files:
     - public/src/ride_state.js
+    - public/src/state.js
+    - public/src/mock_api.js
+    - public/src/driver_offer_store.js
+    - public/src/ride_history.js
+    - public/src/screens/trip_receipt.js
     - docs-site/docs/governance/mini-yonder-model.md
   issues: []
   prs: []
@@ -84,6 +89,12 @@ CREATED → ACCEPTED → EN_ROUTE → ARRIVED → IN_PROGRESS → COMPLETED
 
 CANCELED and NO_SHOW are terminal: once reached, the state must not be reopened.
 
+> **Simplified diagram.** The canonical, shipped status enum is richer than the
+> labels above — see `RIDE_STATUS` in `public/src/ride_state.js` (NEW_ORDER /
+> ACCEPTED / DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP / WAITING_PASSENGER /
+> IN_PROGRESS / COMPLETED / CANCELED / NO_SHOW) and row 5 of the
+> [runtime mapping](#how-this-maps-to-the-current-runtime) table.
+
 ## Data layer
 
 | Tier | Holds |
@@ -134,8 +145,8 @@ Legend: ✅ shipped (real client-side equivalent) · ◐ placeholder / mock / st
 
 | Target service | Today in the repo | Status |
 |---|---|---|
-| 1. Order Dispatcher | Mock order creation only — `order_map_draft.js` writes to `mock_api` `bazardrive.ride_orders.v1`. No queue, no broadcast, no dispatch process. | ◐ |
-| 2. Driver Availability | Driver readiness gate (`isDriverLineReady`, `public/src/screens/driver_map.js`) + a local `driverOnline` flag. No presence/heartbeat service. | ◐ |
+| 1. Order Dispatcher | Mock order creation only — `order_map_draft.js` creates the order via `mock_api.js`, which owns the `bazardrive.ride_orders.v1` store. No queue, no broadcast, no dispatch process. | ◐ |
+| 2. Driver Availability | Driver readiness gate (`isDriverLineReady`, defined in `public/src/state.js` and enforced in `public/src/screens/driver_map.js`) + a local `driverOnline` flag. No presence/heartbeat service. | ◐ |
 | 3. Matching & Assignment | Mock driver offers + passenger select (`public/src/screens/responses.js`, the `driver_offers` store, Order Detail 01D writes). No scoring/ranking/auto-assign. | ◐ |
 | 4. Route & Price (Map) | Mapbox **stub** — no-op layers in `public/src/mapbox/*` and `createMapShell`; prices are mock literals. Real Mapbox is future (`docs/db-mapbox-readiness.md`, issue #105). | ◐ / 🔮 |
 | 5. Ride State Machine | **Shipped** — `public/src/ride_state.js` `RIDE_STATUS` (NEW_ORDER / ACCEPTED / DRIVER_EN_ROUTE / DRIVER_APPROACHING_PICKUP / WAITING_PASSENGER / IN_PROGRESS / COMPLETED / CANCELED / NO_SHOW) with a terminal-status freeze. Closest real match to the diagram. | ✅ |
