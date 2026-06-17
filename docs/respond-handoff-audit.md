@@ -4,6 +4,15 @@ Status: snapshot taken on the `claude/respond-polish-handoff-kRosX` branch
 after BD-RESPOND-03 polish. Render-only audit; no backend / Mapbox /
 payment / auth / push wiring is in place.
 
+> **Update (2026-06-17):** the handoff **seam** described in §6/§7 below
+> (no `/chat → /trip-confirmation` transition, `responseId → tripId` gap,
+> single-slot `respond.v1`, no confirmation persistence) is now **CLOSED** —
+> it was implemented across **BD-HANDOFF-01 … BD-HANDOFF-06** and end-to-end
+> re-verified in **#200 / BD-HANDOFF-07** (see
+> [end-to-end handoff smoke audit](end-to-end-handoff-smoke-audit.md)).
+> §6/§7 are kept as the original BD-RESPOND-03 snapshot; read **§8** for the
+> current (wired) state. The Respond polish itself is shipped and unchanged.
+
 The goal of this document is to make the *data contract* between screens
 explicit, so the next issue (real handoff) can be scoped against a single,
 shared map rather than re-discovering it from the source each time.
@@ -250,3 +259,31 @@ What is explicitly **out of scope** for the next issue:
 - Payment, auth, push, calls, safety sheet.
 - Any change to `/active-ride` internals.
 - Map rendering on `/trip-confirmation`.
+
+---
+
+## 8. Update (2026-06-17) — handoff seam closed
+
+The §6/§7 "next issue" became the **BD-HANDOFF-01 … BD-HANDOFF-07** line and is
+now implemented (still mock/local — no backend/Mapbox/payment/auth/push). Each
+§6/§7 gap → its current resolution:
+
+| §6/§7 gap | Now (shipped, mock/local) |
+|---|---|
+| No `/chat → /trip-confirmation` transition | `chat.js` writes a CONFIRMED record to `bazardrive.trip_confirmation.v1` (`saveTripConfirmation`) and the confirm CTA navigates to `/trip-confirmation`. |
+| No `responseId → tripId` mapping | The persisted response carries `tripId`; the chain keys off `tripId` end-to-end through to `/active-ride`. |
+| `/chat` & `/trip-confirmation` ignore the persisted response | `chat.js` hydrates header/trip bar from `bazardrive.active_ride.v1` / `bazardrive.responses.v1`; `trip_confirmation_handoff.js` seeds `active_ride.v1` from the confirmed handoff. |
+| `bazardrive.respond.v1` single slot | The keyed map `bazardrive.responses.v1` is the live store the chain reads; `respond.v1` is a legacy single slot, cleared on the auth boundary. |
+| No confirmation persistence | `bazardrive.trip_confirmation.v1` persists the `CONFIRMED` handoff (state + role + `expiresAt` TTL); `seedActiveRideFromConfirmedHandoff` writes `active_ride.v1`. |
+
+**Data-layer guards** (TTL, malformed JSON, malformed `savedAt`, single-key stale
+cleanup, role match) and the **auth-boundary cleanup**
+(`clearDriverHandoffSnapshotStore`) are all in place — fully documented and
+re-verified live in [end-to-end handoff smoke audit](end-to-end-handoff-smoke-audit.md)
+(#200). The Respond screen polish from BD-RESPOND-03 (accurate success copy —
+marketplace «Сообщение отправлено» → `/feed`; ride «Отклик отправлен … Если он
+подтвердит, поездка появится в активных» → «Открыть чат» / «В ленту») is shipped
+and unchanged.
+
+**Remaining (future, not this line):** real backend sync, second-device handoff,
+payment/auth/push, real Mapbox — unchanged from §7's out-of-scope list.
