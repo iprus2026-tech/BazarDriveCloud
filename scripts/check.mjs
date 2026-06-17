@@ -173,6 +173,19 @@ if (exists(mapFlowSmoke)) {
   }
 }
 
+// BD-RIDE-P-06/07 — static regression smoke for the passenger NO_SHOW terminal
+// fallback (audit URL reachability, terminal short-circuit, copy, single
+// return-home CTA). Audit #455 flagged the passenger no-show parity was thin.
+const passengerNoShowSmoke = path.join(root, 'scripts', 'smoke-passenger-noshow-terminal.mjs');
+if (exists(passengerNoShowSmoke)) {
+  try {
+    execFileSync(process.execPath, [passengerNoShowSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-passenger-noshow-terminal.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-WAITING-01 — static regression smoke for the driver waiting redesign.
 const waitingSmoke = path.join(root, 'scripts', 'smoke-active-ride-waiting.mjs');
 if (exists(waitingSmoke)) {
