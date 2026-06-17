@@ -41,6 +41,10 @@ const config = {
           // Docs-only mode: docs are served at the site root.
           routeBasePath: '/',
           sidebarPath: require.resolve('./sidebars.js'),
+          // "Edit this page" points at the doc source in the repo — reinforces
+          // that the repository is the source of truth (see project/overview).
+          editUrl:
+            'https://github.com/iprus2026-tech/BazarDriveCloud/tree/main/docs-site/',
         },
         blog: false,
         theme: {},
@@ -55,6 +59,11 @@ const config = {
         title: 'BazarDrive Docs',
         items: [
           { type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs' },
+          {
+            href: 'https://github.com/iprus2026-tech/BazarDriveCloud',
+            label: 'GitHub',
+            position: 'right',
+          },
         ],
       },
       footer: {
