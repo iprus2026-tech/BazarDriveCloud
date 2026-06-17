@@ -523,3 +523,42 @@ sources (`trip_confirmation_handoff.MOCK_*` and
 `responses.v1[responseId]` and the originating post from
 `bazardrive.posts.v1`. That is the natural successor to BD-HANDOFF-06
 once a real backend is on the horizon.
+
+---
+
+## 16. Re-verification (2026-06-17, current `main`)
+
+This audit was first written several merges ago. Re-verified against the
+current `main` tip (`23307ab`); the corridor is unchanged and still healthy.
+
+**Data-layer guards re-read on current main (still present, unchanged):**
+
+- `trip_confirmation_handoff.js` — `loadHandoffRecord` try/catch + `isPlainObject`
+  guard (malformed JSON → null); `loadConfirmedHandoff` enforces
+  `state==='CONFIRMED'` + not-expired + **role match**; `seedActiveRideFromConfirmedHandoff`
+  returns an existing `active_ride.v1` record first (no override of newer state).
+- `driver_handoff_snapshot.js` — `loadStore` malformed-JSON → `{}`; `isSnapshotStale`
+  treats non-finite/≤0 `savedAt` as stale; stale read `removeFromStore(store, key)`
+  drops **only that key**; all fields coerced via `safeText`; pure
+  `applyDriverHandoffSnapshotToRide`.
+- `storage_boundary.js:110` still calls `clearDriverHandoffSnapshotStore()` —
+  unchanged.
+
+**Live headless re-run (real `index.html` app shell + hash router, `welcomeSeen`
+seeded; throwaway server/seed removed after, tree clean):**
+
+- **§5 deep-link safety:** all nine deep-links render a `.screen` with no crash —
+  `#/active-ride?role=passenger|driver&status=DRIVER_EN_ROUTE` (± `tripId=missing-demo`),
+  `#/trip-confirmation?tripId=missing-demo&role=passenger&state=CONFIRMED`,
+  `#/trip-confirmation?tripId=missing-demo&role=driver&state=DRIVER_CONFIRMED`,
+  `#/chat`, `#/respond`, `#/feed`.
+- **§1/§7/§9 matching + role safety:** with a single shared `active_ride.v1` record
+  for `trip-e2e`, the **passenger** route rendered the driver («Рустам К.») + route
+  («Шереметьево») and not the passenger's own identity; the **driver** route
+  rendered the passenger («Анна М.») + the same route and not the driver's own.
+  Both roles consume the one shared record, role-correct, no cross-leak.
+
+**Result:** PASS on current `main`. No regression; no code change (docs-only).
+The §11 risks remain open backlog notes (not blockers). Recommend **closing
+#200** — or keeping it open only for a real-device pass, at the maintainer's
+discretion.
