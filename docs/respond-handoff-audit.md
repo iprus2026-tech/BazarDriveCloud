@@ -4,6 +4,18 @@ Status: snapshot taken on the `claude/respond-polish-handoff-kRosX` branch
 after BD-RESPOND-03 polish. Render-only audit; no backend / Mapbox /
 payment / auth / push wiring is in place.
 
+> **Update (2026-06-17):** the handoff **seam** described in §6/§7 below is now
+> largely **WIRED** (navigation + handoff persistence from chat + active-ride
+> seed) across **BD-HANDOFF-01 … BD-HANDOFF-06**, end-to-end re-verified in
+> **#200 / BD-HANDOFF-07** (see
+> [end-to-end handoff smoke audit](end-to-end-handoff-smoke-audit.md)). It is
+> **not fully "closed"**, though: the screens/seed still render `MOCK_*`
+> identities (not hydrated from the real response/post), the chat confirm handler
+> always writes a `role: 'passenger'` record, and the in-screen
+> `/trip-confirmation` confirm button is URL-only. §6/§7 are kept as the original
+> BD-RESPOND-03 snapshot; read **§8** for the precise current state. The Respond
+> polish itself is shipped and unchanged.
+
 The goal of this document is to make the *data contract* between screens
 explicit, so the next issue (real handoff) can be scoped against a single,
 shared map rather than re-discovering it from the source each time.
@@ -250,3 +262,33 @@ What is explicitly **out of scope** for the next issue:
 - Payment, auth, push, calls, safety sheet.
 - Any change to `/active-ride` internals.
 - Map rendering on `/trip-confirmation`.
+
+---
+
+## 8. Update (2026-06-17) — handoff seam closed
+
+The §6/§7 "next issue" became the **BD-HANDOFF-01 … BD-HANDOFF-07** line. The seam
+is **wired** (still mock/local — no backend/Mapbox/payment/auth/push), but several
+gaps are only **partly** closed. Honest status per §6/§7 gap (✅ done · ◐ partial ·
+🔮 still open):
+
+| §6/§7 gap | Status | Now |
+|---|---|---|
+| No `/chat → /trip-confirmation` transition | ◐ | The chat confirm CTA (`#chat-confirm`) writes a CONFIRMED record to `bazardrive.trip_confirmation.v1` (`chat.js` `saveTripConfirmation`) and navigates to `/trip-confirmation`. **Caveat:** the handoff is always written with `role: 'passenger'` (`chat.js:537`), even when the Respond success CTA opened chat with `role=driver`. |
+| No `responseId → tripId` mapping | ✅ | The handoff carries `responseId` and the whole chain keys off `tripId` end-to-end through to `/active-ride`. |
+| `/chat` & `/trip-confirmation` ignore the persisted response | 🔮 | **Still open.** `trip_confirmation.js` renders static `MOCK_PASSENGER` / `MOCK_DRIVER` / `MOCK_ROUTE` (lines ~141-215) and `buildActiveRideSeed` seeds `active_ride.v1` from the same `MOCK_*` literals — the handoff record only **gates** state. Only `chat.js` partially hydrates its header from the active-ride / responses store. Real response/post hydration is not done. |
+| `bazardrive.respond.v1` single slot | ◐ | The keyed map `bazardrive.responses.v1` is the live store the chain reads; the legacy single-slot `respond.v1` still exists (cleared on the auth boundary). |
+| No confirmation persistence | ◐ | The **chat** confirm CTA persists `trip_confirmation.v1` (state + role + `expiresAt` TTL), and `seedActiveRideFromConfirmedHandoff` writes `active_ride.v1`. **But** the in-screen `/trip-confirmation` `passenger-confirm` button is still **URL-only** (`trip_confirmation.js:534` → `go(…&state=PASSENGER_CONFIRMED)`, no handoff write). |
+
+**Data-layer guards** (TTL, malformed JSON, malformed `savedAt`, single-key stale
+cleanup, role match) and the **auth-boundary cleanup**
+(`clearDriverHandoffSnapshotStore`) are in place — documented and re-verified live
+in [end-to-end handoff smoke audit](end-to-end-handoff-smoke-audit.md) (#200). The
+Respond screen polish from BD-RESPOND-03 (accurate success copy — marketplace
+«Сообщение отправлено» → `/feed`; ride «Отклик отправлен … Если он подтвердит,
+поездка появится в активных» → «Открыть чат» / «В ленту») is shipped and unchanged.
+
+**Remaining (future, not this line):** real response/post hydration for
+`/chat` + `/trip-confirmation` (the 🔮 row above), role-aware confirmation, in-screen
+confirm persistence, plus real backend sync, second-device handoff,
+payment/auth/push, and real Mapbox — per §7's out-of-scope list.
