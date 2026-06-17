@@ -53,7 +53,7 @@
       "sections": [
         "Order Detail"
       ],
-      "notes": "BD-ORDER-DETAIL-01 role-split render gate (issue #454) — 10 artboards: passenger P1-P4, driver D1-D4, shared S1-S2. Visual reference only — never copied into runtime (public/index.html and the SW precache stay free of prototype HTML; scripts/check.mjs skips public/prototypes). The standaloneExport is a Claude Design bundler preview (loader + JS bundle), not a parseable component export. Gate↔contract deltas (contract docs/screen-contracts.md#bd-order-detail-01 stays the behavioral source of truth for chip/CTA copy): P3 chip reads «Водитель выбран» in the gate vs «Заказ принят» in runtime; P4 renders a single «Отменён» chip with the expiry reason as body copy (no distinct «Истёк» chip); some CTAs are icon-only or shortened (Отозвать / Написать пассажиру / Активная поездка); S1/S2 carry no status chip by design."
+      "notes": "BD-ORDER-DETAIL-01 role-split render gate (issue #454) — 10 artboards: passenger P1-P4, driver D1-D4, shared S1-S2. Visual reference only — never copied into runtime (public/index.html and the SW precache stay free of prototype HTML; scripts/check.mjs skips public/prototypes). The standaloneExport is a Claude Design bundler preview (loader + JS bundle), not a parseable component export. Gate↔contract deltas (contract docs/screen-contracts.md#bd-order-detail-01 stays the behavioral source of truth for chip/CTA copy): P3 chip is ALIGNED — runtime now renders «Водитель выбран» on the passenger P3 view (driver D3 keeps «Заказ принят»). Remaining visual-only deltas (not adopted in runtime): P4 renders a single «Отменён» chip with the expiry reason as body copy (no distinct «Истёк» chip); some CTAs are icon-only or shortened (Отозвать / Написать пассажиру / Активная поездка); S1/S2 carry no status chip by design."
     }
   ],
   "screens": [
@@ -352,7 +352,7 @@
         "S1": "/order/<id> — loading skeleton (no status chip)",
         "S2": "/order/<id> — «Заказ не найден» fallback"
       },
-      "note": "Shipped role-split runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Render gate BD-ORDER-DETAIL-01-RENDER-GATE landed (issue #454, 10 artboards). docs/screen-contracts.md#bd-order-detail-01 remains the behavioral source of truth for chip/CTA copy; see the render-gate notes for the gate↔contract deltas (P3 chip «Водитель выбран» vs runtime «Заказ принят»; single terminal chip; icon-only/shortened CTAs). The render-gate PDF/HTML are visual reference only — never copied into runtime."
+      "note": "Shipped role-split runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Render gate BD-ORDER-DETAIL-01-RENDER-GATE landed (issue #454, 10 artboards). docs/screen-contracts.md#bd-order-detail-01 remains the behavioral source of truth for chip/CTA copy; the P3 passenger chip is aligned to the gate («Водитель выбран»; driver D3 keeps «Заказ принят»), remaining gate deltas (single terminal chip; icon-only/shortened CTAs) are visual-only. The render-gate PDF/HTML are visual reference only — never copied into runtime."
     }
   ],
   "foundationModules": [

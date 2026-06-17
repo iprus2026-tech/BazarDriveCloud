@@ -135,7 +135,7 @@ expect('future passenger commit seeds bazardrive.active_ride.v1 with trip_${orde
 const requiredStates = [
   ['P1', /Passenger\s+Own\s+Order\s+Created[\s\S]{0,500}«Ждём водителя»/i],
   ['P2', /Passenger\s+Has\s+Driver\s+Offers[\s\S]{0,500}«Есть предложения»/i],
-  ['P3', /Passenger\s+Driver\s+Selected[\s\S]{0,700}«Заказ принят»[\s\S]{0,700}«Открыть поездку»/i],
+  ['P3', /Passenger\s+Driver\s+Selected[\s\S]{0,700}«Водитель выбран»[\s\S]{0,700}«Открыть поездку»/i],
   ['P4', /Passenger\s+Terminal\s+State[\s\S]{0,500}«Отменён»[\s\S]{0,180}«Истёк»/i],
   ['D1', /Driver\s+Available\s+Order[\s\S]{0,500}«Откликнуться на заказ»/i],
   ['D2', /Driver\s+Offer\s+Sent[\s\S]{0,500}«Оффер отправлен»/i],
@@ -274,9 +274,9 @@ expect('default export is a screen loader function', typeof orderDetailMod.defau
 expect('role chips match contract',
   orderDetailMod.ROLE_CHIP.passenger === 'Ваш заказ'
   && orderDetailMod.ROLE_CHIP.driver === 'Просмотр водителя');
-expect('canonical accepted enum and UI chip stay separated',
+expect('canonical accepted enum and UI chips stay separated (role-split: P3 passenger «Водитель выбран», D3 driver «Заказ принят»)',
   orderDetailMod.ORDER_STATUS.ACCEPTED === 'ACCEPTED'
-  && orderDetailMod.STATE_CHIP.P3 === 'Заказ принят'
+  && orderDetailMod.STATE_CHIP.P3 === 'Водитель выбран'
   && orderDetailMod.STATE_CHIP.D3 === 'Заказ принят'
   && orderDetailMod.STATE_CHIP.S1 === 'Загружаем заказ'
   && orderDetailMod.STATE_CHIP.S2 === 'Заказ не найден');
@@ -443,9 +443,10 @@ expect('missing order and loading state resolve to S2 / S1',
 }
 {
   const { state, markup } = renderState(orderDetailMod, 'demo-order-accepted', 'passenger');
-  expect('P3 passenger render carries accepted chip + open trip action',
+  expect('P3 passenger render carries «Водитель выбран» chip (not «Заказ принят») + open trip action',
     state === 'P3'
-    && markup.includes('Заказ принят')
+    && markup.includes('Водитель выбран')
+    && !markup.includes('Заказ принят')
     && buttonTextForAction(markup, 'open-trip') === 'Открыть поездку');
 }
 {
