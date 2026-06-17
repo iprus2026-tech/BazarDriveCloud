@@ -48,12 +48,13 @@ completeness rule** — this is a design over the same key set, not a new author
 
 Derived from the live key inventory (`public/src/storage_boundary.js` + the
 known out-of-inventory key `order_overlay.v1`). Legend for the target column:
-**S** = server-owned, **C** = client-only (stays local), **S?** = candidate
-server (client today).
+**S** = server-owned, **C** = client-only (stays local). Client/server split
+follows [ADR BD-DOCS-030](../decisions/shared-source-of-truth.md) — this design
+must not reclassify a key the ADR already placed.
 
 | Current key | Owning module | Target entity | Kind |
 |---|---|---|---|
-| `bazardrive.user.v1` | `state.js` / `mock_api.js` | **users** (identity → see auth ADR) + local session cache | S + C |
+| `bazardrive.user.v1` | `state.js` / `mock_api.js` | *(local session cache; the server **users**/identity entity is owned by the auth ADR, **not** migrated in this data-layer phase)* | C |
 | *(no store today; in driver profile)* | — | **vehicles** (plate, class, docs) | S |
 | `bazardrive.posts.v1`, `bazardrive.myposts.v1` | `mock_api.js` | **posts** (marketplace) | S |
 | `bazardrive.ride_orders.v1` | `mock_api.js` | **orders** | S |
@@ -65,8 +66,9 @@ server (client today).
 | `bazardrive.chat.v1` | `chat.js`, `active_ride.js` | **messages** | S |
 | `bazardrive.driver_receipts.v1` | `mock_api.js` | **receipts** | S |
 | `bazardrive.ride_history.v1` | `ride_history.js` | **ride history** (derivable from rides + events) | S |
-| `bazardrive.favorite_routes.v1` | `favorite_routes.js` | **favorites / saved routes** (durable) | S? |
+| `bazardrive.favorite_routes.v1` | `favorite_routes.js` | *(saved routes — ADR-030 keeps this **local**; a future cross-device sync would be its own decision)* | C |
 | `bazardrive.favorite_route_notice.v1`, `bazardrive.repeat_route.v1` | `favorite_routes.js`, `repeat_route.js` | *(one-time navigation handoff — read-and-clear banner / prefill; must NOT sync)* | C |
+| `profileTripDemo` *(non-`bazardrive.` key; audited in `storage_boundary.js`)* | `storage_boundary.js` (`TRIP_DEMO_KEY`) | *(passenger Profile demo override)* | C (dev) |
 | `bazardrive.draft.v2`, `bazardrive.order_form.v1`, `bazardrive.route_draft.v1` | `composer.js`, `route_picker.js`, `order_map_draft.js` | *(composer / route drafts)* | C |
 | `bazardrive.map_prefs.v1` | `mapbox_state.js` | *(map UI prefs)* | C |
 | `bazardrive.smoke_role.v1` | `smoke_role.js` | *(test harness)* | C (dev) |
@@ -76,6 +78,8 @@ server (client today).
 Proposal only; IDs, types, and indexes are deferred (see Open questions).
 
 - **users** — `id`, `role` (passenger/driver), profile, compliance/doc state.
+  *Owned by the auth ADR, not this data-layer phase;* `user.v1` stays a local
+  session cache.
 - **vehicles** — `id`, `ownerUserId`, `plate`, `class` (econom/…), `docsState`.
   *No store exists today;* vehicle data lives inside the driver profile and must
   be split out.
