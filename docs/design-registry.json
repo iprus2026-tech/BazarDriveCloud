@@ -44,6 +44,16 @@
         "Profile"
       ],
       "notes": "BD-PROFILE-D-03 driver dashboard render gate (merged via PR #384). Visual reference only — never copied into runtime (public/index.html and the SW precache stay free of prototype HTML)."
+    },
+    {
+      "id": "BD-ORDER-DETAIL-01-RENDER-GATE",
+      "title": "Order Detail role-split render gate",
+      "artifact": "public/prototypes/order/BD-ORDER-DETAIL-01-order-detail-render-gate.pdf",
+      "standaloneExport": "public/prototypes/order/BD-ORDER-DETAIL-01-order-detail-render-gate.html",
+      "sections": [
+        "Order Detail"
+      ],
+      "notes": "BD-ORDER-DETAIL-01 role-split render gate (issue #454) — 10 artboards: passenger P1-P4, driver D1-D4, shared S1-S2. Visual reference only — never copied into runtime (public/index.html and the SW precache stay free of prototype HTML; scripts/check.mjs skips public/prototypes). The standaloneExport is a Claude Design bundler preview (loader + JS bundle), not a parseable component export. Gate↔contract deltas (contract docs/screen-contracts.md#bd-order-detail-01 stays the behavioral source of truth for chip/CTA copy): P3 chip reads «Водитель выбран» in the gate vs «Заказ принят» in runtime; P4 renders a single «Отменён» chip with the expiry reason as body copy (no distinct «Истёк» chip); some CTAs are icon-only or shortened (Отозвать / Написать пассажиру / Активная поездка); S1/S2 carry no status chip by design."
     }
   ],
   "screens": [
@@ -320,6 +330,29 @@
       "renderGate": "BD-RENDER-GATES-2026-06-03",
       "classification": "render-gate",
       "note": "Screen/contract entry only — references the existing BD-RENDER-GATES-2026-06-03 render gate (no new standaloneExport is added). Bridge contract: chat hydrates header + trip bar from bazardrive.active_ride.v1 when tripId+role present, from bazardrive.responses.v1 (response.driverPrice + MOCK_DRIVER) when only responseId, MOCK_DRIVER/MOCK_TRIP fallback for demo. Back deep-link returns to /active-ride?role=&tripId= when both present, /respond?postId= when response has requestId, /feed otherwise. Outgoing send writes { senderRole: viewerRole, dir: 'out' }; readers prefer senderRole via directionForMessage. BD-CHAT-01 confirmation flow (/chat → trip_confirmation.v1 → /trip-confirmation) is preserved unchanged. No section pin — chat is not a render-gate section in the 2026-06-03 PDF."
+    },
+    {
+      "id": "BD-ORDER-DETAIL-01",
+      "title": "Order Detail",
+      "route": "/order",
+      "file": "public/src/screens/order_detail.js",
+      "renderGate": "BD-ORDER-DETAIL-01-RENDER-GATE",
+      "classification": "render-gate",
+      "section": "Order Detail",
+      "role": "role-split",
+      "states": {
+        "P1": "/order/<id>?role=passenger — own order created, «Ждём водителя» (empty offers)",
+        "P2": "/order/<id>?role=passenger — «Есть предложения», DriverOffer cards (over-budget badge «Выше бюджета»)",
+        "P3": "/order/<id>?role=passenger — driver selected, primary «Открыть поездку» (no auto-redirect)",
+        "P4": "/order/<id>?role=passenger — terminal «Отменён» (expiry shown as body copy)",
+        "D1": "/order/<id>?role=driver — available order, primary «Откликнуться на заказ»",
+        "D2": "/order/<id>?role=driver — «Оффер отправлен»",
+        "D3": "/order/<id>?role=driver — «Заказ принят», «Начать подачу» / open active ride",
+        "D4": "/order/<id>?role=driver — «Недоступен» (locked: passenger chose another / canceled / expired)",
+        "S1": "/order/<id> — loading skeleton (no status chip)",
+        "S2": "/order/<id> — «Заказ не найден» fallback"
+      },
+      "note": "Shipped role-split runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Render gate BD-ORDER-DETAIL-01-RENDER-GATE landed (issue #454, 10 artboards). docs/screen-contracts.md#bd-order-detail-01 remains the behavioral source of truth for chip/CTA copy; see the render-gate notes for the gate↔contract deltas (P3 chip «Водитель выбран» vs runtime «Заказ принят»; single terminal chip; icon-only/shortened CTAs). The render-gate PDF/HTML are visual reference only — never copied into runtime."
     }
   ],
   "foundationModules": [
@@ -435,17 +468,6 @@
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-inbox-01",
       "note": "Shipped notifications/inbox hub (list / empty / unread states). Contract present; no render gate yet. Render-pending — named for Cloud Design render."
-    },
-    {
-      "id": "BD-ORDER-DETAIL-01",
-      "title": "Order Detail",
-      "route": "/order",
-      "file": "public/src/screens/order_detail.js",
-      "renderGate": null,
-      "classification": "contract-only",
-      "renderStatus": "render-pending",
-      "contract": "docs/screen-contracts.md#bd-order-detail-01",
-      "note": "Shipped runtime shell that resolves /order/<id> (Model B locked; 01D driver-offer/passenger-select writes landed; reads mock fixtures). Full contract present; no Cloud Design render gate yet. Render-pending — named for Cloud Design render."
     },
     {
       "id": "BD-SETTINGS-01",

@@ -24,7 +24,6 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 
 | Priority | Screen ID | Route | File | Gap |
 |---|---|---|---|---|
-| P1 | BD-ORDER-DETAIL-01 | `/order` (`/order/<id>`) | `public/src/screens/order_detail.js` | Runtime shell + full contract + 01D writes landed; no render gate |
 | P1 | BD-POST-01 | `/post` | `public/src/screens/post_detail.js` | Shipped detail gate; no render gate |
 | P1 | BD-INBOX-01 | `/inbox` | `public/src/screens/inbox.js` | Shipped hub; no render gate |
 | P2 | BD-MAP-02 | `/location-permission` | `public/src/screens/location_permission.js` | Shipped mock-permission gate; no render gate |

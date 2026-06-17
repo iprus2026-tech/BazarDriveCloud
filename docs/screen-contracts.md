@@ -566,6 +566,8 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 
 ### BD-ORDER-DETAIL-01 - Order Detail
 
+**Render gate:** `BD-ORDER-DETAIL-01-RENDER-GATE` shipped (issue #454; artifact `public/prototypes/order/BD-ORDER-DETAIL-01-order-detail-render-gate.{pdf,html}`, registered in `docs/design-registry.json` → `screens[]`). The gate is **visual reference only** — this contract stays the source of truth for chip/CTA copy. Known gate↔contract deltas are recorded in the design-registry note (notably the gate's P3 chip reads «Водитель выбран» vs runtime «Заказ принят», a single terminal «Отменён» chip, and some icon-only/shortened CTAs).
+
 **Status:** runtime shell · Model B locked · scoped local 01D writes landed (driver send/withdraw offer, passenger select-driver commit, passenger open-trip active_ride handoff, passenger cancel order, passenger reject offer, passenger cancel sent-offer sync, driver cancel accepted order); backend / Mapbox / payment out of scope.
 This entry locks the Cloud Design / Codex audit decisions captured in
 #454 / #455 plus the BD-ORDER-DETAIL-01B Model B product call.
