@@ -1,0 +1,33 @@
+# Dependabot configuration.
+# The runtime PWA in public/ is dependency-free (no package.json), so the only
+# npm surface is the docs-site Docusaurus layer. GitHub Actions workflows are
+# also kept current. See docs-site/package.json and .github/workflows/.
+version: 2
+updates:
+  # Docusaurus docs-site dependencies.
+  - package-ecosystem: "npm"
+    directory: "/docs-site"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      docusaurus:
+        patterns:
+          - "@docusaurus/*"
+      docs-site-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "docs-site"
+
+  # GitHub Actions used across the CI / Pages workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
