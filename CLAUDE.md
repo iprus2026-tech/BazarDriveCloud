@@ -192,8 +192,7 @@ Search and document download controls are UI-only/no-op today.
 ### Notifications
 Audit `/inbox` before creating `/notifications`.
 Known entry points: passenger: #pfp-notif-btn, driver: #pf2-act-notif
-The driver profile does not have a notification bell today.
-#pf2-act-notif currently toggles notificationsEnabled.
+Both entry points navigate to `/inbox` via `go('/inbox')` (profile.js): #pfp-notif-btn is a bell icon, #pf2-act-notif is an action row with a chevron (a navigation affordance) — it no longer toggles notificationsEnabled.
 Future notification work must decide: reuse /inbox or consciously split /notifications after audit.
 Do not silently orphan `/inbox`.
 
