@@ -4,9 +4,9 @@ docType: process
 title: "Data Layer Contract — Target Schema (Phase 1 Design)"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-17
+revision: 2026-06-18
 effectiveFrom: 2026-06-17
-reviewAfter: 2026-12-17
+reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
 sourceOfTruth: docs-site
 related:
@@ -85,10 +85,14 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 - **vehicles** — `id`, `ownerUserId`, `plate`, `class` (econom/…), `docsState`.
   *No store exists today;* vehicle data lives inside the driver profile and must
   be split out.
-- **posts** — `id`, `authorId`, `type` (marketplace / announcement / …), body,
-  `createdAt`. *The marketplace / feed surface (`posts.v1` / `myposts.v1`); it
-  **predates the ride-dispatch model**, so no Mini-Yonder service (#1–#9) owns
-  it — it is its own future "Marketplace" concern, not part of ride dispatch.*
+- **posts** — `id`, `authorId`, `type` (marketplace / announcement / …),
+  `createdAt`, **plus the per-type payload the current stores carry** — `title`,
+  `tags`, `author` (`posts.v1`) and, for composer-created `myposts.v1`,
+  `title` / `price` / `tags` / `from` / `to` / `seats` / `phone` by post type.
+  *The marketplace / feed surface; under the ADR-030 completeness rule the
+  migration must **preserve these payload variants**, not flatten to a body-only
+  row. It **predates the ride-dispatch model**, so no Mini-Yonder service
+  (#1–#9) owns it — its own future "Marketplace" concern, not ride dispatch.*
 - **orders** — `id`, `passengerId`, route (from/to), price estimate, `createdAt`,
   lifecycle pointer.
 - **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`, payload,
@@ -121,10 +125,12 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 > (+ #9 audit, [BD-DOCS-038](../decisions/monitoring-audit.md)); receipts /
 > history → #8 (History); vehicles → #2 (Presence,
 > [BD-DOCS-033](../decisions/presence-heartbeat.md)); users → Auth
-> ([BD-DOCS-032](../decisions/auth-identity.md)). `posts`, `messages`, and the
+> ([BD-DOCS-032](../decisions/auth-identity.md)). `posts` and the
 > **`marketplace_message`** kind of `responses` sit **outside** the #1–#9
-> dispatch services — they belong to the same marketplace / feed concern as
-> `posts` (only `passenger_response` responses are dispatch offers). This list
+> dispatch services — the marketplace / feed concern (only `passenger_response`
+> responses are dispatch offers). `messages` is **ride chat** — the `chat.v1`
+> threads keyed to a ride / `tripId`, written by the active-ride screens —
+> ride-adjacent and delivered by #6 Notification, **not** marketplace. This list
 > is **Phase-1
 > scoped** — later services introduce their own entities with their ADRs:
 > route/price cache (#4, [BD-DOCS-035](../decisions/route-price-map.md)),
