@@ -45,11 +45,11 @@ single-car ceiling is not a UI limit; it comes from how data lives today:
 
 - All ride state persists to **per-client `localStorage`**. The **primary
   inventory of persisted keys is `public/src/storage_boundary.js`** — that file,
-  not this ADR, is the reference for *what* is stored. It is **not currently
-  exhaustive**, though: at least one server-owned store, `bazardrive.order_overlay.v1`
-  (`ORDER_OVERLAY_STORAGE_KEY` in `driver_offer_store.js`), is **not** in its
-  audited-key list. Closing that gap is a Phase-1 prerequisite (a runtime
-  follow-up, out of scope for this ADR). The keys are **owned by many modules**,
+  not this ADR, is the reference for *what* is stored. Its audited-key list now
+  documents `bazardrive.order_overlay.v1` (`ORDER_OVERLAY_STORAGE_KEY` in
+  `driver_offer_store.js`, cleared via `clearDriverOfferStore`, #605); auditing
+  for any *other* store defined outside it stays a Phase-1 prerequisite (a
+  runtime follow-up, out of scope for this ADR). The keys are **owned by many modules**,
   not one. Grouped by the server-owned entity each would map to (owners listed are
   illustrative, **not exhaustive**):
   - **Orders / posts / receipts** — `bazardrive.ride_orders.v1`,
@@ -106,11 +106,11 @@ and turn the client into a consumer of it:
    recommended way to guarantee no store (offers, overlay, responses, active ride,
    confirmation, handoff snapshot, history) is left localStorage-backed.
 2. **`storage_boundary.js` is the migration inventory, not the write path —
-   and Phase 1 first makes it actually exhaustive.** A Phase-1 prerequisite is to
-   reconcile it so it enumerates **every** persisted key (adding the known gap
-   `order_overlay.v1`, and auditing for any other store defined outside it). Only
-   then is it a trustworthy completeness checklist; it also gains a "client cache
-   vs server-owned" column. Each store maps to a server-owned entity (orders,
+   and Phase 1 keeps it exhaustive.** The known `order_overlay.v1` gap is closed
+   (documented + cleared via `clearDriverOfferStore`, #605); the remaining
+   Phase-1 prerequisite is to keep auditing for any other store defined outside
+   it so it stays a trustworthy completeness checklist; it also gains a "client
+   cache vs server-owned" column. Each store maps to a server-owned entity (orders,
    responses/offers, active ride, ride events, history).
 3. **The ride state machine stays the canon.** `RIDE_STATUS` and its transitions
    move from client-authority to **server-authority** unchanged — same enum,
