@@ -72,17 +72,26 @@ client invented.
 Introduce a server-mediated **Route & Price service** (#4) behind the existing
 stub seams:
 
-1. **The stub seams are the swap boundary — callers do not change.** Real
-   routing/pricing lands behind `route_service.js`, `price_estimator.js`, and
-   the `createMapShell()` DOM boundary; the 8 consumer screens keep calling the
-   same contract. (This commits to the single-seam **M2** plan in
-   `docs/db-mapbox-readiness.md`.)
+1. **The stub seams are the swap boundary — but the route-picker call site must
+   be migrated onto them first.** Real routing/pricing lands behind
+   `route_service.js`, `price_estimator.js`, and the `createMapShell()` DOM
+   boundary. The `createMapShell()` consumers (8 screens) already sit on that
+   boundary, but `route_picker.js` today computes route and price with its **own
+   local `estimateRoute()` and `80 + 35 × km` formula** and does **not** yet call
+   the `route_service` / `price_estimator` seams. So Phase 4's **step one** is to
+   migrate that call site onto the seam — otherwise route drafts and order prices
+   stay on the hash formula even after the server lands. (This is exactly the
+   **M2** warning in `docs/db-mapbox-readiness.md`: updating the seams alone
+   changes nothing live until the call site moves.)
 2. **Route, distance, and ETA become real and server-computed.** The hash-based
    `estimateRoute()` is replaced by a real Directions/route service (Mapbox or a
-   server proxy). `distanceKm` / `durationMin` come from real geometry;
-   pickup/dropoff `coords` are filled by **geocoding**, replacing the hardcoded
-   place lists. Saved/recent places persist via the Phase 1 data layer
-   (BD-DOCS-031), not in-file.
+   server proxy). `distanceKm` / `durationMin` come from real geometry, and
+   pickup/dropoff `coords` are filled by **real geocoding** instead of the
+   hardcoded place lists. The user's **saved/recent places stay client-only** —
+   BD-DOCS-030/031 classify `favorite_routes.v1`, `repeat_route.v1`, and
+   `route_draft.v1` as local-only, and cross-device sync of route preferences is
+   a **separate decision, out of scope here**. Phase 4 adds geocoding and
+   authoritative route geometry, not preference sync.
 3. **Price becomes a server-owned fare, not a client formula.** Today's
    `80 + 35 × km` literal moves server-side as an authoritative tariff (base +
    per-km + per-time; surge/zones deferred). The client renders an **estimate**;
@@ -96,9 +105,13 @@ stub seams:
 5. **Mapbox is its own track, never mixed with the DB swap.** Per
    `docs/db-mapbox-readiness.md`, the Mapbox track (real SDK / Directions /
    geocoding) and the DB track (Phase 1) ship independently, never in one PR.
-   Calling `api.mapbox.com` and tiles requires a **CSP** allowance and the
-   **service worker must never cache** tiles or route/price responses (the origin
-   guard already keeps tiles uncached; this formalizes it as a hard rule).
+   Calling `api.mapbox.com` and tiles requires a **CSP** allowance, and the
+   **service worker must never cache** map or route/price traffic. Today's
+   `public/sw.js` origin guard only bypasses **cross-origin** tiles while it
+   caches any **same-origin** `200` / `basic` response — so if the route/price
+   service is exposed as **same-origin** endpoints, the SW must be changed to
+   **explicitly bypass those API endpoint paths**, not only `api.mapbox.com` /
+   tiles.
 
 This ADR decides **that Route & Price becomes a real server-mediated service
 behind the existing stub seams, with the server as fare authority and geocoded
@@ -127,9 +140,11 @@ are deferred (see Follow-ups; tile/CSP is the readiness doc's **M1**).
     "nearby".
 - **Negative / trade-offs:**
   - **CSP + service worker** changes to allow `api.mapbox.com` / tiles while
-    **never caching** map or fare traffic — a safety-boundary touch
-    (`public/index.html` CSP + `public/sw.js`), sw-offline-agent scope, gated
-    behind the readiness doc's **M1**.
+    **never caching** map or fare traffic — including **same-origin** route/price
+    endpoints, which today's SW would cache (its origin guard only skips
+    cross-origin tiles). A safety-boundary touch (`public/index.html` CSP +
+    `public/sw.js`), sw-offline-agent scope, gated behind the readiness doc's
+    **M1**.
   - Real routing/geocoding has **per-request cost** and latency; estimates may
     need caching (the Redis geo/ETA cache, BD-DOCS-023 data layer).
   - Privacy: real coordinates and geocoding are a new privacy surface (ties to
