@@ -85,6 +85,10 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 - **vehicles** — `id`, `ownerUserId`, `plate`, `class` (econom/…), `docsState`.
   *No store exists today;* vehicle data lives inside the driver profile and must
   be split out.
+- **posts** — `id`, `authorId`, `type` (marketplace / announcement / …), body,
+  `createdAt`. *The marketplace / feed surface (`posts.v1` / `myposts.v1`); it
+  **predates the ride-dispatch model**, so no Mini-Yonder service (#1–#9) owns
+  it — it is its own future "Marketplace" concern, not part of ride dispatch.*
 - **orders** — `id`, `passengerId`, route (from/to), price estimate, `createdAt`,
   lifecycle pointer.
 - **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`, payload,
@@ -103,9 +107,26 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
   `public/src/ride_state.js`, unchanged).
 - **ride_events** — append-only timeline (`rideId`, `type`, `at`, payload);
   absorbs confirmation + handoff state.
-- **messages** — `rideId`/`threadId`, `senderId`, `body`, `at`.
+- **messages** — `rideId`/`threadId`, `senderId`, `body`, `at`. *A chat / threads
+  concern adjacent to #6 Notification: chat **owns** the threads, notifications
+  **deliver** events about them — no dedicated #1–#9 dispatch service owns chat.*
 - **receipts** — `rideId`, fare breakdown, payout. **history** is a read model
   over **rides** + **ride_events** (or materialized).
+
+> **Service / phase ownership.** Each ride-dispatch entity maps to a Mini-Yonder
+> service ([BD-DOCS-023](../governance/mini-yonder-background-services.md)) and an
+> ADR phase: orders / responses / assignment → #1 / #3 (Phase 3,
+> [BD-DOCS-034](../decisions/dispatch-matching.md)); rides / ride_events → #5
+> (+ #9 audit, [BD-DOCS-038](../decisions/monitoring-audit.md)); receipts /
+> history → #8 (History); vehicles → #2 (Presence,
+> [BD-DOCS-033](../decisions/presence-heartbeat.md)); users → Auth
+> ([BD-DOCS-032](../decisions/auth-identity.md)). `posts` and `messages` sit
+> **outside** the #1–#9 dispatch services (see above). This list is **Phase-1
+> scoped** — later services introduce their own entities with their ADRs:
+> route/price cache (#4, [BD-DOCS-035](../decisions/route-price-map.md)),
+> notification feed (#6, [BD-DOCS-036](../decisions/notification-service.md)),
+> moderation cases (#7, [BD-DOCS-037](../decisions/safety-compliance.md)),
+> audit log (#9, BD-DOCS-038).
 
 ## Invariants carried from the runtime (must not change)
 
