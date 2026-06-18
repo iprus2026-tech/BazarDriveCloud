@@ -86,9 +86,10 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
   *No store exists today;* vehicle data lives inside the driver profile and must
   be split out.
 - **posts** — `id`, `authorId`, `type` (marketplace / announcement / …),
-  `createdAt`, **plus the per-type payload the current stores carry** — `title`,
-  `tags`, `author` (`posts.v1`) and, for composer-created `myposts.v1`,
-  `title` / `price` / `tags` / `from` / `to` / `seats` / `phone` by post type.
+  `body` (post text / description), `createdAt`, **plus the per-type payload the
+  current stores carry** — `title`, `tags`, `author` (`posts.v1`) and, for
+  composer-created `myposts.v1`, `title` / `price` / `tags` / `from` / `to` /
+  `seats` / `phone` by post type.
   *The marketplace / feed surface; under the ADR-030 completeness rule the
   migration must **preserve these payload variants**, not flatten to a body-only
   row. It **predates the ride-dispatch model**, so no Mini-Yonder service
