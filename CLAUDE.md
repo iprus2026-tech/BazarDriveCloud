@@ -83,6 +83,23 @@ node scripts/dispatcher.mjs
 ```
 Report: merge commit SHA, main SHA after pull, check result, dispatcher result, working tree status.
 
+## Project tracking
+
+Planning is tracked on **GitHub Project #1 — "BazarDrive — Mini-Yonder Growth Path"**
+(linked to the repo), the planning view of the Mini-Yonder growth path
+(`docs-site/docs/governance/mini-yonder-background-services.md`, BD-DOCS-023). One
+item per service/phase, keyed by a **Design State** field: `Shipped` (a real
+client-side equivalent exists in `public/` — the #5/#8 anchors) · `Designed (ADR)`
+(a `status: draft` decision record exists — phases BD-DOCS-030–038) · `Todo` (an
+open runtime gap, no ADR/impl).
+
+Move an item to `Designed (ADR)` only when its ADR merges, and to `Shipped` only
+when the phase actually ships in `public/` — a draft ADR is a target, not shipped
+behaviour. The board reflects work done through the normal branch → PR → merge
+discipline; it does not replace it. Full process: `docs-site` BD-DOCS-006
+(Project Tracking). The board is a reference view — the runtime, the contracts,
+and the docs-site ADRs stay the sources of truth.
+
 ## Safety boundaries
 
 Do not change these unless the task explicitly asks:
