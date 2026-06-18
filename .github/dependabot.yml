@@ -22,12 +22,17 @@ updates:
       - "dependencies"
       - "docs-site"
     ignore:
-      # Transitive advisories with no upstream fix available today; both come in
-      # through Docusaurus (uuid via sockjs; js-yaml as a build dep). Suppress
-      # the noise until a patched Docusaurus release pulls them forward, then
-      # remove these entries. Tracked: GHSA-w5hq-g745-h8pq (uuid), js-yaml DoS.
+      # Advisories that are currently unactionable here. Each ignore is BOUND to
+      # the present vulnerable/no-fix range via `versions`, not the whole
+      # package, so Dependabot resumes automatically once a patched release
+      # becomes resolvable (no manual config edit needed). Revisit on Docusaurus
+      # bumps. Tracked: GHSA-w5hq-g745-h8pq (uuid), js-yaml merge-key DoS.
       - dependency-name: "uuid"
+        # Patched >= 11.1.1, but the tree is pinned to uuid@8.3.2 via sockjs.
+        versions: ["< 11.1.1"]
       - dependency-name: "js-yaml"
+        # Direct devDep; advisory range <= 4.1.1 with no upstream fix yet.
+        versions: ["<= 4.1.1"]
 
   # GitHub Actions used across the CI / Pages workflows.
   - package-ecosystem: "github-actions"
