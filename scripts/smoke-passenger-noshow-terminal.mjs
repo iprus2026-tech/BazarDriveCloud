@@ -6,8 +6,9 @@
 //   • dispatch to the terminal renderPassengerCanceledFallback(ride, 'no_show')
 //     BEFORE the active/supported-status layouts (a terminal ride never renders
 //     the live ride or any non-terminal action),
-//   • render the neutral "Поездка закрыта" copy + literal NO_SHOW badge with a
-//     truthful "driver didn't wait" line (not pretend the user cancelled), and
+//   • render the neutral "Поездка закрыта" copy + a NO_SHOW badge derived from
+//     the canonical ride-state label (resolveRideStatusLabel) with a truthful
+//     "driver didn't wait" line (not pretend the user cancelled), and
 //   • expose NO primary "create new trip" action — only a single return-home CTA
 //     to /feed.
 // A refactor could regress any of these and the generic checks would not catch
@@ -46,8 +47,8 @@ expect('NO_SHOW terminal return precedes the supported-status/active render',
 // ── C. no_show copy: neutral title + literal badge + truthful description ──
 expect("no_show variant flag derived from variant === 'no_show'",
   /isNoShow = variant === 'no_show'/.test(fallback));
-expect("no_show badge is the literal NO_SHOW",
-  /badgeText = isNoShow \? 'NO_SHOW'/.test(fallback));
+expect('no_show badge uses the canonical NO_SHOW label (not the raw enum)',
+  /badgeText = isNoShow \? resolveRideStatusLabel\(RIDE_STATUS\.NO_SHOW\)/.test(fallback));
 expect("no_show title (const title) is the neutral «Поездка закрыта»",
   /const title = isNoShow \? 'Поездка закрыта'/.test(fallback));
 expect('no_show description is truthful (driver did not wait), not a self-cancel',
