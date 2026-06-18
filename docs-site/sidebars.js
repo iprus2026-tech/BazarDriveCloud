@@ -25,7 +25,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Decisions',
-      items: ['decisions/BD-DOCS-030', 'decisions/BD-DOCS-032', 'decisions/BD-DOCS-033'],
+      items: ['decisions/BD-DOCS-030', 'decisions/BD-DOCS-032', 'decisions/BD-DOCS-033', 'decisions/BD-DOCS-034'],
     },
     {
       type: 'category',
