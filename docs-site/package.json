@@ -28,6 +28,9 @@
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0"
   },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  },
   "browserslist": {
     "production": [">0.5%", "not dead", "not op_mini all"],
     "development": [
