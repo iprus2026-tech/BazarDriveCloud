@@ -4,9 +4,9 @@ docType: process
 title: "Data Layer Contract — Target Schema (Phase 1 Design)"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-17
+revision: 2026-06-19
 effectiveFrom: 2026-06-17
-reviewAfter: 2026-12-17
+reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product]
 sourceOfTruth: docs-site
 related:
@@ -85,6 +85,16 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 - **vehicles** — `id`, `ownerUserId`, `plate`, `class` (econom/…), `docsState`.
   *No store exists today;* vehicle data lives inside the driver profile and must
   be split out.
+- **posts** — `id`, `authorId`, `type` (marketplace / announcement / …),
+  `body` (post text / description), `createdAt`, **plus the per-type payload the
+  current stores carry** — `title`, `tags`, `author` (`posts.v1`) and, for
+  composer-created `myposts.v1`, `title` / `price` / `subtype` / `tags` /
+  `from` / `to` / `when` (trip departure time) / `seats` / `phone` by post type
+  (e.g. marketplace `subtype: 'service'` renders as «Услуга»).
+  *The marketplace / feed surface; under the ADR-030 completeness rule the
+  migration must **preserve these payload variants**, not flatten to a body-only
+  row. It **predates the ride-dispatch model**, so no Mini-Yonder service
+  (#1–#9) owns it — its own future "Marketplace" concern, not ride dispatch.*
 - **orders** — `id`, `passengerId`, route (from/to), price estimate, `createdAt`,
   lifecycle pointer.
 - **responses** — `id`, `orderId` (or `postId`), `authorId`, `kind`, payload,
@@ -103,9 +113,36 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
   `public/src/ride_state.js`, unchanged).
 - **ride_events** — append-only timeline (`rideId`, `type`, `at`, payload);
   absorbs confirmation + handoff state.
-- **messages** — `rideId`/`threadId`, `senderId`, `body`, `at`.
+- **messages** — `rideId`/`threadId`, `senderId`, `body`, `at`. *A chat / threads
+  concern adjacent to #6 Notification: chat **owns** the threads, notifications
+  **deliver** events about them — no dedicated #1–#9 dispatch service owns chat.*
 - **receipts** — `rideId`, fare breakdown, payout. **history** is a read model
   over **rides** + **ride_events** (or materialized).
+
+> **Service / phase ownership.** Each ride-dispatch entity maps to a Mini-Yonder
+> service ([BD-DOCS-023](../governance/mini-yonder-background-services.md)) and an
+> ADR phase: orders / offers / assignment — and **ride** responses
+> (`kind: 'passenger_response'`) — → #1 / #3 (Phase 3,
+> [BD-DOCS-034](../decisions/dispatch-matching.md)); rides / ride_events → #5
+> (+ #9 audit, [BD-DOCS-038](../decisions/monitoring-audit.md)); receipts /
+> history → #8 (History); **vehicles** → Auth (driver garage → server
+> `vehicles`, keyed by driver identity,
+> [BD-DOCS-032](../decisions/auth-identity.md)) — Presence (#2) only
+> **references** the active vehicle for the heartbeat
+> ([BD-DOCS-033](../decisions/presence-heartbeat.md)); users → Auth
+> (BD-DOCS-032). `posts` and the
+> **`marketplace_message`** kind of `responses` sit **outside** the #1–#9
+> dispatch services — the marketplace / feed concern (only `passenger_response`
+> responses are dispatch offers). `messages` is the `chat.v1` threads —
+> **both** active-ride chat **and** feed trip-post chats (`trip-${postId}`
+> opened from /feed · /post) — a chat concern delivered by #6 Notification
+> (which owns delivery, not the threads); not a dispatch entity. This list
+> is **Phase-1
+> scoped** — later services introduce their own entities with their ADRs:
+> route/price cache (#4, [BD-DOCS-035](../decisions/route-price-map.md)),
+> notification feed (#6, [BD-DOCS-036](../decisions/notification-service.md)),
+> moderation cases (#7, [BD-DOCS-037](../decisions/safety-compliance.md)),
+> audit log (#9, BD-DOCS-038).
 
 ## Invariants carried from the runtime (must not change)
 
