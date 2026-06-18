@@ -89,8 +89,8 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
   `body` (post text / description), `createdAt`, **plus the per-type payload the
   current stores carry** — `title`, `tags`, `author` (`posts.v1`) and, for
   composer-created `myposts.v1`, `title` / `price` / `subtype` / `tags` /
-  `from` / `to` / `seats` / `phone` by post type (e.g. marketplace
-  `subtype: 'service'` renders as «Услуга»).
+  `from` / `to` / `when` (trip departure time) / `seats` / `phone` by post type
+  (e.g. marketplace `subtype: 'service'` renders as «Услуга»).
   *The marketplace / feed surface; under the ADR-030 completeness rule the
   migration must **preserve these payload variants**, not flatten to a body-only
   row. It **predates the ride-dispatch model**, so no Mini-Yonder service
