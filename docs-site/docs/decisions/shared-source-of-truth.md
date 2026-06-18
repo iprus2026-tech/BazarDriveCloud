@@ -60,7 +60,8 @@ single-car ceiling is not a UI limit; it comes from how data lives today:
     `public/src/screens/chat.js`
   - **Offers / assignment** — `bazardrive.driver_offers.v1`,
     `bazardrive.order_overlay.v1` (passenger selection / `Order.status=ACCEPTED`;
-    **⚠ not in `storage_boundary.js`** — owned solely by `driver_offer_store.js`)
+    owned by `driver_offer_store.js`, cleared via `clearDriverOfferStore` and
+    documented in `storage_boundary.js`, #605)
     → `public/src/driver_offer_store.js` (+ read in `ride_state.js`, `order_detail.js`)
   - **Active ride + confirmation / handoff (ride events)** —
     `bazardrive.active_ride.v1`, `bazardrive.trip_confirmation.v1`,
@@ -97,7 +98,8 @@ and turn the client into a consumer of it:
    persistence facade.** The seam is **not** `mock_api.js` alone, and **not** any
    hand-maintained subset. The completeness rule is: *every persisted server-owned
    key — those enumerated in `storage_boundary.js` **plus any store key defined
-   outside it** (today `order_overlay.v1` in `driver_offer_store.js`) — must have
+   outside it** (the previously-outstanding `order_overlay.v1` is now documented
+   there, #605) — must have
    its owning module migrated from `localStorage` to network calls.* That
    spans `mock_api.js`, `driver_offer_store.js`, `ride_state.js`, `ride_history.js`,
    and the response/confirmation/handoff owners (`respond.js`, `responses.js`,
@@ -147,8 +149,8 @@ auth ADR.
   - Offline behaviour shifts from "localStorage is truth" to "cache + reconcile";
     conflict handling must be designed.
 - **Follow-ups:**
-  - **Reconcile `storage_boundary.js` to be truly exhaustive** (add the known gap
-    `order_overlay.v1`; audit for any other store key defined outside it) — a
+  - **Keep `storage_boundary.js` exhaustive** (the `order_overlay.v1` gap is
+    closed, #605; audit for any other store key defined outside it) — a
     runtime prerequisite before it can serve as the migration checklist.
   - Data-layer contract design doc — current stores → target entities
     (users/vehicles/orders/rides/events). *(BD-DOCS Design option.)*
