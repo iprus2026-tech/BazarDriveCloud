@@ -38,7 +38,7 @@ ADR BD-DOCS-030 decided to replace per-client `localStorage` with a backend +
 shared database, and named the migration **seam** (every owning module, behind
 one persistence facade) and the **completeness rule** (every persisted
 server-owned key — those in `public/src/storage_boundary.js` **plus any defined
-outside it**, today `order_overlay.v1`). It deliberately deferred the **schema**.
+outside it**). It deliberately deferred the **schema**.
 
 This design fills that gap: it maps each current store to a **target server-owned
 entity** and proposes the entities' core fields. It **inherits the ADR-030
@@ -46,8 +46,9 @@ completeness rule** — this is a design over the same key set, not a new author
 
 ## Current stores → target entities
 
-Derived from the live key inventory (`public/src/storage_boundary.js` + the
-known out-of-inventory key `order_overlay.v1`). Legend for the target column:
+Derived from the live key inventory in `public/src/storage_boundary.js` (which,
+per #605, now also documents `order_overlay.v1` — cleared via
+`clearDriverOfferStore`). Legend for the target column:
 **S** = server-owned, **C** = client-only (stays local). Client/server split
 follows [ADR BD-DOCS-030](../decisions/shared-source-of-truth.md) — this design
 must not reclassify a key the ADR already placed.
@@ -60,7 +61,7 @@ must not reclassify a key the ADR already placed.
 | `bazardrive.ride_orders.v1` | `mock_api.js` | **orders** | S |
 | `bazardrive.respond.v1`, `bazardrive.responses.v1` | `respond.js`, `responses.js`, `chat.js` | **responses** | S |
 | `bazardrive.driver_offers.v1` | `driver_offer_store.js` | **offers** | S |
-| `bazardrive.order_overlay.v1` ⚠ *(not in `storage_boundary.js`)* | `driver_offer_store.js` | **assignment** (selected driver / `ACCEPTED` **and** cancellation: `CANCELED`, `canceledBy`, `canceledAt`) | S |
+| `bazardrive.order_overlay.v1` *(in `storage_boundary.js` inventory; cleared via `clearDriverOfferStore`, per #605)* | `driver_offer_store.js` | **assignment** (selected driver / `ACCEPTED` **and** cancellation: `CANCELED`, `canceledBy`, `canceledAt`) | S |
 | `bazardrive.active_ride.v1` | `ride_state.js` (+ `ride_actions.js`, `driver_offer_store.js`, `trip_confirmation_handoff.js`, `active_ride.js`, `order_detail.js`) | **rides** (status via `RIDE_STATUS`) | S |
 | `bazardrive.trip_confirmation.v1`, `bazardrive.driver_handoff_snapshot.v1` | `chat.js`, `trip_confirmation.js` (`TRIP_CONFIRM_KEY`), `trip_confirmation_handoff.js`, `driver_handoff_snapshot.js` | **ride_events** (confirmation / handoff timeline) | S |
 | `bazardrive.chat.v1` | `chat.js`, `active_ride.js` | **messages** | S |
@@ -72,6 +73,7 @@ must not reclassify a key the ADR already placed.
 | `bazardrive.draft.v2`, `bazardrive.order_form.v1`, `bazardrive.route_draft.v1` | `composer.js`, `route_picker.js`, `order_map_draft.js` | *(composer / route drafts)* | C |
 | `bazardrive.map_prefs.v1` | `mapbox_state.js` | *(map UI prefs)* | C |
 | `bazardrive.smoke_role.v1` | `smoke_role.js` | *(test harness)* | C (dev) |
+| `bazardrive.debug.publish` | `order_map_draft.js` | *(opt-in publish debug-trail toggle; never carries user data)* | C (dev) |
 
 ## Proposed entities (core fields)
 
@@ -116,8 +118,9 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 
 - **ID strategy** — server-generated vs client-proposed (offline create).
 - **Auth / identity** — `users` identity is owned by the **auth ADR**, not here.
-- **`storage_boundary.js` reconciliation** — `order_overlay.v1` (and any other
-  out-of-inventory key) must be folded into the inventory first (ADR-030
+- **`storage_boundary.js` reconciliation** — done for `order_overlay.v1`
+  (documented + cleared via `clearDriverOfferStore`, #605); any *future*
+  out-of-inventory key must likewise be folded into the inventory (ADR-030
   follow-up, runtime prerequisite).
 - **Vehicles split** — extracting vehicle data out of the driver profile.
 - **Offline conflict handling** — optimistic create/reconcile semantics.
