@@ -735,6 +735,7 @@ Checks:           node scripts/check.mjs result
 
 - **Allowed design inputs**:
   - Exported HTML artifact from Claude Design.
+  - Exported **multi-screen interactive prototype** from Claude Design (a connected flow: several screens plus the transitions between them).
   - Exported screenshot / image artifact.
   - User-provided screen description.
   - Existing repo patterns from `public/styles/cloud.css` and neighboring screens in `public/src/screens/`.
@@ -742,9 +743,10 @@ Checks:           node scripts/check.mjs result
 
 - **Supported workflows**:
   1. **Design → export → repo**
-     - User exports HTML from Claude Design.
+     - User exports HTML from Claude Design — a single screen, or a **multi-screen interactive prototype** (a connected flow).
      - Agent reads/parses the exported artifact.
      - Agent ports scoped components/screens into `public/src/screens/*.js` and `public/styles/cloud.css`.
+     - For a multi-screen flow: port **one screen per scoped PR** and wire transitions through the runtime router (`public/src/router.js` / `app.js`) and the flow contracts (`docs/flow-contracts.md`, `docs/screen-transitions.md`) — never a parallel navigation model. The prototype's own navigation is a reference, not the implementation.
 
   2. **Missing screen description → implementation**
      - User describes a missing screen.
