@@ -115,13 +115,17 @@ Proposal only; IDs, types, and indexes are deferred (see Open questions).
 
 > **Service / phase ownership.** Each ride-dispatch entity maps to a Mini-Yonder
 > service ([BD-DOCS-023](../governance/mini-yonder-background-services.md)) and an
-> ADR phase: orders / responses / assignment → #1 / #3 (Phase 3,
+> ADR phase: orders / offers / assignment — and **ride** responses
+> (`kind: 'passenger_response'`) — → #1 / #3 (Phase 3,
 > [BD-DOCS-034](../decisions/dispatch-matching.md)); rides / ride_events → #5
 > (+ #9 audit, [BD-DOCS-038](../decisions/monitoring-audit.md)); receipts /
 > history → #8 (History); vehicles → #2 (Presence,
 > [BD-DOCS-033](../decisions/presence-heartbeat.md)); users → Auth
-> ([BD-DOCS-032](../decisions/auth-identity.md)). `posts` and `messages` sit
-> **outside** the #1–#9 dispatch services (see above). This list is **Phase-1
+> ([BD-DOCS-032](../decisions/auth-identity.md)). `posts`, `messages`, and the
+> **`marketplace_message`** kind of `responses` sit **outside** the #1–#9
+> dispatch services — they belong to the same marketplace / feed concern as
+> `posts` (only `passenger_response` responses are dispatch offers). This list
+> is **Phase-1
 > scoped** — later services introduce their own entities with their ADRs:
 > route/price cache (#4, [BD-DOCS-035](../decisions/route-price-map.md)),
 > notification feed (#6, [BD-DOCS-036](../decisions/notification-service.md)),
