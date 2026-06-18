@@ -4,9 +4,9 @@ docType: process
 title: "Data Layer Contract — Target Schema (Phase 1 Design)"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-06-19
 effectiveFrom: 2026-06-17
-reviewAfter: 2026-12-18
+reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product]
 sourceOfTruth: docs-site
 related:
