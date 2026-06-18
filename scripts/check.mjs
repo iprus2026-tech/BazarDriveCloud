@@ -919,6 +919,25 @@ if (exists(dispatcherSelftest)) {
   }
 }
 
+// BD-TEST-01 — node:test behavioural coverage. Runs every tests/*.test.mjs
+// through Node's built-in test runner, complementing the static smoke pins
+// above with real behavioural assertions (e.g. the ride-state terminal freeze).
+// Pure Node, no browser/DOM/network; modules under test mock localStorage.
+const testsDir = path.join(root, 'tests');
+if (exists(testsDir)) {
+  const testFiles = fs.readdirSync(testsDir)
+    .filter((f) => f.endsWith('.test.mjs'))
+    .map((f) => path.join(testsDir, f));
+  if (testFiles.length) {
+    try {
+      execFileSync(process.execPath, ['--test', ...testFiles], { stdio: 'pipe' });
+    } catch (e) {
+      const msg = ((e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : e.message)).slice(-600);
+      errors.push(`node:test (tests/) failed\n${msg}`);
+    }
+  }
+}
+
 if (errors.length) {
   console.error('CHECK FAILED:');
   for (const e of errors) console.error('  - ' + e);
