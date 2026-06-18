@@ -52,8 +52,7 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 
 ### Gaps that remain real
 
-- [ ] **Real Mapbox SDK** - not connected. All map screens use DOM placeholders.
-- [ ] **Mapbox foundation stubs** - `driver_markers.js` and `trip_status_layer.js` are still not present.
+- [ ] **Real Mapbox SDK** - not connected. All map screens use DOM placeholders (the `driver_markers.js` / `trip_status_layer.js` foundation stubs exist; real Mapbox GL is the gap).
 - [ ] **Driver no-show full flow** - no-show still needs a dedicated issue before becoming a complete lifecycle surface.
 - [ ] **Automated tests** - `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt.
 
@@ -90,7 +89,7 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 - [x] **BD-DRIVER-01 mock screen** - DriverMap
 - [x] **MapShell placeholder** - `public/src/mapbox/map_shell.js`
 - [x] **Basic mapbox folder stubs** - config, loader, state, geolocation, route service, price estimator
-- [ ] **Remaining local stubs** - `driver_markers.js`, `trip_status_layer.js`
+- [x] **Marker & status layer stubs** - `driver_markers.js` (BD-MAP-FOUND-03), `trip_status_layer.js` (BD-MAP-FOUND-04) — DOM foundation stubs, no real Mapbox yet
 - [ ] **BD-MAP-FOUND-01** - real Mapbox GL JS, token, CSP update, SW update, network failure fallback
 - [ ] Real route line, pickup/dropoff coordinates, driver/passenger live-position mock
 
