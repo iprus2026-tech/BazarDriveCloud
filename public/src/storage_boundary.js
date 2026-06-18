@@ -18,7 +18,9 @@
 // storage layout):
 //
 //   bazardrive.ride_history.v1      → ride_history.js
-//   bazardrive.favorite_routes.v1   → favorite_routes.js
+//   bazardrive.favorite_routes.v1   → favorite_routes.js (clearFavoriteRoutes()
+//                                     also clears
+//                                     bazardrive.favorite_route_notice.v1)
 //   bazardrive.active_ride.v1       → ride_state.js
 //   bazardrive.chat.v1              → screens/chat.js (also written by
 //                                     screens/active_ride.js)
@@ -50,7 +52,10 @@
 //                                     (BD-ORDER-DETAIL-01D-1 local
 //                                     DriverOffer store: status 'sent' or
 //                                     'withdrawn', keyed by orderId +
-//                                     driverId)
+//                                     driverId). clearDriverOfferStore() also
+//                                     clears bazardrive.order_overlay.v1 (the
+//                                     Order Detail 01D-2A passenger-selection
+//                                     overlay).
 //   bazardrive.myposts.v1           → mock_api.js
 //   profileTripDemo                 → passenger Profile demo override
 //
@@ -62,6 +67,13 @@
 //                            seeded sample posts.
 //   bazardrive.map_prefs.v1 — device-level map preferences, identity
 //                             agnostic.
+//
+// Intentionally NOT cleared (dev/test artefacts, not user data):
+//   bazardrive.debug.publish — dev-only publish debug-trail toggle
+//                              (screens/order_map_draft.js), opt-in via
+//                              localStorage; never carries user data.
+//   bazardrive.smoke_role.v1 — per-tab role test override in sessionStorage
+//                              (smoke_role.js); ephemeral, not localStorage.
 
 import { clearRideHistory } from './ride_history.js';
 import { clearFavoriteRoutes } from './favorite_routes.js';
