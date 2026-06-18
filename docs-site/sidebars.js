@@ -34,6 +34,11 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Audits',
+      items: ['audits/BD-DOCS-039'],
+    },
+    {
+      type: 'category',
       label: 'Governance',
       items: [
         'governance/BD-DOCS-010',
