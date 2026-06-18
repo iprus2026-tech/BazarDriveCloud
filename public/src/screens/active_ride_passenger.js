@@ -13,6 +13,7 @@ import {
   saveActiveRide,
   SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
+  resolveRideStatusLabel,
   DEMO_ACTIVE_RIDE_ID,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
@@ -1398,14 +1399,11 @@ function renderPassengerCanceledFallback(ride, variant = 'canceled') {
   const byDriver = cancel.by === 'driver';
   const byPassenger = cancel.by === 'passenger';
 
-  // BD-RIDE-P-06/07 polish — NO_SHOW carries a neutral "Поездка закрыта"
-  // copy with a literal NO_SHOW badge and a single "Вернуться на главную"
-  // CTA so it doesn't pretend the user manually canceled. CANCELED keeps
-  // its two CTAs but the secondary now reads "Вернуться на главную" to
-  // match the fresh Cloud Design contract.
+  // BD-RIDE-P-06/07 polish — NO_SHOW badge uses the canonical label
+  // (resolveRideStatusLabel), not the raw enum string.
   const title = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
   const badgeLabel = isNoShow ? 'Поездка закрыта' : 'Поездка отменена';
-  const badgeText = isNoShow ? 'NO_SHOW' : 'Отменена';
+  const badgeText = isNoShow ? resolveRideStatusLabel(RIDE_STATUS.NO_SHOW) : 'Отменена';
   const description = isNoShow
     ? 'Водитель отметил, что не дождался вас.'
     : (byPassenger

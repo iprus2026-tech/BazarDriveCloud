@@ -370,8 +370,8 @@ expect('IN_PROGRESS sheet does not expose the cancel button',
 // Badge: NO_SHOW (literal tech label, "neutral copy"), title:
 // "Поездка закрыта", body: "Водитель отметил, что не дождался вас.",
 // single CTA: "Вернуться на главную".
-expect('NO_SHOW terminal badge reads "NO_SHOW"',
-  /isNoShow\s*\?\s*'NO_SHOW'/.test(canceledFallbackBody));
+expect('NO_SHOW terminal badge uses the canonical label (resolveRideStatusLabel)',
+  /isNoShow\s*\?\s*resolveRideStatusLabel\(RIDE_STATUS\.NO_SHOW\)/.test(canceledFallbackBody));
 expect('NO_SHOW terminal title reads "Поездка закрыта"',
   /isNoShow\s*\?\s*'Поездка закрыта'/.test(canceledFallbackBody));
 expect('NO_SHOW terminal body reads "Водитель отметил, что не дождался вас."',
