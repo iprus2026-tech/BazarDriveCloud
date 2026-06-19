@@ -1036,7 +1036,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 
 ### BD-RIDE-D-ERROR-01 - Driver active-ride error states
 
-**Status: Planned / contract-only — none of the four states are wired in runtime.** `retry status sync` is **deferred until a backend ride-events / async mutation contract** exists; the dedicated in-screen error UI is Cloud Design render-needed. Error/offline handling for the live driver ride. Distinct from BD-ERROR-01A (the app-shell overlay) and from BD-RIDE-D-NOSHOW-01 (the terminal no-show flow). No own route — these states would layer onto `/active-ride?role=driver`.
+**Status: Planned / contract-only — none of the four states are wired in runtime.** `retry status sync` is **deferred until a backend ride-events / async mutation contract** exists. The **support fallback (state 4) is no longer render-needed** — its render gate + contract now live under `BD-RIDE-D-DISPUTE-01`; only the remaining bespoke in-screen error UI (beyond reusing the global overlay) stays Cloud Design render-needed. Error/offline handling for the live driver ride. Distinct from BD-ERROR-01A (the app-shell overlay) and from BD-RIDE-D-NOSHOW-01 (the terminal no-show flow). No own route — these states would layer onto `/active-ride?role=driver`.
 
 | Field | Contract |
 |---|---|
@@ -1068,10 +1068,10 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 |---|---|
 | Route | `/active-ride?role=driver` (no own route — a state of the no-show mark action inside the `WAITING_PASSENGER` sheet) |
 | File | (future) extension of `public/src/screens/active_ride_driver_noshow.js` |
-| Render gate | `public/prototypes/ride/BD-RIDE-D-NOSHOW-DISPUTE-ERROR-2026-06-19-design.html` (DriverNoShowErrorFlow group) — visual reference only; never copied into runtime / SW precache. |
-| States (5) | 1. **loading** — skeleton + disabled «Отмечаем…» spinner. 2. **offline** — нет соединения; «Повторить» + safe return. 3. **server** (500). 4. **timeout** (504). 5. **waiting_safe** — «Статус не изменён» landing: NO_SHOW is **not** recorded on failure. |
+| Render gate | `public/prototypes/ride/BD-RIDE-D-NOSHOW-DISPUTE-ERROR-2026-06-19-design.html` → section `bd-ride-d-noshow-err-01` (DriverNoShowErrorFlow group): `dxe-loading`, `dxe-offline`, `dxe-server`, `dxe-timeout`, `dxe-waiting-safe` — one artboard per state. Visual reference only; never copied into runtime / SW precache. |
+| States (5) | 1. **loading** — skeleton + disabled «Отмечаем…» spinner. 2. **offline** — нет соединения; the frame copy states the mark is **not** saved and **not** queued («Отметка не сохранена, статус не изменён»); «Повторить» + safe return. 3. **server** (500). 4. **timeout** (504). 5. **waiting_safe** — «Статус не изменён» landing: NO_SHOW is **not** recorded on failure. |
 | Actions | «Повторить» → `loading`; «Вернуться к ожиданию» → `waiting_safe` (no `NO_SHOW` write). |
-| Wiring note | These are **render/demo** states. Like `waiting`/`expired`, they would be **demo-gated** (e.g. `?noshowerror=server`) because the current sync localStorage path has **no real reject** — this is NOT a real failure handler. Real backend-failure handling for the status mutation is `BD-RIDE-D-ERROR-02`. |
+| Wiring note | These are **render/demo** states. Like `waiting`/`expired`, they would be **demo-gated** (e.g. `?noshowerror=server`) because the current sync localStorage path has **no real reject** — this is NOT a real failure handler. The offline frame copy reflects this: it does **not** promise a queued/auto-send write. Real backend-failure handling for the status mutation is `BD-RIDE-D-ERROR-02`. |
 | Out of scope | Real failure handling / backend reject path (→ `BD-RIDE-D-ERROR-02`); any change to the actual `NO_SHOW` persistence. |
 
 ### BD-RIDE-D-DISPUTE-01 - Driver support / dispute fallback (design-available / render-pending)
@@ -1082,7 +1082,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 |---|---|
 | Route | `/active-ride?role=driver` (no own route — opened from the no-show compensation result) |
 | File | (future) `public/src/screens/active_ride_driver_dispute.js`, opened from the compensation step of `active_ride_driver_noshow.js` |
-| Render gate | `public/prototypes/ride/BD-RIDE-D-NOSHOW-DISPUTE-ERROR-2026-06-19-design.html` (DriverDisputeFlow group) — visual reference only. |
+| Render gate | `public/prototypes/ride/BD-RIDE-D-NOSHOW-DISPUTE-ERROR-2026-06-19-design.html` → section `bd-ride-d-dispute-01` (DriverDisputeFlow group): `dx-entry`, `dx-reason`, `dx-compose`, `dx-pending`, `dx-ack`, `dx-done` — one artboard per state. Visual reference only. |
 | States (6) | entry (neutral CTA «Связаться с поддержкой · оспорить» off the compensation receipt) → reason (5 themes: компенсация / ожидание / отмена / **небезопасно** [danger + SOS] / другое) → compose (textarea + char counter `/300` + empty/typing + photo-attach stub) → pending («Обращение отправлено» · SUP‑8842 · «На рассмотрении») → ack (поддержка пересчитала компенсацию 276 → 336 ₽) → done. |
 | Tone | Neutral / reassuring; **danger styling only on the safety theme**. |
 | Mock/UI only | No real support backend; the ticket id (SUP‑8842) and compensation figures (276 / 336 ₽) are **demo** — comp ₽ stay pending product/finance sign-off (see `BD-RIDE-D-NOSHOW-01`). |
