@@ -32,48 +32,47 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 | P2 | BD-RULES-01 | `/rules` | `public/src/screens/rules.js` | Shipped static articles; no render gate |
 | P2 | BD-SETTINGS-01 | `/settings` | `public/src/screens/settings.js` | Shipped shared shell + contract; no render-gate artifact |
 
-`BD-RIDE-D-NOSHOW-01` is the inverse case (render gate has 7 states, runtime wires 5/7) — classified `future-design` and tracked under **Partial / future issues** below.
+`BD-RIDE-D-NOSHOW-01` wires all 7 render-gate states across two markers (waiting/expired under BD-RIDE-D-WAITING-01, the 5 sub-flow states under BD-RIDE-D-NOSHOW-01); it stays `future-design` only for the remaining sign-off/backend items (mock compensation, dispute path, error states) — see **Partial / future issues** below.
 
 ## Partial / future issues
 
 These flows already render a stub or terminal state in the runtime, but the full state set is a future dedicated issue. They are NOT missing screens and NOT audit gates — they need real wiring work, but that work is scheduled separately and is out of scope for this artifact PR.
 
-### BD-RIDE-D-NOSHOW-01 — Driver No-Show Flow (partial / future issue)
+### BD-RIDE-D-NOSHOW-01 — Driver No-Show Flow (wired cross-gate; remaining items are sign-off/backend)
 
-**Status: Partial — 5 of the render gate's 7 states are wired.** The Cloud Design
-no-show gate has 7 states: `waiting → expired → action → confirm → result →
-compensation → done`. The runtime ships the **5 in-sheet sub-flow states**
-(`action → confirm → result → compensation → done`) in
-`public/src/screens/active_ride_driver_noshow.js`, opened from the
-`WAITING_PASSENGER` «Не приехал» (`#ar-no-show`) action via `openDriverNoShowFlow`.
+**Status: Wired (cross-gate) — all 7 render-gate states have runtime
+representation.** The Cloud Design no-show gate has 7 states:
+`waiting → expired → action → confirm → result → compensation → done`, wired
+across two markers:
+
+- `waiting` (`renderWaiting`, free-wait ring) and `expired`
+  (`renderWaitingExpired`, paid-wait variant) ship under **BD-RIDE-D-WAITING-01**
+  (#543–#545) as render phases of the `WAITING_PASSENGER` status — reached via
+  `?wait=expired` or the live free-wait timer hitting 0:00, pinned by
+  `scripts/smoke-active-ride-waiting.mjs`.
+- the **5 in-sheet sub-flow states** (`action → confirm → result → compensation →
+  done`) ship in `public/src/screens/active_ride_driver_noshow.js`, opened from
+  the `WAITING_PASSENGER` «Не приехал» (`#ar-no-show`) action via
+  `openDriverNoShowFlow`.
 
 **Split ownership** (recorded in `docs/design-registry.json`):
 
-- `public/src/screens/active_ride.js` owns the **waiting/expired entry states** +
+- `public/src/screens/active_ride.js` owns the **waiting/expired stages** +
   the `#ar-no-show` wiring (pinned by `scripts/smoke-active-ride-noshow.mjs` and
   `scripts/smoke-active-ride-waiting.mjs`).
 - `public/src/screens/active_ride_driver_noshow.js` owns the **5 in-sheet states**.
 
-**Parity gap (the remaining 2/7):**
+**Remaining future-design scope** (narrower than the gate — own dedicated issues,
+these are NOT missing screens):
 
-- `waiting` and `expired` are **gate-only** — the dedicated full-screen waiting /
-  expired no-show stages from the render gate are not yet wired as their own
-  states (the runtime enters the no-show sub-flow from the existing
-  `WAITING_PASSENGER` sheet instead).
 - **Compensation values `180 / 120 / 276 ₽` are mock placeholders** and must be
-  confirmed with **product / finance sign-off** before any further wiring — do not
+  confirmed with **product / finance sign-off** before any real wiring — do not
   treat them as real figures.
-
-**Future wiring scope** (own dedicated issue, NOT this artifact PR):
-
-- dedicated `waiting` / `expired` no-show stages (the 2 gate-only states)
-- real compensation / earnings-adjustment figures (after product/finance sign-off)
 - support fallback / dispute path
 - loading and error states for the flow (see `BD-RIDE-D-ERROR-02` for the
   async/backed cancel/no-show failure semantics)
 
-**Out of scope for this artifact PR:** runtime wiring of the remaining no-show
-states, `active_ride` lifecycle changes, compensation backend, dispatcher.
+**Out of scope:** `active_ride` lifecycle changes, compensation backend, dispatcher.
 
 ## Audit / consolidation gates (shipped, not missing)
 

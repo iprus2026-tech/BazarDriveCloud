@@ -164,7 +164,7 @@
       "section": "Active Ride",
       "role": "driver",
       "status": "NO_SHOW",
-      "note": "Split ownership: active_ride.js owns the waiting/expired entry states + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). Still future-design: the render gate has 7 states — waiting + expired are gate-only and not yet wired. Compensation values 180 / 120 / 276 ₽ are mock placeholders and must be confirmed with product/finance before further wiring.",
+      "note": "Split ownership: active_ride.js owns the waiting/expired stages + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). All 7 render-gate states are now wired: waiting (renderWaiting, free-wait ring) and expired (renderWaitingExpired, paid-wait) ship under BD-RIDE-D-WAITING-01 (#543–#545; reached via ?wait=expired or the live free-wait timer hitting 0:00, pinned by scripts/smoke-active-ride-waiting.mjs), plus the 5 sub-flow states above. Remaining future-design scope is narrower: compensation values 180 / 120 / 276 ₽ are mock placeholders pending product/finance sign-off, the support/dispute fallback path, and loading/error states (BD-RIDE-D-ERROR-02).",
       "interaction": "design-render-only"
     },
     {
