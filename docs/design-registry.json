@@ -160,12 +160,12 @@
       "file": "public/src/screens/active_ride.js",
       "additionalFiles": ["public/src/screens/active_ride_driver_noshow.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "classification": "future-design",
+      "classification": "render-gate",
       "section": "Active Ride",
       "role": "driver",
       "status": "NO_SHOW",
-      "note": "Split ownership: active_ride.js owns the waiting/expired stages + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). All 7 render-gate states are now wired: waiting (renderWaiting, free-wait ring) and expired (renderWaitingExpired, paid-wait) ship under BD-RIDE-D-WAITING-01 (#543–#545; reached via ?wait=expired or the live free-wait timer hitting 0:00, pinned by scripts/smoke-active-ride-waiting.mjs), plus the 5 sub-flow states above. Remaining future-design scope is narrower: compensation values 180 / 120 / 276 ₽ are mock placeholders pending product/finance sign-off, the support/dispute fallback path, and loading/error states (BD-RIDE-D-ERROR-02).",
-      "interaction": "design-render-only"
+      "note": "Split ownership: active_ride.js owns the waiting/expired stages + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). All 7 render-gate states are now wired: waiting (renderWaiting, free-wait ring) and expired (renderWaitingExpired, paid-wait) ship under BD-RIDE-D-WAITING-01 (#543–#545; reached via ?wait=expired or the live free-wait timer hitting 0:00, pinned by scripts/smoke-active-ride-waiting.mjs), plus the 5 sub-flow states above. The 7-state render gate has runtime parity, so this is classification 'render-gate' (not future-design). Remaining follow-up scope is separate from the render-gate states and tracked under its own gates/issues: compensation values 180 / 120 / 276 ₽ are mock placeholders pending product/finance sign-off, the support/dispute fallback path (BD-RIDE-D-DISPUTE-01, proposed), and loading/error states (BD-RIDE-D-ERROR-02).",
+      "interaction": "manual-interaction"
     },
     {
       "id": "BD-RIDE-P-01",

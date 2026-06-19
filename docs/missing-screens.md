@@ -32,7 +32,7 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 | P2 | BD-RULES-01 | `/rules` | `public/src/screens/rules.js` | Shipped static articles; no render gate |
 | P2 | BD-SETTINGS-01 | `/settings` | `public/src/screens/settings.js` | Shipped shared shell + contract; no render-gate artifact |
 
-`BD-RIDE-D-NOSHOW-01` wires all 7 render-gate states across two markers (waiting/expired under BD-RIDE-D-WAITING-01, the 5 sub-flow states under BD-RIDE-D-NOSHOW-01); it stays `future-design` only for the remaining sign-off/backend items (mock compensation, dispute path, error states) — see **Partial / future issues** below.
+`BD-RIDE-D-NOSHOW-01` wires all 7 render-gate states across two markers (waiting/expired under BD-RIDE-D-WAITING-01, the 5 sub-flow states under BD-RIDE-D-NOSHOW-01), so the render gate has runtime parity and is classified `render-gate` in `docs/design-registry.json`. The remaining sign-off/backend follow-ups (mock compensation, dispute path, error states) are separate from the render-gate states and tracked under their own gates/issues — see **Partial / future issues** below.
 
 ## Partial / future issues
 
