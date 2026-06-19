@@ -24,9 +24,9 @@ ScreenOps is a **Mini Yonder Docs** feature.
 
 Preferred docs URL: `/docs/screenops`.
 
-Planned local dev URL: `/ops/screens`.
+Local dev URL: `/ops/screens`.
 
-`/ops/screens` is the future local PWA/dev route for the runtime ScreenOps module. This docs-only slice documents the contract and render direction; it does not implement that runtime route.
+`/ops/screens` is the local PWA/dev route for the runtime ScreenOps module, shipped by BD-OPS-03. This manual documents the contract and render direction; the runtime dashboard is implemented.
 
 It must not appear in the normal product tabbar.
 
@@ -38,7 +38,7 @@ ScreenOps Control is the working surface for UI drift repair: find a defect, cre
 
 | Control | Target | Current status |
 | --- | --- | --- |
-| Open ScreenOps | `/ops/screens` | Planned runtime/dev route in BD-OPS-03 |
+| Open ScreenOps | `/ops/screens` | Runtime/dev route — implemented in BD-OPS-03 |
 | Run defect search | Defect Search panel | Planned ScreenOps action |
 | View MEL cards | MEL cards panel | Planned ScreenOps action |
 | Generate design prompt | Prompt generator panel | Planned ScreenOps action |
@@ -46,7 +46,7 @@ ScreenOps Control is the working surface for UI drift repair: find a defect, cre
 
 **Workflow:** defect → MEL card → design prompt → issue body → code prompt → scoped branch → smoke/check → PR.
 
-Until `/ops/screens` is implemented, this manual is the source of truth for the ScreenOps contract, stack, flow, and render direction.
+This manual is the source of truth for the ScreenOps contract, stack, flow, and render direction; `/ops/screens` implements it (BD-OPS-03).
 
 ## Render set
 

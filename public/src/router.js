@@ -8,6 +8,10 @@ let pendingAction = null;
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
 const SHOW_FAB    = new Set(['/feed']);
 const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft']);
+// BD-OPS-03 — dev/docs routes exempt from the first-run welcome guard so the
+// documented /ops/screens entry point opens from a clean profile. Product
+// routes keep the guard unchanged; this is not a tabbar or HIDE_CHROME change.
+const DEV_DOCS_ROUTES = new Set(['/ops/screens']);
 
 function redirectDriverPassengerOrderFlow(path, u) {
   return isDriverMode(u) && PASSENGER_ORDER_ROUTES.has(path);
@@ -44,7 +48,7 @@ async function render() {
   bootstrapSmokeRoleFromQuery(qi === -1 ? '' : fullPath.slice(qi + 1));
   const u = applySmokeRole(user.get());
 
-  if (!u.welcomeSeen && path !== '/welcome') {
+  if (!u.welcomeSeen && path !== '/welcome' && !DEV_DOCS_ROUTES.has(path)) {
     go('/welcome');
     return;
   }

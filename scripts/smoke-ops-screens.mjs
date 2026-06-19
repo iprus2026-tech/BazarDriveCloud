@@ -14,6 +14,7 @@ import fs from 'node:fs';
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 const app = read('../public/src/app.js');
+const router = read('../public/src/router.js');
 const indexHtml = read('../public/index.html');
 const sw = read('../public/sw.js');
 const css = read('../public/styles/cloud.css');
@@ -51,6 +52,18 @@ expect('ops_screens.js has a default export',
 // ── B. NOT in the product tabbar ──
 expect('/ops/screens is NOT a tabbar data-route in index.html',
   !/data-route="\/ops\/screens"/.test(indexHtml));
+
+// ── B2. Welcome guard bypass (BD-OPS-03) — opens from a clean profile ──
+// Focused source pins: allowlist exists, the guard NEGATES it (so dev/docs
+// routes are exempted, not redirected), and the product guard is untouched.
+expect('router defines dev/docs route allowlist containing /ops/screens',
+  /const\s+DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[\s*['"]\/ops\/screens['"]\s*\]\s*\)/.test(router));
+expect('welcome guard exempts dev/docs routes via negated allowlist',
+  /!\s*DEV_DOCS_ROUTES\.has\(path\)/.test(router));
+expect('welcome guard still redirects first-run non-welcome routes to /welcome',
+  /!\s*u\.welcomeSeen/.test(router)
+  && /path\s*!==\s*['"]\/welcome['"]/.test(router)
+  && /go\(\s*['"]\/welcome['"]\s*\)/.test(router));
 
 // ── C. Registry seed (the 9 MVP screens from #623) ──
 const MVP_IDS = ['BD-FEED-01', 'BD-COMPOSER-01', 'BD-PROFILE-01', 'BD-RESPOND-01',
