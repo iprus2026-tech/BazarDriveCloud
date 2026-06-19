@@ -30,6 +30,24 @@ Planned local dev URL: `/ops/screens`.
 
 It must not appear in the normal product tabbar.
 
+## ScreenOps Control
+
+Use this block as the operational entry point for ScreenOps work inside Mini Yonder Docs.
+
+ScreenOps Control is the working surface for UI drift repair: find a defect, create a MEL card, generate the design prompt, prepare the issue body, generate the code-agent prompt, move into a scoped branch, run smoke/check, and open a PR.
+
+| Control | Target | Current status |
+| --- | --- | --- |
+| Open ScreenOps | `/ops/screens` | Planned runtime/dev route in BD-OPS-03 |
+| Run defect search | Defect Search panel | Planned ScreenOps action |
+| View MEL cards | MEL cards panel | Planned ScreenOps action |
+| Generate design prompt | Prompt generator panel | Planned ScreenOps action |
+| Prepare repair PR | GitHub issue body + code-agent prompt | Planned ScreenOps workflow |
+
+**Workflow:** defect → MEL card → design prompt → issue body → code prompt → scoped branch → smoke/check → PR.
+
+Until `/ops/screens` is implemented, this manual is the source of truth for the ScreenOps contract, stack, flow, and render direction.
+
 ## Render set
 
 ![ScreenOps render set](/img/screenops/00-screenops-render-set.svg)
@@ -78,3 +96,6 @@ open PR
 - Planned local dev URL is documented as future runtime work.
 - Render assets are attached to this manual.
 - Issue 623 remains the tracker.
+- ScreenOps Control block is present before the Render set.
+- The block marks `/ops/screens` as planned, not implemented.
+- The block keeps ScreenOps inside Mini Yonder Docs, not product navigation.
