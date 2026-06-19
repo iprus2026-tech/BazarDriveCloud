@@ -16,7 +16,7 @@ This backlog is extracted from the BD-FULL-FLOW-01 Product Navigation Map.
 
 **Missing-screen count: 3 net-new gates + 1 extension** (BD-NOTIF-01, BD-ERROR-01, BD-MOD-01 + BD-RIDE-D error states). BD-SETTINGS-01 is no longer counted — it is **shipped** (contract present; `design-registry.json` → `runtimeOnly`, render-pending; see below). BD-AUTH-01 is not counted — reclassified as an audit gate over the existing onboarding phone / OTP flow (see below).
 
-See the **Partial / future issues** section below for partial flows that already render a terminal stub but need future dedicated wiring. See the **Audit / consolidation gates** section for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds. See the **Render-pending** section for shipped screens that lack a Cloud Design render gate.
+See the **Partial / future issues** section below for flows whose render-gate states are already wired but still carry non-render follow-ups (sign-off / backend) tracked separately. See the **Audit / consolidation gates** section for items that were previously marked Missing/P0 but are already shipped — they need audit/parity work, not from-scratch builds. See the **Render-pending** section for shipped screens that lack a Cloud Design render gate.
 
 ## Render-pending (shipped runtime, no Cloud Design render gate)
 
@@ -36,7 +36,7 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 
 ## Partial / future issues
 
-These flows already render a stub or terminal state in the runtime, but the full state set is a future dedicated issue. They are NOT missing screens and NOT audit gates — they need real wiring work, but that work is scheduled separately and is out of scope for this artifact PR.
+These flows are NOT missing screens and NOT audit gates. Their Cloud Design render-gate states are already wired in the runtime — the only remaining work is non-render follow-up (product / finance sign-off and backend), tracked under its own gates/issues and out of scope for this artifact PR.
 
 ### BD-RIDE-D-NOSHOW-01 — Driver No-Show Flow (wired cross-gate; remaining items are sign-off/backend)
 
@@ -62,8 +62,8 @@ across two markers:
   `scripts/smoke-active-ride-waiting.mjs`).
 - `public/src/screens/active_ride_driver_noshow.js` owns the **5 in-sheet states**.
 
-**Remaining future-design scope** (narrower than the gate — own dedicated issues,
-these are NOT missing screens):
+**Remaining non-render follow-ups** (not render-gate states — own dedicated issues,
+NOT missing screens):
 
 - **Compensation values `180 / 120 / 276 ₽` are mock placeholders** and must be
   confirmed with **product / finance sign-off** before any real wiring — do not
