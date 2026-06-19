@@ -93,9 +93,9 @@ open PR
 
 - ScreenOps is documented as a docs feature.
 - Preferred docs URL is documented and backed by the page slug.
-- Planned local dev URL is documented as future runtime work.
+- Local dev URL `/ops/screens` is documented and implemented in BD-OPS-03.
 - Render assets are attached to this manual.
 - Issue 623 remains the tracker.
 - ScreenOps Control block is present before the Render set.
-- The block marks `/ops/screens` as planned, not implemented.
+- The block marks `/ops/screens` as implemented in BD-OPS-03.
 - The block keeps ScreenOps inside Mini Yonder Docs, not product navigation.

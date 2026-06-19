@@ -9,6 +9,7 @@
 // CSP: no inline styles, no inline handlers — all wiring is event delegation.
 
 import { go } from '../router.js';
+import { user } from '../state.js';
 import { getScreens, getScreen } from '../ops/ops_registry.js';
 import { listMelForScreen, createMelCard } from '../ops/ops_mel_store.js';
 import { generateCloudDesignPrompt } from '../ops/templates/cloud_design_prompt_template.js';
@@ -179,11 +180,21 @@ export default function opsScreens() {
   }
 
   function copy(text, okMsg) {
-    state.notice = okMsg;
+    // Only report success after the write actually resolves. If the Clipboard
+    // API is unavailable (insecure host) or rejects (denied permission), tell
+    // the user to copy manually instead of falsely claiming success.
+    const fail = () => {
+      state.notice = 'Copy failed. Select the text manually.';
+      renderDetail();
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {});
+      navigator.clipboard.writeText(text).then(() => {
+        state.notice = okMsg;
+        renderDetail();
+      }).catch(fail);
+    } else {
+      fail();
     }
-    renderDetail();
   }
 
   // Search filters the list in place; the input element persists so focus and
@@ -213,6 +224,12 @@ export default function opsScreens() {
 
     switch (action) {
       case 'open-screen':
+        // BD-OPS-03 — opening a product screen from the dev dashboard must work
+        // even from a clean profile. Seed the first-run flag locally (a
+        // deliberate dev action) so the target product route isn't bounced to
+        // /welcome by the router guard. We intentionally do NOT exempt product
+        // routes globally in the router or add them to DEV_DOCS_ROUTES.
+        if (!user.get().welcomeSeen) user.set({ welcomeSeen: true });
         go(s.route);
         break;
       case 'mark-crooked': {

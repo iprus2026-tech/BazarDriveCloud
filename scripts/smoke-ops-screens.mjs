@@ -135,6 +135,23 @@ for (const p of OPS_PRECACHE) {
 expect('cloud.css defines the ScreenOps atoms',
   /\.screen--ops-screens\s*\{/.test(css) && /\.ops-reg__item\b/.test(css));
 
+// ── I. Clipboard copy reports success only after the write resolves (P3) ──
+expect('copy() reports success only after writeText resolves (then-branch)',
+  /writeText\([^)]*\)\s*\.then\(/.test(screenSrc));
+expect('copy() surfaces a manual-fallback message on clipboard failure',
+  /Copy failed\. Select the text manually\./.test(screenSrc));
+expect('copy() does not swallow clipboard failure as success (no empty catch)',
+  !/\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/.test(screenSrc));
+
+// ── J. "Open screen" works from a clean profile WITHOUT broadly exempting product routes (P3) ──
+expect('ops_screens imports user state from state.js',
+  /import\s*\{[^}]*\buser\b[^}]*\}\s*from\s*'\.\.\/state\.js'/.test(screenSrc));
+expect('open-screen seeds welcomeSeen so a clean-profile dev navigation is not bounced to /welcome',
+  /user\.set\(\s*\{\s*welcomeSeen:\s*true\s*\}\s*\)/.test(screenSrc));
+expect('router still exempts ONLY /ops/screens (no product routes added to DEV_DOCS_ROUTES)',
+  /const\s+DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[\s*['"]\/ops\/screens['"]\s*\]\s*\)/.test(router)
+  && !/DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[[^\]]*\/(feed|profile|map|active-ride|chat|respond|new|order|responses|rules|inbox)\b/.test(router));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
