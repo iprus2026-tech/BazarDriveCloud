@@ -41,13 +41,13 @@ The map is organized into four lanes:
 
 - Designed / ready gates: 31 (added: BD-MAP-02 location permission — previously folded into BD-MAP-01; BD-POST-01 post detail — previously treated only as a Feed card target)
 - Missing gates: 4
-- Partial gates: 1 (BD-RIDE-D-NOSHOW-01 reconciled to render-gate parity in PR #621 — see no-show follow-up below)
+- Partial gates: 2
 - Audit / consolidation gates: 4
 - Legacy: 1
 
 > **Codex P2 review follow-up (PR #495):** the previous draft counted BD-HISTORY-P-01, BD-COMPOSER-01 state expansion, BD-GARAGE-01, and BD-AUTH-01 as Missing / Partial backlog items. All four are already shipped in the production app and are now classified as **audit / consolidation gates** — opening them only after a confirmed gap audit, not as a from-scratch build.
 
-> **Codex P2 follow-up — no-show flow (reconciled, PR #621):** BD-RIDE-D-NOSHOW-01 has render-gate parity — all 7 render-gate states have runtime representation across two markers. `waiting`/`expired` (`renderWaiting`/`renderWaitingExpired`) ship under BD-RIDE-D-WAITING-01 on the `status=WAITING_PASSENGER` route (reached via `?wait=expired` or the live free-wait timer hitting 0:00), and the 5 in-sheet states (action → confirm → result → compensation → done) ship in `public/src/screens/active_ride_driver_noshow.js`, opened from the `#ar-no-show` action. The registry entry is classified `render-gate` and its route points at `status=WAITING_PASSENGER` (where the gate renders); the terminal `status=NO_SHOW` route renders the closed-trip canceled stub (`renderCanceledStub`) — the flow's outcome, not its render gate — with exits `go('/feed')` (primary) and `go('/profile')` (history), no `/driver-map` exit. Remaining work is non-render follow-up only: mock comp ₽ (180 / 120 / 276) pending product/finance sign-off, the dispute path (BD-RIDE-D-DISPUTE-01), and error states (BD-RIDE-D-ERROR-02).
+> **Codex P2 follow-up — no-show flow:** BD-RIDE-D-NOSHOW-01 is partial, not done. The driver route renders only the terminal NO_SHOW / canceled stub today (`docs/design-registry.json`); the full no-show flow (reason / confirm / compensation / support / loading / error) remains a future dedicated issue per `docs/screen-contracts.md` and is out of scope for this artifact PR. The currently wired exits for the terminal stub are `go('/feed')` (primary) and `go('/profile')` (history) — there is no `/driver-map` exit from this state today.
 
 > **Codex P2 follow-up — onboarding routes / files split:** `/welcome` is owned by `public/src/screens/welcome.js` (welcome / role / permissions / loading / error states) and `/onboarding` is the onboarding step host (`public/src/screens/onboarding.js`) used for steps like `?step=phone`. Empty hash defaults to `#/welcome` in `public/src/router.js`. A literal `#/` is not a registered onboarding route and, once `welcomeSeen` is true, falls through to `/feed`. The first-run welcome flow persists `welcomeSeen` + role and routes directly to `/feed` (passenger) or `/driver-map` (driver) — it does **not** pass through `/onboarding?step=phone`; the OTP step is the profile-side phone-verification re-entry path.
 

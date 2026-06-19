@@ -23,7 +23,7 @@
 | Полка | Где в registry | Что значит |
 |---|---|---|
 | `render-gate` | `screens[]` | Есть реальный Cloud Design render gate (каталог визуальной правды). |
-| `future-design` | `screens[]`, `interaction: "design-render-only"` | Render gate есть, но runtime беднее/заглушка → нужен parity follow-up. Сейчас таких нет (`BD-RIDE-D-NOSHOW-01` достиг render-gate-паритета — перенесён в `render-gate`, PR #621). |
+| `future-design` | `screens[]`, `interaction: "design-render-only"` | Render gate есть, но runtime беднее/заглушка → нужен parity follow-up. Сейчас: `BD-RIDE-D-NOSHOW-01`. |
 | `stub-foundation` | `foundationModules[]` | Переиспользуемый не-маршрутный модуль (Mapbox stub). |
 | `contract-only` | `runtimeOnly[]` | Ship + контракт в `screen-contracts.md`, но render gate ещё нет → `render-pending`. |
 | `runtime-only` | `runtimeOnly[]` | Ship без render gate и без контракта → `render-pending`. Сейчас таких нет. |
