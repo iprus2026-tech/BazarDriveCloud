@@ -12,12 +12,11 @@ import { go } from '../router.js';
 import { user } from '../state.js';
 import { getScreens, getScreen } from '../ops/ops_registry.js';
 import { listMelForScreen, createMelCard } from '../ops/ops_mel_store.js';
-import { generateCloudDesignPrompt } from '../ops/templates/cloud_design_prompt_template.js';
-import { generateGithubIssueBody } from '../ops/templates/github_issue_template.js';
-import { generateClaudeCodePrompt } from '../ops/templates/claude_code_prompt_template.js';
 import { renderMelCard } from '../ops/templates/screen_mel_card_template.js';
-
-const CHECK_COMMANDS = 'node scripts/check.mjs\nnode scripts/dispatcher.mjs';
+import { buildCloudDesignPrompt } from '../ops/connectors/cloud_design_connector.js';
+import { buildGithubIssue } from '../ops/connectors/github_issue_connector.js';
+import { buildClaudeCodePrompt } from '../ops/connectors/claude_code_connector.js';
+import { buildCheckCommands } from '../ops/connectors/checks_connector.js';
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -247,21 +246,21 @@ export default function opsScreens() {
       }
       case 'gen-cloud': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Cloud Design prompt', generateCloudDesignPrompt(s, mel));
+        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel));
         break;
       }
       case 'gen-github': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('GitHub issue body', generateGithubIssueBody(s, mel));
+        setOutput('GitHub issue body', buildGithubIssue(s.id, mel));
         break;
       }
       case 'gen-claude': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Claude Code prompt', generateClaudeCodePrompt(s, mel));
+        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel));
         break;
       }
       case 'copy-check':
-        copy(CHECK_COMMANDS, 'Check commands copied.');
+        copy(buildCheckCommands(s.id), 'Check commands copied.');
         break;
       case 'copy-output':
         copy(state.outputText, 'Copied.');
