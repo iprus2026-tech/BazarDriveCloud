@@ -20,7 +20,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Processes',
-      items: ['processes/BD-DOCS-004', 'processes/BD-DOCS-005', 'processes/BD-DOCS-006'],
+      items: ['processes/BD-DOCS-004', 'processes/BD-DOCS-005', 'processes/BD-DOCS-006', 'processes/BD-DOCS-040'],
     },
     {
       type: 'category',
