@@ -25,6 +25,12 @@ const tplCloud = read('../public/src/ops/templates/cloud_design_prompt_template.
 const tplGithub = read('../public/src/ops/templates/github_issue_template.js');
 const tplClaude = read('../public/src/ops/templates/claude_code_prompt_template.js');
 const tplMel = read('../public/src/ops/templates/screen_mel_card_template.js');
+const connRepo = read('../public/src/ops/connectors/repo_connector.js');
+const connContracts = read('../public/src/ops/connectors/screen_contracts_connector.js');
+const connCloud = read('../public/src/ops/connectors/cloud_design_connector.js');
+const connGithub = read('../public/src/ops/connectors/github_issue_connector.js');
+const connClaude = read('../public/src/ops/connectors/claude_code_connector.js');
+const connChecks = read('../public/src/ops/connectors/checks_connector.js');
 
 // Pure modules are safe to import in Node (no browser globals at module load).
 const { getScreens } = await import(new URL('../public/src/ops/ops_registry.js', import.meta.url));
@@ -32,6 +38,12 @@ const { generateCloudDesignPrompt } = await import(new URL('../public/src/ops/te
 const { generateGithubIssueBody } = await import(new URL('../public/src/ops/templates/github_issue_template.js', import.meta.url));
 const { generateClaudeCodePrompt } = await import(new URL('../public/src/ops/templates/claude_code_prompt_template.js', import.meta.url));
 const { renderMelCard } = await import(new URL('../public/src/ops/templates/screen_mel_card_template.js', import.meta.url));
+const { getScreenFacts, listScreenFacts } = await import(new URL('../public/src/ops/connectors/repo_connector.js', import.meta.url));
+const { getContractFacts } = await import(new URL('../public/src/ops/connectors/screen_contracts_connector.js', import.meta.url));
+const { buildCloudDesignPrompt } = await import(new URL('../public/src/ops/connectors/cloud_design_connector.js', import.meta.url));
+const { buildGithubIssue } = await import(new URL('../public/src/ops/connectors/github_issue_connector.js', import.meta.url));
+const { buildClaudeCodePrompt } = await import(new URL('../public/src/ops/connectors/claude_code_connector.js', import.meta.url));
+const { buildCheckCommands } = await import(new URL('../public/src/ops/connectors/checks_connector.js', import.meta.url));
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -113,6 +125,12 @@ for (const [name, src] of [
   ['github_issue_template.js', tplGithub],
   ['claude_code_prompt_template.js', tplClaude],
   ['screen_mel_card_template.js', tplMel],
+  ['connectors/repo_connector.js', connRepo],
+  ['connectors/screen_contracts_connector.js', connContracts],
+  ['connectors/cloud_design_connector.js', connCloud],
+  ['connectors/github_issue_connector.js', connGithub],
+  ['connectors/claude_code_connector.js', connClaude],
+  ['connectors/checks_connector.js', connChecks],
 ]) {
   expect(`no hard-coded credential assignment in ${name}`, !CRED.test(src));
 }
@@ -126,6 +144,12 @@ const OPS_PRECACHE = [
   './src/ops/templates/github_issue_template.js',
   './src/ops/templates/claude_code_prompt_template.js',
   './src/ops/templates/screen_mel_card_template.js',
+  './src/ops/connectors/repo_connector.js',
+  './src/ops/connectors/screen_contracts_connector.js',
+  './src/ops/connectors/cloud_design_connector.js',
+  './src/ops/connectors/github_issue_connector.js',
+  './src/ops/connectors/claude_code_connector.js',
+  './src/ops/connectors/checks_connector.js',
 ];
 for (const p of OPS_PRECACHE) {
   expect(`sw.js precaches ${p}`, sw.includes(`'${p}'`));
@@ -151,6 +175,54 @@ expect('open-screen seeds welcomeSeen so a clean-profile dev navigation is not b
 expect('router still exempts ONLY /ops/screens (no product routes added to DEV_DOCS_ROUTES)',
   /const\s+DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[\s*['"]\/ops\/screens['"]\s*\]\s*\)/.test(router)
   && !/DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[[^\]]*\/(feed|profile|map|active-ride|chat|respond|new|order|responses|rules|inbox)\b/.test(router));
+
+// ── K. Connector layer (BD-OPS-03b) — dashboard talks to connectors, not templates ──
+expect('repo_connector exports getScreenFacts + listScreenFacts',
+  typeof getScreenFacts === 'function' && typeof listScreenFacts === 'function');
+expect('screen_contracts_connector exports getContractFacts',
+  typeof getContractFacts === 'function');
+expect('cloud_design_connector exports buildCloudDesignPrompt',
+  typeof buildCloudDesignPrompt === 'function');
+expect('github_issue_connector exports buildGithubIssue',
+  typeof buildGithubIssue === 'function');
+expect('claude_code_connector exports buildClaudeCodePrompt',
+  typeof buildClaudeCodePrompt === 'function');
+expect('checks_connector exports buildCheckCommands',
+  typeof buildCheckCommands === 'function');
+
+// Prompt connectors embed route+file+id for a real registry screen and append the contract ref.
+const cid = 'BD-FEED-01';
+const cmel = { problem: 'p', requiredRepair: 'r' };
+for (const [name, fn] of [
+  ['cloud_design', buildCloudDesignPrompt],
+  ['github_issue', buildGithubIssue],
+  ['claude_code', buildClaudeCodePrompt],
+]) {
+  const out = fn(cid, cmel);
+  expect(`${name} connector output embeds id + route + file`,
+    out.includes('BD-FEED-01') && out.includes('/feed') && out.includes('public/src/screens/feed.js'));
+  expect(`${name} connector appends the contract reference`,
+    out.includes('Contract: docs/screen-contracts.md#bd-feed-01'));
+}
+expect('prompt connector returns empty string for an unknown screen id',
+  buildCloudDesignPrompt('NOPE-404', {}) === '');
+expect('checks_connector returns the check command set',
+  /node scripts\/check\.mjs/.test(buildCheckCommands(cid)));
+expect('repo_connector surfaces registry facts (route + file) for a screen',
+  (getScreenFacts(cid) || {}).route === '/feed' && (getScreenFacts(cid) || {}).file === 'public/src/screens/feed.js');
+expect('screen_contracts_connector derives a contract anchor',
+  (getContractFacts(cid) || {}).contractAnchor === 'docs/screen-contracts.md#bd-feed-01');
+
+// ops_screens.js talks to the connectors, NOT the prompt templates directly.
+expect('ops_screens imports the prompt + checks connectors',
+  /from\s+'\.\.\/ops\/connectors\/cloud_design_connector\.js'/.test(screenSrc)
+  && /from\s+'\.\.\/ops\/connectors\/github_issue_connector\.js'/.test(screenSrc)
+  && /from\s+'\.\.\/ops\/connectors\/claude_code_connector\.js'/.test(screenSrc)
+  && /from\s+'\.\.\/ops\/connectors\/checks_connector\.js'/.test(screenSrc));
+expect('ops_screens no longer imports the 3 prompt templates directly (renderMelCard display import may remain)',
+  !/from\s+'\.\.\/ops\/templates\/cloud_design_prompt_template\.js'/.test(screenSrc)
+  && !/from\s+'\.\.\/ops\/templates\/github_issue_template\.js'/.test(screenSrc)
+  && !/from\s+'\.\.\/ops\/templates\/claude_code_prompt_template\.js'/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
