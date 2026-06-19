@@ -15,7 +15,7 @@ related:
   issues: [623]
   prs: []
 tags: [process, screenops, mini-yonder, docs]
-slug: /processes/screenops-mini-yonder
+slug: /docs/screenops
 ---
 
 # Mini Yonder ScreenOps
@@ -24,7 +24,9 @@ ScreenOps is a **Mini Yonder Docs** feature.
 
 Preferred docs URL: `/docs/screenops`.
 
-Local dev URL: `/ops/screens`.
+Planned local dev URL: `/ops/screens`.
+
+`/ops/screens` is the future local PWA/dev route for the runtime ScreenOps module. This docs-only slice documents the contract and render direction; it does not implement that runtime route.
 
 It must not appear in the normal product tabbar.
 
@@ -72,7 +74,7 @@ open PR
 ## Acceptance
 
 - ScreenOps is documented as a docs feature.
-- Preferred docs URL is documented.
-- Local dev URL is documented.
+- Preferred docs URL is documented and backed by the page slug.
+- Planned local dev URL is documented as future runtime work.
 - Render assets are attached to this manual.
 - Issue 623 remains the tracker.
