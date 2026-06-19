@@ -28,6 +28,7 @@ import driverMap  from './screens/driver_map.js';
 import tripReceipt from './screens/trip_receipt.js';
 import orderDetail from './screens/order_detail.js';
 import settings    from './screens/settings.js';
+import opsScreens  from './screens/ops_screens.js';
 
 register('/welcome',     welcome);
 register('/feed',        feed);
@@ -55,6 +56,9 @@ register('/receipt',     tripReceipt);
 register('/order',       orderDetail);
 // BD-SETTINGS-01 — passenger #pfp-settings-btn + driver #pf2-gear open this.
 register('/settings',    settings);
+// BD-OPS-03 — ScreenOps dev/docs dashboard. Intentionally NOT in the tabbar
+// (no #tabbar button); reached by typing /ops/screens or from the docs manual.
+register('/ops/screens', opsScreens);
 
 export function requireOnboarding(after) {
   if (user.get().onboarded) {

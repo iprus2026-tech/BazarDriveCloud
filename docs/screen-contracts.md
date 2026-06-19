@@ -61,6 +61,7 @@ Registered in `public/src/app.js`.
 | `/inbox` | BD-INBOX-01 | `public/src/screens/inbox.js` | implemented |
 | `/receipt` | BD-RIDE-HISTORY-D-01 | `public/src/screens/trip_receipt.js` | implemented, driver completed-ride receipt by `?tripId=` |
 | `/settings` | BD-SETTINGS-01 | `public/src/screens/settings.js` | implemented, shared shell, role-aware back via `?role=` |
+| `/ops/screens` | BD-OPS-SCREENS-01 | `public/src/screens/ops_screens.js` | implemented, dev/docs tool — **not** in the product tabbar |
 
 ### Shell invariants
 
@@ -952,6 +953,21 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Actions | `Сохранить` shows the «Сохранено» toast; all account actions are UI-only demo toasts/confirms; «Назад» (`#settings-back`) → role-correct profile. |
 | Precache | `public/src/screens/settings.js` is in the `public/sw.js` PRECACHE list. |
 | Acceptance | Reachable from both profile gears; no real logout/delete/push/payment/backend; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs`. |
+
+### BD-OPS-SCREENS-01 - ScreenOps
+
+| Field | Contract |
+|---|---|
+| Route | `/ops/screens` (dev/docs tool; optional `?screen=<BD-ID>` pre-selects a registry entry) |
+| File | `public/src/screens/ops_screens.js` |
+| Access | Internal developer surface. Registered in `app.js` but **intentionally not in the product tabbar** — reached by typing the route or from the docs manual (docs-site `/docs/screenops`). |
+| Storage | MEL cards persist in `localStorage` under `bazardrive.ops.mel.v1` via `public/src/ops/ops_mel_store.js`. This key is **dev-tool data, deliberately outside** the user-scoped storage boundary (`public/src/storage_boundary.js`) — a normal logout must not wipe it. `clearOpsMel()` is exported for explicit dev use only and is **not** wired into the UI. |
+| Data | Static screen registry (`public/src/ops/ops_registry.js`) — plain JS metadata, no network/fetch/probing. `implementationStatus` is declared in data; real file existence is pinned only by Node smoke/check. |
+| Panels | Screen registry list + search (left); selected screen detail + status; quick actions; generated-prompt output with copy. |
+| Actions | Open screen (`go(route)`); Mark as Crooked (creates a local MEL card); Generate Cloud Design / GitHub issue / Claude Code prompt (four pure templates under `public/src/ops/templates/`, each embeds route+file+id); Copy check commands; Copy output. |
+| Precache | All new ops runtime files are in the `public/sw.js` PRECACHE list. |
+| Out of scope | No backend, no real GitHub/Figma/Claude write integration, no Mapbox, no auth/payment/push, no formal connector modules, no visual diff/screenshots (BD-OPS follow-ups). |
+| Acceptance | `/ops/screens` opens; not in passenger/driver tabbar; registry renders the 9 MVP screens; Mark as Crooked persists a MEL card; prompts generate and copy with route/file/id. Pinned by `scripts/smoke-ops-screens.mjs`. |
 
 ### BD-MAP-01 - MapHome
 

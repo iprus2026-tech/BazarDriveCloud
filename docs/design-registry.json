@@ -479,6 +479,17 @@
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-settings-01",
       "note": "Shipped shared role-aware settings shell (issue #539). /settings registered; reached from passenger #pfp-settings-btn (go('/settings')) and driver #pf2-gear (go('/settings?role=driver')); settings.js reads ?role= to send «Назад» back to /profile?role=driver. Driver security pane stays reachable via its pf2-tab[data-pane=security] tab. UI-only — no persistence, no fetch, no native push, no backend logout/delete/payment; pinned by scripts/smoke-settings.mjs and precached in public/sw.js. Listed in runtimeOnly (not screens[]) because no Cloud Design render-gate artifact exists yet — render-pending."
+    },
+    {
+      "id": "BD-OPS-SCREENS-01",
+      "title": "ScreenOps",
+      "route": "/ops/screens",
+      "file": "public/src/screens/ops_screens.js",
+      "renderGate": null,
+      "classification": "contract-only",
+      "renderStatus": "render-pending",
+      "contract": "docs/screen-contracts.md#bd-ops-screens-01",
+      "note": "BD-OPS-03 ScreenOps dev/docs dashboard. /ops/screens registered in app.js but intentionally NOT in the product tabbar — reached by typing the route or from the docs manual (docs-site /docs/screenops). Static screen registry (public/src/ops/ops_registry.js), localStorage MEL store (public/src/ops/ops_mel_store.js, key bazardrive.ops.mel.v1, deliberately outside the user-scoped storage boundary), and four pure prompt templates under public/src/ops/templates/. Pinned by scripts/smoke-ops-screens.mjs and precached in public/sw.js. No render gate yet — render-pending."
     }
   ]
 }

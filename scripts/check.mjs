@@ -147,6 +147,20 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// BD-OPS-03 — static regression smoke for the ScreenOps dev/docs route
+// (route registration, not-in-tabbar, registry seed, generator route/file/id
+// embedding, MEL store key, no hard-coded credentials, SW precache of every new
+// ops runtime file).
+const opsScreensSmoke = path.join(root, 'scripts', 'smoke-ops-screens.mjs');
+if (exists(opsScreensSmoke)) {
+  try {
+    execFileSync(process.execPath, [opsScreensSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ops-screens.mjs failed\n${msg}`);
+  }
+}
+
 // BD-POST-01 — static regression smoke for the post-detail primary-action
 // resolver (pickCtaSpec kinds + runCtaAction per-kind routing). Audit #455
 // flagged this resolver had no behavioural pin.
