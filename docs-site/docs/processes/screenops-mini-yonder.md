@@ -11,7 +11,7 @@ visibleFor: [developer, designer, dispatcher]
 sourceOfTruth: docs-site
 related:
   routes: []
-  files: ["docs-site/static/img/screenops/01-mini-yonder-docs-entry.svg"]
+  files: ["docs-site/static/img/screenops/00-screenops-render-set.svg", "docs-site/static/img/screenops/01-mini-yonder-docs-entry.svg"]
   issues: [623]
   prs: []
 tags: [process, screenops, mini-yonder, docs]
@@ -20,7 +20,7 @@ slug: /processes/screenops-mini-yonder
 
 # Mini Yonder ScreenOps
 
-ScreenOps is a Mini Yonder Docs feature.
+ScreenOps is a **Mini Yonder Docs** feature.
 
 Preferred docs URL: `/docs/screenops`.
 
@@ -28,7 +28,11 @@ Local dev URL: `/ops/screens`.
 
 It must not appear in the normal product tabbar.
 
-## Render
+## Render set
+
+![ScreenOps render set](/img/screenops/00-screenops-render-set.svg)
+
+## Docs entry render
 
 ![Mini Yonder Docs entry](/img/screenops/01-mini-yonder-docs-entry.svg)
 
@@ -70,5 +74,5 @@ open PR
 - ScreenOps is documented as a docs feature.
 - Preferred docs URL is documented.
 - Local dev URL is documented.
-- Render asset is attached.
+- Render assets are attached to this manual.
 - Issue 623 remains the tracker.
