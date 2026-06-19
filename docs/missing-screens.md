@@ -176,7 +176,7 @@ The four states, by disposition:
 - **offline while on ride** — already covered by the global app-shell offline overlay (BD-ERROR-01B). No in-screen UI added.
 - **GPS unavailable** — out of scope until a Mapbox/geolocation slice (no real geolocation wired).
 - **retry status sync** — **deferred / backend-needed → BD-RIDE-D-ERROR-02.** A first synchronous guard (01B) was **closed unmerged as premature**: retrofitting backend-failure handling onto the sync, side-effect-laden lifecycle requires async mutations, rollback on partial writes, a stale-route retry guard, and side-effect reordering — i.e. a real ride-events backend, which is out of scope. Sync localStorage gives no real reject path today.
-- **support fallback** — **design-available → `BD-RIDE-D-DISPUTE-01`** (Cloud Design render gate + `screen-contracts.md` contract now present; runtime wiring pending — no longer render-needed).
+- **support fallback** — escalation out of an active-ride **error state**: **Cloud Design render-needed.** `BD-RIDE-D-DISPUTE-01` renders only the **no-show-compensation** support/dispute path (a different entry point), so it is **not** the render gate for error-state support escalation — a dedicated frame (or shared error-state support gate) is still needed.
 
 A dedicated **in-screen** driver error UI (cards/states beyond reusing the global overlay) is **Cloud Design render-needed / not implemented** — do not invent bespoke in-screen error UI without a render frame.
 
