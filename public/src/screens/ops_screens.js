@@ -6,12 +6,24 @@
 // passenger/driver tabbar. No backend, no network — registry is static data and
 // MEL cards persist in localStorage via ops_mel_store.
 //
+// BD-OPS-08 (#647): MEL cards have a full lifecycle — a New MEL editor form
+// (severity/status/problem/decision/repair), a per-card status-advance control,
+// and a per-card delete.
+//
 // CSP: no inline styles, no inline handlers — all wiring is event delegation.
 
 import { go } from '../router.js';
 import { user } from '../state.js';
 import { getScreens, getScreen } from '../ops/ops_registry.js';
-import { listMelForScreen, createMelCard } from '../ops/ops_mel_store.js';
+import {
+  listMelForScreen,
+  createMelCard,
+  updateMelCard,
+  deleteMelCard,
+  nextMelStatus,
+  MEL_SEVERITIES,
+  MEL_STATUSES,
+} from '../ops/ops_mel_store.js';
 import { renderMelCard } from '../ops/templates/screen_mel_card_template.js';
 import { buildCloudDesignPrompt } from '../ops/connectors/cloud_design_connector.js';
 import { buildGithubIssue } from '../ops/connectors/github_issue_connector.js';
@@ -33,6 +45,12 @@ function getParam(name) {
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
 }
 
+function optionList(values, selected) {
+  return values
+    .map((v) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(v)}</option>`)
+    .join('');
+}
+
 export default function opsScreens() {
   const screens = getScreens();
 
@@ -42,6 +60,9 @@ export default function opsScreens() {
     outputLabel: '',
     outputText: '',
     notice: '',
+    // The MEL editor form, or null when closed. Holds the in-progress field
+    // values so an unrelated re-render does not drop what the user typed.
+    melForm: null,
   };
   if (!getScreen(state.selectedId)) {
     state.selectedId = (screens[0] && screens[0].id) || null;
@@ -105,6 +126,39 @@ export default function opsScreens() {
       .join('');
   }
 
+  function renderMelForm() {
+    if (!state.melForm) return '';
+    const f = state.melForm;
+    return `
+      <form class="ops-melform" autocomplete="off">
+        <p class="ops-melform__title">New MEL card</p>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Severity</span>
+          <select id="mel-severity" class="ops-melform__control">${optionList(MEL_SEVERITIES, f.severity)}</select>
+        </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Status</span>
+          <select id="mel-status" class="ops-melform__control">${optionList(MEL_STATUSES, f.status)}</select>
+        </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Problem</span>
+          <textarea id="mel-problem" class="ops-melform__control" rows="2">${esc(f.problem)}</textarea>
+        </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Operational decision</span>
+          <textarea id="mel-decision" class="ops-melform__control" rows="2">${esc(f.operationalDecision)}</textarea>
+        </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Required repair</span>
+          <textarea id="mel-repair" class="ops-melform__control" rows="2">${esc(f.requiredRepair)}</textarea>
+        </label>
+        <div class="ops-melform__actions">
+          <button type="button" class="ops-btn ops-btn--accent" data-action="mel-form-save">Save MEL card</button>
+          <button type="button" class="ops-btn ops-btn--ghost" data-action="mel-form-cancel">Cancel</button>
+        </div>
+      </form>`;
+  }
+
   function renderDetail() {
     const s = getScreen(state.selectedId);
     if (!s) {
@@ -114,7 +168,22 @@ export default function opsScreens() {
     const mels = listMelForScreen(s.id);
     const melBlock = mels.length
       ? mels
-          .map((m) => `<pre class="ops-melcard">${esc(renderMelCard(m))}</pre>`)
+          .map(
+            (m) => `
+            <div class="ops-melitem">
+              <pre class="ops-melcard">${esc(renderMelCard(m))}</pre>
+              <div class="ops-melitem__actions">
+                ${
+                  // Terminal (DONE) or an out-of-vocab persisted status both have
+                  // no next step — show the status, not an inert Advance button.
+                  nextMelStatus(m.status) === m.status
+                    ? `<span class="ops-melitem__done">${esc(m.status)}</span>`
+                    : `<button type="button" class="ops-btn ops-btn--ghost" data-action="advance-mel" data-mel-id="${esc(m.id)}">Advance → ${esc(nextMelStatus(m.status))}</button>`
+                }
+                <button type="button" class="ops-btn ops-btn--ghost" data-action="delete-mel" data-mel-id="${esc(m.id)}">Delete</button>
+              </div>
+            </div>`,
+          )
           .join('')
       : `<p class="ops-detail__empty">No MEL cards for this screen yet.</p>`;
 
@@ -163,7 +232,9 @@ export default function opsScreens() {
       <section class="ops-section">
         <div class="ops-section__head">
           <h3 class="ops-section__title">MEL cards</h3>
+          <button type="button" class="ops-btn ops-btn--ghost" data-action="new-mel">New MEL…</button>
         </div>
+        ${renderMelForm()}
         ${melBlock}
       </section>
 
@@ -206,6 +277,18 @@ export default function opsScreens() {
     renderList();
   });
 
+  // Keep the open MEL form's field values in state so an unrelated re-render
+  // (e.g. generating a prompt) does not discard what the user has typed.
+  root.addEventListener('input', (e) => {
+    if (!state.melForm) return;
+    const t = e.target;
+    if (t.id === 'mel-severity') state.melForm.severity = t.value;
+    else if (t.id === 'mel-status') state.melForm.status = t.value;
+    else if (t.id === 'mel-problem') state.melForm.problem = t.value;
+    else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
+    else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
+  });
+
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
@@ -216,6 +299,7 @@ export default function opsScreens() {
       state.outputText = '';
       state.outputLabel = '';
       state.notice = '';
+      state.melForm = null;
       renderList();
       renderDetail();
       return;
@@ -256,6 +340,70 @@ export default function opsScreens() {
         // createMelCard returns null if persistence failed (quota / private mode).
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
         renderDetail();
+        break;
+      }
+      case 'new-mel':
+        // Open the editor with the quick-flag defaults as the empty-form state.
+        state.melForm = {
+          severity: 'MEL-C',
+          status: 'DETECTED',
+          problem: '',
+          operationalDecision: '',
+          requiredRepair: '',
+        };
+        state.notice = '';
+        renderDetail();
+        break;
+      case 'mel-form-cancel':
+        state.melForm = null;
+        renderDetail();
+        break;
+      case 'mel-form-save': {
+        const read = (sel) => {
+          const el = detailEl.querySelector(sel);
+          return el ? el.value : '';
+        };
+        const card = createMelCard({
+          screenId: s.id,
+          route: s.route,
+          file: s.file,
+          severity: read('#mel-severity'),
+          status: read('#mel-status'),
+          problem: read('#mel-problem').trim(),
+          operationalDecision: read('#mel-decision').trim(),
+          requiredRepair: read('#mel-repair').trim(),
+        });
+        state.melForm = null;
+        state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
+        renderDetail();
+        break;
+      }
+      case 'advance-mel': {
+        const id = btn.dataset.melId;
+        const card = listMelForScreen(s.id).find((c) => c.id === id);
+        if (!card) {
+          // Card vanished between render and click (e.g. deleted in another tab).
+          state.notice = 'MEL card not found.';
+        } else {
+          const next = nextMelStatus(card.status);
+          if (next === card.status) {
+            state.notice = 'MEL is already at the final status.';
+          } else {
+            const ok = updateMelCard(id, { status: next });
+            state.notice = ok ? `MEL advanced → ${next}.` : 'Could not update the MEL card (storage full?).';
+          }
+        }
+        renderDetail();
+        break;
+      }
+      case 'delete-mel': {
+        const id = btn.dataset.melId;
+        // Destructive — confirm first; only re-render when something changed
+        // (a cancelled confirm leaves the panel, and any open form, untouched).
+        if (window.confirm('Delete this MEL card? This cannot be undone.')) {
+          state.notice = deleteMelCard(id) ? 'MEL card deleted.' : 'MEL card not found.';
+          renderDetail();
+        }
         break;
       }
       case 'gen-cloud': {
