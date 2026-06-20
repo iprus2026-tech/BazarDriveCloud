@@ -239,6 +239,17 @@ node scripts/dispatcher.mjs
 ```
 If a script is missing, report that clearly instead of inventing a result.
 
+### Static-data gate (BD-DATA-STATIC-01)
+
+`node scripts/check.mjs` runs `scripts/smoke-static-data-inventory.mjs`, the
+backend-readiness gate (#636). Every `localStorage` / `sessionStorage` key
+accessed in `public/src/**` — including access through a `safeLocalStorage()` /
+`localStorage` alias — must be classified: documented in
+`public/src/storage_boundary.js`'s audit comment **and** present in the gate's
+manifest. The check fails on an orphan (unclassified) or unresolved dynamic key.
+When you add, rename, or remove a storage key, update both the boundary audit
+comment and the gate manifest in the same change.
+
 ## Mini-Yonder documentation governance
 
 The `docs-site/` Docusaurus layer is governed by Mini-Yonder (added in
