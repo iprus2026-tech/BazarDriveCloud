@@ -40,9 +40,9 @@ ScreenOps Control is the working surface for UI drift repair: find a defect, cre
 | --- | --- | --- |
 | Open ScreenOps | `/ops/screens` | Runtime/dev route — implemented in BD-OPS-03 |
 | Run defect search | Defect Search panel | Planned ScreenOps action |
-| View MEL cards | MEL cards panel | Planned ScreenOps action |
-| Generate design prompt | Prompt generator panel | Planned ScreenOps action |
-| Prepare repair PR | GitHub issue body + code-agent prompt | Planned ScreenOps workflow |
+| View MEL cards | MEL cards panel | Shipped local MEL lifecycle in BD-OPS-08 |
+| Generate design prompt | Connector-backed prompt generator | Shipped connector seam (`cloud_design_connector`) |
+| Prepare repair PR | GitHub issue body + code-agent prompt | Shipped connector seam (`github_issue_connector`, `claude_code_connector`, `checks_connector`) |
 
 **Workflow:** defect → MEL card → design prompt → issue body → code prompt → scoped branch → smoke/check → PR.
 
@@ -63,6 +63,7 @@ Mini Yonder Docs
 ScreenOps module
 screen registry
 MEL cards
+connector layer
 prompt generators
 checks
 PR workflow

@@ -489,7 +489,7 @@
       "classification": "contract-only",
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-ops-screens-01",
-      "note": "BD-OPS-03 ScreenOps dev/docs dashboard. /ops/screens registered in app.js but intentionally NOT in the product tabbar — reached by typing the route or from the docs manual (docs-site /docs/screenops). Static screen registry (public/src/ops/ops_registry.js), localStorage MEL store (public/src/ops/ops_mel_store.js, key bazardrive.ops.mel.v1, deliberately outside the user-scoped storage boundary), and four pure prompt templates under public/src/ops/templates/. Pinned by scripts/smoke-ops-screens.mjs and precached in public/sw.js. No render gate yet — render-pending."
+      "note": "BD-OPS-03 ScreenOps dev/docs dashboard. /ops/screens registered in app.js but intentionally NOT in the product tabbar — reached by typing the route or from the docs manual (docs-site /docs/screenops). Static screen registry (public/src/ops/ops_registry.js), localStorage MEL store (public/src/ops/ops_mel_store.js, key bazardrive.ops.mel.v1, deliberately outside the user-scoped storage boundary), pure prompt templates under public/src/ops/templates/, and shipped connector layer under public/src/ops/connectors/ (repo_connector, screen_contracts_connector, cloud_design_connector, github_issue_connector, claude_code_connector, checks_connector). Pinned by scripts/smoke-ops-screens.mjs and precached in public/sw.js. No render gate yet — render-pending."
     }
   ]
 }

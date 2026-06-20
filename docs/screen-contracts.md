@@ -964,9 +964,10 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Storage | MEL cards persist in `localStorage` under `bazardrive.ops.mel.v1` via `public/src/ops/ops_mel_store.js`. This key is **dev-tool data, deliberately outside** the user-scoped storage boundary (`public/src/storage_boundary.js`) — a normal logout must not wipe it. `clearOpsMel()` is exported for explicit dev use only and is **not** wired into the UI. |
 | Data | Static screen registry (`public/src/ops/ops_registry.js`) — plain JS metadata, no network/fetch/probing. `implementationStatus` is declared in data; real file existence is pinned only by Node smoke/check. |
 | Panels | Screen registry list + search (left); selected screen detail + status; quick actions; generated-prompt output with copy. |
-| Actions | Open screen (`go(route)`); Mark as Crooked (creates a local MEL card); Generate Cloud Design / GitHub issue / Claude Code prompt (four pure templates under `public/src/ops/templates/`, each embeds route+file+id); Copy check commands; Copy output. |
+| Connector layer | Shipped formal connector modules under `public/src/ops/connectors/`: `repo_connector.js`, `screen_contracts_connector.js`, `cloud_design_connector.js`, `github_issue_connector.js`, `claude_code_connector.js`, and `checks_connector.js`. The dashboard calls this seam; prompt templates remain pure formatting helpers behind the connector modules. |
+| Actions | Open screen (`go(route)`); Mark as Crooked (creates a local MEL card); Generate Cloud Design / GitHub issue / Claude Code prompt through connector modules (templates under `public/src/ops/templates/` remain pure formatters, each embeds route+file+id); Copy check commands; Copy output. |
 | Precache | All new ops runtime files are in the `public/sw.js` PRECACHE list. |
-| Out of scope | No backend, no real GitHub/Figma/Claude write integration, no Mapbox, no auth/payment/push, no formal connector modules, no visual diff/screenshots (BD-OPS follow-ups). |
+| Out of scope | No backend, no real GitHub/Figma/Claude write integration, no Mapbox, no auth/payment/push, no visual diff/screenshots (BD-OPS follow-ups). |
 | Acceptance | `/ops/screens` opens; not in passenger/driver tabbar; registry renders the 9 MVP screens; Mark as Crooked persists a MEL card; prompts generate and copy with route/file/id. Pinned by `scripts/smoke-ops-screens.mjs`. |
 
 ### BD-MAP-01 - MapHome
