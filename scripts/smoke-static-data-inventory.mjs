@@ -1,23 +1,23 @@
 // BD-DATA-STATIC-01 (#636) — backend-readiness gate: lock the static-data surface.
 //
 // Why: the Phase-1 data-layer migration (#584, ADR BD-DOCS-030/031) must replace
-// every per-client localStorage store with the backend as the single source of
-// truth. To do that module-by-module with a green/red signal — and so a new
-// untracked store can never be added silently (the gap that once let
+// every per-client storage store with the backend as the single source of truth.
+// To do that module-by-module with a green/red signal — and so a new untracked
+// store can never be added silently (the gap that once let
 // `bazardrive.order_overlay.v1` live OUTSIDE `storage_boundary.js`) — this check
-// locks the surface against a curated manifest AND verifies the clear-on-boundary
-// contract behaviourally.
+// discovers every storage key actually used and locks it against a curated
+// manifest, then verifies the clear-on-boundary contract behaviourally.
 //
-// Axis note: the manifest classifies keys by whether `clearUserScopedStorage()`
-// wipes them — what this gate verifies. Two of the not-cleared keys (`user.v1`,
-// `smoke_role.v1`) ARE still reset at logout, but by the auth flow
-// (`resetLocalSession()` → `user.reset()` / `clearSmokeRole()`), not by this
-// function. The orthogonal **migration** axis (server-owned -> backend vs
-// client-only -> stays) is owned by BD-DOCS-031; this gate does not assert it.
+// Discovery resolves the KEY ARGUMENT of every localStorage/sessionStorage access
+// (`.getItem/.setItem/.removeItem(...)` and `[...]`), following same-file
+// `const NAME = 'literal'` so constant-stored and non-`bazardrive` keys (e.g.
+// `bd-reloading`) are caught — not just inline `bazardrive.*` literals. A dynamic
+// key argument that cannot be resolved to a literal FAILS (it must be classified).
 //
-// Mostly static (reads source, asserts). The clear-on-boundary check imports
-// `storage_boundary.js` under a localStorage shim and runs it — no DOM, no
-// network, no real behaviour change.
+// Axis note: keys are classified by whether `clearUserScopedStorage()` wipes them.
+// `user.v1` / `smoke_role.v1` are still reset at logout, but by the auth flow
+// (`resetLocalSession()`), not this function. The migration axis (server vs
+// client) is owned by BD-DOCS-031; this gate does not assert it.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,38 +48,34 @@ const CLEARED = [
   'bazardrive.driver_receipts.v1', 'bazardrive.driver_offers.v1',
   'bazardrive.order_overlay.v1', 'bazardrive.myposts.v1', 'profileTripDemo',
 ];
-// NOT_CLEARED — untouched by clearUserScopedStorage(). `documented:true` means the
-// key must appear in storage_boundary.js's audit; ops.mel is deliberately outside it.
+// NOT_CLEARED — untouched by clearUserScopedStorage().
+//   documented:true  → must appear in storage_boundary.js's audit comment.
+//   documented:false → must NOT appear in storage_boundary.js at all.
+//   session:true     → lives in sessionStorage (seeded there for the clear test).
 const NOT_CLEARED = [
-  { key: 'bazardrive.user.v1', documented: true },      // reset by auth flow (user.reset)
-  { key: 'bazardrive.smoke_role.v1', documented: true }, // reset by auth flow (clearSmokeRole)
-  { key: 'bazardrive.posts.v1', documented: true },      // global cache, survives
-  { key: 'bazardrive.map_prefs.v1', documented: true },  // device pref, survives
-  { key: 'bazardrive.debug.publish', documented: true }, // dev flag, survives
-  { key: 'bazardrive.ops.mel.v1', documented: false },   // dev tooling, out of boundary
+  { key: 'bazardrive.user.v1', documented: true },            // reset by auth flow (user.reset)
+  { key: 'bazardrive.smoke_role.v1', documented: true, session: true }, // reset by auth flow (clearSmokeRole)
+  { key: 'bazardrive.posts.v1', documented: true },           // global cache, survives
+  { key: 'bazardrive.map_prefs.v1', documented: true },       // device pref, survives
+  { key: 'bazardrive.debug.publish', documented: true },      // dev flag, survives
+  { key: 'bazardrive.ops.mel.v1', documented: false },        // dev tooling, out of boundary
+  { key: 'bd-reloading', documented: false, session: true },  // transient SW reload flag (sw-update.js)
 ];
-const NOT_CLEARED_KEYS = NOT_CLEARED.map((e) => e.key);
-const DOCUMENTED = [...CLEARED, ...NOT_CLEARED.filter((e) => e.documented).map((e) => e.key)];
-const ALL = [...CLEARED, ...NOT_CLEARED_KEYS];
+const NC_KEYS = NOT_CLEARED.map((e) => e.key);
+const ALL = [...CLEARED, ...NC_KEYS];
 const MANIFEST = new Set(ALL);
+
+// Storage-availability probes: written + immediately removed to test whether
+// localStorage works (driver_offer_store.js). Not real stores — exempt from the
+// orphan inventory.
+const ALLOWLIST = new Set(['__bd_driver_offer_probe__']);
 
 // ── 0. Disjoint classification ────────────────────────────────────────────────
 const dupes = ALL.filter((k, i) => ALL.indexOf(k) !== i);
 expect('manifest classes are disjoint — no key classified twice', dupes.length === 0,
   dupes.length ? 'duplicated: ' + [...new Set(dupes)].join(', ') : '');
 
-// ── Discover storage keys in public/src/** (comments stripped) ────────────────
-// Two passes, unioned: (a) any `bazardrive.*` / `profileTripDemo` literal (keys
-// stored via a constant), and (b) ANY string literal passed to a localStorage /
-// sessionStorage get/set/removeItem call (catches a new store that does NOT use
-// the bazardrive prefix). Comments are stripped first so a key named only in a
-// comment is not treated as a live reference, and dynamic `${...}` keys are kept
-// (they must be classified or fail, not silently dropped).
-function stripComments(s) {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
+// ── Discover storage keys actually accessed in public/src/** ──────────────────
 function listJs(dir) {
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -89,52 +85,89 @@ function listJs(dir) {
   }
   return out;
 }
+function stripComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+// Returns { keys:Set, dynamic:[] } — resolved storage keys + unresolved dynamic args.
+function resolveStorageKeys(text) {
+  const consts = new Map();
+  const cre = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g;
+  let cm;
+  while ((cm = cre.exec(text))) if (!consts.has(cm[1])) consts.set(cm[1], cm[2]);
+  const keys = new Set();
+  const dynamic = [];
+  // `.getItem/.setItem/.removeItem(ARG` or `[ARG`
+  const are = /(?:local|session)Storage\s*(?:\.\s*(?:get|set|remove)Item\s*\(|\[)\s*([^,)\]]+)/g;
+  let am;
+  while ((am = are.exec(text))) {
+    const arg = am[1].trim();
+    const lit = arg.match(/^['"`]([^'"`]+)['"`]$/);
+    if (lit) keys.add(lit[1]);
+    else if (/^[A-Za-z_$][\w$]*$/.test(arg) && consts.has(arg)) keys.add(consts.get(arg));
+    else dynamic.push(arg);
+  }
+  return { keys, dynamic };
+}
 const prefixRe = /['"`](bazardrive\.[^'"`]+|profileTripDemo)['"`]/g;
-const apiRe = /(?:local|session)Storage\.(?:get|set|remove)Item\(\s*['"`]([^'"`]+)['"`]/g;
-function discoverIn(files) {
-  const set = new Set();
+function discoverIn(files, { withPrefixLiterals } = {}) {
+  const keys = new Set();
+  const dynamic = [];
   for (const f of files) {
     const txt = stripComments(fs.readFileSync(f, 'utf8'));
-    let m;
-    while ((m = prefixRe.exec(txt))) set.add(m[1]);
-    while ((m = apiRe.exec(txt))) set.add(m[1]);
+    const r = resolveStorageKeys(txt);
+    r.keys.forEach((k) => keys.add(k));
+    dynamic.push(...r.dynamic);
+    if (withPrefixLiterals) { let m; while ((m = prefixRe.exec(txt))) keys.add(m[1]); }
   }
-  return set;
+  return { keys, dynamic };
 }
 const allFiles = listJs(SRC);
-const discovered = discoverIn(allFiles);
-const inOwners = discoverIn(allFiles.filter((f) => path.relative(root, f) !== BOUNDARY_REL));
+const ownerFiles = allFiles.filter((f) => path.relative(root, f) !== BOUNDARY_REL);
+// Orphan: every key accessed anywhere (plus any bazardrive.* literal, belt-and-suspenders).
+const all = discoverIn(allFiles, { withPrefixLiterals: true });
+// Stale: a key counts as live if accessed via a storage API OR present as a
+// `bazardrive.*` literal (its const definition) in an owner module — boundary
+// excluded so its audit comment cannot mask a removal.
+const owners = discoverIn(ownerFiles, { withPrefixLiterals: true });
 
-// ── 1. No orphan ──────────────────────────────────────────────────────────────
-const orphans = [...discovered].filter((k) => !MANIFEST.has(k));
-expect('no orphan storage key in public/src — every key (any prefix, incl. dynamic) is classified',
+// ── 1. No orphan (incl. unresolved dynamic keys) ──────────────────────────────
+const orphans = [...all.keys].filter((k) => !MANIFEST.has(k) && !ALLOWLIST.has(k));
+expect('no orphan storage key in public/src — every accessed key is classified',
   orphans.length === 0, orphans.length ? 'orphans: ' + orphans.join(', ') : '');
+expect('no unresolved dynamic storage key — every storage access resolves to a literal',
+  all.dynamic.length === 0, all.dynamic.length ? 'dynamic: ' + [...new Set(all.dynamic)].join(', ') : '');
 
-// ── 2. No stale ───────────────────────────────────────────────────────────────
-const stale = ALL.filter((k) => !inOwners.has(k));
-expect('no stale manifest entry — every key is still referenced (in code) by an owner module',
+// ── 2. No stale: every manifest key is still accessed by an owner module ──────
+const stale = ALL.filter((k) => !owners.keys.has(k));
+expect('no stale manifest entry — every key is still accessed (via a storage API) by an owner module',
   stale.length === 0, stale.length ? 'stale: ' + stale.join(', ') : '');
 
-// ── 3. storage_boundary.js documents every boundary key ───────────────────────
+// ── 3. Documentation in storage_boundary.js's AUDIT COMMENT (not just code) ────
 const boundary = fs.readFileSync(BOUNDARY, 'utf8');
-const undocumented = DOCUMENTED.filter((k) => !boundary.includes(k));
-expect('storage_boundary.js documents every boundary key (cleared + documented not-cleared)',
+const auditComment = boundary.slice(0, boundary.search(/\nimport\s/));
+const docTrue = [...CLEARED, ...NOT_CLEARED.filter((e) => e.documented).map((e) => e.key)];
+const undocumented = docTrue.filter((k) => !auditComment.includes(k));
+expect('every boundary key is documented in the storage_boundary.js audit comment',
   undocumented.length === 0, undocumented.length ? 'undocumented: ' + undocumented.join(', ') : '');
+// Excluded keys must stay OUT of the boundary entirely.
+const excluded = NOT_CLEARED.filter((e) => !e.documented).map((e) => e.key);
+const leakedIntoBoundary = excluded.filter((k) => boundary.includes(k));
+expect('excluded dev keys stay OUT of storage_boundary.js',
+  leakedIntoBoundary.length === 0, leakedIntoBoundary.length ? 'present: ' + leakedIntoBoundary.join(', ') : '');
 
 // ── 4. Behavioural clear-on-boundary contract ─────────────────────────────────
-// Seed every key, run the real clearUserScopedStorage() under a localStorage shim,
-// assert CLEARED keys' data is gone and NOT_CLEARED keys are preserved verbatim.
-const store = new Map();
+const ls = new Map();
+const ss = new Map();
 const SENTINEL = 'SMOKE_SENTINEL_v1';
-globalThis.localStorage = {
-  getItem: (k) => (store.has(k) ? store.get(k) : null),
-  setItem: (k, v) => store.set(k, String(v)),
-  removeItem: (k) => store.delete(k),
-  clear: () => store.clear(),
-  key: (i) => [...store.keys()][i] ?? null,
-  get length() { return store.size; },
-};
-globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {}, clear() {} };
+const shim = (m) => ({
+  getItem: (k) => (m.has(k) ? m.get(k) : null),
+  setItem: (k, v) => m.set(k, String(v)),
+  removeItem: (k) => m.delete(k),
+  clear: () => m.clear(), key: (i) => [...m.keys()][i] ?? null,
+  get length() { return m.size; },
+});
+globalThis.localStorage = shim(ls);
+globalThis.sessionStorage = shim(ss);
 globalThis.window = globalThis;
 globalThis.document = {
   addEventListener() {}, removeEventListener() {}, querySelector: () => null,
@@ -145,13 +178,14 @@ globalThis.location = globalThis.location || { hash: '', href: 'http://localhost
 
 try {
   const mod = await import(pathToFileURL(BOUNDARY).href);
-  for (const k of ALL) localStorage.setItem(k, SENTINEL);
+  for (const k of CLEARED) ls.set(k, SENTINEL);
+  for (const e of NOT_CLEARED) (e.session ? ss : ls).set(e.key, SENTINEL);
   mod.clearUserScopedStorage();
   const isCleared = (v) => v === null || v === '' || v === '{}' || v === '[]';
-  const leaked = CLEARED.filter((k) => !isCleared(localStorage.getItem(k)));
+  const leaked = CLEARED.filter((k) => !isCleared(ls.get(k) ?? null));
   expect('clearUserScopedStorage() actually clears every cleared key (no logout data leak)',
     leaked.length === 0, leaked.length ? 'NOT cleared: ' + leaked.join(', ') : '');
-  const wiped = NOT_CLEARED_KEYS.filter((k) => localStorage.getItem(k) !== SENTINEL);
+  const wiped = NOT_CLEARED.filter((e) => (e.session ? ss : ls).get(e.key) !== SENTINEL).map((e) => e.key);
   expect('clearUserScopedStorage() preserves every not-cleared key (never over-clears)',
     wiped.length === 0, wiped.length ? 'wrongly cleared: ' + wiped.join(', ') : '');
 } catch (e) {
@@ -159,9 +193,9 @@ try {
 }
 
 // ── Ledger summary ────────────────────────────────────────────────────────────
-console.log('\nStatic-data surface: ' + discovered.size + ' keys · '
+console.log('\nStatic-data surface: ' + all.keys.size + ' keys accessed · '
   + CLEARED.length + ' cleared by clearUserScopedStorage() · '
-  + NOT_CLEARED_KEYS.length + ' not-cleared (auth-reset / device / dev). '
+  + NC_KEYS.length + ' not-cleared (auth-reset / device / dev / transient). '
   + 'Migration ownership (server vs client) is per BD-DOCS-031.');
 
 console.log('\n' + (issues.length
