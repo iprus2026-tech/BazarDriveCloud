@@ -3,9 +3,9 @@ id: BD-DOCS-039
 docType: audit
 title: "Mock-to-Real Data Inventory — Backend Migration Audit"
 owner: docs-contract-agent
-status: draft
-revision: 2026-06-18
-effectiveFrom: 2026-06-18
+status: current
+revision: 2026-06-20
+effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
@@ -18,7 +18,9 @@ related:
     - public/src/driver_offer_store.js
     - public/src/ride_history.js
     - public/src/storage_boundary.js
-  issues: []
+    - scripts/smoke-static-data-inventory.mjs
+    - scripts/check.mjs
+  issues: [636, 584]
   prs: []
 tags: [audit, migration, mock-to-real, data-layer, target]
 slug: /audits/mock-to-real-data-inventory
@@ -43,8 +45,37 @@ Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 22 localStorage keys · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 25 storage keys (19 class A · 5 class B · 1 class C — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
+
+## Enforcement & removal tracking
+
+The **surface** of this inventory (which storage keys exist) is locked by an
+automated gate — `scripts/smoke-static-data-inventory.mjs`, run by
+`node scripts/check.mjs` (BD-DATA-STATIC-01, #636). It discovers every
+`bazardrive.*` / `profileTripDemo` key in `public/src/**` and classifies each:
+
+- **Class A — 19 user-scoped product stores** → backend migration targets; each
+  must be documented in `public/src/storage_boundary.js` (cleared on the auth
+  boundary). These are the §A rows holding orders, rides, offers, chat/responses,
+  receipts, history and drafts.
+- **Class B — 5 user/device keys** kept client-side but documented in
+  `storage_boundary.js`: `user.v1`, `posts.v1`, `map_prefs.v1`, `debug.publish`,
+  `smoke_role.v1`.
+- **Class C — 1 dev-tooling key** outside the user boundary: `ops.mel.v1`.
+
+**Canonical count: 25 keys (19 A · 5 B · 1 C).** The gate fails on any **orphan**
+key not in the manifest — the class of gap that once let
+`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — on any
+stale manifest entry, and on any user-data key missing from
+`storage_boundary.js`. This makes the **completeness rule** of BD-DOCS-030
+(every server-owned key migrates) machine-checked, not hand-maintained.
+
+**Removal tracking.** As Phase 1 lands, each class-A key moves
+`mock → migrating → removed` — its owning module swaps `localStorage` for the API
+behind `public/src/data_layer.js`. "All static data removed" is reached when
+every class-A key is served by the backend; this ledger plus the gate are the
+scoreboard.
 
 ## A. localStorage-backed shared data — the migration backbone
 
@@ -180,8 +211,9 @@ standalone Ride History screen; history renders inside `profile.js`
    matching and billing are untrustworthy.
 4. **One demo driver "Рустам К. ★4,92"** across 6+ surfaces — every ride shares
    the same fake identity.
-5. **22 localStorage keys with no backend sync** — orders/offers/history/chats
-   are client-only; device switch = data loss.
+5. **19 class-A user-scoped stores with no backend sync** — orders/offers/history/chats
+   are client-only; device switch = data loss. (Surface locked by the #636 gate;
+   see [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
    are not server-verified (a non-ready driver can reach the line).
 
