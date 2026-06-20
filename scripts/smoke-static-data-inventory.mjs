@@ -94,10 +94,21 @@ function resolveStorageKeys(text) {
   const cre = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g;
   let cm;
   while ((cm = cre.exec(text))) if (!consts.has(cm[1])) consts.set(cm[1], cm[2]);
+  // Storage aliases: identifiers bound to a Storage reference, so accesses made
+  // THROUGH them (e.g. `const ls = safeLocalStorage(); ls.getItem(KEY)` in
+  // driver_offer_store.js) are discovered too — not just literal
+  // `localStorage`/`sessionStorage`. New storage-alias factories must be added
+  // to the assignment regex below.
+  const aliases = new Set(['localStorage', 'sessionStorage']);
+  const aliasAssign = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:safeLocalStorage\s*\(\s*\)|(?:window\.|globalThis\.)?(?:local|session)Storage\b)/g;
+  let alm;
+  while ((alm = aliasAssign.exec(text))) aliases.add(alm[1]);
+  const aliasGroup = [...aliases].map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   const keys = new Set();
   const dynamic = [];
-  // `.getItem/.setItem/.removeItem(ARG` or `[ARG`
-  const are = /(?:local|session)Storage\s*(?:\.\s*(?:get|set|remove)Item\s*\(|\[)\s*([^,)\]]+)/g;
+  // `<storage>.getItem/.setItem/.removeItem(ARG` or `<storage>[ARG`, where
+  // <storage> is localStorage/sessionStorage or any alias bound to one.
+  const are = new RegExp('(?:' + aliasGroup + ')\\s*(?:\\.\\s*(?:get|set|remove)Item\\s*\\(|\\[)\\s*([^,)\\]]+)', 'g');
   let am;
   while ((am = are.exec(text))) {
     const arg = am[1].trim();
