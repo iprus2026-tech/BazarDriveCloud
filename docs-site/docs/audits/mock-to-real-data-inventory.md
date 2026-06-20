@@ -3,7 +3,7 @@ id: BD-DOCS-039
 docType: audit
 title: "Mock-to-Real Data Inventory — Backend Migration Audit"
 owner: docs-contract-agent
-status: current
+status: draft
 revision: 2026-06-20
 effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-18
@@ -85,9 +85,12 @@ each storage call site — including access through a `safeLocalStorage()` /
 `bd-reloading`) are caught too. Storage-availability **probes** — written and
 immediately removed to feature-detect `localStorage` (`__bd_driver_offer_probe__`
 in `driver_offer_store.js`) — are allowlisted, not treated as orphan stores.
-Canonical count: **26 keys (19 cleared · 7 not-cleared).**
+Canonical count: **26 keys (19 cleared · 7 not-cleared).** Scope: **Web Storage
+only** (`localStorage` / `sessionStorage`) — cookies, IndexedDB and CacheStorage
+are out of scope and currently unused in `public/src`.
 
-**Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
+**Migration axis — S/C per [BD-DOCS-031](../design/data-layer-contract.md)** (the
+server entities for identity / presence are owned by the Auth & Presence ADRs).
 This is what drives removal, and it does **not** line up with the boundary class:
 
 - **Server-owned (S) → migrate to backend:** `posts.v1` + `myposts.v1`,
@@ -95,11 +98,12 @@ This is what drives removal, and it does **not** line up with the boundary class
   `order_overlay.v1`, `active_ride.v1`, `trip_confirmation.v1` +
   `driver_handoff_snapshot.v1`, `chat.v1`, `driver_receipts.v1`,
   `ride_history.v1`. (`posts.v1` is *kept* on the boundary yet server-owned.)
-- **Mixed (S + C) — `user.v1` is not flat client-only:** a single key holding both
-  server-owned fields (identity / profile, driver documents + garage vehicles,
-  `driverOnline` / shift / medical readiness — owned by the Auth & Presence ADRs)
-  and a client-only device/session cache. On migration the server-owned fields move
-  to the backend; only the device cache stays local.
+- **`user.v1` — client session cache (C) this phase, with server-owned fields:**
+  per BD-DOCS-031 the key itself stays a local session cache (C); but the identity /
+  profile, driver documents + garage vehicles, and `driverOnline` / shift / medical
+  readiness it currently holds become **server-owned under the Auth & Presence ADRs**
+  (BD-DOCS-032 + presence) — not migrated as this key, and not retired by the
+  data-layer S-key scoreboard below. Their removal is tracked in those ADRs.
 - **Client-only (C) → stays local even with a backend:** `favorite_routes.v1`,
   `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
   `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
@@ -126,7 +130,7 @@ Every store is client-only today; none syncs to a backend.
 
 | Key | Holds | Module | Target entity | Phase |
 | --- | --- | --- | --- | --- |
-| `bazardrive.user.v1` | profile / identity / readiness | state.js:1 | User/Auth | **Auth** |
+| `bazardrive.user.v1` | profile / identity / readiness (+ client session cache) | state.js:1 | User/Auth — *key stays C; server fields → Auth/Presence ADRs (see Enforcement)* | **Auth** |
 | `bazardrive.active_ride.v1` | active ride + status | ride_state.js:4 | ActiveRide | **Dispatch** |
 | `bazardrive.ride_history.v1` | completed trips | ride_history.js:13 | TripHistory | **History** |
 | `bazardrive.ride_orders.v1` | passenger orders | mock_api.js:428 | Order | **Dispatch** |
@@ -144,7 +148,7 @@ Every store is client-only today; none syncs to a backend.
 | `bazardrive.favorite_routes.v1` · `bazardrive.repeat_route.v1` | saved / repeat routes (client-only per BD-DOCS-031) | favorite/repeat_route.js | RoutePrefs | Phase 1 data |
 | `bazardrive.draft.v2` | composer draft | composer.js:8 | ComposerDraft | Phase 1 data |
 | `bazardrive.map_prefs.v1` | device map prefs (not user-scoped) | mapbox_state.js:5 | DevicePref | **Mapbox** |
-| `bazardrive.smoke_role.v1` (sessionStorage) | per-tab role (test override) | smoke_role.js | replace with real auth | **Auth** |
+| `bazardrive.smoke_role.v1` (sessionStorage) | per-tab role (test override) | smoke_role.js | — (dev/test harness; client-only, not migrated) | Auth · dev/test |
 | `profileTripDemo` | profile demo override | storage_boundary.js | — (demo only) | — |
 | `bazardrive.favorite_route_notice.v1` | one-time favorite-route banner | favorite_routes.js | client-only (BD-DOCS-031) | Phase 1 data |
 | `bazardrive.debug.publish` | dev publish debug-trail toggle | order_map_draft.js | — (dev / client-only) | — |
@@ -260,8 +264,8 @@ standalone Ride History screen; history renders inside `profile.js`
    the same fake identity.
 5. **12 server-owned cleared stores with no backend sync** (of the 19 cleared; the
    other 7 are client-only and stay local) — orders/offers/rides/history/chats;
-   device switch = data loss. (Surface to be locked by the #636 gate once #637
-   lands — see [Enforcement](#enforcement--removal-tracking).)
+   device switch = data loss. (Surface to be locked by the BD-DATA-STATIC-01 gate
+   once PR #637 lands — see [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
    are not server-verified (a non-ready driver can reach the line).
 
