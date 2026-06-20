@@ -326,6 +326,13 @@ expect('screen renders a per-row open-MEL badge from cards grouped by screen',
   && /function\s+melByScreen/.test(screenSrc));
 expect('cloud.css defines the filter + MEL-badge atoms',
   /\.ops-filters\b/.test(css) && /\.ops-chip\b/.test(css) && /\.ops-pill--mel\b/.test(css));
+// Codex #652 P2s: MEL mutations must refresh the badge source (renderList), and
+// combined severity+status filters must be satisfied by the SAME card.
+expect('MEL create + delete refresh the registry list so badges stay in sync',
+  /createMelCard\([\s\S]*?renderList\(\)/.test(screenSrc)
+  && /deleteMelCard\(id\)[\s\S]*?renderList\(\)/.test(screenSrc));
+expect('combined severity+status filters are matched against the same MEL card',
+  /\(f\.severity \|\| f\.status\)[\s\S]*?cards\.some/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

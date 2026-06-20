@@ -165,10 +165,13 @@ export default function opsScreens() {
       )) return false;
       if (f.role && !(s.role || '').toLowerCase().includes(f.role)) return false;
       const cards = melMap.get(s.id) || [];
-      // Severity filters on OPEN cards so it agrees with the open-only badge;
-      // status filters over all cards (DONE is itself a filterable status).
-      if (f.severity && !cards.some((c) => c.status !== 'DONE' && c.severity === f.severity)) return false;
-      if (f.status && !cards.some((c) => c.status === f.status)) return false;
+      // Combined MEL filters must be satisfied by the SAME card — otherwise
+      // severity and status could each match a different card (false positive).
+      // Severity is scoped to open cards so it agrees with the open-only badge;
+      // status matches any card (DONE is itself a filterable status).
+      if ((f.severity || f.status) && !cards.some((c) =>
+        (!f.severity || (c.status !== 'DONE' && c.severity === f.severity)) &&
+        (!f.status || c.status === f.status))) return false;
       return true;
     });
     if (!rows.length) {
@@ -433,6 +436,7 @@ export default function opsScreens() {
         });
         // createMelCard returns null if persistence failed (quota / private mode).
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
+        renderList(); // refresh the registry badges/filters for the new card
         renderDetail();
         break;
       }
@@ -479,6 +483,7 @@ export default function opsScreens() {
         });
         state.melForm = null;
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
+        renderList(); // refresh the registry badges/filters for the new card
         renderDetail();
         break;
       }
@@ -497,6 +502,7 @@ export default function opsScreens() {
             state.notice = ok ? `MEL advanced → ${next}.` : 'Could not update the MEL card (storage full?).';
           }
         }
+        renderList(); // status change can move/clear the row's open-MEL badge
         renderDetail();
         break;
       }
@@ -506,6 +512,7 @@ export default function opsScreens() {
         // (a cancelled confirm leaves the panel, and any open form, untouched).
         if (window.confirm('Delete this MEL card? This cannot be undone.')) {
           state.notice = deleteMelCard(id) ? 'MEL card deleted.' : 'MEL card not found.';
+          renderList(); // refresh the registry badges/filters after delete
           renderDetail();
         }
         break;
