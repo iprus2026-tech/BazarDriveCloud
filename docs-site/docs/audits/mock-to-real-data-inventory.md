@@ -45,14 +45,14 @@ Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 25 storage keys (19 cleared · 3 kept · 3 dev — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 25 storage keys (19 cleared · 6 not-cleared — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
 
 ## Enforcement & removal tracking
 
-**Two axes.** Every key has a *boundary* class (does logout wipe it?) and a
-*migration* owner (does the backend own it?). They are independent — do **not**
-conflate them.
+**Two axes.** Every key has a *boundary* class (does `clearUserScopedStorage()`
+wipe it?) and a *migration* owner (does the backend own it?). They are
+independent — do **not** conflate them.
 
 **Boundary axis — locked by an automated gate (lands in PR #637).** The gate
 `scripts/smoke-static-data-inventory.mjs`, wired into `node scripts/check.mjs`
@@ -63,17 +63,21 @@ conflate them.
 - **Cleared — 19 user-scoped stores** wiped by `clearUserScopedStorage()` in
   `public/src/storage_boundary.js`; the gate seeds every key, runs the real clear,
   and asserts each cleared key's data is actually gone (no logout leak).
-- **Kept — 3 user/device keys** documented but not cleared: `user.v1`,
-  `posts.v1`, `map_prefs.v1`.
-- **Dev/test — 3 artefacts** never cleared, not product data: `debug.publish` and
-  `smoke_role.v1` (documented as dev/test in `storage_boundary.js`) and
-  `ops.mel.v1` (outside the boundary).
+- **Not cleared by `clearUserScopedStorage()` — 6 keys**, three sub-groups:
+  - *auth-reset:* `user.v1`, `smoke_role.v1` — still wiped at logout, but by the
+    auth flow (`resetLocalSession()` → `user.reset()` / `clearSmokeRole()`), not
+    this function.
+  - *survive (global/device):* `posts.v1`, `map_prefs.v1`.
+  - *dev:* `debug.publish` (documented as dev/test in `storage_boundary.js`) and
+    `ops.mel.v1` (outside the boundary).
 
-The gate fails on any **orphan** key not in the manifest — including a dynamic
-`bazardrive.${…}` key, and the gap that once let `bazardrive.order_overlay.v1` live
-outside `storage_boundary.js` — plus a stale entry, a duplicate classification, a
-cleared key whose data survives the clear, or an over-cleared kept/dev key.
-Canonical count: **25 keys (19 cleared · 3 kept · 3 dev).**
+The gate also discovers any string literal passed to a localStorage/sessionStorage
+API (not just `bazardrive.*`), and fails on any **orphan** key not in the manifest —
+including a dynamic `bazardrive.${…}` key and the gap that once let
+`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
+entry, a duplicate classification, a cleared key whose data survives the clear, or
+an over-cleared not-cleared key. Canonical count: **25 keys (19 cleared · 6
+not-cleared).**
 
 **Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
 This is what drives removal, and it does **not** line up with the boundary class:
@@ -87,14 +91,21 @@ This is what drives removal, and it does **not** line up with the boundary class
   cache; identity is the auth ADR), `favorite_routes.v1`,
   `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
   `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
-  `debug.publish`, `ops.mel.v1`. (Several of these are *cleared* on the boundary
-  yet never migrate.)
+  `debug.publish`. (Several of these are *cleared* on the boundary yet never
+  migrate.) `ops.mel.v1` is **dev tooling — outside BD-DOCS-031's scope**, so it
+  has no S/C owner there (neither migrates nor is a product store).
 
 **Removal tracking.** Each **server-owned** key moves `mock → migrating → removed`
 as its owning module swaps `localStorage` for the API behind
 `public/src/data_layer.js`. "All static data removed" is reached when every **S**
 key is served by the backend — not every cleared key; the **C** keys stay. This
 ledger plus the gate are the scoreboard.
+
+**Scope of "removed".** That condition covers the **storage-key** axis only. The
+non-storage findings this audit also tracks — URL-param status overrides (§C),
+hardcoded config enums / ratings / waiting policies (§B), and the Mapbox
+placeholders (§B Mapbox) — are **not** retired by the S-key migration and must be
+resolved under their own phases before the audit as a whole can close.
 
 ## A. localStorage-backed shared data — the migration backbone
 
