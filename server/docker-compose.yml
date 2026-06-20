@@ -1,0 +1,35 @@
+# /server/docker-compose.yml — local parity: the Fastify api + PostgreSQL 16.
+# (redis/minio are added in their own phases — BD-DOCS-033 / BD-DOCS-037.) Per BD-DOCS-041.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bazardrive
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/bazardrive
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-}
+    ports:
+      - "3000:3000"
+    # Apply migrations, then start. (Phase-1 convenience; prod runs migrate as its own step.)
+    command: sh -c "npm run migrate && node src/index.js"
+
+volumes:
+  pgdata:

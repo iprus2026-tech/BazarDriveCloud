@@ -1,0 +1,8 @@
+# /server/.dockerignore — scope the Docker build context (ADR BD-DOCS-041; mirrors
+# .gitignore). Without this, `COPY . .` would clobber the prod-only node_modules built by
+# `npm ci --omit=dev` and could bake a local .env into the image.
+node_modules
+.env
+.env.local
+*.log
+coverage

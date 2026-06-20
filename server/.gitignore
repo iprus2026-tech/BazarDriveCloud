@@ -1,0 +1,6 @@
+# Server (Node 22) — local-only artifacts; the repo root toolchain is untouched.
+node_modules/
+.env
+.env.local
+*.log
+coverage/
