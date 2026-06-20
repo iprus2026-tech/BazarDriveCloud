@@ -52,6 +52,11 @@ function optionList(values, selected) {
     .join('');
 }
 
+// Defect severities (MEL-A..D). WAITING/OK are MEL lifecycle states, not defects,
+// so they drive neither the open-MEL badge nor the severity filter chips — only
+// the badge/filter signal would otherwise advertise an "OK" screen as a problem.
+const DEFECT_SEVERITIES = MEL_SEVERITIES.filter((s) => s.startsWith('MEL-'));
+
 export default function opsScreens() {
   const screens = getScreens();
 
@@ -134,7 +139,7 @@ export default function opsScreens() {
     const roles = [['', 'Any'], ['passenger', 'Passenger'], ['driver', 'Driver'], ['shared', 'Shared']];
     // Data-drive from the canonical vocab so every severity that can appear in a
     // badge (incl. WAITING/OK) is also filterable; labels drop the MEL- prefix.
-    const sevs = [['', 'Any'], ...MEL_SEVERITIES.map((sv) => [sv, sv.replace('MEL-', '')])];
+    const sevs = [['', 'Any'], ...DEFECT_SEVERITIES.map((sv) => [sv, sv.replace('MEL-', '')])];
     const statusOpts = ['', ...MEL_STATUSES]
       .map((v) => `<option value="${esc(v)}"${state.filters.status === v ? ' selected' : ''}>${v ? esc(v) : 'Any status'}</option>`)
       .join('');
@@ -181,7 +186,7 @@ export default function opsScreens() {
     listEl.innerHTML = rows
       .map((s) => {
         const active = s.id === state.selectedId ? ' ops-reg__item--active' : '';
-        const open = (melMap.get(s.id) || []).filter((c) => c.status !== 'DONE');
+        const open = (melMap.get(s.id) || []).filter((c) => c.status !== 'DONE' && DEFECT_SEVERITIES.includes(c.severity));
         const sev = topSeverity(open);
         const melBadge = open.length
           ? `<span class="ops-pill ops-pill--mel" title="${open.length} open MEL card(s)">${esc(sev || 'MEL')} · ${open.length}</span>`

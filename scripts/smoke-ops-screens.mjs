@@ -333,6 +333,11 @@ expect('MEL create + delete refresh the registry list so badges stay in sync',
   && /deleteMelCard\(id\)[\s\S]*?renderList\(\)/.test(screenSrc));
 expect('combined severity+status filters are matched against the same MEL card',
   /\(f\.severity \|\| f\.status\)[\s\S]*?cards\.some/.test(screenSrc));
+// The open-MEL badge and severity chips signal DEFECTS only — WAITING/OK are
+// MEL states, not defects, so they must not drive the badge or the chips.
+expect('open-MEL badge + severity chips are defect-only (WAITING/OK excluded)',
+  /DEFECT_SEVERITIES\s*=\s*MEL_SEVERITIES\.filter/.test(screenSrc)
+  && /status !== 'DONE' && DEFECT_SEVERITIES\.includes/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
