@@ -34,6 +34,9 @@ export default async function authService(app) {
       },
     },
   }, async (req, reply) => {
+    // Resolve the session lazily — this is one of the few routes that NEEDS the actor, so
+    // it opts into the DB lookup (operational/liveness routes never call resolveUser).
+    const user = await req.resolveUser();
     // A presented token whose lookup FAILED (DB outage) is a retryable error, NOT a logout
     // — see plugins/auth.js. Anonymous (no token / no live session) stays { user: null }.
     if (req.authError) {
@@ -43,7 +46,7 @@ export default async function authService(app) {
         retryable: true,
       });
     }
-    return { user: req.user ?? null };
+    return { user: user ?? null };
   });
 
   app.post('/otp/request', async (req, reply) => notImplemented(reply, 'OTP request'));

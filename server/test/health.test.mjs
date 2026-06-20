@@ -24,6 +24,25 @@ test('GET /api/v1/health is 200 ok and touches no DB', async () => {
   assert.equal(res.json().status, 'ok');
 });
 
+test('GET /api/v1/health does NO auth DB lookup even with an Authorization header', async () => {
+  // Liveness must stay no-I/O: a global onRequest auth lookup would make /health block on
+  // the pool connect-timeout during a DB outage. Resolution is lazy, so /health never queries.
+  let dbCalls = 0;
+  const orig = app.db.query;
+  app.db.query = (...args) => { dbCalls += 1; return orig.apply(app.db, args); };
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/health',
+      headers: { authorization: 'Bearer dummy-token' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(dbCalls, 0, 'liveness must not trigger a session lookup');
+  } finally {
+    app.db.query = orig;
+  }
+});
+
 test('GET /api/v1/readyz returns a deterministic { db } body (503 when DB down)', async () => {
   const res = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
   assert.ok([200, 503].includes(res.statusCode), `status ${res.statusCode}`);
