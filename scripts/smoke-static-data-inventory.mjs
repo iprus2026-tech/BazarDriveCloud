@@ -6,7 +6,9 @@
 // store can never be added silently (the gap that once let
 // `bazardrive.order_overlay.v1` live OUTSIDE `storage_boundary.js`) — this check
 // discovers every storage key actually used and locks it against a curated
-// manifest, then verifies the clear-on-boundary contract behaviourally.
+// manifest, then verifies the clear-on-boundary contract behaviourally. Scope:
+// Web Storage only (localStorage/sessionStorage) — cookies, IndexedDB and
+// CacheStorage are out of scope and currently unused in public/src.
 //
 // Discovery resolves the KEY ARGUMENT of every localStorage/sessionStorage access
 // (`.getItem/.setItem/.removeItem(...)` and `[...]`), following same-file
@@ -88,7 +90,7 @@ function listJs(dir) {
 function stripComments(s) {
   return s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
-// Returns { keys:Set, dynamic:[] } — resolved storage keys + unresolved dynamic args.
+// Returns { keys, dynamic, unrecognized, destructured } from comment-stripped source.
 function resolveStorageKeys(text) {
   const consts = new Map();
   const cre = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g;
@@ -112,25 +114,48 @@ function resolveStorageKeys(text) {
   let am;
   while ((am = are.exec(text))) {
     const arg = am[1].trim();
-    const lit = arg.match(/^['"`]([^'"`]+)['"`]$/);
+    // A template literal with interpolation is a dynamic key — never a static one.
+    const interpolated = arg.startsWith('`') && arg.includes('${');
+    const lit = interpolated ? null : arg.match(/^['"`]([^'"`]+)['"`]$/);
     if (lit) keys.add(lit[1]);
-    else if (/^[A-Za-z_$][\w$]*$/.test(arg) && consts.has(arg)) keys.add(consts.get(arg));
+    else if (!interpolated && /^[A-Za-z_$][\w$]*$/.test(arg) && consts.has(arg)) keys.add(consts.get(arg));
     else dynamic.push(arg);
   }
-  return { keys, dynamic };
+  // Fail-loud coverage: a storage-API call whose receiver is NOT a recognized
+  // alias (a member-expr like `this.s`, a parameter/reassigned handle, a paren
+  // expression, or a new factory) would otherwise be silently invisible to
+  // discovery. `.getItem/.setItem/.removeItem(` are Web-Storage-only methods.
+  const unrecognized = [];
+  const callRe = /([\w$.]+)\s*\.\s*(?:get|set|remove)Item\s*\(/g;
+  let rm;
+  while ((rm = callRe.exec(text))) {
+    const recv = rm[1];
+    const ok = aliases.has(recv) || /(?:^|\.)(?:local|session)Storage$/.test(recv);
+    if (!ok) unrecognized.push(recv);
+  }
+  // Fail-loud: destructured storage methods cannot be tied back to a key.
+  const destructured = [];
+  const dre = /(?:const|let|var)\s*\{[^}]*\b(?:get|set|remove)Item\b[^}]*\}\s*=\s*(?:safeLocalStorage\s*\(\s*\)|(?:window\.|globalThis\.)?(?:local|session)Storage\b)/g;
+  let dm;
+  while ((dm = dre.exec(text))) destructured.push(dm[0].slice(0, 60));
+  return { keys, dynamic, unrecognized, destructured };
 }
 const prefixRe = /['"`](bazardrive\.[^'"`]+|profileTripDemo)['"`]/g;
 function discoverIn(files, { withPrefixLiterals } = {}) {
   const keys = new Set();
   const dynamic = [];
+  const unrecognized = [];
+  const destructured = [];
   for (const f of files) {
     const txt = stripComments(fs.readFileSync(f, 'utf8'));
     const r = resolveStorageKeys(txt);
     r.keys.forEach((k) => keys.add(k));
     dynamic.push(...r.dynamic);
+    unrecognized.push(...r.unrecognized);
+    destructured.push(...r.destructured);
     if (withPrefixLiterals) { let m; while ((m = prefixRe.exec(txt))) keys.add(m[1]); }
   }
-  return { keys, dynamic };
+  return { keys, dynamic, unrecognized, destructured };
 }
 const allFiles = listJs(SRC);
 const ownerFiles = allFiles.filter((f) => path.relative(root, f) !== BOUNDARY_REL);
@@ -147,6 +172,10 @@ expect('no orphan storage key in public/src — every accessed key is classified
   orphans.length === 0, orphans.length ? 'orphans: ' + orphans.join(', ') : '');
 expect('no unresolved dynamic storage key — every storage access resolves to a literal',
   all.dynamic.length === 0, all.dynamic.length ? 'dynamic: ' + [...new Set(all.dynamic)].join(', ') : '');
+expect('every storage-API call goes through a recognized storage receiver (no untracked alias/handle)',
+  all.unrecognized.length === 0, all.unrecognized.length ? 'unrecognized receivers: ' + [...new Set(all.unrecognized)].join(', ') : '');
+expect('no destructured storage methods — they cannot be tied back to a key',
+  all.destructured.length === 0, all.destructured.length ? 'destructured: ' + [...new Set(all.destructured)].join(' | ') : '');
 
 // ── 2. No stale: every manifest key is still accessed by an owner module ──────
 const stale = ALL.filter((k) => !owners.keys.has(k));
@@ -187,14 +216,21 @@ globalThis.document = {
 };
 globalThis.location = globalThis.location || { hash: '', href: 'http://localhost/', search: '', pathname: '/' };
 
+// Map-shaped stores hold a {id: …} envelope; seed two tenants so a partial /
+// per-identity wipe (leaving another id behind) is caught, not just a flat value.
+const MAP_KEYS = new Set([
+  'bazardrive.active_ride.v1', 'bazardrive.chat.v1', 'bazardrive.responses.v1',
+  'bazardrive.trip_confirmation.v1', 'bazardrive.driver_offers.v1', 'bazardrive.order_overlay.v1',
+]);
+const TWO_TENANT = JSON.stringify({ id_a: { secret: 'A' }, id_b: { secret: 'B' } });
 try {
   const mod = await import(pathToFileURL(BOUNDARY).href);
-  for (const k of CLEARED) ls.set(k, SENTINEL);
+  for (const k of CLEARED) ls.set(k, MAP_KEYS.has(k) ? TWO_TENANT : SENTINEL);
   for (const e of NOT_CLEARED) (e.session ? ss : ls).set(e.key, SENTINEL);
   mod.clearUserScopedStorage();
   const isCleared = (v) => v === null || v === '' || v === '{}' || v === '[]';
   const leaked = CLEARED.filter((k) => !isCleared(ls.get(k) ?? null));
-  expect('clearUserScopedStorage() actually clears every cleared key (no logout data leak)',
+  expect('clearUserScopedStorage() actually clears every cleared key, incl. map stores (no logout data leak)',
     leaked.length === 0, leaked.length ? 'NOT cleared: ' + leaked.join(', ') : '');
   const wiped = NOT_CLEARED.filter((e) => (e.session ? ss : ls).get(e.key) !== SENTINEL).map((e) => e.key);
   expect('clearUserScopedStorage() preserves every not-cleared key (never over-clears)',
@@ -203,10 +239,28 @@ try {
   expect('storage_boundary.js imports + runs clearUserScopedStorage() under a shim', false, e.message.slice(0, 200));
 }
 
+// The auth boundary (resetLocalSession) — not clearUserScopedStorage — is what
+// removes the sessionStorage role override; assert it so the session-key coverage
+// is non-vacuous.
+try {
+  ss.clear(); ls.clear();
+  ss.set('bazardrive.smoke_role.v1', SENTINEL);
+  const auth = await import(pathToFileURL(path.join(SRC, 'mock_auth.js')).href);
+  auth.resetLocalSession();
+  expect('resetLocalSession() clears the sessionStorage role override (auth-reset)',
+    ss.get('bazardrive.smoke_role.v1') == null,
+    ss.get('bazardrive.smoke_role.v1') != null ? 'smoke_role survived logout' : '');
+} catch (e) {
+  expect('mock_auth.js imports + runs resetLocalSession() under a shim', false, e.message.slice(0, 200));
+}
+
 // ── Ledger summary ────────────────────────────────────────────────────────────
-console.log('\nStatic-data surface: ' + all.keys.size + ' keys accessed · '
+const storeKeys = [...all.keys].filter((k) => !ALLOWLIST.has(k));
+console.log('\nStatic-data surface: ' + storeKeys.length + ' keys'
+  + (ALLOWLIST.size ? ' (+' + ALLOWLIST.size + ' probe, allowlisted)' : '') + ' · '
   + CLEARED.length + ' cleared by clearUserScopedStorage() · '
   + NC_KEYS.length + ' not-cleared (auth-reset / device / dev / transient). '
+  + 'Web Storage only (localStorage/sessionStorage); cookies / IndexedDB / CacheStorage are out of scope and unused in public/src. '
   + 'Migration ownership (server vs client) is per BD-DOCS-031.');
 
 console.log('\n' + (issues.length
