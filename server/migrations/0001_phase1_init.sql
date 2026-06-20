@@ -131,6 +131,11 @@ CREATE TABLE IF NOT EXISTS vehicles (
   -- owning driver (FK to the users stub). driverGarage lives under the user
   -- record today; here it becomes an explicit owner reference.
   owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- verbatim client vehicle id (appendGarageVehicle: 'vehicle-1', ...). driverGarage.
+  -- activeVehicleId stores this exact string, so it must round-trip to preserve the
+  -- active-vehicle selection and idempotently match re-imports/edits. Unique PER OWNER
+  -- (not globally — see vehicles_owner_legacy_uq below).
+  legacy_id     TEXT NULL,
   -- garage.js normalisePersistedVehicle: `model` is REQUIRED (blank-model entries
   -- are dropped). Maps driverGarage.vehicles[].model + the legacy-derived
   -- `${vehicleMake} ${vehicleModel}` modelLine.
@@ -151,7 +156,10 @@ CREATE TABLE IF NOT EXISTS vehicles (
   -- Realized as a flag; the partial-unique index below enforces single-active.
   is_active     BOOLEAN NOT NULL DEFAULT FALSE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- the persisted client vehicle id is unique within an owner's garage, not globally
+  -- (NULLs allowed for rows with no legacy id).
+  CONSTRAINT vehicles_owner_legacy_uq UNIQUE (owner_user_id, legacy_id)
 );
 -- NOTE: legacy vehicleMake/vehicleModel are NOT separate columns — garage.js
 -- itself collapses them to one modelLine; vehicleYear/vehicleBody have no
@@ -276,10 +284,15 @@ CREATE TABLE IF NOT EXISTS orders (
   scheduled_at_ts       TIMESTAMPTZ NULL,                    -- parsed, when possible
   scheduled_label       TEXT NOT NULL DEFAULT '',            -- order.scheduledLabel
   comment               TEXT NOT NULL DEFAULT '',            -- order.comment
-  -- order.passenger sanitized snapshot {name,initials,phoneMasked,comment,
-  -- authorId,isCurrentUser} — JSONB so the BD-ACTIVE-07 driver handoff reads it
-  -- verbatim; flattening would break that handoff.
-  passenger_snapshot    JSONB NULL,
+  -- order.passenger sanitized snapshot {name,initials,phoneMasked,comment,authorId} —
+  -- JSONB so the BD-ACTIVE-07 driver handoff reads it verbatim. The per-VIEWER
+  -- `isCurrentUser` flag (createRideOrder stamps true; canManageOwnOrder trusts it)
+  -- MUST NOT be persisted as shared state — returned to another viewer it would mark the
+  -- request "mine" for everyone and suppress the accept path. The CHECK forces the writer
+  -- to strip it; isCurrentUser is recomputed per authenticated request.
+  passenger_snapshot    JSONB NULL
+                          CHECK (passenger_snapshot IS NULL
+                                 OR NOT jsonb_exists(passenger_snapshot, 'isCurrentUser')),
   -- ORDER lifecycle status (distinct from rides.status RIDE_STATUS):
   -- CREATED -> ACCEPTED -> IN_PROGRESS -> COMPLETED, with CANCELED. updateTripStatus
   -- (mock_api.js) persists IN_PROGRESS and COMPLETED; HANDED_OFF_ORDER_STATUSES =
@@ -567,6 +580,11 @@ CREATE TABLE IF NOT EXISTS rides (
   started_at     TIMESTAMPTZ NULL,     -- timestamps.startedAt (IN_PROGRESS)
   completed_at   TIMESTAMPTZ NULL,     -- timestamps.completedAt (COMPLETED)
   canceled_at    TIMESTAMPTZ NULL,     -- timestamps.canceledAt (CANCELED/NO_SHOW)
+  -- passenger-side completion: renderPassengerRideComplete persists a history entry when
+  -- the passenger reaches the COMPLETED screen (via ?status=COMPLETED) WITHOUT calling
+  -- updateActiveRideStatus, so the CANONICAL status may still be IN_PROGRESS. Stamped
+  -- independently so passenger history is not lost (see ride_history passenger arm).
+  passenger_completed_at TIMESTAMPTZ NULL,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   -- terminal-cancel / completion stamp invariants (mirror STATUS_TIMESTAMP_FIELD).
@@ -678,7 +696,13 @@ BEGIN
     old_norm := OLD;
     old_norm.ride_id := NEW.ride_id;          -- normalize the single allowed change
     IF NEW IS NOT DISTINCT FROM old_norm THEN
-      RETURN NEW;                             -- pure ride_id backfill; nothing else changed
+      -- the backfilled ride must be the SAME business trip, else the event would be
+      -- attached to an unrelated ride's timeline (and append-only blocks correcting it).
+      IF EXISTS (SELECT 1 FROM rides r WHERE r.id = NEW.ride_id AND r.trip_id = NEW.trip_id) THEN
+        RETURN NEW;                           -- pure ride_id backfill to the MATCHING ride
+      END IF;
+      RAISE EXCEPTION 'ride_events backfill must target the ride with matching trip_id (got %)', NEW.trip_id
+        USING ERRCODE = 'raise_exception';
     END IF;
   END IF;
   RAISE EXCEPTION 'ride_events is append-only: % is not allowed', TG_OP
@@ -870,7 +894,7 @@ SELECT
   r.trip_id                                       AS trip_id,
   'passenger'::text                               AS role,
   r.order_id                                      AS order_id,
-  r.completed_at                                  AS completed_at,        -- timestamps.completedAt (when the ride completed)
+  COALESCE(r.completed_at, r.passenger_completed_at) AS completed_at,     -- ride completion, else passenger-side completion
   r.passenger_user_id                             AS viewer_user_id,
   r.driver_user_id                                AS counterparty_id,     -- passenger sees the driver
   r.driver_name                                   AS counterparty_name,   -- entry.driver.name
@@ -891,7 +915,9 @@ SELECT
   NULL::integer                                   AS receipt_tip,
   NULL::text                                      AS receipt_payment_mode
 FROM rides r
-WHERE r.status = 'COMPLETED'
+-- passenger history survives even when the canonical ride is not COMPLETED: the
+-- passenger completion path persists a history entry without flipping rides.status.
+WHERE r.status = 'COMPLETED' OR r.passenger_completed_at IS NOT NULL
 
 UNION ALL
 
