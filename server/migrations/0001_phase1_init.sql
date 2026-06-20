@@ -487,6 +487,10 @@ CREATE TABLE IF NOT EXISTS rides (
   driver_car            TEXT NULL,    -- driver.car
   driver_online_label   TEXT NULL,    -- driver.onlineLabel
   driver_shift_duration TEXT NULL,    -- driver.shiftDuration
+  -- ride.selectedDriver.responseId — the accepted-response pin. resolveDriverSnapshotForRide
+  -- REFUSES to infer the accepted driver without this exact pin (avoids swapping in an
+  -- unrelated latest response), so it is load-bearing across cutover.
+  selected_driver_response_id TEXT NULL,
 
   -- vehicle.* (ride.vehicle from buildActiveRideSeed)
   vehicle_model  TEXT NULL,           -- vehicle.model
@@ -660,11 +664,23 @@ CREATE TABLE IF NOT EXISTS ride_events (
   at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- APPEND-ONLY enforcement (BD-DOCS-041: ride_events is append-only; no UPDATE/
--- DELETE). The read model (ride_history view) picks the latest per (ride, type).
+-- APPEND-ONLY enforcement (BD-DOCS-041: ride_events is an append-only timeline).
+-- The ONLY permitted mutation is the one-time ride_id BACKFILL (NULL -> a ride id)
+-- for a handoff written before its ride existed; every other column must be
+-- unchanged (whole-row compare with ride_id normalized). DELETE and any content
+-- change remain forbidden. The read model (ride_history view) picks latest per (ride,type).
 CREATE OR REPLACE FUNCTION ride_events_block_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  old_norm ride_events%ROWTYPE;
 BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.ride_id IS NULL AND NEW.ride_id IS NOT NULL THEN
+    old_norm := OLD;
+    old_norm.ride_id := NEW.ride_id;          -- normalize the single allowed change
+    IF NEW IS NOT DISTINCT FROM old_norm THEN
+      RETURN NEW;                             -- pure ride_id backfill; nothing else changed
+    END IF;
+  END IF;
   RAISE EXCEPTION 'ride_events is append-only: % is not allowed', TG_OP
     USING ERRCODE = 'raise_exception';
 END;
@@ -692,7 +708,11 @@ CREATE TABLE IF NOT EXISTS messages (
   -- resolved FKs derived from the chat_id prefix; nullable for bare feed-post and
   -- demo threads.
   ride_id     UUID NULL REFERENCES rides(id) ON DELETE SET NULL,
-  response_id TEXT NULL,    -- the <responseId> from a 'response-' chat_id
+  response_id TEXT NULL,    -- the legacy <responseId> string from a 'response-' chat_id
+  -- the legacy response_id ('resp_<post.id>') is AMBIGUOUS across drivers (responses.
+  -- legacy_id is non-unique); response_uuid is the unique per-response thread scope the
+  -- server groups a conversation by. Nullable for trip-/demo-threads with no response.
+  response_uuid UUID NULL REFERENCES responses(id) ON DELETE CASCADE,
   -- canonical authorship (BD-CHAT-02; doSend stamps senderRole = viewerRole).
   sender_role TEXT NULL CHECK (sender_role IS NULL OR sender_role IN ('driver', 'passenger')),
   -- client per-message int (Date.now()) — dedup/idempotency key for re-import.
@@ -813,12 +833,14 @@ CREATE INDEX IF NOT EXISTS idx_ride_events_response ON ride_events(response_id);
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id);
 CREATE INDEX IF NOT EXISTS idx_messages_response ON messages(response_id);
--- client_msg_id is a per-client Date.now() millisecond stamp, NOT a global id —
--- scope dedupe by sender_role so a driver and passenger sending in the SAME ms (and
--- legacy NULL-sender imports, distinct under NULL) are not rejected; the server UUID
--- PK remains the message identity.
+-- client_msg_id is a per-client Date.now() millisecond stamp, NOT a global id — scope
+-- dedupe by a NON-NULL participant discriminator so (a) a driver and passenger sending
+-- in the SAME ms stay distinct and (b) legacy NULL-sender imports still dedupe on replay
+-- (NULLs are distinct in a UNIQUE index, so COALESCE to legacy_dir then a sentinel). The
+-- server UUID PK remains the message identity.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_client_id
-  ON messages(chat_id, sender_role, client_msg_id) WHERE client_msg_id IS NOT NULL;
+  ON messages(chat_id, COALESCE(sender_role, legacy_dir, '~'), client_msg_id)
+  WHERE client_msg_id IS NOT NULL;
 
 -- receipts: point lookup (/receipt?tripId=) via the unique ride_id; payouts
 -- calendar (listDriverReceipts sorts by completedAt desc).

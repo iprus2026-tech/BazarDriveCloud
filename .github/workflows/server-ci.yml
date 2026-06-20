@@ -61,8 +61,10 @@ jobs:
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 11
           psql -v ON_ERROR_STOP=1 -tAc \
             "select 1 from information_schema.views where table_name='ride_history'" | grep -qx 1
+          # pg_trigger has ONE row per trigger (information_schema.triggers has one
+          # row per event, so a BEFORE UPDATE OR DELETE trigger would appear twice).
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select 1 from information_schema.triggers where trigger_name='trg_rides_freeze_terminal'" | grep -qx 1
+            "select count(*) from pg_trigger where tgname='trg_rides_freeze_terminal' and not tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select 1 from information_schema.triggers where trigger_name='trg_ride_events_no_mutation'" | grep -qx 1
+            "select count(*) from pg_trigger where tgname='trg_ride_events_no_mutation' and not tgisinternal" | grep -qx 1
           echo "schema objects OK"
