@@ -15292,6 +15292,25 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .ops-search:focus { outline: none; border-color: var(--accent); }
 
+/* BD-OPS-09 — registry filters (role/severity chips + status select). */
+.ops-filters { display: flex; flex-direction: column; gap: 8px; }
+.ops-filters__group { display: flex; flex-direction: column; gap: 4px; }
+.ops-filters__label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.ops-filters__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ops-chip {
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  background: var(--bg-1); color: var(--text-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px;
+}
+.ops-chip:hover { border-color: var(--line-strong); }
+.ops-chip--active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.ops-filters__select {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 6px 8px;
+}
+.ops-filters__select:focus-visible { outline: none; border-color: var(--accent); }
+
 .ops-reg { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ops-reg__empty, .ops-detail__empty { font-size: 13px; color: var(--text-3); padding: 8px 2px; }
 .ops-reg__item {
@@ -15306,7 +15325,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .ops-reg__id { font-size: 11px; font-weight: 600; color: var(--text-2); letter-spacing: 0.02em; }
 .ops-reg__title { font-size: 14px; font-weight: 600; grid-column: 1; }
 .ops-reg__route { font-size: 12px; color: var(--text-3); grid-column: 1; }
-.ops-reg__item .ops-pill { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.ops-reg__pills {
+  grid-column: 2; grid-row: 1 / span 3; align-self: center;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
 
 .ops-detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .ops-card { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px; }
@@ -15327,6 +15349,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .ops-pill--implemented { color: var(--success); border-color: rgba(74, 222, 128, 0.32); }
 .ops-pill--waiting { color: var(--warning); border-color: rgba(251, 191, 36, 0.32); }
 .ops-pill--missing { color: var(--danger); border-color: rgba(248, 113, 113, 0.32); }
+.ops-pill--mel { color: var(--accent); border-color: var(--accent); }
 
 .ops-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ops-btn {

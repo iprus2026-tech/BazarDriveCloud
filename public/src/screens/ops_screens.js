@@ -17,6 +17,7 @@ import { user } from '../state.js';
 import { getScreens, getScreen } from '../ops/ops_registry.js';
 import {
   listMelForScreen,
+  listAllMel,
   createMelCard,
   updateMelCard,
   deleteMelCard,
@@ -51,6 +52,11 @@ function optionList(values, selected) {
     .join('');
 }
 
+// Defect severities (MEL-A..D). WAITING/OK are MEL lifecycle states, not defects,
+// so they drive neither the open-MEL badge nor the severity filter chips — only
+// the badge/filter signal would otherwise advertise an "OK" screen as a problem.
+const DEFECT_SEVERITIES = MEL_SEVERITIES.filter((s) => s.startsWith('MEL-'));
+
 export default function opsScreens() {
   const screens = getScreens();
 
@@ -63,6 +69,8 @@ export default function opsScreens() {
     // The MEL editor form, or null when closed. Holds the in-progress field
     // values so an unrelated re-render does not drop what the user typed.
     melForm: null,
+    // Registry filters — '' means "any". Compose with the text search.
+    filters: { role: '', severity: '', status: '' },
   };
   if (!getScreen(state.selectedId)) {
     state.selectedId = (screens[0] && screens[0].id) || null;
@@ -82,6 +90,7 @@ export default function opsScreens() {
       <aside class="ops-aside">
         <input id="ops-search" class="ops-search" type="search"
           placeholder="Search screens…" aria-label="Search screens" autocomplete="off">
+        <div id="ops-filters" class="ops-filters"></div>
         <ul id="ops-list" class="ops-reg" role="listbox" aria-label="Screen registry"></ul>
       </aside>
       <main id="ops-detail" class="ops-detail" aria-live="polite"></main>
@@ -91,35 +100,109 @@ export default function opsScreens() {
   const listEl = root.querySelector('#ops-list');
   const detailEl = root.querySelector('#ops-detail');
   const searchEl = root.querySelector('#ops-search');
+  const filtersEl = root.querySelector('#ops-filters');
 
   function statusPill(value, kind) {
     return `<span class="ops-pill ops-pill--${esc(kind)}">${esc(value)}</span>`;
   }
 
+  // Group every MEL card by screen in a single read, so the list can render
+  // per-row badges and apply MEL filters without a load() per screen.
+  function melByScreen() {
+    const map = new Map();
+    for (const c of listAllMel()) {
+      const list = map.get(c.screenId) || [];
+      list.push(c);
+      map.set(c.screenId, list);
+    }
+    return map;
+  }
+
+  // Most severe severity among a set of cards (MEL_SEVERITIES is ordered
+  // most→least severe), or '' if none are classified.
+  function topSeverity(cards) {
+    let best = '';
+    let bestIdx = Infinity;
+    for (const c of cards) {
+      const i = MEL_SEVERITIES.indexOf(c.severity);
+      if (i !== -1 && i < bestIdx) { bestIdx = i; best = c.severity; }
+    }
+    return best;
+  }
+
+  function filterChip(group, value, label) {
+    const on = state.filters[group] === value;
+    return `<button type="button" class="ops-chip${on ? ' ops-chip--active' : ''}" data-action="filter-${group}" data-value="${esc(value)}" aria-pressed="${on}">${esc(label)}</button>`;
+  }
+
+  function renderFilters() {
+    const roles = [['', 'Any'], ['passenger', 'Passenger'], ['driver', 'Driver'], ['shared', 'Shared']];
+    // Data-drive from the canonical vocab so every severity that can appear in a
+    // badge (incl. WAITING/OK) is also filterable; labels drop the MEL- prefix.
+    const sevs = [['', 'Any'], ...DEFECT_SEVERITIES.map((sv) => [sv, sv.replace('MEL-', '')])];
+    const statusOpts = ['', ...MEL_STATUSES]
+      .map((v) => `<option value="${esc(v)}"${state.filters.status === v ? ' selected' : ''}>${v ? esc(v) : 'Any status'}</option>`)
+      .join('');
+    filtersEl.innerHTML = `
+      <div class="ops-filters__group">
+        <span class="ops-filters__label">Role</span>
+        <div class="ops-filters__chips">${roles.map(([v, l]) => filterChip('role', v, l)).join('')}</div>
+      </div>
+      <div class="ops-filters__group">
+        <span class="ops-filters__label">Severity</span>
+        <div class="ops-filters__chips">${sevs.map(([v, l]) => filterChip('severity', v, l)).join('')}</div>
+      </div>
+      <div class="ops-filters__group">
+        <span class="ops-filters__label">Status</span>
+        <select id="ops-filter-status" class="ops-filters__select" aria-label="Filter by MEL status">${statusOpts}</select>
+      </div>`;
+  }
+
   function renderList() {
     const term = state.search.trim().toLowerCase();
+    const f = state.filters;
+    const melMap = melByScreen();
     const rows = screens.filter((s) => {
-      if (!term) return true;
-      return (
+      if (term && !(
         s.id.toLowerCase().includes(term) ||
         (s.title || '').toLowerCase().includes(term) ||
         (s.route || '').toLowerCase().includes(term)
-      );
+      )) return false;
+      if (f.role && !(s.role || '').toLowerCase().includes(f.role)) return false;
+      const cards = melMap.get(s.id) || [];
+      // Combined MEL filters must be satisfied by the SAME card — otherwise
+      // severity and status could each match a different card (false positive).
+      // Severity WITHOUT an explicit status is scoped to open cards so it agrees
+      // with the open-only badge; adding a status filter overrides that scoping
+      // so completed (DONE) cards of that severity stay reachable.
+      if ((f.severity || f.status) && !cards.some((c) =>
+        (!f.severity || c.severity === f.severity) &&
+        (!f.status || c.status === f.status) &&
+        (!f.severity || f.status || c.status !== 'DONE'))) return false;
+      return true;
     });
     if (!rows.length) {
-      listEl.innerHTML = `<li class="ops-reg__empty">No screens match “${esc(state.search)}”.</li>`;
+      listEl.innerHTML = `<li class="ops-reg__empty">No screens match the current search and filters.</li>`;
       return;
     }
     listEl.innerHTML = rows
       .map((s) => {
         const active = s.id === state.selectedId ? ' ops-reg__item--active' : '';
+        const open = (melMap.get(s.id) || []).filter((c) => c.status !== 'DONE' && DEFECT_SEVERITIES.includes(c.severity));
+        const sev = topSeverity(open);
+        const melBadge = open.length
+          ? `<span class="ops-pill ops-pill--mel" title="${open.length} open MEL card(s)">${esc(sev || 'MEL')} · ${open.length}</span>`
+          : '';
         return `
           <li>
             <button type="button" class="ops-reg__item${active}" data-action="select-screen" data-id="${esc(s.id)}">
               <span class="ops-reg__id">${esc(s.id)}</span>
               <span class="ops-reg__title">${esc(s.title)}</span>
               <span class="ops-reg__route">${esc(s.route)}</span>
-              ${statusPill(s.implementationStatus, s.implementationStatus)}
+              <span class="ops-reg__pills">
+                ${statusPill(s.implementationStatus, s.implementationStatus)}
+                ${melBadge}
+              </span>
             </button>
           </li>`;
       })
@@ -277,11 +360,18 @@ export default function opsScreens() {
     renderList();
   });
 
-  // Keep the open MEL form's field values in state so an unrelated re-render
-  // (e.g. generating a prompt) does not discard what the user has typed.
+  // Status filter is a <select> in the aside; mirror it into filter state and
+  // re-render the list. Handled before the MEL-form guard below.
   root.addEventListener('input', (e) => {
-    if (!state.melForm) return;
     const t = e.target;
+    if (t.id === 'ops-filter-status') {
+      state.filters.status = t.value;
+      renderList();
+      return;
+    }
+    // Keep the open MEL form's field values in state so an unrelated re-render
+    // (e.g. generating a prompt) does not discard what the user has typed.
+    if (!state.melForm) return;
     if (t.id === 'mel-severity') state.melForm.severity = t.value;
     else if (t.id === 'mel-status') state.melForm.status = t.value;
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
@@ -302,6 +392,20 @@ export default function opsScreens() {
       state.melForm = null;
       renderList();
       renderDetail();
+      return;
+    }
+
+    // Role / severity filter chips — screen-independent, so handle before the
+    // selected-screen guard below.
+    if (action === 'filter-role' || action === 'filter-severity') {
+      const group = action === 'filter-role' ? 'role' : 'severity';
+      const value = btn.dataset.value;
+      state.filters[group] = value;
+      renderFilters();
+      renderList();
+      // renderFilters() rebuilt the chip DOM — restore focus to the same chip
+      // so keyboard navigation is not dropped to <body>.
+      filtersEl.querySelector(`[data-action="${action}"][data-value="${CSS.escape(value)}"]`)?.focus();
       return;
     }
 
@@ -339,6 +443,7 @@ export default function opsScreens() {
         });
         // createMelCard returns null if persistence failed (quota / private mode).
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
+        renderList(); // refresh the registry badges/filters for the new card
         renderDetail();
         break;
       }
@@ -385,6 +490,7 @@ export default function opsScreens() {
         });
         state.melForm = null;
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
+        renderList(); // refresh the registry badges/filters for the new card
         renderDetail();
         break;
       }
@@ -403,6 +509,7 @@ export default function opsScreens() {
             state.notice = ok ? `MEL advanced → ${next}.` : 'Could not update the MEL card (storage full?).';
           }
         }
+        renderList(); // status change can move/clear the row's open-MEL badge
         renderDetail();
         break;
       }
@@ -412,6 +519,7 @@ export default function opsScreens() {
         // (a cancelled confirm leaves the panel, and any open form, untouched).
         if (window.confirm('Delete this MEL card? This cannot be undone.')) {
           state.notice = deleteMelCard(id) ? 'MEL card deleted.' : 'MEL card not found.';
+          renderList(); // refresh the registry badges/filters after delete
           renderDetail();
         }
         break;
@@ -442,6 +550,7 @@ export default function opsScreens() {
     }
   });
 
+  renderFilters();
   renderList();
   renderDetail();
   return root;

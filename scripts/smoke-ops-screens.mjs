@@ -158,8 +158,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v161 (bumped for the MEL lifecycle UI)',
-  !!swVer && Number(swVer[1]) >= 161);
+expect('sw.js VERSION is present and >= v162 (bumped for the registry badges/filters)',
+  !!swVer && Number(swVer[1]) >= 162);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
@@ -312,6 +312,32 @@ expect('renderMelForm re-renders field values from state.melForm',
   /function\s+renderMelForm/.test(screenSrc) && /esc\(f\.problem\)/.test(screenSrc));
 expect('mel-form-save requires a problem before creating a card',
   /Add a problem description/.test(screenSrc));
+
+// ── M3. BD-OPS-09 (#648) — registry open-MEL badges + role/severity/status filters. ──
+expect('ops_mel_store exports listAllMel (one read for per-row badges)',
+  /export\s+function\s+listAllMel\s*\(/.test(storeSrc));
+expect('screen wires the registry filters (role/severity chips + status select)',
+  /id="ops-filters"/.test(screenSrc)
+  && /action === 'filter-role'/.test(screenSrc)
+  && /action === 'filter-severity'/.test(screenSrc)
+  && /id="ops-filter-status"/.test(screenSrc));
+expect('screen renders a per-row open-MEL badge from cards grouped by screen',
+  /ops-pill--mel/.test(screenSrc) && /ops-reg__pills/.test(screenSrc)
+  && /function\s+melByScreen/.test(screenSrc));
+expect('cloud.css defines the filter + MEL-badge atoms',
+  /\.ops-filters\b/.test(css) && /\.ops-chip\b/.test(css) && /\.ops-pill--mel\b/.test(css));
+// Codex #652 P2s: MEL mutations must refresh the badge source (renderList), and
+// combined severity+status filters must be satisfied by the SAME card.
+expect('MEL create + delete refresh the registry list so badges stay in sync',
+  /createMelCard\([\s\S]*?renderList\(\)/.test(screenSrc)
+  && /deleteMelCard\(id\)[\s\S]*?renderList\(\)/.test(screenSrc));
+expect('combined severity+status filters are matched against the same MEL card',
+  /\(f\.severity \|\| f\.status\)[\s\S]*?cards\.some/.test(screenSrc));
+// The open-MEL badge and severity chips signal DEFECTS only — WAITING/OK are
+// MEL states, not defects, so they must not drive the badge or the chips.
+expect('open-MEL badge + severity chips are defect-only (WAITING/OK excluded)',
+  /DEFECT_SEVERITIES\s*=\s*MEL_SEVERITIES\.filter/.test(screenSrc)
+  && /status !== 'DONE' && DEFECT_SEVERITIES\.includes/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
