@@ -15,6 +15,17 @@
 // `const NAME = 'literal'` so constant-stored and non-`bazardrive` keys (e.g.
 // `bd-reloading`) are caught — not just inline `bazardrive.*` literals. A dynamic
 // key argument that cannot be resolved to a literal FAILS (it must be classified).
+// Method access via `?.` (optional chaining) is handled.
+//
+// Accepted limits (static heuristic, not a full parser) — the gate fails LOUD on
+// the higher-risk bypasses (unrecognized receiver, destructured methods, dynamic
+// keys, orphans), and accepts these lower-risk residuals: (1) a key whose `const`
+// definition lingers in an owner module with no live access can keep its manifest
+// entry from going stale (the prefix-literal pass is intentionally lenient so
+// wrapper-accessed stores like driver_offers are not falsely flagged); (2) within
+// one file, a storage-key `const` redeclared with a different value resolves to the
+// first; (3) non-Web-Storage persistence (cookies / IndexedDB / CacheStorage) is
+// out of scope. None occur in public/src today.
 //
 // Axis note: keys are classified by whether `clearUserScopedStorage()` wipes them.
 // `user.v1` / `smoke_role.v1` are still reset at logout, but by the auth flow
@@ -110,7 +121,7 @@ function resolveStorageKeys(text) {
   const dynamic = [];
   // `<storage>.getItem/.setItem/.removeItem(ARG` or `<storage>[ARG`, where
   // <storage> is localStorage/sessionStorage or any alias bound to one.
-  const are = new RegExp('(?:' + aliasGroup + ')\\s*(?:\\.\\s*(?:get|set|remove)Item\\s*\\(|\\[)\\s*([^,)\\]]+)', 'g');
+  const are = new RegExp('(?:' + aliasGroup + ')\\s*(?:\\??\\.\\s*(?:get|set|remove)Item\\s*\\(|\\??\\.?\\[)\\s*([^,)\\]]+)', 'g');
   let am;
   while ((am = are.exec(text))) {
     const arg = am[1].trim();
@@ -126,7 +137,7 @@ function resolveStorageKeys(text) {
   // expression, or a new factory) would otherwise be silently invisible to
   // discovery. `.getItem/.setItem/.removeItem(` are Web-Storage-only methods.
   const unrecognized = [];
-  const callRe = /([\w$.]+)\s*\.\s*(?:get|set|remove)Item\s*\(/g;
+  const callRe = /([\w$.]+)\s*\??\.\s*(?:get|set|remove)Item\s*\(/g;
   let rm;
   while ((rm = callRe.exec(text))) {
     const recv = rm[1];
