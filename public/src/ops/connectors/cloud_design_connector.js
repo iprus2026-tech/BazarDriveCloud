@@ -11,6 +11,6 @@ import { generateCloudDesignPrompt } from '../templates/cloud_design_prompt_temp
 export function buildCloudDesignPrompt(screenId, mel = {}) {
   const facts = getScreenFacts(screenId);
   if (!facts) return '';
-  const contract = getContractFacts(screenId);
+  const contract = getContractFacts(facts);
   return generateCloudDesignPrompt(facts, mel) + '\n\nContract: ' + contract.contractAnchor;
 }

@@ -154,6 +154,12 @@ const OPS_PRECACHE = [
 for (const p of OPS_PRECACHE) {
   expect(`sw.js precaches ${p}`, sw.includes(`'${p}'`));
 }
+// VERSION must be bumped whenever precached file contents change, or installed
+// clients keep serving the stale cache (house convention: other precache smokes
+// pin a VERSION floor). Floor is raised each time the ops runtime changes.
+const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
+expect('sw.js VERSION is present and >= v158 (bumped for the connector/store changes)',
+  !!swVer && Number(swVer[1]) >= 158);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
@@ -223,6 +229,42 @@ expect('ops_screens no longer imports the 3 prompt templates directly (renderMel
   !/from\s+'\.\.\/ops\/templates\/cloud_design_prompt_template\.js'/.test(screenSrc)
   && !/from\s+'\.\.\/ops\/templates\/github_issue_template\.js'/.test(screenSrc)
   && !/from\s+'\.\.\/ops\/templates\/claude_code_prompt_template\.js'/.test(screenSrc));
+
+// ── L. Registry integrity (review #9) — ops_registry's header promises the
+// file/route values are pinned by the Node smoke/check, so actually pin them. ──
+const REGISTERED = new Set([...app.matchAll(/register\(\s*'([^']+)'/g)].map((m) => m[1]));
+for (const sc of getScreens()) {
+  expect(`registry file exists on disk: ${sc.id} → ${sc.file}`,
+    fs.existsSync(new URL('../' + sc.file, import.meta.url)));
+  const base = String(sc.route).split('?')[0];
+  expect(`registry route base is registered in app.js: ${sc.id} → ${base}`,
+    REGISTERED.has(base));
+}
+
+// ── M. Review follow-up invariants (A + B + D) ──
+expect('copy() guards the async clipboard result against a stale screen selection',
+  /const\s+forScreen\s*=\s*state\.selectedId/.test(screenSrc)
+  && /state\.selectedId\s*!==\s*forScreen/.test(screenSrc));
+expect('save() reports success/failure instead of swallowing it',
+  /return\s+true/.test(storeSrc) && /return\s+false/.test(storeSrc));
+expect('createMelCard returns null when persistence fails',
+  /return\s+save\(cards\)\s*\?\s*card\s*:\s*null/.test(storeSrc));
+expect('createMelCard validates severity/status against the canonical vocab',
+  /MEL_SEVERITIES\.includes\(input\.severity\)/.test(storeSrc)
+  && /MEL_STATUSES\.includes\(input\.status\)/.test(storeSrc));
+expect('mark-crooked dedupes the default flag and surfaces a save failure',
+  /Already flagged as crooked/.test(screenSrc) && /Could not save the MEL card/.test(screenSrc));
+expect('getContractFacts accepts an already-fetched facts object (no double lookup)',
+  /typeof\s+screenOrFacts\s*===\s*'string'/.test(connContracts));
+expect('prompt connectors pass facts (not the id) to getContractFacts',
+  /getContractFacts\(facts\)/.test(connCloud)
+  && /getContractFacts\(facts\)/.test(connGithub)
+  && /getContractFacts\(facts\)/.test(connClaude));
+expect('ops_mel_store dropped its unused CRUD/enum exports',
+  !/export\s+function\s+listMelCards/.test(storeSrc)
+  && !/export\s+function\s+updateMelCard/.test(storeSrc)
+  && !/export\s+function\s+deleteMelCard/.test(storeSrc)
+  && !/export\s+const\s+MEL_SEVERITIES/.test(storeSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

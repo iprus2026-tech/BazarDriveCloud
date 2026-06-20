@@ -179,20 +179,23 @@ export default function opsScreens() {
   }
 
   function copy(text, okMsg) {
-    // Only report success after the write actually resolves. If the Clipboard
-    // API is unavailable (insecure host) or rejects (denied permission), tell
-    // the user to copy manually instead of falsely claiming success.
-    const fail = () => {
-      state.notice = 'Copy failed. Select the text manually.';
+    // Capture the screen the copy began on; only paint the result if the user
+    // is still on it when the async clipboard write settles — otherwise the
+    // notice would land on whatever screen they switched to mid-write.
+    const forScreen = state.selectedId;
+    const settle = (msg) => {
+      if (state.selectedId !== forScreen) return;
+      state.notice = msg;
       renderDetail();
     };
+    // Report success only after the write resolves; on an unavailable/denied
+    // clipboard, tell the user to copy manually instead of claiming success.
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(() => {
-        state.notice = okMsg;
-        renderDetail();
-      }).catch(fail);
+      navigator.clipboard.writeText(text)
+        .then(() => settle(okMsg))
+        .catch(() => settle('Copy failed. Select the text manually.'));
     } else {
-      fail();
+      settle('Copy failed. Select the text manually.');
     }
   }
 
@@ -232,15 +235,26 @@ export default function opsScreens() {
         go(s.route);
         break;
       case 'mark-crooked': {
-        createMelCard({
+        const CROOKED_PROBLEM = 'Crooked screen flagged from ScreenOps.';
+        // Dedupe the generic quick-flag: a repeated click should not pile up
+        // byte-identical cards (the only feedback is a transient notice).
+        const alreadyFlagged = listMelForScreen(s.id)
+          .some((c) => c.problem === CROOKED_PROBLEM && c.status === 'DETECTED');
+        if (alreadyFlagged) {
+          state.notice = 'Already flagged as crooked.';
+          renderDetail();
+          break;
+        }
+        const card = createMelCard({
           screenId: s.id,
           route: s.route,
           file: s.file,
           severity: 'MEL-C',
           status: 'DETECTED',
-          problem: 'Crooked screen flagged from ScreenOps.',
+          problem: CROOKED_PROBLEM,
         });
-        state.notice = 'MEL card created.';
+        // createMelCard returns null if persistence failed (quota / private mode).
+        state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
         renderDetail();
         break;
       }

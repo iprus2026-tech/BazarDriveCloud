@@ -11,6 +11,6 @@ import { generateClaudeCodePrompt } from '../templates/claude_code_prompt_templa
 export function buildClaudeCodePrompt(screenId, mel = {}) {
   const facts = getScreenFacts(screenId);
   if (!facts) return '';
-  const contract = getContractFacts(screenId);
+  const contract = getContractFacts(facts);
   return generateClaudeCodePrompt(facts, mel) + '\n\nContract: ' + contract.contractAnchor;
 }
