@@ -8,11 +8,11 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch src/index.js",
     "test": "node --test",
-    "migrate": "node scripts/migrate.mjs",
-    "seed": "node scripts/seed.mjs"
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "seed": "node --env-file-if-exists=.env scripts/seed.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

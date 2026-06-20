@@ -23,6 +23,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # Local compose is a DEV parity tool, so run as development: ALLOWED_ORIGIN may stay
+      # empty (CORS off / same-origin). The Dockerfile keeps NODE_ENV=production for real
+      # deploys, which set ALLOWED_ORIGIN explicitly. Without this, the image's
+      # NODE_ENV=production + empty ALLOWED_ORIGIN would fail loadConfig() on `compose up`.
+      NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/bazardrive
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-}

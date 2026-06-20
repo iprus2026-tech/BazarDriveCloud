@@ -38,10 +38,14 @@ async function dbPlugin(app, opts) {
       }
     },
 
-    // Readiness ping (used by /readyz).
-    async ping() {
-      const { rows } = await pool.query('SELECT 1 AS ok');
-      return rows[0]?.ok === 1;
+    // Readiness check (used by /readyz): connectivity AND that migrations have been applied
+    // (the auth_session table — the live seam's dependency — exists). A bare SELECT 1 would
+    // report a fresh, un-migrated database as ready.
+    async ready() {
+      const { rows } = await pool.query(
+        "SELECT to_regclass('public.auth_session') IS NOT NULL AS ok",
+      );
+      return rows[0]?.ok === true;
     },
   };
 

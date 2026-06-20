@@ -20,7 +20,7 @@ npm run dev             # node --watch; or `npm start` / `docker compose up`
 npm test                # node:test — enum-parity + route smokes
 ```
 
-- `GET /api/v1/health` — liveness; `GET /api/v1/readyz` — readiness (DB ping).
+- `GET /api/v1/health` — liveness; `GET /api/v1/readyz` — readiness (DB connectivity + migrations applied).
 - `GET /api/v1/auth/session` — resolves the presented session (live); the OTP
   request/verify write endpoints return `501` until the next scoped PR.
 - `GET /api/v1/<service>` for the 8 services returns `501 NOT_IMPLEMENTED`.

@@ -33,7 +33,18 @@ export default async function authService(app) {
         },
       },
     },
-  }, async (req) => ({ user: req.user ?? null }));
+  }, async (req, reply) => {
+    // A presented token whose lookup FAILED (DB outage) is a retryable error, NOT a logout
+    // — see plugins/auth.js. Anonymous (no token / no live session) stays { user: null }.
+    if (req.authError) {
+      return reply.code(503).send({
+        error: 'session lookup failed',
+        code: 'SESSION_LOOKUP_FAILED',
+        retryable: true,
+      });
+    }
+    return { user: req.user ?? null };
+  });
 
   app.post('/otp/request', async (req, reply) => notImplemented(reply, 'OTP request'));
   app.post('/otp/verify', async (req, reply) => notImplemented(reply, 'OTP verify'));

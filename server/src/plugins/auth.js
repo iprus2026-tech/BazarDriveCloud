@@ -12,6 +12,13 @@ import { resolveLiveSessionByTokenHash } from '../repositories/sessions.js';
 
 async function authPlugin(app) {
   app.decorateRequest('user', null);
+  // A token was presented but its session lookup FAILED (transient DB error) — distinct
+  // from "no token" and from "no live session". The live /auth/session endpoint converts
+  // this to a RETRYABLE error so a backend blip is not mistaken for a logout. We do NOT
+  // throw here: that would 503 every token-bearing request, including liveness /health,
+  // which must never depend on the DB. Routes that don't consume the session stay
+  // fail-open anonymous.
+  app.decorateRequest('authError', false);
 
   app.addHook('onRequest', async (req) => {
     const token = bearerToken(req.headers?.authorization);
@@ -21,9 +28,10 @@ async function authPlugin(app) {
     try {
       session = await resolveLiveSessionByTokenHash(app.db, hashToken(token));
     } catch (err) {
-      // A DB hiccup at the auth seam must not 500 every request; treat as anonymous and
-      // let protected routes (none in Phase 1) decide. Logged for #9 monitoring.
+      // Record the failure (the session endpoint surfaces it as retryable); never 500 a
+      // request that doesn't need auth. Logged for #9 monitoring.
       req.log?.warn?.({ err }, 'auth session resolve failed');
+      req.authError = true;
       return;
     }
     if (session) {
