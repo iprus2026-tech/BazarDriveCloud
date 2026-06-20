@@ -80,9 +80,12 @@ including a dynamic `bazardrive.${…}` key and the gap that once let
 `bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
 entry, a duplicate classification, a cleared key whose data survives the clear, or
 an over-cleared not-cleared key. Discovery resolves `const NAME = 'literal'` at
-each storage call site, so constant-stored and non-`bazardrive` keys (e.g.
-`bd-reloading`) are caught too. Canonical count: **26 keys (19 cleared · 7
-not-cleared).**
+each storage call site — including access through a `safeLocalStorage()` /
+`localStorage` alias — so constant-stored and non-`bazardrive` keys (e.g.
+`bd-reloading`) are caught too. Storage-availability **probes** — written and
+immediately removed to feature-detect `localStorage` (`__bd_driver_offer_probe__`
+in `driver_offer_store.js`) — are allowlisted, not treated as orphan stores.
+Canonical count: **26 keys (19 cleared · 7 not-cleared).**
 
 **Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
 This is what drives removal, and it does **not** line up with the boundary class:
@@ -92,8 +95,12 @@ This is what drives removal, and it does **not** line up with the boundary class
   `order_overlay.v1`, `active_ride.v1`, `trip_confirmation.v1` +
   `driver_handoff_snapshot.v1`, `chat.v1`, `driver_receipts.v1`,
   `ride_history.v1`. (`posts.v1` is *kept* on the boundary yet server-owned.)
-- **Client-only (C) → stays local even with a backend:** `user.v1` (session
-  cache; identity is the auth ADR), `favorite_routes.v1`,
+- **Mixed (S + C) — `user.v1` is not flat client-only:** a single key holding both
+  server-owned fields (identity / profile, driver documents + garage vehicles,
+  `driverOnline` / shift / medical readiness — owned by the Auth & Presence ADRs)
+  and a client-only device/session cache. On migration the server-owned fields move
+  to the backend; only the device cache stays local.
+- **Client-only (C) → stays local even with a backend:** `favorite_routes.v1`,
   `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
   `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
   `debug.publish`. (Several of these are *cleared* on the boundary yet never
@@ -253,8 +260,8 @@ standalone Ride History screen; history renders inside `profile.js`
    the same fake identity.
 5. **12 server-owned cleared stores with no backend sync** (of the 19 cleared; the
    other 7 are client-only and stay local) — orders/offers/rides/history/chats;
-   device switch = data loss. (Surface locked by the #636 gate — see
-   [Enforcement](#enforcement--removal-tracking).)
+   device switch = data loss. (Surface to be locked by the #636 gate once #637
+   lands — see [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
    are not server-verified (a non-ready driver can reach the line).
 
