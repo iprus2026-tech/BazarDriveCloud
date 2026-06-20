@@ -10,8 +10,11 @@
 
 const KEY = 'bazardrive.ops.mel.v1';
 
-export const MEL_SEVERITIES = ['MEL-A', 'MEL-B', 'MEL-C', 'MEL-D', 'WAITING', 'OK'];
-export const MEL_STATUSES = [
+// Canonical MEL vocab — used to validate createMelCard input. Module-local: not
+// part of the public API (no consumer imports these), but the authoritative
+// source for the allowed values, so an edit here actually changes behaviour.
+const MEL_SEVERITIES = ['MEL-A', 'MEL-B', 'MEL-C', 'MEL-D', 'WAITING', 'OK'];
+const MEL_STATUSES = [
   'DETECTED',
   'NEEDS_AUDIT',
   'WAITING_FOR_CLOUD_DESIGN',
@@ -33,11 +36,14 @@ function load() {
   }
 }
 
+// Returns true on success, false if persistence failed (quota / private mode),
+// so callers can surface the failure instead of falsely reporting success.
 function save(cards) {
   try {
     localStorage.setItem(KEY, JSON.stringify(cards));
+    return true;
   } catch {
-    /* storage unavailable (private mode / quota) — dev tool degrades quietly */
+    return false;
   }
 }
 
@@ -45,14 +51,12 @@ function uid() {
   return 'mel_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
 }
 
-export function listMelCards() {
-  return load();
-}
-
 export function listMelForScreen(screenId) {
   return load().filter((c) => c.screenId === screenId);
 }
 
+// Creates a MEL card. Severity/status are validated against the canonical vocab.
+// Returns the card on success, or null if it could not be persisted.
 export function createMelCard(input = {}) {
   const cards = load();
   const now = new Date().toISOString();
@@ -61,8 +65,8 @@ export function createMelCard(input = {}) {
     screenId: input.screenId || '',
     route: input.route || '',
     file: input.file || '',
-    severity: input.severity || 'MEL-C',
-    status: input.status || 'DETECTED',
+    severity: MEL_SEVERITIES.includes(input.severity) ? input.severity : 'MEL-C',
+    status: MEL_STATUSES.includes(input.status) ? input.status : 'DETECTED',
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',
@@ -70,21 +74,7 @@ export function createMelCard(input = {}) {
     updatedAt: now,
   };
   cards.push(card);
-  save(cards);
-  return card;
-}
-
-export function updateMelCard(id, patch = {}) {
-  const cards = load();
-  const i = cards.findIndex((c) => c.id === id);
-  if (i === -1) return null;
-  cards[i] = { ...cards[i], ...patch, id: cards[i].id, updatedAt: new Date().toISOString() };
-  save(cards);
-  return { ...cards[i] };
-}
-
-export function deleteMelCard(id) {
-  save(load().filter((c) => c.id !== id));
+  return save(cards) ? card : null;
 }
 
 // Dev-only reset. Intentionally not part of the storage boundary / logout path.

@@ -6,8 +6,11 @@
 
 import { getScreenFacts } from './repo_connector.js';
 
-export function getContractFacts(screenId) {
-  const s = getScreenFacts(screenId);
+// Accepts either a screen id (string) or an already-fetched facts object, so a
+// caller that already holds the facts (the prompt connectors) avoids a second
+// registry lookup.
+export function getContractFacts(screenOrFacts) {
+  const s = typeof screenOrFacts === 'string' ? getScreenFacts(screenOrFacts) : screenOrFacts;
   if (!s) return null;
   return {
     id: s.id,

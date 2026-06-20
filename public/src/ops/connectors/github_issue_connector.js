@@ -11,6 +11,6 @@ import { generateGithubIssueBody } from '../templates/github_issue_template.js';
 export function buildGithubIssue(screenId, mel = {}) {
   const facts = getScreenFacts(screenId);
   if (!facts) return '';
-  const contract = getContractFacts(screenId);
+  const contract = getContractFacts(facts);
   return generateGithubIssueBody(facts, mel) + '\n\nContract: ' + contract.contractAnchor;
 }
