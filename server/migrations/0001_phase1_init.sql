@@ -310,9 +310,11 @@ CREATE TRIGGER trg_orders_updated_at
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS responses (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- verbatim response.id ('resp_<post.id>'); responses.v1 is keyed by this and
-  -- chat.js / trip_confirmation look responses up by it.
-  legacy_id     TEXT UNIQUE NOT NULL,
+  -- verbatim response.id ('resp_<post.id>') — a PER-BROWSER key, NOT globally
+  -- unique: two drivers answering the same post both produce resp_<post.id>, so the
+  -- server must accept multiple. The UUID PK is the only global id; the server
+  -- queries responses by request_id (+ author_id once auth lands).
+  legacy_id     TEXT NOT NULL,
   -- response.kind — PRESERVED VERBATIM (readers filter on it).
   kind          TEXT NOT NULL
                   CHECK (kind IN ('passenger_response', 'marketplace_message')),
@@ -324,7 +326,10 @@ CREATE TABLE IF NOT EXISTS responses (
   request_id    TEXT NOT NULL,
   -- response.orderId — additive canonical link; references orders.legacy_id (the
   -- string the client joins on). Null for non-canonical / marketplace rows.
-  order_id      TEXT NULL REFERENCES orders(legacy_id) ON DELETE SET NULL,
+  -- ON DELETE CASCADE (not SET NULL): a canonical passenger_response REQUIRES its
+  -- order (responses_passenger_link below), so SET NULL would violate that CHECK
+  -- on order delete; cascading removes the now-orphaned canonical response instead.
+  order_id      TEXT NULL REFERENCES orders(legacy_id) ON DELETE CASCADE,
   -- response.canonical literal — ONLY ever 'ride_order'.
   canonical     TEXT NULL CHECK (canonical IS NULL OR canonical = 'ride_order'),
   -- passenger_response payload (respond.js):
@@ -414,13 +419,16 @@ CREATE TABLE IF NOT EXISTS assignment (
   canceled_by        TEXT NULL CHECK (canceled_by IS NULL OR canceled_by IN ('passenger', 'driver')),
   canceled_at        TIMESTAMPTZ NULL,                       -- overlay.canceledAt (monotonic)
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),     -- overlay.updatedAt
-  -- store invariant: a CANCELED overlay always carries actor+timestamp;
-  -- an ACCEPTED overlay carries neither.
+  -- store invariant: a CANCELED overlay always carries actor+timestamp; an
+  -- ACCEPTED overlay carries a selected driver and no cancel actor/timestamp
+  -- (an overlay only reaches ACCEPTED via commitPassengerSelection, which pins
+  -- selectedDriverId — order-detail uses it to decide driver ownership/cancel).
   CONSTRAINT assignment_cancel_stamp CHECK (
     status <> 'CANCELED' OR (canceled_by IS NOT NULL AND canceled_at IS NOT NULL)
   ),
   CONSTRAINT assignment_accept_clean CHECK (
-    status <> 'ACCEPTED' OR (canceled_by IS NULL AND canceled_at IS NULL)
+    status <> 'ACCEPTED' OR (selected_driver_id IS NOT NULL
+                            AND canceled_by IS NULL AND canceled_at IS NULL)
   )
 );
 -- NOTE: like offers, updated_at is a monotonic bumpedIso() value supplied by the
@@ -516,11 +524,13 @@ CREATE TABLE IF NOT EXISTS rides (
   ride_duration       TEXT NULL,       -- ride.duration (history pickDuration)
   ride_today_earnings TEXT NULL,       -- ride.todayEarnings
   ride_trips_today    INTEGER NULL,    -- ride.tripsToday
-  ride_rating         TEXT NULL,       -- ride.rating (rider's submitted score)
-  -- passenger completion feedback (buildPassengerHistoryEntry -> ride_history.v1);
-  -- surfaced by Profile history card/detail. The rating itself is ride_rating above.
-  feedback_tags       JSONB NULL,       -- rating tags (array)
-  feedback_comment    TEXT NULL,        -- free-text comment
+  ride_rating         TEXT NULL,       -- ride.rating: the DRIVER's dashboard/overall rating seeded on the active ride (NOT the rider's submitted score)
+  -- passenger completion feedback (buildPassengerHistoryEntry's ratingPayload ->
+  -- ride_history.v1); surfaced by Profile history card/detail. feedback_rating is the
+  -- rider's SUBMITTED score (ratingPayload.rating), DISTINCT from ride_rating above.
+  feedback_rating     SMALLINT NULL CHECK (feedback_rating IS NULL OR feedback_rating BETWEEN 0 AND 5),
+  feedback_tags       JSONB NULL,       -- ratingPayload.tags (array)
+  feedback_comment    TEXT NULL,        -- ratingPayload.comment (free-text)
 
   -- waiting.* (ride.waiting)
   waiting_free_limit     TEXT NULL,    -- waiting.freeLimit
@@ -607,8 +617,11 @@ CREATE TRIGGER trg_rides_freeze_terminal
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS ride_events (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- FK to the owning ride (both source records are keyed by tripId = rides.trip_id).
-  ride_id   UUID NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+  -- FK to the owning ride — NULLABLE: /chat writes a trip_confirmation handoff
+  -- BEFORE the active-ride row necessarily exists (seedActiveRideFromConfirmedHandoff
+  -- creates the ride only when /trip-confirmation or /active-ride opens). trip_id is
+  -- the stable business key; ride_id is backfilled when the ride is seeded.
+  ride_id   UUID NULL REFERENCES rides(id) ON DELETE CASCADE,
   -- denormalized business key so an event can be written/looked up by the same
   -- tripId the client uses, even before the ride row is resolved at cutover.
   trip_id   TEXT NOT NULL,
@@ -800,8 +813,12 @@ CREATE INDEX IF NOT EXISTS idx_ride_events_response ON ride_events(response_id);
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id);
 CREATE INDEX IF NOT EXISTS idx_messages_response ON messages(response_id);
+-- client_msg_id is a per-client Date.now() millisecond stamp, NOT a global id —
+-- scope dedupe by sender_role so a driver and passenger sending in the SAME ms (and
+-- legacy NULL-sender imports, distinct under NULL) are not rejected; the server UUID
+-- PK remains the message identity.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_client_id
-  ON messages(chat_id, client_msg_id) WHERE client_msg_id IS NOT NULL;
+  ON messages(chat_id, sender_role, client_msg_id) WHERE client_msg_id IS NOT NULL;
 
 -- receipts: point lookup (/receipt?tripId=) via the unique ride_id; payouts
 -- calendar (listDriverReceipts sorts by completedAt desc).
@@ -844,7 +861,7 @@ SELECT
   COALESCE(r.payment_amount, r.ride_price)        AS fare,                -- pickFare: payment.amount, else ride.price
   r.ride_distance                                 AS distance,
   r.ride_duration                                 AS duration,
-  r.ride_rating                                   AS rating,              -- rider's submitted score (ride.rating)
+  r.feedback_rating                               AS rating,              -- rider's SUBMITTED score (ratingPayload.rating)
   r.feedback_tags                                 AS tags,                -- rider's rating tags
   r.feedback_comment                              AS comment,             -- rider's free-text comment
   NULL::integer                                   AS receipt_net,         -- passenger row carries no receipt
@@ -878,7 +895,7 @@ SELECT
   COALESCE(rc.fare::text, r.payment_amount, r.ride_price) AS fare,
   r.ride_distance                                 AS distance,
   r.ride_duration                                 AS duration,
-  NULL::text                                      AS rating,              -- driver entry carries no rider score
+  NULL::smallint                                  AS rating,              -- driver entry carries no rider score
   NULL::jsonb                                     AS tags,
   NULL::text                                      AS comment,
   rc.net                                          AS receipt_net,         -- receipts.* (already computed; no recompute)
