@@ -45,7 +45,7 @@ Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 25 storage keys (19 cleared · 5 kept · 1 dev — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 25 storage keys (19 cleared · 3 kept · 3 dev — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
 
 ## Enforcement & removal tracking
@@ -54,22 +54,26 @@ phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 *migration* owner (does the backend own it?). They are independent — do **not**
 conflate them.
 
-**Boundary axis — locked by an automated gate.**
-`scripts/smoke-static-data-inventory.mjs`, run by `node scripts/check.mjs`
-(BD-DATA-STATIC-01, #636 — shipped alongside this ledger in PR #637). It discovers
-every `bazardrive.*` / `profileTripDemo` key in `public/src/**` and classifies each:
+**Boundary axis — locked by an automated gate (lands in PR #637).** The gate
+`scripts/smoke-static-data-inventory.mjs`, wired into `node scripts/check.mjs`
+(BD-DATA-STATIC-01, #636), ships in **PR #637** — merge that first; until it lands,
+`check.mjs` does not yet enforce this surface. It discovers every `bazardrive.*` /
+`profileTripDemo` key in `public/src/**` (comments stripped) and classifies each:
 
 - **Cleared — 19 user-scoped stores** wiped by `clearUserScopedStorage()` in
-  `public/src/storage_boundary.js`; the gate asserts each is documented there
-  **and** wired to a remover.
-- **Kept — 5 user/device keys** documented but not cleared: `user.v1`,
-  `posts.v1`, `map_prefs.v1`, `debug.publish`, `smoke_role.v1`.
-- **Dev — 1 tooling key** outside the boundary: `ops.mel.v1`.
+  `public/src/storage_boundary.js`; the gate seeds every key, runs the real clear,
+  and asserts each cleared key's data is actually gone (no logout leak).
+- **Kept — 3 user/device keys** documented but not cleared: `user.v1`,
+  `posts.v1`, `map_prefs.v1`.
+- **Dev/test — 3 artefacts** never cleared, not product data: `debug.publish` and
+  `smoke_role.v1` (documented as dev/test in `storage_boundary.js`) and
+  `ops.mel.v1` (outside the boundary).
 
-The gate fails on any **orphan** key not in the manifest — the gap that once let
-`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
-entry, a duplicate classification, an undocumented cleared key, or a cleared key
-with no remover. Canonical count: **25 keys (19 cleared · 5 kept · 1 dev).**
+The gate fails on any **orphan** key not in the manifest — including a dynamic
+`bazardrive.${…}` key, and the gap that once let `bazardrive.order_overlay.v1` live
+outside `storage_boundary.js` — plus a stale entry, a duplicate classification, a
+cleared key whose data survives the clear, or an over-cleared kept/dev key.
+Canonical count: **25 keys (19 cleared · 3 kept · 3 dev).**
 
 **Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
 This is what drives removal, and it does **not** line up with the boundary class:
@@ -229,9 +233,10 @@ standalone Ride History screen; history renders inside `profile.js`
    matching and billing are untrustworthy.
 4. **One demo driver "Рустам К. ★4,92"** across 6+ surfaces — every ride shares
    the same fake identity.
-5. **19 cleared user-scoped stores with no backend sync** — orders/offers/history/chats
-   are client-only; device switch = data loss. (Surface locked by the #636 gate;
-   see [Enforcement](#enforcement--removal-tracking).)
+5. **12 server-owned cleared stores with no backend sync** (of the 19 cleared; the
+   other 7 are client-only and stay local) — orders/offers/rides/history/chats;
+   device switch = data loss. (Surface locked by the #636 gate — see
+   [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
    are not server-verified (a non-ready driver can reach the line).
 
