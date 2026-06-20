@@ -363,13 +363,23 @@ export default function opsScreens() {
           const el = detailEl.querySelector(sel);
           return el ? el.value : '';
         };
+        const problem = read('#mel-problem').trim();
+        // Require a problem description — saving an untouched form would
+        // otherwise persist a blank card and feed empty generated prompts.
+        // Keep the form open (values survive via the input mirror) so the
+        // developer can fill it in.
+        if (!problem) {
+          state.notice = 'Add a problem description before saving.';
+          renderDetail();
+          break;
+        }
         const card = createMelCard({
           screenId: s.id,
           route: s.route,
           file: s.file,
           severity: read('#mel-severity'),
           status: read('#mel-status'),
-          problem: read('#mel-problem').trim(),
+          problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
         });

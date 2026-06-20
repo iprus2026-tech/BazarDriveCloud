@@ -302,6 +302,16 @@ expect('screen wires per-card status-advance and confirmed delete',
   /data-action="advance-mel"/.test(screenSrc)
   && /data-action="delete-mel"/.test(screenSrc)
   && /window\.confirm\(/.test(screenSrc));
+// The headline invariant: an open MEL form's input is mirrored into state and
+// re-rendered from it, so an unrelated re-render does not discard typed text.
+expect('screen mirrors open MEL form input into state.melForm (survives re-render)',
+  /addEventListener\('input'/.test(screenSrc)
+  && /state\.melForm\.problem\s*=/.test(screenSrc)
+  && /state\.melForm\.severity\s*=/.test(screenSrc));
+expect('renderMelForm re-renders field values from state.melForm',
+  /function\s+renderMelForm/.test(screenSrc) && /esc\(f\.problem\)/.test(screenSrc));
+expect('mel-form-save requires a problem before creating a card',
+  /Add a problem description/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
