@@ -33,8 +33,9 @@
 --                              No TTL/refresh policy is baked into the schema.
 --
 -- IDEMPOTENCY (server-ci re-applies every migration): ADD COLUMN IF NOT EXISTS,
--- CREATE TABLE/INDEX IF NOT EXISTS, DROP ... IF EXISTS, and DO-block guards for
--- constraint adds. A second apply is a clean no-op. Wrapped in BEGIN/COMMIT.
+-- CREATE TABLE/INDEX IF NOT EXISTS, DO-block guards for constraint adds, and
+-- WHERE-guarded reconcile UPDATEs (this migration never DROPs — see line 11).
+-- A second apply is a clean no-op. Wrapped in BEGIN/COMMIT.
 --
 -- VERIFIED: applied against PostgreSQL after 0001 — first apply OK, second apply
 -- (idempotency) OK; base-table count 11 -> 13; partial-unique phone + both
