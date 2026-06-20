@@ -158,8 +158,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v160 (bumped for the registry expansion)',
-  !!swVer && Number(swVer[1]) >= 160);
+expect('sw.js VERSION is present and >= v161 (bumped for the MEL lifecycle UI)',
+  !!swVer && Number(swVer[1]) >= 161);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
@@ -276,11 +276,42 @@ expect('prompt connectors pass facts (not the id) to getContractFacts',
   /getContractFacts\(facts\)/.test(connCloud)
   && /getContractFacts\(facts\)/.test(connGithub)
   && /getContractFacts\(facts\)/.test(connClaude));
-expect('ops_mel_store dropped its unused CRUD/enum exports',
-  !/export\s+function\s+listMelCards/.test(storeSrc)
-  && !/export\s+function\s+updateMelCard/.test(storeSrc)
-  && !/export\s+function\s+deleteMelCard/.test(storeSrc)
-  && !/export\s+const\s+MEL_SEVERITIES/.test(storeSrc));
+// ── M2. BD-OPS-08 (#647) — MEL lifecycle: the store re-exports its editor/lifecycle
+// API (now consumed by the dashboard), and the screen wires the editor + controls. ──
+expect('ops_mel_store exports the MEL lifecycle API (vocab + update/delete/next)',
+  /export\s+const\s+MEL_SEVERITIES/.test(storeSrc)
+  && /export\s+const\s+MEL_STATUSES/.test(storeSrc)
+  && /export\s+function\s+updateMelCard\s*\(/.test(storeSrc)
+  && /export\s+function\s+deleteMelCard\s*\(/.test(storeSrc)
+  && /export\s+function\s+nextMelStatus\s*\(/.test(storeSrc));
+expect('updateMelCard refreshes updatedAt and validates severity/status',
+  /updatedAt:\s*new Date\(\)\.toISOString\(\)/.test(storeSrc)
+  && /MEL_SEVERITIES\.includes\(sevCandidate\)/.test(storeSrc)
+  && /MEL_STATUSES\.includes\(statusCandidate\)/.test(storeSrc));
+expect('deleteMelCard removes the card by id',
+  /filter\(\(c\)\s*=>\s*c\.id\s*!==\s*id\)/.test(storeSrc));
+expect('screen renders the MEL editor form (severity/status selects + fields)',
+  /id="mel-severity"/.test(screenSrc) && /id="mel-status"/.test(screenSrc)
+  && /id="mel-problem"/.test(screenSrc) && /id="mel-decision"/.test(screenSrc)
+  && /id="mel-repair"/.test(screenSrc));
+expect('screen wires the MEL editor actions (new / save / cancel)',
+  /data-action="new-mel"/.test(screenSrc)
+  && /data-action="mel-form-save"/.test(screenSrc)
+  && /data-action="mel-form-cancel"/.test(screenSrc));
+expect('screen wires per-card status-advance and confirmed delete',
+  /data-action="advance-mel"/.test(screenSrc)
+  && /data-action="delete-mel"/.test(screenSrc)
+  && /window\.confirm\(/.test(screenSrc));
+// The headline invariant: an open MEL form's input is mirrored into state and
+// re-rendered from it, so an unrelated re-render does not discard typed text.
+expect('screen mirrors open MEL form input into state.melForm (survives re-render)',
+  /addEventListener\('input'/.test(screenSrc)
+  && /state\.melForm\.problem\s*=/.test(screenSrc)
+  && /state\.melForm\.severity\s*=/.test(screenSrc));
+expect('renderMelForm re-renders field values from state.melForm',
+  /function\s+renderMelForm/.test(screenSrc) && /esc\(f\.problem\)/.test(screenSrc));
+expect('mel-form-save requires a problem before creating a card',
+  /Add a problem description/.test(screenSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

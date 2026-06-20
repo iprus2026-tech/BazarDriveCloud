@@ -15354,6 +15354,27 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .ops-output__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ops-output__label { font-size: 13px; font-weight: 600; color: var(--text); }
 
+/* BD-OPS-08 — MEL editor form + per-card lifecycle controls (advance / delete). */
+.ops-melform {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 12px;
+}
+.ops-melform__title { margin: 0; font-size: 13px; font-weight: 700; color: var(--text); }
+.ops-melform__row { display: flex; flex-direction: column; gap: 4px; }
+.ops-melform__label { font-size: 12px; color: var(--text-2); }
+.ops-melform__control {
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px;
+}
+.ops-melform__control:focus-visible { outline: none; border-color: var(--accent); }
+.ops-melform__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ops-melitem { display: flex; flex-direction: column; gap: 6px; }
+.ops-melitem__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ops-melitem__done { font-size: 12px; font-weight: 700; color: var(--success); letter-spacing: 0.04em; }
+
 @media (min-width: 720px) {
   .ops-layout { flex-direction: row; align-items: flex-start; }
   .ops-aside { flex: 0 0 280px; position: sticky; top: 0; }
