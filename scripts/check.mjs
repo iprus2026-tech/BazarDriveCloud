@@ -161,6 +161,21 @@ if (exists(opsScreensSmoke)) {
   }
 }
 
+// BD-DATA-STATIC-01 (#636) — backend-readiness gate: lock the static-data surface
+// so the Phase-1 data-layer migration (#584) proceeds with a green/red signal. Fails
+// if a localStorage store appears in public/src that is not classified in the
+// manifest (orphan, e.g. the old order_overlay.v1 gap) or if a user-data key is not
+// documented in storage_boundary.js.
+const staticDataSmoke = path.join(root, 'scripts', 'smoke-static-data-inventory.mjs');
+if (exists(staticDataSmoke)) {
+  try {
+    execFileSync(process.execPath, [staticDataSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-static-data-inventory.mjs failed\n${msg}`);
+  }
+}
+
 // BD-POST-01 — static regression smoke for the post-detail primary-action
 // resolver (pickCtaSpec kinds + runCtaAction per-kind routing). Audit #455
 // flagged this resolver had no behavioural pin.
