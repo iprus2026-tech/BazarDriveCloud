@@ -172,11 +172,13 @@ export default function opsScreens() {
       const cards = melMap.get(s.id) || [];
       // Combined MEL filters must be satisfied by the SAME card — otherwise
       // severity and status could each match a different card (false positive).
-      // Severity is scoped to open cards so it agrees with the open-only badge;
-      // status matches any card (DONE is itself a filterable status).
+      // Severity WITHOUT an explicit status is scoped to open cards so it agrees
+      // with the open-only badge; adding a status filter overrides that scoping
+      // so completed (DONE) cards of that severity stay reachable.
       if ((f.severity || f.status) && !cards.some((c) =>
-        (!f.severity || (c.status !== 'DONE' && c.severity === f.severity)) &&
-        (!f.status || c.status === f.status))) return false;
+        (!f.severity || c.severity === f.severity) &&
+        (!f.status || c.status === f.status) &&
+        (!f.severity || f.status || c.status !== 'DONE'))) return false;
       return true;
     });
     if (!rows.length) {
