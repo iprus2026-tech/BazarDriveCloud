@@ -284,15 +284,14 @@ CREATE TABLE IF NOT EXISTS orders (
   scheduled_at_ts       TIMESTAMPTZ NULL,                    -- parsed, when possible
   scheduled_label       TEXT NOT NULL DEFAULT '',            -- order.scheduledLabel
   comment               TEXT NOT NULL DEFAULT '',            -- order.comment
-  -- order.passenger sanitized snapshot {name,initials,phoneMasked,comment,authorId} —
-  -- JSONB so the BD-ACTIVE-07 driver handoff reads it verbatim. The per-VIEWER
-  -- `isCurrentUser` flag (createRideOrder stamps true; canManageOwnOrder trusts it)
-  -- MUST NOT be persisted as shared state — returned to another viewer it would mark the
-  -- request "mine" for everyone and suppress the accept path. The CHECK forces the writer
-  -- to strip it; isCurrentUser is recomputed per authenticated request.
-  passenger_snapshot    JSONB NULL
-                          CHECK (passenger_snapshot IS NULL
-                                 OR NOT jsonb_exists(passenger_snapshot, 'isCurrentUser')),
+  -- order.passenger sanitized snapshot {name,initials,phoneMasked,comment,authorId,
+  -- isCurrentUser} — JSONB so the BD-ACTIVE-07 driver handoff reads it verbatim.
+  -- createRideOrder ALWAYS persists isCurrentUser, so it is stored as-is (no CHECK that
+  -- would reject a faithful import). BUT isCurrentUser is PER-VIEWER state: the API MUST
+  -- recompute it per authenticated request (authorId === session user) and never echo the
+  -- stored flag to another viewer — else the request shows as "mine" for everyone and
+  -- suppresses the accept path (canManageOwnOrder). Enforced at the API layer, not here.
+  passenger_snapshot    JSONB NULL,
   -- ORDER lifecycle status (distinct from rides.status RIDE_STATUS):
   -- CREATED -> ACCEPTED -> IN_PROGRESS -> COMPLETED, with CANCELED. updateTripStatus
   -- (mock_api.js) persists IN_PROGRESS and COMPLETED; HANDED_OFF_ORDER_STATUSES =
@@ -904,13 +903,17 @@ SELECT
   r.vehicle_plate                                 AS vehicle_plate,
   r.route_pickup_label                            AS pickup_label,
   r.route_dropoff_label                           AS dropoff_label,
-  COALESCE(r.payment_amount, r.ride_price)        AS fare,                -- pickFare: payment.amount, else ride.price
-  r.ride_distance                                 AS distance,
-  r.ride_duration                                 AS duration,
-  r.feedback_rating                               AS rating,              -- rider's SUBMITTED score (ratingPayload.rating)
+  -- pickFare precedence (ride_history.js -> ride_state.js getActiveRideRouteSnapshot):
+  -- payment.amount -> ride.price -> order.offerPrice. Mirror all three tiers.
+  COALESCE(r.payment_amount, r.ride_price, r.order_offer_price)  AS fare,
+  -- pickDistance / pickDuration fall back to the order.* block when ride.* is empty.
+  COALESCE(r.ride_distance, r.order_destination_distance)        AS distance,
+  COALESCE(r.ride_duration, r.order_destination_eta)             AS duration,
+  COALESCE(r.feedback_rating, 0::smallint)        AS rating,              -- client serializes 0 when unrated, never NULL
   r.feedback_tags                                 AS tags,                -- rider's rating tags
   r.feedback_comment                              AS comment,             -- rider's free-text comment
-  NULL::integer                                   AS receipt_net,         -- passenger row carries no receipt
+  NULL::integer                                   AS receipt_fare,        -- passenger row carries no receipt
+  NULL::integer                                   AS receipt_net,
   NULL::integer                                   AS receipt_commission,
   NULL::integer                                   AS receipt_tip,
   NULL::text                                      AS receipt_payment_mode
@@ -927,8 +930,9 @@ SELECT
   r.trip_id                                       AS trip_id,
   'driver'::text                                  AS role,
   r.order_id                                      AS order_id,
-  -- driver completedAt prefers the canonical receipt time, then ride completed_at.
-  COALESCE(rc.completed_at, r.completed_at)       AS completed_at,
+  -- driver completedAt = pickCompletedAt(ride) = ride.timestamps.completedAt ONLY;
+  -- buildDriverHistoryEntry never uses the receipt time for the history calendar key.
+  r.completed_at                                  AS completed_at,
   r.driver_user_id                                AS viewer_user_id,
   r.passenger_user_id                             AS counterparty_id,     -- driver sees the passenger
   r.passenger_name                                AS counterparty_name,   -- entry.passenger.name
@@ -938,14 +942,16 @@ SELECT
   r.vehicle_plate                                 AS vehicle_plate,
   r.route_pickup_label                            AS pickup_label,
   r.route_dropoff_label                           AS dropoff_label,
-  -- driver fare prefers the canonical receipt fare (BD-RIDE-HISTORY-D-01
-  -- 'receipt' object); read-only, no recompute. Falls back to the ride display.
-  COALESCE(rc.fare::text, r.payment_amount, r.ride_price) AS fare,
-  r.ride_distance                                 AS distance,
-  r.ride_duration                                 AS duration,
+  -- entry.fare = pickFare(ride) (a DISPLAY string); buildDriverHistoryEntry keeps the
+  -- receipt as a SEPARATE sub-object, so the top-level fare is NOT the receipt integer.
+  -- Same precedence as the passenger arm: payment.amount -> ride.price -> order.offerPrice.
+  COALESCE(r.payment_amount, r.ride_price, r.order_offer_price)  AS fare,
+  COALESCE(r.ride_distance, r.order_destination_distance)        AS distance,
+  COALESCE(r.ride_duration, r.order_destination_eta)             AS duration,
   NULL::smallint                                  AS rating,              -- driver entry carries no rider score
   NULL::jsonb                                     AS tags,
   NULL::text                                      AS comment,
+  rc.fare                                         AS receipt_fare,        -- entry.receipt.fare (integer; separate from the display fare)
   rc.net                                          AS receipt_net,         -- receipts.* (already computed; no recompute)
   rc.commission                                   AS receipt_commission,  -- Profile renders receipt.commission
   rc.tip                                          AS receipt_tip,         -- Profile renders receipt.tip
