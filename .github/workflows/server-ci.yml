@@ -57,8 +57,11 @@ jobs:
 
       - name: Assert core objects exist
         run: |
+          # 11 base tables from 0001 + auth_otp + auth_session from 0002 = 13.
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 11
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 13
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('auth_otp','auth_session')" | grep -qx 2
           psql -v ON_ERROR_STOP=1 -tAc \
             "select 1 from information_schema.views where table_name='ride_history'" | grep -qx 1
           # pg_trigger has ONE row per trigger (information_schema.triggers has one
