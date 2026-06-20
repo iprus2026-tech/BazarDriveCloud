@@ -15256,6 +15256,14 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .ns-alert-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
 
 /* ── BD-OPS-03 — ScreenOps dashboard (dev/docs tool, /ops/screens) ───────── */
+/* ScreenOps is a dev/docs tool, not a product screen — it must NOT be confined
+   to the 430px phone shell. When it is mounted, let #shell use the full viewport
+   width (e.g. a tablet in landscape) and drop the phone-frame shadow, so the
+   two-column registry/detail layout (the min-width:720px block below) can fire. */
+#shell:has(.screen--ops-screens) {
+  max-width: none;
+  box-shadow: none;
+}
 .screen--ops-screens {
   display: flex;
   flex-direction: column;

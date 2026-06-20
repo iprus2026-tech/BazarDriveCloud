@@ -158,12 +158,15 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v158 (bumped for the connector/store changes)',
-  !!swVer && Number(swVer[1]) >= 158);
+expect('sw.js VERSION is present and >= v159 (bumped for the full-width shell change)',
+  !!swVer && Number(swVer[1]) >= 159);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
   /\.screen--ops-screens\s*\{/.test(css) && /\.ops-reg__item\b/.test(css));
+// ScreenOps breaks out of the 430px phone shell to full width (tablet/landscape).
+expect('cloud.css lets the ScreenOps shell use the full viewport width',
+  /#shell:has\(\.screen--ops-screens\)\s*\{[^}]*max-width:\s*none/.test(css));
 
 // ── I. Clipboard copy reports success only after the write resolves (P3) ──
 expect('copy() reports success only after writeText resolves (then-branch)',
