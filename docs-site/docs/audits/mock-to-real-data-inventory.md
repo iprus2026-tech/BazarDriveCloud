@@ -45,37 +45,52 @@ Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 25 storage keys (19 class A · 5 class B · 1 class C — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 25 storage keys (19 cleared · 5 kept · 1 dev — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
 
 ## Enforcement & removal tracking
 
-The **surface** of this inventory (which storage keys exist) is locked by an
-automated gate — `scripts/smoke-static-data-inventory.mjs`, run by
-`node scripts/check.mjs` (BD-DATA-STATIC-01, #636). It discovers every
-`bazardrive.*` / `profileTripDemo` key in `public/src/**` and classifies each:
+**Two axes.** Every key has a *boundary* class (does logout wipe it?) and a
+*migration* owner (does the backend own it?). They are independent — do **not**
+conflate them.
 
-- **Class A — 19 user-scoped product stores** → backend migration targets; each
-  must be documented in `public/src/storage_boundary.js` (cleared on the auth
-  boundary). These are the §A rows holding orders, rides, offers, chat/responses,
-  receipts, history and drafts.
-- **Class B — 5 user/device keys** kept client-side but documented in
-  `storage_boundary.js`: `user.v1`, `posts.v1`, `map_prefs.v1`, `debug.publish`,
-  `smoke_role.v1`.
-- **Class C — 1 dev-tooling key** outside the user boundary: `ops.mel.v1`.
+**Boundary axis — locked by an automated gate.**
+`scripts/smoke-static-data-inventory.mjs`, run by `node scripts/check.mjs`
+(BD-DATA-STATIC-01, #636 — shipped alongside this ledger in PR #637). It discovers
+every `bazardrive.*` / `profileTripDemo` key in `public/src/**` and classifies each:
 
-**Canonical count: 25 keys (19 A · 5 B · 1 C).** The gate fails on any **orphan**
-key not in the manifest — the class of gap that once let
-`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — on any
-stale manifest entry, and on any user-data key missing from
-`storage_boundary.js`. This makes the **completeness rule** of BD-DOCS-030
-(every server-owned key migrates) machine-checked, not hand-maintained.
+- **Cleared — 19 user-scoped stores** wiped by `clearUserScopedStorage()` in
+  `public/src/storage_boundary.js`; the gate asserts each is documented there
+  **and** wired to a remover.
+- **Kept — 5 user/device keys** documented but not cleared: `user.v1`,
+  `posts.v1`, `map_prefs.v1`, `debug.publish`, `smoke_role.v1`.
+- **Dev — 1 tooling key** outside the boundary: `ops.mel.v1`.
 
-**Removal tracking.** As Phase 1 lands, each class-A key moves
-`mock → migrating → removed` — its owning module swaps `localStorage` for the API
-behind `public/src/data_layer.js`. "All static data removed" is reached when
-every class-A key is served by the backend; this ledger plus the gate are the
-scoreboard.
+The gate fails on any **orphan** key not in the manifest — the gap that once let
+`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
+entry, a duplicate classification, an undocumented cleared key, or a cleared key
+with no remover. Canonical count: **25 keys (19 cleared · 5 kept · 1 dev).**
+
+**Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
+This is what drives removal, and it does **not** line up with the boundary class:
+
+- **Server-owned (S) → migrate to backend:** `posts.v1` + `myposts.v1`,
+  `ride_orders.v1`, `respond.v1` + `responses.v1`, `driver_offers.v1`,
+  `order_overlay.v1`, `active_ride.v1`, `trip_confirmation.v1` +
+  `driver_handoff_snapshot.v1`, `chat.v1`, `driver_receipts.v1`,
+  `ride_history.v1`. (`posts.v1` is *kept* on the boundary yet server-owned.)
+- **Client-only (C) → stays local even with a backend:** `user.v1` (session
+  cache; identity is the auth ADR), `favorite_routes.v1`,
+  `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
+  `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
+  `debug.publish`, `ops.mel.v1`. (Several of these are *cleared* on the boundary
+  yet never migrate.)
+
+**Removal tracking.** Each **server-owned** key moves `mock → migrating → removed`
+as its owning module swaps `localStorage` for the API behind
+`public/src/data_layer.js`. "All static data removed" is reached when every **S**
+key is served by the backend — not every cleared key; the **C** keys stay. This
+ledger plus the gate are the scoreboard.
 
 ## A. localStorage-backed shared data — the migration backbone
 
@@ -103,6 +118,9 @@ Every store is client-only today; none syncs to a backend.
 | `bazardrive.map_prefs.v1` | device map prefs (not user-scoped) | mapbox_state.js:5 | DevicePref | **Mapbox** |
 | `bazardrive.smoke_role.v1` (sessionStorage) | per-tab role (test override) | smoke_role.js | replace with real auth | **Auth** |
 | `profileTripDemo` | profile demo override | storage_boundary.js | — (demo only) | — |
+| `bazardrive.favorite_route_notice.v1` | one-time favorite-route banner | favorite_routes.js | client-only (BD-DOCS-031) | Phase 1 data |
+| `bazardrive.debug.publish` | dev publish debug-trail toggle | order_map_draft.js | — (dev / client-only) | — |
+| `bazardrive.ops.mel.v1` | ScreenOps MEL cards (dev tooling) | ops/ops_mel_store.js | — (dev / client-only) | — |
 
 ## B. Findings by phase
 
@@ -211,7 +229,7 @@ standalone Ride History screen; history renders inside `profile.js`
    matching and billing are untrustworthy.
 4. **One demo driver "Рустам К. ★4,92"** across 6+ surfaces — every ride shares
    the same fake identity.
-5. **19 class-A user-scoped stores with no backend sync** — orders/offers/history/chats
+5. **19 cleared user-scoped stores with no backend sync** — orders/offers/history/chats
    are client-only; device switch = data loss. (Surface locked by the #636 gate;
    see [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
