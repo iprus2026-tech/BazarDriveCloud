@@ -60,6 +60,12 @@ export function listMelForScreen(screenId) {
   return load().filter((c) => c.screenId === screenId);
 }
 
+// All MEL cards across every screen, in one read — the registry list groups
+// these by screenId to render per-row badges without a load() per screen.
+export function listAllMel() {
+  return load();
+}
+
 // Creates a MEL card. Severity/status are validated against the canonical vocab.
 // Returns the card on success, or null if it could not be persisted.
 export function createMelCard(input = {}) {
