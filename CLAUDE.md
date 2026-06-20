@@ -244,11 +244,13 @@ If a script is missing, report that clearly instead of inventing a result.
 `node scripts/check.mjs` runs `scripts/smoke-static-data-inventory.mjs`, the
 backend-readiness gate (#636). Every `localStorage` / `sessionStorage` key
 accessed in `public/src/**` — including access through a `safeLocalStorage()` /
-`localStorage` alias — must be classified: documented in
-`public/src/storage_boundary.js`'s audit comment **and** present in the gate's
-manifest. The check fails on an orphan (unclassified) or unresolved dynamic key.
-When you add, rename, or remove a storage key, update both the boundary audit
-comment and the gate manifest in the same change.
+`localStorage` alias — must be classified in the gate's manifest, or the check
+fails on an orphan (unclassified) or unresolved dynamic key. User-scoped keys
+must **also** be documented in `public/src/storage_boundary.js`'s audit comment;
+dev/transient keys (manifest `documented: false`, e.g. `ops.mel.v1`,
+`bd-reloading`) must stay **OUT** of `storage_boundary.js`. When you add, rename,
+or remove a storage key, update the manifest — and the boundary audit comment
+only if the key is user-scoped.
 
 ## Mini-Yonder documentation governance
 
