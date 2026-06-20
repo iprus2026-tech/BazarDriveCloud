@@ -175,6 +175,10 @@ CREATE TRIGGER trg_vehicles_updated_at
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS posts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- verbatim persisted post.id ('trip-2','mkt-1','sys-1','ann-1','user-<ts>') — feed/
+  -- post/respond look posts up by this string and /respond stores requestId/tripId =
+  -- post.id, so it must round-trip across cutover.
+  legacy_id     TEXT UNIQUE,
   -- createFeedPost stamps authorId = LOCAL_USER_ID ('local-user'); legacy
   -- posts.v1 has only a free-text `author`. author_id is the FK when an authored
   -- row maps to a real user; SET NULL on delete (seed posts have no user row).
@@ -208,6 +212,10 @@ CREATE TABLE IF NOT EXISTS posts (
   trip_when     TEXT NULL,
   trip_seats    INTEGER NULL CHECK (trip_seats IS NULL OR trip_seats >= 0),
   trip_phone    TEXT NULL,
+  -- posts.v1 / order-projection `passenger: true` on passenger-REQUEST trip posts —
+  -- renderTripCard branches on it for the «Откликнуться» / own-order CTA vs the
+  -- driver-trip chat CTA. Display-driving, must round-trip.
+  passenger     BOOLEAN NOT NULL DEFAULT FALSE,
   -- mock_api.createFeedPost createdByCurrentUser marker (drives «Мои публикации»).
   created_by_current_user BOOLEAN NOT NULL DEFAULT FALSE,
   -- createFeedPost createdAt (epoch ms) / posts.v1 createdAt -> timestamptz.
@@ -261,7 +269,11 @@ CREATE TABLE IF NOT EXISTS orders (
   estimated_price_label TEXT NOT NULL DEFAULT '',
   scheduled_mode        TEXT NOT NULL DEFAULT 'now'
                           CHECK (scheduled_mode IN ('now', 'later')),
-  scheduled_at          TIMESTAMPTZ NOT NULL DEFAULT now(),  -- order.scheduledAt (ISO)
+  -- order.scheduledAt is FREE TEXT (composer passes the user's `when` label) OR an
+  -- ISO string — kept raw as TEXT so natural-language labels round-trip; the optional
+  -- parsed value lives in scheduled_at_ts (NULL when unparseable).
+  scheduled_at          TEXT NOT NULL DEFAULT '',            -- order.scheduledAt (raw)
+  scheduled_at_ts       TIMESTAMPTZ NULL,                    -- parsed, when possible
   scheduled_label       TEXT NOT NULL DEFAULT '',            -- order.scheduledLabel
   comment               TEXT NOT NULL DEFAULT '',            -- order.comment
   -- order.passenger sanitized snapshot {name,initials,phoneMasked,comment,
@@ -269,9 +281,13 @@ CREATE TABLE IF NOT EXISTS orders (
   -- verbatim; flattening would break that handoff.
   passenger_snapshot    JSONB NULL,
   -- ORDER lifecycle status (distinct from rides.status RIDE_STATUS):
-  -- CREATED -> ACCEPTED -> (CANCELED). See assignment table for actor/overlay.
+  -- CREATED -> ACCEPTED -> IN_PROGRESS -> COMPLETED, with CANCELED. updateTripStatus
+  -- (mock_api.js) persists IN_PROGRESS and COMPLETED; HANDED_OFF_ORDER_STATUSES =
+  -- {ACCEPTED, IN_PROGRESS}; NO_SHOW active rides sync to CANCELED here, so the
+  -- order never holds NO_SHOW. See assignment table for actor/overlay.
   status                TEXT NOT NULL DEFAULT 'CREATED'
-                          CHECK (status IN ('CREATED', 'ACCEPTED', 'CANCELED')),
+                          CHECK (status IN ('CREATED', 'ACCEPTED', 'IN_PROGRESS',
+                                            'COMPLETED', 'CANCELED')),
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),   -- order.createdAt
   accepted_at          TIMESTAMPTZ NULL,                     -- order.acceptedAt
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -500,7 +516,11 @@ CREATE TABLE IF NOT EXISTS rides (
   ride_duration       TEXT NULL,       -- ride.duration (history pickDuration)
   ride_today_earnings TEXT NULL,       -- ride.todayEarnings
   ride_trips_today    INTEGER NULL,    -- ride.tripsToday
-  ride_rating         TEXT NULL,       -- ride.rating
+  ride_rating         TEXT NULL,       -- ride.rating (rider's submitted score)
+  -- passenger completion feedback (buildPassengerHistoryEntry -> ride_history.v1);
+  -- surfaced by Profile history card/detail. The rating itself is ride_rating above.
+  feedback_tags       JSONB NULL,       -- rating tags (array)
+  feedback_comment    TEXT NULL,        -- free-text comment
 
   -- waiting.* (ride.waiting)
   waiting_free_limit     TEXT NULL,    -- waiting.freeLimit
@@ -811,27 +831,27 @@ SELECT
   r.trip_id                                       AS trip_id,
   'passenger'::text                               AS role,
   r.order_id                                      AS order_id,
-  -- completedAt: latest COMPLETED ride_event time, else the ride's completed_at
-  -- (pickCompletedAt precedence: timestamps.completedAt).
-  COALESCE(ev.at, r.completed_at)                 AS completed_at,
+  r.completed_at                                  AS completed_at,        -- timestamps.completedAt (when the ride completed)
   r.passenger_user_id                             AS viewer_user_id,
-  r.driver_user_id                                AS counterparty_id,  -- passenger sees the driver
+  r.driver_user_id                                AS counterparty_id,     -- passenger sees the driver
+  r.driver_name                                   AS counterparty_name,   -- entry.driver.name
+  r.driver_rating                                 AS counterparty_rating, -- entry.driver.rating
+  r.vehicle_model                                 AS vehicle_model,       -- entry.vehicle.*
+  r.vehicle_color                                 AS vehicle_color,
+  r.vehicle_plate                                 AS vehicle_plate,
   r.route_pickup_label                            AS pickup_label,
   r.route_dropoff_label                           AS dropoff_label,
-  -- pickFare: payment.amount first, else ride.price.
-  COALESCE(r.payment_amount, r.ride_price)        AS fare,
+  COALESCE(r.payment_amount, r.ride_price)        AS fare,                -- pickFare: payment.amount, else ride.price
   r.ride_distance                                 AS distance,
   r.ride_duration                                 AS duration,
-  NULL::integer                                   AS receipt_net,           -- passenger row carries no receipt
+  r.ride_rating                                   AS rating,              -- rider's submitted score (ride.rating)
+  r.feedback_tags                                 AS tags,                -- rider's rating tags
+  r.feedback_comment                              AS comment,             -- rider's free-text comment
+  NULL::integer                                   AS receipt_net,         -- passenger row carries no receipt
+  NULL::integer                                   AS receipt_commission,
+  NULL::integer                                   AS receipt_tip,
   NULL::text                                      AS receipt_payment_mode
 FROM rides r
-LEFT JOIN LATERAL (
-  SELECT e.at
-  FROM ride_events e
-  WHERE e.ride_id = r.id AND e.type = 'trip_confirmation' AND e.state = 'CONFIRMED'
-  ORDER BY e.at DESC
-  LIMIT 1
-) ev ON true
 WHERE r.status = 'COMPLETED'
 
 UNION ALL
@@ -845,7 +865,12 @@ SELECT
   -- driver completedAt prefers the canonical receipt time, then ride completed_at.
   COALESCE(rc.completed_at, r.completed_at)       AS completed_at,
   r.driver_user_id                                AS viewer_user_id,
-  r.passenger_user_id                             AS counterparty_id,  -- driver sees the passenger
+  r.passenger_user_id                             AS counterparty_id,     -- driver sees the passenger
+  r.passenger_name                                AS counterparty_name,   -- entry.passenger.name
+  r.passenger_rating                              AS counterparty_rating, -- entry.passenger.rating
+  r.vehicle_model                                 AS vehicle_model,       -- the driver's own vehicle
+  r.vehicle_color                                 AS vehicle_color,
+  r.vehicle_plate                                 AS vehicle_plate,
   r.route_pickup_label                            AS pickup_label,
   r.route_dropoff_label                           AS dropoff_label,
   -- driver fare prefers the canonical receipt fare (BD-RIDE-HISTORY-D-01
@@ -853,7 +878,12 @@ SELECT
   COALESCE(rc.fare::text, r.payment_amount, r.ride_price) AS fare,
   r.ride_distance                                 AS distance,
   r.ride_duration                                 AS duration,
-  rc.net                                          AS receipt_net,         -- receipts.net (already computed)
+  NULL::text                                      AS rating,              -- driver entry carries no rider score
+  NULL::jsonb                                     AS tags,
+  NULL::text                                      AS comment,
+  rc.net                                          AS receipt_net,         -- receipts.* (already computed; no recompute)
+  rc.commission                                   AS receipt_commission,  -- Profile renders receipt.commission
+  rc.tip                                          AS receipt_tip,         -- Profile renders receipt.tip
   rc.payment_mode                                 AS receipt_payment_mode
 FROM rides r
 LEFT JOIN receipts rc ON rc.ride_id = r.id
