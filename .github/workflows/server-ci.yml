@@ -1,0 +1,68 @@
+name: server-ci
+
+# Path-filtered CI for the in-repo backend (/server), per ADR BD-DOCS-041.
+# Kept fully separate from ci.yml (node scripts/check.mjs over public/+scripts/)
+# and docs-site-ci.yml. Phase 1 only applies the SQL migrations against a real
+# PostgreSQL 16 — the Node app + `npm test` job lands with the Fastify scaffold.
+on:
+  push:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-ci.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-ci.yml'
+
+jobs:
+  migrations:
+    name: apply migrations (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bazardrive
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: bazardrive
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations in order (ON_ERROR_STOP)
+        run: |
+          shopt -s nullglob
+          for f in $(ls server/migrations/*.sql | sort); do
+            echo "── applying $f"
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Schema is idempotent (re-apply must be clean)
+        run: |
+          for f in $(ls server/migrations/*.sql | sort); do
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Assert core objects exist
+        run: |
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 11
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select 1 from information_schema.views where table_name='ride_history'" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select 1 from information_schema.triggers where trigger_name='trg_rides_freeze_terminal'" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select 1 from information_schema.triggers where trigger_name='trg_ride_events_no_mutation'" | grep -qx 1
+          echo "schema objects OK"
