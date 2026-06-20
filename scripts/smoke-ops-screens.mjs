@@ -158,8 +158,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v159 (bumped for the full-width shell change)',
-  !!swVer && Number(swVer[1]) >= 159);
+expect('sw.js VERSION is present and >= v160 (bumped for the registry expansion)',
+  !!swVer && Number(swVer[1]) >= 160);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
@@ -242,6 +242,19 @@ for (const sc of getScreens()) {
   const base = String(sc.route).split('?')[0];
   expect(`registry route base is registered in app.js: ${sc.id} → ${base}`,
     REGISTERED.has(base));
+}
+
+// ── L2. Reverse drift (BD-OPS-07 / #646) — every route registered in app.js must
+// be covered by the registry OR explicitly allowlisted, so a screen added to the
+// app without a ScreenOps registry decision fails the gate (not just silent rot). ──
+const KNOWN_UNREGISTERED = new Set([
+  '/ops/screens', // the ScreenOps dev tool itself — not a product screen to triage
+  '/onboarding',  // onboarding step host — same family as BD-ONBOARDING-01 (/welcome)
+]);
+const registryRouteBases = new Set(getScreens().map((s) => String(s.route).split('?')[0]));
+for (const r of REGISTERED) {
+  expect(`app.js route is covered by the ScreenOps registry or allowlist: ${r}`,
+    registryRouteBases.has(r) || KNOWN_UNREGISTERED.has(r));
 }
 
 // ── M. Review follow-up invariants (A + B + D) ──
