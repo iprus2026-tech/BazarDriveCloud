@@ -4,8 +4,8 @@ docType: audit
 title: "Mock-to-Real Data Inventory — Backend Migration Audit"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
-effectiveFrom: 2026-06-18
+revision: 2026-06-20
+effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
@@ -18,7 +18,9 @@ related:
     - public/src/driver_offer_store.js
     - public/src/ride_history.js
     - public/src/storage_boundary.js
-  issues: []
+    - public/src/sw-update.js
+    - public/src/ops/ops_mel_store.js
+  issues: [636, 584]
   prs: []
 tags: [audit, migration, mock-to-real, data-layer, target]
 slug: /audits/mock-to-real-data-inventory
@@ -38,13 +40,89 @@ slug: /audits/mock-to-real-data-inventory
 
 Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 `ride_state.js`, `driver_offer_store.js`, `ride_history.js`,
-`storage_boundary.js`, `public/src/mapbox/*.js`. Findings classified by type
+`storage_boundary.js`, `public/src/mapbox/*.js`, `public/src/ops/*.js`,
+`public/src/sw-update.js`. Findings classified by type
 (`static` / `mock` / `localStorage` / `derived` / `URL` / `placeholder`) and by
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 22 localStorage keys · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 26 storage keys (19 cleared · 7 not-cleared — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
+
+## Enforcement & removal tracking
+
+**Two axes.** Every key has a *boundary* class (does `clearUserScopedStorage()`
+wipe it?) and a *migration* owner (does the backend own it?). They are
+independent — do **not** conflate them.
+
+**Boundary axis — locked by an automated gate (lands in PR #637).** The gate
+`scripts/smoke-static-data-inventory.mjs`, wired into `node scripts/check.mjs`
+(BD-DATA-STATIC-01, #636), ships in **PR #637** — merge that first; until it lands,
+`check.mjs` does not yet enforce this surface. It discovers every `bazardrive.*` /
+`profileTripDemo` key in `public/src/**` (comments stripped) and classifies each:
+
+- **Cleared — 19 user-scoped stores** wiped by `clearUserScopedStorage()` in
+  `public/src/storage_boundary.js`; the gate seeds every key, runs the real clear,
+  and asserts each cleared key's data is actually gone (no logout leak).
+- **Not cleared by `clearUserScopedStorage()` — 7 keys**, three sub-groups:
+  - *auth-reset:* `user.v1`, `smoke_role.v1` — still wiped at logout, but by the
+    auth flow (`resetLocalSession()` → `user.reset()` / `clearSmokeRole()`), not
+    this function.
+  - *survive (global/device):* `posts.v1`, `map_prefs.v1`.
+  - *dev/transient:* `debug.publish` (documented as dev/test in
+    `storage_boundary.js`); `ops.mel.v1` and `bd-reloading` are outside the
+    boundary (`bd-reloading` is a transient `sessionStorage` SW-reload flag in
+    `sw-update.js`, not a data store).
+
+The gate also discovers any string literal passed to a localStorage/sessionStorage
+API (not just `bazardrive.*`), and fails on any **orphan** key not in the manifest —
+including a dynamic `bazardrive.${…}` key and the gap that once let
+`bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
+entry, a duplicate classification, a cleared key whose data survives the clear, or
+an over-cleared not-cleared key. Discovery resolves `const NAME = 'literal'` at
+each storage call site — including access through a `safeLocalStorage()` /
+`localStorage` alias — so constant-stored and non-`bazardrive` keys (e.g.
+`bd-reloading`) are caught too. Storage-availability **probes** — written and
+immediately removed to feature-detect `localStorage` (`__bd_driver_offer_probe__`
+in `driver_offer_store.js`) — are allowlisted, not treated as orphan stores.
+Canonical count: **26 keys (19 cleared · 7 not-cleared).** Scope: **Web Storage
+only** (`localStorage` / `sessionStorage`) — cookies, IndexedDB and CacheStorage
+are out of scope and currently unused in `public/src`.
+
+**Migration axis — S/C per [BD-DOCS-031](../design/data-layer-contract.md)** (the
+server entities for identity / presence are owned by the Auth & Presence ADRs).
+This is what drives removal, and it does **not** line up with the boundary class:
+
+- **Server-owned (S) → migrate to backend:** `posts.v1` + `myposts.v1`,
+  `ride_orders.v1`, `respond.v1` + `responses.v1`, `driver_offers.v1`,
+  `order_overlay.v1`, `active_ride.v1`, `trip_confirmation.v1` +
+  `driver_handoff_snapshot.v1`, `chat.v1`, `driver_receipts.v1`,
+  `ride_history.v1`. (`posts.v1` is *kept* on the boundary yet server-owned.)
+- **`user.v1` — client session cache (C) this phase, with server-owned fields:**
+  per BD-DOCS-031 the key itself stays a local session cache (C); but the identity /
+  profile, driver documents + garage vehicles, and `driverOnline` / shift / medical
+  readiness it currently holds become **server-owned under the Auth & Presence ADRs**
+  (BD-DOCS-032 + presence) — not migrated as this key, and not retired by the
+  data-layer S-key scoreboard below. Their removal is tracked in those ADRs.
+- **Client-only (C) → stays local even with a backend:** `favorite_routes.v1`,
+  `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
+  `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
+  `debug.publish`. (Several of these are *cleared* on the boundary yet never
+  migrate.) `ops.mel.v1` and `bd-reloading` are **outside BD-DOCS-031's scope** —
+  dev tooling / a transient SW flag — so they have no S/C owner there (neither
+  migrates nor is a product store).
+
+**Removal tracking.** Each **server-owned** key moves `mock → migrating → removed`
+as its owning module swaps `localStorage` for the API behind
+`public/src/data_layer.js`. "All static data removed" is reached when every **S**
+key is served by the backend — not every cleared key; the **C** keys stay. This
+ledger plus the gate are the scoreboard.
+
+**Scope of "removed".** That condition covers the **storage-key** axis only. The
+non-storage findings this audit also tracks — URL-param status overrides (§C),
+hardcoded config enums / ratings / waiting policies (§B), and the Mapbox
+placeholders (§B Mapbox) — are **not** retired by the S-key migration and must be
+resolved under their own phases before the audit as a whole can close.
 
 ## A. localStorage-backed shared data — the migration backbone
 
@@ -52,7 +130,7 @@ Every store is client-only today; none syncs to a backend.
 
 | Key | Holds | Module | Target entity | Phase |
 | --- | --- | --- | --- | --- |
-| `bazardrive.user.v1` | profile / identity / readiness | state.js:1 | User/Auth | **Auth** |
+| `bazardrive.user.v1` | profile / identity / readiness (+ client session cache) | state.js:1 | User/Auth — *key stays C; server fields → Auth/Presence ADRs (see Enforcement)* | **Auth** |
 | `bazardrive.active_ride.v1` | active ride + status | ride_state.js:4 | ActiveRide | **Dispatch** |
 | `bazardrive.ride_history.v1` | completed trips | ride_history.js:13 | TripHistory | **History** |
 | `bazardrive.ride_orders.v1` | passenger orders | mock_api.js:428 | Order | **Dispatch** |
@@ -70,8 +148,12 @@ Every store is client-only today; none syncs to a backend.
 | `bazardrive.favorite_routes.v1` · `bazardrive.repeat_route.v1` | saved / repeat routes (client-only per BD-DOCS-031) | favorite/repeat_route.js | RoutePrefs | Phase 1 data |
 | `bazardrive.draft.v2` | composer draft | composer.js:8 | ComposerDraft | Phase 1 data |
 | `bazardrive.map_prefs.v1` | device map prefs (not user-scoped) | mapbox_state.js:5 | DevicePref | **Mapbox** |
-| `bazardrive.smoke_role.v1` (sessionStorage) | per-tab role (test override) | smoke_role.js | replace with real auth | **Auth** |
+| `bazardrive.smoke_role.v1` (sessionStorage) | per-tab role (test override) | smoke_role.js | — (dev/test harness; client-only, not migrated) | Auth · dev/test |
 | `profileTripDemo` | profile demo override | storage_boundary.js | — (demo only) | — |
+| `bazardrive.favorite_route_notice.v1` | one-time favorite-route banner | favorite_routes.js | client-only (BD-DOCS-031) | Phase 1 data |
+| `bazardrive.debug.publish` | dev publish debug-trail toggle | order_map_draft.js | — (dev / client-only) | — |
+| `bazardrive.ops.mel.v1` | ScreenOps MEL cards (dev tooling) | ops/ops_mel_store.js | — (dev / client-only) | — |
+| `bd-reloading` (sessionStorage) | transient SW-reload guard | sw-update.js | — (transient flag) | — |
 
 ## B. Findings by phase
 
@@ -180,8 +262,10 @@ standalone Ride History screen; history renders inside `profile.js`
    matching and billing are untrustworthy.
 4. **One demo driver "Рустам К. ★4,92"** across 6+ surfaces — every ride shares
    the same fake identity.
-5. **22 localStorage keys with no backend sync** — orders/offers/history/chats
-   are client-only; device switch = data loss.
+5. **12 server-owned cleared stores with no backend sync** (of the 19 cleared; the
+   other 7 are client-only and stay local) — orders/offers/rides/history/chats;
+   device switch = data loss. (Surface to be locked by the BD-DATA-STATIC-01 gate
+   once PR #637 lands — see [Enforcement](#enforcement--removal-tracking).)
 6. **Readiness/presence on the client** — `driverOnline` / `isDriverLineReady`
    are not server-verified (a non-ready driver can reach the line).
 
