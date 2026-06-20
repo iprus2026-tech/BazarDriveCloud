@@ -142,6 +142,8 @@ Use registered runtime routes from `public/src/app.js`. Important routes:
 - `/receipt?tripId=...`
 - `/rules`
 - `/inbox`
+- `/settings` (shared role-aware shell; `?role=driver` only steers the «Назад» target)
+- `/ops/screens` (ScreenOps dev/docs tool — registered but **not** in the product tabbar; see ScreenOps flow note)
 
 Do not use old sandbox file names (feed.jsx, route-picker.jsx, etc).
 Use real runtime paths (public/src/screens/feed.js, etc).
@@ -217,6 +219,13 @@ Do not silently orphan `/inbox`.
 Wire inert standalone report CTAs (e.g. Order Detail data-action="report-order").
 Preserve in-ride safety report sheet behavior.
 Do not reroute BD-RIDE-P-07 safety report to /report.
+
+### ScreenOps (dev/docs)
+`/ops/screens` is a dev/docs tool, not a passenger/driver feature. Registered in `public/src/app.js` but intentionally NOT in the tabbar.
+It is exempt from the first-run welcome guard via `DEV_DOCS_ROUTES` in `public/src/router.js`; product routes keep the guard unchanged.
+Modules live under `public/src/ops/` (`ops_registry.js`, `ops_mel_store.js`, `templates/`, `connectors/`); the dashboard talks to the connector seam, not the templates/registry directly.
+MEL cards persist in `localStorage` (`bazardrive.ops.mel.v1`), deliberately outside the user-scoped storage boundary (a normal logout must not wipe them).
+The contract source of truth is the docs-site manual at `/docs/screenops` (BD-DOCS-040). Pinned by `scripts/smoke-ops-screens.mjs`.
 
 ## Local verification
 
