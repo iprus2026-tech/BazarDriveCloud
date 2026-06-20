@@ -426,7 +426,11 @@ CREATE TABLE IF NOT EXISTS assignment (
   -- overlay.status — the two literals the overlay ever writes (ORDER_STATUS_*).
   status             TEXT NOT NULL CHECK (status IN ('ACCEPTED', 'CANCELED')),
   -- overlay.selectedDriverId (preserved across cancel).
-  selected_driver_id UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  -- ON DELETE RESTRICT (not SET NULL): assignment_accept_clean requires a non-null
+  -- selected driver while status='ACCEPTED', so SET NULL on driver-delete would violate
+  -- the CHECK and fail anyway. RESTRICT states it: an assigned driver cannot be deleted
+  -- until the assignment is canceled/reassigned.
+  selected_driver_id UUID NULL REFERENCES users(id) ON DELETE RESTRICT,
   -- overlay.canceledBy actor — verbatim literals (cancelOrderByPassenger/Driver).
   canceled_by        TEXT NULL CHECK (canceled_by IS NULL OR canceled_by IN ('passenger', 'driver')),
   canceled_at        TIMESTAMPTZ NULL,                       -- overlay.canceledAt (monotonic)
@@ -503,6 +507,10 @@ CREATE TABLE IF NOT EXISTS rides (
   -- REFUSES to infer the accepted driver without this exact pin (avoids swapping in an
   -- unrelated latest response), so it is load-bearing across cutover.
   selected_driver_response_id TEXT NULL,
+  -- the verbatim client pin above ('resp_<post.id>') is AMBIGUOUS across drivers
+  -- (responses.legacy_id is non-unique); selected_response_id is the UNIQUE server
+  -- pointer used to hydrate the correct accepted response/driver snapshot at cutover.
+  selected_response_id        UUID NULL REFERENCES responses(id) ON DELETE SET NULL,
 
   -- vehicle.* (ride.vehicle from buildActiveRideSeed)
   vehicle_model  TEXT NULL,           -- vehicle.model
@@ -642,7 +650,11 @@ CREATE TABLE IF NOT EXISTS ride_events (
   -- BEFORE the active-ride row necessarily exists (seedActiveRideFromConfirmedHandoff
   -- creates the ride only when /trip-confirmation or /active-ride opens). trip_id is
   -- the stable business key; ride_id is backfilled when the ride is seeded.
-  ride_id   UUID NULL REFERENCES rides(id) ON DELETE CASCADE,
+  -- ON DELETE RESTRICT (not CASCADE): ride_events is append-only, and the
+  -- trg_ride_events_no_mutation trigger rejects every DELETE — so a CASCADE would make
+  -- the parent ride delete FAIL, not cascade. RESTRICT states the truth: a ride with a
+  -- timeline cannot be deleted (a future purge needs a privileged trigger-disabled path).
+  ride_id   UUID NULL REFERENCES rides(id) ON DELETE RESTRICT,
   -- denormalized business key so an event can be written/looked up by the same
   -- tripId the client uses, even before the ride row is resolved at cutover.
   trip_id   TEXT NOT NULL,
