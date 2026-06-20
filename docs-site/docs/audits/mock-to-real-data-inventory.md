@@ -18,8 +18,8 @@ related:
     - public/src/driver_offer_store.js
     - public/src/ride_history.js
     - public/src/storage_boundary.js
-    - scripts/smoke-static-data-inventory.mjs
-    - scripts/check.mjs
+    - public/src/sw-update.js
+    - public/src/ops/ops_mel_store.js
   issues: [636, 584]
   prs: []
 tags: [audit, migration, mock-to-real, data-layer, target]
@@ -40,12 +40,13 @@ slug: /audits/mock-to-real-data-inventory
 
 Audited (read-only): `public/src/screens/*.js`, `mock_api.js`, `state.js`,
 `ride_state.js`, `driver_offer_store.js`, `ride_history.js`,
-`storage_boundary.js`, `public/src/mapbox/*.js`. Findings classified by type
+`storage_boundary.js`, `public/src/mapbox/*.js`, `public/src/ops/*.js`,
+`public/src/sw-update.js`. Findings classified by type
 (`static` / `mock` / `localStorage` / `derived` / `URL` / `placeholder`) and by
 phase (`Phase 1 data` / `Auth` / `Presence` / `Dispatch` / `Mapbox` / `Safety` /
 `History`).
 
-**Totals:** ~150 findings · 25 storage keys (19 cleared · 6 not-cleared — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
+**Totals:** ~150 findings · 26 storage keys (19 cleared · 7 not-cleared — see [Enforcement](#enforcement--removal-tracking)) · 6 URL-param state surfaces ·
 5 client-only readiness flags · 4 demo seed arrays.
 
 ## Enforcement & removal tracking
@@ -63,20 +64,24 @@ independent — do **not** conflate them.
 - **Cleared — 19 user-scoped stores** wiped by `clearUserScopedStorage()` in
   `public/src/storage_boundary.js`; the gate seeds every key, runs the real clear,
   and asserts each cleared key's data is actually gone (no logout leak).
-- **Not cleared by `clearUserScopedStorage()` — 6 keys**, three sub-groups:
+- **Not cleared by `clearUserScopedStorage()` — 7 keys**, three sub-groups:
   - *auth-reset:* `user.v1`, `smoke_role.v1` — still wiped at logout, but by the
     auth flow (`resetLocalSession()` → `user.reset()` / `clearSmokeRole()`), not
     this function.
   - *survive (global/device):* `posts.v1`, `map_prefs.v1`.
-  - *dev:* `debug.publish` (documented as dev/test in `storage_boundary.js`) and
-    `ops.mel.v1` (outside the boundary).
+  - *dev/transient:* `debug.publish` (documented as dev/test in
+    `storage_boundary.js`); `ops.mel.v1` and `bd-reloading` are outside the
+    boundary (`bd-reloading` is a transient `sessionStorage` SW-reload flag in
+    `sw-update.js`, not a data store).
 
 The gate also discovers any string literal passed to a localStorage/sessionStorage
 API (not just `bazardrive.*`), and fails on any **orphan** key not in the manifest —
 including a dynamic `bazardrive.${…}` key and the gap that once let
 `bazardrive.order_overlay.v1` live outside `storage_boundary.js` — plus a stale
 entry, a duplicate classification, a cleared key whose data survives the clear, or
-an over-cleared not-cleared key. Canonical count: **25 keys (19 cleared · 6
+an over-cleared not-cleared key. Discovery resolves `const NAME = 'literal'` at
+each storage call site, so constant-stored and non-`bazardrive` keys (e.g.
+`bd-reloading`) are caught too. Canonical count: **26 keys (19 cleared · 7
 not-cleared).**
 
 **Migration axis — owned by [BD-DOCS-031](../design/data-layer-contract.md) (S/C).**
@@ -92,8 +97,9 @@ This is what drives removal, and it does **not** line up with the boundary class
   `favorite_route_notice.v1`, `repeat_route.v1`, `draft.v2`, `order_form.v1`,
   `route_draft.v1`, `profileTripDemo`, `map_prefs.v1`, `smoke_role.v1`,
   `debug.publish`. (Several of these are *cleared* on the boundary yet never
-  migrate.) `ops.mel.v1` is **dev tooling — outside BD-DOCS-031's scope**, so it
-  has no S/C owner there (neither migrates nor is a product store).
+  migrate.) `ops.mel.v1` and `bd-reloading` are **outside BD-DOCS-031's scope** —
+  dev tooling / a transient SW flag — so they have no S/C owner there (neither
+  migrates nor is a product store).
 
 **Removal tracking.** Each **server-owned** key moves `mock → migrating → removed`
 as its owning module swaps `localStorage` for the API behind
@@ -136,6 +142,7 @@ Every store is client-only today; none syncs to a backend.
 | `bazardrive.favorite_route_notice.v1` | one-time favorite-route banner | favorite_routes.js | client-only (BD-DOCS-031) | Phase 1 data |
 | `bazardrive.debug.publish` | dev publish debug-trail toggle | order_map_draft.js | — (dev / client-only) | — |
 | `bazardrive.ops.mel.v1` | ScreenOps MEL cards (dev tooling) | ops/ops_mel_store.js | — (dev / client-only) | — |
+| `bd-reloading` (sessionStorage) | transient SW-reload guard | sw-update.js | — (transient flag) | — |
 
 ## B. Findings by phase
 
