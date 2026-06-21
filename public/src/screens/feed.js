@@ -170,26 +170,10 @@ export default async function feed() {
       return;
     }
 
-    const card = e.target.closest('[data-post-card]');
-    if (!card) return;
-    if (e.target.closest('button, a, [data-action]')) return;
-    const postId = card.dataset.postCard;
-    if (!postId) return;
-    go(`/post?id=${encodeURIComponent(postId)}`);
-  });
-
-  // BD-FEED-01 — keyboard parity for the card-body tap: Enter / Space on a
-  // focused card opens Post Detail, mirroring the click path above (and reusing
-  // the same inner-control guard so a focused CTA/like/share keeps its own key
-  // handling). Same go('/post?id=...') destination as the pointer path.
-  feedList.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const card = e.target.closest('[data-post-card]');
-    if (!card || e.target.closest('button, a, [data-action]')) return;
-    e.preventDefault();
-    const postId = card.dataset.postCard;
-    if (!postId) return;
-    go(`/post?id=${encodeURIComponent(postId)}`);
+    // Card-body navigation is the native stretched .feed-card__open link
+    // (rendered per card) — it handles mouse and keyboard (Enter) without a
+    // custom handler and keeps the <article> role intact. Only the per-card
+    // action buttons need JS, handled above.
   });
 
   renderList();
@@ -202,13 +186,15 @@ function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
 }
 
-// BD-FEED-01 — keyboard-operable card affordance, mirroring the shipped
-// .inbox-item pattern: the focusable card is exposed to assistive tech as an
-// actionable role="button" (so the Enter/Space key path is discoverable, not
-// announced as a plain article), with a DISTINCTIVE accessible name built from
-// the route/title so same-author posts are tellable apart. The Enter/Space
-// handler (above) opens Post Detail, matching the click handler; inner controls
-// (CTA / like / comment / share / kebab) stay guarded and keep their own focus.
+// BD-FEED-01 — keyboard-operable card WITHOUT overriding article semantics. The
+// card stays a real <article> inside the role="feed" list; a dedicated stretched
+// open-link (.feed-card__open, absolutely positioned over the card) is the
+// activatable control — natively keyboard-focusable (Enter opens Post Detail)
+// and exposed to assistive tech as a link with a DISTINCTIVE name (route/title +
+// author), so same-author posts are tellable apart. The inner controls (CTA /
+// like / comment / share / kebab) are raised above the link via z-index and keep
+// their own click/focus. This satisfies both "preserve the article role" and
+// "expose an activatable control" without making the article a button.
 function cardLabel(p) {
   const what = (p.from || p.to)
     ? `${p.from || '—'} → ${p.to || '—'}`
@@ -216,8 +202,8 @@ function cardLabel(p) {
   const who = p.author ? ` · ${p.author}` : '';
   return `Открыть: ${what}${who}`;
 }
-function cardOpenAttrs(p) {
-  return `role="button" tabindex="0" aria-label="${escapeHtml(cardLabel(p))}"`;
+function cardOpenLink(p) {
+  return `<a class="feed-card__open" href="#/post?id=${escapeHtml(p.id || '')}" aria-label="${escapeHtml(cardLabel(p))}"></a>`;
 }
 
 function renderCard(p) {
@@ -288,7 +274,8 @@ function renderPostActions(p) {
 function renderSystemCard(p) {
   // Render system posts as pinned announcement cards, matching prototype visual
   return `
-    <article class="bd-card feed-card--pinned" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
+    <article class="bd-card feed-card--pinned" data-post-card="${escapeHtml(p.id || '')}">
+      ${cardOpenLink(p)}
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -331,7 +318,8 @@ function renderTripCard(p) {
   }
 
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${postId}" ${cardOpenAttrs(p)}>
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${postId}">
+      ${cardOpenLink(p)}
       ${renderCardHeader(p)}
       <div class="feed-route-row">
         <div class="feed-route-track">
@@ -362,7 +350,8 @@ function renderTripCard(p) {
 
 function renderAnnouncementCard(p) {
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${escapeHtml(p.id || '')}">
+      ${cardOpenLink(p)}
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -376,7 +365,8 @@ function renderMarketplaceCard(p) {
     .map((t) => `<span class="bd-badge">${escapeHtml(t)}</span>`)
     .join('');
   return `
-    <article class="bd-card" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
+    <article class="bd-card" data-post-card="${escapeHtml(p.id || '')}">
+      ${cardOpenLink(p)}
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-mkt-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.price ? `<div class="feed-card-mkt-price">${escapeHtml(p.price)}</div>` : ''}
