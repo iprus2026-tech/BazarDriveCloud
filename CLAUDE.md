@@ -434,6 +434,14 @@ Resolve a review thread only after:
 
 ## Agent roles
 
+`AGENTS.md` (repo root) is the companion cross-agent operations file — session
+routing, worktree isolation, audit-only/write modes, protected commands, and
+per-area checks — read by Codex, Claude Code, ChatGPT-assisted CLI sessions, and
+other agents. It is **subordinate to this file**: for authority/precedence, PR
+review-thread discipline, the merge gate, merge approval, and design governance,
+CLAUDE.md is authoritative. Keep the two aligned on shared topics; where they
+overlap, CLAUDE.md wins unless CLAUDE.md explicitly delegates the topic to AGENTS.md.
+
 Each role below has a specific scope. An agent must not expand into another role's territory.
 
 ### Authority order
@@ -443,10 +451,15 @@ When instructions conflict, earlier items win:
 1. User instruction
 2. GitHub issue / PR scope
 3. CLAUDE.md
-4. `docs/screen-contracts.md` and product contracts
-5. `scripts/check.mjs` / `dispatcher.mjs`
-6. Review comments
-7. Individual agent role notes
+4. `AGENTS.md` (cross-agent session/operational rules — subordinate to CLAUDE.md)
+5. `docs/screen-contracts.md` and product contracts
+6. `scripts/check.mjs` / `dispatcher.mjs`
+7. Review comments
+8. Individual agent role notes
+
+`CLAUDE.md` is the top control document and outranks `AGENTS.md`; `AGENTS.md` never
+acts as an independent control tower. Where the two overlap, CLAUDE.md wins unless
+CLAUDE.md explicitly delegates a topic to AGENTS.md.
 
 No agent may override:
 - explicit user constraints

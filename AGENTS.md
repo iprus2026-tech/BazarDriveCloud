@@ -1,6 +1,10 @@
 # AGENTS.md — agent control rules
 
-This repository is worked by multiple coding agents and human operators. Treat this file as the shared traffic-control tower for Codex, Claude Code, ChatGPT-assisted CLI sessions, and any future repo agents.
+This repository is worked by multiple coding agents and human operators. This file holds the shared **operational** rules — session routing, worktrees, protected commands, checks — for Codex, Claude Code, ChatGPT-assisted CLI sessions, and any future repo agents.
+
+## Authority
+
+`CLAUDE.md` (repo root) is the **top control document and outranks this file**. AGENTS.md is a cross-agent operations layer that **complements CLAUDE.md and never overrides it** — it is not an independent control tower. For authority/precedence, PR review-thread discipline, the merge gate and merge approval, the branch/merge method (squash), and design/docs governance, **CLAUDE.md is authoritative** (see its *Authority order* and *Merge rules*). Where this file and CLAUDE.md overlap, CLAUDE.md wins unless CLAUDE.md explicitly delegates the topic here.
 
 ## Prime directive
 
@@ -48,8 +52,10 @@ When the human says `go`:
 2. Change only the approved files.
 3. Prefer explicit file staging, never `git add .`.
 4. Show `git diff --stat` and the relevant diff before commit.
-5. Run the checks named in the task.
-6. Stop before commit unless the human explicitly approved commit and push.
+5. Run the checks named in the task. If none are named, default to `node scripts/check.mjs`
+   and `node scripts/dispatcher.mjs`, plus any area-specific checks below.
+6. Stop before commit unless the human explicitly approved it; treat commit and push as
+   separate approvals (approval to commit is not approval to push).
 
 ## Protected commands
 
@@ -70,10 +76,11 @@ Dependency changes should normally come from Dependabot PRs or an explicit depen
 
 ## Checks
 
-Common checks:
+Common checks (run after a change, and as the post-merge verification):
 
 ```bash
 node scripts/check.mjs
+node scripts/dispatcher.mjs
 ```
 
 ScreenOps-specific checks:
@@ -96,6 +103,8 @@ Docs-site checks:
 cd docs-site && npm run check
 ```
 
+`npm ci` is the allowed dependency bootstrap — it installs from the committed lockfile without mutating it. Run it in `server/` or `docs-site/` before their checks if `node_modules` is absent. Use `npm ci`, not `npm install` (which is protected — see above).
+
 Run only checks that are relevant and available in the current environment. If a tool is missing, report that honestly and provide the fallback used.
 
 ## Service worker rule
@@ -106,7 +115,21 @@ Do not bump the service worker for documentation-only changes.
 
 ## ScreenOps route policy
 
-`/ops/screens` is a dev/docs route. It must not appear in the product tabbar and must not show product chrome. Keep this covered by `scripts/smoke-ops-screens.mjs`.
+`/ops/screens` is a dev/docs route, kept covered by `scripts/smoke-ops-screens.mjs`.
+Its constraints (not in the product tabbar, no product chrome) live in CLAUDE.md's
+ScreenOps note and the docs-site ScreenOps manual (BD-DOCS-040) — follow those rather
+than restating the rules here, to avoid drift.
+
+## PR review threads & merge
+
+CLAUDE.md is authoritative for review/merge; in brief:
+
+- A reply is **not** a resolution — resolve a thread only after the fix is present in the diff.
+- Do not merge while **active** threads remain (active = not outdated **and** not resolved).
+- If Codex posts new comments after the latest commit, those become the current source of truth.
+- Merging requires **explicit human approval** plus a green CI/merge gate; default to a **squash** merge. After merge, run the post-merge verification (the common checks above).
+
+See CLAUDE.md *PR review thread discipline* and *Merge rules* for the full process.
 
 ## Dependabot PRs
 
@@ -115,8 +138,12 @@ Handle Dependabot PRs one at a time:
 1. Audit the diff and release notes.
 2. Rebase with `@dependabot rebase` when the base branch is stale.
 3. Wait for fresh CI.
-4. Merge only when checks are green and the change is scoped.
+4. Do **not** merge autonomously. Merge only after the human **explicitly approves**, and
+   only when checks are green and the change is scoped — CLAUDE.md's merge gate and
+   merge-approval rule apply to Dependabot PRs too.
 5. If checks fail, do not merge. Investigate or close/recreate as appropriate.
+6. After merge, run the post-merge verification (`node scripts/check.mjs` and
+   `node scripts/dispatcher.mjs`).
 
 Do not batch server dependency PRs unless the human explicitly asks for a batch.
 
