@@ -1032,20 +1032,25 @@ function renderPassengerRideComplete(ride, deps) {
           ${CLOSE_SVG}
         </button>
       </div>
-      <div class="passenger-complete__report-desc">
+      <div class="passenger-complete__report-desc" data-report-stage-select>
         Выберите, что произошло — поддержка свяжется в течение часа
       </div>
-      <ul class="passenger-complete__report-list" role="list">
+      <ul class="passenger-complete__report-list" role="radiogroup" aria-label="Причина обращения" data-report-stage-select>
         ${REPORT_REASONS.map((r) => `
           <li>
-            <button type="button" class="passenger-complete__report-reason" data-reason="${escapeHtml(r.id)}">
+            <button type="button" class="passenger-complete__report-reason" role="radio" aria-checked="false" data-reason="${escapeHtml(r.id)}">
               <span class="passenger-complete__report-ic" aria-hidden="true">${r.icon}</span>
               <span class="passenger-complete__report-reason-text">${escapeHtml(r.label)}</span>
-              <span class="passenger-complete__report-chev" aria-hidden="true">${CHEVRON_RIGHT_SVG}</span>
+              <span class="passenger-complete__report-radio" aria-hidden="true"></span>
             </button>
           </li>
         `).join('')}
       </ul>
+      <div class="passenger-complete__report-done" data-report-stage-submitted role="status" aria-live="polite">
+        <div class="passenger-complete__report-done-ic" aria-hidden="true">${CHECK_SVG}</div>
+        <div class="passenger-complete__report-done-title">Жалоба отправлена</div>
+        <div class="passenger-complete__report-done-meta">Поддержка свяжется в течение часа.</div>
+      </div>
     </div>
 
     <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-submit-rating" data-default-only data-hide-when-report disabled>
@@ -1056,7 +1061,10 @@ function renderPassengerRideComplete(ride, deps) {
       <span class="passenger-complete__cta-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
       Вернуться в ленту
     </button>
-    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-report-return" data-report-only>
+    <button type="button" class="bd-btn primary passenger-complete__cta" id="arp-report-submit" data-report-only data-report-stage-select disabled>
+      Отправить жалобу
+    </button>
+    <button type="button" class="bd-btn primary passenger-complete__cta passenger-complete__cta--return" id="arp-report-return" data-report-only data-report-stage-submitted>
       <span class="passenger-complete__cta-ic" aria-hidden="true">${ARROW_RIGHT_SVG}</span>
       Вернуться в ленту
     </button>
@@ -1335,8 +1343,22 @@ function renderPassengerRideComplete(ride, deps) {
   const reportReasons = Array.from(
     content.querySelectorAll('.passenger-complete__report-reason')
   );
+  const reportSubmit = content.querySelector('#arp-report-submit');
+  let reportReason = null;
+
+  // BD-RIDE-P-01 (BD-MOD) — bring the COMPLETED report sheet up to the
+  // established in-repo submit→confirmation moderation pattern (mirrors the
+  // in-ride safety sheet's idle→selected→submitted and order_detail BD-MOD-01).
+  // UI-only, in-screen — no router change, no storage write.
+  const resetReport = () => {
+    reportReason = null;
+    reportReasons.forEach((r) => r.setAttribute('aria-checked', 'false'));
+    if (reportSubmit) reportSubmit.disabled = true;
+    content.dataset.reportStage = 'select';
+  };
 
   content.querySelector('#arp-report').addEventListener('click', () => {
+    resetReport();
     content.dataset.report = 'open';
     if (reportSheet && typeof reportSheet.scrollIntoView === 'function') {
       reportSheet.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1346,6 +1368,7 @@ function renderPassengerRideComplete(ride, deps) {
   if (reportClose) {
     reportClose.addEventListener('click', () => {
       content.dataset.report = 'closed';
+      resetReport();
     });
   }
 
@@ -1357,13 +1380,18 @@ function renderPassengerRideComplete(ride, deps) {
 
   reportReasons.forEach((btn) => {
     btn.addEventListener('click', () => {
-      const labelEl = btn.querySelector('.passenger-complete__report-reason-text');
-      const label = labelEl ? labelEl.textContent.trim() : '';
-      // Detail flow isn't wired up — show a safe toast so the
-      // selection is acknowledged without throwing.
-      localToast(label ? `Причина выбрана: ${label}` : 'Раздел обращения будет добавлен позже');
+      reportReason = btn.getAttribute('data-reason');
+      reportReasons.forEach((r) => r.setAttribute('aria-checked', r === btn ? 'true' : 'false'));
+      if (reportSubmit) reportSubmit.disabled = false;
     });
   });
+
+  if (reportSubmit) {
+    reportSubmit.addEventListener('click', () => {
+      if (!reportReason) return;
+      content.dataset.reportStage = 'submitted';
+    });
+  }
 
   applyRating(0);
   return root;

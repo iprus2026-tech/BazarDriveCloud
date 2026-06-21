@@ -7033,12 +7033,57 @@ body {
   color: var(--text);
   letter-spacing: -0.01em;
 }
-.passenger-complete__report-chev {
-  color: var(--text-3);
+/* BD-RIDE-P-01 (BD-MOD) — report sheet radio-select + submit→confirmation,
+   mirroring the in-ride safety sheet. The forward chevron was dropped (it
+   promised a non-existent drill-in); reasons are now a radiogroup. */
+.passenger-complete__report-radio {
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  background: transparent;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.passenger-complete__report-reason[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
+.passenger-complete__report-reason[aria-checked="true"] .passenger-complete__report-radio {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 5px, transparent 6px);
+}
+/* Stage gating: the select bits (desc / reasons / submit) vs the submitted
+   confirmation, driven by content.dataset.reportStage. */
+.passenger-complete__scroll[data-report-stage="submitted"] [data-report-stage-select] { display: none !important; }
+.passenger-complete__scroll:not([data-report-stage="submitted"]) [data-report-stage-submitted] { display: none !important; }
+.passenger-complete__report-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 8px 6px 4px;
+}
+.passenger-complete__report-done-ic {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--success);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+.passenger-complete__report-done-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.passenger-complete__report-done-meta {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.4;
 }
 
 @media (max-width: 380px) {
