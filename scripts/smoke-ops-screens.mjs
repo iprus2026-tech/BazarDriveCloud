@@ -103,6 +103,15 @@ for (const [name, fn] of [
   expect(`${name} prompt embeds screen id + route + file`,
     out.includes(sample.id) && out.includes(sample.route) && out.includes(sample.file));
 }
+// BD-OPS — the Claude Code prompt bakes in the smoke-suite intent guard: a
+// "confirmed" MEL can be intentionally-pinned behavior, so cross-check before fixing.
+const ccPrompt = generateClaudeCodePrompt(sample, mel);
+expect('claude-code prompt embeds the smoke cross-check step (grep -rlE, file OR route)',
+  /cross-check the smoke suite/i.test(ccPrompt)
+  && /grep -rlE "[^"]+" scripts\/smoke-\*\.mjs/.test(ccPrompt)
+  && ccPrompt.includes('sample\\.js') && ccPrompt.includes('/sample'));
+expect('claude-code prompt warns against editing a pin to force the fix',
+  /never edit a pin/i.test(ccPrompt));
 const card = { id: 'mel_x', screenId: 'BD-SAMPLE-01', route: '/sample', file: 'f.js' };
 const cardOut = renderMelCard(card);
 expect('mel card renderer embeds screen id + route + file',
@@ -162,8 +171,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v162 (bumped for the registry badges/filters)',
-  !!swVer && Number(swVer[1]) >= 162);
+expect('sw.js VERSION is present and >= v174 (bumped for the smoke cross-check connector change)',
+  !!swVer && Number(swVer[1]) >= 174);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
@@ -221,6 +230,13 @@ expect('prompt connector returns empty string for an unknown screen id',
   buildCloudDesignPrompt('NOPE-404', {}) === '');
 expect('checks_connector returns the check command set',
   /node scripts\/check\.mjs/.test(buildCheckCommands(cid)));
+const feedChecks = buildCheckCommands(cid);
+expect('checks_connector prepends a smoke cross-check grep (by file AND route)',
+  /grep -rlE "/.test(feedChecks) && feedChecks.includes('feed\\.js') && feedChecks.includes('/feed'));
+// Codex #685 — route-pinned screens (e.g. Route Picker) must be searched by route
+// too, not just filename, or the guard silently misses the pin.
+expect('checks_connector cross-check searches by route for route-pinned screens',
+  buildCheckCommands('BD-MAP-03').includes('/route-picker'));
 expect('repo_connector surfaces registry facts (route + file) for a screen',
   (getScreenFacts(cid) || {}).route === '/feed' && (getScreenFacts(cid) || {}).file === 'public/src/screens/feed.js');
 expect('screen_contracts_connector derives a contract anchor',

@@ -11,6 +11,11 @@ function branchFor(screen = {}) {
   return `fix/${raw}-repair`;
 }
 
+// Regex-escape a term for a `grep -E` alternation.
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -18,6 +23,10 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const title = screen.title || id;
   const problem = mel.problem || '(describe the defect)';
   const repair = mel.requiredRepair || '(describe the required repair)';
+  const fileBase = String(file).split('/').pop() || file;
+  // Search by file OR route — some smokes pin a screen by its route, not its file.
+  const routeTerm = (typeof screen.route === 'string' && screen.route.startsWith('/')) ? screen.route : '';
+  const pinPattern = [fileBase, routeTerm].filter(Boolean).map(escapeRe).join('|') || escapeRe(fileBase);
 
   return [
     `Task: repair ${id} — ${title}`,
@@ -25,6 +34,12 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `Route: ${route}`,
     `File: ${file}`,
     `Suggested branch: ${branchFor(screen)}`,
+    ``,
+    `Step 0 — cross-check the smoke suite (intent guard)`,
+    `A "confirmed" defect can be intentionally-pinned behavior. Before changing anything:`,
+    `- find the smokes that pin this screen (file or route):  grep -rlE "${pinPattern}" scripts/smoke-*.mjs || echo '(no file/route pin — check by selector)'`,
+    `- read them (and the selectors you are about to touch); if one pins the behavior as INTENDED, stop — this may be WONTFIX or need a different fix.`,
+    `- never edit a pin to force the fix through; if your change breaks a pin, reconsider the fix, not the test.`,
     ``,
     `What to change`,
     repair,
