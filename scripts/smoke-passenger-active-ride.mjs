@@ -526,6 +526,36 @@ for (const s of ['ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP', 'WA
     new RegExp(`${s}:\\s*'${s}'`).test(rideState));
 }
 
+// ── G. COMPLETED report sheet: real submit→confirmation moderation flow (BD-MOD) ──
+// Was a dead-end (pick a reason → toast only; a forward chevron promised a
+// non-existent drill-in). Now mirrors the in-ride safety sheet / order_detail
+// BD-MOD-01: radiogroup reasons → «Отправить жалобу» → «Жалоба отправлена»
+// confirmation, all IN-SCREEN (the BD-RIDE-P-07 safety sheet is NOT rerouted).
+expect('report reasons are a radiogroup (role=radio + aria-checked)',
+  /report-list"[^>]*role="radiogroup"/.test(passenger)
+  && /passenger-complete__report-reason"[^>]*role="radio"[^>]*aria-checked="false"/.test(passenger));
+expect('report sheet has an «Отправить жалобу» submit button (#arp-report-submit)',
+  /id="arp-report-submit"/.test(passenger) && /Отправить жалобу/.test(passenger));
+expect('report sheet has a submitted confirmation (role=status aria-live, «Жалоба отправлена»)',
+  /passenger-complete__report-done"[^>]*role="status"[^>]*aria-live="polite"/.test(passenger)
+  && /Жалоба отправлена/.test(passenger));
+expect('selecting a reason checks it and enables submit',
+  /reportReason\s*=\s*btn\.getAttribute\('data-reason'\)/.test(passenger)
+  && /reportSubmit\.disabled\s*=\s*false/.test(passenger));
+expect('submit advances the sheet to the submitted stage',
+  /reportSubmit\.addEventListener\('click'[\s\S]{0,200}reportStage\s*=\s*'submitted'/.test(passenger));
+expect('submit moves focus to the return CTA (not left on the now-hidden submit button)',
+  /reportStage\s*=\s*'submitted'[\s\S]{0,300}reportReturn\.focus\(\)/.test(passenger));
+expect('the report flow stays in-screen — no /report reroute (BD-RIDE-P-07 preserved)',
+  !/(?:navigate|go)\(\s*['"]\/report/.test(passenger));
+expect('the old dead-end is gone (no «Причина выбрана» toast, no forward chevron in a reason)',
+  !/Причина выбрана/.test(passenger) && !/report-chev/.test(passenger));
+expect('cloud.css gates the report stages + styles the submitted confirmation',
+  /\[data-report-stage="submitted"\]\s+\[data-report-stage-select\]/.test(css)
+  && /\.passenger-complete__report-done\s*\{/.test(css));
+expect('sw.js VERSION bumped to v175+ (precached active_ride_passenger.js + cloud.css changed)',
+  Number((read('../public/sw.js').match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 175);
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
