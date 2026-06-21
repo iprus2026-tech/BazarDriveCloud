@@ -269,6 +269,12 @@ function runCtaAction(spec, post, detailsHref) {
     if (post.canonical === 'ride_order' && post.orderId) {
       go(`/responses?orderId=${encodeURIComponent(post.orderId)}`);
     } else {
+      // BD-POST-01 — defensive fallback, unreachable in shipped flows: an owned
+      // passenger-trip post (the only source of kind 'own') is always a
+      // projection of a canonical ride order — mock_api rideOrderToFeedPost
+      // stamps canonical:'ride_order' + orderId together, and createFeedPost
+      // never emits passenger:true — so the branch above always wins. Kept as a
+      // safe fallback (re-render the post / return to feed), not a live path.
       go(postId ? `/post?id=${encodeURIComponent(postId)}` : '/feed');
     }
     return;
