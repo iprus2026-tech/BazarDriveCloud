@@ -47,5 +47,28 @@ export function loadConfig(env = process.env) {
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);
   }
+  // ALLOWED_ORIGIN, when set, must be a single exact http(s) origin — never a wildcard.
+  // @fastify/cors treats "*" (and arrays containing it) as allow-any-origin, which would
+  // break the exact-origin/no-wildcard boundary (ADR BD-DOCS-041). Reject "*" and any
+  // malformed origin here at startup, before cors.js ever passes the value to @fastify/cors.
+  if (config.allowedOrigin && !isExactOrigin(config.allowedOrigin)) {
+    throw new Error(
+      `Invalid ALLOWED_ORIGIN: "${config.allowedOrigin}" — must be a single exact origin ` +
+        'like https://host[:port] (no path or trailing slash); wildcard "*" is not allowed',
+    );
+  }
   return config;
+}
+
+// A valid ALLOWED_ORIGIN is exactly one http(s) origin with no path, query, or trailing
+// slash — i.e. it round-trips through URL.origin. This rejects "*" (URL parse fails),
+// "https://a.io,https://b.io", "https://host/path", "ftp://host", and bare hostnames.
+function isExactOrigin(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
 }

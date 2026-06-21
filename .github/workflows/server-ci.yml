@@ -4,14 +4,19 @@ name: server-ci
 # Kept fully separate from ci.yml (node scripts/check.mjs over public/+scripts/)
 # and docs-site-ci.yml. Phase 1 only applies the SQL migrations against a real
 # PostgreSQL 16 — the Node app + `npm test` job lands with the Fastify scaffold.
+# public/src/ride_state.js is in the filter on purpose: the parity gate
+# (server/test/ride-status-parity.test.mjs) imports that client module, so a
+# client-only edit to it must still run this CI and fail on enum/transition drift.
 on:
   push:
     paths:
       - 'server/**'
+      - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
   pull_request:
     paths:
       - 'server/**'
+      - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
 
 jobs:

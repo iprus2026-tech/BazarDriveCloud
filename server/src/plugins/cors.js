@@ -1,7 +1,9 @@
 // /server/src/plugins/cors.js — @fastify/cors locked to the single ALLOWED_ORIGIN (the
 // GitHub Pages origin) — the CORS mirror of the client CSP connect-src exact-origin change
 // (ADR BD-DOCS-041). When ALLOWED_ORIGIN is unset (dev/test), CORS is left OFF =>
-// same-origin only. NEVER a wildcard. Registered via fastify-plugin so it applies app-wide.
+// same-origin only. NEVER a wildcard: loadConfig() validates ALLOWED_ORIGIN is a single
+// exact http(s) origin and rejects "*" at startup, so the value handed to @fastify/cors
+// below is already wildcard-free. Registered via fastify-plugin so it applies app-wide.
 import fp from 'fastify-plugin';
 import cors from '@fastify/cors';
 
