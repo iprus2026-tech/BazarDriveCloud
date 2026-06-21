@@ -41,8 +41,10 @@ globalThis.localStorage = {
 globalThis.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} };
 
 const { ensureDemoResponseOrder, getOrderById, DEMO_RESPONSE_ORDER_ID,
-  listNearbyOrders, listRideOrdersAsFeedPosts } =
+  listNearbyOrders, listRideOrdersAsFeedPosts, acceptOrder } =
   await import('../public/src/mock_api.js');
+const { loadActiveRideStore, saveActiveRideStore } =
+  await import('../public/src/ride_state.js');
 
 expect('before ensure: the demo order does not resolve (runtime store empty)',
   getOrderById(DEMO_RESPONSE_ORDER_ID) === null);
@@ -66,9 +68,29 @@ expect('the demo order is excluded from DriverMap (listNearbyOrders skips demo)'
   listNearbyOrders().every((o) => o.id !== DEMO_RESPONSE_ORDER_ID));
 expect('the demo order is excluded from Feed (listRideOrdersAsFeedPosts skips demo)',
   listRideOrdersAsFeedPosts().every((p) => p.orderId !== DEMO_RESPONSE_ORDER_ID));
-expect('ensureDemoResponseOrder regenerates when the linked demo ride is terminal (no dead-trip reuse)',
-  /existing\.status === 'CREATED' && !rideTerminal/.test(mockApi)
+expect('ensureDemoResponseOrder regenerates ONLY on a terminal ride (preserve live handoffs)',
+  /if \(existing && !rideTerminal\) return existing/.test(mockApi)
   && /rideTerminal[\s\S]{0,260}delete store\[tripId\][\s\S]{0,80}saveActiveRideStore/.test(mockApi));
+
+// Codex #688 round 2 — a LIVE accepted handoff must be preserved (not rewritten to
+// CREATED) when the passenger re-opens /inbox mid-trip; only a TERMINAL ride regenerates.
+const demoTrip = `trip_${DEMO_RESPONSE_ORDER_ID}`;
+localStorage.clear();
+ensureDemoResponseOrder();
+acceptOrder(DEMO_RESPONSE_ORDER_ID); // passenger selected a driver: CREATED → ACCEPTED
+const liveStore = loadActiveRideStore();
+liveStore[demoTrip] = { tripId: demoTrip, status: 'DRIVER_EN_ROUTE' };
+saveActiveRideStore(liveStore);
+ensureDemoResponseOrder(); // re-open /inbox while the trip is live
+expect('a live ACCEPTED demo handoff is preserved (not rewritten to CREATED) on re-ensure',
+  (getOrderById(DEMO_RESPONSE_ORDER_ID) || {}).status === 'ACCEPTED');
+const termStore = loadActiveRideStore();
+termStore[demoTrip] = { tripId: demoTrip, status: 'COMPLETED' };
+saveActiveRideStore(termStore);
+ensureDemoResponseOrder(); // re-open /inbox after the trip finished
+expect('after a terminal ride, re-ensure regenerates a fresh CREATED order + clears the dead ride',
+  (getOrderById(DEMO_RESPONSE_ORDER_ID) || {}).status === 'CREATED'
+  && (loadActiveRideStore()[demoTrip] || null) === null);
 
 expect('sw.js VERSION bumped to v177+',
   Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 177);

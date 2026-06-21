@@ -576,11 +576,13 @@ export function ensureDemoResponseOrder() {
   const linkedRide = findActiveRide(tripId);
   const rideTerminal = !!linkedRide && TERMINAL_ACTIVE_RIDE_STATUSES.has(linkedRide.status);
   const existing = getOrderById(DEMO_RESPONSE_ORDER_ID);
-  // Reuse only a still-fresh demo order: status CREATED (not yet consumed by a
-  // select → accept) AND no terminal ride sitting on its fixed tripId. Otherwise
-  // regenerate, so re-opening the notification after one completed/canceled demo
-  // lifecycle restores a working CTA instead of reopening the finished trip.
-  if (existing && existing.status === 'CREATED' && !rideTerminal) return existing;
+  // Preserve an existing handoff while it is live: a fresh CREATED demo order, OR
+  // an ACCEPTED one whose ride is still in progress (the passenger already selected
+  // a driver) — re-opening /inbox mid-trip must NOT rewrite a live ACCEPTED order
+  // back to CREATED. Only regenerate once the linked ride is TERMINAL (one
+  // completed / canceled demo lifecycle), so the notification CTA works again
+  // instead of reopening the finished trip; or when no demo order exists yet.
+  if (existing && !rideTerminal) return existing;
   if (rideTerminal) {
     // Drop the terminal handoff ride so the next select builds a fresh one.
     const store = loadActiveRideStore();
