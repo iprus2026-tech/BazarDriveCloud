@@ -1,9 +1,53 @@
 # `/server` — BazarDrive backend (Phase 1)
 
 > Per ADR **BD-DOCS-041** (`docs-site/docs/decisions/backend-home-and-stack.md`): a
-> self-hosted Node service lives here. **Today this directory contains only the
-> Phase-1 database schema** (`#584`) — the Fastify app, repository layer, auth and
-> CI are later scoped PRs. `status: draft` work; nothing here is deployed.
+> self-hosted Node service lives here. This directory now holds the Phase-1 database
+> schema (`#584`/`#585`) **and the Fastify app scaffold** — the bootable foundation
+> with the data-layer + auth seams. The 8 Mini-Yonder service folders are "wired but
+> dark" (each returns `501` until its phase fills it). `status: draft` work; nothing
+> here is deployed, and no client cutover has happened (gated by `#636`).
+
+## Running the server
+
+```
+cd server
+nvm use                 # Node 22 (server's own .nvmrc; repo .nvmrc=20 is untouched)
+cp .env.example .env    # set DATABASE_URL (Postgres 16); ALLOWED_ORIGIN in prod
+npm ci
+npm run migrate         # apply migrations/*.sql in order
+npm run seed            # dev seed (stub — per-entity seeders land with their module PRs)
+npm run dev             # node --watch; or `npm start` / `docker compose up`
+npm test                # node:test — enum-parity + route smokes
+```
+
+- `GET /api/v1/health` — liveness; `GET /api/v1/readyz` — readiness (DB connectivity + migrations applied).
+- `GET /api/v1/auth/session` — resolves the presented session (live); the OTP
+  request/verify write endpoints return `501` until the next scoped PR.
+- `GET /api/v1/<service>` for the 8 services returns `501 NOT_IMPLEMENTED`.
+
+**Two origins, two CI gates.** The PWA stays on GitHub Pages; `/server` deploys to a
+separate origin (e.g. `https://api.bazardrive.<domain>`). CORS (`@fastify/cors`) and
+the client CSP `connect-src` allow-list exactly that origin — a later, conscious,
+reviewed safety-boundary PR, never a wildcard. The service worker already excludes
+cross-origin `/api`, so no SW change is needed in Phase 1. `node scripts/check.mjs`
+(client) and `cd server && npm test` (server) never entangle. `server-ci.yml` runs two
+jobs against `postgres:16`: **migrations** (apply + idempotent re-apply + object asserts,
+via `psql`) and **app** (`npm ci` → `npm audit --omit=dev --audit-level=high` → `npm run
+migrate` → `npm test` on Node 22).
+
+## Layout (ADR BD-DOCS-041 §`/server` layout)
+
+```
+src/
+  server.js / index.js / config.js   buildApp() (testable, no listen) + entrypoint + env
+  infra/    db(ACTIVE) cache storage bus(dark) logger
+  plugins/  error-handler cors helmet auth(session seam) realtime(dark)
+  domain/   ride-status.js (VERBATIM mirror of ride_state.js) + entities.js (JSDoc)
+  services/ auth(live session + dark OTP) + #1-#8 dark 501 skeletons
+  repositories/ the ONLY SQL seam (sessions.js for the auth read; rest land per module)
+  routes/   health (live) + metrics (dark)
+scripts/    migrate.mjs        test/  node:test (enum-parity gate + route smokes)
+```
 
 # Phase-1 Schema Overview — `/server/migrations/0001_phase1_init.sql`
 

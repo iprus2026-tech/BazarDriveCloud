@@ -4,14 +4,19 @@ name: server-ci
 # Kept fully separate from ci.yml (node scripts/check.mjs over public/+scripts/)
 # and docs-site-ci.yml. Phase 1 only applies the SQL migrations against a real
 # PostgreSQL 16 — the Node app + `npm test` job lands with the Fastify scaffold.
+# public/src/ride_state.js is in the filter on purpose: the parity gate
+# (server/test/ride-status-parity.test.mjs) imports that client module, so a
+# client-only edit to it must still run this CI and fail on enum/transition drift.
 on:
   push:
     paths:
       - 'server/**'
+      - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
   pull_request:
     paths:
       - 'server/**'
+      - 'public/src/ride_state.js'
       - '.github/workflows/server-ci.yml'
 
 jobs:
@@ -71,3 +76,40 @@ jobs:
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger where tgname='trg_ride_events_no_mutation' and not tgisinternal" | grep -qx 1
           echo "schema objects OK"
+
+  app:
+    name: app (Node 22 + npm test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bazardrive
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/bazardrive
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: server/.nvmrc
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
+      - run: npm audit --omit=dev --audit-level=high
+      # Validate the Node migration runner end-to-end against real PostgreSQL 16
+      # (the migrations job above also applies the same SQL via psql).
+      - run: npm run migrate
+      - run: npm test
