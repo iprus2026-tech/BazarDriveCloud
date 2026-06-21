@@ -86,11 +86,21 @@ export default async function feed() {
       if (activeKey === 'trip')      return p.type === 'trip' && !p.passenger;
       return p.type === activeKey;
     });
-    feedList.innerHTML = items.length
-      ? items.map(renderCard).join('')
+    if (items.length) {
+      feedList.innerHTML = items.map(renderCard).join('');
+      return;
+    }
+    // Distinguish a genuinely empty / failed feed (no posts at all) from a
+    // filter that matched nothing — telling the user to "change the filter" is
+    // wrong when there is nothing to show regardless of the active filter.
+    feedList.innerHTML = posts.length === 0
+      ? `<div class="bd-empty">
+           <div class="bd-empty__title">Пока нет публикаций</div>
+           <p>Здесь появятся поездки, попутчики и объявления.</p>
+         </div>`
       : `<div class="bd-empty">
-           <div class="bd-empty__title">Пока пусто</div>
-           <p>Попробуйте сменить фильтр</p>
+           <div class="bd-empty__title">Ничего не найдено</div>
+           <p>Попробуйте сменить фильтр.</p>
          </div>`;
   }
 
