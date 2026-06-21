@@ -3,8 +3,9 @@
 // feed.js routes a feed data-load failure through the global app-shell overlay
 // via the shared data_layer.loadResource adapter (the per-screen loadFeedPosts
 // wrapper was consolidated into data_layer.js in 02A). This smoke asserts the
-// DELEGATION — both feed load sites go through loadResource(listFeedPosts, …) and
-// feed never reads listFeedPosts() outside that wrapper. The guarded-retry
+// DELEGATION — the feed loads only through a single shared loadResource(
+// listFeedPosts, …) path used by both the initial render (refreshList(false))
+// and the retry, and feed never reads listFeedPosts() outside it. The guarded-retry
 // CONTRACT itself (retrying / onlyIfState dismiss / server_error / [] fallback)
 // is pinned once in scripts/smoke-data-layer.mjs.
 //
@@ -50,14 +51,18 @@ expect('feed.js no longer defines its own loadFeedPosts wrapper (consolidated in
 expect('feed.js no longer imports the overlay adapter directly (it goes through data_layer)',
   !/from\s*'\.\.\/app_error_triggers\.js'/.test(feed));
 
-// ── B. both load sites go through loadResource(listFeedPosts, …) ──
-expect('initial render loads via loadResource(listFeedPosts, { onRetry: onFeedRetry, isRetry: false })',
-  /let\s+posts\s*=\s*await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onFeedRetry\s*,\s*isRetry:\s*false\s*\}\s*\)/.test(feed));
+// ── B. the feed loads through ONE shared loadResource(listFeedPosts, …) path ──
+// BD-FEED-01: the screen now returns synchronously and loads in the background
+// (refreshList), so the initial load is kicked via refreshList(false) rather than
+// a top-level `await loadResource` — the single guarded path serves both.
+expect('the initial render kicks the load via refreshList(false), not a top-level await',
+  /refreshList\(\s*false\s*\)/.test(feed)
+  && !/let\s+posts\s*=\s*await\s+loadResource/.test(feed));
 expect('refreshList(isRetry) loads via loadResource(listFeedPosts, { onRetry: onFeedRetry, isRetry })',
-  /async\s+function\s+refreshList\(\s*isRetry\s*\)[\s\S]{0,90}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onFeedRetry\s*,\s*isRetry\s*\}\s*\)/.test(feed));
-expect('both load sites route through loadResource(listFeedPosts, …)',
-  (feed.match(/loadResource\(\s*listFeedPosts\s*,/g) || []).length === 2,
-  'expected initial + refreshList');
+  /async\s+function\s+refreshList\(\s*isRetry\s*\)[\s\S]{0,300}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onFeedRetry\s*,\s*isRetry\s*\}\s*\)/.test(feed));
+expect('the feed reads listFeedPosts only through loadResource — one shared call site',
+  (feed.match(/loadResource\(\s*listFeedPosts\s*,/g) || []).length === 1,
+  'single guarded load path in refreshList (initial + retry)');
 expect('feed.js reads the feed only through the adapter (no direct listFeedPosts() call)',
   (feed.match(/await\s+listFeedPosts\(\)/g) || []).length === 0,
   'listFeedPosts is passed by reference to loadResource, never called directly in feed.js');

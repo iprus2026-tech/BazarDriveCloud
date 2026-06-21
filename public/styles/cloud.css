@@ -11800,6 +11800,46 @@ button.pfp-menu-row:active { opacity: 0.7; }
   z-index: 2;
 }
 
+/* BD-FEED-01 — feed loading skeleton (renderLoading paints these while the first
+   load resolves; the list carries aria-busy). Decorative + aria-hidden. */
+.feed-card--skeleton { pointer-events: none; }
+.feed-skeleton__head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.feed-skeleton__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex: none;
+}
+.feed-skeleton__lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.feed-skeleton__line { height: 12px; border-radius: 6px; }
+.feed-skeleton__line--name  { width: 45%; }
+.feed-skeleton__line--meta  { width: 30%; height: 10px; }
+.feed-skeleton__line--short { width: 60%; }
+.feed-skeleton__avatar,
+.feed-skeleton__line {
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--line) 37%, var(--bg-2) 63%);
+  background-size: 400% 100%;
+  animation: feed-skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes feed-skeleton-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-skeleton__avatar,
+  .feed-skeleton__line { animation: none; }
+}
+
 /* ── Inbox V2 polish (BD-RIDE-INBOX-02) ─────────────────────
    Hub for responses, chat messages and ride events. Uses Cloud
    Design tokens; status palette mirrors active-ride flow. */
