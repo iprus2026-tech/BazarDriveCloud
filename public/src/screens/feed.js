@@ -46,7 +46,7 @@ export default async function feed() {
         <p class="bd-topbar__sub">Москва · сегодня</p>
       </div>
       <div class="feed-topbar-actions">
-        <button class="bd-iconbtn" type="button" aria-label="Поиск">
+        <button class="bd-iconbtn" type="button" data-noop aria-label="Поиск">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
             <circle cx="11" cy="11" r="8"/>
@@ -178,6 +178,14 @@ export default async function feed() {
     // action buttons need JS, handled above.
   });
 
+  // BD-FEED-01 — the search, post-menu (⋮), like, comment and share controls are
+  // intentional UI-only stubs (no backend / target screen yet). Mark them
+  // data-noop and swallow their click so they are explicit no-ops, not mistaken
+  // for broken wiring (mirrors the rules.js data-noop convention).
+  root.addEventListener('click', (e) => {
+    if (e.target.closest('[data-noop]')) e.preventDefault();
+  });
+
   renderList();
   return root;
 }
@@ -231,7 +239,7 @@ function renderCardHeader(p) {
         <div class="feed-card-header__name">${escapeHtml(p.author || '—')}</div>
         <div class="feed-card-header__meta">${escapeHtml(meta)}</div>
       </div>
-      <button class="feed-card-menu" type="button" aria-label="Меню поста">
+      <button class="feed-card-menu" type="button" data-noop aria-label="Меню поста">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
           <circle cx="5" cy="12" r="2"/>
           <circle cx="12" cy="12" r="2"/>
@@ -245,21 +253,21 @@ function renderCardHeader(p) {
 function renderPostActions(p) {
   return `
     <div class="feed-post-actions">
-      <button class="feed-post-actions__btn" type="button" aria-label="Нравится: ${escapeHtml(String(p.likes || 0))}">
+      <button class="feed-post-actions__btn" type="button" data-noop aria-label="Нравится: ${escapeHtml(String(p.likes || 0))}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>
         </svg>
         ${escapeHtml(String(p.likes || 0))}
       </button>
-      <button class="feed-post-actions__btn" type="button" aria-label="Комментарии: ${escapeHtml(String(p.comments || 0))}">
+      <button class="feed-post-actions__btn" type="button" data-noop aria-label="Комментарии: ${escapeHtml(String(p.comments || 0))}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
         </svg>
         ${escapeHtml(String(p.comments || 0))}
       </button>
-      <button class="feed-post-actions__btn feed-post-actions__share" type="button" aria-label="Поделиться">
+      <button class="feed-post-actions__btn feed-post-actions__share" type="button" data-noop aria-label="Поделиться">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <circle cx="18" cy="5" r="3"/>
