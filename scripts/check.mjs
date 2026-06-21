@@ -486,6 +486,19 @@ if (exists(profileInertFeedbackSmoke)) {
   }
 }
 
+// BD-PROFILE-01 (F5) — driver-profile ARIA tab pattern: tabs carry id +
+// aria-controls + roving tabindex, panes are labelled tabpanels, and a shared
+// activateTab() drives click + Arrow/Home/End keyboard nav (deep-link preserved).
+const profileTabsA11ySmoke = path.join(root, 'scripts', 'smoke-profile-tabs-a11y.mjs');
+if (exists(profileTabsA11ySmoke)) {
+  try {
+    execFileSync(process.execPath, [profileTabsA11ySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-tabs-a11y.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
 // Both /respond (getUserVehicle) and the accept-handoff
 // (buildAcceptedDriverSnapshot) consume the shared resolver from

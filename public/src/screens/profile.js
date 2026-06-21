@@ -1013,7 +1013,7 @@ function tabsHtml(activeId = 'overview') {
   return `<div class="pf2-tabs-wrap">
     <div class="pf2-tabs-row" role="tablist">${
       TABS.map((t) =>
-        `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${t.id === activeId}">${t.label}</button>`
+        `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" id="pf2-tab-${t.id}" role="tab" aria-selected="${t.id === activeId}" aria-controls="pf2-pane-${t.id}" tabindex="${t.id === activeId ? '0' : '-1'}">${t.label}</button>`
       ).join('')
     }</div>
   </div>`;
@@ -3608,7 +3608,7 @@ function renderDriver(root, u) {
     </div>
     ${tabsHtml('overview')}
     <div class="bd-scroll">
-      <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview">
+      <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview" role="tabpanel" aria-labelledby="pf2-tab-overview" tabindex="0">
         ${driverHeroHtml(u)}
         ${statusCardHtml(u)}
         ${driverCreateActionsHtml()}
@@ -3620,10 +3620,10 @@ function renderDriver(root, u) {
         ${historySectionHtml()}
         ${quickActionsHtml()}
       </div>
-      <div class="pf2-pane" id="pf2-pane-ip">${ipPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-docs">${docsPaneHtml(u)}</div>
-      <div class="pf2-pane" id="pf2-pane-payouts">${payoutsPaneHtml(payoutsEmpty)}</div>
-      <div class="pf2-pane" id="pf2-pane-security">${securityPaneHtml()}</div>
+      <div class="pf2-pane" id="pf2-pane-ip" role="tabpanel" aria-labelledby="pf2-tab-ip" tabindex="0">${ipPaneHtml(u)}</div>
+      <div class="pf2-pane" id="pf2-pane-docs" role="tabpanel" aria-labelledby="pf2-tab-docs" tabindex="0">${docsPaneHtml(u)}</div>
+      <div class="pf2-pane" id="pf2-pane-payouts" role="tabpanel" aria-labelledby="pf2-tab-payouts" tabindex="0">${payoutsPaneHtml(payoutsEmpty)}</div>
+      <div class="pf2-pane" id="pf2-pane-security" role="tabpanel" aria-labelledby="pf2-tab-security" tabindex="0">${securityPaneHtml()}</div>
     </div>`;
 
   wireMyPostsSection(root);
@@ -3634,21 +3634,46 @@ function renderDriver(root, u) {
   // Tab switching
   const tabBtns = root.querySelectorAll('.pf2-tab');
   const panes   = root.querySelectorAll('.pf2-pane');
-  tabBtns.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabBtns.forEach((t) => { t.classList.remove('pf2-tab--active'); t.setAttribute('aria-selected', 'false'); });
-      panes.forEach((p) => p.classList.remove('pf2-pane--active'));
-      tab.classList.add('pf2-tab--active');
-      tab.setAttribute('aria-selected', 'true');
-      const pane = root.querySelector(`#pf2-pane-${tab.dataset.pane}`);
-      if (pane) pane.classList.add('pf2-pane--active');
-      // BD-ERROR-01C-G — load receipts only when the payouts pane is shown, and
-      // defer past the synchronous mount/programmatic ?pane=payouts click so
-      // window.BD.GlobalError already exists (app.js runs start() before
-      // initGlobalErrorOverlay()). queueMicrotask runs after the current task's
-      // overlay init, flash-free.
-      if (tab.dataset.pane === 'payouts') queueMicrotask(fillReceipts);
+  // BD-PROFILE-01 (F5) — shared activation for click + roving keyboard nav.
+  // Moves the active class, aria-selected, and the roving tabindex (active tab
+  // 0, the rest -1), and swaps the visible tabpanel.
+  function activateTab(tab) {
+    tabBtns.forEach((t) => {
+      const on = t === tab;
+      t.classList.toggle('pf2-tab--active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.setAttribute('tabindex', on ? '0' : '-1');
     });
+    panes.forEach((p) => p.classList.remove('pf2-pane--active'));
+    const pane = root.querySelector(`#pf2-pane-${tab.dataset.pane}`);
+    if (pane) pane.classList.add('pf2-pane--active');
+    // BD-ERROR-01C-G — load receipts only when the payouts pane is shown, and
+    // defer past the synchronous mount/programmatic ?pane=payouts click so
+    // window.BD.GlobalError already exists (app.js runs start() before
+    // initGlobalErrorOverlay()). queueMicrotask runs after the current task's
+    // overlay init, flash-free.
+    if (tab.dataset.pane === 'payouts') queueMicrotask(fillReceipts);
+  }
+  tabBtns.forEach((tab) => {
+    tab.addEventListener('click', () => activateTab(tab));
+  });
+  // WAI-ARIA roving keyboard nav: Arrow/Home/End move focus to a sibling tab
+  // and activate it (automatic-activation tablist). The deep-link / programmatic
+  // `.click()` path is unchanged — it still routes through activateTab.
+  root.querySelector('.pf2-tabs-row')?.addEventListener('keydown', (e) => {
+    const focusedTab = e.target.closest('.pf2-tab');
+    if (!focusedTab) return;
+    const tabs = Array.from(tabBtns);
+    const i = tabs.indexOf(focusedTab);
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    activateTab(tabs[next]);
+    tabs[next].focus();
   });
 
   // BD-RIDE-HISTORY-D-01 / BD-PROFILE-D-03 — deep-link to a pane, e.g.
