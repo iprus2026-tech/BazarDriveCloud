@@ -24,6 +24,12 @@ export const MEL_STATUSES = [
   'DONE',
 ];
 
+// Where the defect actually bites — kept SEPARATE from severity (which is
+// code-correctness). Drives real triage priority: a code-severe MEL reachable
+// only via a dev/QA param is lower-priority than a user-path one (this is the
+// distinction that made the garage demo-2 MEL-B a WONTFIX). BD-OPS / #684 #3.
+export const MEL_REACHABILITY = ['user-path', 'dev-param', 'edge'];
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -78,6 +84,7 @@ export function createMelCard(input = {}) {
     file: input.file || '',
     severity: MEL_SEVERITIES.includes(input.severity) ? input.severity : 'MEL-C',
     status: MEL_STATUSES.includes(input.status) ? input.status : 'DETECTED',
+    reachability: MEL_REACHABILITY.includes(input.reachability) ? input.reachability : 'user-path',
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',
@@ -101,6 +108,7 @@ export function updateMelCard(id, patch = {}) {
   const cur = cards[i];
   const sevCandidate = patch.severity !== undefined ? patch.severity : cur.severity;
   const statusCandidate = patch.status !== undefined ? patch.status : cur.status;
+  const reachCandidate = patch.reachability !== undefined ? patch.reachability : cur.reachability;
   const next = {
     ...cur,
     ...patch,
@@ -111,6 +119,7 @@ export function updateMelCard(id, patch = {}) {
     createdAt: cur.createdAt,
     severity: MEL_SEVERITIES.includes(sevCandidate) ? sevCandidate : cur.severity,
     status: MEL_STATUSES.includes(statusCandidate) ? statusCandidate : cur.status,
+    reachability: MEL_REACHABILITY.includes(reachCandidate) ? reachCandidate : (cur.reachability || 'user-path'),
     updatedAt: new Date().toISOString(),
   };
   cards[i] = next;

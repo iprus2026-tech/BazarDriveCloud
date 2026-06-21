@@ -16,6 +16,7 @@ export function renderMelCard(mel = {}) {
     `Route: ${route}`,
     `File: ${file}`,
     `Severity: ${mel.severity || 'MEL-C'}`,
+    `Reachability: ${mel.reachability || 'user-path'}`,
     `Status: ${mel.status || 'DETECTED'}`,
     ``,
     `Problem`,
