@@ -209,7 +209,7 @@ const INBOX_ITEMS_V1 = [
     summary:   'Подъеду к подъезду №3, позвоню. Цена 950 ₽, подача 4 мин.',
     time:      '2 мин',
     unread:    true,
-    primary:   { label: 'Посмотреть отклик', href: '/responses?postId=trip-2&state=list' },
+    primary:   { label: 'Посмотреть отклик', href: '/responses?orderId=order-demo-response-1&state=list' },
     secondary: { label: 'В чат',             href: '/chat?responseId=response_1' },
   },
   {
@@ -560,6 +560,41 @@ export function getOrderById(id) {
   const list = loadRideOrdersRaw();
   const found = list.find((o) => o && o.id === id);
   return found ? { ...found } : null;
+}
+
+// BD-RESPONSES-01 — the static Inbox "driver responded" notification
+// (inbox-response-1) points at this canonical demo order so the passenger can
+// open the offers board and actually BUILD the active ride (select → /active-ride),
+// not hit a dead-end. Ride orders are runtime/localStorage data, so a static href
+// alone resolves to nothing on a fresh load — this idempotently materialises the
+// order. Called when the Inbox screen MOUNTS (not at module load), so the
+// lifecycle smokes that start from an empty ride-order store are unaffected.
+export const DEMO_RESPONSE_ORDER_ID = 'order-demo-response-1';
+
+export function ensureDemoResponseOrder() {
+  const existing = getOrderById(DEMO_RESPONSE_ORDER_ID);
+  if (existing) return existing;
+  const now = new Date().toISOString();
+  const order = {
+    id: DEMO_RESPONSE_ORDER_ID,
+    type: 'passenger_request',
+    source: 'map',
+    pickup: { id: null, label: 'Внуково' },
+    dropoff: { id: null, label: 'Парк Победы' },
+    distanceKm: 24,
+    durationMin: 38,
+    estimatedPrice: 950,
+    estimatedPriceLabel: '950',
+    scheduledMode: 'now',
+    scheduledAt: now,
+    scheduledLabel: '',
+    comment: '',
+    passenger: null,
+    status: 'CREATED',
+    createdAt: now,
+  };
+  persistRideOrders([order, ...loadRideOrdersRaw()]);
+  return order;
 }
 
 // Spine alias for acceptNearbyOrder — keeps the legacy export stable
