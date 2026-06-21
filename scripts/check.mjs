@@ -499,6 +499,19 @@ if (exists(profileTabsA11ySmoke)) {
   }
 }
 
+// BD-PROFILE-01 (F4) — driver Garage add/edit sheets manage dialog focus:
+// move focus into the panel on open, restore it to the trigger on close, and
+// close on Escape (view-only — the no-mutation contract is unchanged).
+const profileGarageFocusSmoke = path.join(root, 'scripts', 'smoke-profile-garage-focus.mjs');
+if (exists(profileGarageFocusSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileGarageFocusSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-garage-focus.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
 // Both /respond (getUserVehicle) and the accept-handoff
 // (buildAcceptedDriverSnapshot) consume the shared resolver from
