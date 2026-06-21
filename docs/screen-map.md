@@ -52,7 +52,7 @@ Status: `implemented` (рабочий экран) / `partial` (есть, но с
 |---|---|---|---|---|---|---|
 | BD-ONBOARDING-01 (welcome) | Welcome | `/welcome` | `public/src/screens/welcome.js` | guest | implemented | First-run. Скрывает tabbar/FAB. |
 | BD-ONBOARDING-01 | Onboarding | `/onboarding` | `public/src/screens/onboarding.js` | common / guest | implemented | Роль, телефон/OTP (mock), профиль, авто, документы. Pending-intent сохраняется. |
-| BD-FEED-01 | Feed V2 | `/feed` | `public/src/screens/feed.js` | common | implemented | Единственный экран с FAB. Категории, CTA на respond/chat/accept. |
+| BD-FEED-01 | Feed V2 | `/feed` | `public/src/screens/feed.js` | common | implemented | Единственный экран с FAB. Категории; per-card CTA: respond/chat/accept/own-order (own-order → `/responses?orderId=...`); card-body tap → `/post`. |
 | BD-COMPOSER-01 | Composer V2 | `/new` | `public/src/screens/composer.js` | common | implemented | 5 типов публикаций, автосохранение `bazardrive.draft.v2`. |
 | BD-PROFILE-01 | Profile (passenger) | `/profile` | `public/src/screens/profile.js` | passenger / guest | implemented | Дашборд пассажира, верификация телефона (mock). Bell `#pfp-notif-btn` → `/inbox`; история `#pfp-menu-history` → секция (не `/feed`). |
 | BD-PROFILE-02 | Profile (driver) | `/profile` | `public/src/screens/profile.js` | driver | implemented | Overview / Taxi IP / Documents / Payouts / Safety; readiness через `isDriverLineReady()`. Уведомления `#pf2-act-notif` → `/inbox` (бывший toggle). |
@@ -323,7 +323,7 @@ flowchart LR
 - **Work slice:** Feed publish loop
 - **Touches:** `screens/feed.js`, `mock_api.js` (`listFeedPosts`, `mergeFeedAndRideOrderPosts`, `listRideOrdersAsFeedPosts`)
 - **Upstream deps:** `state.js` (роль/onboarded), `mock_api.js` seed + authored + ride-order posts
-- **Downstream deps:** Composer (`/new`), Respond (`/respond`), Post detail (`/post`), Chat, accept-флоу
+- **Downstream deps:** Composer (`/new`), Respond (`/respond`), Post detail (`/post`), Chat, accept-флоу, Responses (own-order CTA → `/responses?orderId=...`)
 - **Related user flows:** passenger publish, driver accept-from-feed
 - **Risk:** medium — единственный экран с FAB; меняет видимость CTA для обеих ролей
 - **Do not touch:** FAB-инвариант (`SHOW_FAB` в `router.js`), регистрация маршрутов в `app.js`

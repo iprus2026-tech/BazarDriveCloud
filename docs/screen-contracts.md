@@ -122,9 +122,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Route | `/feed` |
 | File | `public/src/screens/feed.js` |
 | Data | `listFeedPosts()` from `mock_api.js`; merges seed feed + local ride-order posts. |
-| Main states | All, trips, passenger requests, announcements, marketplace, empty filtered state. |
-| Actions | Category chips, topbar plus, global FAB, card CTA to respond/chat/accept. |
-| Acceptance | Route opens, tab highlights, FAB visible only here, filters work, no CSP/inline regressions. |
+| Main states | All, trips, passenger requests, announcements, marketplace; loading skeleton (first load, `aria-busy`), zero-data (no posts at all) and filtered-empty (filter matched nothing) states. |
+| Actions | Category chips, topbar plus, global FAB; card body tap → Post Detail; per-card CTA: respond / chat / driver-accept / own-order. Search, post-menu (⋮) and like / comment / share are `data-noop` UI-only stubs. |
+| Transitions | Card body tap → `/post?id=...` (BD-POST-01). Card CTA exits: respond → `/respond?postId=...`; chat → `/chat?tripId=...`; driver accept → `/active-ride?role=driver&tripId=...` (canonical ride-order also appends `&status=ACCEPTED`); owned canonical ride-order «К моему заказу» → `/responses?orderId=...` (non-canonical owned post falls back to `/post?id=...`). Feed cards never link to `/order/<id>`. |
+| Acceptance | Route opens, the active tab reflects `aria-selected`, FAB visible only here, filters work, the zero-data and filtered-empty states are distinct, no CSP/inline regressions. |
 
 ### BD-COMPOSER-01 - Composer V2
 
