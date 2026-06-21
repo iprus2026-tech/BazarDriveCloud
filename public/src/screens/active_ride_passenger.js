@@ -1390,6 +1390,9 @@ function renderPassengerRideComplete(ride, deps) {
     reportSubmit.addEventListener('click', () => {
       if (!reportReason) return;
       content.dataset.reportStage = 'submitted';
+      // Move focus to the now-visible return CTA so keyboard / SR users are not
+      // left on the just-hidden submit button (mirrors the rating submit path).
+      if (reportReturn) reportReturn.focus();
     });
   }
 

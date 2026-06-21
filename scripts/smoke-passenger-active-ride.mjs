@@ -544,6 +544,8 @@ expect('selecting a reason checks it and enables submit',
   && /reportSubmit\.disabled\s*=\s*false/.test(passenger));
 expect('submit advances the sheet to the submitted stage',
   /reportSubmit\.addEventListener\('click'[\s\S]{0,200}reportStage\s*=\s*'submitted'/.test(passenger));
+expect('submit moves focus to the return CTA (not left on the now-hidden submit button)',
+  /reportStage\s*=\s*'submitted'[\s\S]{0,300}reportReturn\.focus\(\)/.test(passenger));
 expect('the report flow stays in-screen — no /report reroute (BD-RIDE-P-07 preserved)',
   !/(?:navigate|go)\(\s*['"]\/report/.test(passenger));
 expect('the old dead-end is gone (no «Причина выбрана» toast, no forward chevron in a reason)',
