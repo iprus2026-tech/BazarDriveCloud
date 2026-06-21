@@ -447,6 +447,19 @@ if (exists(profileDriverGarageSmoke)) {
   }
 }
 
+// BD-PROFILE-01 — driver-profile CSS polish pins: --text-1 token, garage-ready
+// card chrome, 44px garage tap-targets, reduced-motion gate on the online-dot
+// pulse, and the SW VERSION bump for the precached cloud.css change.
+const profileCssPolishSmoke = path.join(root, 'scripts', 'smoke-profile-css-polish.mjs');
+if (exists(profileCssPolishSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileCssPolishSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-css-polish.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
 // Both /respond (getUserVehicle) and the accept-handoff
 // (buildAcceptedDriverSnapshot) consume the shared resolver from
