@@ -18,7 +18,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, sep, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const SCRIPTS_DIR = fileURLToPath(new URL('.', import.meta.url));
 const SITE_ROOT = join(SCRIPTS_DIR, '..'); // docs-site/

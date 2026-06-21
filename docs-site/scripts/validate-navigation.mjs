@@ -36,7 +36,7 @@ import { join, relative, sep, extname, basename, dirname, posix } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import matter from 'gray-matter';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const require = createRequire(import.meta.url);
 
