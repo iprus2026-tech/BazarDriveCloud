@@ -18,6 +18,7 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const title = screen.title || id;
   const problem = mel.problem || '(describe the defect)';
   const repair = mel.requiredRepair || '(describe the required repair)';
+  const fileBase = String(file).split('/').pop() || file;
 
   return [
     `Task: repair ${id} — ${title}`,
@@ -25,6 +26,12 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `Route: ${route}`,
     `File: ${file}`,
     `Suggested branch: ${branchFor(screen)}`,
+    ``,
+    `Step 0 — cross-check the smoke suite (intent guard)`,
+    `A "confirmed" defect can be intentionally-pinned behavior. Before changing anything:`,
+    `- find the smokes that pin this screen:  grep -rln "${fileBase}" scripts/smoke-*.mjs`,
+    `- read them (and the selectors you are about to touch); if one pins the behavior as INTENDED, stop — this may be WONTFIX or need a different fix.`,
+    `- never edit a pin to force the fix through; if your change breaks a pin, reconsider the fix, not the test.`,
     ``,
     `What to change`,
     repair,
