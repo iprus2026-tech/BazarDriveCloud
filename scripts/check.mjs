@@ -809,6 +809,20 @@ if (exists(feedInertNoopSmoke)) {
   }
 }
 
+// BD-FEED-01 — static regression smoke for the Feed empty states: renderList
+// distinguishes a genuinely empty / load-failed feed (no posts at all) from a
+// filter that matched nothing, so the change-filter hint is not shown on a
+// zero-data feed.
+const feedEmptyStatesSmoke = path.join(root, 'scripts', 'smoke-feed-empty-states.mjs');
+if (exists(feedEmptyStatesSmoke)) {
+  try {
+    execFileSync(process.execPath, [feedEmptyStatesSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-empty-states.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
 // contract in public/src/data_layer.js (the single guarded-retry wrapper that
 // replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
