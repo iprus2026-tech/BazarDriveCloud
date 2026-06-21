@@ -40,7 +40,8 @@ globalThis.localStorage = {
 };
 globalThis.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} };
 
-const { ensureDemoResponseOrder, getOrderById, DEMO_RESPONSE_ORDER_ID } =
+const { ensureDemoResponseOrder, getOrderById, DEMO_RESPONSE_ORDER_ID,
+  listNearbyOrders, listRideOrdersAsFeedPosts } =
   await import('../public/src/mock_api.js');
 
 expect('before ensure: the demo order does not resolve (runtime store empty)',
@@ -56,6 +57,18 @@ ensureDemoResponseOrder(); // second call
 const all = JSON.parse(localStorage.getItem('bazardrive.ride_orders.v1') || '[]');
 expect('ensureDemoResponseOrder is idempotent (no duplicate on a second call)',
   all.filter((o) => o.id === DEMO_RESPONSE_ORDER_ID).length === 1);
+
+// Codex #688 — the demo order must NOT leak into the shared published-order
+// surfaces (Feed / DriverMap); and a terminal demo lifecycle must regenerate.
+expect('the demo order carries the demo flag (kept out of shared surfaces)',
+  !!resolved && resolved.demo === true);
+expect('the demo order is excluded from DriverMap (listNearbyOrders skips demo)',
+  listNearbyOrders().every((o) => o.id !== DEMO_RESPONSE_ORDER_ID));
+expect('the demo order is excluded from Feed (listRideOrdersAsFeedPosts skips demo)',
+  listRideOrdersAsFeedPosts().every((p) => p.orderId !== DEMO_RESPONSE_ORDER_ID));
+expect('ensureDemoResponseOrder regenerates when the linked demo ride is terminal (no dead-trip reuse)',
+  /existing\.status === 'CREATED' && !rideTerminal/.test(mockApi)
+  && /rideTerminal[\s\S]{0,260}delete store\[tripId\][\s\S]{0,80}saveActiveRideStore/.test(mockApi));
 
 expect('sw.js VERSION bumped to v177+',
   Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 177);

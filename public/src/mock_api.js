@@ -2,7 +2,7 @@
 // active-ride record so the passenger entry never reopens a terminal
 // trip. ride_state.js is the foundation layer (no imports back into
 // mock_api.js), so this introduces no circular dependency.
-import { findActiveRide } from './ride_state.js';
+import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride_state.js';
 
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
@@ -509,7 +509,7 @@ export function createRideOrder(input = {}) {
 
 export function listNearbyOrders() {
   return loadRideOrdersRaw()
-    .filter((o) => o && o.status === 'CREATED')
+    .filter((o) => o && o.status === 'CREATED' && !o.demo)
     .slice(0, 20);
 }
 
@@ -572,8 +572,21 @@ export function getOrderById(id) {
 export const DEMO_RESPONSE_ORDER_ID = 'order-demo-response-1';
 
 export function ensureDemoResponseOrder() {
+  const tripId = `trip_${DEMO_RESPONSE_ORDER_ID}`;
+  const linkedRide = findActiveRide(tripId);
+  const rideTerminal = !!linkedRide && TERMINAL_ACTIVE_RIDE_STATUSES.has(linkedRide.status);
   const existing = getOrderById(DEMO_RESPONSE_ORDER_ID);
-  if (existing) return existing;
+  // Reuse only a still-fresh demo order: status CREATED (not yet consumed by a
+  // select → accept) AND no terminal ride sitting on its fixed tripId. Otherwise
+  // regenerate, so re-opening the notification after one completed/canceled demo
+  // lifecycle restores a working CTA instead of reopening the finished trip.
+  if (existing && existing.status === 'CREATED' && !rideTerminal) return existing;
+  if (rideTerminal) {
+    // Drop the terminal handoff ride so the next select builds a fresh one.
+    const store = loadActiveRideStore();
+    delete store[tripId];
+    saveActiveRideStore(store);
+  }
   const now = new Date().toISOString();
   const order = {
     id: DEMO_RESPONSE_ORDER_ID,
@@ -591,9 +604,15 @@ export function ensureDemoResponseOrder() {
     comment: '',
     passenger: null,
     status: 'CREATED',
+    // Demo-only: keep this order OUT of the shared published-order surfaces
+    // (Feed via rideOrderToFeedPost, DriverMap via listNearbyOrders) so a user
+    // who only opens notifications never appears to have published a ride.
+    demo: true,
     createdAt: now,
   };
-  persistRideOrders([order, ...loadRideOrdersRaw()]);
+  // Replace any stale demo order (e.g. a prior ACCEPTED one) rather than stacking.
+  const rest = loadRideOrdersRaw().filter((o) => !o || o.id !== DEMO_RESPONSE_ORDER_ID);
+  persistRideOrders([order, ...rest]);
   return order;
 }
 
@@ -742,6 +761,7 @@ function formatRideOrderWhen(order) {
 
 export function rideOrderToFeedPost(order) {
   if (!order || typeof order !== 'object') return null;
+  if (order.demo) return null;
   if (order.status !== 'CREATED') return null;
 
   const id = String(order.id || '');
