@@ -2932,7 +2932,6 @@ body {
 /* BD-PROFILE-01 — branded focus-visible ring on the driver-dashboard button
    controls, matching the profile-history / feed-card / inbox-item siblings
    (these buttons kept only the UA default outline, not the accent ring). */
-.pf2-action-row:focus-visible,
 .pf2-edit-btn:focus-visible,
 .pf2-permit-btn:focus-visible,
 .pf2-check-row--action:focus-visible,
@@ -2941,6 +2940,13 @@ body {
 .pf2-doc-add-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* .pf2-action-row sits flush inside .pf2-action-list (overflow: hidden), so a
+   positive outline-offset is clipped at the list edges for the first/last/
+   full-width rows — use an inset ring so it stays fully visible. */
+.pf2-action-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .pf2-action-row__label { flex: 1; text-align: left; font-size: 15px; }
 .pf2-action-row svg { color: var(--text-3); flex-shrink: 0; }

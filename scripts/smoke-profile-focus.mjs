@@ -16,13 +16,18 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
-// The grouped :focus-visible rule exists and carries the branded accent ring.
-const ruleMatch = css.match(/\.pf2-action-row:focus-visible[\s\S]{0,400}?\{([\s\S]*?)\}/);
-expect('F3: a :focus-visible rule anchored on .pf2-action-row exists', !!ruleMatch);
-expect('F3: the focus ring is outline 2px solid var(--accent) + 2px offset',
-  !!ruleMatch
-  && /outline:\s*2px solid var\(--accent\)/.test(ruleMatch[1])
-  && /outline-offset:\s*2px/.test(ruleMatch[1]));
+// .pf2-action-row sits inside .pf2-action-list (overflow: hidden), so it uses an
+// INSET branded ring (negative offset) to stay visible despite the clip.
+const rowMatch = css.match(/\.pf2-action-row:focus-visible\s*\{([\s\S]*?)\}/);
+expect('F3: a :focus-visible rule for .pf2-action-row exists', !!rowMatch);
+expect('F3: .pf2-action-row uses an inset accent ring (2px accent + negative offset, clip-safe)',
+  !!rowMatch
+  && /outline:\s*2px solid var\(--accent\)/.test(rowMatch[1])
+  && /outline-offset:\s*-2px/.test(rowMatch[1]));
+
+// The non-clipped dashboard buttons keep the standard outward 2px accent ring.
+expect('F3: the non-clipped dashboard buttons keep an outward 2px accent ring',
+  /\.pf2-doc-add-btn:focus-visible\s*\{[\s\S]*?outline:\s*2px solid var\(--accent\)[\s\S]*?outline-offset:\s*2px/.test(css));
 
 // Parity coverage: the other driver-dashboard buttons share the same ring.
 for (const sel of ['pf2-edit-btn', 'pf2-permit-btn', 'pf2-check-row--action', 'pf2-ip-go-btn', 'pf2-ip-permit-btn', 'pf2-doc-add-btn']) {
