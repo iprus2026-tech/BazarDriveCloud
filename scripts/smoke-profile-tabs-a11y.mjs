@@ -20,7 +20,16 @@ function expect(label, cond, detail = '') {
 expect('F5: tab button carries id="pf2-tab-${t.id}"', src.includes('id="pf2-tab-${t.id}"'));
 expect('F5: tab button carries aria-controls="pf2-pane-${t.id}"', src.includes('aria-controls="pf2-pane-${t.id}"'));
 expect('F5: tab button has roving tabindex (active 0, others -1)',
-  src.includes("tabindex=\"${t.id === activeId ? '0' : '-1'}\""));
+  src.includes("tabindex=\"${selected ? '0' : '-1'}\""));
+
+// The loading skeleton reuses the row decoratively (no #pf2-pane panels, no
+// keyboard handler), so it must render INERT tabs — no dangling aria-controls,
+// out of the tab order. The live ARIA is gated behind `interactive`.
+expect('F5: tabsHtml accepts an { interactive } option', src.includes('{ interactive = true } = {}'));
+expect('F5: the loading skeleton renders inert tabs (interactive: false)',
+  src.includes("tabsHtml('overview', { interactive: false })"));
+expect('F5: the inert branch omits aria-controls and stays out of tab order',
+  src.includes(": ' tabindex=\"-1\"'"));
 
 // Each pane is a labelled tabpanel.
 for (const p of ['overview', 'ip', 'docs', 'payouts', 'security']) {

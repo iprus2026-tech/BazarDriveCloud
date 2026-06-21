@@ -1002,7 +1002,7 @@ function renderPassenger(root, u, previewState) {
 
 // ── Driver dashboard (BD-PROFILE-02) ─────────────────────────────────────────
 
-function tabsHtml(activeId = 'overview') {
+function tabsHtml(activeId = 'overview', { interactive = true } = {}) {
   const TABS = [
     { id: 'overview', label: 'Обзор' },
     { id: 'ip',       label: 'Такси·ИП' },
@@ -1012,9 +1012,18 @@ function tabsHtml(activeId = 'overview') {
   ];
   return `<div class="pf2-tabs-wrap">
     <div class="pf2-tabs-row" role="tablist">${
-      TABS.map((t) =>
-        `<button type="button" class="pf2-tab${t.id === activeId ? ' pf2-tab--active' : ''}" data-pane="${t.id}" id="pf2-tab-${t.id}" role="tab" aria-selected="${t.id === activeId}" aria-controls="pf2-pane-${t.id}" tabindex="${t.id === activeId ? '0' : '-1'}">${t.label}</button>`
-      ).join('')
+      TABS.map((t) => {
+        const selected = t.id === activeId;
+        // BD-PROFILE-01 (F5) — the live ARIA wiring (id / aria-controls / roving
+        // tabindex) is valid only where the matching #pf2-pane-* tabpanels and the
+        // keyboard handler exist (the real driver profile). The loading skeleton
+        // reuses this row decoratively with NO panels, so it renders inert tabs:
+        // no dangling aria-controls, kept out of the tab order.
+        const live = interactive
+          ? ` id="pf2-tab-${t.id}" aria-controls="pf2-pane-${t.id}" tabindex="${selected ? '0' : '-1'}"`
+          : ' tabindex="-1"';
+        return `<button type="button" class="pf2-tab${selected ? ' pf2-tab--active' : ''}" data-pane="${t.id}" role="tab" aria-selected="${selected}"${live}>${t.label}</button>`;
+      }).join('')
     }</div>
   </div>`;
 }
@@ -1283,7 +1292,7 @@ function renderDriverSkeleton(root) {
       <h1 class="pf2-topbar__title">Профиль</h1>
       <button type="button" class="pf2-topbar__gear" aria-label="Настройки" disabled>${SVG_GEAR}</button>
     </div>
-    ${tabsHtml('overview')}
+    ${tabsHtml('overview', { interactive: false })}
     <div class="bd-scroll" aria-busy="true">
       <p class="pf2-sk-status" role="status">Загружаем профиль…</p>
       ${driverSkeletonBonesHtml()}
