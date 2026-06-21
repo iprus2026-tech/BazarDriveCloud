@@ -28,12 +28,15 @@ const CATS = [
 // only on a successful reload (guarded by onlyIfState), reports server_error
 // with the guarded onRetry on failure, and falls back to [] so the feed's own
 // empty state is preserved (the overlay is additive).
-export default async function feed() {
-  // Retry re-runs the feed load (isRetry=true → 'retrying' progress, dismiss on
-  // success). refreshList is hoisted, so referencing it here before its
-  // declaration is safe — the arrow only runs when the user taps «Повторить».
+export default function feed() {
+  // BD-FEED-01 — return the screen shell synchronously and load in the
+  // background (refreshList) so the feed paints a loading skeleton immediately
+  // instead of leaving #app blank while the data resolves (the router clears
+  // #app before awaiting the loader). Both the initial load and the retry go
+  // through refreshList → loadResource (BD-ERROR-01C-B: single guarded path,
+  // server_error overlay + [] fallback). The retry arrow runs only on «Повторить».
   const onFeedRetry = () => { refreshList(true); };
-  let posts = await loadResource(listFeedPosts, { onRetry: onFeedRetry, isRetry: false });
+  let posts = [];
   let activeKey = 'all';
 
   const root = document.createElement('section');
@@ -75,11 +78,31 @@ export default async function feed() {
   const feedList = root.querySelector('.feed-list');
 
   async function refreshList(isRetry) {
+    // Skeleton only on the first load; a retry shows the global 'retrying'
+    // overlay (loadResource), so the existing content / empty state stays put.
+    if (!isRetry) renderLoading();
     posts = await loadResource(listFeedPosts, { onRetry: onFeedRetry, isRetry });
     renderList();
   }
 
+  function renderLoading() {
+    feedList.setAttribute('aria-busy', 'true');
+    feedList.innerHTML = Array.from({ length: 4 }, () => `
+      <div class="bd-card feed-card--skeleton" aria-hidden="true">
+        <div class="feed-skeleton__head">
+          <div class="feed-skeleton__avatar"></div>
+          <div class="feed-skeleton__lines">
+            <div class="feed-skeleton__line feed-skeleton__line--name"></div>
+            <div class="feed-skeleton__line feed-skeleton__line--meta"></div>
+          </div>
+        </div>
+        <div class="feed-skeleton__line"></div>
+        <div class="feed-skeleton__line feed-skeleton__line--short"></div>
+      </div>`).join('');
+  }
+
   function renderList() {
+    feedList.setAttribute('aria-busy', 'false');
     const items = posts.filter((p) => {
       if (activeKey === 'all')       return true;
       if (activeKey === 'passenger') return p.type === 'trip' && p.passenger === true;
@@ -196,7 +219,7 @@ export default async function feed() {
     if (e.target.closest('[data-noop]')) e.preventDefault();
   });
 
-  renderList();
+  refreshList(false);
   return root;
 }
 

@@ -823,6 +823,19 @@ if (exists(feedEmptyStatesSmoke)) {
   }
 }
 
+// BD-FEED-01 — static regression smoke for the Feed loading skeleton: the feed
+// returns synchronously and paints an aria-busy skeleton (refreshList(false))
+// while the first load resolves, with a reduced-motion-aware shimmer in cloud.css.
+const feedLoadingSmoke = path.join(root, 'scripts', 'smoke-feed-loading.mjs');
+if (exists(feedLoadingSmoke)) {
+  try {
+    execFileSync(process.execPath, [feedLoadingSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-loading.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
 // contract in public/src/data_layer.js (the single guarded-retry wrapper that
 // replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
