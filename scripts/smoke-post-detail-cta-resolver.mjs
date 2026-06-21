@@ -79,6 +79,11 @@ expect('runCtaAction gates on onboarding (setPendingAction → /onboarding) befo
   /if \(!fresh\.onboarded\)/.test(runBody)
   && /setPendingAction\(/.test(runBody)
   && /go\('\/onboarding'\)/.test(runBody));
+// The gate must RESUME the tapped CTA after onboarding (replay runCtaAction),
+// not just return to the post screen — otherwise the originally-tapped
+// respond/accept/chat/own intent is silently dropped and the user must tap again.
+expect('onboarding gate resumes the tapped CTA (setPendingAction replays runCtaAction)',
+  /setPendingAction\(\s*\(\)\s*=>\s*runCtaAction\(/.test(runBody));
 
 // ── E. no-primary footer (announcement/system) = single Назад, no respond CTA ──
 expect("kind 'none' footer is the single Назад (#pd-cancel), no #pd-respond",

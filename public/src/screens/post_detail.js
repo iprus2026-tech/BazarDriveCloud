@@ -254,7 +254,13 @@ function runCtaAction(spec, post, detailsHref) {
   // role; onboarded and identity fields are untouched by the override.
   const fresh = applySmokeRole(user.get());
   if (!fresh.onboarded) {
-    setPendingAction(() => go(detailsHref));
+    // BD-POST-01 — resume the tapped CTA after onboarding instead of only
+    // returning to the post screen. Matches the requireOnboarding(after)
+    // convention (app.js / composer.js): onboarding.js finish() persists
+    // onboarded:true BEFORE running this closure, so re-entering runCtaAction
+    // finds the gate open and falls through to the spec.kind branch (no
+    // recursion). detailsHref stays the own/respond fallback inside the action.
+    setPendingAction(() => runCtaAction(spec, post, detailsHref));
     go('/onboarding');
     return;
   }
