@@ -796,6 +796,19 @@ if (exists(feedA11ySmoke)) {
   }
 }
 
+// BD-FEED-01 — static regression smoke for the Feed inert-control stubs: the
+// search / kebab / like / comment / share controls carry data-noop and a
+// delegated handler swallows their click (explicit stubs, like rules.js).
+const feedInertNoopSmoke = path.join(root, 'scripts', 'smoke-feed-inert-noop.mjs');
+if (exists(feedInertNoopSmoke)) {
+  try {
+    execFileSync(process.execPath, [feedInertNoopSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-inert-noop.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
 // contract in public/src/data_layer.js (the single guarded-retry wrapper that
 // replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
