@@ -4,7 +4,7 @@ docType: process
 title: Project Tracking — Mini-Yonder Growth Path
 owner: docs-contract-agent
 status: current
-revision: 2026-06-18
+revision: 2026-06-21
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -34,19 +34,29 @@ field is the spine:
 
 | Design State | Meaning |
 | --- | --- |
-| **Shipped** | A real client-side equivalent exists in `public/` today (the anchors — service #5 Ride State Machine, #8 History & Receipt). |
-| **Designed (ADR)** | A target decision record exists (`status: draft`), but nothing is built — phases BD-DOCS-030–038. |
+| **Shipped** | Real, running behaviour exists — *where* depends on the phase. **Client-anchor phases** (#5 Ride State Machine, #8 History & Receipt): a client-side equivalent exists in `public/`. **Backend service phases**: the server implementation is merged to `main` and **live** in `/server` — serving real behaviour, `server-ci` green — not a dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, a bootable scaffold, or a merged ADR alone. |
+| **Designed (ADR)** | The phase has a target decision record (`status: draft`) but is **not yet live** — either nothing is built, or only merged-but-dark scaffolding exists (a `501 NOT_IMPLEMENTED` service, a structured-but-dark seam, a bootable scaffold), e.g. a backend phase whose Fastify app is merged while its endpoints stay dark. Phases BD-DOCS-030–038. |
 | **Todo** | An open runtime gap with no ADR and no implementation (e.g. real Mapbox SDK, no-show full lifecycle, node:test coverage). |
+
+The board also carries GitHub's built-in **Status** field (`Todo` / `In Progress`
+/ `Done`) for work-in-flight; it is independent of `Design State` — an item can be
+`In Progress` (a PR is open) while still `Designed (ADR)` until the phase actually
+ships. (`Design State` is the design-maturity spine; **Status** is just
+work-tracking.)
 
 ## How items map to the process
 
 1. **Todo → Designed (ADR).** A gap starts as **Todo**. When its decision record
    is written and merged (the ADR pipeline — small docs-only PR, `status: draft`),
    its item moves to **Designed (ADR)** and links the BD-DOCS-0xx record.
-2. **Designed (ADR) → Shipped.** When the phase is actually implemented and ships
-   in `public/`, the item moves to **Shipped** — and only then. A draft ADR is a
-   target, not shipped behaviour; do **not** mark an item Shipped on the strength
-   of a merged ADR alone.
+2. **Designed (ADR) → Shipped.** When the phase actually ships, the item moves to
+   **Shipped** — and only then. *Where* it ships depends on the phase: client-anchor
+   phases ship in `public/`; backend service phases ship when the server
+   implementation is merged to `main` and **live** in `/server` — serving real
+   behaviour, `server-ci` green. A draft ADR, or merged-but-dark server code (a dark
+   `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, or a bootable
+   scaffold), is a target — not shipped behaviour. None of these is `Shipped` on its
+   own.
 3. **Every change still follows the normal discipline.** Branch off updated
    `main`, one scoped PR, green checks (`scripts/check.mjs` / `dispatcher.mjs`,
    plus the docs-site validators for docs), review threads resolved, squash-merge

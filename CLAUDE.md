@@ -4,14 +4,17 @@
 
 Repository: `iprus2026-tech/BazarDriveCloud`
 
-BazarDriveCloud is a vanilla PWA and Cloud Design repository.
+BazarDriveCloud is primarily a vanilla PWA and Cloud Design repository. Since #655
+it also hosts the in-repo backend under `/server` (Phase 1+, per ADR BD-DOCS-041),
+kept strictly separate from the PWA.
 
 It is not:
 - an Android app
-- a backend repository
 - a React or Vite runtime app
 
-The current app is a static PWA with:
+The PWA frontend (`public/`) is itself not a backend — no server code or DB lives
+there; backend work belongs under `/server`, never mixed into the PWA. The PWA is a
+static app with:
 - `public/index.html`
 - `public/src/*.js` ES modules
 - `public/styles/cloud.css`
@@ -19,6 +22,9 @@ The current app is a static PWA with:
 - strict CSP
 - service worker
 - GitHub Pages
+
+The backend (`/server`) is a separate Node/Fastify + Postgres app (ADR BD-DOCS-041),
+gated by its own `server-ci` workflow.
 
 ## Main source of truth
 
@@ -88,17 +94,28 @@ Report: merge commit SHA, main SHA after pull, check result, dispatcher result, 
 Planning is tracked on **GitHub Project #1 — "BazarDrive — Mini-Yonder Growth Path"**
 (linked to the repo), the planning view of the Mini-Yonder growth path
 (`docs-site/docs/governance/mini-yonder-background-services.md`, BD-DOCS-023). One
-item per service/phase, keyed by a **Design State** field: `Shipped` (a real
-client-side equivalent exists in `public/` — the #5/#8 anchors) · `Designed (ADR)`
-(a `status: draft` decision record exists — phases BD-DOCS-030–038) · `Todo` (an
-open runtime gap, no ADR/impl).
+item per service/phase, keyed by a **Design State** field: `Shipped` · `Designed
+(ADR)` (a `status: draft` decision record exists — phases BD-DOCS-030–038) · `Todo`
+(an open runtime gap, no ADR/impl).
+
+`Shipped` means real, running behaviour exists — *where* depends on the phase:
+- **Client-anchor phases** (the #5/#8 anchors): `Shipped` when a real client-side
+  equivalent exists in `public/`.
+- **Backend service phases**: `Shipped` only when the phase's server implementation
+  is merged to `main` and **live** in `/server` — serving real behaviour,
+  `server-ci` green. A dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark
+  seam, a bootable scaffold, or a merged ADR alone is a target, not `Shipped`.
 
 Move an item to `Designed (ADR)` only when its ADR merges, and to `Shipped` only
-when the phase actually ships in `public/` — a draft ADR is a target, not shipped
-behaviour. The board reflects work done through the normal branch → PR → merge
-discipline; it does not replace it. Full process: `docs-site` BD-DOCS-006
-(Project Tracking). The board is a reference view — the runtime, the contracts,
-and the docs-site ADRs stay the sources of truth.
+under the rule above. A draft ADR, or merged-but-dark code, stays `Designed (ADR)`
+(a target) until the phase goes live — it is never `Shipped` on that basis, and a
+merged-but-dark backend phase is not `Todo` either. (The board's separate
+**Status** field — `Todo` / `In Progress`
+/ `Done` — tracks work-in-flight and is independent of `Design State`.) The board
+reflects work done through the normal branch → PR → merge discipline; it does not
+replace it. Full process: `docs-site` BD-DOCS-006 (Project Tracking). The board is
+a reference view — the runtime, the contracts, and the docs-site ADRs stay the
+sources of truth.
 
 ## Safety boundaries
 
