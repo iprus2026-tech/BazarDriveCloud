@@ -11701,7 +11701,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 
 .post-detail__contact {
-  align-items: center;
+  /* BD-POST-01 — align the icon to the leading label (top), not the vertical
+     centre of the 3-line body. Matches the .bd-alert base (flex-start). */
+  align-items: flex-start;
   margin-top: 4px;
 }
 .post-detail__contact-icon {
