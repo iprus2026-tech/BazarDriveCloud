@@ -138,6 +138,14 @@ function renderFactsRow(p) {
 }
 
 function renderContactBlock(p, onboarded) {
+  // BD-POST-01 — the author-contact atom is only meaningful for ride posts
+  // (type 'trip': a driver offer or a passenger request). System / announcement
+  // posts have no contactable author (pickCtaSpec → kind 'none'), and marketplace
+  // contacts are revealed only after responding (respond.js: «Контакты продавца
+  // раскрываются после ответа»). Rendering it for those types would surface
+  // revealedPhone()'s mock «+7 (900) 000-00-00» fallback as a fabricated, dialable
+  // «Контакт автора» on administrative / system content — so gate it here.
+  if (p.type !== 'trip') return '';
   if (onboarded) {
     return `
       <div class="bd-alert success post-detail__contact">
