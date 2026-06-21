@@ -118,6 +118,26 @@ expect('mel card renderer embeds screen id + route + file',
   typeof renderMelCard === 'function'
   && cardOut.includes(card.screenId) && cardOut.includes(card.route) && cardOut.includes(card.file));
 
+// ── D2. MEL reachability field (BD-OPS / #684 #3) — triage by real impact ──
+// reachability is SEPARATE from severity: a code-severe MEL reachable only via a
+// dev/QA param is lower-priority than a user-path one. Pinned end-to-end:
+// store vocab + validation, the card renderer, and the dashboard editor select.
+expect('store exports MEL_REACHABILITY = [user-path, dev-param, edge]',
+  /export const MEL_REACHABILITY\s*=\s*\[[^\]]*'user-path'[^\]]*'dev-param'[^\]]*'edge'[^\]]*\]/.test(storeSrc));
+expect('createMelCard validates + defaults reachability to user-path',
+  /reachability:\s*MEL_REACHABILITY\.includes\(input\.reachability\)\s*\?\s*input\.reachability\s*:\s*'user-path'/.test(storeSrc));
+expect('updateMelCard validates reachability against the vocab',
+  /reachability:\s*MEL_REACHABILITY\.includes\(reachCandidate\)/.test(storeSrc));
+expect('renderMelCard renders the Reachability line (value + default)',
+  renderMelCard({ id: 'mel_r', screenId: 'BD-X', route: '/x', file: 'x.js', reachability: 'dev-param' }).includes('Reachability: dev-param')
+  && renderMelCard({}).includes('Reachability: user-path'));
+expect('dashboard imports MEL_REACHABILITY and renders the reachability select',
+  /MEL_REACHABILITY/.test(screenSrc)
+  && /id="mel-reachability"[\s\S]{0,90}optionList\(MEL_REACHABILITY/.test(screenSrc));
+expect('dashboard mirrors the reachability select into form state + the save payload',
+  /mel-reachability'\)\s*state\.melForm\.reachability\s*=/.test(screenSrc)
+  && /reachability:\s*read\('#mel-reachability'\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -171,8 +191,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v174 (bumped for the smoke cross-check connector change)',
-  !!swVer && Number(swVer[1]) >= 174);
+expect('sw.js VERSION is present and >= v176 (bumped for the MEL reachability field)',
+  !!swVer && Number(swVer[1]) >= 176);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

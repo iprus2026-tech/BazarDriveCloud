@@ -24,6 +24,7 @@ import {
   nextMelStatus,
   MEL_SEVERITIES,
   MEL_STATUSES,
+  MEL_REACHABILITY,
 } from '../ops/ops_mel_store.js';
 import { renderMelCard } from '../ops/templates/screen_mel_card_template.js';
 import { buildCloudDesignPrompt } from '../ops/connectors/cloud_design_connector.js';
@@ -224,6 +225,10 @@ export default function opsScreens() {
           <select id="mel-status" class="ops-melform__control">${optionList(MEL_STATUSES, f.status)}</select>
         </label>
         <label class="ops-melform__row">
+          <span class="ops-melform__label">Reachability</span>
+          <select id="mel-reachability" class="ops-melform__control">${optionList(MEL_REACHABILITY, f.reachability)}</select>
+        </label>
+        <label class="ops-melform__row">
           <span class="ops-melform__label">Problem</span>
           <textarea id="mel-problem" class="ops-melform__control" rows="2">${esc(f.problem)}</textarea>
         </label>
@@ -374,6 +379,7 @@ export default function opsScreens() {
     if (!state.melForm) return;
     if (t.id === 'mel-severity') state.melForm.severity = t.value;
     else if (t.id === 'mel-status') state.melForm.status = t.value;
+    else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
     else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
     else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
@@ -452,6 +458,7 @@ export default function opsScreens() {
         state.melForm = {
           severity: 'MEL-C',
           status: 'DETECTED',
+          reachability: 'user-path',
           problem: '',
           operationalDecision: '',
           requiredRepair: '',
@@ -484,6 +491,7 @@ export default function opsScreens() {
           file: s.file,
           severity: read('#mel-severity'),
           status: read('#mel-status'),
+          reachability: read('#mel-reachability'),
           problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
