@@ -65,13 +65,17 @@ expect('ops_screens.js has a default export',
 expect('/ops/screens is NOT a tabbar data-route in index.html',
   !/data-route="\/ops\/screens"/.test(indexHtml));
 
-// ── B2. Welcome guard bypass (BD-OPS-03) — opens from a clean profile ──
+// ── B2. Dev/docs route policy (BD-OPS-03/09) ──
 // Focused source pins: allowlist exists, the guard NEGATES it (so dev/docs
-// routes are exempted, not redirected), and the product guard is untouched.
+// routes are exempted, not redirected), and the same allowlist hides product
+// chrome/tabbar/FAB without broadening the product HIDE_CHROME list.
 expect('router defines dev/docs route allowlist containing /ops/screens',
   /const\s+DEV_DOCS_ROUTES\s*=\s*new\s+Set\(\s*\[\s*['"]\/ops\/screens['"]\s*\]\s*\)/.test(router));
 expect('welcome guard exempts dev/docs routes via negated allowlist',
-  /!\s*DEV_DOCS_ROUTES\.has\(path\)/.test(router));
+  /const\s+isDevDocsRoute\s*=\s*DEV_DOCS_ROUTES\.has\(path\)/.test(router)
+  && /!\s*isDevDocsRoute/.test(router));
+expect('/ops/screens hides product chrome via the dev/docs route policy',
+  /const\s+noChrome\s*=\s*!\s*u\.welcomeSeen\s*\|\|\s*HIDE_CHROME\.has\(path\)\s*\|\|\s*isDevDocsRoute/.test(router));
 expect('welcome guard still redirects first-run non-welcome routes to /welcome',
   /!\s*u\.welcomeSeen/.test(router)
   && /path\s*!==\s*['"]\/welcome['"]/.test(router)
