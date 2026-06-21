@@ -96,10 +96,9 @@ item per service/phase, keyed by a **Design State** field: `Shipped` · `Designe
 - **Client-anchor phases** (the #5/#8 anchors): `Shipped` when a real client-side
   equivalent exists in `public/`.
 - **Backend service phases**: `Shipped` only when the phase's server implementation
-  is merged to `main` and **live** in `/server` — serving real behaviour with
-  `server-ci` green — not a dark `501 NOT_IMPLEMENTED` skeleton or a
-  structured-but-dark seam. A bootable scaffold, a merged-but-dark service folder,
-  or a merged ADR is a target, not `Shipped`.
+  is merged to `main` and **live** in `/server` — serving real behaviour,
+  `server-ci` green. A dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark
+  seam, a bootable scaffold, or a merged ADR alone is a target, not `Shipped`.
 
 Move an item to `Designed (ADR)` only when its ADR merges, and to `Shipped` only
 under the rule above — a draft ADR, or merged-but-dark code, is a target, not

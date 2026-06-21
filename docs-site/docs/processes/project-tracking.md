@@ -34,9 +34,15 @@ field is the spine:
 
 | Design State | Meaning |
 | --- | --- |
-| **Shipped** | Real, running behaviour exists — *where* depends on the phase. **Client-anchor phases** (#5 Ride State Machine, #8 History & Receipt): a client-side equivalent exists in `public/`. **Backend service phases**: the server implementation is merged to `main` and **live** in `/server` (`server-ci` green) — not a dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, a bootable scaffold, or a merged ADR alone. |
+| **Shipped** | Real, running behaviour exists — *where* depends on the phase. **Client-anchor phases** (#5 Ride State Machine, #8 History & Receipt): a client-side equivalent exists in `public/`. **Backend service phases**: the server implementation is merged to `main` and **live** in `/server` — serving real behaviour, `server-ci` green — not a dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, a bootable scaffold, or a merged ADR alone. |
 | **Designed (ADR)** | A target decision record exists (`status: draft`), but nothing is built — phases BD-DOCS-030–038. |
 | **Todo** | An open runtime gap with no ADR and no implementation (e.g. real Mapbox SDK, no-show full lifecycle, node:test coverage). |
+
+The board also carries GitHub's built-in **Status** field (`Todo` / `In Progress`
+/ `Done`) for work-in-flight; it is independent of `Design State` — an item can be
+`In Progress` (a PR is open) while still `Designed (ADR)` until the phase actually
+ships. (`Design State` is the design-maturity spine; **Status** is just
+work-tracking.)
 
 ## How items map to the process
 
@@ -46,10 +52,11 @@ field is the spine:
 2. **Designed (ADR) → Shipped.** When the phase actually ships, the item moves to
    **Shipped** — and only then. *Where* it ships depends on the phase: client-anchor
    phases ship in `public/`; backend service phases ship when the server
-   implementation is merged to `main` and **live** in `/server` (`server-ci` green).
-   A draft ADR — or merged-but-dark server code (a `501` skeleton, a
-   structured-but-dark seam, a bare scaffold) — is a target, not shipped behaviour;
-   do **not** mark an item Shipped on the strength of a merged ADR or a scaffold alone.
+   implementation is merged to `main` and **live** in `/server` — serving real
+   behaviour, `server-ci` green. A draft ADR, or merged-but-dark server code (a dark
+   `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, or a bootable
+   scaffold), is a target — not shipped behaviour. None of these is `Shipped` on its
+   own.
 3. **Every change still follows the normal discipline.** Branch off updated
    `main`, one scoped PR, green checks (`scripts/check.mjs` / `dispatcher.mjs`,
    plus the docs-site validators for docs), review threads resolved, squash-merge
