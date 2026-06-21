@@ -460,6 +460,19 @@ if (exists(profileCssPolishSmoke)) {
   }
 }
 
+// BD-PROFILE-01 (F3) — driver-dashboard focus-visible parity: the pf2 button
+// controls carry the branded accent ring (matching profile-history / feed-card /
+// inbox-item), plus the SW VERSION bump for the precached cloud.css change.
+const profileFocusSmoke = path.join(root, 'scripts', 'smoke-profile-focus.mjs');
+if (exists(profileFocusSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileFocusSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-focus.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
 // Both /respond (getUserVehicle) and the accept-handoff
 // (buildAcceptedDriverSnapshot) consume the shared resolver from
