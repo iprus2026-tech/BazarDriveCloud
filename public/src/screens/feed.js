@@ -178,6 +178,20 @@ export default async function feed() {
     go(`/post?id=${encodeURIComponent(postId)}`);
   });
 
+  // BD-FEED-01 — keyboard parity for the card-body tap: Enter / Space on a
+  // focused card opens Post Detail, mirroring the click path above (and reusing
+  // the same inner-control guard so a focused CTA/like/share keeps its own key
+  // handling). Same go('/post?id=...') destination as the pointer path.
+  feedList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('[data-post-card]');
+    if (!card || e.target.closest('button, a, [data-action]')) return;
+    e.preventDefault();
+    const postId = card.dataset.postCard;
+    if (!postId) return;
+    go(`/post?id=${encodeURIComponent(postId)}`);
+  });
+
   renderList();
   return root;
 }
@@ -186,6 +200,15 @@ export default async function feed() {
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
+}
+
+// BD-FEED-01 — keyboard-operable card affordance (mirrors the .inbox-item
+// pattern). The clickable card body becomes a focusable role="button" so
+// keyboard / screen-reader users can open Post Detail, not just pointer users.
+// Inner controls (CTA / like / comment / share / kebab) keep their own focus.
+function cardOpenAttrs(p) {
+  const who = p.author ? `: ${p.author}` : '';
+  return `role="button" tabindex="0" aria-label="${escapeHtml('Открыть публикацию' + who)}"`;
 }
 
 function renderCard(p) {
@@ -256,7 +279,7 @@ function renderPostActions(p) {
 function renderSystemCard(p) {
   // Render system posts as pinned announcement cards, matching prototype visual
   return `
-    <article class="bd-card feed-card--pinned" data-post-card="${escapeHtml(p.id || '')}">
+    <article class="bd-card feed-card--pinned" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -299,7 +322,7 @@ function renderTripCard(p) {
   }
 
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${postId}">
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${postId}" ${cardOpenAttrs(p)}>
       ${renderCardHeader(p)}
       <div class="feed-route-row">
         <div class="feed-route-track">
@@ -330,7 +353,7 @@ function renderTripCard(p) {
 
 function renderAnnouncementCard(p) {
   return `
-    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${escapeHtml(p.id || '')}">
+    <article class="bd-card${p.pinned ? ' feed-card--pinned' : ''}" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-ann-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.body ? `<p class="feed-card-body">${escapeHtml(p.body)}</p>` : ''}
@@ -344,7 +367,7 @@ function renderMarketplaceCard(p) {
     .map((t) => `<span class="bd-badge">${escapeHtml(t)}</span>`)
     .join('');
   return `
-    <article class="bd-card" data-post-card="${escapeHtml(p.id || '')}">
+    <article class="bd-card" data-post-card="${escapeHtml(p.id || '')}" ${cardOpenAttrs(p)}>
       ${renderCardHeader(p)}
       ${p.title ? `<h2 class="feed-card-mkt-title">${escapeHtml(p.title)}</h2>` : ''}
       ${p.price ? `<div class="feed-card-mkt-price">${escapeHtml(p.price)}</div>` : ''}
