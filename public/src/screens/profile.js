@@ -3798,6 +3798,19 @@ function renderDriver(root, u) {
       if (ipWarn && cur.taxiPermit) ipWarn.hidden = true;
       return;
     }
+    // BD-PROFILE-01 (F1) — «Добавить документ» is a UI-only stub (file upload is
+    // deferred); give it transient feedback like its sibling stubs. Swap
+    // innerHTML so the SVG_PLUS icon is restored after the flash.
+    const addBtn = e.target.closest('#pf2-doc-add');
+    if (addBtn && docsPane.contains(addBtn)) {
+      if (addBtn.dataset.busy !== '1') {
+        addBtn.dataset.busy = '1';
+        const orig = addBtn.innerHTML;
+        addBtn.textContent = 'Загрузка файлов появится в следующей версии';
+        setTimeout(() => { addBtn.innerHTML = orig; delete addBtn.dataset.busy; }, 1500);
+      }
+      return;
+    }
   });
 
   // Re-render readiness card + checklist row in place, without losing focus
@@ -3995,6 +4008,33 @@ function renderDriver(root, u) {
       maybeShowPermitWarn();
       return;
     }
+
+    // BD-PROFILE-01 (F6) — «Продлить разрешение» is a UI-only stub: give it the
+    // same transient "Скоро здесь" feedback its siblings use (no nav/mutation).
+    const permitBtn = e.target.closest('.pf2-ip-permit-btn');
+    if (permitBtn) {
+      if (permitBtn.dataset.busy !== '1') {
+        permitBtn.dataset.busy = '1';
+        const orig = permitBtn.textContent;
+        permitBtn.textContent = 'Скоро здесь';
+        setTimeout(() => { permitBtn.textContent = orig; delete permitBtn.dataset.busy; }, 1500);
+      }
+      return;
+    }
+
+    // BD-PROFILE-01 (F7) — «Подключить парк» chevron row is a dead nav affordance
+    // (no /fleet route exists today); flash the row label instead of dead-ending.
+    const fleetRow = e.target.closest('#pf2-ip-park-fleet');
+    if (fleetRow) {
+      const nameEl = fleetRow.querySelector('.pf2-ip-park-name');
+      if (nameEl && nameEl.dataset.busy !== '1') {
+        nameEl.dataset.busy = '1';
+        const orig = nameEl.textContent;
+        nameEl.textContent = 'Скоро здесь';
+        setTimeout(() => { nameEl.textContent = orig; delete nameEl.dataset.busy; }, 1500);
+      }
+      return;
+    }
   });
 
   // ── Payouts tab interactions ──────────────────────────────────────────────
@@ -4048,6 +4088,21 @@ function renderDriver(root, u) {
     const orig = nameEl.textContent;
     nameEl.textContent = 'Скоро здесь';
     setTimeout(() => { nameEl.textContent = orig; }, 1500);
+  });
+
+  // BD-PROFILE-01 (F11) — saved payout-method rows carry a chevron but had no
+  // handler (they have no id; only the add-card row does). Delegate on the
+  // methods block so every saved row flashes "Скоро здесь" like its siblings;
+  // skip the add-card row, which keeps its own handler above.
+  root.querySelector('#pf2-po-methods-block')?.addEventListener('click', (e) => {
+    const row = e.target.closest('.pf2-po-method-row');
+    if (!row || row.id === 'pf2-po-add-card-btn') return;
+    const nameEl = row.querySelector('.pf2-po-method-name');
+    if (!nameEl || nameEl.dataset.busy === '1') return;
+    nameEl.dataset.busy = '1';
+    const orig = nameEl.textContent;
+    nameEl.textContent = 'Скоро здесь';
+    setTimeout(() => { nameEl.textContent = orig; delete nameEl.dataset.busy; }, 1500);
   });
 
   root.querySelector('#pf2-po-tax-pay-npd-apr')?.addEventListener('click', () => {
