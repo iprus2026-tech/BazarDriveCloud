@@ -2,9 +2,10 @@
 //
 // The Feed contract's primary card action ("card tap → /post?id=...") must be
 // reachable by keyboard / screen-reader users, not just by pointer. The fix
-// makes each clickable card a focusable role="button" (mirroring .inbox-item)
-// and adds an Enter/Space key path to the same go('/post?id=...') the click
-// handler uses, plus a :focus-visible ring. This smoke pins that contract so a
+// makes each clickable card a focusable <article> (role preserved, NOT
+// overridden to "button") with a distinctive label, and adds an Enter/Space key
+// path to the same go('/post?id=...') the click handler uses, plus a
+// :focus-visible ring. This smoke pins that contract so a
 // refactor cannot silently drop the keyboard path or ship a new card type
 // without the affordance.
 //
@@ -23,9 +24,15 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
-// ── A. focusable card affordance helper ──
-expect('cardOpenAttrs emits role="button" tabindex="0" + aria-label',
-  /function cardOpenAttrs[\s\S]*?role="button" tabindex="0" aria-label=/.test(feed));
+// ── A. focusable card affordance that PRESERVES the <article> role ──
+const helper = (feed.match(/function cardOpenAttrs[\s\S]*?\n\}/) || [''])[0];
+const labeler = (feed.match(/function cardLabel[\s\S]*?\n\}/) || [''])[0];
+expect('cardOpenAttrs makes the card focusable (tabindex="0") with an aria-label',
+  /tabindex="0"/.test(helper) && /aria-label=/.test(helper));
+expect('card affordance preserves the article role (no role="button" override)',
+  !/role="button"/.test(helper));
+expect('aria-label is distinctive — cardLabel builds from route/title, not author alone',
+  /p\.from|p\.to|p\.title/.test(labeler));
 
 // ── B. every clickable card applies the affordance; none omit it ──
 const withAffordance = (feed.match(/data-post-card="\$\{[^}]*\}"\s+\$\{cardOpenAttrs\(p\)\}/g) || []).length;

@@ -202,13 +202,22 @@ function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
 }
 
-// BD-FEED-01 — keyboard-operable card affordance (mirrors the .inbox-item
-// pattern). The clickable card body becomes a focusable role="button" so
-// keyboard / screen-reader users can open Post Detail, not just pointer users.
+// BD-FEED-01 — keyboard-operable card affordance (WAI feed pattern). The card
+// stays a real <article> — its role is preserved, NOT overridden to "button" —
+// so the role="feed" container keeps owning article items for assistive tech.
+// It becomes focusable (tabindex="0") with a DISTINCTIVE accessible name built
+// from the route/title (so same-author posts are tellable apart), and an
+// Enter/Space key path (above) opens Post Detail, matching the click handler.
 // Inner controls (CTA / like / comment / share / kebab) keep their own focus.
+function cardLabel(p) {
+  const what = (p.from || p.to)
+    ? `${p.from || '—'} → ${p.to || '—'}`
+    : (p.title || 'публикация');
+  const who = p.author ? ` · ${p.author}` : '';
+  return `Открыть: ${what}${who}`;
+}
 function cardOpenAttrs(p) {
-  const who = p.author ? `: ${p.author}` : '';
-  return `role="button" tabindex="0" aria-label="${escapeHtml('Открыть публикацию' + who)}"`;
+  return `tabindex="0" aria-label="${escapeHtml(cardLabel(p))}"`;
 }
 
 function renderCard(p) {
