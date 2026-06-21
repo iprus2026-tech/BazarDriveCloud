@@ -11778,6 +11778,26 @@ button.pfp-menu-row:active { opacity: 0.7; }
 
 .feed-list [data-post-card] {
   cursor: pointer;
+  position: relative; /* positioning context for the stretched open-link */
+}
+/* BD-FEED-01 — keep the <article> role; a dedicated stretched link is the
+   activatable control. It covers the card for the mouse and is keyboard-
+   focusable (Enter opens Post Detail). Inner controls are raised above it. */
+.feed-card__open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
+.feed-card__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.feed-list [data-post-card] .feed-card-menu,
+.feed-list [data-post-card] .feed-card-cta,
+.feed-list [data-post-card] .feed-post-actions__btn {
+  position: relative;
+  z-index: 2;
 }
 
 /* ── Inbox V2 polish (BD-RIDE-INBOX-02) ─────────────────────

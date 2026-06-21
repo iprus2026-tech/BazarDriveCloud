@@ -768,6 +768,21 @@ if (exists(feedErrorTriggerSmoke)) {
   }
 }
 
+// BD-FEED-01 — static regression smoke for the Feed card keyboard affordance:
+// each clickable card is a focusable role="button" (mirrors .inbox-item) with an
+// Enter/Space path to the same go('/post?id=...') as the click handler, plus a
+// :focus-visible ring — so the contract's primary card action stays reachable by
+// keyboard / screen-reader users.
+const feedCardKeyboardSmoke = path.join(root, 'scripts', 'smoke-feed-card-keyboard.mjs');
+if (exists(feedCardKeyboardSmoke)) {
+  try {
+    execFileSync(process.execPath, [feedCardKeyboardSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-card-keyboard.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
 // contract in public/src/data_layer.js (the single guarded-retry wrapper that
 // replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
