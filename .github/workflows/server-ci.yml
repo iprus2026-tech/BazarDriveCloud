@@ -44,7 +44,7 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: bazardrive
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Apply migrations in order (ON_ERROR_STOP)
         run: |
@@ -100,7 +100,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version-file: server/.nvmrc
