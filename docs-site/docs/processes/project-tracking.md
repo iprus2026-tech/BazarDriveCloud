@@ -35,7 +35,7 @@ field is the spine:
 | Design State | Meaning |
 | --- | --- |
 | **Shipped** | Real, running behaviour exists — *where* depends on the phase. **Client-anchor phases** (#5 Ride State Machine, #8 History & Receipt): a client-side equivalent exists in `public/`. **Backend service phases**: the server implementation is merged to `main` and **live** in `/server` — serving real behaviour, `server-ci` green — not a dark `501 NOT_IMPLEMENTED` skeleton, a structured-but-dark seam, a bootable scaffold, or a merged ADR alone. |
-| **Designed (ADR)** | A target decision record exists (`status: draft`), but nothing is built — phases BD-DOCS-030–038. |
+| **Designed (ADR)** | The phase has a target decision record (`status: draft`) but is **not yet live** — either nothing is built, or only merged-but-dark scaffolding exists (a `501 NOT_IMPLEMENTED` service, a structured-but-dark seam, a bootable scaffold), e.g. a backend phase whose Fastify app is merged while its endpoints stay dark. Phases BD-DOCS-030–038. |
 | **Todo** | An open runtime gap with no ADR and no implementation (e.g. real Mapbox SDK, no-show full lifecycle, node:test coverage). |
 
 The board also carries GitHub's built-in **Status** field (`Todo` / `In Progress`
