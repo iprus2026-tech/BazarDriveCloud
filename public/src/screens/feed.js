@@ -65,7 +65,7 @@ export default async function feed() {
     <div class="feed-chip-row" role="tablist" aria-label="Категории">
       ${CATS.map((c, i) =>
         `<button class="feed-chip${i === 0 ? ' active' : ''}" data-cat="${escapeHtml(c.key)}"
-                 role="tab" type="button">${escapeHtml(c.label)}</button>`
+                 role="tab" type="button" aria-selected="${i === 0 ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
       ).join('')}
     </div>
     <div class="bd-scroll feed-list" role="feed"></div>
@@ -99,7 +99,9 @@ export default async function feed() {
     if (!btn) return;
     activeKey = btn.dataset.cat;
     for (const b of chipRow.querySelectorAll('[data-cat]')) {
-      b.classList.toggle('active', b.dataset.cat === activeKey);
+      const selected = b.dataset.cat === activeKey;
+      b.classList.toggle('active', selected);
+      b.setAttribute('aria-selected', selected ? 'true' : 'false');
     }
     renderList();
   });
@@ -243,14 +245,14 @@ function renderCardHeader(p) {
 function renderPostActions(p) {
   return `
     <div class="feed-post-actions">
-      <button class="feed-post-actions__btn" type="button" aria-label="Нравится">
+      <button class="feed-post-actions__btn" type="button" aria-label="Нравится: ${escapeHtml(String(p.likes || 0))}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/>
         </svg>
         ${escapeHtml(String(p.likes || 0))}
       </button>
-      <button class="feed-post-actions__btn" type="button" aria-label="Комментарии">
+      <button class="feed-post-actions__btn" type="button" aria-label="Комментарии: ${escapeHtml(String(p.comments || 0))}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
           <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>

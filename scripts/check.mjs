@@ -783,6 +783,19 @@ if (exists(feedCardKeyboardSmoke)) {
   }
 }
 
+// BD-FEED-01 — static regression smoke for Feed tab + post-action a11y:
+// category tabs carry aria-selected (kept in sync on click), and the like /
+// comment buttons fold their count into the accessible name so AT announces it.
+const feedA11ySmoke = path.join(root, 'scripts', 'smoke-feed-a11y.mjs');
+if (exists(feedA11ySmoke)) {
+  try {
+    execFileSync(process.execPath, [feedA11ySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-feed-a11y.mjs failed\n${msg}`);
+  }
+}
+
 // BD-ERROR-02A — unified data-load adapter smoke. Guards the loadResource
 // contract in public/src/data_layer.js (the single guarded-retry wrapper that
 // replaces the per-screen 01C copies): awaits fn() in a try, retrying on retry,
