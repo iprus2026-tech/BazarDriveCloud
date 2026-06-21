@@ -473,6 +473,19 @@ if (exists(profileFocusSmoke)) {
   }
 }
 
+// BD-PROFILE-01 (F1/F6/F7/F11) — inert-control feedback parity: four UI-only
+// driver-profile stubs (doc-add, taxi-IP permit / park-fleet, payouts saved
+// method) now flash a transient label like their live siblings; stay inert.
+const profileInertFeedbackSmoke = path.join(root, 'scripts', 'smoke-profile-inert-feedback.mjs');
+if (exists(profileInertFeedbackSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileInertFeedbackSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-inert-feedback.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-05E — Driver snapshot reads from active garage vehicle.
 // Both /respond (getUserVehicle) and the accept-handoff
 // (buildAcceptedDriverSnapshot) consume the shared resolver from
