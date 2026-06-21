@@ -189,6 +189,20 @@ if (exists(postDetailCtaSmoke)) {
   }
 }
 
+// BD-POST-01 — static regression smoke for the post-detail contact-block gate
+// (PR #666): the author-contact atom renders only for ride posts (type 'trip'),
+// so system / announcement / marketplace posts never surface revealedPhone()'s
+// mock fallback as a fabricated dialable «Контакт автора».
+const postDetailContactGateSmoke = path.join(root, 'scripts', 'smoke-post-detail-contact-gate.mjs');
+if (exists(postDetailContactGateSmoke)) {
+  try {
+    execFileSync(process.execPath, [postDetailContactGateSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-post-detail-contact-gate.mjs failed\n${msg}`);
+  }
+}
+
 // BD-MAP-01 / BD-MAP-02 — static regression smoke for the /map and
 // /location-permission branch destinations. Audit #455 flagged the map-flow
 // branches had no dedicated pin.
