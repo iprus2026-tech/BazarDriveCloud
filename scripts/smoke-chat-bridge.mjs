@@ -329,6 +329,18 @@ expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud 
 expect("chat.js doSend returns focus to the input after sending (no focus drop to body)",
   /function\s+doSend[\s\S]*?updateSend\(\)[\s\S]{0,400}inputEl\.focus\(\)/.test(chat));
 
+// ── I. chat.js — message-write robustness (#6 silent-swallow + #7 clobber) ──
+// #7: the send path appends to a FRESH read of the store (not a stale full-array
+// overwrite), so a concurrent same-thread write from another tab is preserved.
+// #6: a failed write returns false and is surfaced to the user, not swallowed.
+expect("chat.js appendMessage re-reads the store and pushes a single record (no stale full-array clobber, #7)",
+  /function\s+appendMessage\s*\(\s*chatId\s*,\s*msg\s*\)[\s\S]*?loadChatStore\(\)[\s\S]{0,220}\.push\(\s*msg\s*\)/.test(chat));
+expect("chat.js appendMessage returns true on write, false on failure (no silent swallow, #6)",
+  /function\s+appendMessage[\s\S]*?return\s+true[\s\S]{0,80}catch[\s\S]{0,40}return\s+false/.test(chat));
+expect("chat.js doSend surfaces a failed message write to the user via showNotice (#6)",
+  /const\s+persisted\s*=\s*appendMessage\(/.test(chat)
+  && /if\s*\(\s*!persisted\s*\)\s*showNotice\(/.test(chat));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
