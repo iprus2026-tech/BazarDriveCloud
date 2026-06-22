@@ -165,6 +165,9 @@ function resolveChatHydration({ tripId, responseId, viewerRole }) {
       const counterpart = viewerRole === 'driver'
         ? (ride.passenger || {})
         : (ride.driver || {});
+      // The avatar colour must match the counterpart actually rendered here:
+      // viewer=driver renders the passenger, viewer=passenger renders the driver.
+      const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
       const trip = {
         from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
         to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
@@ -173,7 +176,7 @@ function resolveChatHydration({ tripId, responseId, viewerRole }) {
         seats:  MOCK_TRIP.seats,
         status: ride.status || 'Принят',
       };
-      return { counterpart, trip, response: null };
+      return { counterpart, trip, response: null, counterpartRole };
     }
   }
   if (responseId) {
@@ -187,13 +190,16 @@ function resolveChatHydration({ tripId, responseId, viewerRole }) {
         seats:  MOCK_TRIP.seats,
         status: 'Принят',
       };
-      return { counterpart: MOCK_DRIVER, trip, response };
+      // This path always renders MOCK_DRIVER (a driver) as the counterpart,
+      // regardless of viewer role — so the avatar shows the driver identity colour.
+      return { counterpart: MOCK_DRIVER, trip, response, counterpartRole: 'driver' };
     }
   }
   return {
     counterpart: MOCK_DRIVER,
     trip: { ...MOCK_TRIP, status: 'Принят' },
     response: null,
+    counterpartRole: 'driver',
   };
 }
 
@@ -400,12 +406,14 @@ export default function chat() {
   const hydration   = resolveChatHydration({ tripId, responseId, viewerRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
-  // BD-CHAT-01 (Cloud Design parity) — the header avatar shows the COUNTERPART
-  // (driver for a passenger viewer, passenger for a driver viewer), so it carries
-  // the counterpart's identity colour to match the .cf-avatar--driver/--passenger
-  // convention used elsewhere (driver = green, passenger = purple). Without this
-  // the avatar was always green, mis-identifying a passenger counterpart.
-  const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
+  // BD-CHAT-01 (Cloud Design parity) — the header avatar carries the COUNTERPART's
+  // identity colour (driver = green, passenger = purple), matching the
+  // .cf-avatar--driver/--passenger convention. The role comes from the hydrated
+  // counterpart that is actually rendered (resolveChatHydration), NOT from
+  // viewerRole: the responseId / demo paths render MOCK_DRIVER regardless of the
+  // viewer, so the colour must follow the data on screen — otherwise a driver
+  // counterpart would show in passenger-purple (Codex #710 P2).
+  const counterpartRole = hydration.counterpartRole;
 
   const root = document.createElement('section');
   root.className = 'screen screen--chat';
