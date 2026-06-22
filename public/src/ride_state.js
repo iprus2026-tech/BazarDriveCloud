@@ -273,6 +273,13 @@ const TERMINAL_RIDE_STATUSES = new Set([
   RIDE_STATUS.COMPLETED,
 ]);
 
+// BD-CHAT-01 (Cloud Design port) — exported terminal check so the chat screen can
+// lock its composer to read-only on a completed/canceled/no-show trip without
+// re-deriving (and drifting from) the canonical terminal set above.
+export function isTerminalRideStatus(status) {
+  return TERMINAL_RIDE_STATUSES.has(status);
+}
+
 export function saveActiveRide(ride) {
   if (!isPlainObject(ride) || !ride.tripId) return ride;
   const store = loadActiveRideStore();

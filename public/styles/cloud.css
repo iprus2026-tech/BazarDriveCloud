@@ -4868,6 +4868,22 @@ body {
   background: var(--bg-1);
 }
 
+/* Terminal read-only state — locked composer + "trip ended" note
+   (BD-CHAT-01, Cloud Design port; mapped from the prototype .ch-readonly-note). */
+.chat__readonly-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 var(--pad) 8px;
+  padding: 9px 11px;
+  background: var(--bg-2);
+  border-radius: 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+.chat__composer--locked { opacity: 0.55; }
+
 .chat__composer-plus {
   opacity: 0.4;
   cursor: default;
