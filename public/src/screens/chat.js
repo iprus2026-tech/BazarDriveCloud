@@ -279,6 +279,41 @@ function createMsgEl(msg, viewerRole) {
   return wrap;
 }
 
+const CHAT_EMPTY_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="26" height="26">
+  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+</svg>`;
+
+// BD-CHAT-01 (Cloud Design port) — the designed thread-empty / first-message state:
+// a «Заказ принят» system pill + a warm, role-specific prompt to start the
+// conversation. No fabricated history (the route / trip bar above stays in place).
+function renderEmptyThread(viewerRole) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat__empty';
+
+  const pill = document.createElement('div');
+  pill.className = 'chat__sys-pill';
+  pill.textContent = 'Заказ принят';
+
+  const ic = document.createElement('div');
+  ic.className = 'chat__empty-ic';
+  ic.setAttribute('aria-hidden', 'true');
+  ic.innerHTML = CHAT_EMPTY_SVG;
+
+  const title = document.createElement('p');
+  title.className = 'chat__empty-title';
+  title.textContent = 'Сообщений пока нет';
+
+  const text = document.createElement('p');
+  text.className = 'chat__empty-text';
+  text.textContent = viewerRole === 'driver'
+    ? 'Напишите пассажиру, чтобы согласовать детали посадки.'
+    : 'Напишите водителю — он уже в курсе вашей поездки.';
+
+  wrap.append(pill, ic, title, text);
+  return wrap;
+}
+
 const BACK_SVG = `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
   <polyline points="11 4 6 9 11 14"/>
@@ -324,7 +359,11 @@ export default function chat() {
       : 'demo';
 
   const stored  = loadMessages(chatId);
-  let messages  = stored ? [...stored] : MOCK_MESSAGES.map((m) => ({ ...m }));
+  // BD-CHAT-01 (Cloud Design port) — a REAL thread (trip/response) with no stored
+  // messages shows the designed empty / first-message state, not a fabricated mock
+  // conversation. The demo thread (chatId === 'demo') keeps MOCK_MESSAGES as a showcase.
+  const isRealThread = chatId !== 'demo';
+  let messages  = stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((m) => ({ ...m })));
 
   const rideContext = resolveRideContext({ responseId, viewerRole });
   // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
@@ -415,15 +454,17 @@ export default function chat() {
   const sendBtn    = root.querySelector('#chat-send');
   const noticeEl   = root.querySelector('#chat-notice');
 
-  // ── Date separator ──────────────────────────────────────────────
-  const sep = document.createElement('div');
-  sep.className = 'chat__date-sep';
-  sep.textContent = 'Сегодня';
-  messagesEl.appendChild(sep);
-
-  // ── Render initial messages ─────────────────────────────────────
-  for (const msg of messages) {
-    messagesEl.appendChild(createMsgEl(msg, viewerRole));
+  // ── Empty thread, or date separator + messages ──────────────────
+  if (isRealThread && messages.length === 0) {
+    messagesEl.appendChild(renderEmptyThread(viewerRole));
+  } else {
+    const sep = document.createElement('div');
+    sep.className = 'chat__date-sep';
+    sep.textContent = 'Сегодня';
+    messagesEl.appendChild(sep);
+    for (const msg of messages) {
+      messagesEl.appendChild(createMsgEl(msg, viewerRole));
+    }
   }
 
   function scrollBottom() {
