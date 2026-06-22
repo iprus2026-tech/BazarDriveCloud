@@ -1,4 +1,4 @@
-const VERSION    = 'v201';
+const VERSION    = 'v202';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -63,6 +63,7 @@ const PRECACHE = [
   './src/ops/templates/screen_mel_card_template.js',
   './src/ops/templates/audit_recipe_template.js',
   './src/ops/templates/port_plan_template.js',
+  './src/ops/templates/mel_export_template.js',
   './src/ops/connectors/repo_connector.js',
   './src/ops/connectors/screen_contracts_connector.js',
   './src/ops/connectors/cloud_design_connector.js',
@@ -71,6 +72,7 @@ const PRECACHE = [
   './src/ops/connectors/checks_connector.js',
   './src/ops/connectors/audit_recipe_connector.js',
   './src/ops/connectors/port_plan_connector.js',
+  './src/ops/connectors/mel_export_connector.js',
   './src/ride_state.js',
   './src/driver_offer_store.js',
   './src/ride_actions.js',

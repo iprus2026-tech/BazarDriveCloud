@@ -36,6 +36,8 @@ const tplAudit = read('../public/src/ops/templates/audit_recipe_template.js');
 const connAudit = read('../public/src/ops/connectors/audit_recipe_connector.js');
 const tplPortPlan = read('../public/src/ops/templates/port_plan_template.js');
 const connPortPlan = read('../public/src/ops/connectors/port_plan_connector.js');
+const tplMelExport = read('../public/src/ops/templates/mel_export_template.js');
+const connMelExport = read('../public/src/ops/connectors/mel_export_connector.js');
 
 // Pure modules are safe to import in Node (no browser globals at module load).
 const { getScreens } = await import(new URL('../public/src/ops/ops_registry.js', import.meta.url));
@@ -54,6 +56,8 @@ const { generateAuditRecipe } = await import(new URL('../public/src/ops/template
 const { buildAuditRecipe } = await import(new URL('../public/src/ops/connectors/audit_recipe_connector.js', import.meta.url));
 const { generatePortPlan } = await import(new URL('../public/src/ops/templates/port_plan_template.js', import.meta.url));
 const { buildPortPlan } = await import(new URL('../public/src/ops/connectors/port_plan_connector.js', import.meta.url));
+const { generateMelExport } = await import(new URL('../public/src/ops/templates/mel_export_template.js', import.meta.url));
+const { buildMelExport } = await import(new URL('../public/src/ops/connectors/mel_export_connector.js', import.meta.url));
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -434,6 +438,75 @@ expect('ops dashboard wires a Port plan button + handler (buildPortPlan over all
   /data-action="gen-port-plan"/.test(screenSrc)
   && /case 'gen-port-plan'[\s\S]{0,180}buildPortPlan\(\s*s\.id\s*,\s*listMelForScreen\(\s*s\.id\s*\)\s*\)/.test(screenSrc));
 
+// ── D16. MEL export artifact (BD-OPS / #684 #6) — MEL cards live only in localStorage
+// (a deliberate dev-scratchpad boundary), so a screen's findings don't survive a session
+// or reach another reviewer. This serialises a screen's set into a PORTABLE markdown +
+// round-trippable JSON artifact for review/tracking, WITHOUT touching the storage key.
+// Read-only over the cards the dashboard passes in. Wired into the dashboard.
+const exportMels = [
+  { id: 'mel_x', screenId: 'BD-RESPONSES-01', severity: 'MEL-B', status: 'DETECTED',
+    reachability: 'user-path', selector: '#choose-driver', pr: '#688',
+    lifecycleAudited: ['first-entry', 'terminal'], problem: 'CTA dead-ends | toast' },
+  { id: 'mel_y', screenId: 'BD-RESPONSES-01', severity: 'MEL-C', status: 'DONE',
+    reachability: 'edge', selector: '', pr: '', problem: 'minor' },
+];
+const melExport = buildMelExport('BD-RESPONSES-01', exportMels);
+expect('mel export exports a generator + connector',
+  typeof generateMelExport === 'function' && typeof buildMelExport === 'function');
+expect('mel export embeds screen id + route + file',
+  melExport.includes('BD-RESPONSES-01') && melExport.includes('/responses') && melExport.includes('responses.js'));
+expect('mel export summarises the MEL count (open vs done)',
+  /MELs:\s*2\s*\(1 open · 1 done\)/.test(melExport));
+expect('mel export renders a markdown table + per-card details reflecting severity/status/reachability/selector/pr',
+  /\| # \| Severity \| Status \| Reach \| Lifecycle \| Selector \| PR \| Problem \|/.test(melExport)
+  && /#choose-driver/.test(melExport) && /MEL-B/.test(melExport)
+  && /user-path/.test(melExport) && /#688/.test(melExport));
+expect('mel export escapes the cell separator so free-text never breaks a table row',
+  /CTA dead-ends \\\| toast/.test(melExport));
+// The headline invariant: the embedded JSON block ROUND-TRIPS the cards LOSSLESSLY
+// (export → re-import). Structural equality — not two cherry-picked fields — so a
+// generator that silently projected to a subset of fields would FAIL the pin. The
+// problem spot-check proves the JSON carries the RAW text (not the table-escaped form).
+const melFence = (melExport.match(/```json\n([\s\S]*?)\n```/) || [])[1];
+let melRoundTrip = null;
+try { melRoundTrip = JSON.parse(melFence); } catch { /* leave null → assertion fails below */ }
+expect('mel export carries a round-trippable JSON block (JSON.parse recovers the cards losslessly)',
+  !!melRoundTrip && JSON.stringify(melRoundTrip) === JSON.stringify(exportMels)
+  && melRoundTrip[0].problem === 'CTA dead-ends | toast');
+// #1 robustness: a MEL whose free-text embeds its OWN ```json fence must not fool a
+// first-match extractor — the genuine block is emitted BEFORE Details, so the FIRST
+// fence is always the real one. (If the order ever regressed, the decoy parses first
+// and JSON.parse throws → this pin fails.)
+const decoyExport = buildMelExport('BD-RESPONSES-01', [
+  { id: 'mel_d', severity: 'MEL-A', status: 'DETECTED', reachability: 'user-path',
+    problem: 'parser dies on:\n```json\n{"oops":}\n```\nbad input' },
+]);
+const decoyFence = (decoyExport.match(/```json\n([\s\S]*?)\n```/) || [])[1];
+let decoyRoundTrip = null;
+try { decoyRoundTrip = JSON.parse(decoyFence); } catch { /* leave null → assertion fails below */ }
+expect('mel export round-trips even when a MEL free-text embeds its own ```json fence (genuine block is first)',
+  Array.isArray(decoyRoundTrip) && decoyRoundTrip.length === 1
+  && decoyRoundTrip[0].problem.includes('parser dies on'));
+// A null / non-object card must degrade, not crash (mirrors port_plan's defensive filter).
+let melNullOk = true;
+try { buildMelExport('BD-RESPONSES-01', [null, exportMels[0]]); } catch { melNullOk = false; }
+expect('mel export tolerates a null / corrupt card without throwing', melNullOk);
+// An empty screen still yields a VALID artifact (no throw, empty [] JSON) — the button
+// is safe to press before any MEL is logged.
+const melExportEmpty = buildMelExport('BD-RESPONSES-01', []);
+const melEmptyFence = (melExportEmpty.match(/```json\n([\s\S]*?)\n```/) || [])[1];
+expect('mel export handles a screen with no MELs (valid artifact + empty [] JSON)',
+  /No MEL cards logged for this screen yet\./.test(melExportEmpty) && melEmptyFence === '[]');
+// #6 boundary: the export reads cards passed IN — it must not ACCESS web storage.
+// Match real ACCESS shapes (localStorage. / localStorage[ / sessionStorage. …), not the
+// bare word in the doc comment (the durable cross-file guard is the static-data gate).
+expect('mel export template + connector are pure (no web-storage access / network at module load)',
+  !/(?:local|session)Storage\s*[.\[]|fetch\(|XMLHttpRequest/.test(tplMelExport)
+  && !/(?:local|session)Storage\s*[.\[]|fetch\(|XMLHttpRequest/.test(connMelExport));
+expect('ops dashboard wires an Export MELs button + handler (buildMelExport over all the screen MELs)',
+  /data-action="export-mel"/.test(screenSrc)
+  && /case 'export-mel'[\s\S]{0,200}buildMelExport\(\s*s\.id\s*,\s*listMelForScreen\(\s*s\.id\s*\)\s*\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -481,6 +554,7 @@ const OPS_PRECACHE = [
   './src/ops/templates/screen_mel_card_template.js',
   './src/ops/templates/audit_recipe_template.js',
   './src/ops/templates/port_plan_template.js',
+  './src/ops/templates/mel_export_template.js',
   './src/ops/connectors/repo_connector.js',
   './src/ops/connectors/screen_contracts_connector.js',
   './src/ops/connectors/cloud_design_connector.js',
@@ -489,6 +563,7 @@ const OPS_PRECACHE = [
   './src/ops/connectors/checks_connector.js',
   './src/ops/connectors/audit_recipe_connector.js',
   './src/ops/connectors/port_plan_connector.js',
+  './src/ops/connectors/mel_export_connector.js',
 ];
 for (const p of OPS_PRECACHE) {
   expect(`sw.js precaches ${p}`, sw.includes(`'${p}'`));
@@ -497,8 +572,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v196 (floor raised with the port-plan generator)',
-  !!swVer && Number(swVer[1]) >= 196);
+expect('sw.js VERSION is present and >= v202 (floor raised with the MEL export artifact)',
+  !!swVer && Number(swVer[1]) >= 202);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
