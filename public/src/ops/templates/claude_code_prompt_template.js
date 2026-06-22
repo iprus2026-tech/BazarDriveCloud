@@ -28,7 +28,7 @@ function dataModelLines(screen = {}) {
     return ['- identify where the entity your repair touches LIVES: a static seed (editable in place) or a runtime store (created at runtime — no static id to point at).'];
   }
   const lines = [
-    `- backed by the ${dm.store || '(unnamed)'} store${dm.runtimeCreated ? ' — entities are CREATED AT RUNTIME (no static seed)' : ''}.`,
+    `- backed by ${dm.store || '(unnamed store)'}${dm.runtimeCreated ? ' — CREATED AT RUNTIME (no static seed)' : ' — STATIC (editable in place)'}.`,
   ];
   if (dm.keyedBy) lines.push(`- keyed by ${dm.keyedBy}.`);
   if (dm.note) lines.push(`- ${dm.note}`);
