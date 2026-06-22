@@ -146,15 +146,16 @@ expect('dashboard mirrors the reachability select into form state + the save pay
 // writes — the class that took BD-RESPONSES-01 (#688) three Codex rounds. Pinned:
 // the curated map, the detection, the MEL-card block, and the prompt Step 0c + the
 // strengthened Step 0 clause.
-expect('blast_radius maps ride_orders -> Feed + DriverMap and tripId -> chat/history/receipts',
+expect('blast_radius maps ride_orders -> Feed + DriverMap + Responses and tripId -> chat/history/receipts',
   Array.isArray(SHARED_SURFACE_MAP)
   && SHARED_SURFACE_MAP.some((e) => e.key === 'ride_orders'
-    && /Feed/.test(e.surfaces.join(' ')) && /DriverMap/.test(e.surfaces.join(' ')))
+    && /Feed/.test(e.surfaces.join(' ')) && /DriverMap/.test(e.surfaces.join(' ')) && /Responses/.test(e.surfaces.join(' ')))
   && SHARED_SURFACE_MAP.some((e) => e.key === 'tripId'
     && /chat/i.test(e.surfaces.join(' ')) && /history/i.test(e.surfaces.join(' ')) && /receipt/i.test(e.surfaces.join(' '))));
-expect('computeBlastRadius flags the shared store a MEL references, and nothing for an unrelated one',
+expect('computeBlastRadius matches free-text + mutation-API mentions, and nothing for an unrelated one',
   computeBlastRadius({ requiredRepair: 'point the seed at a real ride-order id' }).some((e) => e.key === 'ride_orders')
-  && computeBlastRadius({ problem: 'reuses a fixed tripId across lifecycles' }).some((e) => e.key === 'tripId')
+  && computeBlastRadius({ problem: 'fix updateTripStatus terminal handling' }).some((e) => e.key === 'ride_orders')
+  && computeBlastRadius({ problem: 'reuses a fixed trip id across lifecycles' }).some((e) => e.key === 'tripId')
   && computeBlastRadius({ problem: 'pure visual spacing tweak' }).length === 0);
 const cardShared = renderMelCard({ id: 'mel_b', screenId: 'BD-X', route: '/x', file: 'x.js', requiredRepair: 'write the ride_orders store' });
 expect('renderMelCard renders a Blast radius block (named surfaces when matched, reminder when not)',

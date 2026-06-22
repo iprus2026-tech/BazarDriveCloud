@@ -21,16 +21,19 @@ export const SHARED_SURFACE_MAP = [
     // scan is deliberately generous — over-surfacing a reminder is cheap; missing
     // one is the bug this exists to prevent.
     triggers: ['ride_orders', 'rideorder', 'ride-order', 'ride order', 'createrideorder',
-      'listnearbyorders', 'rideordertofeedpost', 'getorderbyid', 'persistrideorders'],
+      'listnearbyorders', 'rideordertofeedpost', 'getorderbyid', 'persistrideorders',
+      // canonical ride-order mutation APIs (called from /responses + active-ride flows)
+      'acceptnearbyorder', 'acceptorder', 'updatetripstatus'],
     surfaces: [
       'Feed — listRideOrdersAsFeedPosts() / rideOrderToFeedPost() project orders into the feed',
       'DriverMap — listNearbyOrders() surfaces CREATED orders to drivers',
+      'Responses — getOrderById() / resolveCanonicalOrder() resolve the order for the offers board (/responses)',
     ],
   },
   {
     key: 'tripId',
     label: 'a shared trip id (trip_<orderId>)',
-    triggers: ['tripid', 'trip_', 'active_ride', 'activeride', 'findactiveride', 'buildpassengeractiveride'],
+    triggers: ['tripid', 'trip id', 'trip-id', 'trip_', 'active_ride', 'activeride', 'findactiveride', 'buildpassengeractiveride'],
     surfaces: [
       'Chat — the chat thread store is keyed by tripId',
       'Ride history — the ride-history store is keyed by tripId',
