@@ -18,6 +18,13 @@ function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Shell single-quote a string so it is a safe LITERAL argument — a selector can
+// contain regex/shell metachars ([, ], ., #, ", …), so the locate-grep uses
+// `grep -nF -- <this>` to avoid "Invalid range end" / wrong matches.
+function shQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
 // #684 #8 — repair-viability lines from the screen's optional data-model fact.
 // With no fact, a generic reminder; with one, name the store, runtime-created
 // nature and what it is keyed by, so a fix that assumes a non-existent static
@@ -42,6 +49,8 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const title = screen.title || id;
   const problem = mel.problem || '(describe the defect)';
   const repair = mel.requiredRepair || '(describe the required repair)';
+  // #684 #2 — anchor on a stable selector/symbol, never a (drifting) line number.
+  const selector = (typeof mel.selector === 'string' && mel.selector.trim()) ? mel.selector.trim() : '';
   const fileBase = String(file).split('/').pop() || file;
   // Search by file OR route — some smokes pin a screen by its route, not its file.
   const routeTerm = (typeof screen.route === 'string' && screen.route.startsWith('/')) ? screen.route : '';
@@ -52,6 +61,9 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     ``,
     `Route: ${route}`,
     `File: ${file}`,
+    selector
+      ? `Anchor: ${selector}  —  locate (line numbers drift, re-resolve now): grep -nF -- ${shQuote(selector)} ${file}`
+      : `Anchor: (none recorded — anchor the defect on a stable selector/symbol, not a line number)`,
     `Suggested branch: ${branchFor(screen)}`,
     ``,
     `Step 0 — cross-check the smoke suite (intent guard)`,

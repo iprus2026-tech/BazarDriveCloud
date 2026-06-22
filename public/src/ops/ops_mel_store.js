@@ -85,6 +85,9 @@ export function createMelCard(input = {}) {
     severity: MEL_SEVERITIES.includes(input.severity) ? input.severity : 'MEL-C',
     status: MEL_STATUSES.includes(input.status) ? input.status : 'DETECTED',
     reachability: MEL_REACHABILITY.includes(input.reachability) ? input.reachability : 'user-path',
+    // #684 #2 — stable selector/symbol anchor (e.g. #pf2-doc-add, markGarageVehicleActive).
+    // Line numbers drift; the anchor + the prompt's grep-locate re-resolve at fix time.
+    selector: typeof input.selector === 'string' ? input.selector : '',
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',
