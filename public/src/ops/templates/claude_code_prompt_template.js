@@ -42,6 +42,14 @@ function dataModelLines(screen = {}) {
   return lines;
 }
 
+// #684 #7 — screen-specific must-not-touch guardrails from the registry, appended
+// to the generic list so a per-screen contract (e.g. the garage no-mutation rule)
+// no longer has to be re-typed into every repair prompt by hand.
+function guardrailLines(screen = {}) {
+  const g = Array.isArray(screen.guardrails) ? screen.guardrails.filter((x) => typeof x === 'string' && x.trim()) : [];
+  return g.map((x) => `- [${screen.id || 'screen'}] ${x}`);
+}
+
 export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -98,6 +106,7 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- localStorage keys, state machines, mock_api semantics`,
     `- backend, Mapbox, auth, payment, push, APK`,
     `- do not add real credentials or private keys`,
+    ...guardrailLines(screen),
     ``,
     `Verify`,
     `- node scripts/check.mjs`,
