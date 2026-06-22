@@ -738,6 +738,14 @@ export default function composer() {
     const d = collectDraft();
     const err = validate(d);
     if (err) {
+      // The error renders into #composer-error, which lives inside the edit pane
+      // (#composer-edit). In preview that pane is hidden and collapsed by
+      // `.screen--composer [hidden] { display:none!important }`, so a
+      // publish-from-preview failure would drop the error into a hidden subtree —
+      // a silent dead-end (the publish CTA is footer-linked and stays live in
+      // preview). Return to the edit view first so the role="alert" error is
+      // actually visible/announced. The valid path is unaffected. (BD-COMPOSER-01)
+      if (isPreview) exitPreview();
       showError(err);
       return;
     }
