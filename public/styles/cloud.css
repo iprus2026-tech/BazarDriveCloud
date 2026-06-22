@@ -14223,11 +14223,14 @@ button.pfp-menu-row:active { opacity: 0.7; }
   border-radius: 999px;
 }
 .trip-receipt__pay-badge--cash {
-  color: #FACC15;
-  background: rgba(250, 204, 21, 0.12);
+  /* Align to the --warning token, matching the .pf2-po-trip-badge payout sibling
+     for the same cash/noncash semantic (#FACC15 was off-palette). */
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
 }
 .trip-receipt__pay-badge--noncash {
-  color: #60A5FA;
+  /* --info is #60A5FA — a byte-identical swap; the tint already uses the info RGB. */
+  color: var(--info);
   background: rgba(96, 165, 250, 0.12);
 }
 .trip-receipt__hero {
