@@ -34,6 +34,8 @@ const connClaude = read('../public/src/ops/connectors/claude_code_connector.js')
 const connChecks = read('../public/src/ops/connectors/checks_connector.js');
 const tplAudit = read('../public/src/ops/templates/audit_recipe_template.js');
 const connAudit = read('../public/src/ops/connectors/audit_recipe_connector.js');
+const tplPortPlan = read('../public/src/ops/templates/port_plan_template.js');
+const connPortPlan = read('../public/src/ops/connectors/port_plan_connector.js');
 
 // Pure modules are safe to import in Node (no browser globals at module load).
 const { getScreens } = await import(new URL('../public/src/ops/ops_registry.js', import.meta.url));
@@ -50,6 +52,8 @@ const { buildClaudeCodePrompt } = await import(new URL('../public/src/ops/connec
 const { buildCheckCommands } = await import(new URL('../public/src/ops/connectors/checks_connector.js', import.meta.url));
 const { generateAuditRecipe } = await import(new URL('../public/src/ops/templates/audit_recipe_template.js', import.meta.url));
 const { buildAuditRecipe } = await import(new URL('../public/src/ops/connectors/audit_recipe_connector.js', import.meta.url));
+const { generatePortPlan } = await import(new URL('../public/src/ops/templates/port_plan_template.js', import.meta.url));
+const { buildPortPlan } = await import(new URL('../public/src/ops/connectors/port_plan_connector.js', import.meta.url));
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -397,6 +401,31 @@ expect('claude-code Verify carries the state-seed recipe (welcomeSeen + Step-0b 
 expect('claude-code Verify still runs check.mjs + dispatcher (#15)',
   /node scripts\/check\.mjs/.test(ccVerify) && /node scripts\/dispatcher\.mjs/.test(ccVerify));
 
+// ── D15. Per-screen port-plan generator for a multi-MEL screen (BD-OPS / #684 #14) ──
+// A screen with several MELs is not N independent repairs — they share files (the screen JS
+// + cloud.css + sw.js). The port-plan generator orders them by severity x reachability and
+// carries the SW-sequencing + no-stack-on-deletable-branch discipline (the BD-CHAT-01 7-PR
+// series: a stacked-PR auto-close #699, a SW collision #701). Wired into the dashboard.
+const portMels = [
+  { id: 'mel_a', severity: 'MEL-D', reachability: 'edge', selector: '#z' },
+  { id: 'mel_b', severity: 'MEL-B', reachability: 'user-path', selector: '#a' },
+  { id: 'mel_c', severity: 'MEL-C', reachability: 'user-path' },
+];
+const portPlan = buildPortPlan('BD-CHAT-01', portMels);
+expect('port-plan exports a generator + connector',
+  typeof generatePortPlan === 'function' && typeof buildPortPlan === 'function');
+expect('port-plan orders findings by severity then reachability (MEL-B before MEL-C before MEL-D edge)',
+  portPlan.indexOf('mel_b') < portPlan.indexOf('mel_c') && portPlan.indexOf('mel_c') < portPlan.indexOf('mel_a'));
+expect('port-plan carries the SW-sequencing rule (bump above the previously merged VERSION; no two PRs at the same vN)',
+  /each PR's VERSION must be ABOVE the previously MERGED one/i.test(portPlan) && /#701 \/ #705/.test(portPlan));
+expect('port-plan carries the no-stack-on-deletable-branch discipline (#699)',
+  /do NOT merge PR-A with --delete-branch[\s\S]{0,140}#699/i.test(portPlan));
+expect('port-plan keeps the one-MEL-one-PR rule (do not bundle)',
+  /ONE small scoped PR — do NOT bundle/i.test(portPlan));
+expect('ops dashboard wires a Port plan button + handler (buildPortPlan over all the screen MELs)',
+  /data-action="gen-port-plan"/.test(screenSrc)
+  && /case 'gen-port-plan'[\s\S]{0,180}buildPortPlan\(\s*s\.id\s*,\s*listMelForScreen\(\s*s\.id\s*\)\s*\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -426,6 +455,8 @@ for (const [name, src] of [
   ['connectors/checks_connector.js', connChecks],
   ['templates/audit_recipe_template.js', tplAudit],
   ['connectors/audit_recipe_connector.js', connAudit],
+  ['templates/port_plan_template.js', tplPortPlan],
+  ['connectors/port_plan_connector.js', connPortPlan],
 ]) {
   expect(`no hard-coded credential assignment in ${name}`, !CRED.test(src));
 }
@@ -441,6 +472,7 @@ const OPS_PRECACHE = [
   './src/ops/templates/claude_code_prompt_template.js',
   './src/ops/templates/screen_mel_card_template.js',
   './src/ops/templates/audit_recipe_template.js',
+  './src/ops/templates/port_plan_template.js',
   './src/ops/connectors/repo_connector.js',
   './src/ops/connectors/screen_contracts_connector.js',
   './src/ops/connectors/cloud_design_connector.js',
@@ -448,6 +480,7 @@ const OPS_PRECACHE = [
   './src/ops/connectors/claude_code_connector.js',
   './src/ops/connectors/checks_connector.js',
   './src/ops/connectors/audit_recipe_connector.js',
+  './src/ops/connectors/port_plan_connector.js',
 ];
 for (const p of OPS_PRECACHE) {
   expect(`sw.js precaches ${p}`, sw.includes(`'${p}'`));
@@ -456,8 +489,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v195 (floor raised with the type-aware Verify bump)',
-  !!swVer && Number(swVer[1]) >= 195);
+expect('sw.js VERSION is present and >= v196 (floor raised with the port-plan generator)',
+  !!swVer && Number(swVer[1]) >= 196);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
