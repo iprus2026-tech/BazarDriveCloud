@@ -32,6 +32,8 @@ const connCloud = read('../public/src/ops/connectors/cloud_design_connector.js')
 const connGithub = read('../public/src/ops/connectors/github_issue_connector.js');
 const connClaude = read('../public/src/ops/connectors/claude_code_connector.js');
 const connChecks = read('../public/src/ops/connectors/checks_connector.js');
+const tplAudit = read('../public/src/ops/templates/audit_recipe_template.js');
+const connAudit = read('../public/src/ops/connectors/audit_recipe_connector.js');
 
 // Pure modules are safe to import in Node (no browser globals at module load).
 const { getScreens } = await import(new URL('../public/src/ops/ops_registry.js', import.meta.url));
@@ -46,6 +48,8 @@ const { buildCloudDesignPrompt } = await import(new URL('../public/src/ops/conne
 const { buildGithubIssue } = await import(new URL('../public/src/ops/connectors/github_issue_connector.js', import.meta.url));
 const { buildClaudeCodePrompt } = await import(new URL('../public/src/ops/connectors/claude_code_connector.js', import.meta.url));
 const { buildCheckCommands } = await import(new URL('../public/src/ops/connectors/checks_connector.js', import.meta.url));
+const { generateAuditRecipe } = await import(new URL('../public/src/ops/templates/audit_recipe_template.js', import.meta.url));
+const { buildAuditRecipe } = await import(new URL('../public/src/ops/connectors/audit_recipe_connector.js', import.meta.url));
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -232,6 +236,35 @@ expect('saved MEL cards expose a Set-PR path so pr is settable when the fix ship
   && /case 'set-pr'\s*:/.test(screenSrc)
   && /updateMelCard\(\s*id\s*,\s*\{\s*pr:/.test(screenSrc));
 
+// ── D7. Audit recipe (BD-OPS / #684 #5) — a reproducible FIND-MELs brief per
+// screen (the multi-agent audit was re-improvised each session). It enumerates the
+// audit dimensions incl. the data-model (#8) + lifecycle (#10) lenses, bakes in the
+// smoke cross-check (#1), adversarial verify, the selector anchor (#2) and a
+// severity+reachability (#3) synthesis; the connector appends the contract anchor.
+const auditRecipe = generateAuditRecipe(getScreenFacts('BD-RESPONSES-01'));
+expect('audit recipe embeds screen id + route + file',
+  auditRecipe.includes('BD-RESPONSES-01') && auditRecipe.includes('/responses') && auditRecipe.includes('responses.js'));
+expect('audit recipe enumerates explicit dimensions incl. data-model (#8) + lifecycle (#10 entry-states) + blast-radius (#9)',
+  /Dimensions/i.test(auditRecipe)
+  && /data-model viability/i.test(auditRecipe)
+  && /lifecycle\s*\/\s*entry-state/i.test(auditRecipe)
+  && /blast-radius/i.test(auditRecipe)
+  && /first-entry[\s\S]*terminal[\s\S]*re-entry/i.test(auditRecipe));
+expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, selector anchor (#2) + reachability synthesis (#3)',
+  /cross-check[\s\S]*grep -rlE "[^"]+" scripts\/smoke-\*\.mjs/i.test(auditRecipe)
+  && /adversarial[\s\S]*refute/i.test(auditRecipe)
+  && /selector\s*\/\s*symbol/i.test(auditRecipe)
+  && /reachability[\s\S]*user-path[\s\S]*dev-param[\s\S]*edge/i.test(auditRecipe));
+expect('audit recipe embeds the screen data-model fact (responses → ride_orders order context)',
+  /ride_orders/i.test(auditRecipe));
+expect('buildAuditRecipe connector returns the recipe + a contract anchor',
+  buildAuditRecipe('BD-RESPONSES-01').includes('Audit recipe: BD-RESPONSES-01')
+  && /Contract:/.test(buildAuditRecipe('BD-RESPONSES-01')));
+expect('dashboard wires the gen-audit button + handler to buildAuditRecipe',
+  /data-action="gen-audit"/.test(screenSrc)
+  && /case 'gen-audit'/.test(screenSrc)
+  && /buildAuditRecipe\(s\.id\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -259,6 +292,8 @@ for (const [name, src] of [
   ['connectors/github_issue_connector.js', connGithub],
   ['connectors/claude_code_connector.js', connClaude],
   ['connectors/checks_connector.js', connChecks],
+  ['templates/audit_recipe_template.js', tplAudit],
+  ['connectors/audit_recipe_connector.js', connAudit],
 ]) {
   expect(`no hard-coded credential assignment in ${name}`, !CRED.test(src));
 }
@@ -273,12 +308,14 @@ const OPS_PRECACHE = [
   './src/ops/templates/github_issue_template.js',
   './src/ops/templates/claude_code_prompt_template.js',
   './src/ops/templates/screen_mel_card_template.js',
+  './src/ops/templates/audit_recipe_template.js',
   './src/ops/connectors/repo_connector.js',
   './src/ops/connectors/screen_contracts_connector.js',
   './src/ops/connectors/cloud_design_connector.js',
   './src/ops/connectors/github_issue_connector.js',
   './src/ops/connectors/claude_code_connector.js',
   './src/ops/connectors/checks_connector.js',
+  './src/ops/connectors/audit_recipe_connector.js',
 ];
 for (const p of OPS_PRECACHE) {
   expect(`sw.js precaches ${p}`, sw.includes(`'${p}'`));
@@ -287,8 +324,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v181 (bumped for the MEL→PR link field)',
-  !!swVer && Number(swVer[1]) >= 181);
+expect('sw.js VERSION is present and >= v182 (bumped for the audit-recipe generator)',
+  !!swVer && Number(swVer[1]) >= 182);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
