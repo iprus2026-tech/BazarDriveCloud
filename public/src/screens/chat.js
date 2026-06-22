@@ -4,6 +4,8 @@ import {
   findActiveRide,
   resolveRideStatusTone,
   resolveRideStatusLabel,
+  isTerminalRideStatus,
+  RIDE_STATUS,
 } from '../ride_state.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
@@ -469,6 +471,29 @@ export default function chat() {
   const sendBtn    = root.querySelector('#chat-send');
   const noticeEl   = root.querySelector('#chat-notice');
 
+  // ── Terminal (read-only) lock — ScreenOps audit #2, Cloud Design port ──
+  // A completed / canceled / no-show trip is read-only: lock the composer,
+  // drop the quick replies, and show a "trip ended" note. The composer stays
+  // in the DOM (disabled) so the message log + confirm bar are unaffected, and
+  // the send/keydown listeners below are inert against a disabled input.
+  const isTerminal = isTerminalRideStatus(trip.status);
+  if (isTerminal) {
+    const composerEl = root.querySelector('.chat__composer');
+    if (composerEl) composerEl.classList.add('chat__composer--locked');
+    inputEl.disabled = true;
+    inputEl.placeholder = 'Чат закрыт';
+    sendBtn.disabled = true;
+    qrEl.hidden = true;
+    const note = document.createElement('div');
+    note.className = 'chat__readonly-note';
+    note.setAttribute('role', 'note');
+    note.textContent =
+      trip.status === RIDE_STATUS.COMPLETED ? 'Поездка завершена. Чат доступен только для просмотра.'
+      : trip.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не пришёл. Чат закрыт.'
+      : 'Поездка отменена. Чат закрыт.';
+    if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+  }
+
   // ── Empty thread, or date separator + messages ──────────────────
   if (isRealThread && messages.length === 0) {
     messagesEl.appendChild(renderEmptyThread(viewerRole));
@@ -489,7 +514,7 @@ export default function chat() {
   requestAnimationFrame(scrollBottom);
 
   // ── Quick replies ───────────────────────────────────────────────
-  for (const reply of QUICK_REPLIES) {
+  for (const reply of (isTerminal ? [] : QUICK_REPLIES)) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chat__qr-chip';

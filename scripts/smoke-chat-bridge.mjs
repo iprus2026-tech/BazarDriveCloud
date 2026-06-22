@@ -305,6 +305,22 @@ expect("chat.js empty state carries role-specific copy (no fabricated history)",
 expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
   /\.chat__empty\s*\{/.test(css) && /\.chat__empty-title\s*\{/.test(css) && /\.chat__empty-ic\s*\{/.test(css));
 
+// ── G. chat.js — BD-CHAT-01 terminal read-only state (Cloud Design port, #2) ──
+// A completed / canceled / no-show trip must lock the composer to read-only:
+// disable the input + send, drop the quick replies, and show a "trip ended" note.
+expect("ride_state.js exports isTerminalRideStatus (canonical terminal check)",
+  /export\s+function\s+isTerminalRideStatus\s*\(/.test(rideState));
+expect("chat.js imports isTerminalRideStatus from ride_state.js",
+  /import\s*\{[\s\S]*?\bisTerminalRideStatus\b[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
+expect("chat.js computes isTerminal from trip.status via isTerminalRideStatus",
+  /const\s+isTerminal\s*=\s*isTerminalRideStatus\(\s*trip\.status\s*\)/.test(chat));
+expect("chat.js locks the composer read-only on a terminal trip (disable input/send + note)",
+  /if\s*\(\s*isTerminal\s*\)[\s\S]{0,400}inputEl\.disabled\s*=\s*true[\s\S]{0,220}chat__readonly-note/.test(chat));
+expect("chat.js drops the quick replies on a terminal trip",
+  /for\s*\(\s*const\s+reply\s+of\s*\(\s*isTerminal\s*\?\s*\[\]\s*:\s*QUICK_REPLIES\s*\)\s*\)/.test(chat));
+expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud Design port)",
+  /\.chat__readonly-note\s*\{/.test(css) && /\.chat__composer--locked\s*\{/.test(css));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
