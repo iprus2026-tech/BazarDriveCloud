@@ -8,11 +8,21 @@
 // colours / sizes — the BD-CHAT-01 port landed cleanly only because the prototype
 // happened to use these exact names (#684 #11). smoke-ops-screens cross-checks each
 // advertised token against cloud.css :root so this list can't drift.
+//
+// This is the COMPLETE design-token set (surfaces, text, lines, accent, semantic
+// status, spacing, radius). The semantic status tokens are included because the
+// advertised atoms depend on them (`.chat__online-dot` uses --success; the
+// `.chat__trip-status` tones reuse the inbox status palette) — advertising those
+// atoms while forbidding their tokens would push designs toward raw colours
+// (Codex #704). Runtime layout plumbing (--tabbar-h, --scroll-pb, the safe-area
+// insets) is deliberately excluded — it is not a design token.
 const CLOUD_DESIGN_TOKENS = [
   '--bg-0', '--bg-1', '--bg-2', '--bg-3',
   '--text', '--text-1', '--text-2', '--text-3',
-  '--accent', '--accent-soft', '--accent-strong',
   '--line', '--line-strong',
+  '--accent', '--accent-soft', '--accent-strong',
+  '--success', '--warning', '--danger', '--info',
+  '--pad', '--radius-sm', '--radius-md', '--radius-lg', '--radius-xl',
 ];
 
 // Build the Reuse block: always advertise the token palette; when the screen
