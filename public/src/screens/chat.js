@@ -562,6 +562,12 @@ export default function chat() {
 
     inputEl.value = '';
     updateSend();
+    // BD-CHAT-01 (#4, a11y) — a click-send disables the (now-focused) send
+    // button, which would otherwise drop focus to <body>; return focus to the
+    // input so keyboard / screen-reader users keep their place and can keep
+    // typing. (Mirrors the pinned active-ride pattern: focus moves off a
+    // trigger that the action hides/disables.)
+    inputEl.focus();
   }
 
   sendBtn.addEventListener('click', doSend);

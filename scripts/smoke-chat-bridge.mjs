@@ -321,6 +321,14 @@ expect("chat.js drops the quick replies on a terminal trip",
 expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud Design port)",
   /\.chat__readonly-note\s*\{/.test(css) && /\.chat__composer--locked\s*\{/.test(css));
 
+// ── H. chat.js — send returns focus to the input (#4, a11y) ──────────
+// A click-send disables the (focused) send button, which would otherwise drop
+// focus to <body>; doSend must end by returning focus to the input so keyboard /
+// screen-reader users keep their place. (Same pattern smoke-passenger-active-ride
+// pins for the in-ride safety report submit.)
+expect("chat.js doSend returns focus to the input after sending (no focus drop to body)",
+  /function\s+doSend[\s\S]*?updateSend\(\)[\s\S]{0,400}inputEl\.focus\(\)/.test(chat));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
