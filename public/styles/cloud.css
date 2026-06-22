@@ -4789,6 +4789,15 @@ body {
 .chat__msg--in  { align-self: flex-start; }
 .chat__msg--out { align-self: flex-end; }
 
+/* Per-message sender label on incoming bubbles (BD-CHAT-01, Cloud Design port). */
+.chat__author {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-3);
+  margin-bottom: 2px;
+  letter-spacing: 0.01em;
+}
+
 .chat__bubble {
   padding: 10px 14px;
   font-size: 14px;
