@@ -111,8 +111,13 @@ expect('resolveRideContext gates CTA on response.tripId',
 // so resolveRideContext also gates on viewerRole, threaded from the call site.
 expect("resolveRideContext also gates the CTA on viewerRole !== 'driver'",
   /viewerRole\s*!==\s*'driver'/.test(rideCtxBody || ''));
-expect('chat.js threads viewerRole into resolveRideContext',
-  /resolveRideContext\(\s*\{[^}]*viewerRole[^}]*\}\s*\)/.test(chat));
+// Pin the actual CALL SITE (the `const rideContext = …` assignment), not the
+// declaration — `resolveRideContext({ … viewerRole … })` alone also matches the
+// function signature, so a call that regressed to `resolveRideContext({ responseId })`
+// (viewerRole undefined → gate passes for everyone, driver CTA bug returns) would
+// otherwise keep this green. Codex #697.
+expect('chat.js threads viewerRole into the resolveRideContext CALL site',
+  /const\s+rideContext\s*=\s*resolveRideContext\(\s*\{[^}]*viewerRole[^}]*\}\s*\)/.test(chat));
 
 const confirmArg = callObjectArg(chat, 'saveTripConfirmation');
 expect('chat.js #chat-confirm calls saveTripConfirmation({…})', !!confirmArg);
