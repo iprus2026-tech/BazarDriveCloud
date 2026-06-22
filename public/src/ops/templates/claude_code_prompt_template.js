@@ -18,6 +18,23 @@ function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// #684 #8 — repair-viability lines from the screen's optional data-model fact.
+// With no fact, a generic reminder; with one, name the store, runtime-created
+// nature and what it is keyed by, so a fix that assumes a non-existent static
+// anchor is caught before it is attempted.
+function dataModelLines(screen = {}) {
+  const dm = screen.dataModel;
+  if (!dm || typeof dm !== 'object') {
+    return ['- identify where the entity your repair touches LIVES: a static seed (editable in place) or a runtime store (created at runtime — no static id to point at).'];
+  }
+  const lines = [
+    `- backed by the ${dm.store || '(unnamed)'} store${dm.runtimeCreated ? ' — entities are CREATED AT RUNTIME (no static seed)' : ''}.`,
+  ];
+  if (dm.keyedBy) lines.push(`- keyed by ${dm.keyedBy}.`);
+  if (dm.note) lines.push(`- ${dm.note}`);
+  return lines;
+}
+
 export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -43,6 +60,10 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- read them (and the selectors you are about to touch); if one pins the behavior as INTENDED, stop — this may be WONTFIX or need a different fix.`,
     `- never edit a pin to force the fix through; if your change breaks a pin, reconsider the fix, not the test.`,
     `- NOTE: this cross-check confirms the behavior is SAFE TO CHANGE (not pinned) — it does NOT map the blast radius. For a repair that writes a shared store/id, see Step 0c.`,
+    ``,
+    `Step 0b — repair viability (data model, #684 #8)`,
+    `Confirm the fix is CONSTRUCTIBLE against how the data actually lives — a repair that assumes a static anchor which does not exist is non-viable (the BD-RESPONSES-01 audit proposed pointing a seed at a runtime-created order id that has no static value).`,
+    ...dataModelLines(screen),
     ``,
     `Step 0c — blast radius (shared-state consumers, #684 #9)`,
     `A repair that writes a shared store or shared id does not stay on this screen — other screens read the same data. Before writing:`,

@@ -167,6 +167,22 @@ expect('claude-code prompt embeds Step 0c + the safe-to-change/not-blast-radius 
 expect('claude-code prompt lists the shared consumer surfaces when the repair writes a shared store',
   /Feed|DriverMap/.test(generateClaudeCodePrompt(sample, { requiredRepair: 'write the ride_orders store' })));
 
+// ── D4. Data-model viability (BD-OPS / #684 #8) — is the fix CONSTRUCTIBLE?
+// The audit can confirm a defect against the code, but BD-RESPONSES-01 (#688)
+// showed it can still propose a non-viable repair (point a seed at a runtime-
+// created order id that has no static value). The registry now carries an optional
+// data-model fact, and the repair prompt emits a Step 0b viability slice.
+expect('registry seeds a runtime data-model fact on a ride-order screen',
+  (getScreenFacts('BD-RESPONSES-01').dataModel || {}).store === 'ride_orders'
+  && getScreenFacts('BD-RESPONSES-01').dataModel.runtimeCreated === true);
+const ccPromptDM = generateClaudeCodePrompt(getScreenFacts('BD-RESPONSES-01'), mel);
+expect('claude-code Step 0b names the store + runtime-created when the screen declares a data model',
+  /Step 0b[^\n]*repair viability/i.test(ccPromptDM)
+  && /ride_orders/.test(ccPromptDM) && /CREATED AT RUNTIME/i.test(ccPromptDM));
+expect('claude-code Step 0b falls back to a generic static-seed-vs-runtime-store reminder when none is declared',
+  /Step 0b[^\n]*repair viability/i.test(ccPrompt)
+  && /static seed[\s\S]{0,60}runtime store/i.test(ccPrompt));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -222,8 +238,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v178 (bumped for the blast-radius map)',
-  !!swVer && Number(swVer[1]) >= 178);
+expect('sw.js VERSION is present and >= v179 (bumped for the data-model viability fact)',
+  !!swVer && Number(swVer[1]) >= 179);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

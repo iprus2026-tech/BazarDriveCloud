@@ -13,6 +13,24 @@
 // BD-ONBOARDING-01 `/welcome`). The smoke gate now enforces coverage in BOTH
 // directions, so a screen added to app.js without a registry decision fails.
 
+// BD-OPS / #684 #8 — optional data-model fact: where a screen's primary entity
+// lives, so the repair prompt (Step 0b) can flag a fix that assumes a static
+// anchor which does not exist (the BD-RESPONSES-01 / #688 lesson: ride orders are
+// runtime-created, so "point the seed at an orderId" was non-viable). Read-only;
+// shared by reference — getScreen() shallow-copies the entry and never mutates this.
+const RIDE_ORDERS_DATA_MODEL = {
+  store: 'ride_orders',
+  runtimeCreated: true,
+  keyedBy: 'a runtime order id (order-<timestamp>) minted by createRideOrder()',
+  note: 'no static orderId exists on a fresh load — a repair that needs one must MATERIALISE the order at runtime, not re-point a static seed.',
+};
+const ACTIVE_RIDE_DATA_MODEL = {
+  store: 'active_ride',
+  runtimeCreated: true,
+  keyedBy: 'tripId (trip_<orderId>)',
+  note: 'the active-ride record is created at runtime from an accepted order; a terminal ride must not be reused — regenerate a fresh tripId.',
+};
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -112,6 +130,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-ORDER-DETAIL-01',
@@ -123,6 +142,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-RESPONSES-01',
@@ -134,6 +154,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-RESPOND-01',
@@ -167,6 +188,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: ACTIVE_RIDE_DATA_MODEL,
   },
   {
     id: 'BD-RIDE-P-01',
@@ -178,6 +200,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: ACTIVE_RIDE_DATA_MODEL,
   },
   {
     id: 'BD-DRIVER-01',
@@ -189,6 +212,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-CHAT-01',
