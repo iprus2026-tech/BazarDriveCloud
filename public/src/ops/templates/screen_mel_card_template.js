@@ -21,6 +21,7 @@ export function renderMelCard(mel = {}) {
     `Severity: ${mel.severity || 'MEL-C'}`,
     `Reachability: ${mel.reachability || 'user-path'}`,
     `Status: ${mel.status || 'DETECTED'}`,
+    `Resolved by (PR / commit): ${mel.pr || '(unresolved — set when the fix ships)'}`,
     ``,
     `Problem`,
     mel.problem || '(none recorded)',

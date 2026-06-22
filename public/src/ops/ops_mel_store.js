@@ -88,6 +88,9 @@ export function createMelCard(input = {}) {
     // #684 #2 — stable selector/symbol anchor (e.g. #pf2-doc-add, markGarageVehicleActive).
     // Line numbers drift; the anchor + the prompt's grep-locate re-resolve at fix time.
     selector: typeof input.selector === 'string' ? input.selector : '',
+    // #684 #4 — the PR / commit that resolved this MEL (the MEL→ship trail), so a
+    // screen's MEL history shows what actually shipped. Free-text (#683 or a SHA).
+    pr: typeof input.pr === 'string' ? input.pr : '',
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',

@@ -214,6 +214,24 @@ expect('dashboard exposes a #mel-selector input + mirrors it into form state and
   && /mel-selector'\)\s*state\.melForm\.selector\s*=/.test(screenSrc)
   && /selector:\s*read\('#mel-selector'\)\.trim\(\)/.test(screenSrc));
 
+// ── D6. MEL → PR / commit link (BD-OPS / #684 #4) — the DETECTED…DONE lifecycle
+// had no link to what shipped; the MEL→ship trail (F4 → #683 → merged) lived only
+// in chat. The MEL now carries a pr/commit reference, rendered on the card.
+expect('mel store seeds an optional pr (resolution) reference on createMelCard',
+  /pr:\s*typeof input\.pr === 'string'\s*\?\s*input\.pr\s*:\s*''/.test(storeSrc));
+expect('renderMelCard renders the Resolved-by (PR / commit) line (value when set, unresolved when not)',
+  renderMelCard({ id: 'mel_p', screenId: 'BD-X', route: '/x', file: 'x.js', pr: '#683' }).includes('#683')
+  && /Resolved by/.test(renderMelCard({ id: 'mel_p', screenId: 'BD-X', route: '/x', file: 'x.js', pr: '#683' }))
+  && /Resolved by[^\n]*unresolved/i.test(renderMelCard({ id: 'mel_p2', screenId: 'BD-X', route: '/x', file: 'x.js' })));
+expect('dashboard exposes a #mel-pr input + mirrors it into form state and the save payload',
+  /id="mel-pr"/.test(screenSrc)
+  && /mel-pr'\)\s*state\.melForm\.pr\s*=/.test(screenSrc)
+  && /pr:\s*read\('#mel-pr'\)\.trim\(\)/.test(screenSrc));
+expect('saved MEL cards expose a Set-PR path so pr is settable when the fix ships (not only at creation)',
+  /data-action="set-pr"/.test(screenSrc)
+  && /case 'set-pr'\s*:/.test(screenSrc)
+  && /updateMelCard\(\s*id\s*,\s*\{\s*pr:/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -269,8 +287,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v180 (bumped for the selector anchor field)',
-  !!swVer && Number(swVer[1]) >= 180);
+expect('sw.js VERSION is present and >= v181 (bumped for the MEL→PR link field)',
+  !!swVer && Number(swVer[1]) >= 181);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

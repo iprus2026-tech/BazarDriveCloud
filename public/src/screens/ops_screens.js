@@ -233,6 +233,10 @@ export default function opsScreens() {
           <input id="mel-selector" class="ops-melform__control" type="text" value="${esc(f.selector)}" placeholder="#pf2-doc-add or markGarageVehicleActive">
         </label>
         <label class="ops-melform__row">
+          <span class="ops-melform__label">Resolved by (PR / commit)</span>
+          <input id="mel-pr" class="ops-melform__control" type="text" value="${esc(f.pr)}" placeholder="#683 or a commit SHA">
+        </label>
+        <label class="ops-melform__row">
           <span class="ops-melform__label">Problem</span>
           <textarea id="mel-problem" class="ops-melform__control" rows="2">${esc(f.problem)}</textarea>
         </label>
@@ -272,6 +276,7 @@ export default function opsScreens() {
                     ? `<span class="ops-melitem__done">${esc(m.status)}</span>`
                     : `<button type="button" class="ops-btn ops-btn--ghost" data-action="advance-mel" data-mel-id="${esc(m.id)}">Advance → ${esc(nextMelStatus(m.status))}</button>`
                 }
+                <button type="button" class="ops-btn ops-btn--ghost" data-action="set-pr" data-mel-id="${esc(m.id)}">Set PR</button>
                 <button type="button" class="ops-btn ops-btn--ghost" data-action="delete-mel" data-mel-id="${esc(m.id)}">Delete</button>
               </div>
             </div>`,
@@ -385,6 +390,7 @@ export default function opsScreens() {
     else if (t.id === 'mel-status') state.melForm.status = t.value;
     else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
     else if (t.id === 'mel-selector') state.melForm.selector = t.value;
+    else if (t.id === 'mel-pr') state.melForm.pr = t.value;
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
     else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
     else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
@@ -465,6 +471,7 @@ export default function opsScreens() {
           status: 'DETECTED',
           reachability: 'user-path',
           selector: '',
+          pr: '',
           problem: '',
           operationalDecision: '',
           requiredRepair: '',
@@ -499,6 +506,7 @@ export default function opsScreens() {
           status: read('#mel-status'),
           reachability: read('#mel-reachability'),
           selector: read('#mel-selector').trim(),
+          pr: read('#mel-pr').trim(),
           problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
@@ -525,6 +533,27 @@ export default function opsScreens() {
           }
         }
         renderList(); // status change can move/clear the row's open-MEL badge
+        renderDetail();
+        break;
+      }
+      case 'set-pr': {
+        const id = btn.dataset.melId;
+        const card = listMelForScreen(s.id).find((c) => c.id === id);
+        if (!card) {
+          state.notice = 'MEL card not found.';
+        } else {
+          // The resolving PR/commit is known when the fix SHIPS (advance→DONE),
+          // not at creation — so it is editable on a saved card at any time, even
+          // one already advanced to DONE. window.prompt mirrors the delete confirm.
+          const pr = window.prompt('Resolved by — PR # or commit SHA (blank to clear):', card.pr || '');
+          if (pr !== null) {
+            const ok = updateMelCard(id, { pr: pr.trim() });
+            state.notice = ok
+              ? (pr.trim() ? `MEL resolved by ${pr.trim()}.` : 'Cleared the resolution reference.')
+              : 'Could not update the MEL card (storage full?).';
+          }
+        }
+        renderList();
         renderDetail();
         break;
       }
