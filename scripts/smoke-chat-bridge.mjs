@@ -21,6 +21,7 @@ const activeRidePassenger= read('../public/src/screens/active_ride_passenger.js'
 const passengerSheets    = read('../public/src/screens/active_ride_passenger_sheets.js');
 const sw                 = read('../public/sw.js');
 const rideState          = read('../public/src/ride_state.js');
+const css                = read('../public/styles/cloud.css');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -275,6 +276,21 @@ expect("chat.js no longer hardcodes inbox-item__status--success on chat__trip-st
   !/inbox-item__status--success\s+chat__trip-status/.test(chat));
 expect("chat.js renders dynamic tone class for chat__trip-status",
   /inbox-item__status--\$\{tone\}\s+chat__trip-status/.test(chat));
+
+// ── O. chat.js — BD-CHAT-01 empty / first-message thread (Cloud Design port) ──
+// A real thread (trip/response) with no stored messages must render the designed
+// empty state, NOT the fabricated MOCK_MESSAGES conversation; the demo thread
+// (chatId === 'demo') keeps the mock as a showcase.
+expect("chat.js gates MOCK_MESSAGES on the demo thread (real empty threads get [])",
+  /const\s+isRealThread\s*=\s*chatId\s*!==\s*'demo'/.test(chat)
+  && /isRealThread\s*\?\s*\[\]\s*:\s*MOCK_MESSAGES/.test(chat));
+expect("chat.js defines renderEmptyThread and renders it for a real empty thread",
+  /function\s+renderEmptyThread\s*\(/.test(chat)
+  && /isRealThread\s*&&\s*messages\.length\s*===\s*0[\s\S]{0,80}renderEmptyThread\(/.test(chat));
+expect("chat.js empty state carries role-specific copy (no fabricated history)",
+  /Сообщений пока нет/.test(chat) && /chat__empty-title/.test(chat));
+expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
+  /\.chat__empty\s*\{/.test(css) && /\.chat__empty-title\s*\{/.test(css) && /\.chat__empty-ic\s*\{/.test(css));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
