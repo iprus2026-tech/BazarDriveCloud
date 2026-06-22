@@ -2,6 +2,7 @@ import {
   listInboxItems,
   INBOX_STATUS_LABEL,
   INBOX_STATUS_TONE,
+  ensureDemoResponseOrder,
 } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { escapeHtml } from '../util.js';
@@ -244,6 +245,11 @@ function renderEmpty(tab) {
 }
 
 export default async function inbox() {
+  // BD-RESPONSES-01 — materialise the canonical demo order that the static
+  // "driver responded" notification (inbox-response-1) points at, so its primary
+  // CTA opens a real offers board where the passenger can select a driver and
+  // build the active ride — instead of a dead-end toast. Idempotent.
+  ensureDemoResponseOrder();
   // Retry re-runs the inbox load (isRetry=true → 'retrying' progress, dismiss on
   // success). refreshInbox is hoisted, so referencing it here before its
   // declaration is safe — the arrow only runs when the user taps «Повторить».

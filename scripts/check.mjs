@@ -644,6 +644,20 @@ if (exists(responsesEmptyContextSmoke)) {
   }
 }
 
+// BD-RESPONSES-01 — Inbox "driver responded" notification → /responses offers
+// board → build the active ride. The notification points at a canonical demo
+// order (materialised on Inbox mount), so the «Выбрать водителя» CTA no longer
+// dead-ends; ensureDemoResponseOrder is idempotent.
+const responsesInboxHandoffSmoke = path.join(root, 'scripts', 'smoke-responses-inbox-handoff.mjs');
+if (exists(responsesInboxHandoffSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesInboxHandoffSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-responses-inbox-handoff.mjs failed\n${msg}`);
+  }
+}
+
 // BD-INBOX-03 — static regression smoke for the inbox screen contract.
 const inboxSmoke = path.join(root, 'scripts', 'smoke-inbox.mjs');
 if (exists(inboxSmoke)) {

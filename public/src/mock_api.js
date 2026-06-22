@@ -2,7 +2,7 @@
 // active-ride record so the passenger entry never reopens a terminal
 // trip. ride_state.js is the foundation layer (no imports back into
 // mock_api.js), so this introduces no circular dependency.
-import { findActiveRide } from './ride_state.js';
+import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride_state.js';
 
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
@@ -209,7 +209,9 @@ const INBOX_ITEMS_V1 = [
     summary:   'Подъеду к подъезду №3, позвоню. Цена 950 ₽, подача 4 мин.',
     time:      '2 мин',
     unread:    true,
-    primary:   { label: 'Посмотреть отклик', href: '/responses?postId=trip-2&state=list' },
+    // href is re-pointed at the current demo order id by ensureDemoResponseOrder()
+    // when the Inbox mounts (the demo order id regenerates per lifecycle).
+    primary:   { label: 'Посмотреть отклик', href: '/responses?state=list' },
     secondary: { label: 'В чат',             href: '/chat?responseId=response_1' },
   },
   {
@@ -509,7 +511,7 @@ export function createRideOrder(input = {}) {
 
 export function listNearbyOrders() {
   return loadRideOrdersRaw()
-    .filter((o) => o && o.status === 'CREATED')
+    .filter((o) => o && o.status === 'CREATED' && !o.demo)
     .slice(0, 20);
 }
 
@@ -560,6 +562,81 @@ export function getOrderById(id) {
   const list = loadRideOrdersRaw();
   const found = list.find((o) => o && o.id === id);
   return found ? { ...found } : null;
+}
+
+// BD-RESPONSES-01 — the static Inbox "driver responded" notification
+// (inbox-response-1) points at this canonical demo order so the passenger can
+// open the offers board and actually BUILD the active ride (select → /active-ride),
+// not hit a dead-end. Ride orders are runtime/localStorage data, so a static href
+// alone resolves to nothing on a fresh load — this idempotently materialises the
+// order. Called when the Inbox screen MOUNTS (not at module load), so the
+// lifecycle smokes that start from an empty ride-order store are unaffected.
+// BD-RESPONSES-01 — the demo "driver responded" order. Its id is REGENERATED per
+// lifecycle (a fresh tripId each time), so a completed/canceled demo ride never
+// leaves stale per-trip state for the next one to inherit (chat / ride_history /
+// driver_receipts all key by tripId). It is therefore located by this marker, and
+// the static Inbox notification's href is re-pointed at the current id each mount.
+export const DEMO_RESPONSE_KIND = 'inbox-response';
+
+function makeDemoResponseOrderId() {
+  return 'order-demo-response-' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+}
+
+// Re-point the static Inbox "driver responded" notification (inbox-response-1) at
+// the current demo order id so its primary CTA opens a board whose select can build
+// the active ride. listInboxItems() shallow-copies each item but shares the nested
+// `primary` object, so this mutation is reflected to callers.
+function pointInboxResponseAtOrder(orderId) {
+  const item = INBOX_ITEMS_V1.find((it) => it && it.id === 'inbox-response-1');
+  if (item && item.primary) item.primary.href = `/responses?orderId=${orderId}&state=list`;
+}
+
+export function ensureDemoResponseOrder() {
+  const orders = loadRideOrdersRaw();
+  let order = orders.find((o) => o && o.demo === true && o.demoKind === DEMO_RESPONSE_KIND) || null;
+  if (order) {
+    const linkedRide = findActiveRide(`trip_${order.id}`);
+    // Preserve a live handoff (fresh CREATED, or ACCEPTED with an in-progress ride):
+    // re-opening /inbox mid-trip must NOT disturb it. Only once the linked ride is
+    // TERMINAL do we drop it and start a fresh lifecycle (with a new id) below.
+    if (!linkedRide || !TERMINAL_ACTIVE_RIDE_STATUSES.has(linkedRide.status)) {
+      pointInboxResponseAtOrder(order.id);
+      return order;
+    }
+    const store = loadActiveRideStore();
+    delete store[`trip_${order.id}`];
+    saveActiveRideStore(store);
+    order = null;
+  }
+  const now = new Date().toISOString();
+  order = {
+    id: makeDemoResponseOrderId(),
+    type: 'passenger_request',
+    source: 'map',
+    pickup: { id: null, label: 'Внуково' },
+    dropoff: { id: null, label: 'Парк Победы' },
+    distanceKm: 24,
+    durationMin: 38,
+    estimatedPrice: 950,
+    estimatedPriceLabel: '950',
+    scheduledMode: 'now',
+    scheduledAt: now,
+    scheduledLabel: '',
+    comment: '',
+    passenger: null,
+    status: 'CREATED',
+    // Demo-only: keep this order OUT of the shared published-order surfaces
+    // (Feed via rideOrderToFeedPost, DriverMap via listNearbyOrders) so a user
+    // who only opens notifications never appears to have published a ride.
+    demo: true,
+    demoKind: DEMO_RESPONSE_KIND,
+    createdAt: now,
+  };
+  // Drop any prior demo order (e.g. the just-finished one) — never stack them.
+  const rest = orders.filter((o) => !(o && o.demo === true && o.demoKind === DEMO_RESPONSE_KIND));
+  persistRideOrders([order, ...rest]);
+  pointInboxResponseAtOrder(order.id);
+  return order;
 }
 
 // Spine alias for acceptNearbyOrder — keeps the legacy export stable
@@ -707,6 +784,7 @@ function formatRideOrderWhen(order) {
 
 export function rideOrderToFeedPost(order) {
   if (!order || typeof order !== 'object') return null;
+  if (order.demo) return null;
   if (order.status !== 'CREATED') return null;
 
   const id = String(order.id || '');
