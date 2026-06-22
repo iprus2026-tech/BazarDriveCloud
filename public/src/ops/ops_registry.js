@@ -47,6 +47,12 @@ const RESPONSES_DATA_MODEL = {
   note: 'order-resolution repairs touch the runtime ride order (materialise it — the #688 lesson); but card-mapping / sort / decline / responseId-chat repairs touch the offer store + MOCK_DRIVERS fallback, NOT a ride order.',
 };
 
+// #684 #7 — screen-specific must-not-touch guardrails, injected into the repair
+// prompt's must-not-touch list, so a per-screen contract is not re-typed by hand.
+const ACTIVE_RIDE_GUARDRAILS = [
+  'do NOT reroute the in-ride safety report (BD-RIDE-P-07) to /report, nor break the canonical ride-order status sync (syncCanonicalOrderStatus / updateTripStatus).',
+];
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -171,6 +177,7 @@ const SCREENS = [
     melStatus: 'OK',
     implementationStatus: 'implemented',
     dataModel: RESPONSES_DATA_MODEL,
+    guardrails: ['do NOT weaken the !canonicalOrder defensive guard in the select handler, nor change the select -> /active-ride handoff (buildPassengerActiveRide / activeRideUrl).'],
   },
   {
     id: 'BD-RESPOND-01',
@@ -205,6 +212,7 @@ const SCREENS = [
     melStatus: 'OK',
     implementationStatus: 'implemented',
     dataModel: ACTIVE_RIDE_DATA_MODEL,
+    guardrails: ACTIVE_RIDE_GUARDRAILS,
   },
   {
     id: 'BD-RIDE-P-01',
@@ -217,6 +225,7 @@ const SCREENS = [
     melStatus: 'OK',
     implementationStatus: 'implemented',
     dataModel: ACTIVE_RIDE_DATA_MODEL,
+    guardrails: ACTIVE_RIDE_GUARDRAILS,
   },
   {
     id: 'BD-DRIVER-01',
@@ -273,6 +282,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    guardrails: ['garage vehicle state: do not mutate it outside the documented make-active flow; the ?garage=multi demo-2 make-active is INTENTIONALLY pinned (smoke S24) — not a defect to fix.'],
   },
   {
     id: 'BD-SETTINGS-01',

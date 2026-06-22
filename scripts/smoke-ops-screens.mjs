@@ -290,6 +290,20 @@ expect('dashboard exposes a #mel-lifecycle multi-select + mirrors it (selectedOp
   && /mel-lifecycle'\)\s*state\.melForm\.lifecycleAudited\s*=\s*Array\.from\(t\.selectedOptions\)/.test(screenSrc)
   && /lifecycleAudited:\s*Array\.from\(\(detailEl\.querySelector\('#mel-lifecycle'\)/.test(screenSrc));
 
+// ── D9. Screen-aware must-not-touch guardrails (BD-OPS / #684 #7) — the repair
+// prompt's must-not list was generic; every garage/profile fix re-typed the
+// no-mutation guardrail by hand. The registry now carries per-screen guardrails,
+// appended (tagged by screen id) to the prompt's must-not-touch list.
+expect('registry seeds screen-specific guardrails (profile garage no-mutation, responses select-handoff)',
+  Array.isArray(getScreenFacts('BD-PROFILE-01').guardrails)
+  && /garage[\s\S]*S24/i.test(getScreenFacts('BD-PROFILE-01').guardrails.join(' '))
+  && /!canonicalOrder/.test((getScreenFacts('BD-RESPONSES-01').guardrails || []).join(' '))
+  && Array.isArray(getScreenFacts('BD-RIDE-P-01').guardrails));
+expect('claude-code prompt appends the screen-specific guardrails to Must-not-touch (tagged by screen id)',
+  /Must not touch[\s\S]*- \[BD-PROFILE-01\][\s\S]*garage/i.test(generateClaudeCodePrompt(getScreenFacts('BD-PROFILE-01'), mel)));
+expect('claude-code prompt omits screen guardrails for a screen with none (generic list only)',
+  !/- \[BD-SAMPLE-01\]/.test(generateClaudeCodePrompt({ id: 'BD-SAMPLE-01', route: '/x', file: 'x.js' }, mel)));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -349,8 +363,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v183 (bumped for the lifecycle entry-state field)',
-  !!swVer && Number(swVer[1]) >= 183);
+expect('sw.js VERSION is present and >= v184 (bumped for the screen-aware guardrails)',
+  !!swVer && Number(swVer[1]) >= 184);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
