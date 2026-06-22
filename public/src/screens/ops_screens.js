@@ -34,6 +34,7 @@ import { buildClaudeCodePrompt } from '../ops/connectors/claude_code_connector.j
 import { buildCheckCommands } from '../ops/connectors/checks_connector.js';
 import { buildAuditRecipe } from '../ops/connectors/audit_recipe_connector.js';
 import { buildPortPlan } from '../ops/connectors/port_plan_connector.js';
+import { buildMelExport } from '../ops/connectors/mel_export_connector.js';
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -331,6 +332,7 @@ export default function opsScreens() {
         <button type="button" class="ops-btn" data-action="gen-claude">Claude Code prompt</button>
         <button type="button" class="ops-btn" data-action="gen-audit">Audit recipe</button>
         <button type="button" class="ops-btn" data-action="gen-port-plan">Port plan</button>
+        <button type="button" class="ops-btn" data-action="export-mel">Export MELs</button>
         <button type="button" class="ops-btn ops-btn--ghost" data-action="copy-check">Copy check commands</button>
       </div>
       ${notice}
@@ -602,6 +604,10 @@ export default function opsScreens() {
       case 'gen-port-plan':
         // Port plan ORDERS a multi-finding port from ALL of the screen's MELs — #684 #14.
         setOutput('Port plan', buildPortPlan(s.id, listMelForScreen(s.id)));
+        break;
+      case 'export-mel':
+        // Export ALL the screen's MELs as a portable markdown + JSON artifact (read-only; #684 #6).
+        setOutput('MEL export', buildMelExport(s.id, listMelForScreen(s.id)));
         break;
       case 'copy-check':
         copy(buildCheckCommands(s.id), 'Check commands copied.');
