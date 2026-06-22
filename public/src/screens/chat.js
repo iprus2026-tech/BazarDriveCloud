@@ -126,10 +126,13 @@ function saveTripConfirmation(handoff) {
 // not show it on driver-facing threads. Bare ?tripId=... URLs are also
 // used by driver inbox and active-ride entry points, so they don't
 // qualify on their own — we only unlock the CTA when a stored response
-// of kind='passenger_response' backs this chat.
-function resolveRideContext({ responseId }) {
+// of kind='passenger_response' backs this chat AND the viewer is the
+// passenger. A driver thread (/chat?responseId=…&role=driver, opened by
+// respond.js) stores that SAME passenger_response, so the kind check
+// alone would wrongly show the passenger CTA to a driver.
+function resolveRideContext({ responseId, viewerRole }) {
   const response = loadResponse(responseId);
-  if (response && response.kind === 'passenger_response' && response.tripId) {
+  if (viewerRole !== 'driver' && response && response.kind === 'passenger_response' && response.tripId) {
     return { isRide: true, tripId: String(response.tripId) };
   }
   return { isRide: false, tripId: null };
@@ -323,7 +326,7 @@ export default function chat() {
   const stored  = loadMessages(chatId);
   let messages  = stored ? [...stored] : MOCK_MESSAGES.map((m) => ({ ...m }));
 
-  const rideContext = resolveRideContext({ responseId });
+  const rideContext = resolveRideContext({ responseId, viewerRole });
   // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
   // person on the other end of the thread (driver for passenger viewers,
   // passenger for driver viewers); `trip` carries route + price + status.

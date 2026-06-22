@@ -106,6 +106,18 @@ expect("resolveRideContext gates CTA on kind === 'passenger_response'",
   /kind\s*===\s*'passenger_response'/.test(rideCtxBody || ''));
 expect('resolveRideContext gates CTA on response.tripId',
   /response\.tripId/.test(rideCtxBody || ''));
+// BD-CHAT-01 fix — the passenger-only «Подтвердить поездку» CTA must NOT render on a
+// driver thread (/chat?responseId=…&role=driver stores the same passenger_response),
+// so resolveRideContext also gates on viewerRole, threaded from the call site.
+expect("resolveRideContext also gates the CTA on viewerRole !== 'driver'",
+  /viewerRole\s*!==\s*'driver'/.test(rideCtxBody || ''));
+// Pin the actual CALL SITE (the `const rideContext = …` assignment), not the
+// declaration — `resolveRideContext({ … viewerRole … })` alone also matches the
+// function signature, so a call that regressed to `resolveRideContext({ responseId })`
+// (viewerRole undefined → gate passes for everyone, driver CTA bug returns) would
+// otherwise keep this green. Codex #697.
+expect('chat.js threads viewerRole into the resolveRideContext CALL site',
+  /const\s+rideContext\s*=\s*resolveRideContext\(\s*\{[^}]*viewerRole[^}]*\}\s*\)/.test(chat));
 
 const confirmArg = callObjectArg(chat, 'saveTripConfirmation');
 expect('chat.js #chat-confirm calls saveTripConfirmation({…})', !!confirmArg);
