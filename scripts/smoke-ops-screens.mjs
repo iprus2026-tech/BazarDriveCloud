@@ -304,6 +304,27 @@ expect('claude-code prompt appends the screen-specific guardrails to Must-not-to
 expect('claude-code prompt omits screen guardrails for a screen with none (generic list only)',
   !/- \[BD-SAMPLE-01\]/.test(generateClaudeCodePrompt({ id: 'BD-SAMPLE-01', route: '/x', file: 'x.js' }, mel)));
 
+// ── D10. Cloud Design prompt injects tokens + the screen's CSS atoms (BD-OPS / #684 #11) ──
+// The generic "reuse existing tokens" line let the BD-CHAT-01 port land cleanly only
+// because the Claude Design prototype happened to match token names. The prompt now
+// injects the real :root palette + the screen's cssAtoms reuse contract, so a returned
+// design maps onto the runtime instead of forking a parallel class system.
+const cdChatFacts = getScreenFacts('BD-CHAT-01');
+const cdChat = generateCloudDesignPrompt(cdChatFacts, mel);
+expect('registry seeds BD-CHAT-01 cssAtoms (the reuse contract)',
+  Array.isArray(cdChatFacts.cssAtoms) && cdChatFacts.cssAtoms.length >= 6);
+expect('cloud-design prompt injects the runtime token palette (not a generic reuse line)',
+  /--bg-2/.test(cdChat) && /--text-3/.test(cdChat) && /--accent\b/.test(cdChat) && /--line-strong/.test(cdChat));
+expect('cloud-design prompt injects each of the screen cssAtoms as the reuse contract',
+  cdChatFacts.cssAtoms.every((a) => cdChat.includes(a)));
+expect('cloud-design prompt degrades to a generic atoms line when a screen has no cssAtoms',
+  !/restyle in place/.test(generateCloudDesignPrompt({ id: 'BD-SAMPLE-01', route: '/x', file: 'x.js', role: 'shared' }, mel)));
+// Anti-drift: every token the palette advertises must actually exist in cloud.css :root.
+const cdPaletteLine = (cdChat.match(/--bg-0[^\n]*/) || [''])[0];
+const cdTokens = [...new Set(cdPaletteLine.match(/--[a-z0-9-]+/g) || [])];
+expect('every Cloud-Design-advertised token exists in cloud.css :root (no drift)',
+  cdTokens.length >= 10 && cdTokens.every((t) => new RegExp('\\' + t + '\\s*:').test(css)));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));

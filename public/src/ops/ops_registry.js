@@ -53,6 +53,22 @@ const ACTIVE_RIDE_GUARDRAILS = [
   'do NOT reroute the in-ride safety report (BD-RIDE-P-07) to /report, nor break the canonical ride-order status sync (syncCanonicalOrderStatus / updateTripStatus).',
 ];
 
+// #684 #11 — optional cssAtoms fact: the screen's existing cloud.css class atoms,
+// injected into the Cloud Design prompt's Reuse block so a returned design restyles
+// them in place instead of forking a parallel class system (the BD-CHAT-01 `.ch-*`
+// → `.chat__*` port mapped cleanly only by luck). Optional; the generator degrades
+// gracefully when absent.
+const CHAT_CSS_ATOMS = [
+  '.chat__header / .chat__avatar / .chat__driver-name / .chat__online-dot — thread header',
+  '.chat__trip-bar / .chat__trip-route / .chat__trip-status / .chat__trip-price — trip bar',
+  '.chat__messages / .chat__msg / .chat__msg--in / --out / .chat__bubble / .chat__author / .chat__ts / .chat__date-sep — message log',
+  '.chat__empty / .chat__empty-ic / -title / -text / .chat__sys-pill — empty / first-message state',
+  '.chat__composer / .chat__composer--locked / .chat__input / .chat__send / .chat__composer-plus — composer',
+  '.chat__quick-replies / .chat__qr-chip — quick replies',
+  '.chat__confirm-bar / .chat__confirm-btn — passenger confirm CTA',
+  '.chat__readonly-note — terminal read-only note',
+];
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -249,6 +265,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    cssAtoms: CHAT_CSS_ATOMS,
   },
   {
     id: 'BD-INBOX-01',
