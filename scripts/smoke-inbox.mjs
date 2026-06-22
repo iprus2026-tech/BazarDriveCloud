@@ -18,9 +18,12 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const app     = read('../public/src/app.js');
+const index   = read('../public/index.html');
 const inbox   = read('../public/src/screens/inbox.js');
 const mockApi = read('../public/src/mock_api.js');
 const sw      = read('../public/sw.js');
+const dailyStore = read('../public/src/daily_communication_store.js');
+const dailyScreen = read('../public/src/screens/daily_communication.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -228,6 +231,39 @@ expect('listInboxItems() returns a defensive per-item copy (map + spread)',
 expect('sw.js PRECACHE includes ./src/screens/inbox.js',
   /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw));
 
+// ── J. BD-DAILY-COMM-01 — Daily Communication UI/store slice ─
+expect('app.js imports dailyCommunication from ./screens/daily_communication.js',
+  /import\s+dailyCommunication\s+from\s+'\.\/screens\/daily_communication\.js'/.test(app));
+expect("app.js registers register('/daily-communication', dailyCommunication)",
+  /register\(\s*'\/daily-communication'\s*,\s*dailyCommunication\s*\)/.test(app));
+expect('index.html links ./styles/daily_communication.css',
+  /href=["']\.\/styles\/daily_communication\.css["']/.test(index));
+expect('daily store documents communication_threads and communication_messages',
+  /communication_threads/.test(dailyStore) && /communication_messages/.test(dailyStore));
+expect('daily store reuses audited bazardrive.chat.v1 key',
+  /const\s+CHAT_KEY\s*=\s*'bazardrive\.chat\.v1'/.test(dailyStore)
+  && !/bazardrive\.daily_communication\.v1/.test(dailyStore));
+for (const exported of ['listDailyCommunicationThreads', 'sendDailyCommunicationMessage', 'acknowledgeDailyCommunication', 'resolveDailyCommunication', 'clearDailyCommunicationStore']) {
+  expect(`daily store exports ${exported}`,
+    new RegExp(`export\\s+function\\s+${exported}\\s*\\(`).test(dailyStore));
+}
+for (const status of ['OPEN', 'ACK_REQUIRED', 'NEEDS_ACTION', 'ACKNOWLEDGED', 'RESOLVED']) {
+  expect(`daily store carries status ${status}`, dailyStore.includes(status));
+}
+expect('daily store does not mutate ride/order lifecycle',
+  !/updateTripStatus|acceptOrder|acceptNearbyOrder|saveActiveRideStore|RIDE_STATUS\./.test(dailyStore));
+expect('daily screen imports the daily communication store',
+  /from\s+'\.\.\/daily_communication_store\.js'/.test(dailyScreen));
+expect('daily screen renders screen--daily-communication root',
+  dailyScreen.includes('screen--daily-communication'));
+for (const hook of ['data-dc-tab', 'data-dc-thread-id', 'data-dc-action', 'data-dc-template', 'data-dc-input', 'data-dc-send', 'data-dc-open-route']) {
+  expect(`daily screen exposes ${hook}`, dailyScreen.includes(hook));
+}
+expect('daily screen back action returns to /inbox', /go\('\/inbox'\)/.test(dailyScreen));
+expect('daily screen linked CTAs navigate through go(href)', /go\(href\)/.test(dailyScreen));
+for (const asset of ['./styles/daily_communication.css', './src/daily_communication_store.js', './src/screens/daily_communication.js']) {
+  expect(`sw.js PRECACHE includes ${asset}`, sw.includes(asset));
+}
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
