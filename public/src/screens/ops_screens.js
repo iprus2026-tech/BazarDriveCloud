@@ -33,6 +33,7 @@ import { buildGithubIssue } from '../ops/connectors/github_issue_connector.js';
 import { buildClaudeCodePrompt } from '../ops/connectors/claude_code_connector.js';
 import { buildCheckCommands } from '../ops/connectors/checks_connector.js';
 import { buildAuditRecipe } from '../ops/connectors/audit_recipe_connector.js';
+import { buildPortPlan } from '../ops/connectors/port_plan_connector.js';
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -329,6 +330,7 @@ export default function opsScreens() {
         <button type="button" class="ops-btn" data-action="gen-github">GitHub issue</button>
         <button type="button" class="ops-btn" data-action="gen-claude">Claude Code prompt</button>
         <button type="button" class="ops-btn" data-action="gen-audit">Audit recipe</button>
+        <button type="button" class="ops-btn" data-action="gen-port-plan">Port plan</button>
         <button type="button" class="ops-btn ops-btn--ghost" data-action="copy-check">Copy check commands</button>
       </div>
       ${notice}
@@ -596,6 +598,10 @@ export default function opsScreens() {
       case 'gen-audit':
         // Audit recipe FINDS MELs (no existing mel needed) — vs the repair prompts.
         setOutput('Audit recipe', buildAuditRecipe(s.id));
+        break;
+      case 'gen-port-plan':
+        // Port plan ORDERS a multi-finding port from ALL of the screen's MELs — #684 #14.
+        setOutput('Port plan', buildPortPlan(s.id, listMelForScreen(s.id)));
         break;
       case 'copy-check':
         copy(buildCheckCommands(s.id), 'Check commands copied.');
