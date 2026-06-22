@@ -265,6 +265,31 @@ expect('dashboard wires the gen-audit button + handler to buildAuditRecipe',
   && /case 'gen-audit'/.test(screenSrc)
   && /buildAuditRecipe\(s\.id\)/.test(screenSrc));
 
+// ── D8. Lifecycle / entry-state field (BD-OPS / #684 #10) — which entry-states the
+// audit PROBED, separate from #3 reachability (HOW it's reached). All three
+// BD-RESPONSES-01 (#688) rounds were entry-state edges the single-tap audit missed.
+// Pinned end-to-end: store vocab + validation, the card checklist, the dashboard
+// multi-select.
+expect('store exports MEL_LIFECYCLE_STATES = [first-entry, live-mid-flow, terminal, re-entry]',
+  /export const MEL_LIFECYCLE_STATES\s*=\s*\[[^\]]*'first-entry'[^\]]*'live-mid-flow'[^\]]*'terminal'[^\]]*'re-entry'[^\]]*\]/.test(storeSrc));
+expect('createMelCard validates lifecycleAudited against the vocab (array, dedup + canonical order)',
+  /lifecycleAudited:\s*sanitizeLifecycle\(input\.lifecycleAudited\)/.test(storeSrc)
+  && /function sanitizeLifecycle[\s\S]{0,160}MEL_LIFECYCLE_STATES\.filter/.test(storeSrc));
+expect('updateMelCard validates lifecycleAudited against the vocab',
+  /lifecycleAudited:\s*sanitizeLifecycle\(lcCandidate\)/.test(storeSrc));
+expect('renderMelCard renders the Lifecycle-audited checklist (probed [x], gaps [ ])',
+  renderMelCard({ id: 'mel_l', screenId: 'BD-X', route: '/x', file: 'x.js', lifecycleAudited: ['first-entry', 'terminal'] }).includes('Lifecycle audited')
+  && /first-entry \[x\][\s\S]*live-mid-flow \[ \][\s\S]*terminal \[x\][\s\S]*re-entry \[ \]/.test(
+    renderMelCard({ id: 'mel_l', screenId: 'BD-X', route: '/x', file: 'x.js', lifecycleAudited: ['first-entry', 'terminal'] })));
+expect('renderMelCard canonicalises the checklist (junk values render no extra marks; order is the vocab order)',
+  /first-entry \[ \] · live-mid-flow \[ \] · terminal \[ \] · re-entry \[ \]/.test(
+    renderMelCard({ id: 'mel_l2', screenId: 'BD-X', route: '/x', file: 'x.js', lifecycleAudited: ['bogus', 'not-a-state'] })));
+expect('dashboard exposes a #mel-lifecycle multi-select + mirrors it (selectedOptions) into form state + save',
+  /id="mel-lifecycle"[^>]*multiple/.test(screenSrc)
+  && /MEL_LIFECYCLE_STATES/.test(screenSrc)
+  && /mel-lifecycle'\)\s*state\.melForm\.lifecycleAudited\s*=\s*Array\.from\(t\.selectedOptions\)/.test(screenSrc)
+  && /lifecycleAudited:\s*Array\.from\(\(detailEl\.querySelector\('#mel-lifecycle'\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -324,8 +349,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v182 (bumped for the audit-recipe generator)',
-  !!swVer && Number(swVer[1]) >= 182);
+expect('sw.js VERSION is present and >= v183 (bumped for the lifecycle entry-state field)',
+  !!swVer && Number(swVer[1]) >= 183);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

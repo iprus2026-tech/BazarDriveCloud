@@ -25,6 +25,7 @@ import {
   MEL_SEVERITIES,
   MEL_STATUSES,
   MEL_REACHABILITY,
+  MEL_LIFECYCLE_STATES,
 } from '../ops/ops_mel_store.js';
 import { renderMelCard } from '../ops/templates/screen_mel_card_template.js';
 import { buildCloudDesignPrompt } from '../ops/connectors/cloud_design_connector.js';
@@ -234,6 +235,10 @@ export default function opsScreens() {
           <input id="mel-selector" class="ops-melform__control" type="text" value="${esc(f.selector)}" placeholder="#pf2-doc-add or markGarageVehicleActive">
         </label>
         <label class="ops-melform__row">
+          <span class="ops-melform__label">Lifecycle audited (entry-states)</span>
+          <select id="mel-lifecycle" class="ops-melform__control" multiple size="4" aria-label="Lifecycle entry-states audited">${MEL_LIFECYCLE_STATES.map((st) => `<option value="${esc(st)}"${(f.lifecycleAudited || []).includes(st) ? ' selected' : ''}>${esc(st)}</option>`).join('')}</select>
+        </label>
+        <label class="ops-melform__row">
           <span class="ops-melform__label">Resolved by (PR / commit)</span>
           <input id="mel-pr" class="ops-melform__control" type="text" value="${esc(f.pr)}" placeholder="#683 or a commit SHA">
         </label>
@@ -393,6 +398,7 @@ export default function opsScreens() {
     else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
     else if (t.id === 'mel-selector') state.melForm.selector = t.value;
     else if (t.id === 'mel-pr') state.melForm.pr = t.value;
+    else if (t.id === 'mel-lifecycle') state.melForm.lifecycleAudited = Array.from(t.selectedOptions).map((o) => o.value);
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
     else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
     else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
@@ -474,6 +480,7 @@ export default function opsScreens() {
           reachability: 'user-path',
           selector: '',
           pr: '',
+          lifecycleAudited: [],
           problem: '',
           operationalDecision: '',
           requiredRepair: '',
@@ -509,6 +516,7 @@ export default function opsScreens() {
           reachability: read('#mel-reachability'),
           selector: read('#mel-selector').trim(),
           pr: read('#mel-pr').trim(),
+          lifecycleAudited: Array.from((detailEl.querySelector('#mel-lifecycle') || {}).selectedOptions || []).map((o) => o.value),
           problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
