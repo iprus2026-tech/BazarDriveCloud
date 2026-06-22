@@ -227,6 +227,10 @@ expect('dashboard exposes a #mel-pr input + mirrors it into form state and the s
   /id="mel-pr"/.test(screenSrc)
   && /mel-pr'\)\s*state\.melForm\.pr\s*=/.test(screenSrc)
   && /pr:\s*read\('#mel-pr'\)\.trim\(\)/.test(screenSrc));
+expect('saved MEL cards expose a Set-PR path so pr is settable when the fix ships (not only at creation)',
+  /data-action="set-pr"/.test(screenSrc)
+  && /case 'set-pr'\s*:/.test(screenSrc)
+  && /updateMelCard\(\s*id\s*,\s*\{\s*pr:/.test(screenSrc));
 
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
