@@ -115,11 +115,24 @@ expect("directionForMessage takes viewerRole and compares the resolved explicit 
   /(senderRole|explicitRole)\s*===\s*viewerRole/.test(chat));
 
 expect("createMsgEl threads viewerRole through to directionForMessage",
-  /function\s+createMsgEl\s*\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat) &&
+  /function\s+createMsgEl\s*\(\s*msg\s*,\s*viewerRole\s*,\s*counterpartName\s*\)/.test(chat) &&
   /directionForMessage\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat));
 
-expect("chat.js call sites pass viewerRole into createMsgEl",
-  (chat.match(/createMsgEl\(\s*msg\s*,\s*viewerRole\s*\)/g) || []).length >= 2);
+expect("chat.js call sites pass viewerRole + counterpart name into createMsgEl",
+  (chat.match(/createMsgEl\(\s*msg\s*,\s*viewerRole\s*,\s*counterpart\.name\s*\)/g) || []).length >= 2);
+
+// ── F4. chat.js — BD-CHAT-01 sender attribution (Cloud Design port, #5) ──
+// The in/out side was conveyed by alignment + colour only — invisible to a screen
+// reader. createMsgEl now names the sender: role=group + an aria-label, plus a
+// visible (aria-hidden, so it isn't read twice) author label on incoming bubbles.
+expect("createMsgEl sets role=group + an aria-label naming the sender",
+  /setAttribute\(\s*'role'\s*,\s*'group'\s*\)/.test(chat)
+  && /setAttribute\(\s*'aria-label'\s*,\s*author\s*\)/.test(chat));
+expect("createMsgEl renders a visible (aria-hidden) author label on incoming bubbles",
+  /className\s*=\s*'chat__author'/.test(chat)
+  && /dir\s*===\s*'in'[\s\S]{0,200}chat__author/.test(chat));
+expect("cloud.css defines the .chat__author label atom (Cloud Design port)",
+  /\.chat__author\s*\{/.test(css));
 
 expect("chat.js still falls back to legacy msg.dir for pre-senderRole records",
   /msg\.dir\s*===\s*'out'/.test(chat));

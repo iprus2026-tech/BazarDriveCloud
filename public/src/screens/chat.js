@@ -261,10 +261,25 @@ function directionForMessage(msg, viewerRole) {
   return msg.dir === 'out' ? 'out' : 'in';
 }
 
-function createMsgEl(msg, viewerRole) {
+function createMsgEl(msg, viewerRole, counterpartName) {
   const dir  = directionForMessage(msg, viewerRole);
   const wrap = document.createElement('div');
   wrap.className = `chat__msg chat__msg--${dir}`;
+
+  // BD-CHAT-01 (Cloud Design port, #5) — sender attribution. The in/out side is
+  // otherwise conveyed by alignment + colour only, invisible to a screen reader.
+  // role=group + an aria-label name the author for AT; incoming bubbles also carry
+  // a VISIBLE author label (aria-hidden, so the group label isn't read twice).
+  const author = dir === 'out' ? 'Вы' : (counterpartName || 'Собеседник');
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', author);
+  if (dir === 'in') {
+    const authorEl = document.createElement('div');
+    authorEl.className = 'chat__author';
+    authorEl.setAttribute('aria-hidden', 'true');
+    authorEl.textContent = author;
+    wrap.appendChild(authorEl);
+  }
 
   const bubble = document.createElement('div');
   bubble.className = 'chat__bubble';
@@ -463,7 +478,7 @@ export default function chat() {
     sep.textContent = 'Сегодня';
     messagesEl.appendChild(sep);
     for (const msg of messages) {
-      messagesEl.appendChild(createMsgEl(msg, viewerRole));
+      messagesEl.appendChild(createMsgEl(msg, viewerRole, counterpart.name));
     }
   }
 
@@ -517,7 +532,7 @@ export default function chat() {
     messages = [...messages, msg];
     saveMessages(chatId, messages);
 
-    messagesEl.appendChild(createMsgEl(msg, viewerRole));
+    messagesEl.appendChild(createMsgEl(msg, viewerRole, counterpart.name));
     scrollBottom();
 
     inputEl.value = '';
