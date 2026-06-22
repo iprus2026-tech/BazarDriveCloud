@@ -192,6 +192,26 @@ expect('Responses + active-ride facts name their full data surfaces (offer store
   /respons|offer/i.test(JSON.stringify(getScreenFacts('BD-RESPONSES-01').dataModel))
   && /feed-/.test(JSON.stringify(getScreenFacts('BD-RIDE-P-01').dataModel)));
 
+// ── D5. Selector/symbol anchoring (BD-OPS / #684 #2) — findings drift off line
+// numbers. Every Driver-Profile fix this series started by re-grepping the selector
+// because the audit's line was stale. The MEL now carries a stable selector anchor,
+// the card + prompt render it, and the prompt bakes in a grep-locate so the agent
+// re-resolves the CURRENT line instead of trusting a recorded one.
+expect('mel store seeds an optional selector anchor on createMelCard',
+  /selector:\s*typeof input\.selector === 'string'\s*\?\s*input\.selector\s*:\s*''/.test(storeSrc));
+expect('renderMelCard renders the Anchor line (value when set, reminder when not)',
+  renderMelCard({ id: 'mel_s', screenId: 'BD-X', route: '/x', file: 'x.js', selector: '#pf2-doc-add' }).includes('#pf2-doc-add')
+  && /Anchor/.test(renderMelCard({ id: 'mel_s', screenId: 'BD-X', route: '/x', file: 'x.js', selector: '#pf2-doc-add' }))
+  && /Anchor[^\n]*none/i.test(renderMelCard({ id: 'mel_s2', screenId: 'BD-X', route: '/x', file: 'x.js' })));
+expect('claude-code prompt anchors on the selector + bakes in a grep-locate (no stale line dependency)',
+  /Anchor:\s*markGarageVehicleActive[\s\S]{0,90}grep -n 'markGarageVehicleActive'/.test(
+    generateClaudeCodePrompt(sample, { selector: 'markGarageVehicleActive', problem: 'p' }))
+  && /Anchor:[^\n]*none recorded/i.test(generateClaudeCodePrompt(sample, { problem: 'p' })));
+expect('dashboard exposes a #mel-selector input + mirrors it into form state and the save payload',
+  /id="mel-selector"/.test(screenSrc)
+  && /mel-selector'\)\s*state\.melForm\.selector\s*=/.test(screenSrc)
+  && /selector:\s*read\('#mel-selector'\)\.trim\(\)/.test(screenSrc));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -247,8 +267,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v179 (bumped for the data-model viability fact)',
-  !!swVer && Number(swVer[1]) >= 179);
+expect('sw.js VERSION is present and >= v180 (bumped for the selector anchor field)',
+  !!swVer && Number(swVer[1]) >= 180);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

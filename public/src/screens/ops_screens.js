@@ -229,6 +229,10 @@ export default function opsScreens() {
           <select id="mel-reachability" class="ops-melform__control">${optionList(MEL_REACHABILITY, f.reachability)}</select>
         </label>
         <label class="ops-melform__row">
+          <span class="ops-melform__label">Anchor (selector/symbol)</span>
+          <input id="mel-selector" class="ops-melform__control" type="text" value="${esc(f.selector)}" placeholder="#pf2-doc-add or markGarageVehicleActive">
+        </label>
+        <label class="ops-melform__row">
           <span class="ops-melform__label">Problem</span>
           <textarea id="mel-problem" class="ops-melform__control" rows="2">${esc(f.problem)}</textarea>
         </label>
@@ -380,6 +384,7 @@ export default function opsScreens() {
     if (t.id === 'mel-severity') state.melForm.severity = t.value;
     else if (t.id === 'mel-status') state.melForm.status = t.value;
     else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
+    else if (t.id === 'mel-selector') state.melForm.selector = t.value;
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
     else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
     else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
@@ -459,6 +464,7 @@ export default function opsScreens() {
           severity: 'MEL-C',
           status: 'DETECTED',
           reachability: 'user-path',
+          selector: '',
           problem: '',
           operationalDecision: '',
           requiredRepair: '',
@@ -492,6 +498,7 @@ export default function opsScreens() {
           severity: read('#mel-severity'),
           status: read('#mel-status'),
           reachability: read('#mel-reachability'),
+          selector: read('#mel-selector').trim(),
           problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
