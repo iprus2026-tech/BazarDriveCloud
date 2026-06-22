@@ -455,7 +455,14 @@ function startCountdown(rootEl, controller) {
     const id = setTimeout(tick, 1000);
     controller.timers.push(id);
   }
-  tick();
+  // Defer the first tick to a macrotask. The router appends this section only
+  // AFTER the loader returns (router.js: `await loader()` then appendChild), so a
+  // synchronous first tick would see root.isConnected === false and tear the
+  // countdown down before it ever starts (Codex #713 P2) — freezing both the text
+  // and the new aria-valuenow. By the time a 0ms timer fires, the section is
+  // mounted. Tracked in controller.timers so teardown still cancels it.
+  const initId = setTimeout(tick, 0);
+  controller.timers.push(initId);
 }
 
 // ── Default export ────────────────────────────────────────────

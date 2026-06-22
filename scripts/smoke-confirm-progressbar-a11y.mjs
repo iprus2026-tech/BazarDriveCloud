@@ -45,6 +45,11 @@ expect('startCountdown() resolved', countdown.length > 0);
 expect('startCountdown resolves the .cf-progress bar', /querySelector\('\.cf-progress'\)/.test(countdown));
 expect('tick keeps the progressbar aria-valuenow in sync with the countdown',
   /setAttribute\('aria-valuenow',\s*String\(remaining\)\)/.test(countdown));
+// The router appends the section AFTER the loader returns, so the first tick must
+// be deferred past mount — a synchronous first tick tears the countdown down on
+// the pre-mount isConnected guard, freezing the bar at its initial value (Codex #713 P2).
+expect('startCountdown defers the first tick past mount (no pre-mount teardown)',
+  /setTimeout\(tick, 0\)|requestAnimationFrame\(tick\)/.test(countdown));
 
 if (issues.length) {
   console.error('\nFAILURES:\n- ' + issues.join('\n- '));
