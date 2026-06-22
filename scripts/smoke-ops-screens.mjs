@@ -174,6 +174,14 @@ expect('claude-code prompt embeds Step 0c + the safe-to-change/not-blast-radius 
   && /safe to change[\s\S]{0,90}not[\s\S]{0,50}blast radius/i.test(ccPrompt));
 expect('claude-code prompt lists the shared consumer surfaces when the repair writes a shared store',
   /Feed|DriverMap/.test(generateClaudeCodePrompt(sample, { requiredRepair: 'write the ride_orders store' })));
+// #684 #17 — the always-emit Step 0d front-loads the two mechanical-defect classes Codex
+// caught AFTER first push on this series: a modifier keyed off a proxy (viewerRole) instead of
+// the rendered datum (BD-CHAT-01 #710), and an effect started pre-mount that self-destructs on
+// the isConnected guard (BD-CONFIRM-01 #713). Pinned so the wording can't silently regress.
+expect('claude-code prompt embeds Step 0d render-source + mount-timing front-load',
+  /Step 0d[^\n]*render-source[^\n]*mount-timing/i.test(ccPrompt)
+  && /rendered datum/i.test(ccPrompt)
+  && /isConnected/i.test(ccPrompt));
 
 // ── D4. Data-model viability (BD-OPS / #684 #8) — is the fix CONSTRUCTIBLE?
 // The audit can confirm a defect against the code, but BD-RESPONSES-01 (#688)
