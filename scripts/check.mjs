@@ -419,6 +419,20 @@ if (exists(composerPrefillTerminalSmoke)) {
   }
 }
 
+// BD-COMPOSER-01 — publish-from-preview must not be a silent dead-end. The footer
+// publish CTA is form-linked and stays live in preview, so a validation failure
+// there would otherwise drop the error into the hidden edit pane subtree. Pins the
+// fix (exitPreview before showError) plus the structural hazard it guards.
+const composerPreviewPublishSmoke = path.join(root, 'scripts', 'smoke-composer-preview-publish.mjs');
+if (exists(composerPreviewPublishSmoke)) {
+  try {
+    execFileSync(process.execPath, [composerPreviewPublishSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-composer-preview-publish.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-D-03 (P2) — pane deep-link alias safety: a prototype key such as
 // ?pane=constructor must not resolve to an inherited value or make the profile
 // render throw; valid aliases keep activating the right pane.
