@@ -341,8 +341,8 @@ const cdNoStates = generateCloudDesignPrompt(
   { id: 'BD-X', route: '/x', file: 'x.js', role: 'shared' }, { problem: 'p', requiredRepair: 'r' });
 expect('Required-states degrades to the generic checklist without mel.lifecycleAudited (#12)',
   /default \/ loading \/ empty \/ error/.test(cdNoStates)
-  && /lifecycle states the audit flagged/i.test(cdAllStates)
-  && !/lifecycle states the audit flagged/i.test(cdNoStates));
+  && /lifecycle entry-states this screen must cover/i.test(cdAllStates)
+  && !/lifecycle entry-states this screen must cover/i.test(cdNoStates));
 
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
@@ -403,8 +403,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v184 (bumped for the screen-aware guardrails)',
-  !!swVer && Number(swVer[1]) >= 184);
+expect('sw.js VERSION is present and >= v192 (floor raised with the lifecycle-driven Required-states bump)',
+  !!swVer && Number(swVer[1]) >= 192);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

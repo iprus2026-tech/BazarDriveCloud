@@ -48,10 +48,13 @@ function reuseLines(screen = {}) {
 }
 
 // Map each MEL lifecycle state (#10 vocab) to a Cloud Design brief line. The
-// "Required states" block is driven by mel.lifecycleAudited so the design is asked for
-// the states the audit actually flagged (BD-CHAT-01: first-entry empty + terminal),
-// not a generic checklist (#684 #12). Keys MUST match ops_mel_store MEL_LIFECYCLE_STATES;
-// smoke-ops-screens asserts every store state has a brief here (anti-drift).
+// "Required states" block is driven by mel.lifecycleAudited — the entry-states the audit
+// COVERED (probed) on this screen — so the design is asked to handle exactly those
+// (BD-CHAT-01: first-entry + terminal) rather than a generic checklist (#684 #12). These
+// are coverage context, NOT a defect list: the actual defect lives in Problem / Required
+// repair, so a probed-but-passing state is never demanded as a repair target (Codex #705).
+// Keys MUST match ops_mel_store MEL_LIFECYCLE_STATES; smoke-ops-screens asserts every
+// store state has a brief here (anti-drift).
 const LIFECYCLE_STATE_BRIEF = {
   'first-entry':   'first-entry — opened for the first time, no data yet: design the GENUINE empty / first-run state (not fabricated content)',
   'live-mid-flow': 'live-mid-flow — the active, in-progress state with real data',
@@ -67,7 +70,7 @@ function requiredStatesLines(screen = {}, mel = {}) {
     : [];
   const lines = [];
   if (audited.length) {
-    lines.push(`- lifecycle states the audit flagged on this screen — design each:`);
+    lines.push(`- lifecycle entry-states this screen must cover (audited; the specific defect is in Problem / Required repair above) — design each correctly:`);
     audited.forEach((s) => lines.push(`  · ${LIFECYCLE_STATE_BRIEF[s]}`));
     lines.push(`- plus default / loading / error where applicable`);
   } else {
