@@ -50,25 +50,27 @@ function guardrailLines(screen = {}) {
   return g.map((x) => `- [${screen.id || 'screen'}] ${x}`);
 }
 
-// #684 #13 — a repair that edits a PRECACHED file must bump the SW cache name, or
-// installed clients keep serving the stale copy. The PRECACHE list lives in sw.js and a
-// pure template can't read it, but every screen source (public/src/**.js) and the shared
-// stylesheet (public/styles/*.css) are precached — so a path check covers a screen repair
-// without duplicating the list. The bump must clear the current main VERSION; parallel
-// precached PRs must SEQUENCE their bumps (the #701 / #705 lesson: two PRs sharing a vN
-// means the second to merge ships no cache change).
+// #684 #13 — a repair that edits a PRECACHED file must bump the SW cache name, or installed
+// clients keep serving the stale copy. The PRECACHE list lives in sw.js and a pure template
+// can't read it, but public/styles/cloud.css (ALWAYS an allowed file) and every screen source
+// under public/src/**.js are precached. cloud.css alone means EVERY repair can touch a
+// precached file, so the section ALWAYS emits — a CSS-only repair on a non-precached screen
+// file still changes the precached stylesheet (Codex #706). The bump must clear the current
+// main VERSION; parallel precached PRs must SEQUENCE their bumps (the #701 / #705 lesson: two
+// PRs sharing a vN means the second to merge ships no cache change).
 function isPrecachedPath(file) {
   return /^public\/(src\/.*\.js|styles\/.*\.css)$/.test(String(file || ''));
 }
 
 function serviceWorkerLines(screen = {}) {
   const file = screen.file || '';
-  if (!isPrecachedPath(file)) return [];
+  const fileIsPrecached = isPrecachedPath(file);
+  const precached = fileIsPrecached ? `${file} and public/styles/cloud.css` : `public/styles/cloud.css`;
   return [
     ``,
     `Service worker / cache (this repair edits precached files)`,
-    `- ${file} and public/styles/cloud.css are in the sw.js PRECACHE list, so installed clients keep serving the OLD cached copy until the cache name changes.`,
-    `- After the edit, bump 'const VERSION' in public/sw.js ABOVE the current main VERSION. (This is the ONE sw.js change you SHOULD make — do not otherwise alter the PRECACHE list or CSP.)`,
+    `- ${precached} ${fileIsPrecached ? 'are' : 'is'} in the sw.js PRECACHE list, so installed clients keep serving the OLD cached copy until the cache name changes.`,
+    `- After the edit, bump 'const VERSION' in public/sw.js ABOVE the current main VERSION (the VERSION line ONLY — do not otherwise alter the PRECACHE list or CSP).`,
     `- If a parallel PR also bumps a precached file, sequence your VERSION ABOVE it: two PRs sharing the same vN means the second to merge ships NO cache change (#701 / #705).`,
   ];
 }
@@ -122,6 +124,7 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `Allowed files`,
     `- ${file}`,
     `- public/styles/cloud.css (scoped atoms for this screen only)`,
+    `- public/sw.js (the VERSION line ONLY — bump it; see Service worker below)`,
     ``,
     `Must not touch`,
     `- route registration in public/src/app.js (unless the task is the route)`,
