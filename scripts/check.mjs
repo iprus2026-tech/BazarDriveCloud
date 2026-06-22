@@ -240,6 +240,17 @@ if (exists(waitingSmoke)) {
   }
 }
 
+// BD-CONFIRM-01 — static a11y smoke for the /trip-confirmation auto-cancel progressbar.
+const confirmProgressbarSmoke = path.join(root, 'scripts', 'smoke-confirm-progressbar-a11y.mjs');
+if (exists(confirmProgressbarSmoke)) {
+  try {
+    execFileSync(process.execPath, [confirmProgressbarSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-confirm-progressbar-a11y.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-NOSHOW-01 — static regression smoke for the driver no-show sub-flow.
 const noShowSmoke = path.join(root, 'scripts', 'smoke-active-ride-noshow.mjs');
 if (exists(noShowSmoke)) {
