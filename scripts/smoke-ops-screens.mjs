@@ -344,6 +344,23 @@ expect('Required-states degrades to the generic checklist without mel.lifecycleA
   && /lifecycle entry-states this screen must cover/i.test(cdAllStates)
   && !/lifecycle entry-states this screen must cover/i.test(cdNoStates));
 
+// ── D12. Repair prompt flags SW-precache membership + the VERSION-bump rule (BD-OPS / #684 #13) ──
+// A repair editing a precached file must bump the SW cache or installed clients keep the
+// stale copy (the #701 / #705 v-collision lesson). The prompt now emits a Service-worker
+// section for a precached target (public/src/**.js, public/styles/*.css) — with the bump-
+// above-main + parallel-sequence rule — and omits it for a non-precached target.
+const ccPrecached = generateClaudeCodePrompt(
+  { id: 'BD-CHAT-01', route: '/chat', file: 'public/src/screens/chat.js', role: 'shared' }, mel);
+expect('claude-code prompt emits the SW VERSION-bump obligation for a precached screen file (#13)',
+  /Service worker \/ cache/i.test(ccPrecached)
+  && /bump '?const VERSION'?[\s\S]{0,80}ABOVE the current main VERSION/i.test(ccPrecached));
+expect('claude-code prompt SW note warns about parallel-PR version sequencing (#13)',
+  /sequence your VERSION ABOVE it/i.test(ccPrecached)
+  && /second to merge ships NO cache change/i.test(ccPrecached));
+expect('claude-code prompt omits the Service-worker section for a non-precached target (#13)',
+  !/Service worker \/ cache/i.test(
+    generateClaudeCodePrompt({ id: 'BD-X', route: '/x', file: 'docs/x.md', role: 'shared' }, mel)));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -403,8 +420,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v192 (floor raised with the lifecycle-driven Required-states bump)',
-  !!swVer && Number(swVer[1]) >= 192);
+expect('sw.js VERSION is present and >= v193 (floor raised with the precache-aware repair-prompt bump)',
+  !!swVer && Number(swVer[1]) >= 193);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
