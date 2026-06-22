@@ -30,6 +30,17 @@ export const MEL_STATUSES = [
 // distinction that made the garage demo-2 MEL-B a WONTFIX). BD-OPS / #684 #3.
 export const MEL_REACHABILITY = ['user-path', 'dev-param', 'edge'];
 
+// #684 #10 — which lifecycle ENTRY-STATES the audit probed. Separate from #3
+// reachability (HOW the screen is reached): this is WHAT STATE the entity is in on
+// entry. All three BD-RESPONSES-01 (#688) rounds were entry-state edges the
+// single-tap audit missed (first-entry leak, live regression, terminal/re-entry).
+export const MEL_LIFECYCLE_STATES = ['first-entry', 'live-mid-flow', 'terminal', 're-entry'];
+
+// Validate + canonicalise (dedupe + order) the audited-states array.
+function sanitizeLifecycle(value) {
+  return Array.isArray(value) ? MEL_LIFECYCLE_STATES.filter((st) => value.includes(st)) : [];
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -91,6 +102,8 @@ export function createMelCard(input = {}) {
     // #684 #4 — the PR / commit that resolved this MEL (the MEL→ship trail), so a
     // screen's MEL history shows what actually shipped. Free-text (#683 or a SHA).
     pr: typeof input.pr === 'string' ? input.pr : '',
+    // #684 #10 — the lifecycle entry-states the audit actually probed.
+    lifecycleAudited: sanitizeLifecycle(input.lifecycleAudited),
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',
@@ -115,6 +128,7 @@ export function updateMelCard(id, patch = {}) {
   const sevCandidate = patch.severity !== undefined ? patch.severity : cur.severity;
   const statusCandidate = patch.status !== undefined ? patch.status : cur.status;
   const reachCandidate = patch.reachability !== undefined ? patch.reachability : cur.reachability;
+  const lcCandidate = patch.lifecycleAudited !== undefined ? patch.lifecycleAudited : cur.lifecycleAudited;
   const next = {
     ...cur,
     ...patch,
@@ -126,6 +140,7 @@ export function updateMelCard(id, patch = {}) {
     severity: MEL_SEVERITIES.includes(sevCandidate) ? sevCandidate : cur.severity,
     status: MEL_STATUSES.includes(statusCandidate) ? statusCandidate : cur.status,
     reachability: MEL_REACHABILITY.includes(reachCandidate) ? reachCandidate : (cur.reachability || 'user-path'),
+    lifecycleAudited: sanitizeLifecycle(lcCandidate),
     updatedAt: new Date().toISOString(),
   };
   cards[i] = next;
