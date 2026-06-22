@@ -31,6 +31,7 @@ import { buildCloudDesignPrompt } from '../ops/connectors/cloud_design_connector
 import { buildGithubIssue } from '../ops/connectors/github_issue_connector.js';
 import { buildClaudeCodePrompt } from '../ops/connectors/claude_code_connector.js';
 import { buildCheckCommands } from '../ops/connectors/checks_connector.js';
+import { buildAuditRecipe } from '../ops/connectors/audit_recipe_connector.js';
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -322,6 +323,7 @@ export default function opsScreens() {
         <button type="button" class="ops-btn" data-action="gen-cloud">Cloud Design prompt</button>
         <button type="button" class="ops-btn" data-action="gen-github">GitHub issue</button>
         <button type="button" class="ops-btn" data-action="gen-claude">Claude Code prompt</button>
+        <button type="button" class="ops-btn" data-action="gen-audit">Audit recipe</button>
         <button type="button" class="ops-btn ops-btn--ghost" data-action="copy-check">Copy check commands</button>
       </div>
       ${notice}
@@ -583,6 +585,10 @@ export default function opsScreens() {
         setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel));
         break;
       }
+      case 'gen-audit':
+        // Audit recipe FINDS MELs (no existing mel needed) — vs the repair prompts.
+        setOutput('Audit recipe', buildAuditRecipe(s.id));
+        break;
       case 'copy-check':
         copy(buildCheckCommands(s.id), 'Check commands copied.');
         break;
