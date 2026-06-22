@@ -3,6 +3,8 @@
 // Produces a scoped code-agent prompt for a screen repair. Always embeds the
 // screen id, route and source file, plus an explicit must-not-touch block.
 
+import { blastRadiusLines } from '../blast_radius.js';
+
 function branchFor(screen = {}) {
   const raw = String(screen.id || 'screen')
     .toLowerCase()
@@ -40,6 +42,12 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- find the smokes that pin this screen (file or route):  grep -rlE "${pinPattern}" scripts/smoke-*.mjs || echo '(no file/route pin — check by selector)'`,
     `- read them (and the selectors you are about to touch); if one pins the behavior as INTENDED, stop — this may be WONTFIX or need a different fix.`,
     `- never edit a pin to force the fix through; if your change breaks a pin, reconsider the fix, not the test.`,
+    `- NOTE: this cross-check confirms the behavior is SAFE TO CHANGE (not pinned) — it does NOT map the blast radius. For a repair that writes a shared store/id, see Step 0c.`,
+    ``,
+    `Step 0c — blast radius (shared-state consumers, #684 #9)`,
+    `A repair that writes a shared store or shared id does not stay on this screen — other screens read the same data. Before writing:`,
+    ...blastRadiusLines(mel),
+    `- verify each listed consumer still behaves correctly after the change (this is the class of miss that took BD-RESPONSES-01 / #688 three review rounds).`,
     ``,
     `What to change`,
     repair,

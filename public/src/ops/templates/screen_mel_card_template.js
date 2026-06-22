@@ -3,6 +3,8 @@
 // Renders a MEL card to a plain-text / markdown block for copy-out. Always
 // embeds the screen id, route and source file.
 
+import { blastRadiusLines } from '../blast_radius.js';
+
 export function renderMelCard(mel = {}) {
   const id = mel.id || '(no id)';
   const screenId = mel.screenId || '(unknown screen id)';
@@ -27,6 +29,9 @@ export function renderMelCard(mel = {}) {
     ``,
     `Required repair`,
     mel.requiredRepair || '(none recorded)',
+    ``,
+    `Blast radius (#684 #9 — shared-state consumers to verify before writing)`,
+    ...blastRadiusLines(mel),
     ``,
     `Created: ${mel.createdAt || '(unknown)'}`,
     `Updated: ${mel.updatedAt || '(unknown)'}`,
