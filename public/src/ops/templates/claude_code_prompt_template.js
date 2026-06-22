@@ -139,5 +139,10 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- node scripts/check.mjs`,
     `- node scripts/dispatcher.mjs`,
     `- manual: open ${route} and confirm the repair`,
+    ``,
+    `Before you push (self-review)`,
+    `These are the two mechanical defect classes that have each cost a review round on this screen series — both are checkable BEFORE opening the PR:`,
+    `- Smoke pins: every pin you added or changed must assert the actual CALL SITE / runtime behaviour, NOT just a declaration or signature. A pin that matches the function signature stays GREEN when the CALL to it regresses — anchor it so a real regression turns it RED (#697).`,
+    `- Service worker: if your change touches a precached file (see Service worker above), bump sw.js VERSION ABOVE the current main, and above any parallel precached PR's bump (#701 / #705).`,
   ].join('\n');
 }

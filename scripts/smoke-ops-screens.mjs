@@ -368,6 +368,18 @@ const ccCssOnly = generateClaudeCodePrompt(
 expect('claude-code prompt STILL emits the SW section for a non-precached screen file via cloud.css (#13, Codex #706)',
   /Service worker \/ cache/i.test(ccCssOnly) && /public\/styles\/cloud\.css/.test(ccCssOnly));
 
+// ── D13. Repair prompt carries a pre-PR self-review of the Codex-caught classes (BD-OPS / #684 #16) ──
+// The two mechanical defect classes that each cost a review round — a smoke pin matching a
+// DECLARATION not the call site (#697), and an un-bumped / colliding SW VERSION (#701 / #705)
+// — are checkable before opening the PR. The prompt now appends a "Before you push" self-review.
+const ccReview = generateClaudeCodePrompt(
+  { id: 'BD-CHAT-01', route: '/chat', file: 'public/src/screens/chat.js', role: 'shared' }, mel);
+expect('claude-code prompt appends a "Before you push" self-review block (#16)',
+  /Before you push \(self-review\)/i.test(ccReview));
+expect('self-review flags the call-site (not declaration) smoke-pin class #697 and the SW-bump class #701/#705',
+  /CALL SITE[\s\S]{0,220}regress[\s\S]{0,160}#697/i.test(ccReview)
+  && /Service worker[\s\S]{0,160}VERSION[\s\S]{0,160}#701 \/ #705/i.test(ccReview));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -427,8 +439,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v193 (floor raised with the precache-aware repair-prompt bump)',
-  !!swVer && Number(swVer[1]) >= 193);
+expect('sw.js VERSION is present and >= v194 (floor raised with the pre-push self-review bump)',
+  !!swVer && Number(swVer[1]) >= 194);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
