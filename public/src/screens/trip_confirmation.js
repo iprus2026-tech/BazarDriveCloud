@@ -273,7 +273,7 @@ function renderDriverWaiting(tripId) {
       <div class="cf-section-label">Маршрут</div>
       ${routeCard()}
       ${metaGrid()}
-      <div class="cf-progress" role="progressbar" aria-label="Авто-отмена отклика" aria-valuemin="0" aria-valuemax="60">
+      <div class="cf-progress" role="progressbar" aria-label="Авто-отмена отклика" aria-valuemin="0" aria-valuemax="60" aria-valuenow="60">
         <span class="cf-progress-fill"></span>
       </div>
       <div class="cf-sub-row">
@@ -405,7 +405,8 @@ const STATE_RENDERERS = {
 function startCountdown(rootEl, controller) {
   const big = rootEl.querySelector('#cf-countdown');
   const inline = rootEl.querySelector('#cf-countdown-inline');
-  if (!big && !inline) return;
+  const bar = rootEl.querySelector('.cf-progress');
+  if (!big && !inline && !bar) return;
   let remaining = 60;
   function fmt(s) {
     const m = Math.floor(s / 60);
@@ -432,6 +433,10 @@ function startCountdown(rootEl, controller) {
     if (!rootEl.isConnected) { teardown(); return; }
     if (big)    big.textContent = fmt(remaining);
     if (inline) inline.textContent = fmtInline(remaining);
+    // BD-CONFIRM-01 (a11y) — keep the determinate progressbar's aria-valuenow in
+    // sync with the countdown (mirrors the active-ride waiting bar); without it the
+    // role=progressbar announces no current value.
+    if (bar) bar.setAttribute('aria-valuenow', String(remaining));
     // aria-live is opt-in only inside the urgent window (≤5s). Outside
     // that window the contract calls for silence — announcing every
     // second for a full minute is noisy for screen readers.
@@ -450,7 +455,14 @@ function startCountdown(rootEl, controller) {
     const id = setTimeout(tick, 1000);
     controller.timers.push(id);
   }
-  tick();
+  // Defer the first tick to a macrotask. The router appends this section only
+  // AFTER the loader returns (router.js: `await loader()` then appendChild), so a
+  // synchronous first tick would see root.isConnected === false and tear the
+  // countdown down before it ever starts (Codex #713 P2) — freezing both the text
+  // and the new aria-valuenow. By the time a 0ms timer fires, the section is
+  // mounted. Tracked in controller.timers so teardown still cancels it.
+  const initId = setTimeout(tick, 0);
+  controller.timers.push(initId);
 }
 
 // ── Default export ────────────────────────────────────────────
