@@ -106,6 +106,13 @@ expect("resolveRideContext gates CTA on kind === 'passenger_response'",
   /kind\s*===\s*'passenger_response'/.test(rideCtxBody || ''));
 expect('resolveRideContext gates CTA on response.tripId',
   /response\.tripId/.test(rideCtxBody || ''));
+// BD-CHAT-01 fix — the passenger-only «Подтвердить поездку» CTA must NOT render on a
+// driver thread (/chat?responseId=…&role=driver stores the same passenger_response),
+// so resolveRideContext also gates on viewerRole, threaded from the call site.
+expect("resolveRideContext also gates the CTA on viewerRole !== 'driver'",
+  /viewerRole\s*!==\s*'driver'/.test(rideCtxBody || ''));
+expect('chat.js threads viewerRole into resolveRideContext',
+  /resolveRideContext\(\s*\{[^}]*viewerRole[^}]*\}\s*\)/.test(chat));
 
 const confirmArg = callObjectArg(chat, 'saveTripConfirmation');
 expect('chat.js #chat-confirm calls saveTripConfirmation({…})', !!confirmArg);
