@@ -344,6 +344,30 @@ expect('Required-states degrades to the generic checklist without mel.lifecycleA
   && /lifecycle entry-states this screen must cover/i.test(cdAllStates)
   && !/lifecycle entry-states this screen must cover/i.test(cdNoStates));
 
+// ── D12. Repair prompt flags SW-precache membership + the VERSION-bump rule (BD-OPS / #684 #13) ──
+// A repair editing a precached file must bump the SW cache or installed clients keep the
+// stale copy (the #701 / #705 v-collision lesson). cloud.css is ALWAYS allowed + precached,
+// so the Service-worker section always emits (Codex #706); it names the screen file too when
+// that is precached, adds public/sw.js (VERSION only) to Allowed files, and carries the
+// bump-above-main + parallel-sequence rule.
+const ccPrecached = generateClaudeCodePrompt(
+  { id: 'BD-CHAT-01', route: '/chat', file: 'public/src/screens/chat.js', role: 'shared' }, mel);
+expect('claude-code prompt emits the SW VERSION-bump obligation, naming the precached screen file (#13)',
+  /Service worker \/ cache/i.test(ccPrecached)
+  && ccPrecached.includes('public/src/screens/chat.js')
+  && /bump '?const VERSION'?[\s\S]{0,80}ABOVE the current main VERSION/i.test(ccPrecached));
+expect('claude-code prompt SW note warns about parallel-PR version sequencing (#13)',
+  /sequence your VERSION ABOVE it/i.test(ccPrecached)
+  && /second to merge ships NO cache change/i.test(ccPrecached));
+expect('claude-code prompt adds public/sw.js (VERSION only) to Allowed files (#13, Codex #706)',
+  /Allowed files[\s\S]*public\/sw\.js[\s\S]{0,40}VERSION/i.test(ccPrecached));
+// cloud.css is always allowed + precached, so the SW section must STILL emit even when the
+// screen file itself is not precached (a CSS-only repair changes the precached stylesheet).
+const ccCssOnly = generateClaudeCodePrompt(
+  { id: 'BD-X', route: '/x', file: 'docs/x.md', role: 'shared' }, mel);
+expect('claude-code prompt STILL emits the SW section for a non-precached screen file via cloud.css (#13, Codex #706)',
+  /Service worker \/ cache/i.test(ccCssOnly) && /public\/styles\/cloud\.css/.test(ccCssOnly));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -403,8 +427,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v192 (floor raised with the lifecycle-driven Required-states bump)',
-  !!swVer && Number(swVer[1]) >= 192);
+expect('sw.js VERSION is present and >= v193 (floor raised with the precache-aware repair-prompt bump)',
+  !!swVer && Number(swVer[1]) >= 193);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
