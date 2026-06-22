@@ -203,9 +203,11 @@ expect('renderMelCard renders the Anchor line (value when set, reminder when not
   renderMelCard({ id: 'mel_s', screenId: 'BD-X', route: '/x', file: 'x.js', selector: '#pf2-doc-add' }).includes('#pf2-doc-add')
   && /Anchor/.test(renderMelCard({ id: 'mel_s', screenId: 'BD-X', route: '/x', file: 'x.js', selector: '#pf2-doc-add' }))
   && /Anchor[^\n]*none/i.test(renderMelCard({ id: 'mel_s2', screenId: 'BD-X', route: '/x', file: 'x.js' })));
-expect('claude-code prompt anchors on the selector + bakes in a grep-locate (no stale line dependency)',
-  /Anchor:\s*markGarageVehicleActive[\s\S]{0,90}grep -n 'markGarageVehicleActive'/.test(
+expect('claude-code prompt anchors on the selector + bakes in a LITERAL grep-locate (no stale line, no regex pitfalls)',
+  /Anchor:\s*markGarageVehicleActive[\s\S]{0,90}grep -nF -- 'markGarageVehicleActive'/.test(
     generateClaudeCodePrompt(sample, { selector: 'markGarageVehicleActive', problem: 'p' }))
+  && generateClaudeCodePrompt(sample, { selector: '[data-action="report-order"]', problem: 'p' })
+    .includes(`grep -nF -- '[data-action="report-order"]'`)
   && /Anchor:[^\n]*none recorded/i.test(generateClaudeCodePrompt(sample, { problem: 'p' })));
 expect('dashboard exposes a #mel-selector input + mirrors it into form state and the save payload',
   /id="mel-selector"/.test(screenSrc)
