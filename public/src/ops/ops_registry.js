@@ -13,6 +13,40 @@
 // BD-ONBOARDING-01 `/welcome`). The smoke gate now enforces coverage in BOTH
 // directions, so a screen added to app.js without a registry decision fails.
 
+// BD-OPS / #684 #8 — optional data-model fact: where a screen's primary entity
+// lives, so the repair prompt (Step 0b) can flag a fix that assumes a static
+// anchor which does not exist (the BD-RESPONSES-01 / #688 lesson: ride orders are
+// runtime-created, so "point the seed at an orderId" was non-viable). Read-only;
+// shared by reference — getScreen() shallow-copies the entry and never mutates this.
+const RIDE_ORDERS_DATA_MODEL = {
+  store: 'the ride_orders store',
+  runtimeCreated: true,
+  keyedBy: 'a runtime order id (order-<timestamp>) minted by createRideOrder()',
+  note: 'no static orderId exists on a fresh load — a repair that needs one must MATERIALISE the order at runtime, not re-point a static seed.',
+};
+const ACTIVE_RIDE_DATA_MODEL = {
+  store: 'the active_ride store',
+  runtimeCreated: true,
+  keyedBy: 'a tripId — either trip_<orderId> (canonical, from an accepted ride order) OR feed-<postId> (legacy Feed / Post-Detail fallback via acceptPassengerRequestFromPost)',
+  note: 'created at runtime; a terminal ride must not be reused — regenerate a fresh tripId. A repair must handle BOTH tripId namespaces, not only trip_<orderId>.',
+};
+// BD-ORDER-DETAIL-01 is NOT runtime ride_orders: it resolves loadOrder(id) from the
+// frozen DEMO_ORDERS fixture (demo-order-1 / -offers / -accepted) in order_detail.js.
+const FIXTURE_ORDER_DATA_MODEL = {
+  store: 'the frozen DEMO_ORDERS fixture (in order_detail.js)',
+  runtimeCreated: false,
+  keyedBy: 'a static fixture id (e.g. demo-order-1, demo-order-offers), resolved by loadOrder(id)',
+  note: 'these are static fixtures editable IN PLACE — a repair here edits the fixture; do NOT materialise a runtime ride order for this screen.',
+};
+// BD-RESPONSES-01 reads TWO sources: the ride_orders order context (getOrderById /
+// resolveCanonicalOrder) AND the driver-offer cards (responses store + MOCK_DRIVERS).
+const RESPONSES_DATA_MODEL = {
+  store: 'two sources — the ride_orders order context AND the driver-offer store',
+  runtimeCreated: true,
+  keyedBy: 'order context by a runtime order id (getOrderById / resolveCanonicalOrder); the offer cards by orderId in the responses store, falling back to in-file MOCK_DRIVERS + session-only decline state',
+  note: 'order-resolution repairs touch the runtime ride order (materialise it — the #688 lesson); but card-mapping / sort / decline / responseId-chat repairs touch the offer store + MOCK_DRIVERS fallback, NOT a ride order.',
+};
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -112,6 +146,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-ORDER-DETAIL-01',
@@ -123,6 +158,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: FIXTURE_ORDER_DATA_MODEL,
   },
   {
     id: 'BD-RESPONSES-01',
@@ -134,6 +170,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RESPONSES_DATA_MODEL,
   },
   {
     id: 'BD-RESPOND-01',
@@ -167,6 +204,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: ACTIVE_RIDE_DATA_MODEL,
   },
   {
     id: 'BD-RIDE-P-01',
@@ -178,6 +216,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: ACTIVE_RIDE_DATA_MODEL,
   },
   {
     id: 'BD-DRIVER-01',
@@ -189,6 +228,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    dataModel: RIDE_ORDERS_DATA_MODEL,
   },
   {
     id: 'BD-CHAT-01',
