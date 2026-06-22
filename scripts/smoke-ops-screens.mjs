@@ -325,6 +325,25 @@ const cdTokens = [...new Set(cdPaletteLine.match(/--[a-z0-9-]+/g) || [])];
 expect('every Cloud-Design-advertised token exists in cloud.css :root (no drift)',
   cdTokens.length >= 10 && cdTokens.every((t) => new RegExp('\\' + t + '\\s*:').test(css)));
 
+// ── D11. Cloud Design "Required states" driven by the MEL lifecycle audit (BD-OPS / #684 #12) ──
+// The generic "default/loading/empty/error" list didn't name the lifecycle states the
+// audit actually found missing (BD-CHAT-01: first-entry empty, terminal). The prompt now
+// derives the required states from mel.lifecycleAudited (#10); every store lifecycle state
+// must have a design brief here (anti-drift), and it degrades without the field.
+const lifeMatch = storeSrc.match(/MEL_LIFECYCLE_STATES\s*=\s*\[([^\]]*)\]/);
+const lifeStates = (lifeMatch ? (lifeMatch[1].match(/'[^']+'/g) || []) : []).map((s) => s.replace(/'/g, ''));
+const cdAllStates = generateCloudDesignPrompt(
+  { id: 'BD-X', route: '/x', file: 'x.js', role: 'shared' },
+  { problem: 'p', requiredRepair: 'r', lifecycleAudited: lifeStates });
+expect('Required-states renders a brief for every store lifecycle state (driven by mel.lifecycleAudited, #12)',
+  lifeStates.length >= 4 && lifeStates.every((s) => cdAllStates.includes(s)));
+const cdNoStates = generateCloudDesignPrompt(
+  { id: 'BD-X', route: '/x', file: 'x.js', role: 'shared' }, { problem: 'p', requiredRepair: 'r' });
+expect('Required-states degrades to the generic checklist without mel.lifecycleAudited (#12)',
+  /default \/ loading \/ empty \/ error/.test(cdNoStates)
+  && /lifecycle states the audit flagged/i.test(cdAllStates)
+  && !/lifecycle states the audit flagged/i.test(cdNoStates));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
