@@ -400,6 +400,12 @@ export default function chat() {
   const hydration   = resolveChatHydration({ tripId, responseId, viewerRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
+  // BD-CHAT-01 (Cloud Design parity) — the header avatar shows the COUNTERPART
+  // (driver for a passenger viewer, passenger for a driver viewer), so it carries
+  // the counterpart's identity colour to match the .cf-avatar--driver/--passenger
+  // convention used elsewhere (driver = green, passenger = purple). Without this
+  // the avatar was always green, mis-identifying a passenger counterpart.
+  const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
 
   const root = document.createElement('section');
   root.className = 'screen screen--chat';
@@ -409,7 +415,7 @@ export default function chat() {
       <button type="button" class="bd-iconbtn chat__back" id="chat-back" aria-label="Назад">
         ${BACK_SVG}
       </button>
-      <div class="chat__avatar" aria-hidden="true">${escapeHtml(counterpart.initials || '')}</div>
+      <div class="chat__avatar chat__avatar--${counterpartRole}" aria-hidden="true">${escapeHtml(counterpart.initials || '')}</div>
       <div class="chat__driver-info">
         <div class="chat__driver-name">${escapeHtml(counterpart.name || '')}</div>
         <div class="chat__driver-meta">

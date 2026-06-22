@@ -4607,7 +4607,6 @@ body {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #22c55e;
   color: #fff;
   display: flex;
   align-items: center;
@@ -4617,6 +4616,13 @@ body {
   flex-shrink: 0;
   user-select: none;
 }
+
+/* Counterpart identity colour — keyed off the counterpart's role so the avatar
+   reads as that person, mirroring the .cf-avatar--driver/--passenger identity
+   hues (kept flat here to match this avatar's existing flat treatment). The
+   passenger viewer's driver counterpart stays the original green. */
+.chat__avatar--driver    { background: #22c55e; }
+.chat__avatar--passenger { background: #a855f7; }
 
 .chat__driver-info {
   flex: 1;
