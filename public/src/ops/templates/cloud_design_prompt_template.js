@@ -47,6 +47,39 @@ function reuseLines(screen = {}) {
   return lines;
 }
 
+// Map each MEL lifecycle state (#10 vocab) to a Cloud Design brief line. The
+// "Required states" block is driven by mel.lifecycleAudited — the entry-states the audit
+// COVERED (probed) on this screen — so the design is asked to handle exactly those
+// (BD-CHAT-01: first-entry + terminal) rather than a generic checklist (#684 #12). These
+// are coverage context, NOT a defect list: the actual defect lives in Problem / Required
+// repair, so a probed-but-passing state is never demanded as a repair target (Codex #705).
+// Keys MUST match ops_mel_store MEL_LIFECYCLE_STATES; smoke-ops-screens asserts every
+// store state has a brief here (anti-drift).
+const LIFECYCLE_STATE_BRIEF = {
+  'first-entry':   'first-entry — opened for the first time, no data yet: design the GENUINE empty / first-run state (not fabricated content)',
+  'live-mid-flow': 'live-mid-flow — the active, in-progress state with real data',
+  'terminal':      'terminal — the completed / canceled / ended state: read-only / locked where the flow is over',
+  're-entry':      're-entry — returning after leaving: the restored / resumed state',
+};
+
+// When the MEL records which lifecycle states it audited, ask the design to cover
+// exactly those; otherwise fall back to the generic checklist.
+function requiredStatesLines(screen = {}, mel = {}) {
+  const audited = Array.isArray(mel.lifecycleAudited)
+    ? mel.lifecycleAudited.filter((s) => typeof s === 'string' && LIFECYCLE_STATE_BRIEF[s])
+    : [];
+  const lines = [];
+  if (audited.length) {
+    lines.push(`- lifecycle entry-states this screen must cover (audited; the specific defect is in Problem / Required repair above) — design each correctly:`);
+    audited.forEach((s) => lines.push(`  · ${LIFECYCLE_STATE_BRIEF[s]}`));
+    lines.push(`- plus default / loading / error where applicable`);
+  } else {
+    lines.push(`- default / loading / empty / error where applicable`);
+  }
+  lines.push(`- role-correct variants for ${screen.role || 'the relevant role'}`);
+  return lines;
+}
+
 export function generateCloudDesignPrompt(screen = {}, mel = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -71,8 +104,7 @@ export function generateCloudDesignPrompt(screen = {}, mel = {}) {
     repair,
     ``,
     `Required states to cover`,
-    `- default / loading / empty / error where applicable`,
-    `- role-correct variants for ${screen.role || 'the relevant role'}`,
+    ...requiredStatesLines(screen, mel),
     ``,
     `Reuse`,
     ...reuseLines(screen),
