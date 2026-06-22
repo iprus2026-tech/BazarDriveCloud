@@ -72,12 +72,23 @@ function loadMessages(chatId) {
   return Array.isArray(store[chatId]) ? store[chatId] : null;
 }
 
-function saveMessages(chatId, messages) {
+// Append one outgoing message to its thread. Re-reads the store immediately
+// before writing and pushes only the new record (BD-CHAT-01 #7), so a concurrent
+// write from another tab to the SAME thread is preserved instead of being
+// clobbered by a stale full-array overwrite. Returns false when the write itself
+// fails (quota / private mode) so the caller can surface it (BD-CHAT-01 #6)
+// rather than silently dropping the message.
+function appendMessage(chatId, msg) {
   try {
     const store = loadChatStore();
-    store[chatId] = messages;
+    const arr = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
+    arr.push(msg);
+    store[chatId] = arr;
     localStorage.setItem(CHAT_KEY, JSON.stringify(store));
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // BD-AUTH-BOUNDARY-01 — chat messages are scoped to the local identity
@@ -555,7 +566,7 @@ export default function chat() {
     // local outgoing send.
     const msg = { id: Date.now(), senderRole: viewerRole, dir: 'out', text, time };
     messages = [...messages, msg];
-    saveMessages(chatId, messages);
+    const persisted = appendMessage(chatId, msg);
 
     messagesEl.appendChild(createMsgEl(msg, viewerRole, counterpart.name));
     scrollBottom();
@@ -568,6 +579,10 @@ export default function chat() {
     // typing. (Mirrors the pinned active-ride pattern: focus moves off a
     // trigger that the action hides/disables.)
     inputEl.focus();
+    // BD-CHAT-01 (#6) — surface a failed persist (quota / private mode) instead
+    // of silently swallowing it; the message stays on screen but the user is
+    // told it was not saved.
+    if (!persisted) showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
   }
 
   sendBtn.addEventListener('click', doSend);
