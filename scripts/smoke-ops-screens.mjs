@@ -380,6 +380,23 @@ expect('self-review flags the call-site (not declaration) smoke-pin class #697 a
   /CALL SITE[\s\S]{0,220}regress[\s\S]{0,160}#697/i.test(ccReview)
   && /Service worker[\s\S]{0,160}VERSION[\s\S]{0,160}#701 \/ #705/i.test(ccReview));
 
+// ── D14. Repair prompt's Verify is MEL-type-aware + carries a state-seed recipe (BD-OPS / #684 #15) ──
+// A screenshot proves nothing for an a11y or robustness fix, and reaching a non-default state
+// needs a localStorage seed past the welcome guard (both learned the hard way on BD-CHAT-01).
+// The Verify section now lists the method by MEL nature + the seed recipe.
+const ccVerify = generateClaudeCodePrompt(
+  { id: 'BD-CHAT-01', route: '/chat', file: 'public/src/screens/chat.js', role: 'shared' }, mel);
+expect('claude-code Verify lists method-by-MEL-nature: visual/a11y/robustness (#15)',
+  /screenshot the affected state/i.test(ccVerify)
+  && /a11y[\s\S]{0,180}activeElement/i.test(ccVerify)
+  && /robustness[\s\S]{0,180}SIMULATE/i.test(ccVerify));
+expect('claude-code Verify carries the state-seed recipe (welcomeSeen + Step-0b store) (#15)',
+  /seed localStorage BEFORE navigating/i.test(ccVerify)
+  && /welcomeSeen/i.test(ccVerify)
+  && /store from Step 0b/i.test(ccVerify));
+expect('claude-code Verify still runs check.mjs + dispatcher (#15)',
+  /node scripts\/check\.mjs/.test(ccVerify) && /node scripts\/dispatcher\.mjs/.test(ccVerify));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -439,8 +456,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v194 (floor raised with the pre-push self-review bump)',
-  !!swVer && Number(swVer[1]) >= 194);
+expect('sw.js VERSION is present and >= v195 (floor raised with the type-aware Verify bump)',
+  !!swVer && Number(swVer[1]) >= 195);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
