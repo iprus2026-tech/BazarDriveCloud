@@ -25,6 +25,7 @@ const tplCloud = read('../public/src/ops/templates/cloud_design_prompt_template.
 const tplGithub = read('../public/src/ops/templates/github_issue_template.js');
 const tplClaude = read('../public/src/ops/templates/claude_code_prompt_template.js');
 const tplMel = read('../public/src/ops/templates/screen_mel_card_template.js');
+const blastSrc = read('../public/src/ops/blast_radius.js');
 const connRepo = read('../public/src/ops/connectors/repo_connector.js');
 const connContracts = read('../public/src/ops/connectors/screen_contracts_connector.js');
 const connCloud = read('../public/src/ops/connectors/cloud_design_connector.js');
@@ -38,6 +39,7 @@ const { generateCloudDesignPrompt } = await import(new URL('../public/src/ops/te
 const { generateGithubIssueBody } = await import(new URL('../public/src/ops/templates/github_issue_template.js', import.meta.url));
 const { generateClaudeCodePrompt } = await import(new URL('../public/src/ops/templates/claude_code_prompt_template.js', import.meta.url));
 const { renderMelCard } = await import(new URL('../public/src/ops/templates/screen_mel_card_template.js', import.meta.url));
+const { computeBlastRadius, SHARED_SURFACE_MAP } = await import(new URL('../public/src/ops/blast_radius.js', import.meta.url));
 const { getScreenFacts, listScreenFacts } = await import(new URL('../public/src/ops/connectors/repo_connector.js', import.meta.url));
 const { getContractFacts } = await import(new URL('../public/src/ops/connectors/screen_contracts_connector.js', import.meta.url));
 const { buildCloudDesignPrompt } = await import(new URL('../public/src/ops/connectors/cloud_design_connector.js', import.meta.url));
@@ -138,6 +140,33 @@ expect('dashboard mirrors the reachability select into form state + the save pay
   /mel-reachability'\)\s*state\.melForm\.reachability\s*=/.test(screenSrc)
   && /reachability:\s*read\('#mel-reachability'\)/.test(screenSrc));
 
+// ── D3. Blast-radius / shared-state map (BD-OPS / #684 #9) — what ELSE a repair
+// touches. The #685 cross-check confirms a behavior is SAFE to change (not pinned);
+// it does NOT enumerate the downstream consumers of a shared store/id a repair
+// writes — the class that took BD-RESPONSES-01 (#688) three Codex rounds. Pinned:
+// the curated map, the detection, the MEL-card block, and the prompt Step 0c + the
+// strengthened Step 0 clause.
+expect('blast_radius maps ride_orders -> Feed + DriverMap + Responses and tripId -> chat/history/receipts',
+  Array.isArray(SHARED_SURFACE_MAP)
+  && SHARED_SURFACE_MAP.some((e) => e.key === 'ride_orders'
+    && /Feed/.test(e.surfaces.join(' ')) && /DriverMap/.test(e.surfaces.join(' ')) && /Responses/.test(e.surfaces.join(' ')))
+  && SHARED_SURFACE_MAP.some((e) => e.key === 'tripId'
+    && /chat/i.test(e.surfaces.join(' ')) && /history/i.test(e.surfaces.join(' ')) && /receipt/i.test(e.surfaces.join(' '))));
+expect('computeBlastRadius matches free-text + mutation-API mentions, and nothing for an unrelated one',
+  computeBlastRadius({ requiredRepair: 'point the seed at a real ride-order id' }).some((e) => e.key === 'ride_orders')
+  && computeBlastRadius({ problem: 'fix updateTripStatus terminal handling' }).some((e) => e.key === 'ride_orders')
+  && computeBlastRadius({ problem: 'reuses a fixed trip id across lifecycles' }).some((e) => e.key === 'tripId')
+  && computeBlastRadius({ problem: 'pure visual spacing tweak' }).length === 0);
+const cardShared = renderMelCard({ id: 'mel_b', screenId: 'BD-X', route: '/x', file: 'x.js', requiredRepair: 'write the ride_orders store' });
+expect('renderMelCard renders a Blast radius block (named surfaces when matched, reminder when not)',
+  cardShared.includes('Blast radius') && /Feed|DriverMap/.test(cardShared)
+  && renderMelCard({ id: 'mel_c', screenId: 'BD-X', route: '/x', file: 'x.js' }).includes('Blast radius'));
+expect('claude-code prompt embeds Step 0c + the safe-to-change/not-blast-radius clause',
+  /Step 0c[^\n]*blast radius/i.test(ccPrompt)
+  && /safe to change[\s\S]{0,90}not[\s\S]{0,50}blast radius/i.test(ccPrompt));
+expect('claude-code prompt lists the shared consumer surfaces when the repair writes a shared store',
+  /Feed|DriverMap/.test(generateClaudeCodePrompt(sample, { requiredRepair: 'write the ride_orders store' })));
+
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
   /bazardrive\.ops\.mel\.v1/.test(storeSrc));
@@ -154,6 +183,7 @@ for (const [name, src] of [
   ['ops_screens.js', screenSrc],
   ['ops_registry.js', registrySrc],
   ['ops_mel_store.js', storeSrc],
+  ['blast_radius.js', blastSrc],
   ['cloud_design_prompt_template.js', tplCloud],
   ['github_issue_template.js', tplGithub],
   ['claude_code_prompt_template.js', tplClaude],
@@ -173,6 +203,7 @@ const OPS_PRECACHE = [
   './src/screens/ops_screens.js',
   './src/ops/ops_registry.js',
   './src/ops/ops_mel_store.js',
+  './src/ops/blast_radius.js',
   './src/ops/templates/cloud_design_prompt_template.js',
   './src/ops/templates/github_issue_template.js',
   './src/ops/templates/claude_code_prompt_template.js',
@@ -191,8 +222,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v176 (bumped for the MEL reachability field)',
-  !!swVer && Number(swVer[1]) >= 176);
+expect('sw.js VERSION is present and >= v178 (bumped for the blast-radius map)',
+  !!swVer && Number(swVer[1]) >= 178);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
