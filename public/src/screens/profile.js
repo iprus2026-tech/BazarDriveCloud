@@ -13,6 +13,7 @@ import {
   markGarageVehicleActive,
 } from '../state.js';
 import { go } from '../router.js';
+import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips } from '../mock_api.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
@@ -2221,12 +2222,14 @@ function historyDetailHtml(entry) {
 }
 
 let activeHistoryDetailEsc = null;
+let activeHistoryDetailTrap = null;
 
 function closeHistoryDetail(root) {
   if (activeHistoryDetailEsc) {
     document.removeEventListener('keydown', activeHistoryDetailEsc);
     activeHistoryDetailEsc = null;
   }
+  if (activeHistoryDetailTrap) { activeHistoryDetailTrap(); activeHistoryDetailTrap = null; }
   root.querySelector('#profile-history-detail')?.remove();
 }
 
@@ -2265,7 +2268,9 @@ function openHistoryDetail(root, entry) {
   };
   document.addEventListener('keydown', activeHistoryDetailEsc);
 
-  overlay.querySelector('.profile-history-detail__close')?.focus();
+  // #732 — focus trap + restore (the Escape handler above is kept). trapFocus captures the
+  // triggering history row, focuses the close button, traps Tab, and restores focus on close.
+  activeHistoryDetailTrap = trapFocus(overlay, { initialFocus: '.profile-history-detail__close' });
 }
 
 // ── Documents pane (BD-PROFILE-DOCS-01) ──────────────────────────────────────

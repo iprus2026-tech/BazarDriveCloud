@@ -44,9 +44,22 @@ expect('F4 (edit): Escape handler is registered on open and removed on close',
   src.includes("document.addEventListener('keydown', editSheetEsc)") &&
   src.includes("document.removeEventListener('keydown', editSheetEsc)"));
 
+// ── History-detail dialog (BD-RIDE-HISTORY) — #732 focus-trap retrofit ───────
+// The ride-history detail overlay (role=dialog aria-modal=true) already had Escape +
+// initial focus; #732 adds the shared overlay focus-TRAP + focus-restore via trapFocus,
+// keeping the dialog's own Escape handler.
+expect('history-detail imports the shared trapFocus helper',
+  /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(src));
+expect('history-detail installs the trap on open (initialFocus the close button)',
+  /activeHistoryDetailTrap = trapFocus\(overlay,\s*\{\s*initialFocus:\s*'\.profile-history-detail__close'\s*\}\)/.test(src));
+expect('history-detail releases the trap (focus restore) in closeHistoryDetail',
+  /if \(activeHistoryDetailTrap\)\s*\{\s*activeHistoryDetailTrap\(\);\s*activeHistoryDetailTrap = null;\s*\}/.test(src));
+expect('history-detail keeps its OWN Escape handler (helper is not given onEscape)',
+  /activeHistoryDetailEsc = \(e\) =>[\s\S]{0,80}closeHistoryDetail\(root\)/.test(src));
+
 // Precached profile.js changed → VERSION bumped.
-expect('sw.js VERSION bumped to v173+',
-  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 173);
+expect('sw.js VERSION bumped to v216+',
+  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 216);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
