@@ -542,10 +542,20 @@ export default function tripConfirmation() {
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }
 
-  // #732 — thread the known tripId + viewer role into the chat handoff so chat.js hydrates the
-  // ride thread (tripId → findActiveRide) and its back button returns to the ride context; a
-  // bare /chat dropped both and fell into the demo / legacy-/feed fallback.
-  const chatHref = () => `/chat?tripId=${encodeURIComponent(tripId)}&role=${role}`;
+  // #732 — thread the known tripId + viewer role (+ responseId) into the chat handoff so chat.js
+  // hydrates the real thread and its back button returns to the ride context; a bare /chat fell
+  // into the demo / legacy-/feed fallback. tripId hydrates once the active ride is seeded
+  // («Открыть поездку»); responseId hydrates the thread BEFORE that, since chat.js falls through
+  // from a not-yet-seeded findActiveRide(tripId) to loadResponse(responseId) (Codex #743). Scoped
+  // to passenger — chat.js's responseId path always renders MOCK_DRIVER as the counterpart, which
+  // is wrong for a driver viewer; drivers hydrate via tripId once the ride is seeded.
+  const chatResponseId = role === 'passenger'
+    ? (query.get('responseId') || (handoff && handoff.responseId) || '')
+    : '';
+  const chatHref = () => {
+    const base = `/chat?tripId=${encodeURIComponent(tripId)}&role=${role}`;
+    return chatResponseId ? `${base}&responseId=${encodeURIComponent(chatResponseId)}` : base;
+  };
   const ACTIONS = {
     'passenger-confirm': () => {
       go(`/trip-confirmation?role=passenger&tripId=${encodeURIComponent(tripId)}&state=${CF_STATE.PASSENGER_CONFIRMED}`);

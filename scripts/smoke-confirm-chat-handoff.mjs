@@ -24,6 +24,10 @@ expect('no chat affordance navigates to a bare /chat (params dropped)',
   !/go\(\s*['"`]\/chat['"`]\s*\)/.test(screen));
 expect('a chatHref() helper threads the known tripId + viewer role into /chat',
   screen.includes('/chat?tripId=${encodeURIComponent(tripId)}&role=${role}'));
+expect('the handoff also threads responseId (passenger) so chat hydrates BEFORE the ride is seeded',
+  screen.includes('responseId=${encodeURIComponent(chatResponseId)}')
+  && /chatResponseId = role === 'passenger'/.test(screen)
+  && /handoff && handoff\.responseId/.test(screen));
 expect('open-chat + back-to-chat route through chatHref()',
   /'back-to-chat':\s*\(\) => go\(chatHref\(\)\)/.test(screen)
   && /'open-chat':\s*\(\) => go\(chatHref\(\)\)/.test(screen));
