@@ -332,6 +332,18 @@ if (exists(passengerActiveRideSmoke)) {
   }
 }
 
+// BD-OPS / #732 — the shared overlay a11y helper (focus-trap + restore) + the passenger
+// active-ride sheets that wire it (the top product-strengthening recommendation).
+const overlaySmoke = path.join(root, 'scripts', 'smoke-overlay.mjs');
+if (exists(overlaySmoke)) {
+  try {
+    execFileSync(process.execPath, [overlaySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-overlay.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-SHEETS-01 — static regression smoke for the driver active ride
 // cancel + problem bottom sheets (own module, in-sheet state machines,
 // safety visual state, placeholder problem sheet never persists ride state).
