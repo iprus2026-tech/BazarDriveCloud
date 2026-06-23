@@ -111,6 +111,21 @@ expect('closeSafetySheet releases the trap (focus restore to #responses-shield)'
 expect('setSafetyView re-focuses into the now-visible view on each transition',
   /\.responses-safety-view--\$\{view\} button:not\(\[disabled\]\)[\s\S]{0,40}\.focus\(\)/.test(responses));
 
+// ── H. report reasons are a single-select ARIA RADIOGROUP (#732) — role=radiogroup/radio +
+// aria-checked + roving tabindex + Arrow/Home/End, not just is-selected buttons.
+expect('reasons are wrapped in a role="radiogroup" with an aria-label',
+  /<div class="responses-safety-reasons" role="radiogroup" aria-label="[^"]+">/.test(responses));
+expect('each reason row is role="radio" with aria-checked="false"',
+  /class="responses-safety-reason" data-rsafe-reason="\$\{i\}" role="radio" aria-checked="false"/.test(responses));
+expect('reason rows use a roving tabindex (first 0, the rest -1)',
+  /tabindex="\$\{i === 0 \? '0' : '-1'\}"/.test(responses));
+expect('selecting a reason updates aria-checked + the roving tabindex (single-select)',
+  /selectReason = \(btn\) =>[\s\S]{0,340}setAttribute\('aria-checked'[\s\S]{0,140}r\.tabIndex = on \? 0 : -1/.test(responses));
+expect('Arrow/Home/End keys move the radiogroup selection + focus',
+  /case 'ArrowDown': case 'ArrowRight': next =[\s\S]{0,220}case 'Home'[\s\S]{0,260}selectReason\(next\)/.test(responses));
+expect('cloud.css gives the reason rows a visible focus ring (roving keyboard focus)',
+  /\.responses-safety-reason:focus-visible\s*\{[^}]*outline:/.test(css));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

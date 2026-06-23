@@ -930,7 +930,7 @@ function responsesSafetySheetHtml() {
       <span>${escapeHtml(t)}</span>
     </div>`).join('');
   const reasons = SAFETY_REPORT_REASONS.map((r, i) => `
-    <button type="button" class="responses-safety-reason" data-rsafe-reason="${i}">
+    <button type="button" class="responses-safety-reason" data-rsafe-reason="${i}" role="radio" aria-checked="false" tabindex="${i === 0 ? '0' : '-1'}">
       <span class="responses-safety-reason__text">${escapeHtml(r)}</span>
       <span class="responses-safety-reason__radio" aria-hidden="true"></span>
     </button>`).join('');
@@ -965,7 +965,7 @@ function responsesSafetySheetHtml() {
           <div class="responses-safety-title">Сообщить об отклике</div>
           <button type="button" class="responses-safety-close" data-rsafe="dismiss" aria-label="Закрыть">${CLOSE_SVG}</button>
         </div>
-        <div class="responses-safety-reasons">${reasons}</div>
+        <div class="responses-safety-reasons" role="radiogroup" aria-label="Причина сигнала">${reasons}</div>
         <div class="responses-safety-actions">
           <button type="button" class="bd-btn primary responses-safety-act" data-rsafe="submit">Отправить сигнал</button>
         </div>
@@ -1473,13 +1473,20 @@ export default function responses() {
     // a distinct data-rsafe attribute — fully isolated from the board.
     root.insertAdjacentHTML('beforeend', responsesSafetySheetHtml());
     safetyOverlayEl = root.querySelector('.responses-safety-overlay');
+    // #732 — the report reasons are a single-select ARIA radiogroup: selecting one checks it and
+    // moves the roving tabindex (so Tab reaches only the active radio); Arrow/Home/End navigate.
+    const selectReason = (btn) => {
+      safetyOverlayEl.querySelectorAll('[data-rsafe-reason]').forEach((r) => {
+        const on = r === btn;
+        r.setAttribute('aria-checked', on ? 'true' : 'false');
+        r.classList.toggle('is-selected', on);
+        r.tabIndex = on ? 0 : -1;
+      });
+      if (btn && typeof btn.focus === 'function') btn.focus();
+    };
     safetyOverlayEl.addEventListener('click', (event) => {
       const reasonBtn = event.target.closest('[data-rsafe-reason]');
-      if (reasonBtn) {
-        safetyOverlayEl.querySelectorAll('[data-rsafe-reason]')
-          .forEach((b) => b.classList.toggle('is-selected', b === reasonBtn));
-        return;
-      }
+      if (reasonBtn) { selectReason(reasonBtn); return; }
       const ctl = event.target.closest('[data-rsafe]');
       if (!ctl) return;
       const a = ctl.dataset.rsafe;
@@ -1491,6 +1498,25 @@ export default function responses() {
       // "после подключения backend" copy on the submitted view makes the mock
       // explicit; wire to the moderation queue later.
       if (a === 'submit')     { setSafetyView('submitted'); return; }
+    });
+    // #732 — radiogroup keyboard: Arrow keys (and Home/End) move selection + focus between rows.
+    safetyOverlayEl.addEventListener('keydown', (event) => {
+      if (!event.target.closest('[role="radiogroup"]')) return;
+      const radios = Array.from(safetyOverlayEl.querySelectorAll('[data-rsafe-reason]'));
+      if (!radios.length) return;
+      let idx = radios.indexOf(event.target.closest('[data-rsafe-reason]'));
+      if (idx < 0) idx = radios.findIndex((r) => r.getAttribute('aria-checked') === 'true');
+      if (idx < 0) idx = 0;
+      let next = null;
+      switch (event.key) {
+        case 'ArrowDown': case 'ArrowRight': next = radios[(idx + 1) % radios.length]; break;
+        case 'ArrowUp':   case 'ArrowLeft':  next = radios[(idx - 1 + radios.length) % radios.length]; break;
+        case 'Home': next = radios[0]; break;
+        case 'End':  next = radios[radios.length - 1]; break;
+        default: return;
+      }
+      event.preventDefault();
+      selectReason(next);
     });
     // #732 — modal a11y: capture focus, trap Tab, restore to #responses-shield on close. The
     // sheet had no Escape, so the helper owns it with step-back (sub-view → default → close).
