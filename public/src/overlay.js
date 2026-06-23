@@ -39,7 +39,11 @@ export function trapFocus(overlayEl, opts = {}) {
     // If the overlay was torn down without close() (a route change replaceChildren()s #app),
     // self-release and let the key pass through — never intercept Tab on the next screen (#734).
     if (overlayEl.isConnected === false) { release(); return; }
+    // When this trap HANDLES a key, consume it so a modal stacked over another (e.g. the global
+    // error sheet over a screen sheet) doesn't let the SAME key also reach the one underneath (#738).
+    const stop = () => { if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation(); };
     if (ev.key === 'Escape' && typeof opts.onEscape === 'function') {
+      stop();
       opts.onEscape(ev);
       return;
     }
@@ -47,6 +51,7 @@ export function trapFocus(overlayEl, opts = {}) {
     const els = focusables();
     if (!els.length) {
       ev.preventDefault();
+      stop();
       if (typeof overlayEl.focus === 'function') overlayEl.focus();
       return;
     }
@@ -55,9 +60,10 @@ export function trapFocus(overlayEl, opts = {}) {
     const active = doc.activeElement;
     const inside = overlayEl.contains(active);
     if (ev.shiftKey) {
-      if (!inside || active === first) { ev.preventDefault(); last.focus(); }
+      if (!inside || active === first) { ev.preventDefault(); stop(); last.focus(); }
     } else if (!inside || active === last) {
       ev.preventDefault();
+      stop();
       first.focus();
     }
   }
