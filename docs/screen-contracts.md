@@ -50,7 +50,7 @@ Registered in `public/src/app.js`.
 | `/route-preview` | BD-MAP-04 | `public/src/screens/route_preview.js` | implemented, route preview mock |
 | `/order-map-draft` | BD-MAP-05 | `public/src/screens/order_map_draft.js` | implemented, creates local ride order |
 | `/rules` | BD-RULES-01 | `public/src/screens/rules.js` | implemented |
-| `/profile` | BD-PROFILE-01/02 | `public/src/screens/profile.js` | implemented, passenger + driver |
+| `/profile` | BD-PROFILE-01/02 | `public/src/screens/profile.js` | implemented, guest + passenger + driver |
 | `/new` | BD-COMPOSER-01 | `public/src/screens/composer.js` | implemented |
 | `/respond` | BD-RESPOND-01 | `public/src/screens/respond.js` | implemented |
 | `/chat` | BD-CHAT-01 | `public/src/screens/chat.js` | implemented |
@@ -176,9 +176,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | File | `public/src/screens/profile.js` |
 | Storage | `bazardrive.user.v1`, profile demo helpers, user-scoped stores read-only where needed. |
 | Main states | Guest prompt, passenger dashboard, phone verification banner, stats, saved actions, safety. |
+| Guest variant (`renderGuest`) | A first-class render path, not just a passenger sub-state. A `welcomeSeen && !onboarded` user (no real session) gets the minimal guest surface: a title-only topbar (no bell / gear), exactly **one** `.pf-guest-card` («Создайте профиль») whose **sole** affordance `#pf-onboard` («Начать регистрацию») → `go('/onboarding')`. No identity, menu, settings or logout — there is no session to configure or end. Selected by `profile()` when `!u.onboarded` / `effectiveRole === 'guest'`. The product tabbar stays visible, so the guest can still leave to Лента / Карта / Правила (it is not a navigation dead-end). |
 | Actions | Verify phone mock, edit profile, create ride, view inbox/history/favorites. |
 | Entry points | **Notification bell** `#pfp-notif-btn` (topbar) → `go('/inbox')` (BD-NOTIF-01, reuse the `/inbox` hub — no separate `/notifications` route). **History menu row** `#pfp-menu-history` → `scrollIntoView` of the inline trip-history section `#profile-history-section` (BD-HISTORY-P-01 — **not** `/feed`). **Settings gear** `#pfp-settings-btn` → `go('/settings')` (BD-SETTINGS-01, **shipped**). Pinned by `scripts/smoke-profile-notif-bell.mjs`, `scripts/smoke-profile-history-menu.mjs` and `scripts/smoke-settings.mjs`. |
-| Acceptance | Guest/passenger surfaces do not expose driver-only controls unless role switches. |
+| Acceptance | Guest/passenger surfaces do not expose driver-only controls unless role switches. The guest view renders exactly one `.pf-guest-card` + the `#pf-onboard` → `/onboarding` CTA, and exposes no settings / logout / role-switch (correct — no session). Pinned positively by `scripts/smoke-profile-role-isolation.mjs` Scenario 6. |
 
 ### BD-PROFILE-02 - Driver dashboard profile
 
