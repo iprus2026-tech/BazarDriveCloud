@@ -24,11 +24,18 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
+// LIFO stack of currently-active traps. Only the TOP (most recently installed) trap handles
+// Tab/Escape, so a modal stacked over another (e.g. the global error sheet shown over a screen
+// sheet) owns the keyboard and the covered sheet defers — even though the covered sheet's
+// document-capture listener was registered first and fires earlier (#739).
+const activeTraps = [];
+
 export function trapFocus(overlayEl, opts = {}) {
   if (!overlayEl) return () => {};
   const doc = overlayEl.ownerDocument || (typeof document !== 'undefined' ? document : null);
   if (!doc) return () => {};
   const previouslyFocused = doc.activeElement;
+  const token = {};
 
   // Only VISIBLE focusable controls — hidden sub-views (display:none → no offsetParent) are
   // excluded so the Tab cycle never lands on an off-screen control.
@@ -39,6 +46,8 @@ export function trapFocus(overlayEl, opts = {}) {
     // If the overlay was torn down without close() (a route change replaceChildren()s #app),
     // self-release and let the key pass through — never intercept Tab on the next screen (#734).
     if (overlayEl.isConnected === false) { release(); return; }
+    // Only the topmost trap acts; a covered sheet defers to the modal stacked over it (#739).
+    if (activeTraps[activeTraps.length - 1] !== token) return;
     // When this trap HANDLES a key, consume it so a modal stacked over another (e.g. the global
     // error sheet over a screen sheet) doesn't let the SAME key also reach the one underneath (#738).
     const stop = () => { if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation(); };
@@ -73,6 +82,8 @@ export function trapFocus(overlayEl, opts = {}) {
   function release() {
     if (released) return;
     released = true;
+    const i = activeTraps.indexOf(token);
+    if (i >= 0) activeTraps.splice(i, 1);
     if (observer) { observer.disconnect(); observer = null; }
     doc.removeEventListener('keydown', onKeydown, true);
     // Restore focus only if the trigger is still in the document (it usually is; on a
@@ -84,6 +95,7 @@ export function trapFocus(overlayEl, opts = {}) {
     }
   }
 
+  activeTraps.push(token);
   doc.addEventListener('keydown', onKeydown, true);
 
   // Initial focus: an explicit target, else the first visible focusable, else the overlay.

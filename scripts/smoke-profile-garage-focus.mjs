@@ -18,31 +18,25 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
-// ── Add sheet ────────────────────────────────────────────────────────────────
-expect('F4 (add): open focuses the first field (#pf2-garage-add-model)',
-  src.includes("root.querySelector('#pf2-garage-add-model')?.focus()"));
-expect('F4 (add): open captures the trigger for return focus',
-  src.includes('addReturnFocus = addBtn'));
-expect('F4 (add): close restores focus to the trigger',
-  src.includes('addReturnFocus?.focus()'));
-expect('F4 (add): Escape closes the sheet',
-  src.includes("if (e.key === 'Escape') closeSheet()"));
-expect('F4 (add): Escape handler is registered on open and removed on close',
-  src.includes("document.addEventListener('keydown', addSheetEsc)") &&
-  src.includes("document.removeEventListener('keydown', addSheetEsc)"));
+// ── Add sheet — #732 migrated onto the shared overlay focus-trap ──────────────
+// Was F4 bespoke (capture / initial-focus / Escape / restore, NO Tab-trap). trapFocus now owns
+// the full modal a11y incl. the Tab-trap; the trigger is focused first so restore lands on it.
+expect('F4 (add): open focuses the trigger first (so the trap restores there on close)',
+  /if \(addBtn && typeof addBtn\.focus === 'function'\) addBtn\.focus\(\);[\s\S]{0,200}releaseAddTrap = trapFocus/.test(src));
+expect('F4 (add): open installs the shared trap (initialFocus #pf2-garage-add-model, Escape→closeSheet)',
+  /releaseAddTrap = trapFocus\(sheet,\s*\{\s*initialFocus:\s*'#pf2-garage-add-model',\s*onEscape:\s*closeSheet\s*\}\)/.test(src));
+expect('F4 (add): close releases the trap (focus restore + Tab/Escape teardown)',
+  /const closeSheet = \(\) => \{[\s\S]{0,220}releaseAddTrap\(\);/.test(src));
+expect('F4 (add): the old bespoke focus vars are gone (fully migrated)',
+  !/let addReturnFocus|let addSheetEsc/.test(src));
 
-// ── Edit sheet ───────────────────────────────────────────────────────────────
-expect('F4 (edit): open captures the invoking button (document.activeElement)',
-  src.includes('editReturnFocus = document.activeElement'));
-expect('F4 (edit): open focuses the first field',
-  src.includes('modelEl?.focus()'));
-expect('F4 (edit): close restores focus to the trigger',
-  src.includes('editReturnFocus?.focus()'));
-expect('F4 (edit): Escape closes the sheet',
-  src.includes("if (e.key === 'Escape') closeEditSheet()"));
-expect('F4 (edit): Escape handler is registered on open and removed on close',
-  src.includes("document.addEventListener('keydown', editSheetEsc)") &&
-  src.includes("document.removeEventListener('keydown', editSheetEsc)"));
+// ── Edit sheet — #732 migrated onto the shared overlay focus-trap ─────────────
+expect('F4 (edit): open installs the shared trap (initialFocus #pf2-garage-edit-model, Escape→closeEditSheet)',
+  /releaseEditTrap = trapFocus\(editSheet,\s*\{\s*initialFocus:\s*'#pf2-garage-edit-model',\s*onEscape:\s*closeEditSheet\s*\}\)/.test(src));
+expect('F4 (edit): close releases the trap (focus restore + Tab/Escape teardown)',
+  /const closeEditSheet = \(\) => \{[\s\S]{0,260}releaseEditTrap\(\);/.test(src));
+expect('F4 (edit): the old bespoke focus vars are gone (fully migrated)',
+  !/let editReturnFocus|let editSheetEsc/.test(src));
 
 // ── History-detail dialog (BD-RIDE-HISTORY) — #732 focus-trap retrofit ───────
 // The ride-history detail overlay (role=dialog aria-modal=true) already had Escape +
@@ -58,8 +52,8 @@ expect('history-detail keeps its OWN Escape handler (helper is not given onEscap
   /activeHistoryDetailEsc = \(e\) =>[\s\S]{0,80}closeHistoryDetail\(root\)/.test(src));
 
 // Precached profile.js changed → VERSION bumped.
-expect('sw.js VERSION bumped to v216+',
-  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 216);
+expect('sw.js VERSION bumped to v219+',
+  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 219);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
