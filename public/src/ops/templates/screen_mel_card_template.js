@@ -19,6 +19,7 @@ export function renderMelCard(mel = {}) {
     `Screen id: ${screenId}`,
     `Route: ${route}`,
     `File: ${file}`,
+    `Role variant: ${mel.variant || '(whole screen)'}`,
     `Anchor (selector/symbol — line numbers drift): ${mel.selector || '(none — anchor by a stable selector/symbol, not a line)'}`,
     `Severity: ${mel.severity || 'MEL-C'}`,
     `Reachability: ${mel.reachability || 'user-path'}`,

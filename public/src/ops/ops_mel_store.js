@@ -102,6 +102,10 @@ export function createMelCard(input = {}) {
     // #684 #4 — the PR / commit that resolved this MEL (the MEL→ship trail), so a
     // screen's MEL history shows what actually shipped. Free-text (#683 or a SHA).
     pr: typeof input.pr === 'string' ? input.pr : '',
+    // #684 — role-variant-keyed MEL: the declared variant key this MEL is scoped to
+    // (e.g. 'guest'), or '' for the whole screen. Free-text here; the dashboard form
+    // constrains it to the screen's declared variants (the store keeps no registry dep).
+    variant: typeof input.variant === 'string' ? input.variant : '',
     // #684 #10 — the lifecycle entry-states the audit actually probed.
     lifecycleAudited: sanitizeLifecycle(input.lifecycleAudited),
     problem: input.problem || '',

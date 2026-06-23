@@ -219,6 +219,17 @@ export default function opsScreens() {
   function renderMelForm() {
     if (!state.melForm) return '';
     const f = state.melForm;
+    // #684 — when the screen declares role variants, a MEL can be scoped to one of them.
+    const sc = getScreen(state.selectedId);
+    const variants = Array.isArray(sc && sc.variants) ? sc.variants : [];
+    const variantRow = variants.length ? `
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Role variant</span>
+          <select id="mel-variant" class="ops-melform__control" aria-label="Role variant">
+            <option value="">— (whole screen)</option>
+            ${variants.map((v) => `<option value="${esc(v.key)}"${f.variant === v.key ? ' selected' : ''}>${esc(v.label || v.key)}</option>`).join('')}
+          </select>
+        </label>` : '';
     return `
       <form class="ops-melform" autocomplete="off">
         <p class="ops-melform__title">New MEL card</p>
@@ -234,6 +245,7 @@ export default function opsScreens() {
           <span class="ops-melform__label">Reachability</span>
           <select id="mel-reachability" class="ops-melform__control">${optionList(MEL_REACHABILITY, f.reachability)}</select>
         </label>
+        ${variantRow}
         <label class="ops-melform__row">
           <span class="ops-melform__label">Anchor (selector/symbol)</span>
           <input id="mel-selector" class="ops-melform__control" type="text" value="${esc(f.selector)}" placeholder="#pf2-doc-add or markGarageVehicleActive">
@@ -423,6 +435,7 @@ export default function opsScreens() {
     if (t.id === 'mel-severity') state.melForm.severity = t.value;
     else if (t.id === 'mel-status') state.melForm.status = t.value;
     else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
+    else if (t.id === 'mel-variant') state.melForm.variant = t.value;
     else if (t.id === 'mel-selector') state.melForm.selector = t.value;
     else if (t.id === 'mel-pr') state.melForm.pr = t.value;
     else if (t.id === 'mel-lifecycle') state.melForm.lifecycleAudited = Array.from(t.selectedOptions).map((o) => o.value);
@@ -472,11 +485,13 @@ export default function opsScreens() {
         // the new focus so the selector feels live (#684 #1 widened this beyond Audit).
         state.selectedVariant = btn.dataset.variant || '';
         const vk = state.selectedVariant || undefined;
-        const lastMel = () => listMelForScreen(s.id).slice(-1)[0] || {};
+        const m = listMelForScreen(s.id).slice(-1)[0] || {};
+        // A repair prompt repairs THAT MEL, so its saved variant wins; the chip is the fallback.
+        const repairVk = m.variant || vk;
         if (state.outputLabel === 'Audit recipe') state.outputText = buildAuditRecipe(s.id, vk);
-        else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, lastMel(), vk);
-        else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, lastMel(), vk);
-        else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, lastMel(), vk);
+        else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, m, repairVk);
+        else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, m, repairVk);
+        else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, m, repairVk);
         renderDetail();
         break;
       }
@@ -493,8 +508,11 @@ export default function opsScreens() {
         const CROOKED_PROBLEM = 'Crooked screen flagged from ScreenOps.';
         // Dedupe the generic quick-flag: a repeated click should not pile up
         // byte-identical cards (the only feedback is a transient notice).
+        // Dedupe per variant — flagging guest then driver must create two distinct cards
+        // (Codex #727); flagging the same variant twice still dedupes.
         const alreadyFlagged = listMelForScreen(s.id)
-          .some((c) => c.problem === CROOKED_PROBLEM && c.status === 'DETECTED');
+          .some((c) => c.problem === CROOKED_PROBLEM && c.status === 'DETECTED'
+            && (c.variant || '') === (state.selectedVariant || ''));
         if (alreadyFlagged) {
           state.notice = 'Already flagged as crooked.';
           renderDetail();
@@ -506,6 +524,7 @@ export default function opsScreens() {
           file: s.file,
           severity: 'MEL-C',
           status: 'DETECTED',
+          variant: state.selectedVariant || '',
           problem: CROOKED_PROBLEM,
         });
         // createMelCard returns null if persistence failed (quota / private mode).
@@ -520,6 +539,7 @@ export default function opsScreens() {
           severity: 'MEL-C',
           status: 'DETECTED',
           reachability: 'user-path',
+          variant: state.selectedVariant || '',
           selector: '',
           pr: '',
           lifecycleAudited: [],
@@ -556,6 +576,7 @@ export default function opsScreens() {
           severity: read('#mel-severity'),
           status: read('#mel-status'),
           reachability: read('#mel-reachability'),
+          variant: read('#mel-variant'),
           selector: read('#mel-selector').trim(),
           pr: read('#mel-pr').trim(),
           lifecycleAudited: Array.from((detailEl.querySelector('#mel-lifecycle') || {}).selectedOptions || []).map((o) => o.value),
@@ -622,18 +643,22 @@ export default function opsScreens() {
       }
       case 'gen-cloud': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        // #684 #1 — scope the prompt to the selected role variant ('' = whole screen).
-        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel, state.selectedVariant || undefined));
+        // #684 — a repair prompt repairs THAT MEL, so its saved variant wins; the chip
+        // selection ('' = whole screen) is the fallback when the MEL is whole-screen (Codex #727).
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel, vk));
         break;
       }
       case 'gen-github': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('GitHub issue body', buildGithubIssue(s.id, mel, state.selectedVariant || undefined));
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('GitHub issue body', buildGithubIssue(s.id, mel, vk));
         break;
       }
       case 'gen-claude': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel, state.selectedVariant || undefined));
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel, vk));
         break;
       }
       case 'gen-audit':

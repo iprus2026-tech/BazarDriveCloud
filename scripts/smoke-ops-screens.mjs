@@ -252,6 +252,30 @@ expect('saved MEL cards expose a Set-PR path so pr is settable when the fix ship
   && /case 'set-pr'\s*:/.test(screenSrc)
   && /updateMelCard\(\s*id\s*,\s*\{\s*pr:/.test(screenSrc));
 
+// ── D6b. Role-variant-keyed MEL (BD-OPS / #684) — a MEL can be scoped to one of the
+// screen's declared role variants (e.g. BD-PROFILE-01 · guest), so a per-variant defect
+// isn't logged against the whole screen. The store keeps it as a free-string; the form
+// constrains it to the declared variants and defaults to the dashboard's active variant.
+expect('mel store seeds an optional variant on createMelCard',
+  /variant:\s*typeof input\.variant === 'string'\s*\?\s*input\.variant\s*:\s*''/.test(storeSrc));
+expect('renderMelCard renders the Role-variant line (value when set, whole-screen when not)',
+  renderMelCard({ id: 'mel_v', screenId: 'BD-X', route: '/x', file: 'x.js', variant: 'guest' }).includes('Role variant: guest')
+  && /Role variant[^\n]*whole screen/i.test(renderMelCard({ id: 'mel_v2', screenId: 'BD-X', route: '/x', file: 'x.js' })));
+expect('dashboard exposes a #mel-variant select (gated on declared variants) + mirrors it into form state and the save payload',
+  /id="mel-variant"/.test(screenSrc)
+  && /Array\.isArray\(sc && sc\.variants\)/.test(screenSrc)
+  && /mel-variant'\)\s*state\.melForm\.variant\s*=/.test(screenSrc)
+  && /variant:\s*read\('#mel-variant'\)/.test(screenSrc));
+expect('a new MEL AND the quick mark-crooked both default the variant to the active selectedVariant',
+  (screenSrc.match(/variant:\s*state\.selectedVariant\s*\|\|\s*''/g) || []).length >= 2);
+// Codex #727: per-variant quick-flag dedupe (flag guest, then driver → two cards), and the
+// repair generators scope from the MEL's saved variant (chip is only the fallback).
+expect('quick mark-crooked dedupes PER variant (variant is part of the alreadyFlagged key)',
+  /\(c\.variant \|\| ''\)\s*===\s*\(state\.selectedVariant \|\| ''\)/.test(screenSrc));
+expect('repair generators prefer the MEL\'s saved variant over the chip (3 gen-* handlers + the refresh)',
+  (screenSrc.match(/mel\.variant \|\| state\.selectedVariant \|\| undefined/g) || []).length >= 3
+  && /repairVk\s*=\s*m\.variant \|\| vk/.test(screenSrc));
+
 // ── D7. Audit recipe (BD-OPS / #684 #5) — a reproducible FIND-MELs brief per
 // screen (the multi-agent audit was re-improvised each session). It enumerates the
 // audit dimensions incl. the data-model (#8) + lifecycle (#10) lenses, bakes in the
@@ -341,10 +365,10 @@ for (const [name, build] of [
   expect(`${name} prompt degrades for an unknown variant key`,
     !/Role variant focus/.test(build('BD-PROFILE-01', {}, 'zznope')));
 }
-expect('dashboard threads the selected variant into the Cloud / GitHub / Claude generators',
-  /buildCloudDesignPrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
-  && /buildGithubIssue\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
-  && /buildClaudeCodePrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc));
+expect('dashboard threads the variant into the Cloud / GitHub / Claude generators (vk = mel.variant || selectedVariant)',
+  /buildCloudDesignPrompt\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc)
+  && /buildGithubIssue\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc)
+  && /buildClaudeCodePrompt\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc));
 expect('select-variant refreshes a shown Cloud / GitHub / Claude artifact (not only Audit)',
   /'Cloud Design prompt'\)\s*state\.outputText\s*=\s*buildCloudDesignPrompt/.test(screenSrc)
   && /'GitHub issue body'\)\s*state\.outputText\s*=\s*buildGithubIssue/.test(screenSrc)
@@ -650,8 +674,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v209 (floor raised with the variant-aware prompts)',
-  !!swVer && Number(swVer[1]) >= 209);
+expect('sw.js VERSION is present and >= v210 (floor raised with variant-keyed MEL cards)',
+  !!swVer && Number(swVer[1]) >= 210);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
