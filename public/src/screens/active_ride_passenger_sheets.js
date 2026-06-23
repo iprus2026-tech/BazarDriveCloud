@@ -17,6 +17,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { trapFocus } from '../overlay.js';
 
 // ── Local icon set ───────────────────────────────────────────
 // Self-contained copies of the handful of glyphs these sheets need.
@@ -307,9 +308,11 @@ export function openPassengerSafetySheet(root, options = {}) {
   `;
 
   let reportReason = null;
+  let releaseTrap = () => {};
 
   function close() {
     document.removeEventListener('keydown', onKey);
+    releaseTrap();
     overlay.remove();
   }
 
@@ -416,6 +419,9 @@ export function openPassengerSafetySheet(root, options = {}) {
   });
 
   root.appendChild(overlay);
+  // #732 — capture focus, move into the sheet, trap Tab, restore on close. Escape stays the
+  // sheet's own onKey (step-back-then-close), so the helper is not given onEscape.
+  releaseTrap = trapFocus(overlay);
   return overlay;
 }
 
@@ -582,9 +588,12 @@ export function openPassengerCancelSheet(root, options = {}) {
   const commentInput = overlay.querySelector('#arp-cancel-comment');
   const doneMeta = overlay.querySelector('#arp-cancel-done-meta');
 
+  let releaseTrap = () => {};
+
   function close() {
     if (cancelTimer) { clearTimeout(cancelTimer); cancelTimer = null; }
     document.removeEventListener('keydown', onKey);
+    releaseTrap();
     overlay.remove();
   }
 
@@ -694,5 +703,8 @@ export function openPassengerCancelSheet(root, options = {}) {
   });
 
   root.appendChild(overlay);
+  // #732 — focus trap + restore; Escape stays the sheet's own onKey (it has dismissal-lock +
+  // step-back semantics the helper must not override).
+  releaseTrap = trapFocus(overlay);
   return overlay;
 }
