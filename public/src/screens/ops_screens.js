@@ -467,12 +467,16 @@ export default function opsScreens() {
 
     switch (action) {
       case 'select-variant': {
-        // #684 — scope the variant-aware Audit recipe to a role variant ('' = «Все»).
-        // If an Audit recipe is already on screen, refresh it for the new focus.
+        // #684 — scope the variant-aware generators to a role variant ('' = «Все» /
+        // whole screen). If a variant-aware artifact is already on screen, refresh it for
+        // the new focus so the selector feels live (#684 #1 widened this beyond Audit).
         state.selectedVariant = btn.dataset.variant || '';
-        if (state.outputLabel === 'Audit recipe') {
-          state.outputText = buildAuditRecipe(s.id, state.selectedVariant || undefined);
-        }
+        const vk = state.selectedVariant || undefined;
+        const lastMel = () => listMelForScreen(s.id).slice(-1)[0] || {};
+        if (state.outputLabel === 'Audit recipe') state.outputText = buildAuditRecipe(s.id, vk);
+        else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, lastMel(), vk);
+        else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, lastMel(), vk);
+        else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, lastMel(), vk);
         renderDetail();
         break;
       }
@@ -618,17 +622,18 @@ export default function opsScreens() {
       }
       case 'gen-cloud': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel));
+        // #684 #1 — scope the prompt to the selected role variant ('' = whole screen).
+        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel, state.selectedVariant || undefined));
         break;
       }
       case 'gen-github': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('GitHub issue body', buildGithubIssue(s.id, mel));
+        setOutput('GitHub issue body', buildGithubIssue(s.id, mel, state.selectedVariant || undefined));
         break;
       }
       case 'gen-claude': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel));
+        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel, state.selectedVariant || undefined));
         break;
       }
       case 'gen-audit':
