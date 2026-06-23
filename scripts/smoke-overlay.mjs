@@ -28,9 +28,11 @@ function makeDoc() {
     addEventListener(type, fn) { listeners.push({ type, fn }); },
     removeEventListener(type, fn) { const i = listeners.findIndex((l) => l.fn === fn); if (i >= 0) listeners.splice(i, 1); },
     contains(el) { return inDoc.has(el); },
+    _lastStopped: false,
     _dispatchKeydown(key, shiftKey) {
       let prevented = false;
-      const ev = { key, shiftKey, preventDefault() { prevented = true; } };
+      this._lastStopped = false;
+      const ev = { key, shiftKey, preventDefault() { prevented = true; }, stopImmediatePropagation: () => { this._lastStopped = true; } };
       for (const l of listeners.slice()) if (l.type === 'keydown') l.fn(ev);
       return prevented;
     },
@@ -62,6 +64,8 @@ expect('a keydown listener is registered while trapped', doc._keydownCount() ===
 doc.activeElement = b3;
 const p1 = doc._dispatchKeydown('Tab', false);
 expect('Tab at the last focusable wraps to the first (+ preventDefault)', p1 === true && doc.activeElement === b1);
+expect('a handled Tab wrap consumes the event (stopImmediatePropagation) — no leak to a stacked modal (#738)',
+  doc._lastStopped === true);
 
 doc.activeElement = b1;
 const p2 = doc._dispatchKeydown('Tab', true);
@@ -70,6 +74,7 @@ expect('Shift+Tab at the first focusable wraps to the last (+ preventDefault)', 
 doc.activeElement = b2;
 const p3 = doc._dispatchKeydown('Tab', false);
 expect('Tab in the middle does NOT preventDefault (natural move)', p3 === false);
+expect('an un-handled Tab does NOT stop propagation (only a handled key is consumed)', doc._lastStopped === false);
 
 release();
 expect('release restores focus to the trigger', doc.activeElement === trigger);
@@ -84,6 +89,8 @@ const overlay2 = { ownerDocument: doc2, querySelectorAll: () => [], querySelecto
 const rel2 = trapFocus(overlay2, { onEscape: () => { escFired = true; } });
 doc2._dispatchKeydown('Escape', false);
 expect('Escape invokes opts.onEscape when provided', escFired === true);
+expect('a handled Escape consumes the event (stopImmediatePropagation) so a stacked modal does not also close (#738)',
+  doc2._lastStopped === true);
 rel2();
 
 const doc3 = makeDoc();

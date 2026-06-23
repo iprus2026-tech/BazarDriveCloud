@@ -38,8 +38,7 @@ const BESPOKE_TRAP = {
 const KNOWN_GAP = {
   // pf2-garage-add-sheet / pf2-garage-edit-sheet: capture/initial-focus/Escape/restore but NO Tab trap.
   'screens/profile.js': 2,
-  // app-shell error alertdialog (server-error / timeout sheet): no focus management at all.
-  'app_error_overlay.js': 1,
+  // app_error_overlay.js retrofitted onto overlay.js (#732) — no longer a gap.
 };
 
 // overlay.js is the helper itself — its docstring mentions aria-modal; it is never a consumer.
