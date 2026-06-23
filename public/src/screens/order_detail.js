@@ -859,7 +859,7 @@ const REPORT_REASONS = [
 ];
 function reportSheetHtml() {
   const reasons = REPORT_REASONS.map((r, i) => `
-        <button type="button" class="od-report-reason" data-report-reason="${i}">
+        <button type="button" class="od-report-reason" data-report-reason="${i}" role="radio" aria-checked="false" tabindex="${i === 0 ? '0' : '-1'}">
           <span class="od-report-reason__text">${escapeHtml(r)}</span>
           <span class="od-report-reason__radio" aria-hidden="true"></span>
         </button>`).join('');
@@ -876,7 +876,7 @@ function reportSheetHtml() {
           <button type="button" class="od-report-close" data-report="dismiss" aria-label="Закрыть">×</button>
         </div>
         <div class="od-report-sub">Расскажите, что не так — модерация проверит заказ.</div>
-        <div class="od-report-reasons">${reasons}</div>
+        <div class="od-report-reasons" role="radiogroup" aria-label="Причина жалобы">${reasons}</div>
         <div class="od-report-actions">
           <button type="button" class="bd-btn primary od-report-act" data-report="submit">Отправить жалобу</button>
         </div>
@@ -927,13 +927,20 @@ function bindEvents(rootEl, initialCtx) {
     if (reportTabbar) { reportTabbarPrevHidden = reportTabbar.hidden; reportTabbar.hidden = true; }
     rootEl.insertAdjacentHTML('beforeend', reportSheetHtml());
     reportOverlayEl = rootEl.querySelector('.od-report-overlay');
+    // #732 — the reason rows are a single-select ARIA radiogroup: selecting one checks it and
+    // moves the roving tabindex (so Tab reaches only the active radio); Arrow/Home/End navigate.
+    const selectReason = (btn) => {
+      reportOverlayEl.querySelectorAll('[data-report-reason]').forEach((r) => {
+        const on = r === btn;
+        r.setAttribute('aria-checked', on ? 'true' : 'false');
+        r.classList.toggle('is-selected', on);
+        r.tabIndex = on ? 0 : -1;
+      });
+      if (btn && typeof btn.focus === 'function') btn.focus();
+    };
     reportOverlayEl.addEventListener('click', (event) => {
       const reasonBtn = event.target.closest('[data-report-reason]');
-      if (reasonBtn) {
-        reportOverlayEl.querySelectorAll('[data-report-reason]')
-          .forEach((b) => b.classList.toggle('is-selected', b === reasonBtn));
-        return;
-      }
+      if (reasonBtn) { selectReason(reasonBtn); return; }
       const ctl = event.target.closest('[data-report]');
       if (!ctl) return;
       const a = ctl.dataset.report;
@@ -947,6 +954,25 @@ function bindEvents(rootEl, initialCtx) {
         if (done) done.focus();
         return;
       }
+    });
+    // #732 — radiogroup keyboard: Arrow keys (and Home/End) move selection + focus between rows.
+    reportOverlayEl.addEventListener('keydown', (event) => {
+      if (!event.target.closest('[role="radiogroup"]')) return;
+      const radios = Array.from(reportOverlayEl.querySelectorAll('[data-report-reason]'));
+      if (!radios.length) return;
+      let idx = radios.indexOf(event.target.closest('[data-report-reason]'));
+      if (idx < 0) idx = radios.findIndex((r) => r.getAttribute('aria-checked') === 'true');
+      if (idx < 0) idx = 0;
+      let next = null;
+      switch (event.key) {
+        case 'ArrowDown': case 'ArrowRight': next = radios[(idx + 1) % radios.length]; break;
+        case 'ArrowUp':   case 'ArrowLeft':  next = radios[(idx - 1 + radios.length) % radios.length]; break;
+        case 'Home': next = radios[0]; break;
+        case 'End':  next = radios[radios.length - 1]; break;
+        default: return;
+      }
+      event.preventDefault();
+      selectReason(next);
     });
     // #732 — modal a11y: capture focus, move into the sheet, trap Tab, Escape→close, and
     // restore focus to the «Пожаловаться» trigger on close (shared overlay helper). The sheet
