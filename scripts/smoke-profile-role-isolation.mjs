@@ -284,6 +284,16 @@ user.set({ welcomeSeen: true, role: 'guest' });
     !html.includes(DRIVER_MARKER));
   expect('S6: guest view does not expose passenger-side switcher',
     !html.includes(PASSENGER_MARKER));
+  // #721 — positive guest pins (the guest variant was negative-only before): the guest
+  // view renders exactly one .pf-guest-card with the «Создайте профиль» copy, and its only
+  // affordance (#pf-onboard «Начать регистрацию») navigates to /onboarding.
+  expect('S6+: guest view renders exactly one .pf-guest-card',
+    (html.match(/pf-guest-card/g) || []).length === 1, String((html.match(/pf-guest-card/g) || []).length));
+  expect('S6+: guest card carries the «Создайте профиль» copy + the «Начать регистрацию» #pf-onboard CTA',
+    html.includes('Создайте профиль') && html.includes('Начать регистрацию') && html.includes('id="pf-onboard"'));
+  const onboardRoute = clickAndCaptureRoute('#pf-onboard');
+  expect('S6+: guest #pf-onboard navigates to /onboarding',
+    /onboarding/.test(onboardRoute || ''), String(onboardRoute));
 }
 
 // ── Scenario 7 — persisted driver in passenger-view tab routes CTAs as passenger ──
