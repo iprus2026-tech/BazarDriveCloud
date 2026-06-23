@@ -91,6 +91,25 @@ function appendMessage(chatId, msg) {
   }
 }
 
+// BD-CHAT-01 (#18) — order-preserving persist for a RETRY of a failed send. A plain append would
+// push the older retried message after a newer one the user has since sent, so a reload would
+// flip the thread order (Codex #750). Insert by msg.id (the send timestamp) instead. Returns
+// false on a storage failure, like appendMessage, so the retry can stay flagged.
+function persistMessageInOrder(chatId, msg) {
+  try {
+    const store = loadChatStore();
+    const arr = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
+    let i = arr.length;
+    while (i > 0 && Number(arr[i - 1].id) > Number(msg.id)) i--;
+    arr.splice(i, 0, msg);
+    store[chatId] = arr;
+    localStorage.setItem(CHAT_KEY, JSON.stringify(store));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // BD-AUTH-BOUNDARY-01 — chat messages are scoped to the local identity
 // (driver/passenger thread for a specific trip). Wiped on logout / local
 // reset by storage_boundary.clearUserScopedStorage().
@@ -598,7 +617,7 @@ export default function chat() {
     retry.textContent = 'Повторить';
     retry.setAttribute('aria-label', 'Повторить отправку');
     retry.addEventListener('click', () => {
-      if (appendMessage(chatId, msg)) {
+      if (persistMessageInOrder(chatId, msg)) {
         clearSendFailed(msgEl);
         showNotice('Сообщение отправлено');
         inputEl.focus();

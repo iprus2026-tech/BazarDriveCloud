@@ -252,8 +252,10 @@ expect('markSendFailed adds the failed class + an AT «не отправлено
   /classList\.add\('chat__msg--failed'\)/.test(chat)
   && /setAttribute\('aria-label', 'Вы · не отправлено'\)/.test(chat)
   && /className = 'chat__msg-retry'/.test(chat));
-expect('the retry re-persists via appendMessage and clears the failed state on success',
-  /retry\.addEventListener\('click'[\s\S]{0,120}appendMessage\(chatId, msg\)[\s\S]{0,60}clearSendFailed\(msgEl\)/.test(chat));
+expect('the retry re-persists (order-preserving) and clears the failed state on success',
+  /retry\.addEventListener\('click'[\s\S]{0,120}persistMessageInOrder\(chatId, msg\)[\s\S]{0,60}clearSendFailed\(msgEl\)/.test(chat));
+expect('the retry insert is ordered by id (a retried older message keeps thread order on reload)',
+  /function persistMessageInOrder[\s\S]{0,220}Number\(arr\[i - 1\]\.id\) > Number\(msg\.id\)[\s\S]{0,40}splice\(i, 0, msg\)/.test(chat));
 expect('cloud.css styles the failed bubble + the retry control',
   /\.chat__msg--failed \.chat__bubble\s*\{/.test(css) && /\.chat__msg-retry\s*\{/.test(css));
 
