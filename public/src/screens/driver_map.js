@@ -609,6 +609,9 @@ export default async function driverMapScreen() {
       createRideOrder({
         type: 'passenger_request',
         source: 'map',
+        // #717 — driver-surface TEST order: must NOT count toward the driver's
+        // completed-passenger-trip metric (countCompletedPassengerTrips).
+        createdByRole: 'driver',
         pickup: { id: null, label: 'Тестовая точка подачи' },
         dropoff: { id: null, label: 'Тестовая точка назначения' },
         distanceKm: 6.4,

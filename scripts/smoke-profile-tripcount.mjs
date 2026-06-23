@@ -15,6 +15,7 @@ import fs from 'node:fs';
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const api = read('../public/src/mock_api.js');
 const profile = read('../public/src/screens/profile.js');
+const driverMap = read('../public/src/screens/driver_map.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -35,6 +36,14 @@ expect('it does NOT count CANCELED / NO_SHOW (only the COMPLETED filter gates th
   !/CANCELED|NO_SHOW/.test(fnBody) && /status\s*===\s*'COMPLETED'/.test(fnBody));
 expect('it derives the source from the ride_orders store (passenger-created orders)',
   /loadRideOrdersRaw\(\)/.test(fnBody));
+
+// ── Origin guard (Codex #719): driver-surface orders must NOT count ──
+expect('createRideOrder stamps a createdByRole origin marker (driver vs passenger)',
+  /createdByRole:\s*input\.createdByRole\s*===\s*'driver'\s*\?\s*'driver'\s*:\s*'passenger'/.test(api));
+expect('the count EXCLUDES driver-created orders (createdByRole !== driver)',
+  /createdByRole\s*!==\s*'driver'/.test(fnBody));
+expect('driver_map «Создать тестовый заказ» marks the test order createdByRole: driver',
+  /createRideOrder\(\{[\s\S]{0,400}?createdByRole:\s*'driver'/.test(driverMap));
 expect('it scopes a weekly count to the last 7 days (by statusUpdatedAt)',
   /7\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(fnBody)
   && /statusUpdatedAt/.test(fnBody));

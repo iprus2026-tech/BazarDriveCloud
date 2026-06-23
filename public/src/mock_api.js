@@ -482,6 +482,11 @@ export function createRideOrder(input = {}) {
     id: `order-${Date.now()}`,
     type: input.type === 'ride_order' ? 'ride_order' : 'passenger_request',
     source: input.source === 'feed' ? 'feed' : 'map',
+    // BD-PROFILE-01 / #717 — origin marker: which surface created the order. The
+    // driver's «количество поездок» counts ONLY passenger-created orders, so a
+    // driver-surface order (driver_map «Создать тестовый заказ») marks itself
+    // 'driver' and is excluded by countCompletedPassengerTrips().
+    createdByRole: input.createdByRole === 'driver' ? 'driver' : 'passenger',
     pickup: input.pickup ?? null,
     dropoff: input.dropoff ?? null,
     distanceKm: Number(input.distanceKm) || 0,
@@ -728,7 +733,7 @@ export function updateTripStatus(id, status) {
 // total and the last-7-days count (by statusUpdatedAt — when the order went terminal).
 export function countCompletedPassengerTrips() {
   const completed = loadRideOrdersRaw().filter(
-    (o) => o && o.status === 'COMPLETED' && !o.demo,
+    (o) => o && o.status === 'COMPLETED' && !o.demo && o.createdByRole !== 'driver',
   );
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const thisWeek = completed.filter((o) => {
