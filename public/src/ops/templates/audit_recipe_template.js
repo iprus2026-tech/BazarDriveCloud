@@ -27,9 +27,20 @@ function dataModelLine(screen = {}) {
 // #684 — when a screen declares role variants (multiple role-keyed render paths, e.g.
 // /profile = guest | passenger | driver), brief the auditor to cover EACH and treat
 // their differences as a finding dimension. Empty for single-render screens.
-function variantsBlock(screen = {}) {
+function variantsBlock(screen = {}, variantKey = '') {
   const vs = Array.isArray(screen.variants) ? screen.variants.filter((v) => v && v.key) : [];
   if (!vs.length) return [];
+  const focus = variantKey ? vs.find((v) => v.key === variantKey) : null;
+  if (focus) {
+    const others = vs.filter((v) => v.key !== focus.key).map((v) => v.label || v.key);
+    return [
+      ``,
+      `Variant focus (#684) — audit the ${focus.label || focus.key} render path (${focus.anchor || '?'}); it`,
+      `renders when ${focus.entry || '(unspecified)'}. This screen has ${vs.length} role-keyed variants`,
+      `(others: ${others.join(', ') || '—'}). Audit THIS variant's surfaces in full, AND flag any`,
+      `difference / parity gap vs the other variants (topbar / identity / sections / settings / logout) as a finding.`,
+    ];
+  }
   return [
     ``,
     `Role variants (#684) — this screen has ${vs.length} role-keyed render paths. Audit EACH`,
@@ -40,7 +51,7 @@ function variantsBlock(screen = {}) {
   ];
 }
 
-export function generateAuditRecipe(screen = {}) {
+export function generateAuditRecipe(screen = {}, opts = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
   const file = screen.file || '(unknown file)';
@@ -48,16 +59,18 @@ export function generateAuditRecipe(screen = {}) {
   const fileBase = String(file).split('/').pop() || file;
   const routeTerm = (typeof route === 'string' && route.startsWith('/')) ? route : '';
   const pinPattern = [fileBase, routeTerm].filter(Boolean).map(escapeRe).join('|') || escapeRe(fileBase);
+  const focusVariant = (Array.isArray(screen.variants) && opts.variant)
+    ? screen.variants.find((v) => v && v.key === opts.variant) : null;
 
   return [
-    `Audit recipe: ${id} — ${title}`,
+    `Audit recipe: ${id} — ${title}` + (focusVariant ? ` · вариант: ${focusVariant.label || focusVariant.key}` : ''),
     ``,
     `Route: ${route}`,
     `File: ${file}`,
     ``,
     `Goal: find real MEL defects on this screen, reproducibly. Log each survivor as a`,
     `ScreenOps MEL card (severity + reachability + a stable selector anchor).`,
-    ...variantsBlock(screen),
+    ...variantsBlock(screen, opts.variant),
     ``,
     `Dimensions — audit each independently:`,
     `1. Accessibility / WAI-ARIA — roles, focus management on open/close, aria-live status, tap-target size (>= 44px), labels.`,
