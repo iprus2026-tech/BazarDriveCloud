@@ -348,7 +348,7 @@ function buildAcceptedCard(order, tripId) {
   const safeTripId   = escapeHtml(tripId);
   card.innerHTML = `
     <div class="map-home__sheet-grip" aria-hidden="true"></div>
-    <div class="bd-badge success" role="status">Заказ принят</div>
+    <div class="bd-badge success" role="status" tabindex="-1">Заказ принят</div>
     <div class="driver-map__accepted">
       <div class="driver-map__accepted-route">
         <div class="map-home__order-name">${escapeHtml(pickupLabel)}</div>
@@ -561,6 +561,11 @@ export default async function driverMapScreen() {
     stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.ACCEPTED }));
     sheetSlot.replaceChildren(buildAcceptedCard(order, tripId));
     root.dataset.state = STATE.ACCEPTED;
+    // #732 — move focus to the «Заказ принят» status badge so SR / keyboard users are told the
+    // order was accepted (a major content swap → focus management) instead of a focus lost where
+    // the «Принять» button used to be.
+    const acceptedBadge = sheetSlot.querySelector('.bd-badge.success');
+    if (acceptedBadge && typeof acceptedBadge.focus === 'function') acceptedBadge.focus();
   }
 
   root.addEventListener('click', async (e) => {

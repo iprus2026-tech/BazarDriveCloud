@@ -90,6 +90,12 @@ expect('driver_map imports acceptCanonicalRideOrder from ride_actions',
   /import\s*\{[^}]*acceptCanonicalRideOrder[^}]*\}\s*from\s*'\.\.\/ride_actions\.js'/s.test(driverMap));
 expect('driver_map accept branch accepts then renders the accepted card',
   /action === 'accept'[\s\S]*?acceptCanonicalRideOrder\([\s\S]*?renderAccepted\(\s*result\.order\s*,\s*result\.tripId\s*\)/.test(driverMap));
+// #732 — the accepted swap is a major content change; without focus management it is silent to
+// SR/keyboard (focus lost where «Принять» was). renderAccepted moves focus to the status badge.
+expect('the «Заказ принят» badge is focusable (tabindex="-1")',
+  /<div class="bd-badge success" role="status" tabindex="-1">Заказ принят<\/div>/.test(driverMap));
+expect('renderAccepted moves focus to the accepted «Заказ принят» status badge',
+  /sheetSlot\.querySelector\('\.bd-badge\.success'\);[\s\S]{0,140}acceptedBadge\.focus\(\)/.test(driverMap));
 expect('accepted card exposes the active-ride action carrying the trip id',
   /data-action="active-ride"\s+data-trip-id="\$\{safeTripId\}"/.test(driverMap));
 expect('active-ride action routes to /active-ride?role=driver with status ACCEPTED',
