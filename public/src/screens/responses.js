@@ -1,4 +1,5 @@
 import { go } from '../router.js';
+import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import { acceptOrder, getOrderById } from '../mock_api.js';
 import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
@@ -1449,12 +1450,19 @@ export default function responses() {
   // navigation, so this never leaks even if the screen is torn down while open.)
   let safetyTabbar = null;
   let safetyTabbarPrevHidden = false;
+  let releaseSafetyTrap = () => {};
   function closeSafetySheet() {
+    releaseSafetyTrap();
     if (safetyOverlayEl) { safetyOverlayEl.remove(); safetyOverlayEl = null; }
     if (safetyTabbar) { safetyTabbar.hidden = safetyTabbarPrevHidden; safetyTabbar = null; }
   }
   function setSafetyView(view) {
-    if (safetyOverlayEl) safetyOverlayEl.dataset.view = view;
+    if (!safetyOverlayEl) return;
+    safetyOverlayEl.dataset.view = view;
+    // #732 — move focus into the now-visible view so it doesn't strand on the (now hidden)
+    // control that triggered the transition; the focus trap then cycles within the new view.
+    const next = safetyOverlayEl.querySelector(`.responses-safety-view--${view} button:not([disabled])`);
+    if (next) next.focus();
   }
   function openSafetySheet() {
     if (safetyOverlayEl) return;
@@ -1483,6 +1491,14 @@ export default function responses() {
       // "после подключения backend" copy on the submitted view makes the mock
       // explicit; wire to the moderation queue later.
       if (a === 'submit')     { setSafetyView('submitted'); return; }
+    });
+    // #732 — modal a11y: capture focus, trap Tab, restore to #responses-shield on close. The
+    // sheet had no Escape, so the helper owns it with step-back (sub-view → default → close).
+    releaseSafetyTrap = trapFocus(safetyOverlayEl, {
+      onEscape: () => {
+        if (safetyOverlayEl && safetyOverlayEl.dataset.view !== 'default') { setSafetyView('default'); return; }
+        closeSafetySheet();
+      },
     });
   }
   root.querySelector('#responses-shield').addEventListener('click', openSafetySheet);

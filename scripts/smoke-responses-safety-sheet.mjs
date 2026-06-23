@@ -97,6 +97,20 @@ expect('overlay + ported .rsafe-* content styles exist',
 expect('selected report reason uses the accent',
   /\.responses-safety-reason\.is-selected\s*\{[^}]*var\(--accent\)/.test(css));
 
+// ── G. modal a11y (BD-OPS / #732) — the pre-ride safety sheet wires the shared overlay
+// focus-trap (focus-trap + step-back Escape→close + focus restore + re-focus on view change).
+// It shipped aria-modal=true with no focus management.
+expect('responses imports the shared trapFocus helper',
+  /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(responses));
+expect('openSafetySheet installs the focus trap whose Escape owns step-back (sub-view → default → close)',
+  /releaseSafetyTrap = trapFocus\(safetyOverlayEl,\s*\{[\s\S]{0,80}onEscape/.test(responses)
+  && /dataset\.view !== 'default'[\s\S]{0,90}setSafetyView\('default'\)/.test(responses)
+  && /onEscape:[\s\S]{0,280}closeSafetySheet\(\)/.test(responses));
+expect('closeSafetySheet releases the trap (focus restore to #responses-shield)',
+  /function closeSafetySheet\(\)\s*\{\s*releaseSafetyTrap\(\);/.test(responses));
+expect('setSafetyView re-focuses into the now-visible view on each transition',
+  /\.responses-safety-view--\$\{view\} button:not\(\[disabled\]\)[\s\S]{0,40}\.focus\(\)/.test(responses));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
