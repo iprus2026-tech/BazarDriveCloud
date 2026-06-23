@@ -134,6 +134,31 @@ expect('stacked: after the top releases, the covered trap regains Tab control (w
 relLower();
 expect('stacked: releasing both removes every keydown listener', docS._keydownCount() === 0);
 
+// #745 — focus on an in-overlay element that is NOT a tabbable cycle member (e.g. a tabindex="-1"
+// dialog panel used as the initial focus) must still trap: Shift+Tab wraps to the last focusable
+// and Tab goes to the first — it must not escape to the background.
+const docP = makeDoc();
+const pTrigger = makeBtn(docP, 'pTrigger'); docP._inDoc.add(pTrigger);
+const pb1 = makeBtn(docP, 'pb1'); const pb2 = makeBtn(docP, 'pb2');
+const panel = { id: 'panel' }; // tabindex=-1 container: inside the overlay, NOT a focusable
+const pOverlay = {
+  ownerDocument: docP,
+  querySelectorAll() { return [pb1, pb2]; },
+  querySelector() { return null; },
+  contains(el) { return el === panel || el === pb1 || el === pb2; },
+  focus() { docP.activeElement = pOverlay; },
+};
+const relP = trapFocus(pOverlay);
+docP.activeElement = panel;
+docP._dispatchKeydown('Tab', true);
+expect('Shift+Tab from a non-tabbable in-overlay panel wraps to the LAST focusable (#745)',
+  docP.activeElement === pb2);
+docP.activeElement = panel;
+docP._dispatchKeydown('Tab', false);
+expect('Tab from a non-tabbable in-overlay panel goes to the FIRST focusable (#745)',
+  docP.activeElement === pb1);
+relP();
+
 expect('trapFocus tolerates a null overlay (returns a no-op release)',
   typeof trapFocus(null) === 'function');
 

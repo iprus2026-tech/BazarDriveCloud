@@ -66,11 +66,13 @@ export function trapFocus(overlayEl, opts = {}) {
     }
     const first = els[0];
     const last = els[els.length - 1];
-    const active = doc.activeElement;
-    const inside = overlayEl.contains(active);
+    // idx === -1 when focus is OUTSIDE the overlay OR on an in-overlay element that is not a
+    // tabbable cycle member (e.g. a tabindex="-1" dialog panel used as the initial focus, #745) —
+    // both must wrap back into the cycle rather than let Tab escape to the background.
+    const idx = els.indexOf(doc.activeElement);
     if (ev.shiftKey) {
-      if (!inside || active === first) { ev.preventDefault(); stop(); last.focus(); }
-    } else if (!inside || active === last) {
+      if (idx <= 0) { ev.preventDefault(); stop(); last.focus(); }
+    } else if (idx === -1 || idx === els.length - 1) {
       ev.preventDefault();
       stop();
       first.focus();
