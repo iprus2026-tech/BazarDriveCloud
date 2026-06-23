@@ -268,6 +268,13 @@ expect('dashboard exposes a #mel-variant select (gated on declared variants) + m
   && /variant:\s*read\('#mel-variant'\)/.test(screenSrc));
 expect('a new MEL AND the quick mark-crooked both default the variant to the active selectedVariant',
   (screenSrc.match(/variant:\s*state\.selectedVariant\s*\|\|\s*''/g) || []).length >= 2);
+// Codex #727: per-variant quick-flag dedupe (flag guest, then driver → two cards), and the
+// repair generators scope from the MEL's saved variant (chip is only the fallback).
+expect('quick mark-crooked dedupes PER variant (variant is part of the alreadyFlagged key)',
+  /\(c\.variant \|\| ''\)\s*===\s*\(state\.selectedVariant \|\| ''\)/.test(screenSrc));
+expect('repair generators prefer the MEL\'s saved variant over the chip (3 gen-* handlers + the refresh)',
+  (screenSrc.match(/mel\.variant \|\| state\.selectedVariant \|\| undefined/g) || []).length >= 3
+  && /repairVk\s*=\s*m\.variant \|\| vk/.test(screenSrc));
 
 // ── D7. Audit recipe (BD-OPS / #684 #5) — a reproducible FIND-MELs brief per
 // screen (the multi-agent audit was re-improvised each session). It enumerates the
@@ -358,10 +365,10 @@ for (const [name, build] of [
   expect(`${name} prompt degrades for an unknown variant key`,
     !/Role variant focus/.test(build('BD-PROFILE-01', {}, 'zznope')));
 }
-expect('dashboard threads the selected variant into the Cloud / GitHub / Claude generators',
-  /buildCloudDesignPrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
-  && /buildGithubIssue\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
-  && /buildClaudeCodePrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc));
+expect('dashboard threads the variant into the Cloud / GitHub / Claude generators (vk = mel.variant || selectedVariant)',
+  /buildCloudDesignPrompt\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc)
+  && /buildGithubIssue\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc)
+  && /buildClaudeCodePrompt\(\s*s\.id\s*,\s*mel\s*,\s*vk\s*\)/.test(screenSrc));
 expect('select-variant refreshes a shown Cloud / GitHub / Claude artifact (not only Audit)',
   /'Cloud Design prompt'\)\s*state\.outputText\s*=\s*buildCloudDesignPrompt/.test(screenSrc)
   && /'GitHub issue body'\)\s*state\.outputText\s*=\s*buildGithubIssue/.test(screenSrc)

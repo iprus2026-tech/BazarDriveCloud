@@ -485,11 +485,13 @@ export default function opsScreens() {
         // the new focus so the selector feels live (#684 #1 widened this beyond Audit).
         state.selectedVariant = btn.dataset.variant || '';
         const vk = state.selectedVariant || undefined;
-        const lastMel = () => listMelForScreen(s.id).slice(-1)[0] || {};
+        const m = listMelForScreen(s.id).slice(-1)[0] || {};
+        // A repair prompt repairs THAT MEL, so its saved variant wins; the chip is the fallback.
+        const repairVk = m.variant || vk;
         if (state.outputLabel === 'Audit recipe') state.outputText = buildAuditRecipe(s.id, vk);
-        else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, lastMel(), vk);
-        else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, lastMel(), vk);
-        else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, lastMel(), vk);
+        else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, m, repairVk);
+        else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, m, repairVk);
+        else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, m, repairVk);
         renderDetail();
         break;
       }
@@ -506,8 +508,11 @@ export default function opsScreens() {
         const CROOKED_PROBLEM = 'Crooked screen flagged from ScreenOps.';
         // Dedupe the generic quick-flag: a repeated click should not pile up
         // byte-identical cards (the only feedback is a transient notice).
+        // Dedupe per variant — flagging guest then driver must create two distinct cards
+        // (Codex #727); flagging the same variant twice still dedupes.
         const alreadyFlagged = listMelForScreen(s.id)
-          .some((c) => c.problem === CROOKED_PROBLEM && c.status === 'DETECTED');
+          .some((c) => c.problem === CROOKED_PROBLEM && c.status === 'DETECTED'
+            && (c.variant || '') === (state.selectedVariant || ''));
         if (alreadyFlagged) {
           state.notice = 'Already flagged as crooked.';
           renderDetail();
@@ -638,18 +643,22 @@ export default function opsScreens() {
       }
       case 'gen-cloud': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        // #684 #1 — scope the prompt to the selected role variant ('' = whole screen).
-        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel, state.selectedVariant || undefined));
+        // #684 — a repair prompt repairs THAT MEL, so its saved variant wins; the chip
+        // selection ('' = whole screen) is the fallback when the MEL is whole-screen (Codex #727).
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('Cloud Design prompt', buildCloudDesignPrompt(s.id, mel, vk));
         break;
       }
       case 'gen-github': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('GitHub issue body', buildGithubIssue(s.id, mel, state.selectedVariant || undefined));
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('GitHub issue body', buildGithubIssue(s.id, mel, vk));
         break;
       }
       case 'gen-claude': {
         const mel = listMelForScreen(s.id).slice(-1)[0] || {};
-        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel, state.selectedVariant || undefined));
+        const vk = mel.variant || state.selectedVariant || undefined;
+        setOutput('Claude Code prompt', buildClaudeCodePrompt(s.id, mel, vk));
         break;
       }
       case 'gen-audit':
