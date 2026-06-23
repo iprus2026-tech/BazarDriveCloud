@@ -88,7 +88,7 @@ expect('selected reason uses the accent',
 
 // #732 — modal a11y: the report sheet wires the shared overlay focus-trap (focus-trap +
 // Escape→close + focus restore) via public/src/overlay.js, since it shipped aria-modal=true
-// without any focus management. (role=radio on the reason rows is a separate a11y card.)
+// without any focus management. The reason rows are now a proper ARIA radiogroup (below).
 expect('order_detail imports the shared trapFocus helper',
   /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(od));
 expect('openReportSheet installs the focus trap with Escape→closeReportSheet',
@@ -97,6 +97,21 @@ expect('closeReportSheet releases the trap (focus restore) before removing the o
   /function closeReportSheet\(\)\s*\{\s*releaseReportTrap\(\);/.test(od));
 expect('submit moves focus into the submitted view (not stranded on the hidden submit button)',
   /setReportView\('submitted'\)[\s\S]{0,400}\.od-report-view--submitted \[data-report="dismiss"\][\s\S]{0,80}\.focus\(\)/.test(od));
+
+// #732 — the report reasons are a single-select ARIA RADIOGROUP (role=radiogroup/radio +
+// aria-checked + roving tabindex + Arrow/Home/End), not just is-selected buttons.
+expect('reasons are wrapped in a role="radiogroup" with an aria-label',
+  /<div class="od-report-reasons" role="radiogroup" aria-label="[^"]+">/.test(od));
+expect('each reason row is role="radio" with aria-checked="false"',
+  /class="od-report-reason"[^>]*role="radio"[^>]*aria-checked="false"/.test(od));
+expect('reason rows use a roving tabindex (first 0, the rest -1)',
+  /tabindex="\$\{i === 0 \? '0' : '-1'\}"/.test(od));
+expect('selecting a reason updates aria-checked + the roving tabindex (single-select)',
+  /selectReason = \(btn\) =>[\s\S]{0,340}setAttribute\('aria-checked'[\s\S]{0,140}r\.tabIndex = on \? 0 : -1/.test(od));
+expect('Arrow/Home/End keys move the radiogroup selection + focus',
+  /case 'ArrowDown': case 'ArrowRight': next =[\s\S]{0,220}case 'Home'[\s\S]{0,260}selectReason\(next\)/.test(od));
+expect('cloud.css gives the reason rows a visible focus ring (roving keyboard focus)',
+  /\.od-report-reason:focus-visible\s*\{[^}]*outline:/.test(css));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
