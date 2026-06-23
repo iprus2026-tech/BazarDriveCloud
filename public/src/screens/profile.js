@@ -3231,26 +3231,25 @@ function wireGarageActions(root, vehicles = []) {
   // openPermitPanel / the history-detail dialog: move focus into the panel on
   // open, restore it to the trigger on close, and close on Escape. View-only —
   // no storage write (the garage no-mutation contract is untouched).
-  let addReturnFocus = null;
-  let addSheetEsc = null;
+  // #732 — shared overlay focus-trap (capture + initial-focus + Tab-trap + restore + Escape→close),
+  // replacing the F4 bespoke focus management, which had no Tab-trap. Focus the trigger first so
+  // the trap captures it and restores there on close (the old code captured the trigger explicitly).
+  let releaseAddTrap = () => {};
   const openSheet = () => {
     if (!sheet) return;
     resetDraft();
-    addReturnFocus = addBtn;
+    if (addBtn && typeof addBtn.focus === 'function') addBtn.focus();
     sheet.hidden = false;
     sheet.dataset.garageAddState = 'open';
-    root.querySelector('#pf2-garage-add-model')?.focus();
-    addSheetEsc = (e) => { if (e.key === 'Escape') closeSheet(); };
-    document.addEventListener('keydown', addSheetEsc);
+    releaseAddTrap = trapFocus(sheet, { initialFocus: '#pf2-garage-add-model', onEscape: closeSheet });
   };
   const closeSheet = () => {
     if (!sheet) return;
     resetDraft();
     sheet.hidden = true;
     sheet.dataset.garageAddState = 'closed';
-    if (addSheetEsc) { document.removeEventListener('keydown', addSheetEsc); addSheetEsc = null; }
-    addReturnFocus?.focus();
-    addReturnFocus = null;
+    releaseAddTrap();
+    releaseAddTrap = () => {};
   };
 
   addBtn?.addEventListener('click', openSheet);
@@ -3332,11 +3331,11 @@ function wireGarageActions(root, vehicles = []) {
   // BD-PROFILE-01 (F4) — dialog focus management for the edit sheet (see the
   // add sheet above): capture the invoking edit button, focus the first field on
   // open, restore focus on close, Escape closes. View-only — no storage write.
-  let editReturnFocus = null;
-  let editSheetEsc = null;
+  // #732 — shared overlay focus-trap (see the add sheet). trapFocus captures the invoking edit
+  // button (document.activeElement) on install and restores there on close; adds the Tab-trap.
+  let releaseEditTrap = () => {};
   const openEditSheet = (vehicle) => {
     if (!editSheet || !vehicle || typeof vehicle.id !== 'string') return;
-    editReturnFocus = document.activeElement;
     resetEditDraft();
     const modelEl = root.querySelector('#pf2-garage-edit-model');
     if (modelEl) modelEl.value = (typeof vehicle.model === 'string') ? vehicle.model : '';
@@ -3347,9 +3346,7 @@ function wireGarageActions(root, vehicles = []) {
     editSheet.dataset.editVehicleId = vehicle.id;
     editSheet.hidden = false;
     editSheet.dataset.garageEditState = 'open';
-    modelEl?.focus();
-    editSheetEsc = (e) => { if (e.key === 'Escape') closeEditSheet(); };
-    document.addEventListener('keydown', editSheetEsc);
+    releaseEditTrap = trapFocus(editSheet, { initialFocus: '#pf2-garage-edit-model', onEscape: closeEditSheet });
   };
   const closeEditSheet = () => {
     if (!editSheet) return;
@@ -3357,9 +3354,8 @@ function wireGarageActions(root, vehicles = []) {
     delete editSheet.dataset.editVehicleId;
     editSheet.hidden = true;
     editSheet.dataset.garageEditState = 'closed';
-    if (editSheetEsc) { document.removeEventListener('keydown', editSheetEsc); editSheetEsc = null; }
-    editReturnFocus?.focus();
-    editReturnFocus = null;
+    releaseEditTrap();
+    releaseEditTrap = () => {};
   };
   for (const sel of ['#pf2-garage-edit-cancel', '#pf2-garage-edit-close', '#pf2-garage-edit-backdrop']) {
     const el = root.querySelector(sel);

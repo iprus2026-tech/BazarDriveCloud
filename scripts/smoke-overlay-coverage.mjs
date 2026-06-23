@@ -36,9 +36,8 @@ const BESPOKE_TRAP = {
 // rel-path → count of aria-modal modals in that file that do NOT yet trap focus. KNOWN, tracked
 // gaps (TODO #732 retrofit onto overlay.js). Exempted so a NEW untrapped modal still fails.
 const KNOWN_GAP = {
-  // pf2-garage-add-sheet / pf2-garage-edit-sheet: capture/initial-focus/Escape/restore but NO Tab trap.
-  'screens/profile.js': 2,
-  // app_error_overlay.js retrofitted onto overlay.js (#732) — no longer a gap.
+  // Empty — every aria-modal modal now traps focus (shared trapFocus or a vetted BESPOKE_TRAP).
+  // profile.js garage add/edit migrated onto overlay.js (#732); app_error_overlay.js too (#738).
 };
 
 // overlay.js is the helper itself — its docstring mentions aria-modal; it is never a consumer.
