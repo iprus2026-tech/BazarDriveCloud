@@ -498,6 +498,20 @@ if (exists(profileFocusSmoke)) {
   }
 }
 
+// BD-PROFILE-01 / #717 — the driver «количество поездок» must be DERIVED from
+// completed passenger ride orders (status COMPLETED, demo excluded), never the old
+// hard-coded 203 / 42. Pins the countCompletedPassengerTrips() rule + the hero/stat
+// wiring (derived total + pluralRu, derived weekly count).
+const profileTripCountSmoke = path.join(root, 'scripts', 'smoke-profile-tripcount.mjs');
+if (exists(profileTripCountSmoke)) {
+  try {
+    execFileSync(process.execPath, [profileTripCountSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-profile-tripcount.mjs failed\n${msg}`);
+  }
+}
+
 // BD-PROFILE-01 (F1/F6/F7/F11) — inert-control feedback parity: four UI-only
 // driver-profile stubs (doc-add, taxi-IP permit / park-fleet, payouts saved
 // method) now flash a transient label like their live siblings; stay inert.

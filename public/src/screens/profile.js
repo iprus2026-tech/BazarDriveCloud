@@ -14,7 +14,7 @@ import {
 } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { listMyPostsSync, listDriverReceipts } from '../mock_api.js';
+import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips } from '../mock_api.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
@@ -1034,6 +1034,8 @@ function driverHeroHtml(u) {
   const car  = (u.vehicleMake && u.vehicleModel)
     ? escapeHtml(`${u.vehicleMake} ${u.vehicleModel}${u.vehiclePlate ? ' · ' + u.vehiclePlate : ''}`)
     : '';
+  // #717 — lifetime trip count DERIVED from completed passenger rides, not a literal.
+  const trips = countCompletedPassengerTrips().total;
   return `
     <div class="pf2-hero">
       <div class="pf2-avatar" aria-hidden="true">${ini}</div>
@@ -1042,7 +1044,7 @@ function driverHeroHtml(u) {
         <span class="pf2-hero__star">${SVG_STAR}</span>
         <span class="pf2-hero__rating">4.8</span>
         <span class="pf2-hero__sep">·</span>
-        <span class="pf2-hero__trips">203 поездки</span>
+        <span class="pf2-hero__trips">${trips} ${pluralRu(trips, 'поездка', 'поездки', 'поездок')}</span>
       </div>
       ${car ? `<p class="pf2-hero__car">${car}</p>` : ''}
       <button type="button" class="pf2-edit-btn" id="pf2-edit">${SVG_PENCIL} Изменить</button>
@@ -1074,6 +1076,9 @@ function statusCardHtml(u) {
 }
 
 function driverStatsHtml() {
+  // #717 — weekly trips DERIVED from completed passenger rides (last 7 days), not a
+  // literal. Earnings / hours stay demo values until their own rule is defined.
+  const weekTrips = countCompletedPassengerTrips().thisWeek;
   return `
     <div class="pf2-stats-grid">
       <div class="pf2-stat-card">
@@ -1081,7 +1086,7 @@ function driverStatsHtml() {
         <span class="pf2-stat-label">За неделю</span>
       </div>
       <div class="pf2-stat-card">
-        <span class="pf2-stat-val">42</span>
+        <span class="pf2-stat-val">${weekTrips}</span>
         <span class="pf2-stat-label">Поездок</span>
       </div>
       <div class="pf2-stat-card">

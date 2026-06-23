@@ -721,6 +721,23 @@ export function updateTripStatus(id, status) {
   return updated;
 }
 
+// BD-PROFILE-01 / #717 — the driver's «количество поездок» is DERIVED, not stored:
+// it counts passenger-created ride orders (the bazardrive.ride_orders.v1 store) that
+// the driver drove to LOGICAL COMPLETION (status COMPLETED). CANCELED / NO_SHOW /
+// unfinished orders never count, and demo seeds are excluded. Returns the all-time
+// total and the last-7-days count (by statusUpdatedAt — when the order went terminal).
+export function countCompletedPassengerTrips() {
+  const completed = loadRideOrdersRaw().filter(
+    (o) => o && o.status === 'COMPLETED' && !o.demo,
+  );
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = completed.filter((o) => {
+    const t = Date.parse(o.statusUpdatedAt || o.completedAt || '');
+    return Number.isFinite(t) && t >= weekAgo;
+  }).length;
+  return { total: completed.length, thisWeek };
+}
+
 // ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
 // Read-side adapter: surfaces map-created CREATED ride orders as
 // passenger ride cards in Feed without duplicating them into
