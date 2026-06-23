@@ -97,6 +97,29 @@ rel3();
 expect('trapFocus tolerates a null overlay (returns a no-op release)',
   typeof trapFocus(null) === 'function');
 
+// #734 — if the overlay leaves the DOM WITHOUT close() (a route change replaceChildren()s
+// #app while the sheet is open), the next keydown self-releases the trap and is NOT
+// intercepted, so Tab is not captured on the screen that replaced it.
+{
+  const docL = makeDoc();
+  const trig = makeBtn(docL, 't');
+  docL._inDoc.add(trig);
+  const kid = makeBtn(docL, 'k');
+  const ovL = {
+    ownerDocument: docL, isConnected: true,
+    querySelectorAll: () => [kid], querySelector: () => null,
+    contains: (e) => e === kid, focus() {},
+  };
+  docL.activeElement = trig;
+  const relL = trapFocus(ovL);
+  expect('the keydown trap is active while the overlay is connected', docL._keydownCount() === 1);
+  ovL.isConnected = false; // simulate the replaceChildren() teardown on a route change
+  const prevented = docL._dispatchKeydown('Tab', false);
+  expect('after a no-close teardown, the next keydown self-releases the trap', docL._keydownCount() === 0);
+  expect('and that keydown is NOT intercepted (Tab works on the next screen)', prevented === false);
+  relL();
+}
+
 // ── Static integration: the passenger sheets wire the helper ────────────────
 const sheetsSrc = fs.readFileSync(new URL('../public/src/screens/active_ride_passenger_sheets.js', import.meta.url), 'utf8');
 expect('passenger sheets import trapFocus from ../overlay.js',
