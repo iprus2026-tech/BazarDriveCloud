@@ -186,6 +186,14 @@ expect('claude-code prompt embeds Step 0d render-source + mount-timing front-loa
   /Step 0d[^\n]*render-source[^\n]*mount-timing/i.test(ccPrompt)
   && /rendered datum/i.test(ccPrompt)
   && /isConnected/i.test(ccPrompt));
+// #684 R6 — Step 0d + the "Before you push" self-review also front-load the edge/ordering classes
+// that drew ~8 review rounds on the #732 series (stacked-modal key ownership, trap release on
+// navigate-away, programmatic maxlength bypass, out-of-order retry persist, hydrate-before-seed).
+expect('claude-code prompt embeds the Step 0d edge/ordering checklist + its self-review item (#684 R6)',
+  /edge \/ ordering states \(#684 R6/i.test(ccPrompt)
+  && /second overlay STACKED on top/i.test(ccPrompt)
+  && /skips maxlength/i.test(ccPrompt)
+  && /Edge \/ ordering \(#684 R6\)/.test(ccPrompt));
 
 // ── D4. Data-model viability (BD-OPS / #684 #8) — is the fix CONSTRUCTIBLE?
 // The audit can confirm a defect against the code, but BD-RESPONSES-01 (#688)
