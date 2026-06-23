@@ -657,6 +657,17 @@ if (exists(confirmHandoffSmoke)) {
   }
 }
 
+// BD-CONFIRM-CHAT-01 — /trip-confirmation chat affordances thread tripId + role (not bare /chat).
+const confirmChatHandoffSmoke = path.join(root, 'scripts', 'smoke-confirm-chat-handoff.mjs');
+if (exists(confirmChatHandoffSmoke)) {
+  try {
+    execFileSync(process.execPath, [confirmChatHandoffSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-confirm-chat-handoff.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).
