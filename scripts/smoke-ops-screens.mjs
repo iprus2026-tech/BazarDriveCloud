@@ -276,6 +276,27 @@ expect('audit recipe embeds the screen data-model fact (responses → ride_order
 expect('buildAuditRecipe connector returns the recipe + a contract anchor',
   buildAuditRecipe('BD-RESPONSES-01').includes('Audit recipe: BD-RESPONSES-01')
   && /Contract:/.test(buildAuditRecipe('BD-RESPONSES-01')));
+
+// ── D7b. Registry role variants (BD-OPS / #684) — a screen with multiple role-keyed
+// render paths declares them in the registry so ScreenOps can ADDRESS a specific
+// variant instead of one undifferentiated row, and the audit recipe briefs "audit EACH
+// + their differences". /profile = guest | passenger | driver (guest was the variant the
+// contract AND this registry's role label previously omitted). Single-render screens omit it.
+const profileScreen = getScreens().find((s) => s.id === 'BD-PROFILE-01');
+expect('BD-PROFILE-01 declares role variants guest / passenger / driver',
+  !!profileScreen && Array.isArray(profileScreen.variants)
+  && ['guest', 'passenger', 'driver'].every((k) => profileScreen.variants.some((v) => v && v.key === k)));
+expect('each role variant carries a label + entry + render anchor',
+  !!profileScreen && profileScreen.variants.length >= 3
+  && profileScreen.variants.every((v) => v && v.key && v.label && v.entry && v.anchor));
+expect('the audit recipe surfaces the role variants (audit EACH, with render anchors)',
+  /Role variants/i.test(generateAuditRecipe(profileScreen))
+  && /renderGuest/.test(generateAuditRecipe(profileScreen))
+  && /renderPassenger/.test(generateAuditRecipe(profileScreen))
+  && /renderDriver/.test(generateAuditRecipe(profileScreen)));
+expect('a single-render screen gets NO variants block (no false injection)',
+  !/Role variants/i.test(generateAuditRecipe(getScreens().find((s) => s.id === 'BD-FEED-01'))));
+
 expect('dashboard wires the gen-audit button + handler to buildAuditRecipe',
   /data-action="gen-audit"/.test(screenSrc)
   && /case 'gen-audit'/.test(screenSrc)
@@ -572,8 +593,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v202 (floor raised with the MEL export artifact)',
-  !!swVer && Number(swVer[1]) >= 202);
+expect('sw.js VERSION is present and >= v207 (floor raised with the registry role-variants)',
+  !!swVer && Number(swVer[1]) >= 207);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

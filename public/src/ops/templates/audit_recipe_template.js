@@ -24,6 +24,22 @@ function dataModelLine(screen = {}) {
     + (dm.keyedBy ? `, keyed by ${dm.keyedBy}` : '') + '.';
 }
 
+// #684 — when a screen declares role variants (multiple role-keyed render paths, e.g.
+// /profile = guest | passenger | driver), brief the auditor to cover EACH and treat
+// their differences as a finding dimension. Empty for single-render screens.
+function variantsBlock(screen = {}) {
+  const vs = Array.isArray(screen.variants) ? screen.variants.filter((v) => v && v.key) : [];
+  if (!vs.length) return [];
+  return [
+    ``,
+    `Role variants (#684) — this screen has ${vs.length} role-keyed render paths. Audit EACH`,
+    `independently, AND treat their DIFFERENCES (topbar / identity / sections / settings /`,
+    `logout / affordance parity) as a first-class finding dimension — a variant the contract`,
+    `or registry omits is itself a defect:`,
+    ...vs.map((v) => `- ${v.label || v.key} (${v.anchor || '?'}) — renders when ${v.entry || '(unspecified)'}.`),
+  ];
+}
+
 export function generateAuditRecipe(screen = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -41,6 +57,7 @@ export function generateAuditRecipe(screen = {}) {
     ``,
     `Goal: find real MEL defects on this screen, reproducibly. Log each survivor as a`,
     `ScreenOps MEL card (severity + reachability + a stable selector anchor).`,
+    ...variantsBlock(screen),
     ``,
     `Dimensions — audit each independently:`,
     `1. Accessibility / WAI-ARIA — roles, focus management on open/close, aria-live status, tap-target size (>= 44px), labels.`,

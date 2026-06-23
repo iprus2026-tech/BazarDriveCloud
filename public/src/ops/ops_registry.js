@@ -69,6 +69,19 @@ const CHAT_CSS_ATOMS = [
   '.chat__readonly-note — terminal read-only note',
 ];
 
+// #684 — optional role-VARIANTS fact: a screen with MULTIPLE role-keyed render paths
+// (e.g. /profile = guest | passenger | driver) declares them here so ScreenOps can
+// ADDRESS a specific variant instead of one undifferentiated registry row, and the
+// audit recipe can brief "audit EACH variant + their differences" (the BD-PROFILE-01
+// guest variant was invisible to both the contract AND this registry). Each entry:
+// { key, label, entry (when it renders), anchor (the render symbol) }. Optional —
+// single-render screens omit it. Read-only; shared by reference (getScreen shallow-copies).
+const PROFILE_ROLE_VARIANTS = [
+  { key: 'guest',     label: 'Гость',    entry: 'welcomeSeen && !onboarded',           anchor: 'renderGuest' },
+  { key: 'passenger', label: 'Пассажир', entry: "role === 'passenger'",                anchor: 'renderPassenger' },
+  { key: 'driver',    label: 'Водитель', entry: "role === 'driver' (or ?role=driver)", anchor: 'renderDriver' },
+];
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -294,11 +307,12 @@ const SCREENS = [
     title: 'Profile',
     route: '/profile',
     file: 'public/src/screens/profile.js',
-    role: 'passenger / driver',
+    role: 'guest / passenger / driver',
     contractStatus: 'exists',
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    variants: PROFILE_ROLE_VARIANTS,
     guardrails: ['garage vehicle state: do not mutate it outside the documented make-active flow; the ?garage=multi demo-2 make-active is INTENTIONALLY pinned (smoke S24) — not a defect to fix.'],
   },
   {
