@@ -1,10 +1,12 @@
 // BD-FEED-01 — static regression smoke for Feed tab + post-action a11y.
 //
 // Two assistive-tech gaps from the BD-FEED-01 audit:
-//  - the category tabs expose role="tab" but never conveyed the active tab to AT
-//    (no aria-selected);
+//  - the category chips conveyed the active state but as an INCOMPLETE tab pattern
+//    (role="tab"/aria-selected with no tabpanel/aria-controls/roving). #732 demoted
+//    them to a filter group — role="group" + aria-pressed — because they filter ONE
+//    role="feed" region, not switchable panels (the same change lands on /inbox);
 //  - the like / comment buttons' aria-label hid the visible count from AT.
-// The fix declares aria-selected on the tabs and keeps it in sync on click, and
+// The fix declares aria-pressed on the chips and keeps it in sync on click, and
 // folds the like/comment counts into each button's accessible name. This smoke
 // pins both so a refactor cannot silently regress them.
 //
@@ -22,11 +24,13 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
-// ── A. tabs convey the active state to AT ──
-expect('category tab markup declares aria-selected (true for the active tab)',
-  /role="tab"[\s\S]{0,80}aria-selected="\$\{i === 0 \? 'true' : 'false'\}"/.test(feed));
-expect('the tab click handler keeps aria-selected in sync with the active tab',
-  /setAttribute\('aria-selected',\s*selected \? 'true' : 'false'\)/.test(feed));
+// ── A. category chips are a filter GROUP that conveys the active state to AT (#732) ──
+expect('the chip row is a role="group" filter set (not a fake tablist)',
+  /class="feed-chip-row" role="group"/.test(feed) && !/role="tablist"/.test(feed));
+expect('category chip markup declares aria-pressed (true for the active chip), not role="tab"',
+  /aria-pressed="\$\{i === 0 \? 'true' : 'false'\}"/.test(feed) && !/\brole="tab"/.test(feed));
+expect('the chip click handler keeps aria-pressed in sync with the active chip',
+  /setAttribute\('aria-pressed',\s*selected \? 'true' : 'false'\)/.test(feed));
 
 // ── B. like / comment counts are in the accessible name ──
 expect('like button aria-label includes the like count',

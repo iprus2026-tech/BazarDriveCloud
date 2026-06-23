@@ -146,6 +146,16 @@ expect("setActiveTab() sets hash '#/inbox' for the 'all' tab",
 expect('setActiveTab() sets hash #/inbox?tab=<tab> for other tabs',
   /#\/inbox\?tab=\$\{activeTab\}/.test(setActiveTabBody));
 
+// ── D2. category chips are a filter GROUP (#732) — demoted from the incomplete
+// role="tab"/aria-selected pattern to role="group" + aria-pressed (they filter ONE
+// role="feed" region, not switchable panels; matches /feed). ──
+expect('the inbox chip row is a role="group" filter set (not a fake tablist)',
+  /class="feed-chip-row" role="group"/.test(inbox) && !/role="tablist"/.test(inbox));
+expect('inbox chip markup declares aria-pressed (active tab), not role="tab"',
+  /aria-pressed="\$\{t\.key === activeTab \? 'true' : 'false'\}"/.test(inbox) && !/\brole="tab"/.test(inbox));
+expect('the inbox chip handler keeps aria-pressed in sync',
+  /setAttribute\('aria-pressed',\s*isActive \? 'true' : 'false'\)/.test(inbox));
+
 // ── E. inbox.js — empty state + interaction (unique hooks) ───
 expect('empty state exposes data-inbox-empty-cta="feed"',
   inbox.includes('data-inbox-empty-cta="feed"'));

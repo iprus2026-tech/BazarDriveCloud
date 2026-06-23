@@ -65,10 +65,10 @@ export default function feed() {
         </button>
       </div>
     </div>
-    <div class="feed-chip-row" role="tablist" aria-label="Категории">
+    <div class="feed-chip-row" role="group" aria-label="Категории">
       ${CATS.map((c, i) =>
         `<button class="feed-chip${i === 0 ? ' active' : ''}" data-cat="${escapeHtml(c.key)}"
-                 role="tab" type="button" aria-selected="${i === 0 ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
+                 type="button" aria-pressed="${i === 0 ? 'true' : 'false'}">${escapeHtml(c.label)}</button>`
       ).join('')}
     </div>
     <div class="bd-scroll feed-list" role="feed"></div>
@@ -134,7 +134,7 @@ export default function feed() {
     for (const b of chipRow.querySelectorAll('[data-cat]')) {
       const selected = b.dataset.cat === activeKey;
       b.classList.toggle('active', selected);
-      b.setAttribute('aria-selected', selected ? 'true' : 'false');
+      b.setAttribute('aria-pressed', selected ? 'true' : 'false');
     }
     renderList();
   });

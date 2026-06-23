@@ -961,9 +961,9 @@ if (exists(feedCardKeyboardSmoke)) {
   }
 }
 
-// BD-FEED-01 — static regression smoke for Feed tab + post-action a11y:
-// category tabs carry aria-selected (kept in sync on click), and the like /
-// comment buttons fold their count into the accessible name so AT announces it.
+// BD-FEED-01 — static regression smoke for Feed filter-chip + post-action a11y:
+// category chips are a role="group" filter set carrying aria-pressed (kept in sync
+// on click), and the like / comment buttons fold their count into the accessible name.
 const feedA11ySmoke = path.join(root, 'scripts', 'smoke-feed-a11y.mjs');
 if (exists(feedA11ySmoke)) {
   try {
