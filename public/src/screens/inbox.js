@@ -278,12 +278,12 @@ export default async function inbox() {
            </span>`
         : ''}
     </div>
-    <div class="feed-chip-row" role="tablist" aria-label="Категории входящих">
+    <div class="feed-chip-row" role="group" aria-label="Категории входящих">
       ${TABS.map((t) =>
         `<button class="feed-chip${t.key === activeTab ? ' active' : ''}"
                  data-inbox-tab="${escapeHtml(t.key)}"
-                 role="tab" type="button"
-                 aria-selected="${t.key === activeTab ? 'true' : 'false'}">
+                 type="button"
+                 aria-pressed="${t.key === activeTab ? 'true' : 'false'}">
            ${escapeHtml(t.label)}
          </button>`
       ).join('')}
@@ -328,7 +328,7 @@ export default async function inbox() {
     for (const btn of chipRow.querySelectorAll('[data-inbox-tab]')) {
       const isActive = btn.dataset.inboxTab === activeTab;
       btn.classList.toggle('active', isActive);
-      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
     const nextHash = activeTab === 'all' ? '#/inbox' : `#/inbox?tab=${activeTab}`;
     if (location.hash !== nextHash) {
