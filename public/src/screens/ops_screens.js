@@ -62,6 +62,13 @@ function optionList(values, selected) {
 // the badge/filter signal would otherwise advertise an "OK" screen as a problem.
 const DEFECT_SEVERITIES = MEL_SEVERITIES.filter((s) => s.startsWith('MEL-'));
 
+// #684 — MELs for export, scoped to a role variant ('' = whole screen): a focused variant
+// exports its own MELs + the whole-screen ('') ones that apply to every variant.
+function scopedExportMels(screenId, variantKey) {
+  const all = listMelForScreen(screenId);
+  return variantKey ? all.filter((m) => (m.variant || '') === variantKey || !m.variant) : all;
+}
+
 export default function opsScreens() {
   const screens = getScreens();
 
@@ -492,6 +499,7 @@ export default function opsScreens() {
         else if (state.outputLabel === 'Cloud Design prompt') state.outputText = buildCloudDesignPrompt(s.id, m, repairVk);
         else if (state.outputLabel === 'GitHub issue body') state.outputText = buildGithubIssue(s.id, m, repairVk);
         else if (state.outputLabel === 'Claude Code prompt') state.outputText = buildClaudeCodePrompt(s.id, m, repairVk);
+        else if (state.outputLabel === 'MEL export') state.outputText = buildMelExport(s.id, scopedExportMels(s.id, state.selectedVariant), state.selectedVariant || undefined);
         renderDetail();
         break;
       }
@@ -671,8 +679,9 @@ export default function opsScreens() {
         setOutput('Port plan', buildPortPlan(s.id, listMelForScreen(s.id)));
         break;
       case 'export-mel':
-        // Export ALL the screen's MELs as a portable markdown + JSON artifact (read-only; #684 #6).
-        setOutput('MEL export', buildMelExport(s.id, listMelForScreen(s.id)));
+        // #684 — export the screen's MELs as a portable markdown + JSON artifact (read-only;
+        // #684 #6), scoped to the selected role variant ('' = whole screen).
+        setOutput('MEL export', buildMelExport(s.id, scopedExportMels(s.id, state.selectedVariant), state.selectedVariant || undefined));
         break;
       case 'copy-check':
         copy(buildCheckCommands(s.id), 'Check commands copied.');

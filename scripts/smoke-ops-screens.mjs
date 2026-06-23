@@ -594,8 +594,8 @@ expect('mel export embeds screen id + route + file',
   melExport.includes('BD-RESPONSES-01') && melExport.includes('/responses') && melExport.includes('responses.js'));
 expect('mel export summarises the MEL count (open vs done)',
   /MELs:\s*2\s*\(1 open · 1 done\)/.test(melExport));
-expect('mel export renders a markdown table + per-card details reflecting severity/status/reachability/selector/pr',
-  /\| # \| Severity \| Status \| Reach \| Lifecycle \| Selector \| PR \| Problem \|/.test(melExport)
+expect('mel export renders a markdown table (incl. a Variant column) + per-card details reflecting severity/status/reachability/selector/pr',
+  /\| # \| Variant \| Severity \| Status \| Reach \| Lifecycle \| Selector \| PR \| Problem \|/.test(melExport)
   && /#choose-driver/.test(melExport) && /MEL-B/.test(melExport)
   && /user-path/.test(melExport) && /#688/.test(melExport));
 expect('mel export escapes the cell separator so free-text never breaks a table row',
@@ -640,9 +640,34 @@ expect('mel export handles a screen with no MELs (valid artifact + empty [] JSON
 expect('mel export template + connector are pure (no web-storage access / network at module load)',
   !/(?:local|session)Storage\s*[.\[]|fetch\(|XMLHttpRequest/.test(tplMelExport)
   && !/(?:local|session)Storage\s*[.\[]|fetch\(|XMLHttpRequest/.test(connMelExport));
-expect('ops dashboard wires an Export MELs button + handler (buildMelExport over all the screen MELs)',
+expect('ops dashboard wires an Export MELs button + handler (per-variant: scopedExportMels + the selected variant)',
   /data-action="export-mel"/.test(screenSrc)
-  && /case 'export-mel'[\s\S]{0,200}buildMelExport\(\s*s\.id\s*,\s*listMelForScreen\(\s*s\.id\s*\)\s*\)/.test(screenSrc));
+  && /case 'export-mel'[\s\S]{0,300}buildMelExport\(\s*s\.id\s*,\s*scopedExportMels\(\s*s\.id\s*,\s*state\.selectedVariant\s*\)\s*,\s*state\.selectedVariant/.test(screenSrc));
+
+// #684 — per-variant export: a focused variant exports only its own MELs + the whole-screen
+// ('') ones (which apply to every variant); «Все» exports everything. The artifact records the
+// scope; the table carries a Variant column; the select-variant handler refreshes a shown export.
+expect('export scopes to a variant — header note + only the variant\'s / whole-screen cards (focused), everything (Все)',
+  (() => {
+    const mels = [
+      { id: 'g', screenId: 'BD-PROFILE-01', variant: 'guest',  severity: 'MEL-B', status: 'DETECTED', problem: 'guest-only' },
+      { id: 'd', screenId: 'BD-PROFILE-01', variant: 'driver', severity: 'MEL-C', status: 'DETECTED', problem: 'driver-only' },
+      { id: 'w', screenId: 'BD-PROFILE-01', variant: '',       severity: 'MEL-C', status: 'DETECTED', problem: 'whole-screen' },
+    ];
+    const focused = buildMelExport('BD-PROFILE-01', mels.filter((m) => m.variant === 'guest' || !m.variant), 'guest');
+    const all = buildMelExport('BD-PROFILE-01', mels);
+    return /Variant scope: Гость \(guest\)/.test(focused)
+      && /guest-only/.test(focused) && /whole-screen/.test(focused) && !/driver-only/.test(focused)
+      && !/Variant scope/.test(all) && /driver-only/.test(all);
+  })());
+expect('export details surface each card\'s role variant (value, or whole-screen)',
+  (() => {
+    const x = buildMelExport('BD-PROFILE-01', [{ id: 'g', variant: 'guest', problem: 'p' }, { id: 'w', variant: '', problem: 'p' }], 'guest');
+    return /- Role variant: guest/.test(x) && /- Role variant: \(whole screen\)/.test(x);
+  })());
+expect('dashboard scopes export via scopedExportMels (whole-screen \'\' cards included) + refreshes a shown export on variant change',
+  /function scopedExportMels\(screenId, variantKey\)[\s\S]{0,260}\(m\.variant \|\| ''\) === variantKey \|\| !m\.variant/.test(screenSrc)
+  && /'MEL export'\)\s*state\.outputText\s*=\s*buildMelExport\(\s*s\.id\s*,\s*scopedExportMels/.test(screenSrc));
 
 // ── E. MEL store key + dev-only clear is NOT wired into the screen UI ──
 expect('mel store uses the bazardrive.ops.mel.v1 key',
@@ -709,8 +734,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v212 (floor raised with the role-label↔variants pin)',
-  !!swVer && Number(swVer[1]) >= 212);
+expect('sw.js VERSION is present and >= v213 (floor raised with per-variant MEL export)',
+  !!swVer && Number(swVer[1]) >= 213);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

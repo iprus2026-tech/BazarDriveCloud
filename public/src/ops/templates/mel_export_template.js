@@ -26,7 +26,7 @@ function lifecycleText(card) {
     : '—';
 }
 
-export function generateMelExport(screen = {}, cards = []) {
+export function generateMelExport(screen = {}, cards = [], variantKey = '') {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
   const file = screen.file || '(unknown file)';
@@ -40,11 +40,19 @@ export function generateMelExport(screen = {}, cards = []) {
   const open = list.filter((c) => c.status !== 'DONE').length;
   const done = list.length - open;
 
+  // #684 — per-variant export scope: when a role variant is focused, the dashboard passes
+  // only that variant's MELs (+ whole-screen ones); the header records the scope so the
+  // artifact is unambiguous about what it does (and does not) cover.
+  const focusV = variantKey && Array.isArray(screen.variants)
+    ? screen.variants.find((v) => v && v.key === variantKey) : null;
   const header = [
     `ScreenOps MEL export — ${id} · ${title}`,
     ``,
     `Route: ${route}`,
     `File: ${file}`,
+    ...(variantKey
+      ? [`Variant scope: ${focusV ? `${focusV.label} (${focusV.key})` : variantKey} — this variant's MELs + whole-screen MELs only`]
+      : []),
     `MELs: ${list.length} (${open} open · ${done} done)`,
   ];
 
@@ -68,11 +76,11 @@ export function generateMelExport(screen = {}, cards = []) {
 
   const table = [
     ``,
-    `| # | Severity | Status | Reach | Lifecycle | Selector | PR | Problem |`,
-    `|---|----------|--------|-------|-----------|----------|----|---------|`,
+    `| # | Variant | Severity | Status | Reach | Lifecycle | Selector | PR | Problem |`,
+    `|---|---------|----------|--------|-------|-----------|----------|----|---------|`,
   ].concat(
     list.map((c, i) =>
-      `| ${i + 1} | ${cell(c.severity)} | ${cell(c.status)} | ${cell(c.reachability)} | `
+      `| ${i + 1} | ${cell(c.variant) || '—'} | ${cell(c.severity)} | ${cell(c.status)} | ${cell(c.reachability)} | `
       + `${cell(lifecycleText(c))} | ${cell(c.selector) || '—'} | ${cell(c.pr) || '—'} | ${cell(c.problem)} |`),
   );
 
@@ -80,6 +88,7 @@ export function generateMelExport(screen = {}, cards = []) {
     list.flatMap((c, i) => [
       ``,
       `### ${i + 1}. ${dash(c.severity)} · ${dash(c.status)} — ${dash(c.selector)}`,
+      `- Role variant: ${c.variant || '(whole screen)'}`,
       `- Reachability: ${dash(c.reachability)}`,
       `- Lifecycle audited: ${lifecycleText(c)}`,
       `- PR / commit: ${dash(c.pr)}`,
