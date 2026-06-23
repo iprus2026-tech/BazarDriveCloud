@@ -396,6 +396,18 @@ const precache = (sw.match(/PRECACHE\s*=\s*\[([\s\S]*?)\]/) || [])[1] || '';
 expect('public/sw.js PRECACHE includes active_ride_driver_sheets.js',
   /active_ride_driver_sheets\.js/.test(precache));
 
+// ── J. focus-trap migration (#732) — bindSheetChrome now wires the shared overlay trapFocus
+// (Tab-trap + focus restore + self-cleaning teardown), replacing the bespoke onKey trap. Escape
+// stays guarded by isLocked() so a loading / terminal (canceled / sent) sheet is never dismissed.
+expect('driver sheets import the shared trapFocus helper',
+  /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(sheets));
+expect('bindSheetChrome installs trapFocus with an isLocked-guarded Escape',
+  /releaseTrap = trapFocus\(overlay,\s*\{[\s\S]{0,40}onEscape:[\s\S]{0,150}if \(isLocked\(\)\) return;[\s\S]{0,90}close\(\)/.test(sheets));
+expect('close() releases the trap (focus restore + listener teardown)',
+  /function close\(\)\s*\{\s*releaseTrap\(\);/.test(sheets));
+expect('the bespoke onKey / focusableIn trap is gone (fully migrated)',
+  !/function focusableIn/.test(sheets) && !/document\.addEventListener\('keydown', onKey\)/.test(sheets));
+
 // ── L. BD-RIDE-D-09 polish — earnings terminal payment alias + history exit ──
 // The driver COMPLETED dispatch reads either ?state= (the internal entry
 // stage) or ?payment=cash|noncash (the documented manual URL). Both routes
