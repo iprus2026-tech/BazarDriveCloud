@@ -232,6 +232,15 @@ for (let i = 0; i < passengerChatCtas.length; i++) {
 expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger",
   /\/chat\?tripId=\$\{encodeURIComponent\(tripId\)\}&role=passenger/.test(passengerSheets));
 
+// ── I2. chat quick-reply chip appends, never overwrites (#732) ──
+// Tapping a quick-reply chip must APPEND to whatever the user already typed (separated by a
+// space), so it never silently discards a half-written message (BD-CHAT-01 #12).
+expect('quick-reply chip appends to the input (does not overwrite typed text)',
+  /inputEl\.value = existing \+ sep \+ chip\.dataset\.reply/.test(chat)
+  && !/inputEl\.value = chip\.dataset\.reply\b/.test(chat));
+expect('quick-reply keeps a separating space only when the input is non-empty',
+  /const sep = existing && !\/\\s\$\/\.test\(existing\) \? ' ' : ''/.test(chat));
+
 // ── J. sw.js — VERSION shape + CACHE_NAME linkage ──
 // BD-SW-01 — Pin the SHAPE of the cache contract, not the literal number.
 // Every BD-LIFE-XX / BD-CHAT-XX PR that touches a precached file has to

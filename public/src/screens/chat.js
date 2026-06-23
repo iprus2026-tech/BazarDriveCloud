@@ -551,9 +551,18 @@ export default function chat() {
   qrEl.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-reply]');
     if (!chip) return;
-    inputEl.value = chip.dataset.reply;
+    // #732 — append the quick reply to whatever the user already typed (separated by a space)
+    // instead of overwriting it, so a chip tap never silently discards a half-written message.
+    const existing = inputEl.value;
+    const sep = existing && !/\s$/.test(existing) ? ' ' : '';
+    inputEl.value = existing + sep + chip.dataset.reply;
     updateSend();
     inputEl.focus();
+    // Keep the caret at the end so typing continues after the inserted reply.
+    if (typeof inputEl.setSelectionRange === 'function') {
+      const end = inputEl.value.length;
+      inputEl.setSelectionRange(end, end);
+    }
   });
 
   // ── Send button state ───────────────────────────────────────────
