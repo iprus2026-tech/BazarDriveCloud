@@ -327,6 +327,27 @@ expect('BD-CONFIRM-01 declares role variants passenger / driver / expired',
 expect('every variant-bearing screen has well-formed variants (key + label + entry + anchor)',
   getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
     .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));
+
+// #684 #5 — role-label ↔ variants consistency: every variant whose key is a real user role
+// (guest / passenger / driver) must appear in the screen's `role` label, so a future variant
+// edit can't silently leave the role label lying. Non-role state-variants (e.g. 'expired') are
+// exempt. (BD-PROFILE-01 was hand-corrected to 'guest / passenger / driver'; BD-ORDER-DETAIL-01
+// / BD-CONFIRM-01 reconciled from 'shared' to 'passenger / driver' for this pin.)
+{
+  const ROLE_KEYS = ['guest', 'passenger', 'driver'];
+  const labelReflectsRoleVariants = (role, variants) =>
+    (variants || []).filter((v) => v && ROLE_KEYS.includes(v.key))
+      .every((v) => (role || '').toLowerCase().includes(v.key));
+  const offenders = getScreens()
+    .filter((s) => Array.isArray(s.variants) && s.variants.length)
+    .filter((s) => !labelReflectsRoleVariants(s.role, s.variants))
+    .map((s) => `${s.id} (role '${s.role}')`);
+  expect("every variant-bearing screen's role label reflects its role-key variants (no lying label)",
+    offenders.length === 0, offenders.join('; '));
+  expect('self-test: the rule passes a consistent label and fails a lying one',
+    labelReflectsRoleVariants('passenger / driver', [{ key: 'passenger' }, { key: 'driver' }, { key: 'expired' }]) === true
+    && labelReflectsRoleVariants('shared', [{ key: 'passenger' }]) === false);
+}
 expect('the audit recipe surfaces the role variants (audit EACH, with render anchors)',
   /Role variants/i.test(generateAuditRecipe(profileScreen))
   && /renderGuest/.test(generateAuditRecipe(profileScreen))
@@ -688,8 +709,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v211 (floor raised with Order Detail + Trip Confirmation variants)',
-  !!swVer && Number(swVer[1]) >= 211);
+expect('sw.js VERSION is present and >= v212 (floor raised with the role-label↔variants pin)',
+  !!swVer && Number(swVer[1]) >= 212);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
