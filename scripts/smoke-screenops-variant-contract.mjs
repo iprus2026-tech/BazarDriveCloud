@@ -64,10 +64,13 @@ function contractRegion(screen) {
 }
 
 // A variant is "documented" if its key, label, or render anchor appears in the region.
+// Unicode-safe left boundary: JS `\b` is ASCII-only, so `\bГость` never matches a
+// Cyrillic label (#684 #3 review). A negative look-behind on Unicode letters/numbers is
+// a real word-start for both the Latin keys/anchors and the Cyrillic labels.
 function variantDocumented(region, v) {
   return [v.key, v.label, v.anchor]
     .filter(Boolean)
-    .some((t) => new RegExp(`\\b${escapeRegExp(t)}`, 'i').test(region));
+    .some((t) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(t)}`, 'iu').test(region));
 }
 
 const screens = getScreens();
@@ -95,6 +98,12 @@ for (const s of withVariants) {
     !!profile && !variantDocumented(region, { key: 'zzfleetmanager', label: 'Флот-менеджер', anchor: 'renderFleet' }));
   expect('self-test: the real guest variant reads as DOCUMENTED',
     !!profile && variantDocumented(region, { key: 'guest', label: 'Гость', anchor: 'renderGuest' }));
+  // Unicode-safety regression pin (#684 #3 review): a Cyrillic-only label must match
+  // (an ASCII `\b` would miss it), and a Cyrillic label embedded mid-word must not.
+  expect('self-test: a Cyrillic-only label is matched (Unicode-safe boundary)',
+    variantDocumented('показывает Гость prompt', { label: 'Гость' }));
+  expect('self-test: a Cyrillic label embedded in a larger word is NOT matched',
+    !variantDocumented('предГостьслово', { label: 'Гость' }));
 }
 
 console.log('\n' + (issues.length
