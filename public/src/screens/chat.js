@@ -555,7 +555,11 @@ export default function chat() {
     // instead of overwriting it, so a chip tap never silently discards a half-written message.
     const existing = inputEl.value;
     const sep = existing && !/\s$/.test(existing) ? ' ' : '';
-    inputEl.value = existing + sep + chip.dataset.reply;
+    // #749 — a programmatic inputEl.value bypasses the maxlength the browser enforces on typing,
+    // so clamp the appended result to the composer's own limit.
+    const maxLen = Number(inputEl.getAttribute('maxlength')) || 0;
+    const appended = existing + sep + chip.dataset.reply;
+    inputEl.value = maxLen > 0 ? appended.slice(0, maxLen) : appended;
     updateSend();
     inputEl.focus();
     // Keep the caret at the end so typing continues after the inserted reply.

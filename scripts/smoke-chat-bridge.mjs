@@ -236,10 +236,12 @@ expect("active_ride_passenger_sheets.js safety-chat link appends &role=passenger
 // Tapping a quick-reply chip must APPEND to whatever the user already typed (separated by a
 // space), so it never silently discards a half-written message (BD-CHAT-01 #12).
 expect('quick-reply chip appends to the input (does not overwrite typed text)',
-  /inputEl\.value = existing \+ sep \+ chip\.dataset\.reply/.test(chat)
+  /const appended = existing \+ sep \+ chip\.dataset\.reply/.test(chat)
   && !/inputEl\.value = chip\.dataset\.reply\b/.test(chat));
 expect('quick-reply keeps a separating space only when the input is non-empty',
   /const sep = existing && !\/\\s\$\/\.test\(existing\) \? ' ' : ''/.test(chat));
+expect('the appended quick reply is clamped to the composer maxlength (programmatic value bypasses it)',
+  /Number\(inputEl\.getAttribute\('maxlength'\)\)[\s\S]{0,120}appended\.slice\(0, maxLen\)/.test(chat));
 
 // ── J. sw.js — VERSION shape + CACHE_NAME linkage ──
 // BD-SW-01 — Pin the SHAPE of the cache contract, not the literal number.
