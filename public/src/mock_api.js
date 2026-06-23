@@ -482,6 +482,11 @@ export function createRideOrder(input = {}) {
     id: `order-${Date.now()}`,
     type: input.type === 'ride_order' ? 'ride_order' : 'passenger_request',
     source: input.source === 'feed' ? 'feed' : 'map',
+    // BD-PROFILE-01 / #717 — origin marker: which surface created the order. The
+    // driver's «количество поездок» counts ONLY passenger-created orders, so a
+    // driver-surface order (driver_map «Создать тестовый заказ») marks itself
+    // 'driver' and is excluded by countCompletedPassengerTrips().
+    createdByRole: input.createdByRole === 'driver' ? 'driver' : 'passenger',
     pickup: input.pickup ?? null,
     dropoff: input.dropoff ?? null,
     distanceKm: Number(input.distanceKm) || 0,
@@ -719,6 +724,23 @@ export function updateTripStatus(id, status) {
   if (!updated) return null;
   persistRideOrders(next);
   return updated;
+}
+
+// BD-PROFILE-01 / #717 — the driver's «количество поездок» is DERIVED, not stored:
+// it counts passenger-created ride orders (the bazardrive.ride_orders.v1 store) that
+// the driver drove to LOGICAL COMPLETION (status COMPLETED). CANCELED / NO_SHOW /
+// unfinished orders never count, and demo seeds are excluded. Returns the all-time
+// total and the last-7-days count (by statusUpdatedAt — when the order went terminal).
+export function countCompletedPassengerTrips() {
+  const completed = loadRideOrdersRaw().filter(
+    (o) => o && o.status === 'COMPLETED' && !o.demo && o.createdByRole !== 'driver',
+  );
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = completed.filter((o) => {
+    const t = Date.parse(o.statusUpdatedAt || o.completedAt || '');
+    return Number.isFinite(t) && t >= weekAgo;
+  }).length;
+  return { total: completed.length, thisWeek };
 }
 
 // ── Ride order → Feed projection (BD-RIDE-ORDER-UNIFY-01) ──────
