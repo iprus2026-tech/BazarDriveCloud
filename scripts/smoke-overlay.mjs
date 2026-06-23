@@ -39,6 +39,15 @@ function makeDoc() {
     _keydownCount() { return listeners.filter((l) => l.type === 'keydown').length; },
   };
 }
+function mkOverlay(doc, kids) {
+  return {
+    ownerDocument: doc,
+    querySelectorAll() { return kids; },
+    querySelector() { return null; },
+    contains(el) { return kids.includes(el); },
+    focus() { doc.activeElement = this; },
+  };
+}
 
 // ── Behaviour ────────────────────────────────────────────────────────────────
 const doc = makeDoc();
@@ -100,6 +109,30 @@ const rel3 = trapFocus(overlay3); // no onEscape
 doc3._dispatchKeydown('Escape', false);
 expect('Escape is ignored by the helper when onEscape is absent (the sheet owns it)', esc3 === false);
 rel3();
+
+// ── #739 — LIFO stacking: only the TOP (most recently installed) trap handles keys, so a modal
+// stacked over another (e.g. the error sheet over a screen sheet) owns the keyboard and the
+// covered sheet defers — even though the covered trap's listener was registered first.
+const docS = makeDoc();
+const sTrigger = makeBtn(docS, 'sTrigger'); docS._inDoc.add(sTrigger);
+const lo1 = makeBtn(docS, 'lo1'); const lo2 = makeBtn(docS, 'lo2');
+const lower = mkOverlay(docS, [lo1, lo2]);
+docS.activeElement = sTrigger;
+const relLower = trapFocus(lower);
+const up1 = makeBtn(docS, 'up1'); const up2 = makeBtn(docS, 'up2');
+const upper = mkOverlay(docS, [up1, up2]);
+const relUpper = trapFocus(upper); // installed OVER the lower trap → now the top of the stack
+expect('stacked: both traps register a keydown listener', docS._keydownCount() === 2);
+docS.activeElement = up2;
+docS._dispatchKeydown('Tab', false);
+expect('stacked: the TOP trap owns Tab (wraps within the upper overlay)', docS.activeElement === up1);
+relUpper();
+docS.activeElement = lo2;
+docS._dispatchKeydown('Tab', false);
+expect('stacked: after the top releases, the covered trap regains Tab control (wraps within lower)',
+  docS.activeElement === lo1);
+relLower();
+expect('stacked: releasing both removes every keydown listener', docS._keydownCount() === 0);
 
 expect('trapFocus tolerates a null overlay (returns a no-op release)',
   typeof trapFocus(null) === 'function');
