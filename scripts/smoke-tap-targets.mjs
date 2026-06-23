@@ -28,6 +28,14 @@ const SELECTORS = [
   '.omd-route__edit',
   '.omd-phone__edit',
   '.driver-map__order-foot .bd-btn',
+  // trip-confirmation back / shield / party-chat (36px) + chat send (38px) and chat back / call
+  // (38px, the shared .bd-iconbtn atom — scoped by id so it is never resized globally).
+  '.cf-back',
+  '.cf-shield',
+  '.cf-party-chat',
+  '.chat__send',
+  '#chat-back',
+  '#chat-call',
 ];
 
 // Every control gets the hit-area overlay…
