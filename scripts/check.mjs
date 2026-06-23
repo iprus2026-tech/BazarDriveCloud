@@ -357,6 +357,17 @@ if (exists(overlayCoverageSmoke)) {
   }
 }
 
+// BD-A11Y-TAP-01 — #732 touch-target batch: sub-44px controls expanded to a >=44px hit area.
+const tapTargetsSmoke = path.join(root, 'scripts', 'smoke-tap-targets.mjs');
+if (exists(tapTargetsSmoke)) {
+  try {
+    execFileSync(process.execPath, [tapTargetsSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-tap-targets.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-SHEETS-01 — static regression smoke for the driver active ride
 // cancel + problem bottom sheets (own module, in-sheet state machines,
 // safety visual state, placeholder problem sheet never persists ride state).
