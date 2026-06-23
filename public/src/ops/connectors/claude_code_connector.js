@@ -7,10 +7,14 @@
 import { getScreenFacts } from './repo_connector.js';
 import { getContractFacts } from './screen_contracts_connector.js';
 import { generateClaudeCodePrompt } from '../templates/claude_code_prompt_template.js';
+import { variantFocusNote } from '../templates/variant_focus.js';
 
-export function buildClaudeCodePrompt(screenId, mel = {}) {
+export function buildClaudeCodePrompt(screenId, mel = {}, variantKey) {
   const facts = getScreenFacts(screenId);
   if (!facts) return '';
   const contract = getContractFacts(facts);
-  return generateClaudeCodePrompt(facts, mel) + '\n\nContract: ' + contract.contractAnchor;
+  const focus = variantFocusNote(facts, variantKey);
+  return generateClaudeCodePrompt(facts, mel)
+    + (focus ? '\n\n' + focus : '')
+    + '\n\nContract: ' + contract.contractAnchor;
 }

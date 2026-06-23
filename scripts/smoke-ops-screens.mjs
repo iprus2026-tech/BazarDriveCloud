@@ -319,6 +319,39 @@ expect('the focused recipe names the variant in its header + its entry condition
   /вариант: Гость/.test(buildAuditRecipe('BD-PROFILE-01', 'guest'))
   && /welcomeSeen/.test(buildAuditRecipe('BD-PROFILE-01', 'guest')));
 
+// ── D7d. Variant-aware PROMPT generators (BD-OPS / #684 #1) — the selected role variant
+// scopes Cloud Design / Claude Code / GitHub issue too, not just the Audit recipe. Each
+// connector takes a variantKey and appends a shared "Role variant focus" note; an empty /
+// unknown key, or a screen that declares no variants, degrades to a whole-screen prompt.
+for (const [name, build] of [
+  ['Cloud Design', buildCloudDesignPrompt],
+  ['GitHub issue', buildGithubIssue],
+  ['Claude Code', buildClaudeCodePrompt],
+]) {
+  const focused = build('BD-PROFILE-01', {}, 'guest');
+  expect(`${name} prompt focuses the selected variant (render path + label + entry)`,
+    /Role variant focus/.test(focused)
+    && /renderGuest/.test(focused)
+    && /Гость/.test(focused)
+    && /welcomeSeen/.test(focused));
+  expect(`${name} prompt with no variant stays whole-screen (no focus note)`,
+    !/Role variant focus/.test(build('BD-PROFILE-01', {})));
+  expect(`${name} prompt degrades for a screen that declares no variants`,
+    !/Role variant focus/.test(build('BD-FEED-01', {}, 'guest')));
+  expect(`${name} prompt degrades for an unknown variant key`,
+    !/Role variant focus/.test(build('BD-PROFILE-01', {}, 'zznope')));
+}
+expect('dashboard threads the selected variant into the Cloud / GitHub / Claude generators',
+  /buildCloudDesignPrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
+  && /buildGithubIssue\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc)
+  && /buildClaudeCodePrompt\(\s*s\.id\s*,\s*mel\s*,\s*state\.selectedVariant/.test(screenSrc));
+expect('select-variant refreshes a shown Cloud / GitHub / Claude artifact (not only Audit)',
+  /'Cloud Design prompt'\)\s*state\.outputText\s*=\s*buildCloudDesignPrompt/.test(screenSrc)
+  && /'GitHub issue body'\)\s*state\.outputText\s*=\s*buildGithubIssue/.test(screenSrc)
+  && /'Claude Code prompt'\)\s*state\.outputText\s*=\s*buildClaudeCodePrompt/.test(screenSrc));
+expect('the shared variant_focus.js helper is precached in sw.js',
+  sw.includes('./src/ops/templates/variant_focus.js'));
+
 // ── D8. Lifecycle / entry-state field (BD-OPS / #684 #10) — which entry-states the
 // audit PROBED, separate from #3 reachability (HOW it's reached). All three
 // BD-RESPONSES-01 (#688) rounds were entry-state edges the single-tap audit missed.
@@ -610,8 +643,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v208 (floor raised with the role-variant selector)',
-  !!swVer && Number(swVer[1]) >= 208);
+expect('sw.js VERSION is present and >= v209 (floor raised with the variant-aware prompts)',
+  !!swVer && Number(swVer[1]) >= 209);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
