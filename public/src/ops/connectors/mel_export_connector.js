@@ -7,7 +7,7 @@
 import { getScreenFacts } from './repo_connector.js';
 import { generateMelExport } from '../templates/mel_export_template.js';
 
-export function buildMelExport(screenId, mels = []) {
+export function buildMelExport(screenId, mels = [], variantKey) {
   const facts = getScreenFacts(screenId);
-  return generateMelExport(facts, mels);
+  return generateMelExport(facts, mels, variantKey);
 }
