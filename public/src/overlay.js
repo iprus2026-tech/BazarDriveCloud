@@ -36,6 +36,9 @@ export function trapFocus(overlayEl, opts = {}) {
     .filter((el) => el.offsetParent !== null || el === doc.activeElement);
 
   function onKeydown(ev) {
+    // If the overlay was torn down without close() (a route change replaceChildren()s #app),
+    // self-release and let the key pass through — never intercept Tab on the next screen (#734).
+    if (overlayEl.isConnected === false) { release(); return; }
     if (ev.key === 'Escape' && typeof opts.onEscape === 'function') {
       opts.onEscape(ev);
       return;
@@ -59,18 +62,12 @@ export function trapFocus(overlayEl, opts = {}) {
     }
   }
 
-  doc.addEventListener('keydown', onKeydown, true);
-
-  // Initial focus: an explicit target, else the first visible focusable, else the overlay.
-  const target = (typeof opts.initialFocus === 'string'
-    ? overlayEl.querySelector(opts.initialFocus)
-    : opts.initialFocus) || focusables()[0] || null;
-  if (target && typeof target.focus === 'function') target.focus();
-
   let released = false;
-  return function release() {
+  let observer = null;
+  function release() {
     if (released) return;
     released = true;
+    if (observer) { observer.disconnect(); observer = null; }
     doc.removeEventListener('keydown', onKeydown, true);
     // Restore focus only if the trigger is still in the document (it usually is; on a
     // navigate-away teardown it isn't, and the restore is moot because the screen re-rendered).
@@ -79,5 +76,24 @@ export function trapFocus(overlayEl, opts = {}) {
       && (!doc.contains || doc.contains(previouslyFocused))) {
       previouslyFocused.focus();
     }
-  };
+  }
+
+  doc.addEventListener('keydown', onKeydown, true);
+
+  // Initial focus: an explicit target, else the first visible focusable, else the overlay.
+  const target = (typeof opts.initialFocus === 'string'
+    ? overlayEl.querySelector(opts.initialFocus)
+    : opts.initialFocus) || focusables()[0] || null;
+  if (target && typeof target.focus === 'function') target.focus();
+
+  // #734 — auto-release if the overlay is torn down WITHOUT close() (e.g. a route change that
+  // replaceChildren()s #app while the sheet is open), so the document-level keydown trap never
+  // leaks onto the next screen. The onKeydown isConnected guard is the keydown-time fallback.
+  const observeRoot = doc.body || doc.documentElement || null;
+  if (typeof MutationObserver !== 'undefined' && observeRoot) {
+    observer = new MutationObserver(() => { if (!overlayEl.isConnected) release(); });
+    observer.observe(observeRoot, { childList: true, subtree: true });
+  }
+
+  return release;
 }

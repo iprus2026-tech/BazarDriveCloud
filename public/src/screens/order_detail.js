@@ -6,6 +6,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { trapFocus } from '../overlay.js';
 import { user } from '../state.js';
 import { applySmokeRole } from '../smoke_role.js';
 import {
@@ -908,7 +909,9 @@ function bindEvents(rootEl, initialCtx) {
   let reportOverlayEl = null;
   let reportTabbar = null;
   let reportTabbarPrevHidden = false;
+  let releaseReportTrap = () => {};
   function closeReportSheet() {
+    releaseReportTrap();
     if (reportOverlayEl) { reportOverlayEl.remove(); reportOverlayEl = null; }
     if (reportTabbar) { reportTabbar.hidden = reportTabbarPrevHidden; reportTabbar = null; }
   }
@@ -936,8 +939,19 @@ function bindEvents(rootEl, initialCtx) {
       const a = ctl.dataset.report;
       if (a === 'dismiss') { closeReportSheet(); return; }
       // Report submit is a UI stub — no backend, no localStorage.
-      if (a === 'submit')  { setReportView('submitted'); return; }
+      if (a === 'submit')  {
+        setReportView('submitted');
+        // Move focus into the now-visible submitted view so it doesn't strand on the
+        // hidden submit button (the trap then cycles within the submitted view). #732.
+        const done = reportOverlayEl.querySelector('.od-report-view--submitted [data-report="dismiss"]');
+        if (done) done.focus();
+        return;
+      }
     });
+    // #732 — modal a11y: capture focus, move into the sheet, trap Tab, Escape→close, and
+    // restore focus to the «Пожаловаться» trigger on close (shared overlay helper). The sheet
+    // has no sub-view step-back, so the helper owns Escape directly.
+    releaseReportTrap = trapFocus(reportOverlayEl, { onEscape: closeReportSheet });
   }
 
   rootEl.addEventListener('click', (ev) => {
