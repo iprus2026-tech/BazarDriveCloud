@@ -2523,22 +2523,29 @@ body {
 .pf2-tab {
   flex-shrink: 0;
   scroll-snap-align: start;
-  height: 34px;
+  /* BD-PROFILE-01 — reach the >=44px tap-target floor (the 13px pill keeps its
+     compact look via the line-box; the hit area grows to meet the floor). */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
   padding: 0 14px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
-  background: var(--bg-3);
+  /* Inactive tabs recede to bg-2 + hairline + text-2 so only the inverted
+     active pill reads as filled (no second accent / badge-tone pile-up). */
+  background: var(--bg-2);
   color: var(--text-2);
   border: 1px solid var(--line);
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.1s;
 }
 .pf2-tab.pf2-tab--active {
   background: var(--text);
   color: #0a0a0c;
   border-color: transparent;
 }
+.pf2-tab:active { opacity: 0.85; }
 
 /* ── Panes ──────────────────────────────────────────────── */
 .pf2-pane { display: none; }
@@ -2561,8 +2568,8 @@ body {
   width: 72px;
   height: 72px;
   border-radius: 22px;
-  background: linear-gradient(135deg, var(--accent) 0%, #ff9f6b 100%);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), #C2410C);
+  color: #1a0a04;
   font-size: 26px;
   font-weight: 700;
   display: flex;
@@ -2591,7 +2598,7 @@ body {
 .pf2-hero__car { font-size: 13px; color: var(--text-2); margin: 0; }
 .pf2-edit-btn {
   margin-top: 6px;
-  height: 34px;
+  min-height: 44px;
   padding: 0 16px;
   border-radius: 999px;
   background: var(--bg-3);
@@ -2646,6 +2653,9 @@ body {
   align-items: center;
   cursor: pointer;
   flex-shrink: 0;
+  /* BD-PROFILE-01 — the 46x28 track stays visually compact; the label hit
+     area grows to the >=44px tap-target floor. */
+  min-height: 44px;
 }
 .pf2-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
 .pf2-toggle__track {
@@ -2694,6 +2704,11 @@ body {
 }
 .pf2-action-cta:active { opacity: 0.8; }
 .pf2-status-card[data-state="action"] .pf2-action-cta { display: flex; }
+/* BD-PROFILE-01 — the always-rendered active-shift CTA inherited only .bd-btn
+   (width:100%, no margin), so it butted flush against the status-card hairline
+   with its corners clipped by the 26px card radius. Inset it into the canonical
+   16px gutter like .pf2-action-cta so the card radius frames it. */
+.pf2-active-shift-cta { margin: 0 16px 16px; width: calc(100% - 32px); }
 
 /* ── Stats grid ─────────────────────────────────────────── */
 .pf2-stats-grid {
@@ -2933,6 +2948,7 @@ body {
    controls, matching the profile-history / feed-card / inbox-item siblings
    (these buttons kept only the UA default outline, not the accent ring). */
 .pf2-edit-btn:focus-visible,
+.pf2-tab:focus-visible,
 .pf2-permit-btn:focus-visible,
 .pf2-check-row--action:focus-visible,
 .pf2-ip-go-btn:focus-visible,
