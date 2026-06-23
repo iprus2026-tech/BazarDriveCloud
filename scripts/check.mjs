@@ -161,6 +161,19 @@ if (exists(opsScreensSmoke)) {
   }
 }
 
+// BD-OPS / #684 #3 — ScreenOps registry↔contract variant-coverage guard: every
+// registry-declared role variant (e.g. /profile = guest | passenger | driver) must stay
+// documented in docs/screen-contracts.md within that screen's contract region.
+const variantContractSmoke = path.join(root, 'scripts', 'smoke-screenops-variant-contract.mjs');
+if (exists(variantContractSmoke)) {
+  try {
+    execFileSync(process.execPath, [variantContractSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-screenops-variant-contract.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DATA-STATIC-01 (#636) — backend-readiness gate: lock the static-data surface
 // so the Phase-1 data-layer migration (#584) proceeds with a green/red signal. Fails
 // if a localStorage store appears in public/src that is not classified in the
