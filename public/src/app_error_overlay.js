@@ -11,6 +11,10 @@
 // caller-supplied demo callback only. The only state it owns is DOM state
 // inside its own singleton element.
 
+// #732 — public/src/overlay.js is a pure a11y helper (focus-trap), not a ride/order/mock/map
+// runtime module, so importing it keeps the non-mutating contract above intact.
+import { trapFocus } from './overlay.js';
+
 const OVERLAY_ID = 'bd-error-overlay';
 
 // State whitelist. An unknown state is a safe no-op (never renders random UI).
@@ -26,6 +30,8 @@ let currentOptions = {};
 // SAME load is clearing it — a stale/deferred load must not clear another load's
 // state on this singleton overlay. null when no token was supplied.
 let currentToken = null;
+// #732 — release() for the focus-trap installed on the modal error SHEET (server_error / timeout).
+let releaseErrorTrap = () => {};
 
 function shellHost() {
   return document.getElementById('shell') || document.body;
@@ -189,6 +195,8 @@ function markupFor(state) {
 // the state. Always clears any pending recovered auto-dismiss first.
 export function showGlobalErrorOverlay(state, options = {}) {
   clearRecoveredTimer();
+  releaseErrorTrap();
+  releaseErrorTrap = () => {};
   if (!STATES.includes(state)) {
     // Unknown state: safe no-op. Never render arbitrary UI — leave the
     // overlay hidden/empty rather than guessing.
@@ -202,6 +210,11 @@ export function showGlobalErrorOverlay(state, options = {}) {
   el.dataset.bdErrorState = state;
   el.innerHTML = markupFor(state);
   el.hidden = false;
+  // #732 — trap focus inside the modal error SHEET (server_error / timeout — role=alertdialog);
+  // the banner / toast states are non-modal and get no trap. Escape dismisses, mirroring the scrim.
+  if (el.querySelector('[role="alertdialog"]')) {
+    releaseErrorTrap = trapFocus(el, { onEscape: hideGlobalErrorOverlay });
+  }
   if (state === 'recovered') {
     recoveredTimer = setTimeout(() => {
       hideGlobalErrorOverlay();
@@ -214,6 +227,8 @@ export function showGlobalErrorOverlay(state, options = {}) {
 // recovered timer and resets DOM state.
 export function hideGlobalErrorOverlay() {
   clearRecoveredTimer();
+  releaseErrorTrap();
+  releaseErrorTrap = () => {};
   currentOptions = {};
   currentToken = null;
   const el = document.getElementById(OVERLAY_ID);

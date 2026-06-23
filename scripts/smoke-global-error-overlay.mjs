@@ -83,6 +83,15 @@ expect('retry invokes options.onRetry (no real network retry)',
 expect('banner/toast use aria-live="polite"', /aria-live="polite"/.test(overlay));
 expect('blocking sheet uses role="alertdialog"', /role="alertdialog"/.test(overlay));
 expect('actions are real <button> elements', /<button[^>]*type="button"[^>]*data-bd-error-action/.test(overlay));
+// #732 — the modal error SHEET (server_error / timeout, role=alertdialog) traps focus via the
+// shared overlay.js helper: install on show when the alertdialog is present, release (+ focus
+// restore) on hide; Escape dismisses. The non-modal banner / toast states get no trap.
+expect('imports the shared trapFocus helper (a pure a11y util, not a forbidden runtime import)',
+  /import\s*\{\s*trapFocus\s*\}\s*from\s*'\.\/overlay\.js'/.test(overlay));
+expect('show installs the focus trap on the alertdialog sheet (Escape → hide)',
+  /querySelector\('\[role="alertdialog"\]'\)[\s\S]{0,160}releaseErrorTrap = trapFocus\(el,\s*\{\s*onEscape:\s*hideGlobalErrorOverlay\s*\}\)/.test(overlay));
+expect('hide releases the focus trap (restores focus to the trigger)',
+  /export\s+function\s+hideGlobalErrorOverlay[\s\S]{0,160}releaseErrorTrap\(\);/.test(overlay));
 
 // ── H. non-mutating contract — no forbidden imports ──────────
 const FORBIDDEN_IMPORT = ['ride_state', 'driver_offer_store', 'mock_api', 'mapbox', 'order_detail', 'active_ride'];
