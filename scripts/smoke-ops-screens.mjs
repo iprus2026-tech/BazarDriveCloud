@@ -313,6 +313,20 @@ expect('BD-PROFILE-01 declares role variants guest / passenger / driver',
 expect('each role variant carries a label + entry + render anchor',
   !!profileScreen && profileScreen.variants.length >= 3
   && profileScreen.variants.every((v) => v && v.key && v.label && v.entry && v.anchor));
+// #684 #4 — Order Detail (passenger | driver) + Trip Confirmation (passenger | driver |
+// expired) are the other genuinely role-dispatched screens; a 9-candidate audit rejected
+// FEED / COMPOSER / CHAT / POST / ONBOARDING / SETTINGS / INBOX as single-render.
+const orderDetailScreen = getScreens().find((s) => s.id === 'BD-ORDER-DETAIL-01');
+const confirmScreen = getScreens().find((s) => s.id === 'BD-CONFIRM-01');
+expect('BD-ORDER-DETAIL-01 declares role variants passenger / driver',
+  !!orderDetailScreen && Array.isArray(orderDetailScreen.variants)
+  && ['passenger', 'driver'].every((k) => orderDetailScreen.variants.some((v) => v && v.key === k)));
+expect('BD-CONFIRM-01 declares role variants passenger / driver / expired',
+  !!confirmScreen && Array.isArray(confirmScreen.variants)
+  && ['passenger', 'driver', 'expired'].every((k) => confirmScreen.variants.some((v) => v && v.key === k)));
+expect('every variant-bearing screen has well-formed variants (key + label + entry + anchor)',
+  getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
+    .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));
 expect('the audit recipe surfaces the role variants (audit EACH, with render anchors)',
   /Role variants/i.test(generateAuditRecipe(profileScreen))
   && /renderGuest/.test(generateAuditRecipe(profileScreen))
@@ -674,8 +688,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v210 (floor raised with variant-keyed MEL cards)',
-  !!swVer && Number(swVer[1]) >= 210);
+expect('sw.js VERSION is present and >= v211 (floor raised with Order Detail + Trip Confirmation variants)',
+  !!swVer && Number(swVer[1]) >= 211);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',
