@@ -243,6 +243,20 @@ expect('quick-reply keeps a separating space only when the input is non-empty',
 expect('the appended quick reply is clamped to the composer maxlength (programmatic value bypasses it)',
   /Number\(inputEl\.getAttribute\('maxlength'\)\)[\s\S]{0,120}appended\.slice\(0, maxLen\)/.test(chat));
 
+// ── I3. failed-send bubble + retry (#732 BD-CHAT-01 #18) ──
+// A failed persist must flag the bubble (visual + AT) with an explicit retry — never render an
+// unsaved message as an ordinary delivered one. Notice-only (#6) was the floor, this is the ceiling.
+expect('doSend flags the bubble as failed on a failed persist (not notice-only)',
+  /if \(!persisted\) \{[\s\S]{0,80}markSendFailed\(msgEl, msg\)[\s\S]{0,80}showNotice/.test(chat));
+expect('markSendFailed adds the failed class + an AT «не отправлено» label + a retry button',
+  /classList\.add\('chat__msg--failed'\)/.test(chat)
+  && /setAttribute\('aria-label', 'Вы · не отправлено'\)/.test(chat)
+  && /className = 'chat__msg-retry'/.test(chat));
+expect('the retry re-persists via appendMessage and clears the failed state on success',
+  /retry\.addEventListener\('click'[\s\S]{0,120}appendMessage\(chatId, msg\)[\s\S]{0,60}clearSendFailed\(msgEl\)/.test(chat));
+expect('cloud.css styles the failed bubble + the retry control',
+  /\.chat__msg--failed \.chat__bubble\s*\{/.test(css) && /\.chat__msg-retry\s*\{/.test(css));
+
 // ── J. sw.js — VERSION shape + CACHE_NAME linkage ──
 // BD-SW-01 — Pin the SHAPE of the cache contract, not the literal number.
 // Every BD-LIFE-XX / BD-CHAT-XX PR that touches a precached file has to
@@ -350,7 +364,7 @@ expect("chat.js appendMessage returns true on write, false on failure (no silent
   /function\s+appendMessage[\s\S]*?return\s+true[\s\S]{0,80}catch[\s\S]{0,40}return\s+false/.test(chat));
 expect("chat.js doSend surfaces a failed message write to the user via showNotice (#6)",
   /const\s+persisted\s*=\s*appendMessage\(/.test(chat)
-  && /if\s*\(\s*!persisted\s*\)\s*showNotice\(/.test(chat));
+  && /if\s*\(\s*!persisted\s*\)\s*\{[\s\S]{0,120}showNotice\(/.test(chat));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
