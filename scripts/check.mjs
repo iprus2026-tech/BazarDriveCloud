@@ -344,6 +344,19 @@ if (exists(overlaySmoke)) {
   }
 }
 
+// BD-OPS / #732 — coverage guard: every screen with an aria-modal overlay must trap focus
+// (shared overlay.js helper, or an allowlisted vetted bespoke trap), so a new modal can't
+// ship without one.
+const overlayCoverageSmoke = path.join(root, 'scripts', 'smoke-overlay-coverage.mjs');
+if (exists(overlayCoverageSmoke)) {
+  try {
+    execFileSync(process.execPath, [overlayCoverageSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-overlay-coverage.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-SHEETS-01 — static regression smoke for the driver active ride
 // cancel + problem bottom sheets (own module, in-sheet state machines,
 // safety visual state, placeholder problem sheet never persists ride state).
