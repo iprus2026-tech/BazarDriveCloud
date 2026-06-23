@@ -290,6 +290,15 @@ expect('audit recipe enumerates explicit dimensions incl. data-model (#8) + life
   && /lifecycle\s*\/\s*entry-state/i.test(auditRecipe)
   && /blast-radius/i.test(auditRecipe)
   && /first-entry[\s\S]*terminal[\s\S]*re-entry/i.test(auditRecipe));
+// #684 R1 — a 7th dimension enumerates the edge / ordering states the #732 chain proved recur
+// (stacked overlay, route-unmount, install-vs-mount order, programmatic-bypass, persisted-vs-DOM
+// order) — the dominant ScreenOps blind spot (8 of 11 Codex catches).
+expect('audit recipe enumerates the edge / ordering-state dimension (#684 R1)',
+  /Edge \/ ordering states \(#684 R1\)/.test(auditRecipe)
+  && /STACKED on top/.test(auditRecipe)
+  && /navigation-AWAY while open/.test(auditRecipe)
+  && /el\.value vs maxlength/.test(auditRecipe)
+  && /PERSISTED-vs-DOM ORDER/.test(auditRecipe));
 expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, selector anchor (#2) + reachability synthesis (#3)',
   /cross-check[\s\S]*grep -rlE "[^"]+" scripts\/smoke-\*\.mjs/i.test(auditRecipe)
   && /adversarial[\s\S]*refute/i.test(auditRecipe)

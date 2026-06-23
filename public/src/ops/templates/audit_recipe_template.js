@@ -79,6 +79,7 @@ export function generateAuditRecipe(screen = {}, opts = {}) {
     `4. Lifecycle / entry-state (#684 #10) — probe FIRST-ENTRY, LIVE / mid-flow, TERMINAL, and RE-ENTRY; does the screen behave on each?`,
     `5. Shared-state / blast-radius (#684 #9) — does any write touch a shared store or shared id that OTHER screens read (Feed / DriverMap / chat / history / receipts)?`,
     `6. Visual / Cloud-Design parity — spacing, hierarchy, empty / loading / error states.`,
+    `7. Edge / ordering states (#684 R1) — for any overlay or async/persisted flow, enumerate the SECOND-ORDER states (most are user-reachable, NOT the low-priority "edge" tier): a second overlay STACKED on top (who owns Escape/Tab?), navigation-AWAY while open (is the listener / trap released?), install-vs-mount ORDER (handler wired before the node is in the DOM?), a PROGRAMMATIC write bypassing a native constraint (el.value vs maxlength), and PERSISTED-vs-DOM ORDER divergence (append-on-retry reordering the store).`,
     ``,
     `Method — for every candidate finding:`,
     `- Step 0, smoke cross-check (#684 #1): grep -rlE "${pinPattern}" scripts/smoke-*.mjs — if a smoke pins the behavior as INTENDED, it is WONTFIX, not a defect.`,
