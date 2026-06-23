@@ -297,10 +297,27 @@ expect('the audit recipe surfaces the role variants (audit EACH, with render anc
 expect('a single-render screen gets NO variants block (no false injection)',
   !/Role variants/i.test(generateAuditRecipe(getScreens().find((s) => s.id === 'BD-FEED-01'))));
 
-expect('dashboard wires the gen-audit button + handler to buildAuditRecipe',
+expect('dashboard wires the gen-audit button + handler to buildAuditRecipe (scoped to the selected variant)',
   /data-action="gen-audit"/.test(screenSrc)
   && /case 'gen-audit'/.test(screenSrc)
-  && /buildAuditRecipe\(s\.id\)/.test(screenSrc));
+  && /buildAuditRecipe\(\s*s\.id\s*,\s*state\.selectedVariant/.test(screenSrc));
+
+// ── D7c. Role-variant SELECTOR (BD-OPS / #684) — a screen that declares variants gets a
+// chip row scoping the variant-aware Audit recipe to one render path; «Все» (= '') audits
+// EACH. The selected variant flows into buildAuditRecipe, which FOCUSES the recipe.
+expect('dashboard renders a role-variant selector (chip row + «Все» + per-variant chips + handler)',
+  /data-action="select-variant"/.test(screenSrc)
+  && /\{\s*key:\s*''\s*,\s*label:\s*'Все'\s*\}\s*,\s*\.\.\.variants/.test(screenSrc)
+  && /case 'select-variant'/.test(screenSrc));
+expect('selecting a variant FOCUSES the recipe on that render path; «Все» audits each',
+  /Variant focus/.test(buildAuditRecipe('BD-PROFILE-01', 'guest'))
+  && /renderGuest/.test(buildAuditRecipe('BD-PROFILE-01', 'guest'))
+  && !/Audit EACH/.test(buildAuditRecipe('BD-PROFILE-01', 'guest'))
+  && /Audit EACH/.test(buildAuditRecipe('BD-PROFILE-01'))
+  && !/Variant focus/.test(buildAuditRecipe('BD-PROFILE-01')));
+expect('the focused recipe names the variant in its header + its entry condition',
+  /вариант: Гость/.test(buildAuditRecipe('BD-PROFILE-01', 'guest'))
+  && /welcomeSeen/.test(buildAuditRecipe('BD-PROFILE-01', 'guest')));
 
 // ── D8. Lifecycle / entry-state field (BD-OPS / #684 #10) — which entry-states the
 // audit PROBED, separate from #3 reachability (HOW it's reached). All three
@@ -593,8 +610,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v207 (floor raised with the registry role-variants)',
-  !!swVer && Number(swVer[1]) >= 207);
+expect('sw.js VERSION is present and >= v208 (floor raised with the role-variant selector)',
+  !!swVer && Number(swVer[1]) >= 208);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

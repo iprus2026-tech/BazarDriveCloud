@@ -8,9 +8,11 @@ import { getScreenFacts } from './repo_connector.js';
 import { getContractFacts } from './screen_contracts_connector.js';
 import { generateAuditRecipe } from '../templates/audit_recipe_template.js';
 
-export function buildAuditRecipe(screenId) {
+export function buildAuditRecipe(screenId, variantKey) {
   const facts = getScreenFacts(screenId);
   if (!facts) return '';
   const contract = getContractFacts(facts);
-  return generateAuditRecipe(facts) + '\n\nContract: ' + contract.contractAnchor;
+  // #684 — variantKey ('' / undefined = «Все») scopes the variant-aware recipe to one
+  // declared role variant; ignored for single-render screens.
+  return generateAuditRecipe(facts, { variant: variantKey }) + '\n\nContract: ' + contract.contractAnchor;
 }
