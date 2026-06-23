@@ -76,6 +76,8 @@ export default function opsScreens() {
     melForm: null,
     // Registry filters — '' means "any". Compose with the text search.
     filters: { role: '', severity: '', status: '' },
+    // #684 — active role variant for a multi-render screen ('' = «Все» / audit EACH).
+    selectedVariant: '',
   };
   if (!getScreen(state.selectedId)) {
     state.selectedId = (screens[0] && screens[0].id) || null;
@@ -307,6 +309,26 @@ export default function opsScreens() {
       ? `<p class="ops-notice" role="status">${esc(state.notice)}</p>`
       : '';
 
+    // #684 — role-variant selector: a screen that declares `variants` gets a chip row
+    // that scopes the (variant-aware) Audit recipe to one render path; «Все» (= '')
+    // audits EACH. Reuses the .ops-filters / .ops-chip atoms (no new CSS). The variant's
+    // render anchor + entry condition ride in the chip title (native tooltip).
+    const variants = Array.isArray(s.variants) ? s.variants.filter((v) => v && v.key) : [];
+    const variantOpts = variants.length ? [{ key: '', label: 'Все' }, ...variants] : [];
+    const variantSelector = variantOpts.length
+      ? `
+        <div class="ops-filters__group ops-variants" role="group" aria-label="Ролевой вариант">
+          <span class="ops-filters__label">Вариант</span>
+          <div class="ops-filters__chips">
+            ${variantOpts.map((v) => {
+              const on = state.selectedVariant === v.key;
+              const tip = v.key && v.anchor ? ` title="${esc(v.anchor)} — ${esc(v.entry || '')}"` : '';
+              return `<button type="button" class="ops-chip${on ? ' ops-chip--active' : ''}" data-action="select-variant" data-variant="${esc(v.key)}" aria-pressed="${on}"${tip}>${esc(v.label || v.key)}</button>`;
+            }).join('')}
+          </div>
+        </div>`
+      : '';
+
     detailEl.innerHTML = `
       <div class="ops-card">
         <div class="ops-card__head">
@@ -323,6 +345,7 @@ export default function opsScreens() {
           <div class="ops-meta__row"><dt>MEL</dt><dd>${esc(s.melStatus)}</dd></div>
         </dl>
       </div>
+      ${variantSelector}
 
       <div class="ops-actions">
         <button type="button" class="ops-btn" data-action="open-screen">Open screen</button>
@@ -419,6 +442,7 @@ export default function opsScreens() {
       state.outputLabel = '';
       state.notice = '';
       state.melForm = null;
+      state.selectedVariant = '';
       renderList();
       renderDetail();
       return;
@@ -442,6 +466,16 @@ export default function opsScreens() {
     if (!s) return;
 
     switch (action) {
+      case 'select-variant': {
+        // #684 — scope the variant-aware Audit recipe to a role variant ('' = «Все»).
+        // If an Audit recipe is already on screen, refresh it for the new focus.
+        state.selectedVariant = btn.dataset.variant || '';
+        if (state.outputLabel === 'Audit recipe') {
+          state.outputText = buildAuditRecipe(s.id, state.selectedVariant || undefined);
+        }
+        renderDetail();
+        break;
+      }
       case 'open-screen':
         // BD-OPS-03 — opening a product screen from the dev dashboard must work
         // even from a clean profile. Seed the first-run flag locally (a
@@ -599,7 +633,8 @@ export default function opsScreens() {
       }
       case 'gen-audit':
         // Audit recipe FINDS MELs (no existing mel needed) — vs the repair prompts.
-        setOutput('Audit recipe', buildAuditRecipe(s.id));
+        // #684 — scoped to the selected role variant ('' = «Все» / audit EACH).
+        setOutput('Audit recipe', buildAuditRecipe(s.id, state.selectedVariant || undefined));
         break;
       case 'gen-port-plan':
         // Port plan ORDERS a multi-finding port from ALL of the screen's MELs — #684 #14.
