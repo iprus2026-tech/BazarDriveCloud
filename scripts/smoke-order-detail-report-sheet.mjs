@@ -86,6 +86,18 @@ expect('overlay z-index is above .od-notice (200)',
 expect('selected reason uses the accent',
   /\.od-report-reason\.is-selected\s*\{[^}]*var\(--accent\)/.test(css));
 
+// #732 — modal a11y: the report sheet wires the shared overlay focus-trap (focus-trap +
+// Escape→close + focus restore) via public/src/overlay.js, since it shipped aria-modal=true
+// without any focus management. (role=radio on the reason rows is a separate a11y card.)
+expect('order_detail imports the shared trapFocus helper',
+  /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(od));
+expect('openReportSheet installs the focus trap with Escape→closeReportSheet',
+  /releaseReportTrap = trapFocus\(\s*reportOverlayEl\s*,\s*\{\s*onEscape:\s*closeReportSheet\s*\}\s*\)/.test(od));
+expect('closeReportSheet releases the trap (focus restore) before removing the overlay',
+  /function closeReportSheet\(\)\s*\{\s*releaseReportTrap\(\);/.test(od));
+expect('submit moves focus into the submitted view (not stranded on the hidden submit button)',
+  /setReportView\('submitted'\)[\s\S]{0,400}\.od-report-view--submitted \[data-report="dismiss"\][\s\S]{0,80}\.focus\(\)/.test(od));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
