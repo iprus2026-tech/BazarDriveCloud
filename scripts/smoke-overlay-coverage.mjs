@@ -1,74 +1,108 @@
 // BD-OPS / #732 — overlay focus-trap COVERAGE guard.
 //
-// Every screen that ships a `role="dialog" aria-modal="true"` overlay must TRAP FOCUS, so a
-// future modal sheet can't silently ship without one (the dominant a11y defect class the
-// #732 audit found). The shared, self-cleaning trap is public/src/overlay.js (`trapFocus`),
-// applied to the five recommendation-#1 sheets. A small ALLOWLIST covers a screen that
-// predates the helper and carries a VETTED bespoke Tab-trap — each allowlisted file must keep
-// that trap (asserted, so the exemption can't mask a regression) and must still be an
-// aria-modal screen (no stale allowlist). A NEW aria-modal screen with neither fails check.mjs.
+// Every `role="dialog"|"alertdialog" aria-modal="true"` overlay in the RUNTIME must TRAP
+// FOCUS, so a new modal can't silently ship without one (the dominant a11y defect class the
+// #732 audit found). Scans ALL of public/src (not just screens/ — the app-shell error overlay
+// lives outside it). Per FILE it requires:
+//
+//   ariaModalCount(file)  <=  trapFocusCalls(file) + bespokeTrapCount(file) + knownGapCount(file)
+//
+// — i.e. every aria-modal INSTANCE is accounted for, not just "the file mentions trapFocus once"
+// (Codex #737). The shared, self-cleaning trap is public/src/overlay.js (`trapFocus`). A small
+// BESPOKE_TRAP list covers a file with a VETTED hand-rolled trap (its proof regex requires the
+// real preventDefault()/focus() wrap, not just the boundary comparisons). A KNOWN_GAP list
+// names aria-modal modals that do NOT yet trap focus — pre-existing gaps the audit surfaced,
+// exempted with a TODO so the guard stays green WHILE a brand-new untrapped modal still fails.
 //
 // Static source analysis only — no DOM, no network.
 
 import fs from 'node:fs';
 
-const screensUrl = new URL('../public/src/screens/', import.meta.url);
-// Matches both the HTML attribute (`aria-modal="true"`) and the setAttribute form
-// (`setAttribute('aria-modal', 'true')`, used by the passenger sheets).
-const ARIA_MODAL = /aria-modal="true"|aria-modal',\s*'true'/;
-const sharesTrap = (src) =>
-  /import \{ trapFocus \} from '\.\.\/overlay\.js'/.test(src) && /trapFocus\(/.test(src);
+const SRC = new URL('../public/src/', import.meta.url);
+const ARIA_MODAL = /aria-modal="true"|aria-modal',\s*'true'/g;
+const TRAP_CALL = /trapFocus\(/g;
 
-// file → regex proving the file's OWN Tab focus-trap, so the allowlist is justified, not blanket.
-const BESPOKE_TRAP_ALLOWLIST = {
-  // active_ride_driver_sheets: bindDriverSheetEvents.onKey traps Tab / Shift+Tab within the
-  // panel + owns Escape-to-close. TODO(#732): migrate to overlay.js for the self-cleaning teardown.
-  'active_ride_driver_sheets.js':
-    /ev\.key === 'Tab'[\s\S]{0,260}document\.activeElement === first[\s\S]{0,160}document\.activeElement === last/,
+// rel-path → { count, proof }. The file's aria-modal modals are trapped by a hand-rolled
+// trap; `proof` must match the ACTUAL wrap (preventDefault + focus), not just the comparisons.
+const BESPOKE_TRAP = {
+  'screens/active_ride_driver_sheets.js': {
+    count: 1,
+    // bindDriverSheetEvents.onKey: Tab/Shift+Tab wrap with preventDefault + focus, + Escape.
+    proof: /document\.activeElement === first\)\s*\{\s*ev\.preventDefault\(\);\s*last\.focus\(\);[\s\S]{0,140}document\.activeElement === last\)\s*\{\s*ev\.preventDefault\(\);\s*first\.focus\(\);/,
+    note: 'driver sheets — vetted bespoke Tab-trap; migrate to overlay.js for the self-cleaning teardown',
+  },
 };
+
+// rel-path → count of aria-modal modals in that file that do NOT yet trap focus. KNOWN, tracked
+// gaps (TODO #732 retrofit onto overlay.js). Exempted so a NEW untrapped modal still fails.
+const KNOWN_GAP = {
+  // pf2-garage-add-sheet / pf2-garage-edit-sheet: capture/initial-focus/Escape/restore but NO Tab trap.
+  'screens/profile.js': 2,
+  // app-shell error alertdialog (server-error / timeout sheet): no focus management at all.
+  'app_error_overlay.js': 1,
+};
+
+// overlay.js is the helper itself — its docstring mentions aria-modal; it is never a consumer.
+const EXCLUDE = new Set(['overlay.js']);
 
 const issues = [];
 const expect = (label, cond, detail = '') => {
   console.log((cond ? 'PASS' : 'FAIL') + ' — ' + label + (detail ? ' (' + detail + ')' : ''));
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 };
+const count = (src, re) => (src.match(re) || []).length;
 
-const read = (f) => fs.readFileSync(new URL(f, screensUrl), 'utf8');
-const files = fs.readdirSync(screensUrl).filter((f) => f.endsWith('.js'));
-
-let ariaModalCount = 0;
-const compliant = [];
-for (const f of files) {
-  const src = read(f);
-  if (!ARIA_MODAL.test(src)) continue;
-  ariaModalCount++;
-  if (BESPOKE_TRAP_ALLOWLIST[f]) {
-    expect(`${f}: allowlisted bespoke Tab focus-trap is still present (allowlist stays honest)`,
-      BESPOKE_TRAP_ALLOWLIST[f].test(src));
-  } else {
-    const ok = sharesTrap(src);
-    expect(`${f}: aria-modal overlay wires the shared focus-trap (public/src/overlay.js)`,
-      ok, 'a new aria-modal sheet must use trapFocus, or be allowlisted with a vetted trap');
-    if (ok) compliant.push(f);
+// Recursively collect .js files under public/src, as paths relative to public/src.
+function listJs(dirUrl, prefix = '') {
+  const out = [];
+  for (const ent of fs.readdirSync(dirUrl, { withFileTypes: true })) {
+    if (ent.isDirectory()) out.push(...listJs(new URL(ent.name + '/', dirUrl), prefix + ent.name + '/'));
+    else if (ent.name.endsWith('.js')) out.push({ rel: prefix + ent.name, url: new URL(ent.name, dirUrl) });
   }
+  return out;
 }
 
-expect('the guard found the aria-modal screens to check', ariaModalCount >= 5, `${ariaModalCount} found`);
-expect('the four recommendation-#1 shared-trap sheets are all covered',
-  ['active_ride_passenger_sheets.js', 'order_detail.js', 'profile.js', 'responses.js']
-    .every((f) => compliant.includes(f)));
-
-// Allowlist hygiene — every allowlisted file must exist AND still be an aria-modal screen.
-for (const f of Object.keys(BESPOKE_TRAP_ALLOWLIST)) {
-  let src = '';
-  try { src = read(f); } catch { /* missing → fail below */ }
-  expect(`allowlist entry ${f} is a real aria-modal screen (no stale allowlist)`,
-    !!src && ARIA_MODAL.test(src));
+let ariaModalFiles = 0;
+const seenGapFiles = [];
+for (const { rel, url } of listJs(SRC)) {
+  if (EXCLUDE.has(rel)) continue;
+  const src = fs.readFileSync(url, 'utf8');
+  const modals = count(src, ARIA_MODAL);
+  if (!modals) continue;
+  ariaModalFiles++;
+  const traps = count(src, TRAP_CALL);
+  const bespoke = BESPOKE_TRAP[rel] ? BESPOKE_TRAP[rel].count : 0;
+  const gap = KNOWN_GAP[rel] || 0;
+  const covered = traps + bespoke + gap;
+  expect(`${rel}: every aria-modal overlay traps focus (${covered} covered ≥ ${modals} modal${modals > 1 ? 's' : ''})`,
+    modals <= covered,
+    'shared trapFocus, a vetted bespoke trap, or a tracked KNOWN_GAP for EACH instance');
+  if (BESPOKE_TRAP[rel]) {
+    expect(`${rel}: the bespoke trap actually wraps focus (preventDefault + focus, not just the comparisons)`,
+      BESPOKE_TRAP[rel].proof.test(src));
+  }
+  if (gap) seenGapFiles.push(`${rel} (×${gap})`);
 }
 
-// Non-vacuity — the rule rejects an aria-modal source that wires no trap and isn't allowlisted.
-expect('self-test: an aria-modal overlay with no trap is NOT compliant',
-  !sharesTrap('<div role="dialog" aria-modal="true"></div>'));
+if (seenGapFiles.length) {
+  console.log('NOTE — KNOWN_GAP aria-modal modals exempted, TODO #732 retrofit onto overlay.js: ' + seenGapFiles.join(', '));
+}
+
+expect('the guard scanned the runtime and found aria-modal modals', ariaModalFiles >= 6, `${ariaModalFiles} files`);
+
+// Hygiene — every BESPOKE_TRAP / KNOWN_GAP entry must be a real file that still has ≥ the listed
+// aria-modal modals (so an exemption can't outlive the modal it covers).
+for (const [rel, spec] of [...Object.entries(BESPOKE_TRAP), ...Object.entries(KNOWN_GAP)]) {
+  const need = typeof spec === 'number' ? spec : spec.count;
+  let modals = 0;
+  try { modals = count(fs.readFileSync(new URL(rel, SRC), 'utf8'), ARIA_MODAL); } catch { /* missing */ }
+  expect(`exemption ${rel} is a real aria-modal file covering ≥ ${need} modal(s) (no stale exemption)`,
+    modals >= need);
+}
+
+// Non-vacuity — an aria-modal source with no trap and no exemption is NOT compliant.
+expect('self-test: an aria-modal overlay with no trap fails the count rule',
+  !(count('<div role="dialog" aria-modal="true"></div>', ARIA_MODAL) <= count('<div role="dialog" aria-modal="true"></div>', TRAP_CALL)));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
