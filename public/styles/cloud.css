@@ -3788,7 +3788,7 @@ body {
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.pf2-po-trip-row:hover { background: var(--bg-2); }
+.pf2-po-trip-row:active { background: var(--bg-2); }
 .pf2-po-trip-row:active { background: var(--bg-3); }
 .pf2-po-trip-icon {
   display: inline-flex;
@@ -14407,14 +14407,16 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__title { font-size: 15px; font-weight: 600; margin: 0; }
 .pf2-garage__add-btn {
   font-size: 13px;
-  color: var(--accent);
+  /* BD-PROFILE-01 / #717 — single-accent: the secondary «+ Добавить» recedes to
+     text-2 so the accent stays reserved for «Сделать активной». */
+  color: var(--text-2);
   background: transparent;
   border: 0;
   padding: 4px 6px;
   border-radius: 8px;
   cursor: pointer;
 }
-.pf2-garage__add-btn:hover { background: var(--bg-3); }
+.pf2-garage__add-btn:active { background: var(--bg-3); }
 .pf2-garage__car {
   display: grid;
   grid-template-columns: 40px 1fr auto;
@@ -14460,7 +14462,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-garage__action {
   font-size: 13px;
   font-weight: 500;
-  color: var(--accent);
+  /* BD-PROFILE-01 / #717 — single-accent: quiet text-2 actions by default; only
+     .pf2-garage__action--make-active keeps the orange accent (its own rule). */
+  color: var(--text-2);
   background: transparent;
   border: 0;
   padding: 6px 8px;
@@ -14471,7 +14475,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   align-items: center;
   justify-content: center;
 }
-.pf2-garage__action:hover { background: var(--bg-3); }
+.pf2-garage__action:active { background: var(--bg-3); }
 .pf2-garage__action--muted { color: var(--text-2); }
 .pf2-garage__action[data-busy="1"] { color: var(--text-3); pointer-events: none; }
 /* BD-PROFILE-D-05B — "Активна сейчас" is a non-button status pill: no
@@ -14525,7 +14529,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   color: var(--text-2);
   background: transparent;
 }
-.pf2-garage__confirm-cancel:hover { background: var(--bg-2); }
+.pf2-garage__confirm-cancel:active { background: var(--bg-2); }
 .pf2-garage__confirm-final {
   color: #fff;
   background: var(--danger, #d93b3b);
@@ -14616,7 +14620,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   align-items: center;
   justify-content: center;
 }
-.pf2-garage__archived-restore:hover { background: var(--bg-3); }
+.pf2-garage__archived-restore:active { background: var(--bg-3); }
 .pf2-garage__restore-confirm { grid-area: confirm; }
 .pf2-garage__restore-confirm[data-garage-restore-confirm-state="restored-local"] {
   background: var(--bg-2);
@@ -14643,7 +14647,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   color: var(--accent);
   background: var(--bg-3);
 }
-.pf2-garage__action--make-active:hover { background: var(--bg-2); }
+.pf2-garage__action--make-active:active { background: var(--bg-2); }
 .pf2-garage--empty .pf2-garage__empty-body {
   display: flex;
   flex-direction: column;
@@ -14716,7 +14720,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 4px 8px;
   border-radius: 8px;
 }
-.pf2-garage-add-sheet__close:hover { background: var(--bg-3); }
+.pf2-garage-add-sheet__close:active { background: var(--bg-3); }
 .pf2-garage-add-sheet__body {
   display: flex;
   flex-direction: column;
@@ -14774,7 +14778,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
   color: var(--text-2);
   cursor: pointer;
 }
-.pf2-garage-add-sheet__cancel:hover { background: var(--bg-3); }
+.pf2-garage-add-sheet__cancel:active { background: var(--bg-3); }
 .pf2-garage-add-sheet__save {
   min-width: 120px;
 }
