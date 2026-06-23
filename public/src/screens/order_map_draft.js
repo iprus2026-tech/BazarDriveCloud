@@ -732,7 +732,7 @@ function renderSuccessBody(order) {
       <div class="omd-success__meta">
         <span class="omd-success__badge">ЗАКАЗ № ${escapeHtml(shortId)} · ОПУБЛИКОВАН</span>
       </div>
-      <h2 class="omd-success__title">Заказ опубликован</h2>
+      <h2 class="omd-success__title" tabindex="-1">Заказ опубликован</h2>
       <p class="omd-success__status">Ищем водителей</p>
       <p class="omd-success__hint">
         Водители увидят маршрут и смогут откликнуться.
@@ -906,6 +906,11 @@ function handlePublish(root, draft) {
     debugPublish('publishOrder:ok', order.id);
     pushDebugTrail('publishOrder:ok', order.id);
     rerender(root, { state: STATE.VALID, draft, order });
+    // #732 — move focus to the success heading so SR / keyboard users are told «Заказ
+    // опубликован» (a major content swap → focus management, not a silent re-render) instead of
+    // landing on a detached focus where the now-removed publish button used to be.
+    const successHeading = root.querySelector('.omd-success__title');
+    if (successHeading && typeof successHeading.focus === 'function') successHeading.focus();
     scrollFeedbackIntoView(root);
   }, 700);
 }

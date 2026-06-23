@@ -368,6 +368,17 @@ if (exists(tapTargetsSmoke)) {
   }
 }
 
+// BD-MAP-05 — Order Map Draft publish-success moves focus to the «Заказ опубликован» heading.
+const omdSuccessA11ySmoke = path.join(root, 'scripts', 'smoke-omd-success-a11y.mjs');
+if (exists(omdSuccessA11ySmoke)) {
+  try {
+    execFileSync(process.execPath, [omdSuccessA11ySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-omd-success-a11y.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-D-SHEETS-01 — static regression smoke for the driver active ride
 // cancel + problem bottom sheets (own module, in-sheet state machines,
 // safety visual state, placeholder problem sheet never persists ride state).
