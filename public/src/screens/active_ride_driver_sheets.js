@@ -20,6 +20,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
+import { trapFocus } from '../overlay.js';
 
 // ── Local icon set ───────────────────────────────────────────
 // Self-contained SVG glyphs so this module needs no import back into the
@@ -117,11 +118,6 @@ function sheetShell(kind, titleId, eyebrow, title, bodyHtml, headRight = CLOSE_X
       ${bodyHtml}
     </section>
   `;
-}
-
-function focusableIn(overlay) {
-  return Array.from(overlay.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])'))
-    .filter((el) => !el.disabled && !el.hidden && el.offsetParent !== null);
 }
 
 // ── BD-RIDE-D-07 DriverCancelRideSheet ───────────────────────
@@ -311,29 +307,26 @@ function bindSheetChrome(overlay, options) {
     || overlay.dataset.stage === 'canceled'
     || overlay.dataset.stage === 'sent';
 
+  let releaseTrap = () => {};
   function close() {
-    document.removeEventListener('keydown', onKey);
+    releaseTrap();
     overlay.remove();
     if (typeof options.onClose === 'function') options.onClose();
   }
   overlay.__closeSheet = close;
 
-  function onKey(ev) {
-    if (ev.key === 'Tab') {
-      const items = focusableIn(overlay);
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-      else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-      return;
-    }
-    if (ev.key !== 'Escape') return;
-    ev.preventDefault();
-    if (isLocked()) return; // never dismiss mid-flow or a terminal card
-    close();
-  }
-  document.addEventListener('keydown', onKey);
+  // #732 — shared overlay focus-trap (Tab-trap + focus restore + self-cleaning teardown),
+  // replacing the bespoke onKey trap. Escape is guarded: a locked sheet (loading / terminal
+  // canceled / sent) consumes Escape but never dismisses — mirroring the old isLocked() path.
+  // The overlay is bound before it is appended, so initial focus is set by openDriverSheet's
+  // panel.focus() after the append; trapFocus captures the trigger here and restores it on close.
+  releaseTrap = trapFocus(overlay, {
+    onEscape: (ev) => {
+      if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+      if (isLocked()) return; // never dismiss mid-flow or a terminal card
+      close();
+    },
+  });
 
   // Dismiss controls (X, backdrop, "Вернуться к поездке"/"Закрыть") share
   // the data-driver-sheet-close hook; locked stages ignore them.

@@ -25,12 +25,8 @@ const TRAP_CALL = /trapFocus\(/g;
 // rel-path → { count, proof }. The file's aria-modal modals are trapped by a hand-rolled
 // trap; `proof` must match the ACTUAL wrap (preventDefault + focus), not just the comparisons.
 const BESPOKE_TRAP = {
-  'screens/active_ride_driver_sheets.js': {
-    count: 1,
-    // bindDriverSheetEvents.onKey: Tab/Shift+Tab wrap with preventDefault + focus, + Escape.
-    proof: /document\.activeElement === first\)\s*\{\s*ev\.preventDefault\(\);\s*last\.focus\(\);[\s\S]{0,140}document\.activeElement === last\)\s*\{\s*ev\.preventDefault\(\);\s*first\.focus\(\);/,
-    note: 'driver sheets — vetted bespoke Tab-trap; migrate to overlay.js for the self-cleaning teardown',
-  },
+  // Empty — active_ride_driver_sheets.js migrated its bindDriverSheetEvents onKey trap onto the
+  // shared overlay.js trapFocus (#732), so every aria-modal modal now uses the shared helper.
 };
 
 // rel-path → count of aria-modal modals in that file that do NOT yet trap focus. KNOWN, tracked
