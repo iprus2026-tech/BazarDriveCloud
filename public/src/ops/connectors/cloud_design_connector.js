@@ -14,7 +14,7 @@ export function buildCloudDesignPrompt(screenId, mel = {}, variantKey) {
   if (!facts) return '';
   const contract = getContractFacts(facts);
   const focus = variantFocusNote(facts, variantKey);
-  return generateCloudDesignPrompt(facts, mel)
+  return generateCloudDesignPrompt(facts, mel, variantKey)
     + (focus ? '\n\n' + focus : '')
     + '\n\nContract: ' + contract.contractAnchor;
 }

@@ -64,7 +64,7 @@ const LIFECYCLE_STATE_BRIEF = {
 
 // When the MEL records which lifecycle states it audited, ask the design to cover
 // exactly those; otherwise fall back to the generic checklist.
-function requiredStatesLines(screen = {}, mel = {}) {
+function requiredStatesLines(screen = {}, mel = {}, variantKey = '') {
   const audited = Array.isArray(mel.lifecycleAudited)
     ? mel.lifecycleAudited.filter((s) => typeof s === 'string' && LIFECYCLE_STATE_BRIEF[s])
     : [];
@@ -76,11 +76,18 @@ function requiredStatesLines(screen = {}, mel = {}) {
   } else {
     lines.push(`- default / loading / empty / error where applicable`);
   }
-  lines.push(`- role-correct variants for ${screen.role || 'the relevant role'}`);
+  // #684 #1 — when a role variant is focused, ask for THAT render path only; emitting the
+  // full role list here would contradict the appended "Role variant focus" scope note.
+  const focusV = variantKey
+    ? (Array.isArray(screen.variants) ? screen.variants : []).find((v) => v && v.key === variantKey)
+    : null;
+  lines.push(focusV
+    ? `- render-correct output for the ${focusV.label || focusV.key} variant ONLY (${focusV.anchor || '?'}) — do not design the screen's other role variants`
+    : `- role-correct variants for ${screen.role || 'the relevant role'}`);
   return lines;
 }
 
-export function generateCloudDesignPrompt(screen = {}, mel = {}) {
+export function generateCloudDesignPrompt(screen = {}, mel = {}, variantKey = '') {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
   const file = screen.file || '(unknown file)';
@@ -104,7 +111,7 @@ export function generateCloudDesignPrompt(screen = {}, mel = {}) {
     repair,
     ``,
     `Required states to cover`,
-    ...requiredStatesLines(screen, mel),
+    ...requiredStatesLines(screen, mel, variantKey),
     ``,
     `Reuse`,
     ...reuseLines(screen),

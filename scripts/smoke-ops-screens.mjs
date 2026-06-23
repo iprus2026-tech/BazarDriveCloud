@@ -351,6 +351,13 @@ expect('select-variant refreshes a shown Cloud / GitHub / Claude artifact (not o
   && /'Claude Code prompt'\)\s*state\.outputText\s*=\s*buildClaudeCodePrompt/.test(screenSrc));
 expect('the shared variant_focus.js helper is precached in sw.js',
   sw.includes('./src/ops/templates/variant_focus.js'));
+// Codex P2 (#726): a FOCUSED Cloud Design prompt must drop the all-variant "role-correct
+// variants for guest / passenger / driver" line — otherwise the body contradicts the
+// appended focus note. The whole-screen prompt keeps the full role list.
+expect('focused Cloud Design prompt drops the all-variant role list (no contradiction)',
+  !/role-correct variants for guest \/ passenger \/ driver/.test(buildCloudDesignPrompt('BD-PROFILE-01', {}, 'guest'))
+  && /variant ONLY/.test(buildCloudDesignPrompt('BD-PROFILE-01', {}, 'guest'))
+  && /role-correct variants for guest \/ passenger \/ driver/.test(buildCloudDesignPrompt('BD-PROFILE-01', {})));
 
 // ── D8. Lifecycle / entry-state field (BD-OPS / #684 #10) — which entry-states the
 // audit PROBED, separate from #3 reachability (HOW it's reached). All three
