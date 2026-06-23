@@ -542,14 +542,18 @@ export default function tripConfirmation() {
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }
 
+  // #732 — thread the known tripId + viewer role into the chat handoff so chat.js hydrates the
+  // ride thread (tripId → findActiveRide) and its back button returns to the ride context; a
+  // bare /chat dropped both and fell into the demo / legacy-/feed fallback.
+  const chatHref = () => `/chat?tripId=${encodeURIComponent(tripId)}&role=${role}`;
   const ACTIONS = {
     'passenger-confirm': () => {
       go(`/trip-confirmation?role=passenger&tripId=${encodeURIComponent(tripId)}&state=${CF_STATE.PASSENGER_CONFIRMED}`);
     },
     'open-ride-passenger': goActiveRidePassenger,
     'open-ride-driver':    goActiveRideDriver,
-    'back-to-chat':        () => go('/chat'),
-    'open-chat':           () => go('/chat'),
+    'back-to-chat':        () => go(chatHref()),
+    'open-chat':           () => go(chatHref()),
     'cancel-response':     () => go('/feed'),
     'back-to-feed':        () => go('/feed'),
   };
@@ -565,7 +569,7 @@ export default function tripConfirmation() {
     if (state === CF_STATE.DRIVER_WAITING || state === CF_STATE.DRIVER_CONFIRMED) {
       go('/feed');
     } else {
-      go('/chat');
+      go(chatHref());
     }
   });
 
