@@ -4852,6 +4852,36 @@ body {
 .chat__msg--in  .chat__ts { align-self: flex-start; }
 .chat__msg--out .chat__ts { align-self: flex-end; }
 
+/* ── #732 BD-CHAT-01 #18 — failed-send bubble + retry ──────── */
+.chat__msg--failed .chat__bubble {
+  box-shadow: 0 0 0 1.5px var(--danger);
+}
+.chat__msg-failed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-end;
+  margin-top: 4px;
+  padding: 0 4px;
+}
+.chat__msg-failed-note {
+  font-size: 11px;
+  color: var(--danger);
+}
+.chat__msg-retry {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.chat__msg-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ── Quick replies ─────────────────────────────────────── */
 .chat__quick-replies {
   flex-shrink: 0;

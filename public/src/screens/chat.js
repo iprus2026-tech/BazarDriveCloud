@@ -91,6 +91,25 @@ function appendMessage(chatId, msg) {
   }
 }
 
+// BD-CHAT-01 (#18) — order-preserving persist for a RETRY of a failed send. A plain append would
+// push the older retried message after a newer one the user has since sent, so a reload would
+// flip the thread order (Codex #750). Insert by msg.id (the send timestamp) instead. Returns
+// false on a storage failure, like appendMessage, so the retry can stay flagged.
+function persistMessageInOrder(chatId, msg) {
+  try {
+    const store = loadChatStore();
+    const arr = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
+    let i = arr.length;
+    while (i > 0 && Number(arr[i - 1].id) > Number(msg.id)) i--;
+    arr.splice(i, 0, msg);
+    store[chatId] = arr;
+    localStorage.setItem(CHAT_KEY, JSON.stringify(store));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // BD-AUTH-BOUNDARY-01 — chat messages are scoped to the local identity
 // (driver/passenger thread for a specific trip). Wiped on logout / local
 // reset by storage_boundary.clearUserScopedStorage().
@@ -579,6 +598,45 @@ export default function chat() {
   inputEl.addEventListener('input', updateSend);
 
   // ── Send ────────────────────────────────────────────────────────
+  // BD-CHAT-01 (#18) — flag a bubble whose persist failed: a visual + AT failed state with an
+  // explicit retry that re-persists and (on success) clears the failed state. The in-memory
+  // `messages` array already holds the message; only the storage write failed.
+  function markSendFailed(msgEl, msg) {
+    if (!msgEl) return;
+    msgEl.classList.add('chat__msg--failed');
+    msgEl.setAttribute('aria-label', 'Вы · не отправлено');
+    if (msgEl.querySelector('.chat__msg-failed')) return; // never stack a second retry row
+    const foot = document.createElement('div');
+    foot.className = 'chat__msg-failed';
+    const note = document.createElement('span');
+    note.className = 'chat__msg-failed-note';
+    note.textContent = 'Не отправлено';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'chat__msg-retry';
+    retry.textContent = 'Повторить';
+    retry.setAttribute('aria-label', 'Повторить отправку');
+    retry.addEventListener('click', () => {
+      if (persistMessageInOrder(chatId, msg)) {
+        clearSendFailed(msgEl);
+        showNotice('Сообщение отправлено');
+        inputEl.focus();
+      } else {
+        showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
+      }
+    });
+    foot.appendChild(note);
+    foot.appendChild(retry);
+    msgEl.appendChild(foot);
+  }
+  function clearSendFailed(msgEl) {
+    if (!msgEl) return;
+    msgEl.classList.remove('chat__msg--failed');
+    msgEl.setAttribute('aria-label', 'Вы');
+    const foot = msgEl.querySelector('.chat__msg-failed');
+    if (foot) foot.remove();
+  }
+
   function doSend() {
     const text = inputEl.value.trim();
     if (!text) return;
@@ -595,7 +653,8 @@ export default function chat() {
     messages = [...messages, msg];
     const persisted = appendMessage(chatId, msg);
 
-    messagesEl.appendChild(createMsgEl(msg, viewerRole, counterpart.name));
+    const msgEl = createMsgEl(msg, viewerRole, counterpart.name);
+    messagesEl.appendChild(msgEl);
     scrollBottom();
 
     inputEl.value = '';
@@ -606,10 +665,13 @@ export default function chat() {
     // typing. (Mirrors the pinned active-ride pattern: focus moves off a
     // trigger that the action hides/disables.)
     inputEl.focus();
-    // BD-CHAT-01 (#6) — surface a failed persist (quota / private mode) instead
-    // of silently swallowing it; the message stays on screen but the user is
-    // told it was not saved.
-    if (!persisted) showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
+    // BD-CHAT-01 (#6 + #18) — a failed persist (quota / private mode) is both surfaced via a
+    // notice AND flagged on the bubble itself, with an explicit retry, so an unsaved message is
+    // never shown as an ordinary delivered one (screen-contracts state 7).
+    if (!persisted) {
+      markSendFailed(msgEl, msg);
+      showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
+    }
   }
 
   sendBtn.addEventListener('click', doSend);
