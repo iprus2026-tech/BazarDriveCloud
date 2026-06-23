@@ -82,6 +82,23 @@ const PROFILE_ROLE_VARIANTS = [
   { key: 'driver',    label: 'Водитель', entry: "role === 'driver' (or ?role=driver)", anchor: 'renderDriver' },
 ];
 
+// #684 #4 — Order Detail is role-dispatched: resolveState() branches on role into the
+// passenger P1–P4 vs driver D1–D4 body families (own-order / offer-selection vs
+// send-offer / assigned). Labels are the on-screen ROLE_CHIP strings (also in the contract).
+const ORDER_DETAIL_ROLE_VARIANTS = [
+  { key: 'passenger', label: 'Ваш заказ',         entry: "role === 'passenger' (default; no ?role=driver)",   anchor: 'resolveState passenger states P1–P4 → bodyP* (BODY_BY_STATE)' },
+  { key: 'driver',    label: 'Просмотр водителя', entry: "role === 'driver' (?role=driver or session driver)", anchor: "resolveState role==='driver' branch → D1–D4 bodyD*" },
+];
+
+// #684 #4 — Trip Confirmation dispatches by handoff STATE into role-keyed renderers:
+// passenger (driverCard + confirm) vs driver (passengerCard + 60s countdown) vs the
+// role-agnostic expired path. The expired variant is a state, not a role.
+const CONFIRM_ROLE_VARIANTS = [
+  { key: 'passenger', label: 'Пассажир', entry: "role !== 'driver' (default)",                      anchor: 'renderPassengerPending / renderPassengerConfirmed (STATE_RENDERERS)' },
+  { key: 'driver',    label: 'Водитель', entry: "role === 'driver'",                                 anchor: 'renderDriverWaiting (+60s countdown) / renderDriverConfirmed' },
+  { key: 'expired',   label: 'Истекло',  entry: 'role-agnostic: handoff expired or ?state=EXPIRED',  anchor: 'renderExpired (no party card)' },
+];
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -194,6 +211,7 @@ const SCREENS = [
     melStatus: 'OK',
     implementationStatus: 'implemented',
     dataModel: FIXTURE_ORDER_DATA_MODEL,
+    variants: ORDER_DETAIL_ROLE_VARIANTS,
   },
   {
     id: 'BD-RESPONSES-01',
@@ -229,6 +247,7 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+    variants: CONFIRM_ROLE_VARIANTS,
   },
   {
     id: 'BD-RIDE-D-02',
