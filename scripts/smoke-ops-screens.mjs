@@ -180,6 +180,11 @@ expect('renderMelCard renders a Blast radius block (named surfaces when matched,
 expect('blast_radius surfaces the stacked/transient-overlay blast radius (#684 R8)',
   touchesOverlay({ problem: 'an aria-modal report sheet with trapFocus' }) === true
   && touchesOverlay({ problem: 'a plain feed list of ride cards' }) === false
+  // Codex #757 P2-1: hyphenated/spaced focus-trap wording, not just camelCase trapFocus.
+  && touchesOverlay({ problem: 'a focus-trap leak on route change' }) === true
+  && touchesOverlay({ problem: 'the focus trap is not released' }) === true
+  // Codex #757 P2-2: the overlay clue may live only in the selector anchor.
+  && touchesOverlay({ selector: '#pf2-garage-add-sheet', problem: 'restore focus on close' }) === true
   && /STACKING[\s\S]*Escape\/Tab/.test(blastRadiusLines({ problem: 'aria-modal overlay' }).join('\n'))
   && /TEARDOWN[\s\S]*route changes/.test(blastRadiusLines({ problem: 'overlay' }).join('\n'))
   && renderMelCard({ id: 'mel_o', screenId: 'BD-X', route: '/x', file: 'x.js', problem: 'aria-modal sheet missing a trap' }).includes('STACKING'));

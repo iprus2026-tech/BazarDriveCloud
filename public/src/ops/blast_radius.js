@@ -50,8 +50,8 @@ export const SHARED_SURFACE_MAP = [
 // FOCUS surface it shares with whatever overlay sits above or below it, plus the route teardown
 // that must release its trap. Curated like the store map: read it as "verify these".
 export const OVERLAY_SURFACE = {
-  triggers: ['aria-modal', 'trapfocus', 'overlay', 'bottom-sheet', 'bottomsheet', 'alertdialog',
-    'role="dialog"', 'role=dialog', 'modal', 'sheet'],
+  triggers: ['aria-modal', 'trapfocus', 'focus-trap', 'focus trap', 'overlay', 'bottom-sheet',
+    'bottomsheet', 'alertdialog', 'role="dialog"', 'role=dialog', 'modal', 'sheet'],
   questions: [
     'STACKING — can another overlay open ON TOP of / UNDER this one? The topmost trap must own Escape/Tab (consume the handled key, e.g. stopImmediatePropagation) so the one beneath does not also act (#738 / #739).',
     'TEARDOWN — what releases this overlay\'s focus-trap / key listener when the route changes WITHOUT a close tap? A no-close navigation that leaves the trap installed leaks it onto the next screen (#734).',
@@ -59,10 +59,11 @@ export const OVERLAY_SURFACE = {
   ],
 };
 
-// Lowercase haystack from the MEL's text + file path (pure — uses the path STRING,
-// never reads the file).
+// Lowercase haystack from the MEL's text + file path + selector anchor (pure — uses the
+// path/selector STRINGS, never reads the file). The selector is included because it is a
+// first-class MEL field and the overlay clue is often only there (e.g. #pf2-garage-add-sheet).
 function haystack(mel = {}) {
-  return [mel.file, mel.problem, mel.requiredRepair, mel.operationalDecision]
+  return [mel.file, mel.selector, mel.problem, mel.requiredRepair, mel.operationalDecision]
     .filter((s) => typeof s === 'string')
     .join(' ')
     .toLowerCase();
