@@ -350,6 +350,21 @@ expect('audit recipe enumerates explicit dimensions incl. data-model (#8) + life
   && /lifecycle\s*\/\s*entry-state/i.test(auditRecipe)
   && /blast-radius/i.test(auditRecipe)
   && /first-entry[\s\S]*terminal[\s\S]*re-entry/i.test(auditRecipe));
+// #684 R5 — the lifecycle dimension is per-screen: a screen with a curated `lifecycle` fact gets a
+// TAILORED probe list (BD-CONFIRM-01 omits RE-ENTRY) + a PRE-SEED probe (the #743 class); a screen
+// with no fact degrades to the generic 4-state list (BD-RESPONSES-01 above still has re-entry).
+const confirmRecipe = generateAuditRecipe(getScreenFacts('BD-CONFIRM-01'));
+expect('audit recipe tailors the lifecycle probes per screen + adds a pre-seed probe (#684 R5)',
+  /probe list tailored to this screen — #684 R5/.test(confirmRecipe)
+  && /PRE-SEED \(#684 R5\)[\s\S]*SEEDED LATER/.test(confirmRecipe)
+  && !/RE-ENTRY/.test(confirmRecipe.split('\n').find((l) => l.startsWith('4. Lifecycle')))
+  // a screen WITHOUT a lifecycle fact keeps the generic 4-state list (graceful degrade)
+  && /RE-ENTRY/.test(auditRecipe)
+  && !/tailored to this screen/.test(auditRecipe));
+expect('BD-CONFIRM-01 declares a per-screen lifecycle fact (states without re-entry + a pre-seed probe) (#684 R5)',
+  (() => { const lc = getScreenFacts('BD-CONFIRM-01').lifecycle;
+    return lc && Array.isArray(lc.states) && lc.states.includes('terminal') && !lc.states.includes('re-entry')
+      && typeof lc.preSeed === 'string' && /743/.test(lc.preSeed); })());
 // #684 R1 — a 7th dimension enumerates the edge / ordering states the #732 chain proved recur
 // (stacked overlay, route-unmount, install-vs-mount order, programmatic-bypass, persisted-vs-DOM
 // order) — the dominant ScreenOps blind spot (8 of 11 Codex catches).
@@ -444,14 +459,21 @@ function factGaps(screen = {}) {
       || screen.guardrails.some((g) => typeof g !== 'string' || !g.trim()))) {
     gaps.push('guardrails declared but malformed (non-string / empty entry)');
   }
+  // #684 R5 — a declared lifecycle fact must carry a non-empty states list, or the recipe silently
+  // falls back to the generic 4-state probe (the same "declared but incomplete" class as above).
+  if (screen.lifecycle && typeof screen.lifecycle === 'object'
+      && (!Array.isArray(screen.lifecycle.states) || !screen.lifecycle.states.length)) {
+    gaps.push('lifecycle declared without a states list');
+  }
   return gaps;
 }
 // Self-test (HARD): the gate flags each incomplete declared fact and passes complete ones.
-expect('fact-completeness gate flags an incomplete declared fact, not a complete one (#684 R10)',
-  factGaps({ dataModel: { store: 's' }, cssAtoms: ['.a'], guardrails: ['no mutate'] }).length === 0
+expect('fact-completeness gate flags an incomplete declared fact, not a complete one (#684 R10, R5)',
+  factGaps({ dataModel: { store: 's' }, cssAtoms: ['.a'], guardrails: ['no mutate'], lifecycle: { states: ['terminal'] } }).length === 0
   && factGaps({ dataModel: { runtimeCreated: true } }).some((g) => /without a store/.test(g))
   && factGaps({ cssAtoms: [] }).some((g) => /cssAtoms/.test(g))
   && factGaps({ guardrails: ['', 'ok'] }).some((g) => /guardrails/.test(g))
+  && factGaps({ lifecycle: { preSeed: 'x' } }).some((g) => /lifecycle declared without a states/.test(g))
   && factGaps({}).length === 0);
 // Hard gate over the live registry: today 0 gaps (a forward guard); a future incomplete fact fails
 // the check with a precise detail listing each gap.

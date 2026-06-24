@@ -248,6 +248,14 @@ const SCREENS = [
     melStatus: 'OK',
     implementationStatus: 'implemented',
     variants: CONFIRM_ROLE_VARIANTS,
+    // #684 R5 — per-screen lifecycle: a confirmed / expired confirmation is TERMINAL with no
+    // meaningful RE-ENTRY, so the audit recipe should not brief a re-entry probe; and the tripId
+    // handoff links a ride record seeded LATER, the #743 pre-seed class — so add an explicit
+    // "linked record seeded yet?" probe rather than the generic 4-state list.
+    lifecycle: {
+      states: ['first-entry', 'live-mid-flow', 'terminal'],
+      preSeed: 'the tripId handoff to /chat + /active-ride links a ride record SEEDED LATER (goActiveRidePassenger) — probe a LIVE entry BEFORE that record exists (#743)',
+    },
   },
   {
     id: 'BD-RIDE-D-02',
