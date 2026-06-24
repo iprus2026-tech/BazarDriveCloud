@@ -30,6 +30,13 @@ export const MEL_STATUSES = [
 // distinction that made the garage demo-2 MEL-B a WONTFIX). BD-OPS / #684 #3.
 export const MEL_REACHABILITY = ['user-path', 'dev-param', 'edge'];
 
+// #684 R4 — floor vs ceiling: is this a BASELINE break (must-fix to be acceptable — a
+// broken focus-trap, a dead-end CTA) or a POLISH opportunity (a quality ceiling — a
+// cosmetic gap)? Orthogonal to severity (code-correctness) and reachability (where it
+// bites): the #732 audit bucketed a baseline a11y break and a cosmetic item under the
+// same MEL-C band. '' = unclassified. The port plan sequences all floor before any ceiling.
+export const MEL_TIER = ['floor', 'ceiling'];
+
 // #684 #10 — which lifecycle ENTRY-STATES the audit probed. Separate from #3
 // reachability (HOW the screen is reached): this is WHAT STATE the entity is in on
 // entry. All three BD-RESPONSES-01 (#688) rounds were entry-state edges the
@@ -96,6 +103,8 @@ export function createMelCard(input = {}) {
     severity: MEL_SEVERITIES.includes(input.severity) ? input.severity : 'MEL-C',
     status: MEL_STATUSES.includes(input.status) ? input.status : 'DETECTED',
     reachability: MEL_REACHABILITY.includes(input.reachability) ? input.reachability : 'user-path',
+    // #684 R4 — floor (baseline-broken / must-fix) vs ceiling (polish). '' = unclassified.
+    tier: MEL_TIER.includes(input.tier) ? input.tier : '',
     // #684 #2 — stable selector/symbol anchor (e.g. #pf2-doc-add, markGarageVehicleActive).
     // Line numbers drift; the anchor + the prompt's grep-locate re-resolve at fix time.
     selector: typeof input.selector === 'string' ? input.selector : '',
@@ -132,6 +141,7 @@ export function updateMelCard(id, patch = {}) {
   const sevCandidate = patch.severity !== undefined ? patch.severity : cur.severity;
   const statusCandidate = patch.status !== undefined ? patch.status : cur.status;
   const reachCandidate = patch.reachability !== undefined ? patch.reachability : cur.reachability;
+  const tierCandidate = patch.tier !== undefined ? patch.tier : cur.tier;
   const lcCandidate = patch.lifecycleAudited !== undefined ? patch.lifecycleAudited : cur.lifecycleAudited;
   const next = {
     ...cur,
@@ -144,6 +154,7 @@ export function updateMelCard(id, patch = {}) {
     severity: MEL_SEVERITIES.includes(sevCandidate) ? sevCandidate : cur.severity,
     status: MEL_STATUSES.includes(statusCandidate) ? statusCandidate : cur.status,
     reachability: MEL_REACHABILITY.includes(reachCandidate) ? reachCandidate : (cur.reachability || 'user-path'),
+    tier: MEL_TIER.includes(tierCandidate) ? tierCandidate : (cur.tier || ''),
     lifecycleAudited: sanitizeLifecycle(lcCandidate),
     updatedAt: new Date().toISOString(),
   };

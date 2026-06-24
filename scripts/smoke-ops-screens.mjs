@@ -145,12 +145,27 @@ expect('updateMelCard validates reachability against the vocab',
 expect('renderMelCard renders the Reachability line (value + default)',
   renderMelCard({ id: 'mel_r', screenId: 'BD-X', route: '/x', file: 'x.js', reachability: 'dev-param' }).includes('Reachability: dev-param')
   && renderMelCard({}).includes('Reachability: user-path'));
+expect('renderMelCard renders the Tier line (value + unclassified default) (#684 R4)',
+  renderMelCard({ id: 'mel_t', screenId: 'BD-X', route: '/x', file: 'x.js', tier: 'floor' }).includes('Tier (#684 R4): floor')
+  && renderMelCard({}).includes('Tier (#684 R4): (unclassified)'));
 expect('dashboard imports MEL_REACHABILITY and renders the reachability select',
   /MEL_REACHABILITY/.test(screenSrc)
   && /id="mel-reachability"[\s\S]{0,90}optionList\(MEL_REACHABILITY/.test(screenSrc));
 expect('dashboard mirrors the reachability select into form state + the save payload',
   /mel-reachability'\)\s*state\.melForm\.reachability\s*=/.test(screenSrc)
   && /reachability:\s*read\('#mel-reachability'\)/.test(screenSrc));
+// #684 R4 — a floor-vs-ceiling tier axis (orthogonal to severity/reachability): the #732 audit
+// bucketed a baseline a11y break and a cosmetic item under the same MEL-C band. Store vocab +
+// create/update validation + the dashboard select, mirroring the reachability axis.
+expect('store exports MEL_TIER = [floor, ceiling] + create/update validate it (#684 R4)',
+  /export const MEL_TIER\s*=\s*\[[^\]]*'floor'[^\]]*'ceiling'[^\]]*\]/.test(storeSrc)
+  && /tier:\s*MEL_TIER\.includes\(input\.tier\)\s*\?\s*input\.tier\s*:\s*''/.test(storeSrc)
+  && /tier:\s*MEL_TIER\.includes\(tierCandidate\)/.test(storeSrc));
+expect('dashboard imports MEL_TIER, renders the tier select + mirrors it into form state + payload (#684 R4)',
+  /MEL_TIER/.test(screenSrc)
+  && /id="mel-tier"[\s\S]{0,200}optionList\(MEL_TIER/.test(screenSrc)
+  && /mel-tier'\)\s*state\.melForm\.tier\s*=/.test(screenSrc)
+  && /tier:\s*read\('#mel-tier'\)/.test(screenSrc));
 
 // ── D3. Blast-radius / shared-state map (BD-OPS / #684 #9) — what ELSE a repair
 // touches. The #685 cross-check confirms a behavior is SAFE to change (not pinned);
@@ -334,6 +349,12 @@ expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, se
   && /adversarial[\s\S]*refute/i.test(auditRecipe)
   && /selector\s*\/\s*symbol/i.test(auditRecipe)
   && /reachability[\s\S]*user-path[\s\S]*dev-param[\s\S]*edge/i.test(auditRecipe));
+// #684 R4 — the synthesis classifies each survivor by a third axis: floor (baseline-broken) vs
+// ceiling (polish), orthogonal to severity, sequenced floor-first by the port plan.
+expect('audit recipe synthesis classifies by the floor-vs-ceiling tier axis (#684 R4)',
+  /TIER \(#684 R4: FLOOR = baseline-broken/.test(auditRecipe)
+  && /CEILING = polish/.test(auditRecipe)
+  && /ships all floor before any ceiling/i.test(auditRecipe));
 // #684 R3 + R9 — when >=2 survivors share a class, the synthesis recommends ONE invariant smoke
 // pin (not N point-fixes), built to the #737 quality bar: per-instance count, full public/src
 // scan, assert-the-effect. Closes the detect→guard loop the chain proved was the durable win.
@@ -613,6 +634,17 @@ expect('port-plan exports a generator + connector',
   typeof generatePortPlan === 'function' && typeof buildPortPlan === 'function');
 expect('port-plan orders findings by severity then reachability (MEL-B before MEL-C before MEL-D edge)',
   portPlan.indexOf('mel_b') < portPlan.indexOf('mel_c') && portPlan.indexOf('mel_c') < portPlan.indexOf('mel_a'));
+// #684 R4 — tier outranks severity: a FLOOR MEL-D sequences before a CEILING MEL-A, and the
+// order line surfaces the tier.
+expect('port-plan sequences all floor before any ceiling, regardless of severity (#684 R4)',
+  (() => {
+    const p = generatePortPlan({ id: 'BD-X' }, [
+      { id: 'mel_ceil', severity: 'MEL-A', reachability: 'user-path', tier: 'ceiling' },
+      { id: 'mel_floor', severity: 'MEL-D', reachability: 'edge', tier: 'floor' },
+    ]);
+    return p.indexOf('mel_floor') < p.indexOf('mel_ceil') && /mel_floor — floor ·/.test(p)
+      && /ship every FLOOR/i.test(p);
+  })());
 expect('port-plan carries the SW-sequencing rule (bump above the previously merged VERSION; no two PRs at the same vN)',
   /each PR's VERSION must be ABOVE the previously MERGED one/i.test(portPlan) && /#701 \/ #705/.test(portPlan));
 expect('port-plan carries the no-stack-on-deletable-branch discipline (#699)',

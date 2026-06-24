@@ -23,6 +23,7 @@ export function renderMelCard(mel = {}) {
     `Anchor (selector/symbol — line numbers drift): ${mel.selector || '(none — anchor by a stable selector/symbol, not a line)'}`,
     `Severity: ${mel.severity || 'MEL-C'}`,
     `Reachability: ${mel.reachability || 'user-path'}`,
+    `Tier (#684 R4): ${mel.tier || '(unclassified)'}`,
     `Lifecycle audited: ${MEL_LIFECYCLE_STATES.map((st) => `${st} ${audited.includes(st) ? '[x]' : '[ ]'}`).join(' · ')}`,
     `Status: ${mel.status || 'DETECTED'}`,
     `Resolved by (PR / commit): ${mel.pr || '(unresolved — set when the fix ships)'}`,
