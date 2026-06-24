@@ -24,6 +24,29 @@ function dataModelLine(screen = {}) {
     + (dm.keyedBy ? `, keyed by ${dm.keyedBy}` : '') + '.';
 }
 
+// #684 R5 — per-screen lifecycle probes. With a curated `lifecycle` fact, brief ONLY the entry
+// states the screen actually has (a screen with no RE-ENTRY isn't told to probe one) + any pre-seed
+// probe (the #743 class: a handoff linking a record seeded later). Without the fact, the generic
+// 4-state list — so a screen that declares nothing degrades to today's behaviour, not less.
+const LIFECYCLE_LABELS = {
+  'first-entry': 'FIRST-ENTRY',
+  'live-mid-flow': 'LIVE / mid-flow',
+  'terminal': 'TERMINAL',
+  're-entry': 'RE-ENTRY',
+};
+function lifecycleLine(screen = {}) {
+  const lc = screen.lifecycle;
+  const tailored = !!(lc && Array.isArray(lc.states) && lc.states.length);
+  const states = tailored
+    ? lc.states.map((s) => LIFECYCLE_LABELS[s] || s)
+    : ['FIRST-ENTRY', 'LIVE / mid-flow', 'TERMINAL', 'RE-ENTRY'];
+  const base = `4. Lifecycle / entry-state (#684 #10) — probe ${states.join(', ')}; does the screen behave on each?`
+    + (tailored ? ' (probe list tailored to this screen — #684 R5)' : '');
+  return (lc && typeof lc.preSeed === 'string' && lc.preSeed.trim())
+    ? `${base} PRE-SEED (#684 R5): ${lc.preSeed.trim()}`
+    : base;
+}
+
 // #684 — when a screen declares role variants (multiple role-keyed render paths, e.g.
 // /profile = guest | passenger | driver), brief the auditor to cover EACH and treat
 // their differences as a finding dimension. Empty for single-render screens.
@@ -76,7 +99,7 @@ export function generateAuditRecipe(screen = {}, opts = {}) {
     `1. Accessibility / WAI-ARIA — roles, focus management on open/close, aria-live status, tap-target size (>= 44px), labels.`,
     `2. Flow / state correctness — does every PRIMARY CTA reach its contracted destination? any dead-end, wrong route, or stuck state?`,
     `3. Data-model viability (#684 #8) — ${dataModelLine(screen)} Is a fix CONSTRUCTIBLE against how the entity actually lives?`,
-    `4. Lifecycle / entry-state (#684 #10) — probe FIRST-ENTRY, LIVE / mid-flow, TERMINAL, and RE-ENTRY; does the screen behave on each?`,
+    lifecycleLine(screen),
     `5. Shared-state / blast-radius (#684 #9) — does any write touch a shared store or shared id that OTHER screens read (Feed / DriverMap / chat / history / receipts)?`,
     `6. Visual / Cloud-Design parity — spacing, hierarchy, empty / loading / error states.`,
     `7. Edge / ordering states (#684 R1) — for any overlay or async/persisted flow, enumerate the SECOND-ORDER states (most are user-reachable, NOT the low-priority "edge" tier): a second overlay STACKED on top (who owns Escape/Tab?), navigation-AWAY while open (is the listener / trap released?), install-vs-mount ORDER (handler wired before the node is in the DOM?), a PROGRAMMATIC write bypassing a native constraint (el.value vs maxlength), and PERSISTED-vs-DOM ORDER divergence (append-on-retry reordering the store).`,
