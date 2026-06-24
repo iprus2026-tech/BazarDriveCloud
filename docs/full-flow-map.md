@@ -103,7 +103,7 @@ The map is organized into four lanes:
 
 > **Codex P2 follow-up — rules module:** BD-RULES-01 is owned by `public/src/screens/rules.js` (registered for `/rules` in `public/src/app.js`), not `profile.js`.
 
-> **Codex P3 follow-up — BD-RULES-01 static sections:** `public/src/screens/rules.js` renders section cards as **static articles**. Search and document download controls are deliberate no-ops; only the empty-state `[data-go]` button navigates; there is no section-detail route or «open section → back» flow. Handoff must not describe «Открыть раздел» / `back` as the primary action — those flows do not exist today. Section-detail navigation would be a future dedicated issue.
+> **Codex P3 follow-up — BD-RULES-01 static sections:** `public/src/screens/rules.js` renders section cards as **static articles**. The search field is a REAL client-side filter (sections + documents, with a «Ничего не найдено» no-results state, #762); documents show an honest «Скоро» state (no download). Only the empty-state `[data-go]` button navigates; there is no section-detail route or «open section → back» flow. Handoff must not describe «Открыть раздел» / `back` as the primary action — those flows do not exist today. Section-detail navigation would be a future dedicated issue.
 
 > **Codex P2 follow-up — runtime file names:** all handoff rows use production-style `public/src/screens/*.js` paths. Cloud / RV sandbox `.jsx` filenames are not runtime modules — if a runtime path is uncertain, the row is marked **production path audit needed** instead of inventing a `.jsx` file.
 
