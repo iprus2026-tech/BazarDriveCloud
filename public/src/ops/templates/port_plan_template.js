@@ -9,13 +9,19 @@
 
 const SEVERITY_RANK = { 'MEL-A': 0, 'MEL-B': 1, 'MEL-C': 2, 'MEL-D': 3 };
 const REACH_RANK = { 'user-path': 0, 'dev-param': 1, 'edge': 2 };
+// #684 R4 — floor (baseline-broken) outranks an unclassified MEL, which outranks ceiling (polish).
+const TIER_RANK = { floor: 0, ceiling: 2 };
 
-// Order by severity first (MEL-A worst), then reachability (user-path first). Unknown
-// severity sorts as MEL-C, unknown reachability as user-path — the common defaults.
+// Order by TIER first (all floor before any ceiling, #684 R4), then severity (MEL-A worst),
+// then reachability (user-path first). Unknown tier sorts BETWEEN floor and ceiling, unknown
+// severity as MEL-C, unknown reachability as user-path — the common defaults.
 function rankMel(mel = {}) {
+  const tier = TIER_RANK[mel && mel.tier];
   const sev = SEVERITY_RANK[mel && mel.severity];
   const reach = REACH_RANK[mel && mel.reachability];
-  return (typeof sev === 'number' ? sev : 2) * 10 + (typeof reach === 'number' ? reach : 0);
+  return (typeof tier === 'number' ? tier : 1) * 100
+    + (typeof sev === 'number' ? sev : 2) * 10
+    + (typeof reach === 'number' ? reach : 0);
 }
 
 export function generatePortPlan(screen = {}, mels = []) {
@@ -28,7 +34,7 @@ export function generatePortPlan(screen = {}, mels = []) {
 
   const orderLines = n
     ? ordered.map((m, i) =>
-        `${i + 1}. ${m.id || '(mel)'} — ${m.severity || 'MEL-C'} · ${m.reachability || 'user-path'}`
+        `${i + 1}. ${m.id || '(mel)'} — ${m.tier ? m.tier + ' · ' : ''}${m.severity || 'MEL-C'} · ${m.reachability || 'user-path'}`
         + (m.selector ? ` · anchor ${m.selector}` : ''))
     : ['(no MEL cards logged for this screen yet — log them first, then re-generate the plan)'];
 
@@ -37,9 +43,10 @@ export function generatePortPlan(screen = {}, mels = []) {
     ``,
     `These findings share files (${file} + public/styles/cloud.css + sw.js), so they are NOT independent repairs — order and sequence them.`,
     ``,
-    `Recommended order (severity, then reachability — highest impact first):`,
+    `Recommended order (floor before ceiling, then severity, then reachability — highest impact first):`,
     ...orderLines,
     ``,
+    `Ship every FLOOR finding (baseline-broken / must-fix) before any CEILING finding (polish) — the screen is not acceptable while a floor item is open (#684 R4).`,
     `Each is ONE small scoped PR — do NOT bundle (the BD-OPS rule).`,
     ``,
     `Shared-file + service-worker sequencing:`,

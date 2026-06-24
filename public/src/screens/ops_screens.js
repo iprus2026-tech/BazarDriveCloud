@@ -25,6 +25,7 @@ import {
   MEL_SEVERITIES,
   MEL_STATUSES,
   MEL_REACHABILITY,
+  MEL_TIER,
   MEL_LIFECYCLE_STATES,
 } from '../ops/ops_mel_store.js';
 import { renderMelCard } from '../ops/templates/screen_mel_card_template.js';
@@ -252,6 +253,10 @@ export default function opsScreens() {
           <span class="ops-melform__label">Reachability</span>
           <select id="mel-reachability" class="ops-melform__control">${optionList(MEL_REACHABILITY, f.reachability)}</select>
         </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Tier (floor / ceiling)</span>
+          <select id="mel-tier" class="ops-melform__control" aria-label="Floor (baseline-broken / must-fix) vs ceiling (polish)"><option value=""${!f.tier ? ' selected' : ''}>— (unclassified)</option>${optionList(MEL_TIER, f.tier)}</select>
+        </label>
         ${variantRow}
         <label class="ops-melform__row">
           <span class="ops-melform__label">Anchor (selector/symbol)</span>
@@ -442,6 +447,7 @@ export default function opsScreens() {
     if (t.id === 'mel-severity') state.melForm.severity = t.value;
     else if (t.id === 'mel-status') state.melForm.status = t.value;
     else if (t.id === 'mel-reachability') state.melForm.reachability = t.value;
+    else if (t.id === 'mel-tier') state.melForm.tier = t.value;
     else if (t.id === 'mel-variant') state.melForm.variant = t.value;
     else if (t.id === 'mel-selector') state.melForm.selector = t.value;
     else if (t.id === 'mel-pr') state.melForm.pr = t.value;
@@ -584,6 +590,7 @@ export default function opsScreens() {
           severity: read('#mel-severity'),
           status: read('#mel-status'),
           reachability: read('#mel-reachability'),
+          tier: read('#mel-tier'),
           variant: read('#mel-variant'),
           selector: read('#mel-selector').trim(),
           pr: read('#mel-pr').trim(),

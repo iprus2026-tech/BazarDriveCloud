@@ -89,7 +89,7 @@ export function generateAuditRecipe(screen = {}, opts = {}) {
     ``,
     `Synthesis:`,
     `- dedupe overlapping findings;`,
-    `- classify each survivor by SEVERITY (MEL-A..D, code-correctness) AND REACHABILITY (#684 #3: user-path / dev-param / edge — a code-severe edge-only defect is low priority);`,
+    `- classify each survivor by SEVERITY (MEL-A..D, code-correctness), REACHABILITY (#684 #3: user-path / dev-param / edge — a code-severe edge-only defect is low priority), AND TIER (#684 R4: FLOOR = baseline-broken / must-fix-to-be-acceptable vs CEILING = polish / quality opportunity — orthogonal to severity; a broken focus-trap or a dead-end CTA is floor, a cosmetic spacing gap is ceiling). The port plan ships all floor before any ceiling;`,
     `- invariant guard (#684 R3) — when >= 2 survivors share a CLASS (e.g. several aria-modal sheets with no focus-trap, several CTAs dropping a known param), do NOT stop at N point-fix MELs: recommend ONE static smoke pin that makes a BRAND-NEW instance of that class fail check.mjs. Build it to the #737 quality bar (#684 R9): (a) PER-INSTANCE, not per-file — count both sides (e.g. ariaModalCount(file) <= trapCalls + allowlisted) so a file with one fixed + one unfixed instance still fails; (b) scan the FULL source floor — all of public/src, not just screens/ (the app-shell overlay lives outside it); (c) assert the EFFECT, not the shape — require the real wrap (preventDefault() / focus()), not just that the boundary comparisons exist. Reference: scripts/smoke-overlay-coverage.mjs.`,
     `- output a list of MEL candidates, one per real defect, ready to log in ScreenOps.`,
   ].join('\n');
