@@ -43,10 +43,27 @@ export const SHARED_SURFACE_MAP = [
   },
 ];
 
-// Lowercase haystack from the MEL's text + file path (pure — uses the path STRING,
-// never reads the file).
+// #684 R8 — the single highest-leverage blind spot of the #732 chain was the STACKED / TRANSIENT
+// overlay surface: 5 of 11 Codex catches were overlay timing / ownership (#738 / #739 stacked-modal
+// Escape/Tab ownership, #734 trap-not-released on a no-close route change). SHARED_SURFACE_MAP
+// models shared-STORE reach; an aria-modal overlay has a DIFFERENT blast radius — the KEYBOARD /
+// FOCUS surface it shares with whatever overlay sits above or below it, plus the route teardown
+// that must release its trap. Curated like the store map: read it as "verify these".
+export const OVERLAY_SURFACE = {
+  triggers: ['aria-modal', 'trapfocus', 'focus-trap', 'focus trap', 'overlay', 'bottom-sheet',
+    'bottomsheet', 'alertdialog', 'role="dialog"', 'role=dialog', 'modal', 'sheet'],
+  questions: [
+    'STACKING — can another overlay open ON TOP of / UNDER this one? The topmost trap must own Escape/Tab (consume the handled key, e.g. stopImmediatePropagation) so the one beneath does not also act (#738 / #739).',
+    'TEARDOWN — what releases this overlay\'s focus-trap / key listener when the route changes WITHOUT a close tap? A no-close navigation that leaves the trap installed leaks it onto the next screen (#734).',
+    'RESTORE — on close, does focus return to the element that opened the overlay (not <body>)?',
+  ],
+};
+
+// Lowercase haystack from the MEL's text + file path + selector anchor (pure — uses the
+// path/selector STRINGS, never reads the file). The selector is included because it is a
+// first-class MEL field and the overlay clue is often only there (e.g. #pf2-garage-add-sheet).
 function haystack(mel = {}) {
-  return [mel.file, mel.problem, mel.requiredRepair, mel.operationalDecision]
+  return [mel.file, mel.selector, mel.problem, mel.requiredRepair, mel.operationalDecision]
     .filter((s) => typeof s === 'string')
     .join(' ')
     .toLowerCase();
@@ -59,18 +76,33 @@ export function computeBlastRadius(mel = {}) {
   return SHARED_SURFACE_MAP.filter((entry) => entry.triggers.some((t) => hay.includes(t)));
 }
 
+// #684 R8 — does this MEL touch an overlay (aria-modal / sheet / trap)? Same generous-token
+// philosophy as the store map: over-surfacing the stacking reminder is cheap.
+export function touchesOverlay(mel = {}) {
+  const hay = haystack(mel);
+  if (!hay.trim()) return false;
+  return OVERLAY_SURFACE.triggers.some((t) => hay.includes(t));
+}
+
 // Blast-radius as text lines for the MEL card / repair prompt. With no match, a
 // single generic reminder — the value of the check is to make the developer THINK
 // about shared writes, so the artifact always carries the prompt.
 export function blastRadiusLines(mel = {}) {
   const matched = computeBlastRadius(mel);
-  if (!matched.length) {
-    return ['- (no shared store/id detected in this MEL — if the repair writes one, list its consumer surfaces and verify them)'];
-  }
   const lines = [];
-  for (const entry of matched) {
-    lines.push(`- writes ${entry.label} → verify these consumer surfaces first:`);
-    for (const s of entry.surfaces) lines.push(`    • ${s}`);
+  if (!matched.length) {
+    lines.push('- (no shared store/id detected in this MEL — if the repair writes one, list its consumer surfaces and verify them)');
+  } else {
+    for (const entry of matched) {
+      lines.push(`- writes ${entry.label} → verify these consumer surfaces first:`);
+      for (const s of entry.surfaces) lines.push(`    • ${s}`);
+    }
+  }
+  // #684 R8 — an overlay's blast radius is the shared keyboard/focus surface, not a store. Surface
+  // it whenever the MEL touches an overlay, independent of any shared-store match above.
+  if (touchesOverlay(mel)) {
+    lines.push('- opens an overlay → its blast radius is the shared KEYBOARD / FOCUS surface (not a store); verify:');
+    for (const q of OVERLAY_SURFACE.questions) lines.push(`    • ${q}`);
   }
   return lines;
 }
