@@ -419,6 +419,46 @@ expect('every variant-bearing screen has well-formed variants (key + label + ent
   getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
     .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));
 
+// ── #684 R10 — declared-fact-completeness drift gate ────────────────────────────────────────────
+// A curated registry fact that is DECLARED but INCOMPLETE silently degrades the generated artifacts
+// (a dataModel without a store → the audit recipe's "(unnamed store)"; an empty cssAtoms → an empty
+// reuse contract). Variant completeness is already HARD-gated above; this extends the same idea to
+// the other curated facts. It is a HARD gate (not warn-only): factGaps detects ONLY unambiguous
+// incompleteness, so a hit is a real defect with no false positive to soften — and a hard gate is
+// the only form check.mjs surfaces (it pipes a passing smoke's stdout, so a warn-only log would be
+// invisible in CI — Codex #760).
+//
+// Deliberately NOT implemented: a "screen claims contractStatus:exists / melStatus:OK but carries
+// zero curated facts" heuristic — 13 of 22 screens legitimately have no dataModel/variants/guardrails,
+// so it would warn on the majority (noise, not signal). A "needs-but-lacks" guess is exactly the
+// false-positive risk the warn-only-first posture avoids; this gates only UNAMBIGUOUS incompleteness.
+function factGaps(screen = {}) {
+  const gaps = [];
+  if (screen.dataModel && typeof screen.dataModel === 'object' && !screen.dataModel.store) {
+    gaps.push('dataModel declared without a store');
+  }
+  if ('cssAtoms' in screen && (!Array.isArray(screen.cssAtoms) || !screen.cssAtoms.length)) {
+    gaps.push('cssAtoms declared but empty');
+  }
+  if ('guardrails' in screen && (!Array.isArray(screen.guardrails)
+      || screen.guardrails.some((g) => typeof g !== 'string' || !g.trim()))) {
+    gaps.push('guardrails declared but malformed (non-string / empty entry)');
+  }
+  return gaps;
+}
+// Self-test (HARD): the gate flags each incomplete declared fact and passes complete ones.
+expect('fact-completeness gate flags an incomplete declared fact, not a complete one (#684 R10)',
+  factGaps({ dataModel: { store: 's' }, cssAtoms: ['.a'], guardrails: ['no mutate'] }).length === 0
+  && factGaps({ dataModel: { runtimeCreated: true } }).some((g) => /without a store/.test(g))
+  && factGaps({ cssAtoms: [] }).some((g) => /cssAtoms/.test(g))
+  && factGaps({ guardrails: ['', 'ok'] }).some((g) => /guardrails/.test(g))
+  && factGaps({}).length === 0);
+// Hard gate over the live registry: today 0 gaps (a forward guard); a future incomplete fact fails
+// the check with a precise detail listing each gap.
+const factGapList = getScreens().flatMap((sc) => factGaps(sc).map((g) => `${sc.id}: ${g}`));
+expect('every declared curated registry fact is complete (#684 R10)', factGapList.length === 0,
+  factGapList.length ? factGapList.join('; ') : '');
+
 // #684 #5 — role-label ↔ variants consistency: every variant whose key is a real user role
 // (guest / passenger / driver) must appear in the screen's `role` label, so a future variant
 // edit can't silently leave the role label lying. Non-role state-variants (e.g. 'expired') are
