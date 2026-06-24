@@ -67,12 +67,6 @@ function expect(label, cond, detail = '') {
   }
 }
 
-// #684 R10 — warn-only: log a soft drift signal WITHOUT pushing to `issues`, so it is visible in
-// the check output but never fails it (the "warn-only first" posture for a heuristic gate).
-function warn(label, detail = '') {
-  console.log('WARN — ' + label + (detail ? ' (' + detail + ')' : ''));
-}
-
 // ── A. Route registration ──
 expect('app.js imports the ops_screens screen',
   /import\s+opsScreens\s+from\s+'\.\/screens\/ops_screens\.js'/.test(app));
@@ -425,11 +419,14 @@ expect('every variant-bearing screen has well-formed variants (key + label + ent
   getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
     .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));
 
-// ── #684 R10 — declared-fact-completeness drift gate (WARN-ONLY) ────────────────────────────────
+// ── #684 R10 — declared-fact-completeness drift gate ────────────────────────────────────────────
 // A curated registry fact that is DECLARED but INCOMPLETE silently degrades the generated artifacts
 // (a dataModel without a store → the audit recipe's "(unnamed store)"; an empty cssAtoms → an empty
-// reuse contract). Variant completeness is already HARD-gated above; this extends the same idea —
-// WARN-ONLY — to the other curated facts, so a future incomplete fact is visible without failing CI.
+// reuse contract). Variant completeness is already HARD-gated above; this extends the same idea to
+// the other curated facts. It is a HARD gate (not warn-only): factGaps detects ONLY unambiguous
+// incompleteness, so a hit is a real defect with no false positive to soften — and a hard gate is
+// the only form check.mjs surfaces (it pipes a passing smoke's stdout, so a warn-only log would be
+// invisible in CI — Codex #760).
 //
 // Deliberately NOT implemented: a "screen claims contractStatus:exists / melStatus:OK but carries
 // zero curated facts" heuristic — 13 of 22 screens legitimately have no dataModel/variants/guardrails,
@@ -456,12 +453,11 @@ expect('fact-completeness gate flags an incomplete declared fact, not a complete
   && factGaps({ cssAtoms: [] }).some((g) => /cssAtoms/.test(g))
   && factGaps({ guardrails: ['', 'ok'] }).some((g) => /guardrails/.test(g))
   && factGaps({}).length === 0);
-// Warn-only application over the live registry (never fails the check — a soft drift signal only).
-let r10Warnings = 0;
-for (const sc of getScreens()) {
-  for (const g of factGaps(sc)) { warn(`${sc.id} — ${g} (#684 R10)`); r10Warnings += 1; }
-}
-console.log(`R10 fact-completeness: ${r10Warnings} warning(s) across ${getScreens().length} screens.`);
+// Hard gate over the live registry: today 0 gaps (a forward guard); a future incomplete fact fails
+// the check with a precise detail listing each gap.
+const factGapList = getScreens().flatMap((sc) => factGaps(sc).map((g) => `${sc.id}: ${g}`));
+expect('every declared curated registry fact is complete (#684 R10)', factGapList.length === 0,
+  factGapList.length ? factGapList.join('; ') : '');
 
 // #684 #5 — role-label ↔ variants consistency: every variant whose key is a real user role
 // (guest / passenger / driver) must appear in the screen's `role` label, so a future variant
