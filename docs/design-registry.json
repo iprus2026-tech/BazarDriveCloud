@@ -434,7 +434,7 @@
       "classification": "contract-only",
       "renderStatus": "render-pending",
       "contract": "docs/screen-contracts.md#bd-rules-01",
-      "note": "Shipped static read-only rules articles (search/download are UI-only no-ops). Contract present; no render gate yet. Render-pending."
+      "note": "Shipped static read-only rules articles; the search field is a real client-side filter over sections + documents with a no-results state, and documents show an honest «Скоро» state (no real files / no download) — #762. Contract present; no render gate yet. Render-pending."
     },
     {
       "id": "BD-COMPOSER-01",

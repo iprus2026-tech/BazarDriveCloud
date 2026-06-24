@@ -937,10 +937,10 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 |---|---|
 | Route | `/rules` |
 | File | `public/src/screens/rules.js` |
-| Data | Static local content. |
-| Main states | Rules sections. |
-| Actions | Navigation only. |
-| Acceptance | Bottom tab highlights `Правила`. |
+| Data | Static local content (sections + document templates; no backend, no real files). |
+| Main states | Sections + document templates · search-filtered list · no-results state (#762). |
+| Actions | A real client-side **search** filters both sections and documents (with an inline clear and a «Сбросить поиск» reset); documents present an honest **«Скоро»** state, not a download — there are no downloadable files yet. No silent no-op controls. |
+| Acceptance | Bottom tab highlights `Правила`. Typing in the search narrows the sections + documents; a query with no match shows «Ничего не найдено» + «Сбросить поиск»; documents show «Скоро» (no fake download, no dead search icon). |
 
 ### BD-SETTINGS-01 - Settings
 
