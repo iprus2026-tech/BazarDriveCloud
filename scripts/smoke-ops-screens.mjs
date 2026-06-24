@@ -67,6 +67,12 @@ function expect(label, cond, detail = '') {
   }
 }
 
+// #684 R10 — warn-only: log a soft drift signal WITHOUT pushing to `issues`, so it is visible in
+// the check output but never fails it (the "warn-only first" posture for a heuristic gate).
+function warn(label, detail = '') {
+  console.log('WARN — ' + label + (detail ? ' (' + detail + ')' : ''));
+}
+
 // ── A. Route registration ──
 expect('app.js imports the ops_screens screen',
   /import\s+opsScreens\s+from\s+'\.\/screens\/ops_screens\.js'/.test(app));
@@ -418,6 +424,44 @@ expect('BD-CONFIRM-01 declares role variants passenger / driver / expired',
 expect('every variant-bearing screen has well-formed variants (key + label + entry + anchor)',
   getScreens().filter((s) => Array.isArray(s.variants) && s.variants.length)
     .every((s) => s.variants.every((v) => v && v.key && v.label && v.entry && v.anchor)));
+
+// ── #684 R10 — declared-fact-completeness drift gate (WARN-ONLY) ────────────────────────────────
+// A curated registry fact that is DECLARED but INCOMPLETE silently degrades the generated artifacts
+// (a dataModel without a store → the audit recipe's "(unnamed store)"; an empty cssAtoms → an empty
+// reuse contract). Variant completeness is already HARD-gated above; this extends the same idea —
+// WARN-ONLY — to the other curated facts, so a future incomplete fact is visible without failing CI.
+//
+// Deliberately NOT implemented: a "screen claims contractStatus:exists / melStatus:OK but carries
+// zero curated facts" heuristic — 13 of 22 screens legitimately have no dataModel/variants/guardrails,
+// so it would warn on the majority (noise, not signal). A "needs-but-lacks" guess is exactly the
+// false-positive risk the warn-only-first posture avoids; this gates only UNAMBIGUOUS incompleteness.
+function factGaps(screen = {}) {
+  const gaps = [];
+  if (screen.dataModel && typeof screen.dataModel === 'object' && !screen.dataModel.store) {
+    gaps.push('dataModel declared without a store');
+  }
+  if ('cssAtoms' in screen && (!Array.isArray(screen.cssAtoms) || !screen.cssAtoms.length)) {
+    gaps.push('cssAtoms declared but empty');
+  }
+  if ('guardrails' in screen && (!Array.isArray(screen.guardrails)
+      || screen.guardrails.some((g) => typeof g !== 'string' || !g.trim()))) {
+    gaps.push('guardrails declared but malformed (non-string / empty entry)');
+  }
+  return gaps;
+}
+// Self-test (HARD): the gate flags each incomplete declared fact and passes complete ones.
+expect('fact-completeness gate flags an incomplete declared fact, not a complete one (#684 R10)',
+  factGaps({ dataModel: { store: 's' }, cssAtoms: ['.a'], guardrails: ['no mutate'] }).length === 0
+  && factGaps({ dataModel: { runtimeCreated: true } }).some((g) => /without a store/.test(g))
+  && factGaps({ cssAtoms: [] }).some((g) => /cssAtoms/.test(g))
+  && factGaps({ guardrails: ['', 'ok'] }).some((g) => /guardrails/.test(g))
+  && factGaps({}).length === 0);
+// Warn-only application over the live registry (never fails the check — a soft drift signal only).
+let r10Warnings = 0;
+for (const sc of getScreens()) {
+  for (const g of factGaps(sc)) { warn(`${sc.id} — ${g} (#684 R10)`); r10Warnings += 1; }
+}
+console.log(`R10 fact-completeness: ${r10Warnings} warning(s) across ${getScreens().length} screens.`);
 
 // #684 #5 — role-label ↔ variants consistency: every variant whose key is a real user role
 // (guest / passenger / driver) must appear in the screen's `role` label, so a future variant
