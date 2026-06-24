@@ -312,6 +312,15 @@ expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, se
   && /adversarial[\s\S]*refute/i.test(auditRecipe)
   && /selector\s*\/\s*symbol/i.test(auditRecipe)
   && /reachability[\s\S]*user-path[\s\S]*dev-param[\s\S]*edge/i.test(auditRecipe));
+// #684 R3 + R9 — when >=2 survivors share a class, the synthesis recommends ONE invariant smoke
+// pin (not N point-fixes), built to the #737 quality bar: per-instance count, full public/src
+// scan, assert-the-effect. Closes the detect→guard loop the chain proved was the durable win.
+expect('audit recipe synthesis recommends an invariant guard with the #737 quality bar (#684 R3+R9)',
+  /invariant guard \(#684 R3\)/.test(auditRecipe)
+  && /PER-INSTANCE, not per-file/.test(auditRecipe)
+  && /FULL source floor[\s\S]{0,80}all of public\/src/.test(auditRecipe)
+  && /assert the EFFECT, not the shape/.test(auditRecipe)
+  && /smoke-overlay-coverage\.mjs/.test(auditRecipe));
 expect('audit recipe embeds the screen data-model fact (responses → ride_orders order context)',
   /ride_orders/i.test(auditRecipe));
 expect('buildAuditRecipe connector returns the recipe + a contract anchor',
