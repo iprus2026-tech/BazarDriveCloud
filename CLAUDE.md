@@ -223,7 +223,10 @@ Runtime pattern: close -> loading -> closed card -> button -> /driver-map
 
 ### Rules
 Rules sections are static read-only articles. No section-detail route today.
-Search and document download controls are UI-only/no-op today.
+The search field is a real client-side filter over the sections + documents (with a
+no-results state); documents present an honest «Скоро» state — there are no downloadable
+files (no backend). No silent no-op controls (the old no-op search icon / download buttons
+were removed in #763). Contract: `screen-contracts.md#bd-rules-01`.
 
 ### Notifications
 Audit `/inbox` before creating `/notifications`.
