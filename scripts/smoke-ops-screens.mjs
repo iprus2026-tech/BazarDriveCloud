@@ -157,10 +157,10 @@ expect('dashboard mirrors the reachability select into form state + the save pay
 // #684 R4 — a floor-vs-ceiling tier axis (orthogonal to severity/reachability): the #732 audit
 // bucketed a baseline a11y break and a cosmetic item under the same MEL-C band. Store vocab +
 // create/update validation + the dashboard select, mirroring the reachability axis.
-expect('store exports MEL_TIER = [floor, ceiling] + create/update validate it (#684 R4)',
+expect('store exports MEL_TIER = [floor, ceiling] + create/update validate it, accepting an explicit "" to clear (#684 R4, Codex #758)',
   /export const MEL_TIER\s*=\s*\[[^\]]*'floor'[^\]]*'ceiling'[^\]]*\]/.test(storeSrc)
   && /tier:\s*MEL_TIER\.includes\(input\.tier\)\s*\?\s*input\.tier\s*:\s*''/.test(storeSrc)
-  && /tier:\s*MEL_TIER\.includes\(tierCandidate\)/.test(storeSrc));
+  && /tier:\s*\(tierCandidate\s*===\s*''\s*\|\|\s*MEL_TIER\.includes\(tierCandidate\)\)/.test(storeSrc));
 expect('dashboard imports MEL_TIER, renders the tier select + mirrors it into form state + payload (#684 R4)',
   /MEL_TIER/.test(screenSrc)
   && /id="mel-tier"[\s\S]{0,200}optionList\(MEL_TIER/.test(screenSrc)
@@ -814,8 +814,8 @@ for (const p of OPS_PRECACHE) {
 // clients keep serving the stale cache (house convention: other precache smokes
 // pin a VERSION floor). Floor is raised each time the ops runtime changes.
 const swVer = sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/);
-expect('sw.js VERSION is present and >= v213 (floor raised with per-variant MEL export)',
-  !!swVer && Number(swVer[1]) >= 213);
+expect('sw.js VERSION is present and >= v236 (floor raised with the #684 R4 floor/ceiling tier axis)',
+  !!swVer && Number(swVer[1]) >= 236);
 
 // ── H. Scoped CSS atoms exist ──
 expect('cloud.css defines the ScreenOps atoms',

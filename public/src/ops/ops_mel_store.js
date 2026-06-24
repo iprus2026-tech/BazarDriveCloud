@@ -154,7 +154,9 @@ export function updateMelCard(id, patch = {}) {
     severity: MEL_SEVERITIES.includes(sevCandidate) ? sevCandidate : cur.severity,
     status: MEL_STATUSES.includes(statusCandidate) ? statusCandidate : cur.status,
     reachability: MEL_REACHABILITY.includes(reachCandidate) ? reachCandidate : (cur.reachability || 'user-path'),
-    tier: MEL_TIER.includes(tierCandidate) ? tierCandidate : (cur.tier || ''),
+    // #684 R4 — '' is the documented "unclassified" value, so accept it EXPLICITLY: an update that
+    // clears the tier must win, not fall back to the stale cur.tier (Codex #758).
+    tier: (tierCandidate === '' || MEL_TIER.includes(tierCandidate)) ? tierCandidate : (cur.tier || ''),
     lifecycleAudited: sanitizeLifecycle(lcCandidate),
     updatedAt: new Date().toISOString(),
   };
