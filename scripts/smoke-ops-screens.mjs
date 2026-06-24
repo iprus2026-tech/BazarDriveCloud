@@ -45,7 +45,7 @@ const { generateCloudDesignPrompt } = await import(new URL('../public/src/ops/te
 const { generateGithubIssueBody } = await import(new URL('../public/src/ops/templates/github_issue_template.js', import.meta.url));
 const { generateClaudeCodePrompt } = await import(new URL('../public/src/ops/templates/claude_code_prompt_template.js', import.meta.url));
 const { renderMelCard } = await import(new URL('../public/src/ops/templates/screen_mel_card_template.js', import.meta.url));
-const { computeBlastRadius, SHARED_SURFACE_MAP } = await import(new URL('../public/src/ops/blast_radius.js', import.meta.url));
+const { computeBlastRadius, SHARED_SURFACE_MAP, touchesOverlay, blastRadiusLines } = await import(new URL('../public/src/ops/blast_radius.js', import.meta.url));
 const { getScreenFacts, listScreenFacts } = await import(new URL('../public/src/ops/connectors/repo_connector.js', import.meta.url));
 const { getContractFacts } = await import(new URL('../public/src/ops/connectors/screen_contracts_connector.js', import.meta.url));
 const { buildCloudDesignPrompt } = await import(new URL('../public/src/ops/connectors/cloud_design_connector.js', import.meta.url));
@@ -173,6 +173,16 @@ const cardShared = renderMelCard({ id: 'mel_b', screenId: 'BD-X', route: '/x', f
 expect('renderMelCard renders a Blast radius block (named surfaces when matched, reminder when not)',
   cardShared.includes('Blast radius') && /Feed|DriverMap/.test(cardShared)
   && renderMelCard({ id: 'mel_c', screenId: 'BD-X', route: '/x', file: 'x.js' }).includes('Blast radius'));
+// #684 R8 — an overlay's blast radius is the shared keyboard/focus surface, not a store: 5 of 11
+// Codex catches on the #732 chain were stacked-modal ownership (#738/#739) or trap-not-released on
+// a no-close route change (#734). blastRadiusLines now surfaces it for any overlay MEL, and it
+// flows into both the MEL card and the repair prompt.
+expect('blast_radius surfaces the stacked/transient-overlay blast radius (#684 R8)',
+  touchesOverlay({ problem: 'an aria-modal report sheet with trapFocus' }) === true
+  && touchesOverlay({ problem: 'a plain feed list of ride cards' }) === false
+  && /STACKING[\s\S]*Escape\/Tab/.test(blastRadiusLines({ problem: 'aria-modal overlay' }).join('\n'))
+  && /TEARDOWN[\s\S]*route changes/.test(blastRadiusLines({ problem: 'overlay' }).join('\n'))
+  && renderMelCard({ id: 'mel_o', screenId: 'BD-X', route: '/x', file: 'x.js', problem: 'aria-modal sheet missing a trap' }).includes('STACKING'));
 expect('claude-code prompt embeds Step 0c + the safe-to-change/not-blast-radius clause',
   /Step 0c[^\n]*blast radius/i.test(ccPrompt)
   && /safe to change[\s\S]{0,90}not[\s\S]{0,50}blast radius/i.test(ccPrompt));
