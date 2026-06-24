@@ -103,6 +103,15 @@ if (exists(activeRidePath)) {
   if (!/updateTripStatus/.test(activeRideSrc) || !/function\s+syncCanonicalOrderStatus/.test(activeRideSrc)) {
     errors.push('active_ride.js driver lifecycle must sync canonical ride order status');
   }
+  // #765 — Cloud Design parity: the active-ride icon controls (settings / safety / message / call,
+  // the nav-card icon, the order bullet) must render line-SVG, not emoji / glyph icons. The DS rule
+  // is "no emoji, ever — only thin-stroke line SVG icons" (allowed Unicode is only ★ · —).
+  if (/[⚙\u{1F6E1}\u{1F4AC}☎➜●]/u.test(activeRideSrc)) {
+    errors.push('active_ride.js must not render emoji / glyph icons — Cloud Design requires line-SVG (#765)');
+  }
+  if (!/function\s+arIcon\(/.test(activeRideSrc) || !/stroke-width="1\.8"/.test(activeRideSrc)) {
+    errors.push('active_ride.js must define the arIcon line-SVG helper that replaced the emoji icons (#765)');
+  }
   if (!/\[RIDE_STATUS\.NO_SHOW\]:\s*RIDE_STATUS\.CANCELED/.test(activeRideSrc)) {
     errors.push('active_ride.js must map NO_SHOW active rides to CANCELED canonical ride orders');
   }
