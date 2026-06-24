@@ -120,6 +120,10 @@ export function createMelCard(input = {}) {
     problem: input.problem || '',
     operationalDecision: input.operationalDecision || '',
     requiredRepair: input.requiredRepair || '',
+    // #684 R7 — the recommended INVARIANT GUARD (the auditor's #684 R3 output): a drafted static
+    // smoke pin for the recurring class, carried into the repair prompt + the MEL export. Free-text;
+    // patched through ...patch on update like the other free-text fields.
+    recommendedGuard: input.recommendedGuard || '',
     createdAt: now,
     updatedAt: now,
   };

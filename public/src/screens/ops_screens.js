@@ -282,6 +282,10 @@ export default function opsScreens() {
           <span class="ops-melform__label">Required repair</span>
           <textarea id="mel-repair" class="ops-melform__control" rows="2">${esc(f.requiredRepair)}</textarea>
         </label>
+        <label class="ops-melform__row">
+          <span class="ops-melform__label">Recommended guard (invariant smoke pin, #684 R7)</span>
+          <textarea id="mel-guard" class="ops-melform__control" rows="2" placeholder="e.g. smoke-overlay-coverage.mjs — every aria-modal traps focus (per-instance, all public/src)">${esc(f.recommendedGuard)}</textarea>
+        </label>
         <div class="ops-melform__actions">
           <button type="button" class="ops-btn ops-btn--accent" data-action="mel-form-save">Save MEL card</button>
           <button type="button" class="ops-btn ops-btn--ghost" data-action="mel-form-cancel">Cancel</button>
@@ -455,6 +459,7 @@ export default function opsScreens() {
     else if (t.id === 'mel-problem') state.melForm.problem = t.value;
     else if (t.id === 'mel-decision') state.melForm.operationalDecision = t.value;
     else if (t.id === 'mel-repair') state.melForm.requiredRepair = t.value;
+    else if (t.id === 'mel-guard') state.melForm.recommendedGuard = t.value;
   });
 
   root.addEventListener('click', (e) => {
@@ -598,6 +603,7 @@ export default function opsScreens() {
           problem,
           operationalDecision: read('#mel-decision').trim(),
           requiredRepair: read('#mel-repair').trim(),
+          recommendedGuard: read('#mel-guard').trim(),
         });
         state.melForm = null;
         state.notice = card ? 'MEL card created.' : 'Could not save the MEL card (storage full?).';
