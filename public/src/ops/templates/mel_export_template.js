@@ -95,6 +95,7 @@ export function generateMelExport(screen = {}, cards = [], variantKey = '') {
       `- Problem: ${dash(c.problem)}`,
       `- Operational decision: ${dash(c.operationalDecision)}`,
       `- Required repair: ${dash(c.requiredRepair)}`,
+      `- Recommended guard (#684 R7): ${dash(c.recommendedGuard)}`,
     ]),
   );
 

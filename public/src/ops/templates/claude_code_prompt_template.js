@@ -75,6 +75,20 @@ function serviceWorkerLines(screen = {}) {
   ];
 }
 
+// #684 R7 — when the MEL carries a recommended invariant guard (the auditor's #684 R3 output),
+// surface it in the prompt as a DRAFTED PIN to add, not a vague nudge, so the recurring class is
+// guarded rather than only point-fixed. Empty when the MEL has none.
+function guardLines(mel = {}) {
+  const g = (typeof mel.recommendedGuard === 'string' && mel.recommendedGuard.trim()) ? mel.recommendedGuard.trim() : '';
+  if (!g) return [];
+  return [
+    ``,
+    `Recommended invariant guard (#684 R7 — the audit flagged this as a recurring CLASS; draft this static pin, do not stop at the point fix)`,
+    g,
+    `- shape it to the #737 quality bar: PER-INSTANCE (count both sides), scan ALL of public/src (not just screens/), assert the EFFECT (the real preventDefault() / focus() wrap), not the shape. Reference: scripts/smoke-overlay-coverage.mjs.`,
+  ];
+}
+
 export function generateClaudeCodePrompt(screen = {}, mel = {}) {
   const id = screen.id || '(unknown screen id)';
   const route = screen.route || '(unknown route)';
@@ -140,6 +154,7 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- do not add real credentials or private keys`,
     ...guardrailLines(screen),
     ...serviceWorkerLines(screen),
+    ...guardLines(mel),
     ``,
     `Verify (#684 #15 — pick the method that actually exercises THIS fix; a screenshot proves nothing for an a11y or robustness fix)`,
     `- always: node scripts/check.mjs ; node scripts/dispatcher.mjs`,

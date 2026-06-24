@@ -148,6 +148,13 @@ expect('renderMelCard renders the Reachability line (value + default)',
 expect('renderMelCard renders the Tier line (value + unclassified default) (#684 R4)',
   renderMelCard({ id: 'mel_t', screenId: 'BD-X', route: '/x', file: 'x.js', tier: 'floor' }).includes('Tier (#684 R4): floor')
   && renderMelCard({}).includes('Tier (#684 R4): (unclassified)'));
+// #684 R7 — the MEL carries a recommended invariant GUARD (the auditor's #684 R3 output): a drafted
+// smoke pin for the recurring class. createMelCard persists it; the card, the repair prompt and the
+// export all surface it, so the smoke-agent gets a drafted pin, not a vague nudge.
+expect('createMelCard persists recommendedGuard + the card renders it (#684 R7)',
+  /recommendedGuard:\s*input\.recommendedGuard\s*\|\|\s*''/.test(storeSrc)
+  && renderMelCard({ id: 'mel_g', screenId: 'BD-X', route: '/x', file: 'x.js', recommendedGuard: 'pin every aria-modal traps focus' }).includes('pin every aria-modal traps focus')
+  && /Recommended invariant guard \(#684 R7/.test(renderMelCard({})));
 expect('dashboard imports MEL_REACHABILITY and renders the reachability select',
   /MEL_REACHABILITY/.test(screenSrc)
   && /id="mel-reachability"[\s\S]{0,90}optionList\(MEL_REACHABILITY/.test(screenSrc));
@@ -166,6 +173,10 @@ expect('dashboard imports MEL_TIER, renders the tier select + mirrors it into fo
   && /id="mel-tier"[\s\S]{0,200}optionList\(MEL_TIER/.test(screenSrc)
   && /mel-tier'\)\s*state\.melForm\.tier\s*=/.test(screenSrc)
   && /tier:\s*read\('#mel-tier'\)/.test(screenSrc));
+expect('dashboard wires the recommendedGuard textarea into form state + payload (#684 R7)',
+  /id="mel-guard"/.test(screenSrc)
+  && /mel-guard'\)\s*state\.melForm\.recommendedGuard\s*=/.test(screenSrc)
+  && /recommendedGuard:\s*read\('#mel-guard'\)/.test(screenSrc));
 
 // ── D3. Blast-radius / shared-state map (BD-OPS / #684 #9) — what ELSE a repair
 // touches. The #685 cross-check confirms a behavior is SAFE to change (not pinned);
@@ -224,6 +235,13 @@ expect('claude-code prompt embeds the Step 0d edge/ordering checklist + its self
   && /second overlay STACKED on top/i.test(ccPrompt)
   && /skips maxlength/i.test(ccPrompt)
   && /Edge \/ ordering \(#684 R6\)/.test(ccPrompt));
+// #684 R7 — the repair prompt emits the MEL's recommended guard as a DRAFTED pin (with the #737
+// quality bar) when present, and omits the section entirely when the MEL has none.
+expect('claude-code prompt emits the recommended invariant guard when present, omits it when absent (#684 R7)',
+  generateClaudeCodePrompt(sample, { recommendedGuard: 'smoke: every aria-modal traps focus' }).includes('Recommended invariant guard (#684 R7')
+  && generateClaudeCodePrompt(sample, { recommendedGuard: 'smoke: every aria-modal traps focus' }).includes('smoke: every aria-modal traps focus')
+  && /#737 quality bar[\s\S]*PER-INSTANCE/.test(generateClaudeCodePrompt(sample, { recommendedGuard: 'x' }))
+  && !/Recommended invariant guard/.test(generateClaudeCodePrompt(sample, {})));
 
 // ── D4. Data-model viability (BD-OPS / #684 #8) — is the fix CONSTRUCTIBLE?
 // The audit can confirm a defect against the code, but BD-RESPONSES-01 (#688)
@@ -680,6 +698,8 @@ expect('mel export renders a markdown table (incl. a Variant column) + per-card 
   && /user-path/.test(melExport) && /#688/.test(melExport));
 expect('mel export escapes the cell separator so free-text never breaks a table row',
   /CTA dead-ends \\\| toast/.test(melExport));
+expect('mel export Details surface the recommended invariant guard line (#684 R7)',
+  /Recommended guard \(#684 R7\):/.test(melExport));
 // The headline invariant: the embedded JSON block ROUND-TRIPS the cards LOSSLESSLY
 // (export → re-import). Structural equality — not two cherry-picked fields — so a
 // generator that silently projected to a subset of fields would FAIL the pin. The
