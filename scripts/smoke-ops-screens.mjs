@@ -241,7 +241,11 @@ expect('claude-code prompt emits the recommended invariant guard when present, o
   generateClaudeCodePrompt(sample, { recommendedGuard: 'smoke: every aria-modal traps focus' }).includes('Recommended invariant guard (#684 R7')
   && generateClaudeCodePrompt(sample, { recommendedGuard: 'smoke: every aria-modal traps focus' }).includes('smoke: every aria-modal traps focus')
   && /#737 quality bar[\s\S]*PER-INSTANCE/.test(generateClaudeCodePrompt(sample, { recommendedGuard: 'x' }))
-  && !/Recommended invariant guard/.test(generateClaudeCodePrompt(sample, {})));
+  && !/Recommended invariant guard/.test(generateClaudeCodePrompt(sample, {}))
+  // Codex #759 — when a guard is requested, the Allowed files must permit the smoke pin file, or
+  // the agent can't write the pin without violating the allowed-file block.
+  && /Allowed files[\s\S]*add or extend a static pin/.test(generateClaudeCodePrompt(sample, { recommendedGuard: 'x' }))
+  && !/add or extend a static pin/.test(generateClaudeCodePrompt(sample, {})));
 
 // ── D4. Data-model viability (BD-OPS / #684 #8) — is the fix CONSTRUCTIBLE?
 // The audit can confirm a defect against the code, but BD-RESPONSES-01 (#688)

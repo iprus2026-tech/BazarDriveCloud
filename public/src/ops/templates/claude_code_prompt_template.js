@@ -145,6 +145,11 @@ export function generateClaudeCodePrompt(screen = {}, mel = {}) {
     `- ${file}`,
     `- public/styles/cloud.css (scoped atoms for this screen only)`,
     `- public/sw.js (the VERSION line ONLY — bump it; see Service worker below)`,
+    // #684 R7 — if the MEL carries a recommended invariant guard, the agent MUST be allowed to write
+    // the smoke that pins it, or the detect→guard pipeline degrades back to a point fix (Codex #759).
+    ...((typeof mel.recommendedGuard === 'string' && mel.recommendedGuard.trim())
+      ? [`- scripts/smoke-*.mjs (the invariant guard in "Recommended invariant guard" below — add or extend a static pin; scripts/check.mjs too, ONLY to register a NEW smoke file)`]
+      : []),
     ``,
     `Must not touch`,
     `- route registration in public/src/app.js (unless the task is the route)`,
