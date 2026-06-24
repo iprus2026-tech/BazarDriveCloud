@@ -38,6 +38,7 @@ const DOCUMENT_TEMPLATES = [
 
 const ICONS = {
   search: '<path d="M21 21l-4.3-4.3"/><circle cx="11" cy="11" r="7"/>',
+  close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   car: '<path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13"/><path d="M5 13h14v4a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H8v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><circle cx="7.5" cy="15.5" r="0.6"/><circle cx="16.5" cy="15.5" r="0.6"/>',
@@ -50,6 +51,18 @@ function svg(name, size = 22) {
   const body = ICONS[name] || '';
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+// #762 — a section / doc matches a search query if the query is a substring of any of
+// its searchable text. Case-insensitive; empty query matches everything.
+function matchSection(section, q) {
+  if (!q) return true;
+  const hay = [section.title, section.subtitle, ...section.chips].join(' ').toLowerCase();
+  return hay.includes(q);
+}
+function matchDoc(doc, q) {
+  if (!q) return true;
+  return [doc.title, doc.format].join(' ').toLowerCase().includes(q);
 }
 
 function renderSection(section) {
@@ -75,8 +88,11 @@ function renderSection(section) {
   `;
 }
 
+// #762 — documents have no real files (no backend), so an honest row presents the
+// template as info with a «Скоро» pill instead of a download button that silently
+// does nothing (the old silent download stub read as broken).
 function renderTemplate(doc) {
-  const meta = `${doc.size} · ${doc.format} · ${doc.updated}`;
+  const meta = `${doc.format} · ${doc.size} · ${doc.updated}`;
   return `
     <article class="bd-card-tight rules-v2-doc">
       <span class="rules-v2-doc__icon">${svg('doc', 20)}</span>
@@ -84,14 +100,41 @@ function renderTemplate(doc) {
         <div class="rules-v2-doc__title">${escapeHtml(doc.title)}</div>
         <div class="rules-v2-doc__meta">${escapeHtml(meta)}</div>
       </div>
-      <button type="button" class="bd-btn sm rules-v2-doc__action" data-doc="${escapeHtml(doc.id)}">
-        Скачать
-      </button>
+      <span class="rules-v2-doc__soon">Скоро</span>
     </article>
   `;
 }
 
-function renderEmpty() {
+function renderSupport() {
+  return `
+    <article class="bd-card rules-v2-support">
+      <span class="rules-v2-support__icon">${svg('spark', 20)}</span>
+      <div class="rules-v2-support__body">
+        <h3 class="rules-v2-support__title">Не нашли нужный шаблон?</h3>
+        <p class="rules-v2-support__text">
+          Напишите в поддержку — мы добавим его в течение 24 часов.
+        </p>
+      </div>
+    </article>
+  `;
+}
+
+// #762 — search yielded nothing: an honest no-results state (replaces silent filtering),
+// with a control to clear the query.
+function renderNoResults(rawQuery) {
+  return `
+    <div class="bd-empty rules-v2-empty">
+      <span class="rules-v2-empty__icon">${svg('search', 26)}</span>
+      <div class="bd-empty__title">Ничего не найдено</div>
+      <p>По запросу «${escapeHtml(rawQuery)}» в правилах и документах ничего нет. Измените запрос или загляните в разделы.</p>
+      <div class="rules-v2-empty__actions">
+        <button type="button" class="bd-btn" data-rules-reset>Сбросить поиск</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderContentEmpty() {
   return `
     <div class="bd-empty rules-v2-empty">
       <div class="bd-empty__title">Правила пока недоступны</div>
@@ -103,40 +146,40 @@ function renderEmpty() {
   `;
 }
 
-export default function rules() {
-  const root = document.createElement('section');
-  root.className = 'screen';
+// #762 — render the list region for a given query. Filters BOTH sections and documents
+// client-side; an empty query shows everything; a query with no matches shows the
+// no-results state. The support card stays visible alongside any results.
+function renderBody(rawQuery) {
+  const q = rawQuery.trim().toLowerCase();
+  const hasContent = SECTIONS.length > 0 || DOCUMENT_TEMPLATES.length > 0;
+  if (!hasContent) return renderContentEmpty();
 
-  const hasSections = Array.isArray(SECTIONS) && SECTIONS.length > 0;
-  const hasTemplates = Array.isArray(DOCUMENT_TEMPLATES) && DOCUMENT_TEMPLATES.length > 0;
-  const hasContent = hasSections || hasTemplates;
+  const secs = SECTIONS.filter((s) => matchSection(s, q));
+  const docs = DOCUMENT_TEMPLATES.filter((d) => matchDoc(d, q));
+  if (q && !secs.length && !docs.length) return renderNoResults(rawQuery.trim());
 
-  const body = hasContent ? `
-    ${hasSections ? `
+  return `
+    ${secs.length ? `
       <div class="bd-section-h">
         <h2>Разделы</h2>
       </div>
-      ${SECTIONS.map(renderSection).join('')}
+      ${secs.map(renderSection).join('')}
     ` : ''}
 
-    ${hasTemplates ? `
+    ${docs.length ? `
       <div class="bd-section-h">
         <h2>Шаблоны документов</h2>
-        <button type="button" data-noop>Все</button>
       </div>
-      ${DOCUMENT_TEMPLATES.map(renderTemplate).join('')}
+      ${docs.map(renderTemplate).join('')}
     ` : ''}
 
-    <article class="bd-card rules-v2-support">
-      <span class="rules-v2-support__icon">${svg('spark', 20)}</span>
-      <div class="rules-v2-support__body">
-        <h3 class="rules-v2-support__title">Не нашли нужный шаблон?</h3>
-        <p class="rules-v2-support__text">
-          Напишите в поддержку — мы добавим его в течение 24 часов.
-        </p>
-      </div>
-    </article>
-  ` : renderEmpty();
+    ${renderSupport()}
+  `;
+}
+
+export default function rules() {
+  const root = document.createElement('section');
+  root.className = 'screen';
 
   root.innerHTML = `
     <div class="bd-topbar">
@@ -144,15 +187,32 @@ export default function rules() {
         <h1 class="bd-topbar__title">Правила</h1>
         <p class="bd-topbar__sub">Документы и шаблоны</p>
       </div>
-      <button type="button" class="bd-iconbtn" data-noop aria-label="Поиск">
-        ${svg('search', 20)}
+    </div>
+
+    <div class="rules-v2-search">
+      <span class="rules-v2-search__ic">${svg('search', 20)}</span>
+      <input id="rules-search" class="rules-v2-search__input" type="text" autocomplete="off"
+        placeholder="Поиск по правилам и документам" aria-label="Поиск по правилам и документам">
+      <button type="button" class="rules-v2-search__clear" data-rules-reset aria-label="Очистить поиск">
+        ${svg('close', 14)}
       </button>
     </div>
 
     <div class="bd-scroll">
-      ${body}
+      <div id="rules-list">${renderBody('')}</div>
     </div>
   `;
+
+  const wrap = root.querySelector('.rules-v2-search');
+  const searchEl = root.querySelector('#rules-search');
+  const listEl = root.querySelector('#rules-list');
+
+  function apply(query) {
+    wrap.classList.toggle('rules-v2-search--active', query.trim().length > 0);
+    listEl.innerHTML = renderBody(query);
+  }
+
+  searchEl.addEventListener('input', () => apply(searchEl.value));
 
   root.addEventListener('click', (e) => {
     const goBtn = e.target.closest('[data-go]');
@@ -160,15 +220,12 @@ export default function rules() {
       go(goBtn.dataset.go);
       return;
     }
-    // Document download and search are mock/no-op (no backend, no real files).
-    const docBtn = e.target.closest('[data-doc]');
-    if (docBtn) {
-      e.preventDefault();
-      return;
-    }
-    const noop = e.target.closest('[data-noop]');
-    if (noop) {
-      e.preventDefault();
+    // #762 — clear the search (the inline × and the no-results «Сбросить»), then refocus.
+    const reset = e.target.closest('[data-rules-reset]');
+    if (reset) {
+      searchEl.value = '';
+      apply('');
+      searchEl.focus();
     }
   });
 

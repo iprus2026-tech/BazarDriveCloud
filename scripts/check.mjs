@@ -147,6 +147,18 @@ if (exists(settingsSmoke)) {
   }
 }
 
+// #762 — Rules screen honest-affordances smoke: a real client-side search field +
+// no-results state, and honest «Скоро» document rows (no silent no-op controls).
+const rulesSmoke = path.join(root, 'scripts', 'smoke-rules.mjs');
+if (exists(rulesSmoke)) {
+  try {
+    execFileSync(process.execPath, [rulesSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-rules.mjs failed\n${msg}`);
+  }
+}
+
 // BD-OPS-03 — static regression smoke for the ScreenOps dev/docs route
 // (route registration, not-in-tabbar, registry seed, generator route/file/id
 // embedding, MEL store key, no hard-coded credentials, SW precache of every new
