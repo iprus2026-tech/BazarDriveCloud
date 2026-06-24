@@ -307,6 +307,13 @@ expect('audit recipe enumerates the edge / ordering-state dimension (#684 R1)',
   && /navigation-AWAY while open/.test(auditRecipe)
   && /el\.value vs maxlength/.test(auditRecipe)
   && /PERSISTED-vs-DOM ORDER/.test(auditRecipe));
+// #684 R2 — an 8th dimension briefs the auditor to read the screen contract and DIFF it vs the
+// runtime; a stale row is a finding, and any a11y/flow change moves the contract in lockstep
+// (BD-FEED-01 #744: aria-selected → aria-pressed left the contract stale until Codex caught it).
+expect('audit recipe enumerates the contract↔runtime divergence dimension (#684 R2)',
+  /Contract . runtime divergence \(#684 R2\)/.test(auditRecipe)
+  && /docs\/screen-contracts\.md/.test(auditRecipe)
+  && /name the contract LINE it moves in lockstep/.test(auditRecipe));
 expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, selector anchor (#2) + reachability synthesis (#3)',
   /cross-check[\s\S]*grep -rlE "[^"]+" scripts\/smoke-\*\.mjs/i.test(auditRecipe)
   && /adversarial[\s\S]*refute/i.test(auditRecipe)
@@ -323,9 +330,9 @@ expect('audit recipe synthesis recommends an invariant guard with the #737 quali
   && /smoke-overlay-coverage\.mjs/.test(auditRecipe));
 expect('audit recipe embeds the screen data-model fact (responses → ride_orders order context)',
   /ride_orders/i.test(auditRecipe));
-expect('buildAuditRecipe connector returns the recipe + a contract anchor',
+expect('buildAuditRecipe connector returns the recipe + a contract anchor briefed for diff (#684 R2)',
   buildAuditRecipe('BD-RESPONSES-01').includes('Audit recipe: BD-RESPONSES-01')
-  && /Contract:/.test(buildAuditRecipe('BD-RESPONSES-01')));
+  && /Contract \(read \+ diff vs the runtime — #684 R2\): docs\/screen-contracts\.md#bd-responses-01/.test(buildAuditRecipe('BD-RESPONSES-01')));
 
 // ── D7b. Registry role variants (BD-OPS / #684) — a screen with multiple role-keyed
 // render paths declares them in the registry so ScreenOps can ADDRESS a specific

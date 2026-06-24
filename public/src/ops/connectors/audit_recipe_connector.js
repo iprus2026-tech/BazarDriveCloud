@@ -14,5 +14,7 @@ export function buildAuditRecipe(screenId, variantKey) {
   const contract = getContractFacts(facts);
   // #684 — variantKey ('' / undefined = «Все») scopes the variant-aware recipe to one
   // declared role variant; ignored for single-render screens.
-  return generateAuditRecipe(facts, { variant: variantKey }) + '\n\nContract: ' + contract.contractAnchor;
+  // #684 R2 — the anchor is not just a link: brief the auditor to READ + DIFF it vs the runtime
+  // (dimension 8 in the recipe). The connector stays pure — it computes the path, never reads it.
+  return generateAuditRecipe(facts, { variant: variantKey }) + '\n\nContract (read + diff vs the runtime — #684 R2): ' + contract.contractAnchor;
 }
