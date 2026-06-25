@@ -18,6 +18,7 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const app     = read('../public/src/app.js');
+const chat    = read('../public/src/screens/chat.js');
 const index   = read('../public/index.html');
 const inbox   = read('../public/src/screens/inbox.js');
 const mockApi = read('../public/src/mock_api.js');
@@ -264,6 +265,64 @@ expect('daily screen linked CTAs navigate through go(href)', /go\(href\)/.test(d
 for (const asset of ['./styles/daily_communication.css', './src/daily_communication_store.js', './src/screens/daily_communication.js']) {
   expect(`sw.js PRECACHE includes ${asset}`, sw.includes(asset));
 }
+// ── K. BD-DAILY-COMM-01 — review blocker pins ─────────────────
+const loadChatStoreBody = functionBody(chat, 'loadChatStore') || '';
+expect('chat.js does not import daily_communication_store.js',
+  !/daily_communication_store\.js/.test(chat));
+expect('chat.js legacy migration preserves unknown top-level keys',
+  /const\s*\{\s*chatId\s*,\s*messages\s*,\s*\.\.\.rest\s*\}\s*=\s*data/.test(loadChatStoreBody)
+  && /return\s*\{\s*\.\.\.rest\s*,\s*\[chatId\]\s*:\s*messages\s*\}/.test(loadChatStoreBody));
+const saveMessagesBody = functionBody(chat, 'saveMessages') || '';
+expect('chat.js saveMessages helper exists', saveMessagesBody.length > 0);
+expect('chat.js saveMessages clones existing store',
+  /const\s+next\s*=\s*\{\s*\.\.\.store\s*\}/.test(saveMessagesBody));
+expect('chat.js appendMessage calls saveMessages(chatId, arr, store)',
+  /saveMessages\(\s*chatId\s*,\s*arr\s*,\s*store\s*\)/.test(functionBody(chat, 'appendMessage') || ''));
+expect('chat.js persistMessageInOrder calls saveMessages(chatId, arr, store)',
+  /saveMessages\(\s*chatId\s*,\s*arr\s*,\s*store\s*\)/.test(functionBody(chat, 'persistMessageInOrder') || ''));
+
+const acknowledgeBody = functionBody(dailyStore, 'acknowledgeDailyCommunication') || '';
+const ackGuardIndex = acknowledgeBody.indexOf('!ACK_ACTIONABLE_STATUSES.has(thread.status)');
+const ackMutationIndex = acknowledgeBody.indexOf("thread.status = 'ACKNOWLEDGED'");
+expect('daily store declares ACK_ACTIONABLE_STATUSES for ACK_REQUIRED / NEEDS_ACTION',
+  /const\s+ACK_ACTIONABLE_STATUSES\s*=\s*new Set\(\s*\[\s*'ACK_REQUIRED'\s*,\s*'NEEDS_ACTION'\s*\]\s*\)/.test(dailyStore));
+expect('acknowledgeDailyCommunication no-ops non-actionable statuses before mutation',
+  /if\s*\(\s*!ACK_ACTIONABLE_STATUSES\.has\(thread\.status\)\s*\)\s*\{\s*return cloneThread\(thread\);\s*\}/.test(acknowledgeBody));
+expect('acknowledgeDailyCommunication keeps ACKNOWLEDGED mutation behind the guard',
+  ackGuardIndex !== -1 && ackMutationIndex !== -1 && ackGuardIndex < ackMutationIndex);
+
+const dailyDetailBody = functionBody(dailyScreen, 'renderDetail') || '';
+const dailyScreenBody = functionBody(dailyScreen, 'dailyCommunication') || '';
+expect('daily screen declares ACK_ACTIONABLE_STATUSES',
+  /const\s+ACK_ACTIONABLE_STATUSES\s*=\s*new Set\(\s*\[\s*'ACK_REQUIRED'\s*,\s*'NEEDS_ACTION'\s*\]\s*\)/.test(dailyScreen));
+expect('daily screen computes canAck and gates ackButton on it',
+  /const\s+canAck\s*=\s*ACK_ACTIONABLE_STATUSES\.has\(thread\.status\)/.test(dailyDetailBody)
+  && /const\s+ackButton\s*=\s*canAck/.test(dailyDetailBody));
+expect('daily screen does not always render the ack button next to resolve',
+  !dailyScreen.includes("<button type='button' class='bd-btn primary sm' data-dc-action='ack'>Принять</button><button"));
+expect('daily screen click handler uses explicit actionName branches',
+  dailyScreenBody.includes('const actionName = action.dataset.dcAction;'));
+expect('daily screen unknown/non-resolve actions no-op',
+  /else return;/.test(dailyScreenBody));
+expect('daily screen ack branch requires actionable status',
+  /actionName === 'ack' && ACK_ACTIONABLE_STATUSES\.has\(selected\.status\)/.test(dailyScreenBody));
+
+expect('inbox.js contains the Daily Communication entry hook',
+  inbox.includes('data-inbox-daily-communication'));
+expect('inbox.js contains the Daily Communication route',
+  inbox.includes('/daily-communication'));
+expect('inbox.js renders the Daily Communication entry outside mock seed data',
+  /function\s+renderDailyCommunicationEntry\s*\(\)/.test(inbox));
+expect('inbox Daily Communication CTA is visual-only, not a nested button',
+  inbox.includes('<span class="bd-btn primary sm inbox-item__btn inbox-item__btn--primary" aria-hidden="true">Открыть</span>'));
+expect('inbox click handler opens Daily Communication entry',
+  /addEventListener\('click'[\s\S]*data-inbox-daily-communication[\s\S]*openHref\('\/daily-communication'\)/.test(inbox));
+expect('inbox Enter/Space handler opens Daily Communication entry',
+  /addEventListener\('keydown'[\s\S]*data-inbox-daily-communication[\s\S]*openHref\('\/daily-communication'\)/.test(inbox));
+expect('inbox entry does not call ride/order lifecycle writers',
+  !/acceptOrder|updateTripStatus|saveActiveRideStore|acceptNearbyOrder|acceptPassengerRequestFromPost/.test(inbox));
+expect('mock_api.js does not seed a Daily Communication inbox item',
+  !/\/daily-communication/.test(mockApi));
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

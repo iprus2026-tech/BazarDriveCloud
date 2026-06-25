@@ -59,7 +59,8 @@ function loadChatStore() {
     const data = JSON.parse(raw);
     // migrate old storage shape: { chatId, messages }
     if (data?.chatId && Array.isArray(data.messages)) {
-      return { [data.chatId]: data.messages };
+      const { chatId, messages, ...rest } = data;
+      return { ...rest, [chatId]: messages };
     }
     return data && typeof data === 'object' ? data : {};
   } catch {
@@ -70,6 +71,17 @@ function loadChatStore() {
 function loadMessages(chatId) {
   const store = loadChatStore();
   return Array.isArray(store[chatId]) ? store[chatId] : null;
+}
+
+function saveMessages(chatId, messages, store = loadChatStore()) {
+  try {
+    const next = { ...store };
+    next[chatId] = messages;
+    localStorage.setItem(CHAT_KEY, JSON.stringify(next));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Append one outgoing message to its thread. Re-reads the store immediately
@@ -83,9 +95,7 @@ function appendMessage(chatId, msg) {
     const store = loadChatStore();
     const arr = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
     arr.push(msg);
-    store[chatId] = arr;
-    localStorage.setItem(CHAT_KEY, JSON.stringify(store));
-    return true;
+    return saveMessages(chatId, arr, store);
   } catch {
     return false;
   }
@@ -102,9 +112,7 @@ function persistMessageInOrder(chatId, msg) {
     let i = arr.length;
     while (i > 0 && Number(arr[i - 1].id) > Number(msg.id)) i--;
     arr.splice(i, 0, msg);
-    store[chatId] = arr;
-    localStorage.setItem(CHAT_KEY, JSON.stringify(store));
-    return true;
+    return saveMessages(chatId, arr, store);
   } catch {
     return false;
   }

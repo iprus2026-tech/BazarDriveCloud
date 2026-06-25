@@ -39,6 +39,8 @@ export const DAILY_COMMUNICATION_STATUS_TONE = {
   RESOLVED: 'muted',
 };
 
+const ACK_ACTIONABLE_STATUSES = new Set(['ACK_REQUIRED', 'NEEDS_ACTION']);
+
 export const DAILY_COMMUNICATION_TABS = [
   { key: 'all', label: 'Все' },
   { key: 'ride', label: 'Поездки' },
@@ -321,6 +323,9 @@ export function acknowledgeDailyCommunication(threadId, actorRole = 'support') {
   const store = loadStore();
   const thread = store.threads.find((t) => t.id === threadId);
   if (!thread) return null;
+  if (!ACK_ACTIONABLE_STATUSES.has(thread.status)) {
+    return cloneThread(thread);
+  }
   thread.status = 'ACKNOWLEDGED';
   thread.unread = false;
   appendSystemMessage(thread, 'Сообщение принято в работу.', actorRole);

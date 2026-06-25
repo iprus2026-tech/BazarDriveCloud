@@ -19,6 +19,7 @@ const KIND_LABEL = { ride: 'Поездка', passenger: 'Пассажир', driv
 const KIND_GLYPH = { ride: '🚕', passenger: 'П', driver: 'В', support: 'S' };
 const PRIORITY_LABEL = { high: 'Высокий', normal: 'Обычный', low: 'Низкий' };
 const ROLE_LABEL = { passenger: 'Пассажир', driver: 'Водитель', support: 'Поддержка', system: 'Система' };
+const ACK_ACTIONABLE_STATUSES = new Set(['ACK_REQUIRED', 'NEEDS_ACTION']);
 
 function getRouteParam(name) {
   const hash = window.location.hash || '';
@@ -100,6 +101,10 @@ function renderEmpty(tab) {
 
 function renderDetail(thread) {
   if (!thread) return `<aside class='bd-card dc-detail dc-detail--empty' role='status'><div class='dc-empty__glyph' aria-hidden='true'>⌁</div><div class='dc-empty__title'>Выберите тему</div><p class='dc-empty__body'>Откройте сообщение слева, чтобы увидеть историю и быстрые действия.</p></aside>`;
+  const canAck = ACK_ACTIONABLE_STATUSES.has(thread.status);
+  const ackButton = canAck
+    ? `<button type='button' class='bd-btn primary sm' data-dc-action='ack'>Принять</button>`
+    : '';
   const secondaryButton = thread.secondaryHref
     ? `<button type='button' class='bd-btn ghost sm' data-dc-open-route='secondary'>К связанному экрану</button>`
     : '';
@@ -107,7 +112,7 @@ function renderDetail(thread) {
     <aside class='bd-card dc-detail' data-dc-detail-id='${escapeHtml(thread.id)}'>
       <div class='dc-detail__head'><div><div class='dc-detail__eyebrow'>${escapeHtml(KIND_LABEL[thread.kind] || 'Связь')}</div><h2 class='dc-detail__title'>${escapeHtml(thread.title)}</h2><p class='dc-detail__sub'>${escapeHtml(thread.counterpart)} · ${escapeHtml(thread.counterpartRole)}</p></div>${statusHtml(thread.status)}</div>
       ${routeHtml(thread.route)}
-      <div class='dc-detail__actions'><button type='button' class='bd-btn primary sm' data-dc-action='ack'>Принять</button><button type='button' class='bd-btn sm' data-dc-action='resolve'>Закрыть</button></div>
+      <div class='dc-detail__actions'>${ackButton}<button type='button' class='bd-btn sm' data-dc-action='resolve'>Закрыть</button></div>
       <div class='dc-detail__links'><button type='button' class='bd-btn ghost sm' data-dc-open-route='primary'>Открыть канал</button>${secondaryButton}</div>
       <div class='dc-msg-list' role='log' aria-label='История сообщений'>${(thread.messages || []).map(renderMessage).join('')}</div>
       ${renderTemplates()}
@@ -182,9 +187,11 @@ export default function dailyCommunication() {
     if (action) {
       const selected = selectedThread();
       if (!selected) return;
-      const updated = action.dataset.dcAction === 'resolve'
-        ? resolveDailyCommunication(selected.id, actorRole())
-        : acknowledgeDailyCommunication(selected.id, actorRole());
+      const actionName = action.dataset.dcAction;
+      let updated = null;
+      if (actionName === 'resolve') updated = resolveDailyCommunication(selected.id, actorRole());
+      else if (actionName === 'ack' && ACK_ACTIONABLE_STATUSES.has(selected.status)) updated = acknowledgeDailyCommunication(selected.id, actorRole());
+      else return;
       refreshAfterMutation(updated); return;
     }
     const link = e.target.closest('[data-dc-open-route]');
