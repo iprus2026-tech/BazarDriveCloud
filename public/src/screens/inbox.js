@@ -229,6 +229,26 @@ function renderItem(item) {
   `;
 }
 
+function renderDailyCommunicationEntry() {
+  return `
+    <article class="bd-card inbox-item inbox-item--daily-communication"
+             data-inbox-daily-communication
+             data-href="/daily-communication"
+             role="button"
+             tabindex="0"
+             aria-label="Операционная связь · Пассажир водитель поддержка · Открыть">
+      <div class="inbox-item__head">
+        <div class="inbox-item__avatar" aria-hidden="true">О</div>
+        <div class="inbox-item__head-info">
+          <div class="inbox-item__name-row"><span class="inbox-item__name">Операционная связь</span></div>
+          <div class="inbox-item__meta">Пассажир ↔ водитель ↔ поддержка</div>
+        </div>
+      </div>
+      <p class="inbox-item__summary">Темы, подтверждения и действия по поездкам</p>
+      <div class="inbox-item__actions"><span class="bd-btn primary sm inbox-item__btn inbox-item__btn--primary" aria-hidden="true">Открыть</span></div>
+    </article>
+  `;
+}
 function renderEmpty(tab) {
   const hint = EMPTY_HINTS[tab] || EMPTY_HINTS.all;
   return `
@@ -311,7 +331,7 @@ export default async function inbox() {
       ? visible.map(renderItem).join('')
       : renderEmpty(activeTab);
     const prompt = promptShown() ? promptHtml(promptDone ? 'done' : 'prompt') : '';
-    listEl.innerHTML = prompt + body;
+    listEl.innerHTML = prompt + renderDailyCommunicationEntry() + body;
   }
 
   // Re-run the inbox load and re-render the list. Mirrors feed's refreshList:
@@ -365,6 +385,12 @@ export default async function inbox() {
       }
       return;
     }
+    const dailyEntry = e.target.closest('[data-inbox-daily-communication]');
+    if (dailyEntry) {
+      e.stopPropagation();
+      openHref('/daily-communication');
+      return;
+    }
     const actionBtn = e.target.closest('[data-inbox-action]');
     if (actionBtn) {
       e.stopPropagation();
@@ -383,6 +409,12 @@ export default async function inbox() {
 
   listEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    const dailyEntry = e.target.closest('[data-inbox-daily-communication]');
+    if (dailyEntry) {
+      e.preventDefault();
+      openHref('/daily-communication');
+      return;
+    }
     const card = e.target.closest('[data-inbox-id]');
     if (!card || e.target.closest('button')) return;
     e.preventDefault();

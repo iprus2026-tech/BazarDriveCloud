@@ -24,6 +24,7 @@ import responses  from './screens/responses.js';
 import tripConfirmation from './screens/trip_confirmation.js';
 import postDetail from './screens/post_detail.js';
 import inbox      from './screens/inbox.js';
+import dailyCommunication from './screens/daily_communication.js';
 import driverMap  from './screens/driver_map.js';
 import tripReceipt from './screens/trip_receipt.js';
 import orderDetail from './screens/order_detail.js';
@@ -49,6 +50,9 @@ register('/responses',   responses);
 register('/trip-confirmation', tripConfirmation);
 register('/post',        postDetail);
 register('/inbox',       inbox);
+// BD-DAILY-COMM-01 — operational daily communication hub. UI/store slice only:
+// no ride/order status mutation, no backend runtime.
+register('/daily-communication', dailyCommunication);
 register('/receipt',     tripReceipt);
 // BD-ORDER-DETAIL-01C — /order is the exact-registration anchor; the
 // router resolves /order/<id> (any id) to this loader and the screen

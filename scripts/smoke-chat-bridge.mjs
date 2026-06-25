@@ -29,6 +29,23 @@ function expect(label, cond, detail = '') {
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
 }
 
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  if (start === -1) return '';
+  const openParen = source.indexOf('(', start);
+  const open = source.indexOf('{', openParen === -1 ? start : openParen);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return '';
+}
+
 // ── A. chat.js — bridge wiring ───────────────────────────────────
 expect("chat.js imports findActiveRide from '../ride_state.js'",
   /import\s*\{[^}]*\bfindActiveRide\b[^}]*\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
@@ -362,8 +379,22 @@ expect("chat.js doSend returns focus to the input after sending (no focus drop t
 // #6: a failed write returns false and is surfaced to the user, not swallowed.
 expect("chat.js appendMessage re-reads the store and pushes a single record (no stale full-array clobber, #7)",
   /function\s+appendMessage\s*\(\s*chatId\s*,\s*msg\s*\)[\s\S]*?loadChatStore\(\)[\s\S]{0,220}\.push\(\s*msg\s*\)/.test(chat));
+const appendMessageBody = functionBody(chat, 'appendMessage') || '';
+const saveMessagesBody = functionBody(chat, 'saveMessages') || '';
 expect("chat.js appendMessage returns true on write, false on failure (no silent swallow, #6)",
-  /function\s+appendMessage[\s\S]*?return\s+true[\s\S]{0,80}catch[\s\S]{0,40}return\s+false/.test(chat));
+  /return\s+true[\s\S]{0,80}catch[\s\S]{0,40}return\s+false/.test(appendMessageBody)
+  || (
+    /const\s+store\s*=\s*loadChatStore\(\)/.test(appendMessageBody)
+    && /const\s+arr\s*=\s*Array\.isArray\(store\[chatId\]\)\s*\?\s*store\[chatId\]\.slice\(\)\s*:\s*\[\]/.test(appendMessageBody)
+    && /arr\.push\(\s*msg\s*\)/.test(appendMessageBody)
+    && /return\s+saveMessages\(\s*chatId\s*,\s*arr\s*,\s*store\s*\)/.test(appendMessageBody)
+    && saveMessagesBody.length > 0
+    && /const\s+next\s*=\s*\{\s*\.\.\.store\s*\}/.test(saveMessagesBody)
+    && /next\[chatId\]\s*=\s*messages/.test(saveMessagesBody)
+    && /localStorage\.setItem\(\s*CHAT_KEY\s*,\s*JSON\.stringify\(next\)\s*\)/.test(saveMessagesBody)
+    && /return\s+true/.test(saveMessagesBody)
+    && /catch\s*\{[\s\S]*?return\s+false/.test(saveMessagesBody)
+  ));
 expect("chat.js doSend surfaces a failed message write to the user via showNotice (#6)",
   /const\s+persisted\s*=\s*appendMessage\(/.test(chat)
   && /if\s*\(\s*!persisted\s*\)\s*\{[\s\S]{0,120}showNotice\(/.test(chat));

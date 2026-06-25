@@ -47,6 +47,13 @@ const RESPONSES_DATA_MODEL = {
   note: 'order-resolution repairs touch the runtime ride order (materialise it — the #688 lesson); but card-mapping / sort / decline / responseId-chat repairs touch the offer store + MOCK_DRIVERS fallback, NOT a ride order.',
 };
 
+const DAILY_COMMUNICATION_DATA_MODEL = {
+  store: 'the audited bazardrive.chat.v1 store under __daily_communication_threads__',
+  runtimeCreated: true,
+  keyedBy: 'a local Daily Communication thread id (dc-...) until backend communication_threads exists',
+  note: 'prototype-only communication state; CTAs navigate to existing screens and must not mutate orders, rides, assignment or availability.',
+};
+
 // #684 #7 — screen-specific must-not-touch guardrails, injected into the repair
 // prompt's must-not-touch list, so a per-screen contract is not re-typed by hand.
 const ACTIVE_RIDE_GUARDRAILS = [
@@ -317,6 +324,18 @@ const SCREENS = [
     designStatus: 'current',
     melStatus: 'OK',
     implementationStatus: 'implemented',
+  },
+  {
+    id: 'BD-DAILY-COMM-01',
+    title: 'Операционная связь',
+    route: '/daily-communication',
+    file: 'public/src/screens/daily_communication.js',
+    role: 'passenger / driver / support',
+    contractStatus: 'exists',
+    designStatus: 'current',
+    melStatus: 'OK',
+    implementationStatus: 'implemented',
+    dataModel: DAILY_COMMUNICATION_DATA_MODEL,
   },
   {
     id: 'BD-RIDE-HISTORY-D-01',

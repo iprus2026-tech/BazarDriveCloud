@@ -23,7 +23,9 @@
 //                                     bazardrive.favorite_route_notice.v1)
 //   bazardrive.active_ride.v1       → ride_state.js
 //   bazardrive.chat.v1              → screens/chat.js (also written by
-//                                     screens/active_ride.js)
+//                                     screens/active_ride.js) and
+//                                     daily_communication_store.js under
+//                                     __daily_communication_threads__
 //   bazardrive.responses.v1         → screens/respond.js, screens/chat.js
 //   bazardrive.respond.v1           → screens/respond.js
 //   bazardrive.trip_confirmation.v1 → screens/trip_confirmation.js,
@@ -83,6 +85,7 @@ import {
   clearChatResponses,
   clearTripConfirmationMap,
 } from './screens/chat.js';
+import { clearDailyCommunicationStore } from './daily_communication_store.js';
 import { clearRespondStore } from './screens/respond.js';
 import { clearDriverHandoffSnapshotStore } from './screens/driver_handoff_snapshot.js';
 import { clearComposerDraft } from './screens/composer.js';
@@ -116,6 +119,7 @@ export function clearUserScopedStorage() {
   clearFavoriteRoutes();
   clearActiveRideStore();
   clearChatStore();
+  clearDailyCommunicationStore();
   clearChatResponses();
   clearTripConfirmationMap();
   clearRespondStore();
