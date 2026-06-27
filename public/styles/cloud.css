@@ -1403,9 +1403,23 @@ body {
   gap: 12px;
   width: 100%;
   border-style: dashed;
-  cursor: pointer;
 }
-.composer-photo-btn:active { opacity: 0.82; }
+/* #774 — honest disabled "Скоро" state (no upload backend yet). */
+.composer-photo-btn[disabled] {
+  cursor: default;
+  opacity: 0.6;
+}
+.composer-photo-soon {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border-radius: 999px;
+  padding: 7px 12px;
+}
 .composer-photo-label {
   display: flex;
   flex-direction: column;

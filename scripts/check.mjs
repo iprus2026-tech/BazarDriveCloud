@@ -1023,6 +1023,19 @@ if (exists(feedInertNoopSmoke)) {
 // distinguishes a genuinely empty / load-failed feed (no posts at all) from a
 // filter that matched nothing, so the change-filter hint is not shown on a
 // zero-data feed.
+// BD-COMPOSER-01 — static regression smoke for the Composer photo affordance:
+// `#c-photo-btn` ships an honest disabled "Скоро" state and composer.js binds no
+// banned empty-closure no-op click handler (#774).
+const composerPhotoNoopSmoke = path.join(root, 'scripts', 'smoke-composer-photo-noop.mjs');
+if (exists(composerPhotoNoopSmoke)) {
+  try {
+    execFileSync(process.execPath, [composerPhotoNoopSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-composer-photo-noop.mjs failed\n${msg}`);
+  }
+}
+
 const feedEmptyStatesSmoke = path.join(root, 'scripts', 'smoke-feed-empty-states.mjs');
 if (exists(feedEmptyStatesSmoke)) {
   try {
