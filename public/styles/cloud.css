@@ -8601,11 +8601,21 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding-top: 8px;
 }
 
+.screen--responses[data-state="list"] .responses__scroll {
+  padding-top: 0;
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
+  scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
+}
+
 /* ── Request card ───────────────────────────────────────── */
 .responses__request {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.screen--responses[data-state="list"] .responses__request {
+  gap: 10px;
+  padding: 12px 14px;
 }
 
 /* BD-MAP-05 — compact passenger status chip inside the request card.
@@ -8762,6 +8772,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+.screen--responses[data-state="list"] .responses__request-foot {
+  padding-top: 8px;
+}
 .responses__note {
   display: flex;
   align-items: center;
@@ -8912,6 +8925,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   padding: 12px 0;
   border-top: 1px solid var(--line);
 }
+.screen--responses[data-state="list"] .responses__request-meta {
+  padding: 8px 0;
+}
 .responses__request-meta-item {
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -8921,6 +8937,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+}
+.screen--responses[data-state="list"] .responses__request-meta-item {
+  padding: 7px 9px;
 }
 .responses__request-meta-label {
   font-size: 10px;
@@ -9055,6 +9074,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   gap: 10px;
   margin: 14px 0 10px;
 }
+.screen--responses[data-state="list"] .responses__toolbar {
+  margin: 10px 0 8px;
+}
 .responses__count {
   display: inline-flex;
   align-items: center;
@@ -9131,6 +9153,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   gap: 14px;
   margin-top: 4px;
 }
+.screen--responses[data-state="list"] .responses__drivers {
+  gap: 12px;
+}
 .responses__driver {
   position: relative;
   background: var(--bg-1);
@@ -9140,6 +9165,10 @@ button.pfp-menu-row:active { opacity: 0.7; }
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.screen--responses[data-state="list"] .responses__driver {
+  padding: 14px;
+  gap: 12px;
 }
 .responses__driver--best {
   border-color: rgba(255, 107, 53, 0.45);
@@ -9535,6 +9564,43 @@ button.pfp-menu-row:active { opacity: 0.7; }
   display: flex;
   gap: 8px;
   margin: 0 0 12px;
+}
+.screen--responses[data-state="list"] .responses__sortbar {
+  margin-bottom: 10px;
+}
+
+@media (max-height: 820px) {
+  .screen--responses[data-state="list"] .responses__topbar {
+    padding-top: 10px;
+    padding-bottom: 6px;
+  }
+  .screen--responses[data-state="list"] .responses__request {
+    gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .screen--responses[data-state="list"] .responses__request-meta {
+    padding: 6px 0;
+  }
+  .screen--responses[data-state="list"] .responses__request-meta-item {
+    padding: 6px 8px;
+  }
+  .screen--responses[data-state="list"] .responses__request-foot {
+    padding-top: 6px;
+  }
+  .screen--responses[data-state="list"] .responses__toolbar {
+    margin: 8px 0 6px;
+  }
+  .screen--responses[data-state="list"] .responses__sortbar {
+    margin-bottom: 8px;
+  }
+  .screen--responses[data-state="list"] .responses__driver {
+    gap: 10px;
+    padding: 12px;
+  }
+  .screen--responses[data-state="list"] .responses__driver-note {
+    padding: 8px 10px;
+  }
 }
 .responses__chip {
   flex: 1 1 0;
