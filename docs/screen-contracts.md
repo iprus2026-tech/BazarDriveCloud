@@ -137,7 +137,8 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Data | `createFeedPost()` creates local authored feed posts. |
 | Main states | Driver offer, passenger request, marketplace item, announcement, service, preview, validation error, draft saved, submit loading. |
 | Actions | Save draft, preview/edit, publish, back to feed, switch type, autosave. |
-| Acceptance | Five types render correct fields; draft survives reload; publish clears draft and returns to `/feed`. |
+| Photo affordance | `#c-photo-btn` ("Добавить фото") has no upload backend yet, so it ships an honest disabled "Скоро" state (`disabled` + `aria-disabled="true"`, muted, non-interactive, a «Скоро» pill) — **not** a clickable no-op. No silent no-op controls (CLAUDE.md), matching the #763 Rules «Скоро» precedent (#774). |
+| Acceptance | Five types render correct fields; draft survives reload; publish clears draft and returns to `/feed`. The photo affordance is non-interactive (`disabled`) with a «Скоро» pill until an upload path exists. |
 
 ### BD-ONBOARDING-01 - Welcome + Onboarding V2
 

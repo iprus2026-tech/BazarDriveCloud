@@ -508,7 +508,7 @@ export default function composer() {
           <div class="bd-field">
             <label class="bd-label" for="c-photo-btn">Фото</label>
             <button type="button" class="composer-photo-btn bd-card-tight" id="c-photo-btn"
-                    aria-describedby="photo-hint">
+                    disabled aria-disabled="true" aria-describedby="photo-hint">
               <div class="bd-list-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
@@ -520,8 +520,9 @@ export default function composer() {
               </div>
               <div class="composer-photo-label">
                 <span class="composer-photo-label__main">Добавить фото</span>
-                <span class="composer-photo-label__sub" id="photo-hint">До 6 изображений</span>
+                <span class="composer-photo-label__sub" id="photo-hint">Загрузка фото скоро появится</span>
               </div>
+              <span class="composer-photo-soon">Скоро</span>
             </button>
           </div>
         </fieldset>
@@ -721,8 +722,9 @@ export default function composer() {
     else enterPreview();
   });
 
-  // ── Event: photo placeholder (no-op, scope-defined stub) ────────
-  root.querySelector('#c-photo-btn').addEventListener('click', () => {});
+  // ── Photo: honest disabled "Скоро" state (no upload backend yet, #774) ──
+  // No click handler — the control ships `disabled` / `aria-disabled`, matching
+  // the #763 Rules «Скоро» precedent (no silent no-op controls, CLAUDE.md).
 
   // ── Event: driver role-guard switch → back to driver offer chip ──
   roleSwitchBtn?.addEventListener('click', () => {
