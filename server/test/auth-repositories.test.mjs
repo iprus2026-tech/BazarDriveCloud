@@ -80,6 +80,17 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       assert.equal(await findLatestLiveOtpByPhone(db, phone), null, 'expired newest is not live');
       assert.equal(await markOtpConsumed(db, otpC.id), null, 'cannot consume an expired otp');
 
+      // Supersede AT CONSUME (Codex #788): once a newer code exists for the phone, an older
+      // still-live code can no longer be consumed by id — closing the read->consume race where a
+      // resend lands mid-verify. The strictly-newest live code still consumes fine.
+      const supOld = await insertOtp(db, { phone, codeHash: hashOtpCode('sup-old'), expiresAt: future });
+      await stampCreatedAt(supOld.id, new Date(Date.now() - 30_000).toISOString());
+      const supNew = await insertOtp(db, { phone, codeHash: hashOtpCode('sup-new'), expiresAt: future });
+      await stampCreatedAt(supNew.id, new Date(Date.now() + 1_000).toISOString()); // strictly newest
+      assert.equal(await markOtpConsumed(db, supOld.id), null,
+        'an older still-live code cannot be consumed once a newer one exists (supersede guard)');
+      assert.ok(await markOtpConsumed(db, supNew.id), 'the latest live code consumes fine');
+
       // user becomes server-verified.
       const verified = await markPhoneVerified(db, u1.id);
       assert.equal(verified.phone_verified, true);

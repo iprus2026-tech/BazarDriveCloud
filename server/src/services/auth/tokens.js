@@ -2,11 +2,24 @@
 // (BD-DOCS-032: store a HASH, never the plaintext token). Token FORMAT is deferred, so
 // this is just a stable one-way hash. BOTH sides use it: the resolution seam
 // (plugins/auth.js) hashes the presented token to look a session up, and the OTP-verify
-// endpoint (next PR) hashes the minted token before INSERT — so they must always match.
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+// endpoint (R02) hashes the minted token before INSERT — so they must always match.
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 
 export function hashToken(token) {
   return createHash('sha256').update(String(token)).digest('hex');
+}
+
+// Constant-time equality for two sha256 hex digests — the OTP-verify check compares the
+// stored auth_otp.code_hash against hashOtpCode(submittedCode), and a plain === leaks, via
+// timing, how many leading chars match. Both operands are fixed 64-char hex (equal length),
+// so timingSafeEqual never throws; the length guard just returns false (instead of throwing)
+// for a malformed/short input. The real brute-force defense is still R02's attempt cap +
+// expiry — this just removes a free side channel on a security-sensitive path.
+export function hashesEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
 }
 
 // Mint a high-entropy opaque bearer token. Only hashToken(...) of this is ever stored

@@ -60,6 +60,23 @@ export function loadConfig(env = process.env) {
   if (!Number.isInteger(config.otp.length) || config.otp.length < 4 || config.otp.length > 10) {
     throw new Error(`Invalid OTP_LENGTH: ${env.OTP_LENGTH} — must be an integer 4..10`);
   }
+  // Range-guard the remaining OTP/session knobs the R02 verify/request paths consume. Besides
+  // NaN/<=0 (a garbage env like OTP_TTL_SECONDS=abc parses to NaN and would flow into Date math
+  // as NaN), an absurdly LARGE value (e.g. 1e20) passes Number.isInteger yet overflows
+  // `new Date(Date.now() + ttl*1000)` to an Invalid Date that Postgres rejects — a per-request
+  // 500. Bound every knob (mirrors the OTP_LENGTH 4..10 guard) so a fat-fingered env fails fast
+  // at startup, not at runtime. OTP codes are short-lived (cap 1h); sessions may be long (cap
+  // ~10y), well under the Date ceiling; and maxAttempts is capped so an absurd value can't
+  // silently DISABLE the per-code brute-force lockout (the only live attempt cap — Codex #788).
+  if (!Number.isInteger(config.otp.ttlSeconds) || config.otp.ttlSeconds <= 0 || config.otp.ttlSeconds > 3600) {
+    throw new Error(`Invalid OTP_TTL_SECONDS: ${env.OTP_TTL_SECONDS} — must be an integer 1..3600 (seconds)`);
+  }
+  if (!Number.isInteger(config.otp.maxAttempts) || config.otp.maxAttempts <= 0 || config.otp.maxAttempts > 100) {
+    throw new Error(`Invalid OTP_MAX_ATTEMPTS: ${env.OTP_MAX_ATTEMPTS} — must be an integer 1..100`);
+  }
+  if (!Number.isInteger(config.session.ttlSeconds) || config.session.ttlSeconds < 0 || config.session.ttlSeconds > 315_360_000) {
+    throw new Error(`Invalid SESSION_TTL_SECONDS: ${env.SESSION_TTL_SECONDS} — must be an integer 0..315360000 (seconds; 0 = no expiry)`);
+  }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);
   }

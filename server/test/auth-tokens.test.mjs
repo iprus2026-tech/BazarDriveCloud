@@ -9,6 +9,7 @@ import {
   hashOtpCode,
   generateToken,
   generateOtpCode,
+  hashesEqual,
 } from '../src/services/auth/tokens.js';
 
 test('hashToken / hashOtpCode are deterministic 64-char sha256 hex', () => {
@@ -56,4 +57,13 @@ test('generateOtpCode covers leading-zero codes (padStart) and the full range', 
   assert.ok(sawLeadingZero, 'a 4-digit code must sometimes start with 0 (zero-padded)');
   assert.ok(min < 1000, 'codes below 1000 occur (range starts at 0)');
   assert.ok(max >= 1000, 'codes at/above 1000 occur');
+});
+
+test('hashesEqual: true for identical digests, false for different or mismatched-length', () => {
+  const h = hashOtpCode('1234');
+  assert.equal(hashesEqual(h, hashOtpCode('1234')), true, 'same code => equal digests');
+  assert.equal(hashesEqual(h, hashOtpCode('1235')), false, 'different code => not equal');
+  // mismatched length must return false, NOT throw (timingSafeEqual would otherwise throw).
+  assert.equal(hashesEqual(h, 'short'), false, 'mismatched length => false, no throw');
+  assert.equal(hashesEqual('', ''), true, 'equal-length (empty) inputs compare equal');
 });

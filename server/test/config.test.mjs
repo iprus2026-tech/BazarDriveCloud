@@ -111,3 +111,46 @@ test('OTP_LENGTH out of the supported range is rejected at startup (no per-reque
     );
   }
 });
+
+test('OTP_TTL_SECONDS must be an integer in 1..3600 (NaN/<=0/over-ceiling rejected at startup)', () => {
+  // NOTE: parseInt('300abc')->300 by design (matches the existing OTP_LENGTH guard); the
+  // guard's job is rejecting NaN ('abc'), non-positive values, and an absurd over-ceiling value
+  // (e.g. 1e20) that would otherwise overflow Date math into a per-request 500 — not fractional
+  // truncation.
+  for (const bad of ['abc', '0', '-1', '3601', '99999999999999999999']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', OTP_TTL_SECONDS: bad }),
+      /Invalid OTP_TTL_SECONDS/,
+      `expected reject: ${bad}`,
+    );
+  }
+  // the ceiling itself is accepted.
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', OTP_TTL_SECONDS: '3600' }).otp.ttlSeconds, 3600);
+});
+
+test('OTP_MAX_ATTEMPTS must be an integer in 1..100 (NaN/<=0/over-ceiling rejected at startup)', () => {
+  // An absurdly large cap would silently DISABLE the only live brute-force lockout (Codex #788),
+  // so it is bounded like the other knobs.
+  for (const bad of ['abc', '0', '-2', '101', '99999999999999999999']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', OTP_MAX_ATTEMPTS: bad }),
+      /Invalid OTP_MAX_ATTEMPTS/,
+      `expected reject: ${bad}`,
+    );
+  }
+  // the ceiling itself is accepted.
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', OTP_MAX_ATTEMPTS: '100' }).otp.maxAttempts, 100);
+});
+
+test('SESSION_TTL_SECONDS must be an integer in 0..315360000 (NaN/negative/over-ceiling rejected; 0 allowed)', () => {
+  for (const bad of ['abc', '-1', '315360001', '99999999999999999999']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', SESSION_TTL_SECONDS: bad }),
+      /Invalid SESSION_TTL_SECONDS/,
+      `expected reject: ${bad}`,
+    );
+  }
+  // 0 is valid (no expiry modeled); the ceiling itself is accepted.
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', SESSION_TTL_SECONDS: '0' }).session.ttlSeconds, 0);
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development', SESSION_TTL_SECONDS: '315360000' }).session.ttlSeconds, 315360000);
+});
