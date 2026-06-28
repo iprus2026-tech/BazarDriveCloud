@@ -58,3 +58,56 @@ test('production still requires ALLOWED_ORIGIN to be present', () => {
     /Missing required env: ALLOWED_ORIGIN/,
   );
 });
+
+// --- AUTH knobs (BD-DOCS-032; parsed-but-dark until the OTP-verify cutover, R02) ---
+
+test('OTP/session knobs default sensibly (ttl 300, length 4, maxAttempts 5, session ttl 0)', () => {
+  const cfg = loadConfig({ ...base, NODE_ENV: 'development' });
+  assert.equal(cfg.otp.ttlSeconds, 300);
+  assert.equal(cfg.otp.length, 4);
+  assert.equal(cfg.otp.maxAttempts, 5);
+  assert.equal(cfg.session.ttlSeconds, 0, 'no session expiry modeled by default');
+});
+
+test('OTP dev-mode defaults ON outside production, OFF in production', () => {
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'development' }).otp.devMode, true);
+  assert.equal(loadConfig({ ...base, NODE_ENV: 'test' }).otp.devMode, true);
+  assert.equal(
+    loadConfig({ ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io' }).otp.devMode,
+    false,
+  );
+});
+
+test('OTP/session knobs honor explicit env overrides', () => {
+  const cfg = loadConfig({
+    ...base,
+    NODE_ENV: 'development',
+    OTP_TTL_SECONDS: '120',
+    OTP_LENGTH: '6',
+    OTP_MAX_ATTEMPTS: '3',
+    OTP_DEV_MODE: 'false',
+    SESSION_TTL_SECONDS: '86400',
+  });
+  assert.equal(cfg.otp.ttlSeconds, 120);
+  assert.equal(cfg.otp.length, 6);
+  assert.equal(cfg.otp.maxAttempts, 3);
+  assert.equal(cfg.otp.devMode, false, 'explicit OTP_DEV_MODE=false overrides the dev default');
+  assert.equal(cfg.session.ttlSeconds, 86400);
+});
+
+test('OTP dev-mode can be force-enabled in production via OTP_DEV_MODE=true', () => {
+  const cfg = loadConfig({
+    ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io', OTP_DEV_MODE: 'true',
+  });
+  assert.equal(cfg.otp.devMode, true);
+});
+
+test('OTP_LENGTH out of the supported range is rejected at startup (no per-request 500)', () => {
+  for (const bad of ['15', '0', '3', '11', 'abc']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', OTP_LENGTH: bad }),
+      /Invalid OTP_LENGTH/,
+      `expected reject: ${bad}`,
+    );
+  }
+});

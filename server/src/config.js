@@ -26,6 +26,16 @@ export function loadConfig(env = process.env) {
     otp: {
       ttlSeconds: Number.parseInt(env.OTP_TTL_SECONDS ?? '300', 10),
       length: Number.parseInt(env.OTP_LENGTH ?? '4', 10),
+      // Coarse brute-force cap applied by the verify endpoint (R02); no schema threshold.
+      maxAttempts: Number.parseInt(env.OTP_MAX_ATTEMPTS ?? '5', 10),
+      // Dev-mode echoes the minted code in the request response instead of sending SMS (no
+      // provider yet — BD-DOCS-032 open question). On by default outside production.
+      devMode: env.OTP_DEV_MODE != null ? env.OTP_DEV_MODE === 'true' : !isProd,
+    },
+    session: {
+      // 0 = no expiry modeled (auth_session.expires_at stays NULL); lifetime/refresh policy
+      // deferred per BD-DOCS-032. A positive value is the issuer-supplied TTL (R02 reads it).
+      ttlSeconds: Number.parseInt(env.SESSION_TTL_SECONDS ?? '0', 10),
     },
 
     // --- DARK (structured, no Phase-1 consumer — see ADR BD-DOCS-041) ---
@@ -43,6 +53,12 @@ export function loadConfig(env = process.env) {
   if (isProd && !config.allowedOrigin) missing.push('ALLOWED_ORIGIN');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`Invalid PORT: ${env.PORT}`);
+  }
+  // OTP_LENGTH must be a small integer: generateOtpCode uses crypto.randomInt(0, 10**length),
+  // which throws above Node's random ceiling (~2^48, so length >= 15 already overflows). Cap
+  // to a sane OTP range at startup, rather than 500-ing every OTP request later (BD-DOCS-032).
+  if (!Number.isInteger(config.otp.length) || config.otp.length < 4 || config.otp.length > 10) {
+    throw new Error(`Invalid OTP_LENGTH: ${env.OTP_LENGTH} — must be an integer 4..10`);
   }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);
