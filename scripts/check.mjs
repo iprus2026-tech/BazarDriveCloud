@@ -1255,6 +1255,19 @@ if (exists(focusAfterSwapSmoke)) {
   }
 }
 
+// BD-API-CLIENT-01 (R12 of #784) — cross-device backend seam guard: api_config.js +
+// api_client.js stay DARK (default OFF, apiFetch throws BACKEND_DISABLED), touch no
+// Web-Storage, and map non-2xx to the server's { error, code, retryable } shape.
+const apiClientSmoke = path.join(root, 'scripts', 'smoke-api-client.mjs');
+if (exists(apiClientSmoke)) {
+  try {
+    execFileSync(process.execPath, [apiClientSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-api-client.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
