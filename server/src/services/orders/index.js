@@ -11,25 +11,38 @@ import { newOrderId } from '../../infra/ids.js';
 import { serializeOrder } from '../../serialize.js';
 import { insertOrder, listCreatedOrders } from '../../repositories/orders.js';
 
-// A geo point is an optional {lng,lat,label?} object (typed lng/lat columns are deferred to #4).
-// additionalProperties:false — the POINT is stored verbatim into JSONB and re-served on the
-// public feed, so reject stray/oversized keys here (the root body already locks its own keys,
-// but additionalProperties does not recurse). lng/lat are bounded to valid coordinate ranges.
+// A route point. The SHIPPED client stores { id, label } today (order_map_draft.js / composer.js)
+// and the route-picker adds { hint, source, coords }; typed lng/lat geo is #4 (deferred, coords is
+// null today). The EXACT point shape is frozen at the R18 write cutover, so this accepts the
+// current client fields and tolerates forward-compatible additions — NO additionalProperties:false,
+// which would 400 every real createRideOrder payload over its extra `id`/`hint`/`source`/`coords`
+// (Codex #789). The value is stored as opaque JSONB and only `.label` is read by the feed today,
+// so `label` is the one required, bounded field; the rest are length/range-bounded.
 const POINT = {
-  type: ['object', 'null'],
-  additionalProperties: false,
+  type: 'object',
+  required: ['label'],
   properties: {
+    label: { type: 'string', minLength: 1, maxLength: 200 },
+    id: { type: ['string', 'null'], maxLength: 200 },
+    hint: { type: 'string', maxLength: 500 },
+    source: { type: 'string', maxLength: 50 },
+    coords: { type: ['object', 'array', 'null'] },
     lng: { type: 'number', minimum: -180, maximum: 180 },
     lat: { type: 'number', minimum: -90, maximum: 90 },
-    label: { type: 'string', maxLength: 200 },
   },
 };
 
 export default async function ordersService(app) {
   // GET /api/v1/orders — public feed/nearby read. Resolving the viewer is OPTIONAL (anonymous
   // browse is allowed); it only drives the per-viewer isCurrentUser recompute in serializeOrder.
-  app.get('/', async (req) => {
+  app.get('/', async (req, reply) => {
     const viewer = await req.resolveUser();
+    // A token WAS presented but its lookup failed (DB outage) — surface it as retryable, never a
+    // misleading anonymous feed where the owner's own orders read as not-theirs (Codex #789).
+    // Mirrors the /auth/session and POST contracts (plugins/auth.js).
+    if (req.authError) {
+      return reply.code(503).send({ error: 'session lookup failed', code: 'SESSION_LOOKUP_FAILED', retryable: true });
+    }
     const rows = await listCreatedOrders(app.db, { limit: 50 });
     return { items: rows.map((row) => serializeOrder(row, { viewerId: viewer?.userId ?? null })) };
   });
@@ -39,6 +52,9 @@ export default async function ordersService(app) {
     schema: {
       body: {
         type: 'object',
+        // A usable ride order needs both route ends — reject empty/null-route bodies up front
+        // (Codex #789) so an authenticated {} can't publish an unusable CREATED order to the feed.
+        required: ['pickup', 'dropoff'],
         additionalProperties: false,
         properties: {
           type: { type: 'string', enum: ['ride_order', 'passenger_request'] },

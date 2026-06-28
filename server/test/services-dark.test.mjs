@@ -58,16 +58,26 @@ test('auth OTP write endpoints are LIVE (validate, not 501); session read is liv
   assert.equal(session.statusCode, 200);
 });
 
-test('orders #1 is LIVE (validates + auth-gated, not 501)', async () => {
-  // R03 promoted orders live. Provable hermetically (no DB): an invalid body hits the live
-  // schema (400 VALIDATION), and a valid body with NO token hits the live auth gate (401) — the
-  // old dark skeleton would have 501'd either way. The create+list flow is DB-gated (orders-flow).
+test('orders #1 is LIVE (validates, auth-gated, honors authError; not 501)', async () => {
+  // R03 promoted orders live — provable hermetically (no reachable DB here); the old dark skeleton
+  // would have 501'd every case. The create+list flow is DB-gated (orders-flow).
+  // (a) invalid/empty body hits the live schema (400 VALIDATION). Empty {} is rejected because
+  //     pickup+dropoff are required (Codex #789 — no null-route orders).
   const bad = await app.inject({ method: 'POST', url: '/api/v1/orders', payload: { type: 'bogus' } });
   assert.equal(bad.statusCode, 400, 'POST /orders validates (not 501)');
   assert.equal(bad.json().code, 'VALIDATION');
-  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/orders', payload: {} });
+  const empty = await app.inject({ method: 'POST', url: '/api/v1/orders', payload: {} });
+  assert.equal(empty.statusCode, 400, 'empty body rejected (pickup+dropoff required)');
+  // (b) a VALID body with NO token hits the live auth gate (401), pre-DB.
+  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/orders',
+    payload: { pickup: { label: 'A' }, dropoff: { label: 'B' } } });
   assert.equal(noAuth.statusCode, 401, 'POST /orders requires a session (not 501)');
   assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
+  // (c) a token whose lookup fails (DB unreachable here) is a retryable 503 on the public GET too,
+  //     never a misleading anonymous feed (Codex #789).
+  const ge = await app.inject({ method: 'GET', url: '/api/v1/orders', headers: { authorization: 'Bearer x' } });
+  assert.equal(ge.statusCode, 503, 'GET /orders surfaces authError as 503');
+  assert.equal(ge.json().code, 'SESSION_LOOKUP_FAILED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {
