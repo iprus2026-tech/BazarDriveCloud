@@ -126,10 +126,23 @@ expect('passenger commit preserves withdrawn + expired terminal offers',
   !!section
   && /(preserved|verbatim|untouched|stays?)[\s\S]{0,500}status='withdrawn'/i.test(section)
   && /(preserved|verbatim|untouched|stays?)[\s\S]{0,500}status='expired'/i.test(section));
-expect('future passenger commit seeds bazardrive.active_ride.v1 with trip_${order.id}',
+// BD-ORDER-DETAIL-01 OD-MEL-2 (Codex #781): pin the corrected seed attribution
+// PER-ROW, not section-wide. The seed is written by the P3 «Открыть поездку»
+// (open-trip) handoff with status='DRIVER_EN_ROUTE' — NOT by the «Выбрать
+// водителя» select-driver commit (which writes only the order overlay). A
+// section-wide presence check would stay green even if a select-driver summary
+// re-attributed the seed, so each affected row is pinned + a drift guard.
+expect('contract: the active_ride seed is attributed to «Открыть поездку» (open-trip) with DRIVER_EN_ROUTE',
   !!section
   && /bazardrive\.active_ride\.v1/.test(section)
-  && /tripId\s*=\s*trip_\$\{order\.id\}/.test(section));
+  && /tripId\s*=\s*trip_\$\{order\.id\}/.test(section)
+  && /«Открыть поездку»[\s\S]{0,500}status\s*=\s*'DRIVER_EN_ROUTE'/i.test(section));
+expect('contract: the P0 rule states the select-driver commit does NOT seed active_ride',
+  !!section && /select-driver commit \*\*does not\*\* seed\s+`?bazardrive\.active_ride\.v1`?/i.test(section));
+expect('contract: the Order-store-writes «Выбрать водителя» seed cell is None at select time',
+  !!section && /None at select time[\s\S]{0,160}«Выбрать водителя»/i.test(section));
+expect('contract: no select-driver summary still attributes an active-ride seed (OD-MEL-2 drift guard)',
+  !!section && !/→\s*rejected\s*\+\s*active-ride seed/i.test(section));
 
 // ── B. Contract states and terminal affordance pins ──────────────────
 const requiredStates = [
@@ -1792,9 +1805,12 @@ expect('F4e — order.status != ACCEPTED fails canOpenTrip',
     !!seed && seed.selectedDriverId === 'drv-g');
   expect('F4g — seed.selectedOfferId mirrors the chosen offer id',
     !!seed && seed.selectedOfferId === order.offers[0].id);
-  expect('F4g — seed.status is a passenger-supported RIDE_STATUS',
-    !!seed && (seed.status === rideState.RIDE_STATUS.ACCEPTED
-            || seed.status === rideState.RIDE_STATUS.DRIVER_EN_ROUTE));
+  // OD-MEL-2 (Codex #781): the open-trip handoff seed MUST be DRIVER_EN_ROUTE —
+  // ACCEPTED is the order-overlay status, NOT the active-ride seed status. Pin the
+  // runtime so a regression of buildPassengerActiveRideSeed back to ACCEPTED fails
+  // here, independently of the contract wording.
+  expect('F4g — seed.status is DRIVER_EN_ROUTE (open-trip handoff, not ACCEPTED)',
+    !!seed && seed.status === rideState.RIDE_STATUS.DRIVER_EN_ROUTE);
   expect('F4g — seed.passenger.name comes from order.passengerName',
     !!seed && seed.passenger.name === 'Анна М.');
   expect('F4g — seed.driver.name comes from the chosen offer.driverName',
