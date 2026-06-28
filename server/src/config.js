@@ -54,6 +54,12 @@ export function loadConfig(env = process.env) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`Invalid PORT: ${env.PORT}`);
   }
+  // OTP_LENGTH must be a small integer: generateOtpCode uses crypto.randomInt(0, 10**length),
+  // which throws above Node's random ceiling (~2^48, so length >= 15 already overflows). Cap
+  // to a sane OTP range at startup, rather than 500-ing every OTP request later (BD-DOCS-032).
+  if (!Number.isInteger(config.otp.length) || config.otp.length < 4 || config.otp.length > 10) {
+    throw new Error(`Invalid OTP_LENGTH: ${env.OTP_LENGTH} — must be an integer 4..10`);
+  }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);
   }

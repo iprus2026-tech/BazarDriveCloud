@@ -101,3 +101,13 @@ test('OTP dev-mode can be force-enabled in production via OTP_DEV_MODE=true', ()
   });
   assert.equal(cfg.otp.devMode, true);
 });
+
+test('OTP_LENGTH out of the supported range is rejected at startup (no per-request 500)', () => {
+  for (const bad of ['15', '0', '3', '11', 'abc']) {
+    assert.throws(
+      () => loadConfig({ ...base, NODE_ENV: 'development', OTP_LENGTH: bad }),
+      /Invalid OTP_LENGTH/,
+      `expected reject: ${bad}`,
+    );
+  }
+});

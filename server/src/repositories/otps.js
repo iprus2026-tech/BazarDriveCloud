@@ -16,28 +16,35 @@ export async function insertOtp(db, { phone, codeHash, expiresAt, requestedIp = 
   return rows[0];
 }
 
-// The freshest still-usable code for a phone: not consumed, not expired (verify hot path,
-// served by idx_auth_otp_phone_created). Returns the row incl. code_hash for comparison.
+// The phone's most-recent OTP request, returned ONLY if it is still usable (not consumed,
+// not expired). Critically it considers ONLY the newest row (inner LIMIT 1) and THEN filters
+// usability — so a newer request supersedes older codes: once a newer OTP is issued/consumed,
+// an older still-unexpired code can never fall through and re-verify (Codex #787 P1). Expiry
+// is checked on the DB clock. Verify hot path (served by idx_auth_otp_phone_created).
 export async function findLatestLiveOtpByPhone(db, phone) {
   const { rows } = await db.query(
-    `SELECT id, phone, code_hash, expires_at, consumed_at, attempts, created_at
-       FROM auth_otp
-      WHERE phone = $1
-        AND consumed_at IS NULL
-        AND expires_at > now()
-      ORDER BY created_at DESC
-      LIMIT 1`,
+    `SELECT latest.* FROM (
+         SELECT id, phone, code_hash, expires_at, consumed_at, attempts, created_at
+           FROM auth_otp
+          WHERE phone = $1
+          ORDER BY created_at DESC
+          LIMIT 1
+       ) latest
+      WHERE latest.consumed_at IS NULL
+        AND latest.expires_at > now()`,
     [phone],
   );
   return rows[0] ?? null;
 }
 
-// One-time use: stamp consumed_at when a code is accepted. Guarded by consumed_at IS NULL so
-// a double-consume is a no-op (returns the row only if THIS call consumed it).
+// One-time use: stamp consumed_at when a code is accepted. Guarded by consumed_at IS NULL
+// (double-consume is a no-op) AND expires_at > now() — so a code that lapsed between the
+// live read and the consume can never be consumed-and-minted-from (atomic expiry recheck,
+// Codex #787 P2). Returns the row only if THIS call consumed a still-valid code, else null.
 export async function markOtpConsumed(db, id) {
   const { rows } = await db.query(
     `UPDATE auth_otp SET consumed_at = now()
-      WHERE id = $1 AND consumed_at IS NULL
+      WHERE id = $1 AND consumed_at IS NULL AND expires_at > now()
       RETURNING id, consumed_at`,
     [id],
   );

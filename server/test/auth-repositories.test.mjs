@@ -46,27 +46,39 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       const found = await findUserByPhone(db, phone);
       assert.equal(found.id, u1.id);
 
-      // otp: insert -> freshest-live lookup -> attempts bump -> consume removes it from live.
-      const code = generateOtpCode(4);
-      const otp = await insertOtp(db, {
-        phone,
-        codeHash: hashOtpCode(code),
-        expiresAt: new Date(Date.now() + 300_000),
-        requestedIp: '203.0.113.7',
-      });
-      assert.ok(otp.id, 'otp inserted');
-      assert.equal(otp.attempts, 0);
-      const live = await findLatestLiveOtpByPhone(db, phone);
-      assert.equal(live.id, otp.id, 'live lookup returns the fresh otp');
-      assert.equal(live.code_hash, hashOtpCode(code), 'code stored as a hash, comparable');
-      assert.equal(await incrementOtpAttempts(db, otp.id), 1, 'attempts bumps to 1');
-      assert.ok(await markOtpConsumed(db, otp.id), 'first consume succeeds');
-      assert.equal(await markOtpConsumed(db, otp.id), null, 'double-consume is a no-op');
-      assert.equal(await findLatestLiveOtpByPhone(db, phone), null, 'consumed otp is no longer live');
+      // OTP lifecycle. NOTE: now() is frozen for the whole transaction, so created_at is
+      // stamped explicitly to give each row a distinct, deterministic recency.
+      const future = new Date(Date.now() + 300_000);
+      const past = new Date(Date.now() - 60_000);
+      const stampCreatedAt = (id, iso) =>
+        client.query('UPDATE auth_otp SET created_at = $2 WHERE id = $1', [id, iso]);
 
-      // expired otp is also excluded from the live lookup.
-      await insertOtp(db, { phone, codeHash: hashOtpCode('0000'), expiresAt: new Date(Date.now() - 1_000) });
-      assert.equal(await findLatestLiveOtpByPhone(db, phone), null, 'expired otp is not live');
+      // A single fresh OTP: live lookup returns it (hash comparable), attempts bumps.
+      const code = generateOtpCode();
+      const otpA = await insertOtp(db, { phone, codeHash: hashOtpCode(code), expiresAt: future, requestedIp: '203.0.113.7' });
+      await stampCreatedAt(otpA.id, new Date(Date.now() - 120_000).toISOString()); // oldest
+      assert.equal(otpA.attempts, 0);
+      const liveA = await findLatestLiveOtpByPhone(db, phone);
+      assert.equal(liveA.id, otpA.id, 'live lookup returns the fresh otp');
+      assert.equal(liveA.code_hash, hashOtpCode(code), 'code stored & compared as a hash');
+      assert.equal(await incrementOtpAttempts(db, otpA.id), 1, 'attempts bumps to 1');
+
+      // Superseded (Codex #787 P1): a NEWER request wins the live lookup, and consuming the
+      // newest must NOT fall back to the older still-unexpired code.
+      const otpB = await insertOtp(db, { phone, codeHash: hashOtpCode('newer'), expiresAt: future });
+      await stampCreatedAt(otpB.id, new Date(Date.now() - 60_000).toISOString()); // newer than A
+      assert.equal((await findLatestLiveOtpByPhone(db, phone)).id, otpB.id, 'newest request wins');
+      assert.ok(await markOtpConsumed(db, otpB.id), 'consuming the newest succeeds');
+      assert.equal(await markOtpConsumed(db, otpB.id), null, 'double-consume is a no-op');
+      assert.equal(await findLatestLiveOtpByPhone(db, phone), null,
+        'after the newest is consumed, the older superseded code is NOT reachable');
+
+      // Expiry (Codex #787 P2): an expired newest is excluded from the live lookup AND cannot
+      // be consumed even by id (atomic expiry recheck at consume time).
+      const otpC = await insertOtp(db, { phone, codeHash: hashOtpCode('expired'), expiresAt: past });
+      await stampCreatedAt(otpC.id, new Date().toISOString()); // newest
+      assert.equal(await findLatestLiveOtpByPhone(db, phone), null, 'expired newest is not live');
+      assert.equal(await markOtpConsumed(db, otpC.id), null, 'cannot consume an expired otp');
 
       // user becomes server-verified.
       const verified = await markPhoneVerified(db, u1.id);
@@ -79,7 +91,7 @@ test('auth repositories round-trip against real Postgres (rolled back)',
         tokenHash: hashToken(token),
         activeRole: 'passenger',
         phoneVerified: true,
-        otpId: otp.id,
+        otpId: otpB.id,
         expiresAt: null,
       });
       assert.ok(sess.id, 'session minted');
