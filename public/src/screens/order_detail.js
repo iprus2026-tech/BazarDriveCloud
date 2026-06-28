@@ -67,6 +67,17 @@ export const MESSAGE_GUARD_NOTICES = {
   D3: 'Чат поездки будет доступен через активную поездку.',
 };
 
+// BD-ORDER-DETAIL-CHAT-GUARD-01 (passenger parity) — state-aware guard notices
+// for the PASSENGER «Написать» (message-driver) CTA on a P2 driver-offer card.
+// Same product decision as the driver side: no passenger↔driver marketplace
+// chat handoff; chat opens only through the active ride. Keyed by the resolved
+// passenger state (P2 = the offers board, where the CTA renders). The honest
+// default replaces the misleading STUB_TOAST_ACTION («…подключено в 01D»).
+export const PASSENGER_MESSAGE_GUARD_NOTICES = {
+  P2: 'Выберите водителя — чат откроется в активной поездке.',
+};
+export const PASSENGER_MESSAGE_GUARD_DEFAULT = 'Чат с водителем откроется через активную поездку.';
+
 const TS = 1_750_000_000_000;
 
 function offer(overrides = {}) {
@@ -1342,6 +1353,15 @@ function bindEvents(rootEl, initialCtx) {
     // navigate to /chat and never create an order chat thread.
     if (action === 'message-passenger') {
       showNotice(rootEl, MESSAGE_GUARD_NOTICES[ctx.state] || STUB_TOAST_ACTION);
+      return;
+    }
+
+    // BD-ORDER-DETAIL-CHAT-GUARD-01 (passenger parity) — the passenger «Написать»
+    // on a driver-offer card likewise opens no chat (no passenger↔driver
+    // marketplace handoff). Surface an honest, state-aware notice instead of the
+    // generic deferred-write stub; never navigate to /chat or create a thread.
+    if (action === 'message-driver') {
+      showNotice(rootEl, PASSENGER_MESSAGE_GUARD_NOTICES[ctx.state] || PASSENGER_MESSAGE_GUARD_DEFAULT);
       return;
     }
 
