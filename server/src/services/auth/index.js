@@ -11,8 +11,11 @@
 // DISTINCT identity per phone (replacing the old identical pseudo-ids), stamps the phone
 // verified, and mints an opaque bearer session — storing only the token HASH and returning
 // the plaintext exactly once. Each attempt is COUNTED atomically (a single UPDATE) before the
-// compare, so the cap bounds guesses even under a concurrent burst; a generic "invalid or
-// expired code" 401 never reveals whether the phone or code existed (no enumeration oracle).
+// compare, so the cap bounds guesses even under a concurrent burst. A wrong code and an absent
+// code return the SAME generic 401 body (no account-existence oracle); the only residual signal
+// is transient pending-OTP presence (the lock-out 429 / the extra count write), which is
+// self-inducible via the open /otp/request and closes with the request-side rate-limiting noted
+// below (deferred to pre-go-live, BD-DOCS-032).
 import { generateToken, generateOtpCode, hashOtpCode, hashToken, hashesEqual } from './tokens.js';
 import { normalizePhone, isValidPhone } from './phone.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../../repositories/otps.js';
@@ -78,6 +81,11 @@ export default async function authService(app) {
   });
 
   // POST /otp/request — mint + store a hashed code for a phone; dev-mode echoes it.
+  // NOTE (deferred, pre-go-live): this endpoint is intentionally UNTHROTTLED in R02. The
+  // per-code attempt cap (verify) is NOT a per-phone brute-force ceiling — re-requesting mints a
+  // fresh code with attempts=0 — and there is no per-phone/IP rate limit yet (OTP policy is
+  // deferred per BD-DOCS-032; the SMS provider is also still dark). A request-side rate limiter
+  // is a REQUIRED hardening step before real delivery goes live (epic #784, R14/R19).
   app.post('/otp/request', {
     schema: {
       body: {
@@ -157,8 +165,9 @@ export default async function authService(app) {
     }
 
     const otp = await findLatestLiveOtpByPhone(app.db, phone);
-    // Generic for BOTH "no live code" and "wrong code" — never reveal which (no phone/code
-    // enumeration oracle).
+    // Same generic 401 body for "no live code" and "wrong code" — no account-existence oracle.
+    // (A determined probe can still infer transient pending-OTP presence via the 429 lock / the
+    // extra count write; that signal is self-inducible and bounded — see the header note.)
     if (!otp) {
       return problem(reply, 401, 'OTP_INVALID', 'invalid or expired code');
     }
