@@ -1,14 +1,16 @@
-// BD-ORDER-DETAIL-CHAT-GUARD-01 — static regression smoke for the driver
-// «Написать» (message-passenger) state-aware guard notices.
+// BD-ORDER-DETAIL-CHAT-GUARD-01 — static regression smoke for the «Написать»
+// state-aware guard notices on BOTH role sides: the driver message-passenger
+// CTA and the passenger message-driver CTA.
 //
-// Product decision: do NOT create a driver→passenger marketplace chat handoff
-// yet — chat stays responseId-only. The message-passenger CTA (present in the
-// D1/D2/D3 driver bodies) previously fell through to the generic
-// STUB_TOAST_ACTION notice. It now shows a state-aware notice explaining when
-// messaging opens, WITHOUT navigating to /chat or creating any chat thread.
+// Product decision: do NOT create a driver↔passenger marketplace chat handoff
+// yet — chat stays responseId / active-ride only. The driver message-passenger
+// CTA (D1/D2/D3 bodies) and the passenger message-driver CTA (the P2 offer card)
+// both previously fell through to the generic STUB_TOAST_ACTION notice. Each now
+// shows a state-aware notice explaining when messaging opens, WITHOUT navigating
+// to /chat or creating any chat thread.
 //
-// This pins the decision: a refactor that re-points message-passenger at the
-// generic stub, or wires it to /chat / a chat store, would still pass
+// This pins the decision: a refactor that re-points either CTA at the generic
+// stub, or wires it to /chat / a chat store, would still pass
 // `node scripts/check.mjs` without this guard.
 //
 // Intentionally STATIC: reads source and asserts the contract. No DOM, no net.
@@ -46,6 +48,30 @@ expect('D3 notice exact',
 expect('handler does NOT navigate to /chat', !/go\(/.test(handler));
 expect('handler creates no chat thread / store write',
   !/chat/i.test(handler) && !/setItem/.test(handler) && !/saveActiveRide/.test(handler));
+
+// ── PASSENGER PARITY: message-driver «Написать» on the P2 offer card ──
+// Isolate the message-driver handler branch.
+const pStart = od.indexOf("if (action === 'message-driver')");
+const pEnd = pStart >= 0 ? od.indexOf('}', pStart) + 1 : -1;
+const pHandler = pStart >= 0 ? od.slice(pStart, pEnd) : '';
+
+// ── D. dedicated handler, not the generic stub ──────────────
+expect('message-driver has its own handler branch', pStart >= 0);
+expect('handler shows a state-keyed passenger guard notice (not the generic stub fallthrough)',
+  /showNotice\(rootEl,\s*PASSENGER_MESSAGE_GUARD_NOTICES\[ctx\.state\]/.test(pHandler));
+expect('handler falls back to the honest default, NOT STUB_TOAST_ACTION',
+  /PASSENGER_MESSAGE_GUARD_DEFAULT/.test(pHandler) && !/STUB_TOAST_ACTION/.test(pHandler));
+
+// ── E. passenger notices, exact copy ────────────────────────
+expect('P2 notice exact',
+  /P2:\s*'Выберите водителя — чат откроется в активной поездке\.'/.test(od));
+expect('honest default notice exact',
+  /PASSENGER_MESSAGE_GUARD_DEFAULT\s*=\s*'Чат с водителем откроется через активную поездку\.'/.test(od));
+
+// ── F. boundary — no chat handoff invented ──────────────────
+expect('passenger handler does NOT navigate to /chat', !/go\(/.test(pHandler));
+expect('passenger handler creates no chat thread / store write',
+  !/chat/i.test(pHandler) && !/setItem/.test(pHandler) && !/saveActiveRide/.test(pHandler));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
