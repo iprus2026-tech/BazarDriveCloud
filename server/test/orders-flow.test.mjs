@@ -47,11 +47,19 @@ test('order create (auth) -> feed list (public); per-viewer isCurrentUser', { sk
     await app.close();
   });
 
-  // unauthenticated create is refused.
-  assert.equal((await post(app, '/api/v1/orders', { comment: 'x' })).statusCode, 401);
+  // unauthenticated create (even with a valid body) is refused at the auth gate.
+  assert.equal((await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } })).statusCode, 401);
 
-  // mint a session and create an order.
+  // mint a session.
   const me = await mintSession(app, phone);
+
+  // an AUTHENTICATED request still needs a usable route — an incomplete body is 400 VALIDATION,
+  // never a published null-route order (Codex #789).
+  const incomplete = await post(app, '/api/v1/orders', { comment: 'x' }, { authorization: `Bearer ${me.token}` });
+  assert.equal(incomplete.statusCode, 400, 'authenticated create requires pickup+dropoff');
+  assert.equal(incomplete.json().code, 'VALIDATION');
+
+  // create an order.
   const created = await post(app, '/api/v1/orders', {
     type: 'ride_order', source: 'map', comment: 'к центру',
     pickup: { lng: 37.6, lat: 55.7, label: 'Дом' }, dropoff: { lng: 37.7, lat: 55.8, label: 'Центр' },
