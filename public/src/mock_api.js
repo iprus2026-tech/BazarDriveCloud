@@ -4,6 +4,13 @@
 // mock_api.js), so this introduces no circular dependency.
 import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride_state.js';
 
+// BD-API-SEAM-01 (R13 of #784) — the DARK backend seam. isBackendEnabled() is false by
+// default, so apiFetch is never reached today; this proves the one-line guard pattern slots
+// in WITHOUT changing any screen call site. (No circular import: api_config has no imports;
+// api_client imports only api_config.)
+import { isBackendEnabled } from './api_config.js';
+import { apiFetch } from './api_client.js';
+
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
 // All mock posts in this file are seed data from other authors; only
@@ -145,7 +152,26 @@ export function clearMyPostsStore() {
 })();
 
 export async function listFeedPosts() {
+  // DARK cutover seam (R13 of #784): when the backend is ON, the feed is read from the
+  // server of record instead of mock + localStorage — proving the one-line guard pattern
+  // (callers still invoke listFeedPosts() unchanged; note this read is shared by feed.js,
+  // respond.js and post_detail.js via data_layer.loadResource, so the ON blast radius is all
+  // three, not the feed screen alone). The flag is OFF by default, so this
+  // branch never runs today (zero behavior change); if it is ever flipped against a still-501
+  // server, apiFetch throws ApiError and the existing data_layer.loadResource catch raises
+  // the server_error overlay. The orders read targets the planned GET /api/v1/orders service
+  // (R03); the exact feed query + response shape are frozen at the per-read cutover (R18) —
+  // tracked as the #784 feed-endpoint open decision.
+  if (isBackendEnabled()) return normalizeFeedFromApi(await apiFetch('/orders'));
   return mergeFeedAndRideOrderPosts(FEED_POSTS_V2, listRideOrdersAsFeedPosts());
+}
+
+// DARK normalizer for the server feed read (R13 of #784) — best-effort until the orders
+// feed response shape is frozen at cutover (R18). Accepts an array or an { items } envelope.
+// Never executes while the backend flag is OFF.
+function normalizeFeedFromApi(payload) {
+  if (Array.isArray(payload)) return payload;
+  return (payload && Array.isArray(payload.items)) ? payload.items : [];
 }
 
 export function createFeedPost(post) {

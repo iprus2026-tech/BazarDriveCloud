@@ -8,6 +8,11 @@
 // { error, code, retryable } shape; ApiError carries status/code/retryable; and NEITHER
 // module reads localStorage/sessionStorage (so BD-DATA-STATIC-01 stays clean — no new key).
 //
+// Also guards BD-API-SEAM-01 (R13 of #784): the DARK seam wired into mock_api.js calls
+// apiFetch ONLY behind an isBackendEnabled() guard (so the OFF default never fetches and
+// the mock path is intact), and the two now-imported modules are precached with a bumped
+// sw.js VERSION.
+//
 // No network, no DOM. Pure Node.
 
 import fs from 'node:fs';
@@ -112,6 +117,26 @@ expect('ApiError carries status/code/retryable and name=ApiError',
 
 // Don't leak the override (each smoke runs in its own process, but be tidy).
 delete globalThis.__BD_API_BASE__;
+
+// ── R13 (BD-API-SEAM-01): the DARK seam in mock_api.js + precache / VERSION ──
+const mockApiSrc = fs.readFileSync(new URL('../public/src/mock_api.js', import.meta.url), 'utf8');
+const swSrc = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+
+expect('mock_api.js imports isBackendEnabled from api_config',
+  /import\s*\{\s*isBackendEnabled\s*\}\s*from\s*'\.\/api_config\.js'/.test(mockApiSrc));
+expect('mock_api.js imports apiFetch from api_client',
+  /import\s*\{\s*apiFetch\s*\}\s*from\s*'\.\/api_client\.js'/.test(mockApiSrc));
+expect('mock_api.js calls apiFetch ONLY behind an isBackendEnabled() guard (OFF default never fetches)',
+  /if\s*\(isBackendEnabled\(\)\)\s*return[^\n]*await apiFetch\(/.test(mockApiSrc)
+  && (mockApiSrc.match(/apiFetch\(/g) || []).length === 1);
+expect('mock_api.js keeps the mock/localStorage feed path as the OFF fallback',
+  /return mergeFeedAndRideOrderPosts\(/.test(mockApiSrc));
+
+const swVer = Number((swSrc.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0);
+expect('sw.js VERSION bumped to v248+ (mock_api now imports the precached seam modules)', swVer >= 248,
+  `v${swVer}`);
+expect('sw.js precaches api_config.js', /['"]\.\/src\/api_config\.js['"]/.test(swSrc));
+expect('sw.js precaches api_client.js', /['"]\.\/src\/api_client\.js['"]/.test(swSrc));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
