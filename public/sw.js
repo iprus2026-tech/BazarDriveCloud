@@ -1,4 +1,4 @@
-const VERSION    = 'v247';
+const VERSION    = 'v248';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -25,6 +25,8 @@ const PRECACHE = [
   './src/overlay.js',
   './src/storage_boundary.js',
   './src/mock_auth.js',
+  './src/api_config.js',
+  './src/api_client.js',
   './src/mock_api.js',
   './src/sw-update.js',
   './src/daily_communication_store.js',
@@ -126,6 +128,12 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  // BD-API-SEAM-01 (R13 of #784) — never cache backend API reads. If the seam is enabled
+  // with a same-origin base, an /api GET must hit the network every time, not be served
+  // stale from the bazardrive-vNNN cache (which would hide cross-device order/ride changes).
+  // Cross-origin API calls already pass through via the origin check above; this covers the
+  // same-origin case (the only origin the page CSP allows today).
+  if (url.pathname.startsWith('/api/')) return;
   if (url.pathname.includes('/prototypes/')) return;
 
   event.respondWith(

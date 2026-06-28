@@ -4,6 +4,13 @@
 // mock_api.js), so this introduces no circular dependency.
 import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride_state.js';
 
+// BD-API-SEAM-01 (R13 of #784) — the DARK backend seam. isBackendEnabled() is false by
+// default, so apiFetch is never reached today; this proves the one-line guard pattern slots
+// in WITHOUT changing any screen call site. (No circular import: api_config has no imports;
+// api_client imports only api_config.)
+import { isBackendEnabled } from './api_config.js';
+import { apiFetch, ApiError } from './api_client.js';
+
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
 // All mock posts in this file are seed data from other authors; only
@@ -145,7 +152,41 @@ export function clearMyPostsStore() {
 })();
 
 export async function listFeedPosts() {
+  // DARK cutover seam (R13 of #784): when the backend is ON, the feed is read from the
+  // server of record instead of mock + localStorage — proving the one-line guard pattern
+  // (callers still invoke listFeedPosts() unchanged; note this read is shared by feed.js,
+  // respond.js and post_detail.js via data_layer.loadResource, so the ON blast radius is all
+  // three, not the feed screen alone). The flag is OFF by default, so this
+  // branch never runs today (zero behavior change); if it is ever flipped against a still-501
+  // server, apiFetch throws ApiError and the existing data_layer.loadResource catch raises
+  // the server_error overlay. The orders read targets the planned GET /api/v1/orders service
+  // (R03); the exact feed query + response shape are frozen at the per-read cutover (R18) —
+  // tracked as the #784 feed-endpoint open decision.
+  if (isBackendEnabled()) return projectOrdersResponseToFeed(await apiFetch('/orders'));
   return mergeFeedAndRideOrderPosts(FEED_POSTS_V2, listRideOrdersAsFeedPosts());
+}
+
+// Project a server /orders response into RENDERABLE feed posts (R13 of #784). Accepts an
+// array or an { items: [...] } envelope; ANY other 200 shape FAILS LOUD — it throws an
+// ApiError so data_layer.loadResource raises the server_error/retry overlay, instead of
+// silently reporting a valid-but-empty feed (Codex #786). Each row is projected through the
+// canonical rideOrderToFeedPost mapper so the feed renders real cards — never raw,
+// unrenderable order entities (Codex #786). DARK today (flag OFF); the final endpoint + row
+// shape are frozen at the per-read cutover (R18).
+function projectOrdersResponseToFeed(payload) {
+  const rows = Array.isArray(payload) ? payload
+    : (payload && Array.isArray(payload.items)) ? payload.items
+    : null;
+  if (rows === null) {
+    throw new ApiError({ status: 0, code: 'UNEXPECTED_SHAPE', retryable: false,
+      message: 'unexpected /orders feed response shape' });
+  }
+  const out = [];
+  for (const order of rows) {
+    const post = rideOrderToFeedPost(order);
+    if (post) out.push(post);
+  }
+  return out;
 }
 
 export function createFeedPost(post) {
