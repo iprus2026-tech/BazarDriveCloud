@@ -6,7 +6,7 @@
 // Phase-1 surface used by the OTP-verify cutover (R02): findUserByPhone (resolve),
 // upsertUserByPhone (find-or-create an account by phone — created UNVERIFIED), and
 // markPhoneVerified (stamp phone_verified once an OTP is consumed). Profile/role mutation
-// lands with the profile surface. DARK until R02 wires verify — only tests import this today.
+// lands with the profile surface. Wired LIVE by R02 (services/auth/index.js).
 
 export async function findUserByPhone(db, phone) {
   const { rows } = await db.query(

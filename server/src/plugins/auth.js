@@ -10,7 +10,7 @@
 // (repositories/sessions.js), attaching request.user; on a lookup THROW (DB outage) it
 // records request.authError (the live /auth/session endpoint turns that into a retryable
 // error, never a silent logout). The result promise is memoized per request. The token
-// MINTING side (OTP verify) lands with the auth service's write endpoints in the next PR.
+// MINTING side (OTP verify) is live in the auth service's write endpoints (R02).
 import fp from 'fastify-plugin';
 
 import { hashToken } from '../services/auth/tokens.js';
