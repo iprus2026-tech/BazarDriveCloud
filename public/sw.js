@@ -1,4 +1,4 @@
-const VERSION    = 'v245';
+const VERSION    = 'v246';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

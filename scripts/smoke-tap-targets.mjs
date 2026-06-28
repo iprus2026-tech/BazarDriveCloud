@@ -37,6 +37,9 @@ const SELECTORS = [
   '.chat__send',
   '#chat-back',
   '#chat-call',
+  // OD-MEL-3 of #779 — Order Detail back (.od-back, ~22px bare glyph button), the only
+  // chrome nav on /order, rendered on every state; expanded to the >=44px floor.
+  '.od-back',
 ];
 
 // Every control gets the hit-area overlay…

@@ -15884,6 +15884,8 @@ button.pfp-menu-row:active { opacity: 0.7; }
    / phone-edit «Изменить» (unstyled, ~32px) · Driver Map «Принять» (36px, .bd-btn.sm) ·
    trip-confirmation back / shield / party-chat (36px) · chat send (38px) and chat
    back / call (38px, the shared .bd-iconbtn atom — scoped by id, never resized globally).
+   Order Detail back (.od-back, ~22px bare glyph button, OD-MEL-3 of #779) — the only
+   chrome nav on /order, rendered on every state.
    Expand each to a >=44px hit area WITHOUT changing its visual box — a centered,
    transparent overlay grows only the clickable area, so there is zero layout shift
    (this is the recommended technique for small controls in dense rows). */
@@ -15895,6 +15897,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .cf-shield,
 .cf-party-chat,
 .chat__send,
+.od-back,
 #chat-back,
 #chat-call {
   position: relative;
@@ -15907,6 +15910,7 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .cf-shield::after,
 .cf-party-chat::after,
 .chat__send::after,
+.od-back::after,
 #chat-back::after,
 #chat-call::after {
   content: "";
