@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 
 const css = fs.readFileSync(new URL('../public/styles/cloud.css', import.meta.url), 'utf8');
+const dcCss = fs.readFileSync(new URL('../public/styles/daily_communication.css', import.meta.url), 'utf8');
 const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 
 const issues = [];
@@ -53,7 +54,25 @@ expect('the overlay is transparent (content: "" with no background) — no visua
   /::after\s*\{[\s\S]{0,120}content:\s*""/.test(css)
   && !/touch-target a11y[\s\S]{0,400}background/.test(css));
 
-// Precached cloud.css changed → VERSION bumped.
+// ── #777 — Daily Communication touch-target a11y (daily_communication.css) ──
+// .dc-back (38px .bd-iconbtn) + the detail action buttons (.bd-btn.sm, 36px) get
+// the same >=44px transparent ::after hit-area overlay as the #732 batch.
+const DC_SELECTORS = [
+  '.dc-back',
+  '.dc-detail__actions .bd-btn',
+  '.dc-detail__links .bd-btn',
+];
+for (const sel of DC_SELECTORS) {
+  expect(`${sel} gets a >=44px hit-area overlay (::after)`, dcCss.includes(sel + '::after'));
+}
+expect('dc controls anchor the overlay with position: relative',
+  DC_SELECTORS.every((sel) => dcCss.includes(sel + ',') || dcCss.includes(sel + ' {')));
+expect('the dc hit-area overlay enforces the 44px floor (min-width + min-height 44px)',
+  /::after\s*\{[\s\S]{0,260}min-width:\s*44px;[\s\S]{0,60}min-height:\s*44px;/.test(dcCss));
+expect('the dc overlay is transparent (content: "" with no background) — no visual regression',
+  /::after\s*\{[\s\S]{0,120}content:\s*""/.test(dcCss));
+
+// Precached cloud.css / daily_communication.css changed → VERSION bumped.
 expect('sw.js VERSION bumped to v222+',
   Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 222);
 
