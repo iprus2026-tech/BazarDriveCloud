@@ -26,6 +26,16 @@ export function loadConfig(env = process.env) {
     otp: {
       ttlSeconds: Number.parseInt(env.OTP_TTL_SECONDS ?? '300', 10),
       length: Number.parseInt(env.OTP_LENGTH ?? '4', 10),
+      // Coarse brute-force cap applied by the verify endpoint (R02); no schema threshold.
+      maxAttempts: Number.parseInt(env.OTP_MAX_ATTEMPTS ?? '5', 10),
+      // Dev-mode echoes the minted code in the request response instead of sending SMS (no
+      // provider yet — BD-DOCS-032 open question). On by default outside production.
+      devMode: env.OTP_DEV_MODE != null ? env.OTP_DEV_MODE === 'true' : !isProd,
+    },
+    session: {
+      // 0 = no expiry modeled (auth_session.expires_at stays NULL); lifetime/refresh policy
+      // deferred per BD-DOCS-032. A positive value is the issuer-supplied TTL (R02 reads it).
+      ttlSeconds: Number.parseInt(env.SESSION_TTL_SECONDS ?? '0', 10),
     },
 
     // --- DARK (structured, no Phase-1 consumer — see ADR BD-DOCS-041) ---
