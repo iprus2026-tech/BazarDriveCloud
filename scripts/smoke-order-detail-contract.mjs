@@ -126,10 +126,18 @@ expect('passenger commit preserves withdrawn + expired terminal offers',
   !!section
   && /(preserved|verbatim|untouched|stays?)[\s\S]{0,500}status='withdrawn'/i.test(section)
   && /(preserved|verbatim|untouched|stays?)[\s\S]{0,500}status='expired'/i.test(section));
-expect('future passenger commit seeds bazardrive.active_ride.v1 with trip_${order.id}',
+// BD-ORDER-DETAIL-01 OD-MEL-2: the active_ride seed is written by the P3
+// «Открыть поездку» (open-trip) handoff with status='DRIVER_EN_ROUTE' — NOT by
+// the «Выбрать водителя» select-driver commit (which writes only the order
+// overlay). Pins the corrected attribution + status against the runtime
+// (buildPassengerActiveRideSeed → RIDE_STATUS.DRIVER_EN_ROUTE; saveActiveRide
+// only in the open-trip handler) so the stale «commit seeds ... ACCEPTED»
+// contract text cannot return.
+expect('contract attributes the active_ride seed to «Открыть поездку» (open-trip) with status DRIVER_EN_ROUTE, not the select-driver commit',
   !!section
   && /bazardrive\.active_ride\.v1/.test(section)
-  && /tripId\s*=\s*trip_\$\{order\.id\}/.test(section));
+  && /tripId\s*=\s*trip_\$\{order\.id\}/.test(section)
+  && /«Открыть поездку»[\s\S]{0,500}status\s*=\s*'DRIVER_EN_ROUTE'/i.test(section));
 
 // ── B. Contract states and terminal affordance pins ──────────────────
 const requiredStates = [
