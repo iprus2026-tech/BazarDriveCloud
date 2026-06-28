@@ -194,9 +194,10 @@ export default async function authService(app) {
     }
 
     // Correct code: consume + identity + session, atomically. markOtpConsumed re-checks
-    // not-consumed AND not-expired in the same statement, so if a concurrent verify already
-    // consumed it (or it lapsed between the live read and now) it returns null, we roll the
-    // whole tx back, and NO session is minted from an already-used/expired code.
+    // not-consumed, not-expired, AND not-superseded (no strictly-newer code for the phone) in one
+    // atomic statement — so if the code was consumed / expired / replaced between our live read
+    // and now, it returns null, we roll the whole tx back, and NO session is minted from an
+    // already-used / expired / superseded code (Codex #787 P2, #788).
     const expiresAt = (config.session?.ttlSeconds ?? 0) > 0
       ? new Date(Date.now() + config.session.ttlSeconds * 1000)
       : null;

@@ -37,14 +37,22 @@ export async function findLatestLiveOtpByPhone(db, phone) {
   return rows[0] ?? null;
 }
 
-// One-time use: stamp consumed_at when a code is accepted. Guarded by consumed_at IS NULL
-// (double-consume is a no-op) AND expires_at > now() — so a code that lapsed between the
-// live read and the consume can never be consumed-and-minted-from (atomic expiry recheck,
-// Codex #787 P2). Returns the row only if THIS call consumed a still-valid code, else null.
+// One-time use, supersede-safe: stamp consumed_at when a code is accepted. Guarded by
+// consumed_at IS NULL (double-consume is a no-op), expires_at > now() (atomic expiry recheck,
+// Codex #787 P2), AND that no STRICTLY-NEWER code exists for the SAME phone — so if the caller's
+// live read went stale because a replacement OTP was requested mid-verify, this consume returns
+// null instead of authenticating a just-superseded code (Codex #788). The supersession recheck
+// keys off the target row's OWN phone (self-contained) and runs in the same atomic UPDATE as the
+// consume, closing the read→consume TOCTOU. Returns the row only if THIS call consumed the
+// still-latest, still-valid code, else null.
 export async function markOtpConsumed(db, id) {
   const { rows } = await db.query(
     `UPDATE auth_otp SET consumed_at = now()
       WHERE id = $1 AND consumed_at IS NULL AND expires_at > now()
+        AND NOT EXISTS (
+          SELECT 1 FROM auth_otp newer
+           WHERE newer.phone = auth_otp.phone AND newer.created_at > auth_otp.created_at
+        )
       RETURNING id, consumed_at`,
     [id],
   );
