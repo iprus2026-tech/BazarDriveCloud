@@ -9,7 +9,7 @@ import { findActiveRide, loadActiveRideStore, saveActiveRideStore } from './ride
 // in WITHOUT changing any screen call site. (No circular import: api_config has no imports;
 // api_client imports only api_config.)
 import { isBackendEnabled } from './api_config.js';
-import { apiFetch } from './api_client.js';
+import { apiFetch, ApiError } from './api_client.js';
 
 // ── Ownership marker for locally created posts ────────────────
 // Used by BD-PROFILE-MY-POSTS-01 to identify "Мои публикации".
@@ -162,16 +162,31 @@ export async function listFeedPosts() {
   // the server_error overlay. The orders read targets the planned GET /api/v1/orders service
   // (R03); the exact feed query + response shape are frozen at the per-read cutover (R18) —
   // tracked as the #784 feed-endpoint open decision.
-  if (isBackendEnabled()) return normalizeFeedFromApi(await apiFetch('/orders'));
+  if (isBackendEnabled()) return projectOrdersResponseToFeed(await apiFetch('/orders'));
   return mergeFeedAndRideOrderPosts(FEED_POSTS_V2, listRideOrdersAsFeedPosts());
 }
 
-// DARK normalizer for the server feed read (R13 of #784) — best-effort until the orders
-// feed response shape is frozen at cutover (R18). Accepts an array or an { items } envelope.
-// Never executes while the backend flag is OFF.
-function normalizeFeedFromApi(payload) {
-  if (Array.isArray(payload)) return payload;
-  return (payload && Array.isArray(payload.items)) ? payload.items : [];
+// Project a server /orders response into RENDERABLE feed posts (R13 of #784). Accepts an
+// array or an { items: [...] } envelope; ANY other 200 shape FAILS LOUD — it throws an
+// ApiError so data_layer.loadResource raises the server_error/retry overlay, instead of
+// silently reporting a valid-but-empty feed (Codex #786). Each row is projected through the
+// canonical rideOrderToFeedPost mapper so the feed renders real cards — never raw,
+// unrenderable order entities (Codex #786). DARK today (flag OFF); the final endpoint + row
+// shape are frozen at the per-read cutover (R18).
+function projectOrdersResponseToFeed(payload) {
+  const rows = Array.isArray(payload) ? payload
+    : (payload && Array.isArray(payload.items)) ? payload.items
+    : null;
+  if (rows === null) {
+    throw new ApiError({ status: 0, code: 'UNEXPECTED_SHAPE', retryable: false,
+      message: 'unexpected /orders feed response shape' });
+  }
+  const out = [];
+  for (const order of rows) {
+    const post = rideOrderToFeedPost(order);
+    if (post) out.push(post);
+  }
+  return out;
 }
 
 export function createFeedPost(post) {

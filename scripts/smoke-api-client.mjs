@@ -124,8 +124,8 @@ const swSrc = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8
 
 expect('mock_api.js imports isBackendEnabled from api_config',
   /import\s*\{\s*isBackendEnabled\s*\}\s*from\s*'\.\/api_config\.js'/.test(mockApiSrc));
-expect('mock_api.js imports apiFetch from api_client',
-  /import\s*\{\s*apiFetch\s*\}\s*from\s*'\.\/api_client\.js'/.test(mockApiSrc));
+expect('mock_api.js imports apiFetch + ApiError from api_client',
+  /import\s*\{[^}]*\bapiFetch\b[^}]*\bApiError\b[^}]*\}\s*from\s*'\.\/api_client\.js'/.test(mockApiSrc));
 expect('mock_api.js calls apiFetch ONLY behind an isBackendEnabled() guard (OFF default never fetches)',
   /if\s*\(isBackendEnabled\(\)\)\s*return[^\n]*await apiFetch\(/.test(mockApiSrc)
   && (mockApiSrc.match(/apiFetch\(/g) || []).length === 1);
@@ -137,6 +137,39 @@ expect('sw.js VERSION bumped to v248+ (mock_api now imports the precached seam m
   `v${swVer}`);
 expect('sw.js precaches api_config.js', /['"]\.\/src\/api_config\.js['"]/.test(swSrc));
 expect('sw.js precaches api_client.js', /['"]\.\/src\/api_client\.js['"]/.test(swSrc));
+expect('sw.js bypasses /api (never cached) — keeps a same-origin seam read fresh (Codex #786)',
+  /url\.pathname\.startsWith\(\s*['"]\/api\//.test(swSrc));
+
+// ── R13 behavioural (Codex #786 fixes): listFeedPosts projects valid order rows, rejects
+// unexpected shapes (fails loud, no silent empty), and the OFF default never fetches. ──
+const mapi = await import(new URL('../public/src/mock_api.js', import.meta.url));
+const okShape = async (payload) => ({ ok: true, status: 200, async text() { return JSON.stringify(payload); } });
+
+delete globalThis.__BD_API_BASE__;
+globalThis.fetch = () => { throw new Error('listFeedPosts must not fetch while the backend is OFF'); };
+const offFeed = await mapi.listFeedPosts();
+expect('OFF: listFeedPosts returns the mock feed and issues no fetch', Array.isArray(offFeed) && offFeed.length > 0);
+
+globalThis.__BD_API_BASE__ = 'https://api.example.com';
+const orderRow = { id: 'ord-1', status: 'CREATED', pickup: 'A', dropoff: 'B', createdAt: '2026-06-28T00:00:00Z' };
+
+globalThis.fetch = () => okShape([orderRow]);
+const onArray = await mapi.listFeedPosts();
+expect('ON: an order array is projected to renderable feed posts (type=trip via rideOrderToFeedPost)',
+  Array.isArray(onArray) && onArray.length === 1 && onArray[0].type === 'trip' && onArray[0].canonical === 'ride_order');
+
+globalThis.fetch = () => okShape({ items: [orderRow] });
+const onItems = await mapi.listFeedPosts();
+expect('ON: the { items: [...] } envelope is also projected',
+  Array.isArray(onItems) && onItems.length === 1 && onItems[0].type === 'trip');
+
+globalThis.fetch = () => okShape({ orders: [orderRow] }); // unexpected envelope
+let shapeErr = null;
+try { await mapi.listFeedPosts(); } catch (e) { shapeErr = e; }
+expect('ON: an unexpected 200 feed shape FAILS LOUD (throws ApiError, never a silent empty feed)',
+  shapeErr instanceof cli.ApiError && shapeErr.code === 'UNEXPECTED_SHAPE');
+
+delete globalThis.__BD_API_BASE__;
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
