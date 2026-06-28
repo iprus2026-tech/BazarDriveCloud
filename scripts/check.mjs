@@ -1241,6 +1241,20 @@ if (exists(orderDetailChatGuardSmoke)) {
   }
 }
 
+// BD-A11Y-FOCUS-SWAP-01 (OD-MEL-4 of #779) — focus-after-content-swap guard.
+// Pins that Order Detail's rerenderInPlace moves focus into the new content after
+// replaceChildren, and scans all of public/src so a NEW full-root content swap can't
+// ship without restoring focus (or a tracked KNOWN_GAP).
+const focusAfterSwapSmoke = path.join(root, 'scripts', 'smoke-focus-after-swap.mjs');
+if (exists(focusAfterSwapSmoke)) {
+  try {
+    execFileSync(process.execPath, [focusAfterSwapSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-focus-after-swap.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

@@ -850,6 +850,16 @@ function rerenderInPlace(rootEl, ctx) {
     if (tb) tb.hidden = false;
   }
   rootEl.replaceChildren(...Array.from(next.childNodes));
+  // OD-MEL-4 (#779) — a full-body swap removes the activated control from the DOM;
+  // without focus management document.activeElement falls back to <body>, breaking
+  // keyboard / screen-reader continuity (the .od-notice aria-live still announces the
+  // result, but focus position is lost). Move focus INTO the new content: the primary
+  // ENABLED action, else any enabled action, else the always-present back control
+  // (:not([disabled]) so a disabled primary can't swallow focus into a no-op).
+  const focusTarget = rootEl.querySelector('.od-action.primary:not([disabled])')
+    || rootEl.querySelector('.od-action:not([disabled])')
+    || rootEl.querySelector('.od-back');
+  if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
   // The order/state captured in the click closure must follow the new
   // state so subsequent clicks see the up-to-date values.
   ctx.order = order;
