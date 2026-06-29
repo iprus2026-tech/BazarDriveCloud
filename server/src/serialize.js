@@ -178,6 +178,18 @@ export function serializeReceipt(row, { tripId = null } = {}) {
   };
 }
 
+// Project a ride_events row for the realtime poll (#9 read seam, R09). `at` is the cursor the
+// client echoes back; payload carries the event specifics (e.g. {from,to} for a status_change).
+export function serializeRideEvent(row) {
+  if (!row) return null;
+  return {
+    type: row.type,
+    role: row.role ?? null,
+    at: toIso(row.at),
+    payload: row.payload ?? null,
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);
