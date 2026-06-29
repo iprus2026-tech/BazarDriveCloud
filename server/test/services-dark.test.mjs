@@ -23,12 +23,12 @@ const config = {
 const app = await buildApp({ config });
 after(() => app.close());
 
-// auth (R02), orders #1 (R03), matching #3 (R04/R05) and ride-state #5 (R06) are LIVE; rest dark.
-const LIVE = new Set(['auth', 'orders', 'matching', 'ride-state']);
+// auth (R02), orders (R03), matching (R04/R05), ride-state (R06), history #8 (R08) are LIVE; rest dark.
+const LIVE = new Set(['auth', 'orders', 'matching', 'ride-state', 'history']);
 const DARK = SERVICES.map((s) => s.name).filter((n) => !LIVE.has(n));
 
 test('every still-dark service returns 501 NOT_IMPLEMENTED at its prefix', async () => {
-  assert.equal(DARK.length, 5, 'five dark services expected (ride-state #5 went live in R06)');
+  assert.equal(DARK.length, 4, 'four dark services expected (history #8 went live in R08)');
   for (const name of DARK) {
     const res = await app.inject({ method: 'GET', url: `/api/v1/${name}` });
     assert.equal(res.statusCode, 501, `${name} root status`);
@@ -117,6 +117,21 @@ test('ride-state #5 is LIVE (validates + auth-gated + authError; not 501)', asyn
   const getErr = await app.inject({ method: 'GET', url: '/api/v1/ride-state/rides/trip-x', headers: { authorization: 'Bearer x' } });
   assert.equal(getErr.statusCode, 503, 'GET surfaces authError as 503');
   assert.equal(getErr.json().code, 'SESSION_LOOKUP_FAILED');
+});
+
+test('history #8 is LIVE (validates + auth-gated, not 501)', async () => {
+  // R08 promoted #8 live. Hermetic (no DB): GET /history with no token -> 401 (auth, pre-DB); a
+  // receipt POST with a missing body -> 400 VALIDATION; a valid receipt body with no token -> 401.
+  const getNoAuth = await app.inject({ method: 'GET', url: '/api/v1/history' });
+  assert.equal(getNoAuth.statusCode, 401, 'GET /history requires a session (not 501)');
+  assert.equal(getNoAuth.json().code, 'UNAUTHENTICATED');
+  const bad = await app.inject({ method: 'POST', url: '/api/v1/history/receipts', payload: {} });
+  assert.equal(bad.statusCode, 400, 'POST /receipts validates (not 501)');
+  assert.equal(bad.json().code, 'VALIDATION');
+  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/history/receipts',
+    payload: { tripId: 'trip-x', fare: 800, commission: -100, tip: 0, net: 700 } });
+  assert.equal(noAuth.statusCode, 401, 'POST /receipts requires a session');
+  assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {
