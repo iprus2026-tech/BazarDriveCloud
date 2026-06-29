@@ -20,6 +20,7 @@ import realtimePlugin from './plugins/realtime.js';
 import healthRoutes from './routes/health.js';
 import metricsRoutes from './routes/metrics.js';
 import { SERVICES } from './services/index.js';
+import chatService from './services/chat/index.js';
 
 export async function buildApp(overrides = {}) {
   const config = overrides.config || loadConfig();
@@ -56,6 +57,10 @@ export async function buildApp(overrides = {}) {
   for (const svc of SERVICES) {
     await app.register(svc.plugin, { prefix: `/api/v1/${svc.name}` });
   }
+
+  // Chat (#784 R07) — its own route group, NOT one of the 9 Mini-Yonder services. Intentionally
+  // not 401-gated (the minimal cross-device proof; see services/chat/index.js).
+  await app.register(chatService, { prefix: '/api/v1/chat' });
 
   return app;
 }

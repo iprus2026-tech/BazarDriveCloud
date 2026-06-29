@@ -190,6 +190,21 @@ export function serializeRideEvent(row) {
   };
 }
 
+// Project a messages row for the #784 R07 chat thread. client_msg_id is BIGINT (node-pg returns it
+// as a string) — surfaced as a Number (the route bounds it to MAX_SAFE_INTEGER, so this is lossless).
+export function serializeMessage(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    senderRole: row.sender_role ?? null,
+    clientMsgId: row.client_msg_id == null ? null : Number(row.client_msg_id),
+    body: row.body,
+    displayTime: row.display_time ?? null,
+    createdAt: toIso(row.created_at),
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);
