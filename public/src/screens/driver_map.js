@@ -19,6 +19,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import { listNearbyOrders, createRideOrder } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 import { acceptCanonicalRideOrder } from '../ride_actions.js';
+import { isBackendEnabled } from '../api_config.js';
 import { user, isDriverLineReady } from '../state.js';
 import { getSmokeRole } from '../smoke_role.js';
 
@@ -568,6 +569,18 @@ export default async function driverMapScreen() {
     if (acceptedBadge && typeof acceptedBadge.focus === 'function') acceptedBadge.focus();
   }
 
+  // #784 CUT-3: a transient honest "not yet" notice. Reuses the existing driver-map__banner class
+  // (no inline styles — the repo forbids .style assignments; no CSS-file change) + role=alert so it
+  // is announced; auto-dismissed.
+  function showDriverNotice(msg) {
+    const el = document.createElement('div');
+    el.className = 'driver-map__banner';
+    el.setAttribute('role', 'alert');
+    el.textContent = msg;
+    root.appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+  }
+
   root.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.disabled) return;
@@ -590,10 +603,14 @@ export default async function driverMapScreen() {
       const result = acceptCanonicalRideOrder(id, { acceptedSource: 'driver_map' });
       if (result) {
         renderAccepted(result.order, result.tripId);
+      } else if (isBackendEnabled()) {
+        // #784 CUT-3: a backend-only order (from GET /orders) isn't in the local store the accept path
+        // mutates; real server-side accept is CUT-4 (matching). Don't dead-end to the passenger
+        // /order-map-draft route (the router bounces a driver back) — show an honest notice.
+        showDriverNotice('Приём заказов с сервера появится в следующем обновлении.');
       } else {
-        // Stale row (e.g. already accepted in another tab) — route
-        // to the order draft flow so the driver can publish a fresh
-        // local order to accept.
+        // Stale local row (e.g. already accepted in another tab) — route to the order draft flow so
+        // the driver can publish a fresh local order to accept.
         go('/order-map-draft');
       }
     } else if (action === 'complete-readiness') {
@@ -615,6 +632,9 @@ export default async function driverMapScreen() {
       await createRideOrder({
         type: 'passenger_request',
         source: 'map',
+        // #784 CUT-3: a driver TEST order stays LOCAL even when the backend is on — it must not
+        // pollute the shared server (createdByRole isn't sent over POST).
+        local: true,
         // #717 — driver-surface TEST order: must NOT count toward the driver's
         // completed-passenger-trip metric (countCompletedPassengerTrips).
         createdByRole: 'driver',

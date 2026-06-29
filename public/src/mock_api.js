@@ -550,10 +550,14 @@ export async function createRideOrder(input = {}) {
     status: 'CREATED',
     createdAt: new Date().toISOString(),
   };
-  // #784 CUT-3: on a live backend, POST the order and return the server's authoritative copy
-  // (its id/passenger.isCurrentUser/etc.). A rejected POST propagates to the caller (handlePublish
-  // surfaces it, no success card). When the backend is OFF this is the unchanged local-mock path.
-  if (isBackendEnabled()) {
+  // #784 CUT-3: a driver-surface TEST order (createdByRole 'driver') or any input.local stays on the
+  // LOCAL mock path even when the backend is on — it must NOT pollute the shared server (its
+  // createdByRole marker isn't sent over POST, so the server would expose it as a normal order).
+  const localOnly = input.local === true || order.createdByRole === 'driver';
+  // On a live backend, POST the order and return the server's authoritative copy (its
+  // id/passenger.isCurrentUser/etc.). A rejected POST propagates to the caller (handlePublish
+  // surfaces it, no success card). When the backend is OFF (or localOnly) this is the local-mock path.
+  if (isBackendEnabled() && !localOnly) {
     const r = await apiFetch('/orders', {
       method: 'POST',
       body: {
@@ -572,6 +576,10 @@ export async function createRideOrder(input = {}) {
         passenger: order.passenger,
       },
     });
+    // Bridge the server order into the local store (transitional) so local reads — getOrderById /
+    // the passenger's own feed / the post-create /responses CTA — find the just-created order until
+    // those reads cut over (CUT-4). Cleared on logout with the rest of bazardrive.ride_orders.v1.
+    persistRideOrders([r.order, ...loadRideOrdersRaw()]);
     return r.order;
   }
   const list = [order, ...loadRideOrdersRaw()];
@@ -583,7 +591,12 @@ export async function listNearbyOrders() {
   // #784 CUT-3: on a live backend, the nearby/feed read is the server's CREATED orders.
   if (isBackendEnabled()) {
     const r = await apiFetch('/orders');
-    return (r.items || []).filter((o) => o && o.status === 'CREATED');
+    // Fail LOUD on a malformed envelope (matches the feed cutover) so loadResource shows the retry
+    // overlay instead of masking a contract break as an empty DriverMap.
+    if (!Array.isArray(r.items)) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed /orders response' });
+    }
+    return r.items.filter((o) => o && o.status === 'CREATED');
   }
   return loadRideOrdersRaw()
     .filter((o) => o && o.status === 'CREATED' && !o.demo)

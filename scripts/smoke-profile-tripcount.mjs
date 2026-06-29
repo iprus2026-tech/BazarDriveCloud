@@ -43,7 +43,7 @@ expect('createRideOrder stamps a createdByRole origin marker (driver vs passenge
 expect('the count EXCLUDES driver-created orders (createdByRole !== driver)',
   /createdByRole\s*!==\s*'driver'/.test(fnBody));
 expect('driver_map «Создать тестовый заказ» marks the test order createdByRole: driver',
-  /createRideOrder\(\{[\s\S]{0,400}?createdByRole:\s*'driver'/.test(driverMap));
+  /createRideOrder\(\{[\s\S]{0,600}?createdByRole:\s*'driver'/.test(driverMap));
 expect('it scopes a weekly count to the last 7 days (by statusUpdatedAt)',
   /7\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(fnBody)
   && /statusUpdatedAt/.test(fnBody));
