@@ -111,6 +111,9 @@ export function serializeRide(row) {
       etaToPickup: row.route_eta_to_pickup ?? null,
       etaToDestination: row.route_eta_to_destination ?? null,
     },
+    order: {
+      offerPrice: row.order_offer_price ?? null, // the agreed fare (accepted offer's bid, R10)
+    },
     cancel: {
       by: row.cancel_by ?? null,
       reason: row.cancel_reason ?? null,

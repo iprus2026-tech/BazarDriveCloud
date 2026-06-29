@@ -35,12 +35,10 @@ export async function findOrderByLegacyId(db, legacyId) {
 
 // Resolve + ROW-LOCK an order by legacy id inside a transaction (SELECT … FOR UPDATE). The
 // transactional accept (/select, R05) locks the order first so concurrent selects serialize: the
-// loser waits, then re-reads the now-ACCEPTED row and is rejected. Returns null if no such order.
+// loser waits, then re-reads the now-ACCEPTED row and is rejected. Returns the FULL row (R10 reads
+// passenger_snapshot/pickup/dropoff off it to seed the bootstrapped ride). Null if no such order.
 export async function lockOrderByLegacyId(db, legacyId) {
-  const { rows } = await db.query(
-    `SELECT id, legacy_id, passenger_id, status FROM orders WHERE legacy_id = $1 FOR UPDATE`,
-    [legacyId],
-  );
+  const { rows } = await db.query(`SELECT * FROM orders WHERE legacy_id = $1 FOR UPDATE`, [legacyId]);
   return rows[0] ?? null;
 }
 

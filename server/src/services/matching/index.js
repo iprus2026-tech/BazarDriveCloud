@@ -10,10 +10,54 @@
 // (no role grants flow until R17); R04 requires authentication, not a specific role. The PWA write
 // cutover is R18; until then only this server + tests exercise these routes.
 import { newOfferId } from '../../infra/ids.js';
-import { serializeOffer, serializeOrder, serializeAssignment } from '../../serialize.js';
+import { serializeOffer, serializeOrder, serializeAssignment, serializeRide } from '../../serialize.js';
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
+import { bootstrapRide, findRideByTripId } from '../../repositories/rides.js';
+
+// Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
+// client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
+function formatRub(numeric) {
+  const n = Number(numeric);
+  return Number.isFinite(n) ? `${n.toLocaleString('ru-RU')} ₽` : null;
+}
+
+// Project the accepted order + offer into the ride seed (R10). This is the PASSENGER-select path, so
+// it mirrors the client's buildPassengerActiveRide (responses.js): the agreed fare comes from the
+// ACCEPTED driver's bid (offer.price), falling back to the order's estimate only when the offer
+// carried no price — `driver.price || request.price`. tripId = trip_<orderId>; route labels off the
+// order points; the passenger from the order's stored snapshot (neutral 'Пассажир' when absent); the
+// driver name/car/rating from the accepted offer. Status DRIVER_EN_ROUTE = the select handoff status.
+function buildRideSeed(order, offer) {
+  const snap = (order.passenger_snapshot && typeof order.passenger_snapshot === 'object') ? order.passenger_snapshot : {};
+  const name = typeof snap.name === 'string' && snap.name.trim() ? snap.name.trim() : 'Пассажир';
+  const initials = typeof snap.initials === 'string' && snap.initials.trim() ? snap.initials.trim() : name.charAt(0).toUpperCase();
+  const label = (point, fallback) => (point && typeof point.label === 'string' && point.label.trim() ? point.label.trim() : fallback);
+  // Agreed fare: the accepted offer's bid wins over the passenger's original estimate (Codex/#784 R10).
+  const price = offer.price != null ? formatRub(offer.price) : (order.estimated_price_label || null);
+  return {
+    tripId: `trip_${order.legacy_id}`,
+    orderId: order.id,
+    status: 'DRIVER_EN_ROUTE',
+    role: 'passenger',
+    driverUserId: offer.driver_id,
+    passengerUserId: order.passenger_id,
+    passengerName: name,
+    passengerInitials: initials,
+    passengerPhoneMasked: typeof snap.phoneMasked === 'string' ? snap.phoneMasked : null,
+    passengerNote: typeof snap.comment === 'string' ? snap.comment : (order.comment ?? null),
+    driverName: offer.driver_name ?? null,
+    driverCar: offer.car ?? null,
+    driverRating: offer.rating ?? null,
+    routePickupLabel: label(order.pickup, 'Точка подачи'),
+    routeDropoffLabel: label(order.dropoff, 'Точка назначения'),
+    // Both order.offerPrice and ride.price carry the agreed bid (mirrors buildPassengerActiveRide),
+    // so the history fare COALESCE(payment_amount, ride_price, order_offer_price) reads it correctly.
+    orderOfferPrice: price,
+    ridePrice: price,
+  };
+}
 
 const OFFER_TTL_MIN = 15; // mirrors the client DEFAULT_OFFER_TTL_MIN
 
@@ -152,7 +196,12 @@ export default async function matchingService(app) {
       await rejectPeerOffers(client, order.id, driverId);
       const assignment = await insertAssignment(client, { orderId: order.id, selectedDriverId: driverId });
       const updatedOrder = await markOrderAccepted(client, order.id);
-      return { ok: { order: updatedOrder, accepted, assignment } };
+      // R10 — assignment->ride bootstrap: mint the rides row in the SAME tx so accept and ride
+      // creation are atomic (no order is ACCEPTED without its ride). The ride is what /ride-state
+      // (R06), chat-by-trip (R07) and history (R08) key off.
+      let ride = await bootstrapRide(client, buildRideSeed(order, accepted));
+      if (!ride) ride = await findRideByTripId(client, `trip_${order.legacy_id}`);
+      return { ok: { order: updatedOrder, accepted, assignment, ride } };
     });
 
     if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);
@@ -160,6 +209,7 @@ export default async function matchingService(app) {
       order: serializeOrder(result.ok.order, { viewerId: viewer.userId }),
       offer: serializeOffer(result.ok.accepted, { orderLegacyId: orderId }),
       assignment: serializeAssignment(result.ok.assignment, { orderLegacyId: orderId }),
+      ride: serializeRide(result.ok.ride),
     });
   });
 }
