@@ -11,9 +11,10 @@
 //   - the CSP `connect-src` relax PR (R14) must allow that exact https origin;
 //   - the server must set a matching exact-origin CORS ALLOWED_ORIGIN.
 //
-// NO Web-Storage access here (keeps the BD-DATA-STATIC-01 gate clean); the real
-// session-token source lands with the auth-token cutover (R17) — getSessionToken() is
-// null until then.
+// NO Web-Storage access here (keeps the BD-DATA-STATIC-01 gate clean) — the session token is owned
+// by auth_token.js (R17 / CUT-2), which does the localStorage access; getSessionToken() just
+// delegates, so apiFetch attaches the Bearer header once a real session is minted.
+import { getAuthToken } from './auth_token.js';
 
 // Optional runtime override a build step / devtools may set. Absent in production today
 // (CSP forbids inline injection), so the base stays '' (OFF). Read at CALL time so a test
@@ -52,9 +53,8 @@ export function isBackendEnabled() {
 // `/api/v1/<name>`).
 export const API_VERSION_PREFIX = '/api/v1';
 
-// DARK token source — no localStorage / sessionStorage read (no Web-Storage key exists
-// yet; it arrives with R17). Returns null so apiFetch attaches no Authorization header
-// today.
+// Session token from auth_token.js (R17 / CUT-2). null when logged out / OFF, so apiFetch attaches
+// no Authorization header until a session is minted. (No direct Web-Storage access here.)
 export function getSessionToken() {
-  return null;
+  return getAuthToken();
 }

@@ -1,6 +1,9 @@
 import { user, REQUIRED_DOCS } from '../state.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
+import { isBackendEnabled } from '../api_config.js';
+import { apiFetch } from '../api_client.js';
+import { setAuth } from '../auth_token.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
 const SVG_BACK = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -239,6 +242,7 @@ function renderPhone(draft, step, total) {
       </p>
     </div>
     <div class="ob-footer">
+      <p class="ob-subtitle" id="ob-err" role="alert" hidden></p>
       <button type="button" class="bd-btn primary" id="ob-next">Получить код</button>
     </div>
   `;
@@ -252,7 +256,7 @@ function renderOTP(draft, step, total) {
       <p class="ob-subtitle">Код отправлен на номер ${formatPhoneDisplay(draft.phone)}</p>
       <div class="ob-otp-wrap">
         <div class="ob-otp-boxes" aria-label="Поля ввода кода">
-          ${[0, 1, 2, 3, 4, 5].map((i) =>
+          ${Array.from({ length: draft.otpLen || 6 }, (_, i) =>
             `<div class="ob-otp-box" id="ob-otp-box-${i}" aria-hidden="true"></div>`
           ).join('')}
         </div>
@@ -260,9 +264,9 @@ function renderOTP(draft, step, total) {
                id="ob-otp-input"
                type="tel"
                inputmode="numeric"
-               maxlength="6"
+               maxlength="${draft.otpLen || 6}"
                autocomplete="one-time-code"
-               aria-label="Код подтверждения из 6 цифр">
+               aria-label="Код подтверждения из ${draft.otpLen || 6} цифр">
       </div>
       <p class="ob-otp-resend">
         ${SVG_CLOCK}
@@ -270,6 +274,7 @@ function renderOTP(draft, step, total) {
       </p>
     </div>
     <div class="ob-footer">
+      <p class="ob-subtitle" id="ob-err" role="alert" hidden></p>
       <button type="button" class="bd-btn primary" id="ob-next" disabled>Подтвердить</button>
     </div>
   `;
@@ -517,11 +522,56 @@ export default function onboarding() {
     }
   }
 
+  // Inline error under the current step's footer (#ob-err exists on the phone + otp steps). Empty
+  // string clears it. Only used on the live-backend path; the mock path never errors.
+  function setStepError(msg) {
+    const el = root.querySelector('#ob-err');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  // R17 / CUT-2 (#784): verify the OTP against the live backend, persist the minted bearer token
+  // (auth_token.setAuth), then run the existing success path. On failure show an inline error and let
+  // the user retry. The mock path (backend OFF) is unchanged below.
+  async function verifyOtpWithBackend() {
+    const otpInput = root.querySelector('#ob-otp-input');
+    const nextBtn  = root.querySelector('#ob-next');
+    const code = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, draft.otpLen || 6) : '';
+    const phone = draft.authPhone || ('+7' + (draft.phone || '').slice(-10));
+    // Disable the field + button while the verify is in flight so an edit can't reset the
+    // re-entrancy guard and fire a DUPLICATE verify (which would burn a server attempt).
+    if (otpInput) otpInput.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+    try {
+      const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
+      // Stash the minted session on the draft; PERSIST it only at a commit point
+      // (completePhoneVerification / finish) so an abandoned or Guest flow never leaves a token behind.
+      draft.authToken = r.token;
+      draft.authUserId = r.user && r.user.userId;
+      if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
+    } catch (err) {
+      otpSubmitting = false;
+      if (otpInput) otpInput.disabled = false;
+      if (nextBtn) nextBtn.disabled = false;
+      const ecode = err && err.code;
+      setStepError(
+        (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
+        : (err && err.status === 0) || ecode === 'NETWORK' ? 'Не удалось связаться с сервером. Попробуйте ещё раз.'
+        : 'Неверный код. Попробуйте ещё раз.',
+      );
+    }
+  }
+
   function advanceFromOtpOnce() {
     if (otpSubmitting) return;
     if (currentStep() !== 'otp') return;
     otpSubmitting = true;
     clearOtpAdvanceTimer();
+    if (isBackendEnabled()) {
+      verifyOtpWithBackend();
+      return;
+    }
     if (verifyPhoneOnly) {
       completePhoneVerification();
       return;
@@ -544,10 +594,18 @@ export default function onboarding() {
   // Verify-only completion: persist phoneVerified (and the confirmed phone)
   // while preserving every other field, then return to the profile so the
   // needs-phone gate is gone. No full profile rebuild, no role mutation.
+  // Persist the bearer minted during this run, but ONLY at a commit point — so an abandoned or Guest
+  // flow never leaves a token on an anonymous/guest local session. phone = the normalized requested
+  // number used for the OTP (draft.authPhone).
+  function persistAuthIfMinted() {
+    if (draft.authToken) setAuth({ token: draft.authToken, userId: draft.authUserId, phone: draft.authPhone });
+  }
+
   function completePhoneVerification() {
     const patch = { phoneVerified: true };
     if (draft.phone) patch.phone = draft.phone;
     user.set(patch);
+    persistAuthIfMinted();
     go(verifyReturnRoute());
   }
 
@@ -624,6 +682,7 @@ export default function onboarding() {
       documentsReady,
       driverDocuments,
     });
+    persistAuthIfMinted();
     const pending = consumePendingAction();
     if (pending) {
       pending();
@@ -710,30 +769,57 @@ export default function onboarding() {
         if (phoneInput) {
           phoneInput.addEventListener('input', () => {
             draft.phone = phoneInput.value.replace(/\D/g, '');
+            setStepError('');
           });
         }
-        if (nextBtn) nextBtn.addEventListener('click', next);
+        if (nextBtn) nextBtn.addEventListener('click', async () => {
+          // R17 / CUT-2 (#784): on a live backend, request the OTP (POST /auth/otp/request) before
+          // advancing to the code step; on failure show an inline error and stay. Mock path advances.
+          if (!isBackendEnabled()) { next(); return; }
+          // Normalize to E.164 ONCE (last 10 digits handles a 10-digit input AND an 11-digit
+          // 7…/8…-prefixed one), and FREEZE the field + button while the request is in flight so the
+          // requested number can't diverge from the one used to verify/persist.
+          const phone = '+7' + (draft.phone || '').slice(-10);
+          setStepError('');
+          nextBtn.disabled = true;
+          if (phoneInput) phoneInput.disabled = true;
+          try {
+            const resp = await apiFetch('/auth/otp/request', { method: 'POST', body: { phone } });
+            draft.authPhone = phone;
+            // Match the UI to the server's code length (dev echoes devCode; prod default is 4).
+            draft.otpLen = ((resp && resp.devCode) || '').length || 4;
+            next();
+          } catch (err) {
+            nextBtn.disabled = false;
+            if (phoneInput) phoneInput.disabled = false;
+            setStepError(err && err.code === 'INVALID_PHONE'
+              ? 'Неверный номер телефона.'
+              : 'Не удалось отправить код. Попробуйте ещё раз.');
+          }
+        });
         break;
       }
 
       case 'otp': {
         const otpInput = root.querySelector('#ob-otp-input');
         if (otpInput) {
+          const otpLen = draft.otpLen || 6;
           otpInput.addEventListener('input', () => {
-            const val = otpInput.value.replace(/\D/g, '').slice(0, 6);
+            setStepError(''); // editing the code clears any prior inline error (mirrors the phone step)
+            const val = otpInput.value.replace(/\D/g, '').slice(0, otpLen);
             otpInput.value = val;
-            [0, 1, 2, 3, 4, 5].forEach((i) => {
+            for (let i = 0; i < otpLen; i++) {
               const box = root.querySelector(`#ob-otp-box-${i}`);
-              if (!box) return;
+              if (!box) continue;
               box.textContent = val[i] ?? '';
               box.classList.toggle('ob-otp-box--filled', Boolean(val[i]));
-              box.classList.toggle('ob-otp-box--active', i === val.length && val.length < 6);
-            });
-            if (nextBtn) nextBtn.disabled = val.length !== 6;
+              box.classList.toggle('ob-otp-box--active', i === val.length && val.length < otpLen);
+            }
+            if (nextBtn) nextBtn.disabled = val.length !== otpLen;
             clearOtpAdvanceTimer();
-            if (val.length < 6) otpSubmitting = false;
-            if (val.length === 6) {
-              // Mock: accept any 6 digits and auto-advance exactly once.
+            if (val.length < otpLen) otpSubmitting = false;
+            if (val.length === otpLen) {
+              // Full-length code: auto-advance exactly once (mock accepts any digits; backend verifies).
               otpSubmitting = false;
               otpAdvanceTimer = setTimeout(advanceFromOtpOnce, 320);
             }
@@ -744,8 +830,8 @@ export default function onboarding() {
           otpInput.focus();
         }
         if (nextBtn) nextBtn.addEventListener('click', () => {
-          const val = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, 6) : '';
-          if (val.length !== 6) return;
+          const val = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, draft.otpLen || 6) : '';
+          if (val.length !== (draft.otpLen || 6)) return;
           advanceFromOtpOnce();
         });
         break;

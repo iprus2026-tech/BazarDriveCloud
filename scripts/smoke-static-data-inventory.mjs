@@ -52,6 +52,7 @@ function expect(label, cond, detail) {
 // ── Canonical manifest ────────────────────────────────────────────────────────
 // CLEARED — removed by clearUserScopedStorage() at the auth boundary.
 const CLEARED = [
+  'bazardrive.auth.v1',
   'bazardrive.ride_history.v1', 'bazardrive.favorite_routes.v1',
   'bazardrive.favorite_route_notice.v1', 'bazardrive.active_ride.v1',
   'bazardrive.chat.v1', 'bazardrive.responses.v1', 'bazardrive.respond.v1',
