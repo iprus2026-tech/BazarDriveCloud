@@ -4,12 +4,17 @@
 // R07 keys purely by chat_id; the denormalized ride_id/response_id/response_uuid FKs stay null (they
 // are a future join enrichment — the epic's minimal slice needs neither a rides row nor auth).
 
-// The shared thread, oldest-first by created_at (id is a stable, deterministic tiebreaker for the
-// rare same-instant rows — not itself chronological). Served by idx_messages_chat.
+// The shared thread, presented oldest-first. When a thread exceeds the cap we keep the most RECENT
+// window, not the first N ever written (else a busy thread would stop showing new messages — Codex
+// #796 P2): take the latest `safeLimit` rows DESC, then re-order chronologically for display. id is a
+// stable tiebreaker for same-instant rows (not itself chronological). Served by idx_messages_chat.
 export async function listMessagesByChat(db, chatId, { limit = 200 } = {}) {
   const safeLimit = Number.isInteger(limit) && limit > 0 && limit <= 500 ? limit : 200;
   const { rows } = await db.query(
-    `SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC, id ASC LIMIT $2`,
+    `SELECT * FROM (
+       SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2
+     ) recent
+     ORDER BY created_at ASC, id ASC`,
     [chatId, safeLimit],
   );
   return rows;

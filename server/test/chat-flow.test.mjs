@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { listMessagesByChat } from '../src/repositories/messages.js';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -64,6 +65,11 @@ test('chat: one shared thread by chat_id, auth-free, clientMsgId-idempotent', { 
   const thread = (await get(app, `/api/v1/chat/messages?chatId=${encodeURIComponent(chatId)}`)).json().items;
   assert.equal(thread.length, 3, 'one shared thread: passenger + driver + no-id, deduped re-send folded');
   assert.deepEqual(thread.map((m) => m.body), ['Еду', 'Подъезжаю', 'ok'], 'chronological order');
+
+  // truncation keeps the most RECENT window, then orders chronologically (Codex #796 P2): with a cap
+  // of 2 over a 3-message thread, we get the latest two (Подъезжаю, ok), not the oldest two.
+  const recent = await listMessagesByChat(cleanup, chatId, { limit: 2 });
+  assert.deepEqual(recent.map((m) => m.body), ['Подъезжаю', 'ok'], 'recent window, chronological — not the oldest 2');
 
   // validation still applies: empty body / missing chatId -> 400.
   assert.equal((await post(app, '/api/v1/chat/messages', { chatId, body: '' })).statusCode, 400, 'empty body rejected');
