@@ -80,8 +80,8 @@ test('orders #1 is LIVE (validates, auth-gated, honors authError; not 501)', asy
   assert.equal(ge.json().code, 'SESSION_LOOKUP_FAILED');
 });
 
-test('matching #3 offers are LIVE (validate + auth-gated); /select still 501', async () => {
-  // R04 promoted offer create/list live; the /select accept stays 501 for R05. Hermetic (no DB):
+test('matching #3 offers + select are LIVE (validate + auth-gated, not 501)', async () => {
+  // R04 promoted offer create/list live; R05 promoted /select live. Hermetic (no DB):
   const noField = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: {} });
   assert.equal(noField.statusCode, 400, 'POST /matching/offers validates (orderId required, not 501)');
   assert.equal(noField.json().code, 'VALIDATION');
@@ -90,9 +90,14 @@ test('matching #3 offers are LIVE (validate + auth-gated); /select still 501', a
   assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
   const listNoAuth = await app.inject({ method: 'GET', url: '/api/v1/matching/offers?orderId=order-x' });
   assert.equal(listNoAuth.statusCode, 401, 'owner-only list requires a session');
-  const select = await app.inject({ method: 'POST', url: '/api/v1/matching/select', payload: {} });
-  assert.equal(select.statusCode, 501, '/select stays dark (R05)');
-  assert.equal(select.json().code, 'NOT_IMPLEMENTED');
+  // /select is LIVE in R05: empty body -> 400 VALIDATION (orderId+driverId required); valid body
+  // with no token -> 401. The transactional accept is DB-gated (select-flow).
+  const selectEmpty = await app.inject({ method: 'POST', url: '/api/v1/matching/select', payload: {} });
+  assert.equal(selectEmpty.statusCode, 400, '/select validates (not 501)');
+  assert.equal(selectEmpty.json().code, 'VALIDATION');
+  const selectNoAuth = await app.inject({ method: 'POST', url: '/api/v1/matching/select', payload: { orderId: 'order-x', driverId: 'd-x' } });
+  assert.equal(selectNoAuth.statusCode, 401, '/select requires a session');
+  assert.equal(selectNoAuth.json().code, 'UNAUTHENTICATED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {

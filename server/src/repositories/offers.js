@@ -40,3 +40,31 @@ export async function listOffersByOrder(db, orderId) {
   );
   return rows;
 }
+
+// Accept the selected driver's LIVE ('sent', not-expired) offer on an order (the transactional
+// accept, R05). Guarded by status='sent' AND expires_at > now() — so a withdrawn/terminal OR an
+// expired-but-not-yet-swept offer (the TTL sweep is future work) can't be accepted; returns null
+// when there is no live offer from that driver, and the caller rejects with 404 (Codex #791).
+export async function acceptOffer(db, orderId, driverId) {
+  const { rows } = await db.query(
+    `UPDATE offers SET status = 'accepted', updated_at = now()
+      WHERE order_id = $1 AND driver_id = $2 AND status = 'sent' AND expires_at > now()
+      RETURNING *`,
+    [orderId, driverId],
+  );
+  return rows[0] ?? null;
+}
+
+// Reject every OTHER live ('sent') offer on the order once one is accepted (R05). Returns the
+// rejected ids. Run inside the same tx as acceptOffer, under the order's FOR UPDATE lock. Sets only
+// status + updated_at — matching the client commitPassengerSelection, which leaves the rejected_by/
+// rejected_at actor fields for the EXPLICIT passenger-reject / cancel flows, not select-peer rejects.
+export async function rejectPeerOffers(db, orderId, acceptedDriverId) {
+  const { rows } = await db.query(
+    `UPDATE offers SET status = 'rejected', updated_at = now()
+      WHERE order_id = $1 AND driver_id <> $2 AND status = 'sent'
+      RETURNING id`,
+    [orderId, acceptedDriverId],
+  );
+  return rows;
+}

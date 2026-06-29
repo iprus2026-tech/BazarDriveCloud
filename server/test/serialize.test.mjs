@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { serializeOrder, serializeOffer } from '../src/serialize.js';
+import { serializeOrder, serializeOffer, serializeAssignment } from '../src/serialize.js';
 
 const baseRow = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -104,4 +104,16 @@ test('serializeOffer tolerates null detail fields / orderLegacyId / a null row',
   assert.equal(o.orderId, null);
   assert.equal(o.etaMin, null);
   assert.equal(serializeOffer(null), null);
+});
+
+test('serializeAssignment maps the ACCEPTED overlay row to the owner-facing shape', () => {
+  const row = { order_id: 'uuid', status: 'ACCEPTED', selected_driver_id: 'driver-9',
+    canceled_by: null, canceled_at: null, updated_at: new Date('2026-06-29T10:00:00.000Z') };
+  const a = serializeAssignment(row, { orderLegacyId: 'order-1' });
+  assert.equal(a.orderId, 'order-1');
+  assert.equal(a.status, 'ACCEPTED');
+  assert.equal(a.selectedDriverId, 'driver-9');
+  assert.equal(a.canceledBy, null);
+  assert.equal(a.updatedAt, '2026-06-29T10:00:00.000Z');
+  assert.equal(serializeAssignment(null), null);
 });
