@@ -41,6 +41,16 @@ test('isValidRideStatus matches the client over valid + invalid probes', () => {
   }
 });
 
+test('STATUS_TIMESTAMP_FIELD mirrors the client verbatim (R06 chokepoint stamps)', () => {
+  assert.deepEqual({ ...server.STATUS_TIMESTAMP_FIELD }, { ...client.STATUS_TIMESTAMP_FIELD });
+  // every mapped key is a real status, and every mapped value is a known timestamp field.
+  const TS_FIELDS = new Set(['acceptedAt', 'approachingAt', 'arrivedAt', 'startedAt', 'completedAt', 'canceledAt']);
+  for (const [status, field] of Object.entries(server.STATUS_TIMESTAMP_FIELD)) {
+    assert.ok(server.isValidRideStatus(status), `${status} is a real status`);
+    assert.ok(TS_FIELDS.has(field), `${field} is a known timestamp field`);
+  }
+});
+
 test('terminal set is exactly {CANCELED, COMPLETED, NO_SHOW}', () => {
   assert.deepEqual([...server.TERMINAL_RIDE_STATUSES].sort(), ['CANCELED', 'COMPLETED', 'NO_SHOW']);
   for (const s of server.TERMINAL_RIDE_STATUSES) {

@@ -83,6 +83,51 @@ export function serializeAssignment(row, { orderLegacyId = null } = {}) {
   };
 }
 
+// Project a ride snapshot for the #5 Ride-State chokepoint (R06). A FOCUSED snapshot — status,
+// identity, route labels, the status-keyed timestamps, and the cancel block — enough to read/verify
+// the ride state; the full active-ride hydration (every display string) is frozen at the R15 client
+// read cutover. The read is participant-gated, so the masked-phone/name fields are owner/driver-only.
+export function serializeRide(row) {
+  if (!row) return null;
+  return {
+    tripId: row.trip_id,
+    status: row.status,
+    role: row.role ?? null,
+    passenger: {
+      name: row.passenger_name ?? null,
+      initials: row.passenger_initials ?? null,
+      rating: row.passenger_rating ?? null,
+      phoneMasked: row.passenger_phone_masked ?? null,
+    },
+    driver: {
+      name: row.driver_name ?? null,
+      initials: row.driver_initials ?? null,
+      rating: row.driver_rating ?? null,
+      car: row.driver_car ?? null,
+    },
+    route: {
+      pickupLabel: row.route_pickup_label ?? null,
+      dropoffLabel: row.route_dropoff_label ?? null,
+      etaToPickup: row.route_eta_to_pickup ?? null,
+      etaToDestination: row.route_eta_to_destination ?? null,
+    },
+    cancel: {
+      by: row.cancel_by ?? null,
+      reason: row.cancel_reason ?? null,
+    },
+    timestamps: {
+      createdAt: toIso(row.created_at),
+      acceptedAt: row.accepted_at ? toIso(row.accepted_at) : null,
+      approachingAt: row.approaching_at ? toIso(row.approaching_at) : null,
+      arrivedAt: row.arrived_at ? toIso(row.arrived_at) : null,
+      startedAt: row.started_at ? toIso(row.started_at) : null,
+      completedAt: row.completed_at ? toIso(row.completed_at) : null,
+      canceledAt: row.canceled_at ? toIso(row.canceled_at) : null,
+      updatedAt: toIso(row.updated_at),
+    },
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);

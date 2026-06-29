@@ -102,7 +102,9 @@ export const SIM_AUDIT_RIDE_OVERRIDES = {
   },
 };
 
-const STATUS_TIMESTAMP_FIELD = {
+// Exported (additive) so the server's #5 Ride-State chokepoint mirrors the exact status->timestamp
+// map for its PATCH stamps; pinned against the server by ride-status-parity.test.mjs (BD-DOCS-041).
+export const STATUS_TIMESTAMP_FIELD = {
   [RIDE_STATUS.ACCEPTED]: 'acceptedAt',
   [RIDE_STATUS.DRIVER_EN_ROUTE]: 'acceptedAt',
   [RIDE_STATUS.DRIVER_APPROACHING_PICKUP]: 'approachingAt',

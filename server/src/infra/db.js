@@ -38,12 +38,19 @@ async function dbPlugin(app, opts) {
       }
     },
 
-    // Readiness check (used by /readyz): connectivity AND that migrations have been applied
-    // (the auth_session table — the live seam's dependency — exists). A bare SELECT 1 would
-    // report a fresh, un-migrated database as ready.
+    // Readiness check (used by /readyz): connectivity AND that the migrations the LIVE endpoints
+    // depend on are applied — not just 0002's auth_session, but also 0003's widened
+    // ride_events.type CHECK (the #5 status_change write path, Codex #792). Without the 0003 leg, an
+    // env on 0001/0002 would report ready and then every status PATCH would roll back on the
+    // constraint. A bare SELECT 1 would report a fresh, un-migrated database as ready.
     async ready() {
       const { rows } = await pool.query(
-        "SELECT to_regclass('public.auth_session') IS NOT NULL AS ok",
+        `SELECT to_regclass('public.auth_session') IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM pg_constraint
+               WHERE conname = 'ride_events_type_check'
+                 AND pg_get_constraintdef(oid) LIKE '%status_change%'
+            ) AS ok`,
       );
       return rows[0]?.ok === true;
     },

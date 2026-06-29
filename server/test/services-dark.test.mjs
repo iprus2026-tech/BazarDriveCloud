@@ -23,11 +23,12 @@ const config = {
 const app = await buildApp({ config });
 after(() => app.close());
 
-// auth (R02), orders #1 (R03) and matching #3 (R04) are LIVE; the rest stay dark 501.
-const DARK = SERVICES.map((s) => s.name).filter((n) => n !== 'auth' && n !== 'orders' && n !== 'matching');
+// auth (R02), orders #1 (R03), matching #3 (R04/R05) and ride-state #5 (R06) are LIVE; rest dark.
+const LIVE = new Set(['auth', 'orders', 'matching', 'ride-state']);
+const DARK = SERVICES.map((s) => s.name).filter((n) => !LIVE.has(n));
 
 test('every still-dark service returns 501 NOT_IMPLEMENTED at its prefix', async () => {
-  assert.equal(DARK.length, 6, 'six dark services expected (orders #1, matching #3 went live)');
+  assert.equal(DARK.length, 5, 'five dark services expected (ride-state #5 went live in R06)');
   for (const name of DARK) {
     const res = await app.inject({ method: 'GET', url: `/api/v1/${name}` });
     assert.equal(res.statusCode, 501, `${name} root status`);
@@ -98,6 +99,24 @@ test('matching #3 offers + select are LIVE (validate + auth-gated, not 501)', as
   const selectNoAuth = await app.inject({ method: 'POST', url: '/api/v1/matching/select', payload: { orderId: 'order-x', driverId: 'd-x' } });
   assert.equal(selectNoAuth.statusCode, 401, '/select requires a session');
   assert.equal(selectNoAuth.json().code, 'UNAUTHENTICATED');
+});
+
+test('ride-state #5 is LIVE (validates + auth-gated + authError; not 501)', async () => {
+  // R06 promoted the ride-state chokepoint live. Hermetic (no reachable DB here):
+  // PATCH with a missing status -> 400 VALIDATION (live schema, not 501).
+  const bad = await app.inject({ method: 'PATCH', url: '/api/v1/ride-state/rides/trip-x/status', payload: {} });
+  assert.equal(bad.statusCode, 400, 'PATCH validates (status required, not 501)');
+  assert.equal(bad.json().code, 'VALIDATION');
+  // valid body, no token -> 401 (auth gate, pre-DB).
+  const noAuth = await app.inject({ method: 'PATCH', url: '/api/v1/ride-state/rides/trip-x/status', payload: { status: 'IN_PROGRESS' } });
+  assert.equal(noAuth.statusCode, 401, 'PATCH requires a session');
+  assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
+  const getNoAuth = await app.inject({ method: 'GET', url: '/api/v1/ride-state/rides/trip-x' });
+  assert.equal(getNoAuth.statusCode, 401, 'GET snapshot requires a session');
+  // a token whose lookup fails (DB unreachable here) -> retryable 503, not a 200/500.
+  const getErr = await app.inject({ method: 'GET', url: '/api/v1/ride-state/rides/trip-x', headers: { authorization: 'Bearer x' } });
+  assert.equal(getErr.statusCode, 503, 'GET surfaces authError as 503');
+  assert.equal(getErr.json().code, 'SESSION_LOOKUP_FAILED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {
