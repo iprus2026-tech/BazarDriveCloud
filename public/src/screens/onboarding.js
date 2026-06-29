@@ -1,6 +1,9 @@
 import { user, REQUIRED_DOCS } from '../state.js';
 import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
+import { isBackendEnabled } from '../api_config.js';
+import { apiFetch } from '../api_client.js';
+import { setAuth } from '../auth_token.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
 const SVG_BACK = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -239,6 +242,7 @@ function renderPhone(draft, step, total) {
       </p>
     </div>
     <div class="ob-footer">
+      <p class="ob-subtitle" id="ob-err" role="alert" hidden></p>
       <button type="button" class="bd-btn primary" id="ob-next">Получить код</button>
     </div>
   `;
@@ -270,6 +274,7 @@ function renderOTP(draft, step, total) {
       </p>
     </div>
     <div class="ob-footer">
+      <p class="ob-subtitle" id="ob-err" role="alert" hidden></p>
       <button type="button" class="bd-btn primary" id="ob-next" disabled>Подтвердить</button>
     </div>
   `;
@@ -517,11 +522,53 @@ export default function onboarding() {
     }
   }
 
+  // Inline error under the current step's footer (#ob-err exists on the phone + otp steps). Empty
+  // string clears it. Only used on the live-backend path; the mock path never errors.
+  function setStepError(msg) {
+    const el = root.querySelector('#ob-err');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  // R17 / CUT-2 (#784): verify the OTP against the live backend, persist the minted bearer token
+  // (auth_token.setAuth), then run the existing success path. On failure show an inline error and let
+  // the user retry. The mock path (backend OFF) is unchanged below.
+  async function verifyOtpWithBackend() {
+    const otpInput = root.querySelector('#ob-otp-input');
+    const nextBtn  = root.querySelector('#ob-next');
+    const code = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, 6) : '';
+    const phone = draft.authPhone || ('+7' + (draft.phone || ''));
+    // Disable the field + button while the verify is in flight so an edit can't reset the
+    // re-entrancy guard and fire a DUPLICATE verify (which would burn a server attempt).
+    if (otpInput) otpInput.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+    try {
+      const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
+      setAuth({ token: r.token, userId: r.user && r.user.userId, phone });
+      if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
+    } catch (err) {
+      otpSubmitting = false;
+      if (otpInput) otpInput.disabled = false;
+      if (nextBtn) nextBtn.disabled = false;
+      const ecode = err && err.code;
+      setStepError(
+        (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
+        : (err && err.status === 0) || ecode === 'NETWORK' ? 'Не удалось связаться с сервером. Попробуйте ещё раз.'
+        : 'Неверный код. Попробуйте ещё раз.',
+      );
+    }
+  }
+
   function advanceFromOtpOnce() {
     if (otpSubmitting) return;
     if (currentStep() !== 'otp') return;
     otpSubmitting = true;
     clearOtpAdvanceTimer();
+    if (isBackendEnabled()) {
+      verifyOtpWithBackend();
+      return;
+    }
     if (verifyPhoneOnly) {
       completePhoneVerification();
       return;
@@ -710,9 +757,27 @@ export default function onboarding() {
         if (phoneInput) {
           phoneInput.addEventListener('input', () => {
             draft.phone = phoneInput.value.replace(/\D/g, '');
+            setStepError('');
           });
         }
-        if (nextBtn) nextBtn.addEventListener('click', next);
+        if (nextBtn) nextBtn.addEventListener('click', async () => {
+          // R17 / CUT-2 (#784): on a live backend, request the OTP (POST /auth/otp/request) before
+          // advancing to the code step; on failure show an inline error and stay. Mock path advances.
+          if (!isBackendEnabled()) { next(); return; }
+          const phone = '+7' + (draft.phone || '');
+          setStepError('');
+          nextBtn.disabled = true;
+          try {
+            await apiFetch('/auth/otp/request', { method: 'POST', body: { phone } });
+            draft.authPhone = phone;
+            next();
+          } catch (err) {
+            nextBtn.disabled = false;
+            setStepError(err && err.code === 'INVALID_PHONE'
+              ? 'Неверный номер телефона.'
+              : 'Не удалось отправить код. Попробуйте ещё раз.');
+          }
+        });
         break;
       }
 
@@ -720,6 +785,7 @@ export default function onboarding() {
         const otpInput = root.querySelector('#ob-otp-input');
         if (otpInput) {
           otpInput.addEventListener('input', () => {
+            setStepError(''); // editing the code clears any prior inline error (mirrors the phone step)
             const val = otpInput.value.replace(/\D/g, '').slice(0, 6);
             otpInput.value = val;
             [0, 1, 2, 3, 4, 5].forEach((i) => {

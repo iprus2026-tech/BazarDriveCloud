@@ -17,6 +17,7 @@
 // helpers are imported here so this file does not have to know each
 // storage layout):
 //
+//   bazardrive.auth.v1              → auth_token.js (clearAuth() — the bearer-token session, R17)
 //   bazardrive.ride_history.v1      → ride_history.js
 //   bazardrive.favorite_routes.v1   → favorite_routes.js (clearFavoriteRoutes()
 //                                     also clears
@@ -98,6 +99,7 @@ import {
   clearDriverReceiptsStore,
 } from './mock_api.js';
 import { clearDriverOfferStore } from './driver_offer_store.js';
+import { clearAuth } from './auth_token.js';
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
 
@@ -132,5 +134,6 @@ export function clearUserScopedStorage() {
   clearDriverReceiptsStore();
   clearMyPostsStore();
   clearDriverOfferStore();
+  clearAuth();
   clearTripDemoMode();
 }
