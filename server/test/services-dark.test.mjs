@@ -134,6 +134,18 @@ test('history #8 is LIVE (validates + auth-gated, not 501)', async () => {
   assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
 });
 
+test('realtime poll is LIVE (validates + auth-gated; #9 read seam)', async () => {
+  // R09 lit the realtime read seam (a participant-gated DB-cursor poll). Hermetic (no DB):
+  const noTrip = await app.inject({ method: 'GET', url: '/api/v1/realtime/poll' });
+  assert.equal(noTrip.statusCode, 400, 'tripId is required');
+  assert.equal(noTrip.json().code, 'VALIDATION');
+  const badSince = await app.inject({ method: 'GET', url: '/api/v1/realtime/poll?tripId=trip-x&since=not-a-date' });
+  assert.equal(badSince.statusCode, 400, 'a malformed since cursor is a 400, not a timestamptz 500');
+  const noAuth = await app.inject({ method: 'GET', url: '/api/v1/realtime/poll?tripId=trip-x' });
+  assert.equal(noAuth.statusCode, 401, 'poll requires a session');
+  assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
+});
+
 test('/metrics is a dark skeleton (501)', async () => {
   const res = await app.inject({ method: 'GET', url: '/metrics' });
   assert.equal(res.statusCode, 501);
