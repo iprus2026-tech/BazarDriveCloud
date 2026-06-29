@@ -1,8 +1,9 @@
 // /server/test/matching-flow.test.mjs — DB-gated end-to-end for R04 (#3 Matching offers) through
 // the real Fastify app + real Postgres. A passenger creates an order (R03), a driver offers on it
-// (idempotent), the passenger lists offers (owner-only), a non-owner is forbidden, and /select is
-// still 501. SKIPPED without DATABASE_URL; runs in server-ci's app job. Unique per-process phones;
-// cleans up in t.after() (deleting the order cascades its offers).
+// (idempotent), the passenger lists offers (owner-only), a non-owner is forbidden. (/select went
+// live in R05 — its transactional accept is covered by select-flow.test.mjs.) SKIPPED without
+// DATABASE_URL; runs in server-ci's app job. Unique per-process phones; cleans up in t.after()
+// (deleting the order cascades its offers).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
@@ -29,7 +30,7 @@ async function mintSession(app, phone) {
   return (await post(app, '/api/v1/auth/otp/verify', { phone, code })).json(); // { token, user }
 }
 
-test('offer create (driver, idempotent) -> owner-only list -> non-owner 403 -> select 501', { skip: SKIP }, async (t) => {
+test('offer create (driver, idempotent) -> owner-only list -> non-owner 403', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const pax = `+1581${String(process.pid).padStart(7, '0')}`;
   const drv = `+1582${String(process.pid).padStart(7, '0')}`;
@@ -91,6 +92,7 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403 -> s
   // anonymous list -> 401.
   assert.equal((await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`)).statusCode, 401);
 
-  // /select is still dark (R05).
-  assert.equal((await post(app, '/api/v1/matching/select', {}, bearer(paxS))).statusCode, 501);
+  // /select went LIVE in R05 — an empty body now validates (400), not 501; the full transactional
+  // accept is covered by select-flow.test.mjs.
+  assert.equal((await post(app, '/api/v1/matching/select', {}, bearer(paxS))).statusCode, 400);
 });
