@@ -47,6 +47,11 @@ export default async function matchingService(app) {
     const order = await findOrderByLegacyId(app.db, b.orderId);
     if (!order) return problem(reply, 404, 'ORDER_NOT_FOUND', 'order not found');
     if (order.status !== 'CREATED') return problem(reply, 409, 'ORDER_NOT_OPEN', 'order is not open for offers');
+    // A passenger cannot offer on their OWN order — reject at create so no self-candidate ever
+    // enters the owner-only list or sets up a self-assignment at /select (Codex #790).
+    if (String(order.passenger_id) === String(viewer.userId)) {
+      return problem(reply, 403, 'CANNOT_OFFER_OWN_ORDER', 'cannot offer on your own order');
+    }
 
     // Idempotent: upsert creates a fresh 'sent' offer or re-sends a withdrawn one; a no-op conflict
     // (already 'sent' or terminal) returns no row, so read the existing one back.

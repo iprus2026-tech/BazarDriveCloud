@@ -56,6 +56,10 @@ test('offer create (driver, idempotent) -> owner-only list -> non-owner 403 -> s
   // unknown order -> 404; anonymous offer -> 401.
   assert.equal((await post(app, '/api/v1/matching/offers', { orderId: 'order-nope' }, bearer(paxS))).statusCode, 404);
   assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id })).statusCode, 401);
+  // a passenger cannot offer on their OWN order (Codex #790) — no self-candidate is created.
+  const selfOffer = await post(app, '/api/v1/matching/offers', { orderId: order.id }, bearer(paxS));
+  assert.equal(selfOffer.statusCode, 403, 'self-offer is forbidden');
+  assert.equal(selfOffer.json().code, 'CANNOT_OFFER_OWN_ORDER');
 
   // driver offers on the order.
   const drvS = await mintSession(app, drv);
