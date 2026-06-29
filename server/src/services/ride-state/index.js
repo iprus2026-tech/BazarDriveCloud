@@ -70,11 +70,14 @@ export default async function rideStateService(app) {
       if (!ride) return { err: [404, 'RIDE_NOT_FOUND', 'ride not found'] };
       const role = participantRole(ride, viewer.userId);
       if (!role) return { err: [403, 'FORBIDDEN', 'not a participant of this ride'] };
-      // Terminal-freeze (mirrors the client + trg_rides_freeze_terminal): a terminal ride may only
-      // be re-written to the SAME status (idempotent no-op — no re-stamp, no event); any move OUT
-      // to a different status is refused. A non-terminal ride may move to any valid status.
+      // IDEMPOTENT: a PATCH to the status the ride is ALREADY in is a no-op — no re-stamp, no event.
+      // So a normal network retry of an already-succeeded transition can't corrupt the original
+      // lifecycle timestamp (e.g. re-stamping started_at) or append a from==to event (Codex #792).
+      // Covers terminal AND non-terminal alike.
+      if (status === ride.status) return { ok: { ride } };
+      // Terminal-freeze (mirrors the client + trg_rides_freeze_terminal): a terminal ride can't move
+      // OUT to a different status. A non-terminal ride may move to any other valid status.
       if (TERMINAL_RIDE_STATUSES.has(ride.status)) {
-        if (status === ride.status) return { ok: { ride } };
         return { err: [409, 'RIDE_TERMINAL', `ride is terminal (${ride.status})`] };
       }
       const tsKey = STATUS_TIMESTAMP_FIELD[status];

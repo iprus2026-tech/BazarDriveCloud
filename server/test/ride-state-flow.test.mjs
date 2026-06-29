@@ -68,6 +68,9 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
     [tripId, drvS.user.userId, paxS.user.userId],
   );
 
+  // a fully-migrated DB (incl. 0003) reports ready (Codex #792 — /readyz covers the status_change CHECK).
+  assert.equal((await get(app, '/api/v1/readyz')).statusCode, 200, 'readyz is green once 0003 is applied');
+
   // GET snapshot — participant only.
   const snap = await get(app, `/api/v1/ride-state/rides/${tripId}`, bearer(drvS));
   assert.equal(snap.statusCode, 200);
@@ -86,6 +89,11 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   // -> IN_PROGRESS stamps startedAt.
   const p2 = await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'IN_PROGRESS' }, bearer(paxS));
   assert.ok(p2.json().ride.timestamps.startedAt, 'startedAt stamped');
+  // idempotent retry: re-PATCH the SAME non-terminal status -> no-op (no re-stamp, no new event).
+  const startedAt = p2.json().ride.timestamps.startedAt;
+  const retry = await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'IN_PROGRESS' }, bearer(drvS));
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().ride.timestamps.startedAt, startedAt, 'a same-status retry does not re-stamp the lifecycle timestamp');
 
   // guards: non-participant 403, invalid status 400.
   assert.equal((await patch(app, `/api/v1/ride-state/rides/${tripId}/status`, { status: 'COMPLETED' }, bearer(otherS))).statusCode, 403);
