@@ -10,14 +10,20 @@
 // (no role grants flow until R17); R04 requires authentication, not a specific role. The PWA write
 // cutover is R18; until then only this server + tests exercise these routes.
 import { newOfferId } from '../../infra/ids.js';
-import { serializeOffer } from '../../serialize.js';
-import { findOrderByLegacyId } from '../../repositories/orders.js';
-import { upsertOffer, findOfferByOrderDriver, listOffersByOrder } from '../../repositories/offers.js';
+import { serializeOffer, serializeOrder, serializeAssignment } from '../../serialize.js';
+import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
+import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
+import { insertAssignment } from '../../repositories/assignment.js';
 
 const OFFER_TTL_MIN = 15; // mirrors the client DEFAULT_OFFER_TTL_MIN
 
 const problem = (reply, status, code, error, retryable = false) =>
   reply.code(status).send({ error, code, retryable });
+
+// driverId is compared against a uuid column (offers.driver_id); a non-uuid string makes Postgres
+// raise 22P02 at bind time (surfacing as a retryable 500). Guard the shape so a malformed driver id
+// is a clean 404 (no such offer), never a 500.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function matchingService(app) {
   // POST /api/v1/matching/offers — a driver offers on an open order.
@@ -94,8 +100,58 @@ export default async function matchingService(app) {
     return { items: rows.map((r) => serializeOffer(r, { orderLegacyId: order.legacy_id })) };
   });
 
-  // POST /api/v1/matching/select — transactional accept (target→accepted, peers→rejected, write
-  // assignment, order→ACCEPTED). Lands in R05 (#784); dark until then.
-  app.post('/select', async (req, reply) =>
-    problem(reply, 501, 'NOT_IMPLEMENTED', 'matching select is not implemented yet'));
+  // POST /api/v1/matching/select — the OWNER (passenger) accepts a driver's offer. ONE transaction:
+  // lock the order, accept the target offer, reject the peers, write the ACCEPTED assignment, and
+  // flip the order CREATED -> ACCEPTED. The FOR UPDATE lock serializes concurrent selects so exactly
+  // one wins (the rest see a non-CREATED order and 409). LIVE in R05 (#784).
+  app.post('/select', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['orderId', 'driverId'],
+        additionalProperties: false,
+        properties: {
+          orderId: { type: 'string', minLength: 1, maxLength: 200 },
+          driverId: { type: 'string', minLength: 1, maxLength: 200 },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const viewer = await req.resolveUser();
+    if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
+    if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
+
+    const { orderId, driverId } = req.body;
+    const result = await app.db.tx(async (client) => {
+      const order = await lockOrderByLegacyId(client, orderId);
+      if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
+      if (String(order.passenger_id) !== String(viewer.userId)) {
+        return { err: [403, 'FORBIDDEN', 'only the order owner can select a driver'] };
+      }
+      // (Self-select can't normally arise — R04 blocks self-offers, so there is no live self-offer
+      // to accept — but reject it explicitly too.)
+      if (String(driverId) === String(viewer.userId)) {
+        return { err: [400, 'CANNOT_SELECT_SELF', 'cannot select yourself as the driver'] };
+      }
+      // Re-checked UNDER the lock: a concurrent select that already accepted flips this to ACCEPTED.
+      if (order.status !== 'CREATED') return { err: [409, 'ORDER_NOT_OPEN', 'order is not open for selection'] };
+      // A malformed (non-uuid) driverId can have no offer — return 404 rather than letting it hit
+      // the uuid column and raise a pg cast error (500).
+      if (!UUID_RE.test(driverId)) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+
+      const accepted = await acceptOffer(client, order.id, driverId);
+      if (!accepted) return { err: [404, 'OFFER_NOT_FOUND', 'no live offer from that driver'] };
+      await rejectPeerOffers(client, order.id, driverId);
+      const assignment = await insertAssignment(client, { orderId: order.id, selectedDriverId: driverId });
+      const updatedOrder = await markOrderAccepted(client, order.id);
+      return { ok: { order: updatedOrder, accepted, assignment } };
+    });
+
+    if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);
+    return reply.code(200).send({
+      order: serializeOrder(result.ok.order, { viewerId: viewer.userId }),
+      offer: serializeOffer(result.ok.accepted, { orderLegacyId: orderId }),
+      assignment: serializeAssignment(result.ok.assignment, { orderLegacyId: orderId }),
+    });
+  });
 }

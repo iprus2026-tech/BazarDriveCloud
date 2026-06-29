@@ -68,6 +68,21 @@ export function serializeOffer(row, { orderLegacyId = null } = {}) {
   };
 }
 
+// Project the assignment overlay row (#3 /select, R05). Returned to the order OWNER on accept, so
+// exposing selectedDriverId is intended (they just chose that driver). The client-facing order id
+// is the legacy string, supplied by the caller.
+export function serializeAssignment(row, { orderLegacyId = null } = {}) {
+  if (!row) return null;
+  return {
+    orderId: orderLegacyId,
+    status: row.status,
+    selectedDriverId: row.selected_driver_id ?? null,
+    canceledBy: row.canceled_by ?? null,
+    canceledAt: row.canceled_at ? toIso(row.canceled_at) : null,
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);
