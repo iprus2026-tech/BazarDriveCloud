@@ -127,8 +127,12 @@ expect('mock_api.js imports isBackendEnabled from api_config',
 expect('mock_api.js imports apiFetch + ApiError from api_client',
   /import\s*\{[^}]*\bapiFetch\b[^}]*\bApiError\b[^}]*\}\s*from\s*'\.\/api_client\.js'/.test(mockApiSrc));
 expect('mock_api.js calls apiFetch ONLY behind an isBackendEnabled() guard (OFF default never fetches)',
-  /if\s*\(isBackendEnabled\(\)\)\s*return[^\n]*await apiFetch\(/.test(mockApiSrc)
-  && (mockApiSrc.match(/apiFetch\(/g) || []).length === 1);
+  // Structural (not a defeatable count-parity): every apiFetch( site is preceded WITHIN its guarded
+  // block by an `if (isBackendEnabled())`, so the OFF default can never reach a fetch. Grows with each
+  // cutover PR (R18+ #784) without a brittle snapshot count.
+  (mockApiSrc.match(/apiFetch\(/g) || []).length >= 1
+  && (mockApiSrc.match(/if \(isBackendEnabled\(\)\)[\s\S]{0,200}?apiFetch\(/g) || []).length
+     === (mockApiSrc.match(/apiFetch\(/g) || []).length);
 expect('mock_api.js keeps the mock/localStorage feed path as the OFF fallback',
   /return mergeFeedAndRideOrderPosts\(/.test(mockApiSrc));
 

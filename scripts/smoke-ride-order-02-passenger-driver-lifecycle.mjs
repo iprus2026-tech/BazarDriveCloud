@@ -169,7 +169,7 @@ user.set({
   phone: '+77001112233', phoneVerified: true,
   onboarded: true,
 });
-const s1Order = createRideOrder({
+const s1Order = await createRideOrder({
   type: 'ride_order',
   pickup:  { id: 'p1', label: 'ТЦ Мега' },
   dropoff: { id: 'p2', label: 'Аэропорт' },
@@ -195,8 +195,8 @@ const s1Order = createRideOrder({
     s1Order.passenger?.isCurrentUser === true, String(s1Order.passenger?.isCurrentUser));
   expect('S1: order.passenger.authorId pinned to LOCAL_USER_ID',
     s1Order.passenger?.authorId === LOCAL_USER_ID, String(s1Order.passenger?.authorId));
-  expect('S1: order appears in listNearbyOrders()',
-    listNearbyOrders().some((o) => o.id === s1Order.id));
+  expect('S1: order appears in (await listNearbyOrders())',
+    (await listNearbyOrders()).some((o) => o.id === s1Order.id));
 }
 
 // ── Scenario 2 — Driver sees the available order ─────────────────────────────
@@ -205,7 +205,7 @@ const s1Order = createRideOrder({
 // listable with its original passenger snapshot intact.
 user.set({ role: 'driver', firstName: 'Рустам', lastName: 'К.' });
 {
-  const nearby = listNearbyOrders();
+  const nearby = (await listNearbyOrders());
   const found = nearby.find((o) => o.id === s1Order.id);
   expect('S2: driver lists the passenger\'s order',
     !!found, found ? found.id : 'not found');
@@ -261,7 +261,7 @@ const s4Reread = getOrderById(s1Order.id);
   expect('S4: responses survive acceptOrder',
     inlineLoadResponsesForOrder(s1Order.id).length === 1);
   expect('S4: ACCEPTED order drops from listNearbyOrders (CREATED filter)',
-    !listNearbyOrders().some((o) => o.id === s1Order.id));
+    !(await listNearbyOrders()).some((o) => o.id === s1Order.id));
 }
 
 // ── Scenario 5 — effectiveRole priority matrix (mirrors active_ride.js:322) ──
@@ -352,7 +352,7 @@ saveRideHistoryEntry(buildDriverHistoryEntry(s6Ride, {
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s7Order = createRideOrder({
+const s7Order = await createRideOrder({
   type: 'ride_order',
   pickup:  { id: 'p1', label: 'A' },
   dropoff: { id: 'p2', label: 'Б' },
@@ -389,7 +389,7 @@ writeResponseToStore(buildResponseFor(s7Order, { name: 'Рустам К.', ratin
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s8Order = createRideOrder({
+const s8Order = await createRideOrder({
   type: 'ride_order',
   pickup:  { id: 'p1', label: 'A' },
   dropoff: { id: 'p2', label: 'Б' },
@@ -472,7 +472,7 @@ const s8SecondResponder = {
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s9Order = createRideOrder({
+const s9Order = await createRideOrder({
   type: 'ride_order',
   pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
@@ -502,7 +502,7 @@ for (const terminalStatus of [RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s10Order = createRideOrder({
+const s10Order = await createRideOrder({
   type: 'ride_order',
   pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
@@ -592,7 +592,7 @@ const s10Order = createRideOrder({
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s11Order = createRideOrder({
+const s11Order = await createRideOrder({
   type: 'ride_order',
   pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
@@ -656,7 +656,7 @@ const s11LatestResponderId = `resp_late_${s11Order.id}`;
 reset();
 clearRideOrdersStore();
 user.set({ role: 'passenger', firstName: 'Алия', lastName: 'К.', onboarded: true });
-const s11bOrder = createRideOrder({
+const s11bOrder = await createRideOrder({
   type: 'ride_order',
   pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
   passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
@@ -714,7 +714,7 @@ user.set({
   vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
   rating: 4.95,  // exercise the ru-RU rating formatter
 });
-const s12Order = createRideOrder({
+const s12Order = await createRideOrder({
   type: 'ride_order',
   pickup: { id:'p1', label:'A' }, dropoff: { id:'p2', label:'Б' },
   estimatedPrice: 1700, distanceKm: 12, durationMin: 22,
@@ -832,8 +832,8 @@ function seedDriverProfile() {
     vehiclePlate: 'А 100 АА 77', vehicleColor: 'белый',
   });
 }
-function freshOrder() {
-  return createRideOrder({
+async function freshOrder() {
+  return await createRideOrder({
     type: 'ride_order', pickup:{id:'p1',label:'A'}, dropoff:{id:'p2',label:'Б'},
     passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
   });
@@ -841,7 +841,7 @@ function freshOrder() {
 
 // Feed accept → 'feed'
 reset(); clearRideOrdersStore(); seedDriverProfile();
-const acceptedFromFeed = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'feed' });
+const acceptedFromFeed = acceptCanonicalRideOrder((await freshOrder()).id, { acceptedSource: 'feed' });
 expect('S12B: Feed accept tags ride.acceptedSource === "feed"',
   acceptedFromFeed?.ride?.acceptedSource === 'feed',
   String(acceptedFromFeed?.ride?.acceptedSource));
@@ -850,7 +850,7 @@ expect('S12B: Feed accept does NOT mislabel as "driver_map"',
 
 // Post Detail accept → 'post_detail'
 reset(); clearRideOrdersStore(); seedDriverProfile();
-const acceptedFromPost = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'post_detail' });
+const acceptedFromPost = acceptCanonicalRideOrder((await freshOrder()).id, { acceptedSource: 'post_detail' });
 expect('S12B: Post Detail accept tags ride.acceptedSource === "post_detail"',
   acceptedFromPost?.ride?.acceptedSource === 'post_detail',
   String(acceptedFromPost?.ride?.acceptedSource));
@@ -859,7 +859,7 @@ expect('S12B: Post Detail accept does NOT mislabel as "driver_map"',
 
 // Default (no caller option) → neutral 'canonical_accept'
 reset(); clearRideOrdersStore(); seedDriverProfile();
-const acceptedFromDefault = acceptCanonicalRideOrder(freshOrder().id);
+const acceptedFromDefault = acceptCanonicalRideOrder((await freshOrder()).id);
 expect('S12B: default (no caller option) tags neutral "canonical_accept"',
   acceptedFromDefault?.ride?.acceptedSource === 'canonical_accept',
   String(acceptedFromDefault?.ride?.acceptedSource));
@@ -882,7 +882,7 @@ user.set({
   vehicleColor: 'белый', vehiclePlate: 'А 123 БВ 77',
   // intentionally no `rating`
 });
-const acceptedNoRating = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+const acceptedNoRating = acceptCanonicalRideOrder((await freshOrder()).id, { acceptedSource: 'driver_map' });
 {
   const ride = acceptedNoRating?.ride;
   expect('S12C: missing rating stored as non-falsy neutral "—"',
@@ -911,7 +911,7 @@ user.set({
   // intentionally no `vehicleColor`
   rating: 4.95,
 });
-const acceptedNoColor = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+const acceptedNoColor = acceptCanonicalRideOrder((await freshOrder()).id, { acceptedSource: 'driver_map' });
 {
   const ride = acceptedNoColor?.ride;
   expect('S12C: missing color stored as non-falsy neutral "цвет не указан"',
@@ -935,7 +935,7 @@ user.set({
   vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 123 БВ 77',
   // no rating, no vehicleColor
 });
-const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { acceptedSource: 'driver_map' });
+const acceptedBothMissing = acceptCanonicalRideOrder((await freshOrder()).id, { acceptedSource: 'driver_map' });
 {
   const ride = acceptedBothMissing?.ride;
   expect('S12C: both-missing case — rating === "—"',
@@ -997,7 +997,7 @@ const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { accepted
     vehicleMake: 'Toyota', vehicleModel: 'Camry', vehiclePlate: 'А 100 АА 77',
     // intentionally no `rating`, no `vehicleColor`
   });
-  const s14Order = createRideOrder({
+  const s14Order = await createRideOrder({
     type: 'ride_order', pickup:{id:'p1',label:'A'}, dropoff:{id:'p2',label:'Б'},
     passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },
   });
@@ -1188,7 +1188,7 @@ const acceptedBothMissing = acceptCanonicalRideOrder(freshOrder().id, { accepted
     // intentionally no rating / no vehicleColor — exercise the BD-LIFE-06
     // neutrals (rating '—', color 'цвет не указан')
   });
-  const s15Order = createRideOrder({
+  const s15Order = await createRideOrder({
     type: 'ride_order', pickup:{id:'p1',label:'Пушкина 5'}, dropoff:{id:'p2',label:'Аэропорт'},
     estimatedPrice: 1700, distanceKm: 12, durationMin: 22,
     passenger: { name: 'Алия К.', authorId: LOCAL_USER_ID, isCurrentUser: true },

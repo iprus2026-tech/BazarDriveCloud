@@ -611,7 +611,8 @@ export default async function driverMapScreen() {
       // re-render so it surfaces immediately. The self-contained passenger
       // snapshot keeps the later accept → active-ride handoff off the demo
       // "Анна М." seed.
-      createRideOrder({
+      try {
+      await createRideOrder({
         type: 'passenger_request',
         source: 'map',
         // #717 — driver-surface TEST order: must NOT count toward the driver's
@@ -630,6 +631,7 @@ export default async function driverMapScreen() {
           comment: 'Тестовый заказ для проверки DriverMap',
         },
       });
+      } catch { /* #784 CUT-3: live POST failed — no unhandled rejection; the re-render shows current state */ }
       renderList();
     } else if (action === 'map') {
       go('/map');

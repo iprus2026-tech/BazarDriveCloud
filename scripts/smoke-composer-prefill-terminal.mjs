@@ -485,7 +485,7 @@ expect('A — composer.js exports clearComposerDraft + default screen factory',
       isCurrentUser: true,
     },
   };
-  const order = mockApi.createRideOrder(payload);
+  const order = await mockApi.createRideOrder(payload);
   expect('D3 — createRideOrder returns the persisted order',
     !!order && order.type === 'passenger_request' && order.status === 'CREATED');
   expect('D3 — order pickup.label preserves applied repeat route pickup',
@@ -748,7 +748,7 @@ expect('F3 — composer.js does NOT call peekFavoriteNotice / consumeFavoriteNot
       isCurrentUser: true,
     },
   };
-  const order = mockApi.createRideOrder(payload);
+  const order = await mockApi.createRideOrder(payload);
 
   // 5) Final order is route-template-only — no smuggled fields.
   expect('G — final order.status === "CREATED" (no terminal leak)',

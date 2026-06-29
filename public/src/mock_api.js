@@ -518,7 +518,7 @@ function sanitizePassengerSnapshot(input) {
   };
 }
 
-export function createRideOrder(input = {}) {
+export async function createRideOrder(input = {}) {
   const order = {
     id: `order-${Date.now()}`,
     type: input.type === 'ride_order' ? 'ride_order' : 'passenger_request',
@@ -550,12 +550,41 @@ export function createRideOrder(input = {}) {
     status: 'CREATED',
     createdAt: new Date().toISOString(),
   };
+  // #784 CUT-3: on a live backend, POST the order and return the server's authoritative copy
+  // (its id/passenger.isCurrentUser/etc.). A rejected POST propagates to the caller (handlePublish
+  // surfaces it, no success card). When the backend is OFF this is the unchanged local-mock path.
+  if (isBackendEnabled()) {
+    const r = await apiFetch('/orders', {
+      method: 'POST',
+      body: {
+        type: order.type,
+        source: order.source,
+        pickup: order.pickup,
+        dropoff: order.dropoff,
+        distanceKm: order.distanceKm,
+        durationMin: order.durationMin,
+        estimatedPrice: order.estimatedPrice,
+        estimatedPriceLabel: order.estimatedPriceLabel,
+        scheduledMode: order.scheduledMode,
+        scheduledAt: order.scheduledAt,
+        scheduledLabel: order.scheduledLabel,
+        comment: order.comment,
+        passenger: order.passenger,
+      },
+    });
+    return r.order;
+  }
   const list = [order, ...loadRideOrdersRaw()];
   persistRideOrders(list);
   return order;
 }
 
-export function listNearbyOrders() {
+export async function listNearbyOrders() {
+  // #784 CUT-3: on a live backend, the nearby/feed read is the server's CREATED orders.
+  if (isBackendEnabled()) {
+    const r = await apiFetch('/orders');
+    return (r.items || []).filter((o) => o && o.status === 'CREATED');
+  }
   return loadRideOrdersRaw()
     .filter((o) => o && o.status === 'CREATED' && !o.demo)
     .slice(0, 20);

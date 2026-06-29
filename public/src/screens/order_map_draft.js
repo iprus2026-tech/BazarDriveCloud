@@ -837,10 +837,10 @@ function buildPassengerSnapshotFromUser(u, commentText) {
   };
 }
 
-function publishOrder(draft) {
+async function publishOrder(draft) {
   const u = user.get();
   const commentText = form.comment.trim();
-  const order = createRideOrder({
+  const order = await createRideOrder({
     type: 'passenger_request',
     pickup: { id: draft.pickup.id ?? null, label: draft.pickup.label },
     dropoff: { id: draft.dropoff.id ?? null, label: draft.dropoff.label },
@@ -885,18 +885,18 @@ function handlePublish(root, draft) {
   }
   publishFeedback(root, 'info', 'Публикуем заказ…', draft, { publishing: true });
 
-  setTimeout(() => {
+  setTimeout(async () => {
     let order = null;
     try {
-      order = publishOrder(draft);
+      order = await publishOrder(draft);
     } catch (err) {
       debugPublish('publishOrder:threw', err);
-      publishFeedback(root, 'error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.', draft, { publishing: false });
+      publishFeedback(root, 'error', 'Не удалось создать заказ. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
     if (!order || typeof order !== 'object' || !order.id) {
       debugPublish('publishOrder:invalid', order);
-      publishFeedback(root, 'error', 'Не удалось создать локальный заказ. Попробуйте ещё раз.', draft, { publishing: false });
+      publishFeedback(root, 'error', 'Не удалось создать заказ. Попробуйте ещё раз.', draft, { publishing: false });
       return;
     }
     lastOrder = order;
