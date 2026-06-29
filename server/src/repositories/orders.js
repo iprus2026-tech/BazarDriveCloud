@@ -22,6 +22,17 @@ export async function insertOrder(db, o) {
   return rows[0];
 }
 
+// Resolve an order by its client-facing legacy id ('order-…') to the row the matching/ride paths
+// need (the UUID PK for FKs, the owner passenger_id, and the lifecycle status). Returns null when
+// no such order exists.
+export async function findOrderByLegacyId(db, legacyId) {
+  const { rows } = await db.query(
+    `SELECT id, legacy_id, passenger_id, status FROM orders WHERE legacy_id = $1 LIMIT 1`,
+    [legacyId],
+  );
+  return rows[0] ?? null;
+}
+
 // The feed / nearby read: newest CREATED orders (the only status the client renders as a feed
 // card; rideOrderToFeedPost drops anything else). Bounded by `limit` so the response is paged
 // even before real cursor pagination lands.

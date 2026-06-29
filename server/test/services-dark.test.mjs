@@ -23,11 +23,11 @@ const config = {
 const app = await buildApp({ config });
 after(() => app.close());
 
-// auth (R02) and orders #1 (R03) are LIVE; the rest stay dark 501.
-const DARK = SERVICES.map((s) => s.name).filter((n) => n !== 'auth' && n !== 'orders');
+// auth (R02), orders #1 (R03) and matching #3 (R04) are LIVE; the rest stay dark 501.
+const DARK = SERVICES.map((s) => s.name).filter((n) => n !== 'auth' && n !== 'orders' && n !== 'matching');
 
-test('every still-dark service (#2-#8) returns 501 NOT_IMPLEMENTED at its prefix', async () => {
-  assert.equal(DARK.length, 7, 'seven dark services expected (orders #1 went live in R03)');
+test('every still-dark service returns 501 NOT_IMPLEMENTED at its prefix', async () => {
+  assert.equal(DARK.length, 6, 'six dark services expected (orders #1, matching #3 went live)');
   for (const name of DARK) {
     const res = await app.inject({ method: 'GET', url: `/api/v1/${name}` });
     assert.equal(res.statusCode, 501, `${name} root status`);
@@ -36,9 +36,9 @@ test('every still-dark service (#2-#8) returns 501 NOT_IMPLEMENTED at its prefix
 });
 
 test('a dark service is dark on a sub-path too', async () => {
-  const res = await app.inject({ method: 'POST', url: '/api/v1/matching/anything/deep' });
+  const res = await app.inject({ method: 'POST', url: '/api/v1/availability/anything/deep' });
   assert.equal(res.statusCode, 501);
-  assert.equal(res.json().service, 'matching');
+  assert.equal(res.json().service, 'availability');
 });
 
 test('auth OTP write endpoints are LIVE (validate, not 501); session read is live (200)', async () => {
@@ -78,6 +78,21 @@ test('orders #1 is LIVE (validates, auth-gated, honors authError; not 501)', asy
   const ge = await app.inject({ method: 'GET', url: '/api/v1/orders', headers: { authorization: 'Bearer x' } });
   assert.equal(ge.statusCode, 503, 'GET /orders surfaces authError as 503');
   assert.equal(ge.json().code, 'SESSION_LOOKUP_FAILED');
+});
+
+test('matching #3 offers are LIVE (validate + auth-gated); /select still 501', async () => {
+  // R04 promoted offer create/list live; the /select accept stays 501 for R05. Hermetic (no DB):
+  const noField = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: {} });
+  assert.equal(noField.statusCode, 400, 'POST /matching/offers validates (orderId required, not 501)');
+  assert.equal(noField.json().code, 'VALIDATION');
+  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/matching/offers', payload: { orderId: 'order-x' } });
+  assert.equal(noAuth.statusCode, 401, 'offer create requires a session');
+  assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
+  const listNoAuth = await app.inject({ method: 'GET', url: '/api/v1/matching/offers?orderId=order-x' });
+  assert.equal(listNoAuth.statusCode, 401, 'owner-only list requires a session');
+  const select = await app.inject({ method: 'POST', url: '/api/v1/matching/select', payload: {} });
+  assert.equal(select.statusCode, 501, '/select stays dark (R05)');
+  assert.equal(select.json().code, 'NOT_IMPLEMENTED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {

@@ -44,6 +44,30 @@ export function serializeOrder(row, { viewerId = null } = {}) {
   };
 }
 
+// Project an offers row for the OWNER-ONLY matching list (#3, R04). Exposing the driver's id +
+// offer details (name/car/rating/eta/price/message) is intended here — this read is gated to the
+// order's passenger, who is choosing a driver (and needs driverId for the R05 /select). The
+// client-facing order id is the legacy string, supplied by the caller (it knows which order it
+// queried), since the row only carries the order UUID FK.
+export function serializeOffer(row, { orderLegacyId = null } = {}) {
+  if (!row) return null;
+  return {
+    id: row.legacy_id,
+    orderId: orderLegacyId,
+    driverId: row.driver_id,
+    status: row.status,
+    driverName: row.driver_name ?? null,
+    car: row.car ?? null,
+    rating: row.rating ?? null,
+    etaMin: row.eta_min ?? null,
+    price: row.price == null ? null : Number(row.price),
+    message: row.message ?? null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+    expiresAt: toIso(row.expires_at),
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);
