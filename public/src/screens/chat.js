@@ -7,6 +7,8 @@ import {
   isTerminalRideStatus,
   RIDE_STATUS,
 } from '../ride_state.js';
+import { isBackendEnabled } from '../api_config.js';
+import { apiFetch } from '../api_client.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -116,6 +118,38 @@ function persistMessageInOrder(chatId, msg) {
   } catch {
     return false;
   }
+}
+
+// ── #784 chat cutover — when the backend is ON, a real thread's messages come from the shared
+// server thread (GET/POST /api/v1/chat/messages, keyed by chatId) instead of local storage; the
+// local path below is unchanged when the backend is OFF. Messages are auth-free (sender_role in the
+// body) per the epic. ───────────────────────────────────────────────────────────────────────────
+function isoToHm(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+function mapServerMsg(m) {
+  // server shape -> chat.js shape; readers compute in/out from senderRole (dir is a legacy fallback).
+  return {
+    id: m.clientMsgId != null ? m.clientMsgId : m.id,
+    senderRole: m.senderRole || null,
+    // legacy `dir` is only consulted when senderRole is null — default to the SAFE other-side 'in'
+    // so an un-roled server message never renders as the viewer's own outgoing bubble.
+    dir: m.senderRole === 'passenger' ? 'out' : 'in',
+    text: m.body,
+    time: m.displayTime || isoToHm(m.createdAt),
+  };
+}
+async function fetchServerMessages(chatId) {
+  const r = await apiFetch(`/chat/messages?chatId=${encodeURIComponent(chatId)}`);
+  return Array.isArray(r && r.items) ? r.items.map(mapServerMsg) : [];
+}
+function postServerMessage(chatId, msg) {
+  return apiFetch('/chat/messages', {
+    method: 'POST',
+    body: { chatId, body: msg.text, senderRole: msg.senderRole, clientMsgId: msg.id, displayTime: msg.time },
+  });
 }
 
 // BD-AUTH-BOUNDARY-01 — chat messages are scoped to the local identity
@@ -424,7 +458,10 @@ export default function chat() {
   // messages shows the designed empty / first-message state, not a fabricated mock
   // conversation. The demo thread (chatId === 'demo') keeps MOCK_MESSAGES as a showcase.
   const isRealThread = chatId !== 'demo';
-  let messages  = stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((m) => ({ ...m })));
+  // #784 cutover: on a live backend a real thread reads the SHARED SERVER thread (the source of
+  // truth), so local pre-cutover stored messages are ignored to avoid mixing the two histories.
+  const backendRead = isBackendEnabled() && isRealThread;
+  let messages  = backendRead ? [] : (stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((m) => ({ ...m }))));
 
   const rideContext = resolveRideContext({ responseId, viewerRole });
   // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
@@ -547,15 +584,69 @@ export default function chat() {
   }
 
   // ── Empty thread, or date separator + messages ──────────────────
-  if (isRealThread && messages.length === 0) {
-    messagesEl.appendChild(renderEmptyThread(viewerRole));
-  } else {
+  // `rendered` tracks message ids already in the DOM so the backend poll appends INCREMENTALLY
+  // (never a wholesale replaceChildren) — preserving optimistic / failed-send bubbles + their retry
+  // control across poll ticks, and letting us keep the scroll position when reading scrollback.
+  const rendered = new Set();
+  let threadShellReady = false;
+  function ensureThreadShell() {
+    messagesEl.replaceChildren();
+    rendered.clear();
     const sep = document.createElement('div');
     sep.className = 'chat__date-sep';
     sep.textContent = 'Сегодня';
     messagesEl.appendChild(sep);
-    for (const msg of messages) {
-      messagesEl.appendChild(createMsgEl(msg, viewerRole, counterpart.name));
+    threadShellReady = true;
+  }
+  // Dedupe key = senderRole + id. The server treats the same clientMsgId from DIFFERENT senderRoles
+  // as distinct messages (its unique index is chat_id + sender_role + client_msg_id), so keying by id
+  // alone would drop one side's message if both devices mint the same Date.now() id in a thread. The
+  // role discriminator still matches the local optimistic echo (same sender, same id) for dedup.
+  const keyOf = (m) => `${m.senderRole || '~'}:${m.id}`;
+  function renderMessage(msg) {
+    if (rendered.has(keyOf(msg))) return null;
+    rendered.add(keyOf(msg));
+    const el = createMsgEl(msg, viewerRole, counterpart.name);
+    messagesEl.appendChild(el);
+    return el;
+  }
+  if (isRealThread && messages.length === 0) {
+    messagesEl.appendChild(renderEmptyThread(viewerRole));
+  } else {
+    ensureThreadShell();
+    for (const msg of messages) renderMessage(msg);
+  }
+
+  // ── #784 cutover — read the shared server thread. A non-terminal thread POLLS it for cross-device
+  // freshness; a terminal (read-only) thread reads it ONCE so a completed ride's chat still shows on
+  // another device. The poll self-clears once the screen is gone (router replaceChildren removes
+  // messagesEl), APPENDS only new ids (so optimistic/failed local bubbles survive), and auto-scrolls
+  // only when the user was already at the bottom (never yanks someone reading scrollback).
+  const backendChat = backendRead && !isTerminal;
+  // Gate the composer until the first server fetch settles, so a send before history loads can't
+  // append the optimistic bubble ahead of older fetched messages (Codex #798). Off / terminal
+  // threads have no gate (true immediately).
+  let initialFetchDone = !backendChat;
+  if (backendRead) {
+    const nearBottom = () => (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
+    const refresh = async () => {
+      let list;
+      try { list = await fetchServerMessages(chatId); }
+      catch { initialFetchDone = true; return; }
+      initialFetchDone = true;
+      if (!list.length) return;
+      const wasNear = nearBottom();
+      if (!threadShellReady) ensureThreadShell();
+      let grew = false;
+      for (const msg of list) { if (renderMessage(msg)) grew = true; }
+      if (grew && wasNear) scrollBottom();
+    };
+    refresh();
+    if (!isTerminal) {
+      const pollId = setInterval(() => {
+        if (!document.body.contains(messagesEl)) { clearInterval(pollId); return; }
+        refresh();
+      }, 2500);
     }
   }
 
@@ -625,10 +716,11 @@ export default function chat() {
     retry.textContent = 'Повторить';
     retry.setAttribute('aria-label', 'Повторить отправку');
     retry.addEventListener('click', () => {
-      if (persistMessageInOrder(chatId, msg)) {
-        clearSendFailed(msgEl);
-        showNotice('Сообщение отправлено');
-        inputEl.focus();
+      const ok = () => { clearSendFailed(msgEl); showNotice('Сообщение отправлено'); inputEl.focus(); };
+      if (backendChat) {
+        postServerMessage(chatId, msg).then(ok).catch(() => showNotice('Не удалось отправить сообщение — проверьте соединение.'));
+      } else if (persistMessageInOrder(chatId, msg)) {
+        ok();
       } else {
         showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
       }
@@ -648,6 +740,9 @@ export default function chat() {
   function doSend() {
     const text = inputEl.value.trim();
     if (!text) return;
+    // On a live backend, wait for the first server fetch so the optimistic bubble can't land ahead of
+    // older history (Codex #798). initialFetchDone is true immediately for off / terminal threads.
+    if (backendChat && !initialFetchDone) { showNotice('Загрузка чата, подождите…'); return; }
 
     const now  = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -659,10 +754,14 @@ export default function chat() {
     // local outgoing send.
     const msg = { id: Date.now(), senderRole: viewerRole, dir: 'out', text, time };
     messages = [...messages, msg];
-    const persisted = appendMessage(chatId, msg);
 
     const msgEl = createMsgEl(msg, viewerRole, counterpart.name);
+    // On a live backend, ensure the thread shell exists, append the optimistic bubble, and register
+    // its id so the incremental poll dedups the server echo and never wipes the bubble (or its
+    // failed-state retry) on the next tick.
+    if (backendChat && !threadShellReady) ensureThreadShell();
     messagesEl.appendChild(msgEl);
+    if (backendChat) rendered.add(keyOf(msg));
     scrollBottom();
 
     inputEl.value = '';
@@ -676,7 +775,15 @@ export default function chat() {
     // BD-CHAT-01 (#6 + #18) — a failed persist (quota / private mode) is both surfaced via a
     // notice AND flagged on the bubble itself, with an explicit retry, so an unsaved message is
     // never shown as an ordinary delivered one (screen-contracts state 7).
-    if (!persisted) {
+    // BD-CHAT-01 (#6 + #18) + #784 — persist the outgoing message: to the shared backend thread
+    // when the backend is ON, else to local storage. A failed write flags the bubble (with retry)
+    // and a notice, so an unsaved message is never shown as an ordinary delivered one.
+    if (backendChat) {
+      postServerMessage(chatId, msg).catch(() => {
+        markSendFailed(msgEl, msg);
+        showNotice('Не удалось отправить сообщение — проверьте соединение.');
+      });
+    } else if (!appendMessage(chatId, msg)) {
       markSendFailed(msgEl, msg);
       showNotice('Не удалось сохранить сообщение — освободите место в хранилище.');
     }
