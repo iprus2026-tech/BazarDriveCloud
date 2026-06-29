@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { serializeOrder } from '../src/serialize.js';
+import { serializeOrder, serializeOffer } from '../src/serialize.js';
 
 const baseRow = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -69,4 +69,39 @@ test('serializeOrder tolerates a null snapshot, null geo, and a null owner', () 
 test('serializeOrder(null/undefined) => null', () => {
   assert.equal(serializeOrder(null), null);
   assert.equal(serializeOrder(undefined), null);
+});
+
+const offerRow = {
+  legacy_id: 'offer_order-1_driver-9',
+  order_id: 'uuid-order',
+  driver_id: 'driver-9',
+  status: 'sent',
+  driver_name: 'Иван', car: 'Kia Rio', rating: '4,9',
+  eta_min: 5, price: '850.00', message: 'еду',
+  created_at: new Date('2026-06-29T10:00:00.000Z'),
+  updated_at: new Date('2026-06-29T10:00:00.000Z'),
+  expires_at: new Date('2026-06-29T10:15:00.000Z'),
+};
+
+test('serializeOffer maps an offers row to the owner-facing shape (id, driverId, NUMERIC->number, ISO)', () => {
+  const o = serializeOffer(offerRow, { orderLegacyId: 'order-1' });
+  assert.equal(o.id, 'offer_order-1_driver-9');
+  assert.equal(o.orderId, 'order-1', 'caller-supplied legacy order id');
+  assert.equal(o.driverId, 'driver-9');
+  assert.equal(o.status, 'sent');
+  assert.equal(o.driverName, 'Иван');
+  assert.equal(o.etaMin, 5);
+  assert.equal(o.price, 850, 'NUMERIC string -> number');
+  assert.equal(o.expiresAt, '2026-06-29T10:15:00.000Z', 'Date -> ISO');
+});
+
+test('serializeOffer tolerates null detail fields / orderLegacyId / a null row', () => {
+  const row = { legacy_id: 'offer_x', driver_id: 'd', status: 'withdrawn', price: null,
+    driver_name: null, car: null, rating: null, eta_min: null, message: null,
+    created_at: new Date(), updated_at: new Date(), expires_at: new Date() };
+  const o = serializeOffer(row, {});
+  assert.equal(o.price, null);
+  assert.equal(o.orderId, null);
+  assert.equal(o.etaMin, null);
+  assert.equal(serializeOffer(null), null);
 });

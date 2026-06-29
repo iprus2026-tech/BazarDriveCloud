@@ -8,3 +8,11 @@ import { randomUUID } from 'node:crypto';
 export function newOrderId() {
   return `order-${randomUUID()}`;
 }
+
+// The offer business id mirrors the client's buildOfferId (driver_offer_store.js): one offer per
+// (order, driver), so the id is the composite key 'offer_<orderId>_<driverId>'. orderId is the
+// order's legacy id ('order-…'); driverId is the driver's user UUID. The DB also enforces the
+// invariant with UNIQUE(order_id, driver_id) — this keeps the same key explicit/greppable.
+export function newOfferId(orderLegacyId, driverId) {
+  return `offer_${orderLegacyId}_${driverId}`;
+}
