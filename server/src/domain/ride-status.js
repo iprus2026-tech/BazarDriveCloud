@@ -41,6 +41,21 @@ export const TERMINAL_RIDE_STATUSES = Object.freeze(
   new Set([RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW, RIDE_STATUS.COMPLETED]),
 );
 
+// VERBATIM mirror of ride_state.js STATUS_TIMESTAMP_FIELD — the status -> client timestamp key the
+// #5 chokepoint stamps on a transition (the DB columns are the snake_case of these). Statuses with
+// no entry (NEW_ORDER/CONFIRMATION_PENDING/CONFIRMED/CHAT_STARTED) stamp nothing. ACCEPTED and
+// DRIVER_EN_ROUTE both map to acceptedAt (first-stamp-wins on the client). Pinned by the parity test.
+export const STATUS_TIMESTAMP_FIELD = Object.freeze({
+  [RIDE_STATUS.ACCEPTED]: 'acceptedAt',
+  [RIDE_STATUS.DRIVER_EN_ROUTE]: 'acceptedAt',
+  [RIDE_STATUS.DRIVER_APPROACHING_PICKUP]: 'approachingAt',
+  [RIDE_STATUS.WAITING_PASSENGER]: 'arrivedAt',
+  [RIDE_STATUS.IN_PROGRESS]: 'startedAt',
+  [RIDE_STATUS.COMPLETED]: 'completedAt',
+  [RIDE_STATUS.CANCELED]: 'canceledAt',
+  [RIDE_STATUS.NO_SHOW]: 'canceledAt',
+});
+
 // Client parity: isValidRideStatus(status) — a string that is an own key of RIDE_STATUS.
 export function isValidRideStatus(status) {
   return typeof status === 'string'
