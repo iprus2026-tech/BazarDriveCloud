@@ -2,8 +2,9 @@
 // BD-DOCS-041): every #1-#8 service is reachable at its prefix and returns 501
 // NOT_IMPLEMENTED; /metrics is a dark skeleton. This is the regression guard that promoting a
 // service is a deliberate, visible change (a 501 turning into a real status). NOTE: auth's OTP
-// writes were promoted LIVE in R02 (#784) — this file now pins that they VALIDATE (live) and
-// no longer 501; the end-to-end OTP flow is covered (DB-gated) by auth-otp-flow.test.mjs.
+// writes were promoted LIVE in R02, and orders #1 in R03 (#784) — this file now pins that they
+// VALIDATE (live) and no longer 501; their end-to-end flows are DB-gated (auth-otp-flow,
+// orders-flow). The remaining #2-#8 services stay dark 501.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -22,10 +23,11 @@ const config = {
 const app = await buildApp({ config });
 after(() => app.close());
 
-const DARK = SERVICES.map((s) => s.name).filter((n) => n !== 'auth');
+// auth (R02) and orders #1 (R03) are LIVE; the rest stay dark 501.
+const DARK = SERVICES.map((s) => s.name).filter((n) => n !== 'auth' && n !== 'orders');
 
-test('every #1-#8 service returns 501 NOT_IMPLEMENTED at its prefix', async () => {
-  assert.equal(DARK.length, 8, 'eight dark services expected');
+test('every still-dark service (#2-#8) returns 501 NOT_IMPLEMENTED at its prefix', async () => {
+  assert.equal(DARK.length, 7, 'seven dark services expected (orders #1 went live in R03)');
   for (const name of DARK) {
     const res = await app.inject({ method: 'GET', url: `/api/v1/${name}` });
     assert.equal(res.statusCode, 501, `${name} root status`);
@@ -34,9 +36,9 @@ test('every #1-#8 service returns 501 NOT_IMPLEMENTED at its prefix', async () =
 });
 
 test('a dark service is dark on a sub-path too', async () => {
-  const res = await app.inject({ method: 'POST', url: '/api/v1/orders/anything/deep' });
+  const res = await app.inject({ method: 'POST', url: '/api/v1/matching/anything/deep' });
   assert.equal(res.statusCode, 501);
-  assert.equal(res.json().service, 'orders');
+  assert.equal(res.json().service, 'matching');
 });
 
 test('auth OTP write endpoints are LIVE (validate, not 501); session read is live (200)', async () => {
@@ -54,6 +56,28 @@ test('auth OTP write endpoints are LIVE (validate, not 501); session read is liv
   assert.equal(verifyMissing.json().code, 'VALIDATION');
   const session = await app.inject({ method: 'GET', url: '/api/v1/auth/session' });
   assert.equal(session.statusCode, 200);
+});
+
+test('orders #1 is LIVE (validates, auth-gated, honors authError; not 501)', async () => {
+  // R03 promoted orders live — provable hermetically (no reachable DB here); the old dark skeleton
+  // would have 501'd every case. The create+list flow is DB-gated (orders-flow).
+  // (a) invalid/empty body hits the live schema (400 VALIDATION). Empty {} is rejected because
+  //     pickup+dropoff are required (Codex #789 — no null-route orders).
+  const bad = await app.inject({ method: 'POST', url: '/api/v1/orders', payload: { type: 'bogus' } });
+  assert.equal(bad.statusCode, 400, 'POST /orders validates (not 501)');
+  assert.equal(bad.json().code, 'VALIDATION');
+  const empty = await app.inject({ method: 'POST', url: '/api/v1/orders', payload: {} });
+  assert.equal(empty.statusCode, 400, 'empty body rejected (pickup+dropoff required)');
+  // (b) a VALID body with NO token hits the live auth gate (401), pre-DB.
+  const noAuth = await app.inject({ method: 'POST', url: '/api/v1/orders',
+    payload: { pickup: { label: 'A' }, dropoff: { label: 'B' } } });
+  assert.equal(noAuth.statusCode, 401, 'POST /orders requires a session (not 501)');
+  assert.equal(noAuth.json().code, 'UNAUTHENTICATED');
+  // (c) a token whose lookup fails (DB unreachable here) is a retryable 503 on the public GET too,
+  //     never a misleading anonymous feed (Codex #789).
+  const ge = await app.inject({ method: 'GET', url: '/api/v1/orders', headers: { authorization: 'Bearer x' } });
+  assert.equal(ge.statusCode, 503, 'GET /orders surfaces authError as 503');
+  assert.equal(ge.json().code, 'SESSION_LOOKUP_FAILED');
 });
 
 test('/metrics is a dark skeleton (501)', async () => {
