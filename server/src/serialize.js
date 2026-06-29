@@ -131,6 +131,53 @@ export function serializeRide(row) {
   };
 }
 
+// Project a ride_history VIEW row (#8, R08) for the viewer's own history. Role-agnostic
+// counterparty (a passenger row sees the driver; a driver row sees the passenger). Internal user
+// ids (viewer_user_id / counterparty_id) are NOT exposed. The receipt sub-object is present only on
+// driver rows that have a receipt (the view LEFT JOINs it; receipt_fare is null otherwise).
+export function serializeHistoryEntry(row) {
+  if (!row) return null;
+  return {
+    tripId: row.trip_id,
+    role: row.role,
+    completedAt: toIso(row.completed_at),
+    counterparty: { name: row.counterparty_name ?? null, rating: row.counterparty_rating ?? null },
+    vehicle: { model: row.vehicle_model ?? null, color: row.vehicle_color ?? null, plate: row.vehicle_plate ?? null },
+    route: { pickupLabel: row.pickup_label ?? null, dropoffLabel: row.dropoff_label ?? null },
+    fare: row.fare ?? null,
+    distance: row.distance ?? null,
+    duration: row.duration ?? null,
+    rating: row.rating ?? null,
+    tags: row.tags ?? null,
+    comment: row.comment ?? null,
+    receipt: row.receipt_fare != null
+      ? {
+        fare: row.receipt_fare,
+        net: row.receipt_net,
+        commission: row.receipt_commission,
+        tip: row.receipt_tip,
+        paymentMode: row.receipt_payment_mode,
+      }
+      : null,
+  };
+}
+
+// Project a receipts row (#8, R08). The integers are stored already-computed (no recompute), so
+// they are echoed verbatim; commission is already signed (negative).
+export function serializeReceipt(row, { tripId = null } = {}) {
+  if (!row) return null;
+  return {
+    tripId,
+    fare: row.fare,
+    commission: row.commission,
+    tip: row.tip,
+    net: row.net,
+    paymentMode: row.payment_mode,
+    status: row.status,
+    completedAt: toIso(row.completed_at),
+  };
+}
+
 function toIso(value) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : String(value);
