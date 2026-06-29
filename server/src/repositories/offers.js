@@ -41,13 +41,14 @@ export async function listOffersByOrder(db, orderId) {
   return rows;
 }
 
-// Accept the selected driver's LIVE ('sent') offer on an order (the transactional accept, R05).
-// Guarded by status='sent', so a withdrawn/expired/already-terminal offer can't be accepted —
-// returns null when there is no live offer from that driver for the order (the caller rejects).
+// Accept the selected driver's LIVE ('sent', not-expired) offer on an order (the transactional
+// accept, R05). Guarded by status='sent' AND expires_at > now() — so a withdrawn/terminal OR an
+// expired-but-not-yet-swept offer (the TTL sweep is future work) can't be accepted; returns null
+// when there is no live offer from that driver, and the caller rejects with 404 (Codex #791).
 export async function acceptOffer(db, orderId, driverId) {
   const { rows } = await db.query(
     `UPDATE offers SET status = 'accepted', updated_at = now()
-      WHERE order_id = $1 AND driver_id = $2 AND status = 'sent'
+      WHERE order_id = $1 AND driver_id = $2 AND status = 'sent' AND expires_at > now()
       RETURNING *`,
     [orderId, driverId],
   );

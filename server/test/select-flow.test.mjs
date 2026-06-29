@@ -86,6 +86,8 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
 
   // re-select is refused — the order is no longer CREATED.
   assert.equal((await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offB.driverId }, bearer(paxS))).statusCode, 409, 'cannot re-select an accepted order');
+  // and no NEW offer can be created on an accepted order (the locked status recheck, Codex #791).
+  assert.equal((await post(app, '/api/v1/matching/offers', { orderId: order.id }, bearer(drvBS))).statusCode, 409, 'cannot offer on an accepted order');
 
   // the accepted order drops out of the public CREATED feed.
   const feed = (await get(app, '/api/v1/orders')).json().items;
@@ -127,4 +129,37 @@ test('select serializes concurrent accepts via FOR UPDATE — exactly one wins (
   const items = (await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS))).json().items;
   assert.equal(items.filter((o) => o.status === 'accepted').length, 1, 'exactly one offer accepted');
   assert.equal(items.filter((o) => o.status === 'rejected').length, 1, 'the peer is rejected');
+});
+
+test('select refuses an offer past its TTL (expired-but-unswept), even though status is still sent (R05)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const pax = `+1597${String(process.pid).padStart(7, '0')}`;
+  const drv = `+1598${String(process.pid).padStart(7, '0')}`;
+  const cleanup = new pg.Client({ connectionString: DATABASE_URL });
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    for (const p of [pax, drv]) {
+      await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
+      await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const paxS = await mintSession(app, pax);
+  const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+  const off = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'D' }, bearer(await mintSession(app, drv)))).json().offer;
+
+  // force the offer past its TTL while it is still status='sent' (the sweep that flips expired
+  // rows is future work) — selecting it must NOT accept a stale offer.
+  await cleanup.query("UPDATE offers SET expires_at = now() - interval '1 minute' WHERE legacy_id = $1", [off.id]);
+  const sel = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: off.driverId }, bearer(paxS));
+  assert.equal(sel.statusCode, 404, 'an expired sent offer is not a live candidate');
+  assert.equal(sel.json().code, 'OFFER_NOT_FOUND');
+  // the order is untouched (still CREATED, no assignment).
+  const o = (await get(app, '/api/v1/orders')).json().items.find((x) => x.id === order.id);
+  assert.equal(o.status, 'CREATED', 'order stays open after a failed (expired) select');
 });

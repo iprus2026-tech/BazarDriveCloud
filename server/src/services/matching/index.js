@@ -50,31 +50,38 @@ export default async function matchingService(app) {
     if (!viewer) return problem(reply, 401, 'UNAUTHENTICATED', 'authentication required');
 
     const b = req.body;
-    const order = await findOrderByLegacyId(app.db, b.orderId);
-    if (!order) return problem(reply, 404, 'ORDER_NOT_FOUND', 'order not found');
-    if (order.status !== 'CREATED') return problem(reply, 409, 'ORDER_NOT_OPEN', 'order is not open for offers');
-    // A passenger cannot offer on their OWN order — reject at create so no self-candidate ever
-    // enters the owner-only list or sets up a self-assignment at /select (Codex #790).
-    if (String(order.passenger_id) === String(viewer.userId)) {
-      return problem(reply, 403, 'CANNOT_OFFER_OWN_ORDER', 'cannot offer on your own order');
-    }
-
-    // Idempotent: upsert creates a fresh 'sent' offer or re-sends a withdrawn one; a no-op conflict
-    // (already 'sent' or terminal) returns no row, so read the existing one back.
-    let row = await upsertOffer(app.db, {
-      legacyId: newOfferId(order.legacy_id, viewer.userId),
-      orderId: order.id,
-      driverId: viewer.userId,
-      driverName: b.driverName ?? null,
-      car: b.car ?? null,
-      rating: b.rating ?? null,
-      etaMin: b.etaMin ?? null,
-      price: b.price ?? null,
-      message: b.message ?? null,
-      ttlMin: OFFER_TTL_MIN,
+    // Serialize offer creation WITH /select: lock the order row (the same FOR UPDATE the accept
+    // takes) and re-check status UNDER the lock, so a concurrent select can't accept the order
+    // between an unlocked status read and the insert — which would otherwise leave a live 'sent'
+    // offer on an already-ACCEPTED order, after rejectPeerOffers has run (Codex #791). The
+    // idempotent upsert runs in the same tx.
+    const result = await app.db.tx(async (client) => {
+      const order = await lockOrderByLegacyId(client, b.orderId);
+      if (!order) return { err: [404, 'ORDER_NOT_FOUND', 'order not found'] };
+      // A passenger cannot offer on their OWN order — no self-candidate (Codex #790).
+      if (String(order.passenger_id) === String(viewer.userId)) {
+        return { err: [403, 'CANNOT_OFFER_OWN_ORDER', 'cannot offer on your own order'] };
+      }
+      if (order.status !== 'CREATED') return { err: [409, 'ORDER_NOT_OPEN', 'order is not open for offers'] };
+      // Idempotent: upsert creates a fresh 'sent' offer or re-sends a withdrawn one; a no-op
+      // conflict (already 'sent' or terminal) returns no row, so read the existing one back.
+      let row = await upsertOffer(client, {
+        legacyId: newOfferId(order.legacy_id, viewer.userId),
+        orderId: order.id,
+        driverId: viewer.userId,
+        driverName: b.driverName ?? null,
+        car: b.car ?? null,
+        rating: b.rating ?? null,
+        etaMin: b.etaMin ?? null,
+        price: b.price ?? null,
+        message: b.message ?? null,
+        ttlMin: OFFER_TTL_MIN,
+      });
+      if (!row) row = await findOfferByOrderDriver(client, order.id, viewer.userId);
+      return { ok: row, orderLegacyId: order.legacy_id };
     });
-    if (!row) row = await findOfferByOrderDriver(app.db, order.id, viewer.userId);
-    return reply.code(201).send({ offer: serializeOffer(row, { orderLegacyId: order.legacy_id }) });
+    if (result.err) return problem(reply, result.err[0], result.err[1], result.err[2]);
+    return reply.code(201).send({ offer: serializeOffer(result.ok, { orderLegacyId: result.orderLegacyId }) });
   });
 
   // GET /api/v1/matching/offers?orderId=… — OWNER-ONLY list (the passenger choosing a driver).
@@ -128,9 +135,10 @@ export default async function matchingService(app) {
       if (String(order.passenger_id) !== String(viewer.userId)) {
         return { err: [403, 'FORBIDDEN', 'only the order owner can select a driver'] };
       }
-      // (Self-select can't normally arise — R04 blocks self-offers, so there is no live self-offer
-      // to accept — but reject it explicitly too.)
-      if (String(driverId) === String(viewer.userId)) {
+      // (Self-select can't normally arise — R04 blocks self-offers — but reject it explicitly too.
+      // Compare case-INSENSITIVELY: Postgres uuid equality in acceptOffer is case-insensitive, so a
+      // mixed-case driverId must not slip past this JS guard onto a legacy/imported self-offer (Codex #791).
+      if (String(driverId).toLowerCase() === String(viewer.userId).toLowerCase()) {
         return { err: [400, 'CANNOT_SELECT_SELF', 'cannot select yourself as the driver'] };
       }
       // Re-checked UNDER the lock: a concurrent select that already accepted flips this to ACCEPTED.
