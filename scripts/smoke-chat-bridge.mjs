@@ -407,8 +407,10 @@ expect('chat.js routes the chat thread through apiFetch when the backend is enab
   && /postServerMessage\(chatId, msg\)/.test(chat));
 expect('chat.js poll appends incrementally (no wholesale repaint) — preserves optimistic/failed bubbles',
   /const rendered = new Set\(\)/.test(chat)
-  && /if \(rendered\.has\(msg\.id\)\) return null/.test(chat)
+  && /if \(rendered\.has\(keyOf\(msg\)\)\) return null/.test(chat)
   && /if \(grew && wasNear\) scrollBottom\(\)/.test(chat));
+expect('chat.js dedupe key includes senderRole (server distinguishes same clientMsgId across roles)',
+  /const keyOf = \(m\) => `\$\{m\.senderRole/.test(chat));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

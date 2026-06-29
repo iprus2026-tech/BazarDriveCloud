@@ -598,9 +598,14 @@ export default function chat() {
     messagesEl.appendChild(sep);
     threadShellReady = true;
   }
+  // Dedupe key = senderRole + id. The server treats the same clientMsgId from DIFFERENT senderRoles
+  // as distinct messages (its unique index is chat_id + sender_role + client_msg_id), so keying by id
+  // alone would drop one side's message if both devices mint the same Date.now() id in a thread. The
+  // role discriminator still matches the local optimistic echo (same sender, same id) for dedup.
+  const keyOf = (m) => `${m.senderRole || '~'}:${m.id}`;
   function renderMessage(msg) {
-    if (rendered.has(msg.id)) return null;
-    rendered.add(msg.id);
+    if (rendered.has(keyOf(msg))) return null;
+    rendered.add(keyOf(msg));
     const el = createMsgEl(msg, viewerRole, counterpart.name);
     messagesEl.appendChild(el);
     return el;
@@ -618,11 +623,17 @@ export default function chat() {
   // messagesEl), APPENDS only new ids (so optimistic/failed local bubbles survive), and auto-scrolls
   // only when the user was already at the bottom (never yanks someone reading scrollback).
   const backendChat = backendRead && !isTerminal;
+  // Gate the composer until the first server fetch settles, so a send before history loads can't
+  // append the optimistic bubble ahead of older fetched messages (Codex #798). Off / terminal
+  // threads have no gate (true immediately).
+  let initialFetchDone = !backendChat;
   if (backendRead) {
     const nearBottom = () => (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
     const refresh = async () => {
       let list;
-      try { list = await fetchServerMessages(chatId); } catch { return; }
+      try { list = await fetchServerMessages(chatId); }
+      catch { initialFetchDone = true; return; }
+      initialFetchDone = true;
       if (!list.length) return;
       const wasNear = nearBottom();
       if (!threadShellReady) ensureThreadShell();
@@ -729,6 +740,9 @@ export default function chat() {
   function doSend() {
     const text = inputEl.value.trim();
     if (!text) return;
+    // On a live backend, wait for the first server fetch so the optimistic bubble can't land ahead of
+    // older history (Codex #798). initialFetchDone is true immediately for off / terminal threads.
+    if (backendChat && !initialFetchDone) { showNotice('Загрузка чата, подождите…'); return; }
 
     const now  = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -747,7 +761,7 @@ export default function chat() {
     // failed-state retry) on the next tick.
     if (backendChat && !threadShellReady) ensureThreadShell();
     messagesEl.appendChild(msgEl);
-    if (backendChat) rendered.add(msg.id);
+    if (backendChat) rendered.add(keyOf(msg));
     scrollBottom();
 
     inputEl.value = '';
