@@ -40,7 +40,10 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   await cleanup.connect();
   const orderIds = [];
   t.after(async () => {
-    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {}); // cascades offers + assignment
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {}); // cascades offers + assignment
+    }
     for (const p of [pax, drvA, drvB]) {
       await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
       await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
@@ -79,6 +82,19 @@ test('select: transactional accept (target accepted, peers rejected, assignment,
   assert.equal(sel.assignment.status, 'ACCEPTED');
   assert.equal(sel.assignment.selectedDriverId, offA.driverId, 'assignment pins the chosen driver');
 
+  // R10 — the accept atomically bootstrapped the ride (no order is ACCEPTED without its ride).
+  assert.ok(sel.ride, 'select response includes the bootstrapped ride');
+  assert.equal(sel.ride.tripId, `trip_${order.id}`, 'ride tripId = trip_<orderId>');
+  assert.equal(sel.ride.status, 'DRIVER_EN_ROUTE', 'ride starts DRIVER_EN_ROUTE');
+  assert.ok(sel.ride.timestamps.acceptedAt, 'acceptedAt stamped at bootstrap');
+  assert.equal(sel.ride.driver.name, 'A', 'driver seeded from the accepted offer');
+  assert.equal(sel.ride.route.pickupLabel, 'Дом', 'route seeded from the order');
+  assert.equal(sel.ride.order.offerPrice, '800 ₽', 'fare seeded from the accepted bid (800), not the order estimate');
+  // the passenger reads the bootstrapped ride through the R06 chokepoint (and can then advance it).
+  const rideSnap = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(sel.ride.tripId)}`, bearer(paxS));
+  assert.equal(rideSnap.statusCode, 200, 'owner reads the bootstrapped ride');
+  assert.equal(rideSnap.json().ride.status, 'DRIVER_EN_ROUTE');
+
   // peer B is now rejected (owner lists the offers).
   const items = (await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS))).json().items;
   assert.equal(items.find((o) => o.id === offA.id).status, 'accepted');
@@ -103,7 +119,10 @@ test('select serializes concurrent accepts via FOR UPDATE — exactly one wins (
   await cleanup.connect();
   const orderIds = [];
   t.after(async () => {
-    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
     for (const p of [pax, drvA, drvB]) {
       await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
       await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
@@ -139,7 +158,10 @@ test('select refuses an offer past its TTL (expired-but-unswept), even though st
   await cleanup.connect();
   const orderIds = [];
   t.after(async () => {
-    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
     for (const p of [pax, drv]) {
       await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
       await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});

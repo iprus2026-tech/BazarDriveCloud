@@ -9,6 +9,33 @@ export async function findRideByTripId(db, tripId) {
   return rows[0] ?? null;
 }
 
+// Mint the `rides` row when an order is accepted (R10 — the assignment->ride bootstrap). Called
+// INSIDE the /select transaction, so accept + assignment + order->ACCEPTED + ride creation are one
+// atomic unit (the epic's "select tx mints the rides row"; no missed-bootstrap window). The ride
+// starts at DRIVER_EN_ROUTE (the client's select->active-ride handoff status) with accepted_at
+// stamped (its STATUS_TIMESTAMP_FIELD). ON CONFLICT (trip_id) DO NOTHING is a safety net — the
+// /select CREATED-guard already means this runs once per order; the caller re-reads on the rare
+// conflict. Returns the new ride, or null when a ride for that trip already existed.
+export async function bootstrapRide(db, s) {
+  const { rows } = await db.query(
+    `INSERT INTO rides
+       (trip_id, order_id, status, role, driver_user_id, passenger_user_id,
+        passenger_name, passenger_initials, passenger_phone_masked, passenger_note,
+        driver_name, driver_car, driver_rating, route_pickup_label, route_dropoff_label,
+        order_offer_price, ride_price, accepted_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
+     ON CONFLICT (trip_id) DO NOTHING
+     RETURNING *`,
+    [
+      s.tripId, s.orderId, s.status, s.role, s.driverUserId, s.passengerUserId,
+      s.passengerName, s.passengerInitials, s.passengerPhoneMasked, s.passengerNote,
+      s.driverName, s.driverCar, s.driverRating, s.routePickupLabel, s.routeDropoffLabel,
+      s.orderOfferPrice, s.ridePrice,
+    ],
+  );
+  return rows[0] ?? null;
+}
+
 // Lock the ride row inside the PATCH transaction (SELECT … FOR UPDATE) so concurrent status
 // transitions serialize on the row — read-check-write can't race (and the loser re-reads the
 // committed status). Returns null if no such ride.
