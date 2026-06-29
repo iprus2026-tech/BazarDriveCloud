@@ -18,10 +18,24 @@
 // Optional runtime override a build step / devtools may set. Absent in production today
 // (CSP forbids inline injection), so the base stays '' (OFF). Read at CALL time so a test
 // or a future build can flip it without re-importing.
+//
+// Two COMMITTED, CSP-safe sources (no inline <script>), in precedence order:
+//   1. globalThis.__BD_API_BASE__  — set by a test / a future build step;
+//   2. <meta name="bd-api-base" content="…">  — a committed config tag read from an external
+//      module (allowed under script-src 'self'). Absent / empty in production = OFF; the local
+//      test stand injects it (same-origin) so the real PWA can run against the local backend
+//      WITHOUT a CSP change. The cross-origin prod origin + its CSP `connect-src` relax land
+//      together in the R14 PR.
+function readMetaBase() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return '';
+  const el = document.querySelector('meta[name="bd-api-base"]');
+  return el && typeof el.content === 'string' ? el.content : '';
+}
 function readOverride() {
-  return (typeof globalThis !== 'undefined' && typeof globalThis.__BD_API_BASE__ === 'string')
-    ? globalThis.__BD_API_BASE__
-    : '';
+  if (typeof globalThis !== 'undefined' && typeof globalThis.__BD_API_BASE__ === 'string' && globalThis.__BD_API_BASE__) {
+    return globalThis.__BD_API_BASE__;
+  }
+  return readMetaBase();
 }
 
 // The API origin (scheme + host[:port]), trailing slash trimmed. '' means the backend is OFF.

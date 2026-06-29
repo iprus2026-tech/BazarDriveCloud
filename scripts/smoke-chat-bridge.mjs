@@ -264,13 +264,14 @@ expect('the appended quick reply is clamped to the composer maxlength (programma
 // A failed persist must flag the bubble (visual + AT) with an explicit retry — never render an
 // unsaved message as an ordinary delivered one. Notice-only (#6) was the floor, this is the ceiling.
 expect('doSend flags the bubble as failed on a failed persist (not notice-only)',
-  /if \(!persisted\) \{[\s\S]{0,80}markSendFailed\(msgEl, msg\)[\s\S]{0,80}showNotice/.test(chat));
+  /else if \(!appendMessage\(chatId, msg\)\) \{[\s\S]{0,140}markSendFailed\(msgEl, msg\)[\s\S]{0,140}showNotice/.test(chat));
 expect('markSendFailed adds the failed class + an AT «не отправлено» label + a retry button',
   /classList\.add\('chat__msg--failed'\)/.test(chat)
   && /setAttribute\('aria-label', 'Вы · не отправлено'\)/.test(chat)
   && /className = 'chat__msg-retry'/.test(chat));
 expect('the retry re-persists (order-preserving) and clears the failed state on success',
-  /retry\.addEventListener\('click'[\s\S]{0,120}persistMessageInOrder\(chatId, msg\)[\s\S]{0,60}clearSendFailed\(msgEl\)/.test(chat));
+  /retry\.addEventListener\('click'[\s\S]{0,420}persistMessageInOrder\(chatId, msg\)/.test(chat)
+  && /retry\.addEventListener\('click'[\s\S]{0,140}clearSendFailed\(msgEl\)/.test(chat));
 expect('the retry insert is ordered by id (a retried older message keeps thread order on reload)',
   /function persistMessageInOrder[\s\S]{0,220}Number\(arr\[i - 1\]\.id\) > Number\(msg\.id\)[\s\S]{0,40}splice\(i, 0, msg\)/.test(chat));
 expect('cloud.css styles the failed bubble + the retry control',
@@ -396,8 +397,18 @@ expect("chat.js appendMessage returns true on write, false on failure (no silent
     && /catch\s*\{[\s\S]*?return\s+false/.test(saveMessagesBody)
   ));
 expect("chat.js doSend surfaces a failed message write to the user via showNotice (#6)",
-  /const\s+persisted\s*=\s*appendMessage\(/.test(chat)
-  && /if\s*\(\s*!persisted\s*\)\s*\{[\s\S]{0,120}showNotice\(/.test(chat));
+  /else if \(!appendMessage\(chatId, msg\)\) \{[\s\S]{0,160}showNotice\(/.test(chat));
+
+// ── I4. #784 chat cutover — a real thread on a live backend reads/sends the shared server
+// thread via apiFetch (behind isBackendEnabled), while the local-storage path stays the fallback. ──
+expect('chat.js routes the chat thread through apiFetch when the backend is enabled (#784 cutover)',
+  /const backendRead = isBackendEnabled\(\) && isRealThread/.test(chat)
+  && /apiFetch\(`\/chat\/messages\?chatId=/.test(chat)
+  && /postServerMessage\(chatId, msg\)/.test(chat));
+expect('chat.js poll appends incrementally (no wholesale repaint) — preserves optimistic/failed bubbles',
+  /const rendered = new Set\(\)/.test(chat)
+  && /if \(rendered\.has\(msg\.id\)\) return null/.test(chat)
+  && /if \(grew && wasNear\) scrollBottom\(\)/.test(chat));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
