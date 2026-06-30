@@ -8,7 +8,9 @@
 // (receipt/history READ + receipt WRITE seam, R08).
 // v256 (driver handoff of #784): precached respond.js / mock_api.js changed (driver offer→accepted
 // active-ride handoff — the /respond success overlay polls trip_<orderId> and hands off to active-ride).
-const VERSION    = 'v256';
+// v257 (BD-OPS R2): precached ./src/ops/templates/audit_recipe_template.js changed (added the #784
+// backend-seam / dark-cutover audit dimension) — bump so /ops/screens refreshes it (Codex #806).
+const VERSION    = 'v257';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
