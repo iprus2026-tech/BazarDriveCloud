@@ -163,29 +163,48 @@ function buildMapPlaceholder(state) {
 function hydrateRealMap(container) {
   loadMapboxSdk().then((mapboxgl) => {
     if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
-    if (!document.body.contains(container)) return;     // navigated away during the async load
-    const c = getDefaultCenter();
-    container.replaceChildren();                         // drop the placeholder shell/watermark
-    container.removeAttribute('aria-label');            // the live canvas is the map now
-    let map;
-    try {
-      map = new mapboxgl.Map({
-        container,
-        style: MAPBOX_STYLE,
-        center: [c.lng, c.lat],
-        zoom: c.zoom,
-      });
-    } catch {
-      return; // GL unavailable / construction failed — leave the (now-empty) container; non-fatal
-    }
-    // Free the GL context once the container is detached (no router teardown hook).
-    const teardown = setInterval(() => {
-      if (!document.body.contains(container)) {
-        try { map.remove(); } catch { /* already torn down */ }
-        clearInterval(teardown);
+    // On a memoized-SDK REVISIT this .then runs as a microtask BEFORE router.js appends the screen
+    // (Codex #812), so the container isn't mounted yet — bailing here would leave /map on the
+    // placeholder forever. Defer to the next frame (after the append) instead of bailing permanently.
+    requestAnimationFrame(() => {
+      if (!document.body.contains(container)) return;   // navigated away before it mounted
+      const c = getDefaultCenter();
+      container.replaceChildren();                       // drop the placeholder shell/watermark
+      container.removeAttribute('aria-label');           // the live canvas is the map now
+      let map;
+      try {
+        map = new mapboxgl.Map({
+          container,
+          style: MAPBOX_STYLE,
+          center: [c.lng, c.lat],
+          zoom: c.zoom,
+        });
+      } catch {
+        // GL unavailable / CSP / style or token rejected — restore the dark-safe placeholder (the
+        // container was already cleared) rather than leave a blank panel (Codex #812).
+        restoreMapPlaceholder(container);
+        return;
       }
-    }, 2000);
+      // Free the GL context once the container is detached (no router teardown hook).
+      const teardown = setInterval(() => {
+        if (!document.body.contains(container)) {
+          try { map.remove(); } catch { /* already torn down */ }
+          clearInterval(teardown);
+        }
+      }, 2000);
+    });
   }).catch(() => { /* load failed — the placeholder stays */ });
+}
+
+// Rebuild the DEFAULT-state placeholder shell after a failed Map construction (Codex #812):
+// replaceChildren() has already cleared the container, so restore the MapShell rather than a blank card.
+function restoreMapPlaceholder(container) {
+  container.setAttribute('aria-label', 'Карта-заглушка');
+  const shell = createMapShell({
+    variant: 'driver', showRoute: true, showCar: true, showPickup: true, showDropoff: true, showLabels: false,
+  });
+  shell.setAttribute('aria-hidden', 'true');
+  container.replaceChildren(shell);
 }
 
 function buildBanner(state) {
