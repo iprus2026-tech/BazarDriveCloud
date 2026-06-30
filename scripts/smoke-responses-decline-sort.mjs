@@ -30,8 +30,8 @@ function expect(label, cond, detail = '') {
 const slice = (re) => { const m = responses.match(re); return m ? m[0] : ''; };
 
 // ── A. read-side board source of truth is preserved ─────────
-expect('responses() still builds the board via buildDriversForOrder(request)',
-  /const\s+drivers\s*=\s*buildDriversForOrder\(\s*request\s*\)/.test(responses));
+expect('responses() still builds the board via buildDriversForOrder(request, …)',
+  /const\s+drivers\s*=\s*buildDriversForOrder\(\s*request\b/.test(responses));
 
 // ── B. derived sort covers all four modes, never mutating drivers ───
 const sortBody = slice(/function sortDrivers\(drivers, mode\)[\s\S]*?\n}/);

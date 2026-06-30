@@ -1,7 +1,8 @@
 import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { acceptOrder, getOrderById } from '../mock_api.js';
+import { acceptOrder, getOrderById, listOrderOffers, selectOfferOnBackend } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 
 // BD-RESPOND-ORDER-LINK-02 — read-side store. /respond writes a
@@ -557,7 +558,16 @@ function mapResponseToDriverCard(response, request, index) {
 // order has any; otherwise the MOCK_DRIVERS board is preserved unchanged for
 // every fallback path: no orderId, no real response, legacy postId flow, and
 // the fallback/QA request (request.isFallback).
-function buildDriversForOrder(request) {
+function buildDriversForOrder(request, serverOffers, backendAuthoritative) {
+  // #784 CUT-4: when the backend is AUTHORITATIVE (on + a real, non-fallback order), the owner's
+  // board IS the SERVER offers — an EMPTY array is authoritative too (an honest empty board, NEVER
+  // the local MOCK_DRIVERS, which carry no driverId and would mint a phantom server-less ride on
+  // select). OFF / not-authoritative, the call is byte-identical to the prior local/mock behaviour.
+  if (backendAuthoritative) {
+    return Array.isArray(serverOffers)
+      ? serverOffers.map((offer, index) => mapServerOfferToDriverCard(offer, request, index))
+      : [];
+  }
   const real = (request && request.orderId && !request.isFallback)
     ? loadResponsesForOrder(request.orderId)
     : [];
@@ -565,6 +575,47 @@ function buildDriversForOrder(request) {
     return real.map((response, index) => mapResponseToDriverCard(response, request, index));
   }
   return buildDrivers(request);
+}
+
+// #784 CUT-4 — map a SERVER offer (serializeOffer: {id, orderId, driverId,
+// driverName, car, price}) into the exact card shape renderDriverCard/renderOffer
+// consume, mirroring mapResponseToDriverCard. The extra `driverId` field carries
+// the server identity POST /matching/select needs; `responseId` is a stable id so
+// the select-seam pin (buildPassengerActiveRide → selectedDriver.responseId) and
+// the /chat?responseId handoff keep working. Every field stays defined so
+// escapeHtml never renders the literal "undefined".
+function mapServerOfferToDriverCard(offer, request, index) {
+  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
+  const driverId = pickStr(offer && offer.driverId);
+  const responseId = `resp_${driverId || `offer_${index + 1}`}`;
+  const name = pickStr(offer && offer.driverName) || 'Водитель';
+  const value = Number(offer && offer.price);
+  const price = Number.isFinite(value) && value > 0
+    ? formatRub(value)
+    : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
+  return {
+    id:         responseId,
+    responseId,
+    driverId,
+    name,
+    initials:   name.slice(0, 1).toUpperCase(),
+    avatarTone: 'mint',
+    rating:     '—',
+    car:        pickStr(offer && offer.car),
+    carModel:   pickStr(offer && offer.car),
+    carColor:   '',
+    plate:      '',
+    trips:      '',
+    price,
+    priceDelta: '',
+    priceTone:  'same',
+    eta:        '—',
+    etaTone:    'mid',
+    etaBars:    2,
+    etaRank:    1,
+    note:       '',
+    isBest:     index === 0,
+  };
 }
 
 function renderEtaBars(active) {
@@ -778,15 +829,23 @@ function renderOrderMeta(request) {
 // (isFallback=false), assert it is published. When the orderId is unknown,
 // avoid "Заказ опубликован" — the order context was not resolvable. When
 // no orderId was supplied, guide the passenger back to the map.
-function renderEmptyState(request) {
+function renderEmptyState(request, opts = {}) {
   const isFallback = !!(request && request.isFallback);
   const hasOrderId = !!(request && request.orderId);
 
+  let title = 'Ищем водителей';
   let body;
   let hint1;
   let hint2;
 
-  if (isFallback && hasOrderId) {
+  if (opts.error) {
+    // #784 CUT-4: the live offers read failed — honest retry copy (the «Проверить отклики» footer
+    // re-runs the screen and re-fetches GET /matching/offers), never fabricated drivers.
+    title = 'Не удалось загрузить отклики';
+    body = 'Проверьте соединение и нажмите «Проверить отклики», чтобы повторить.';
+    hint1 = 'Нажмите «Проверить отклики», чтобы повторить';
+    hint2 = 'Маршрут уже виден водителям рядом';
+  } else if (isFallback && hasOrderId) {
     body = 'Не удалось открыть детали заказа. Вернитесь на карту или откройте опубликованный заказ ещё раз.';
     hint1 = 'Откройте заказ с карты или из ленты';
     hint2 = 'После публикации маршрут будет виден водителям рядом';
@@ -806,7 +865,7 @@ function renderEmptyState(request) {
         <span class="responses__empty-glow"></span>
         <span class="responses__empty-icon-inner">${CAR_SVG}</span>
       </div>
-      <h2 class="responses__empty-title">Ищем водителей</h2>
+      <h2 class="responses__empty-title">${title}</h2>
       <p class="responses__empty-body">${body}</p>
     </div>
     <div class="responses__hints">
@@ -1290,7 +1349,7 @@ function responseUrl(request, state, driverId = '') {
   return `/responses?${params.toString()}`;
 }
 
-export default function responses() {
+export default async function responses() {
   const explicitOrderId = getRouteParam('orderId') || '';
   const legacyPostId = explicitOrderId ? '' : (getRouteParam('postId') || '');
   const canonicalOrder = resolveCanonicalOrder();
@@ -1299,7 +1358,19 @@ export default function responses() {
     : (legacyPostId ? requestFromLegacyPost(legacyPostId) : requestFromOrder(null, explicitOrderId));
   const postId = request.legacyPostId || request.orderId || request.id;
   const state = getRouteParam('state') || 'empty';
-  const drivers = buildDriversForOrder(request);
+  // #784 CUT-4: on a live backend the owner's offers come from GET /matching/offers, and the server
+  // is AUTHORITATIVE for the board (empty => honest empty state, NEVER the local/mock drivers). A
+  // fetch error sets serverOffersError so the empty state shows an honest "retry" copy instead of
+  // masking the outage with fabricated drivers. OFF, backendAuthoritative is false and the board is
+  // byte-identical to before.
+  const backendAuthoritative = isBackendEnabled() && !!request.orderId && !request.isFallback;
+  let serverOffers = null;
+  let serverOffersError = false;
+  if (backendAuthoritative) {
+    try { serverOffers = await listOrderOffers(request.orderId); }
+    catch { serverOffers = null; serverOffersError = true; }
+  }
+  const drivers = buildDriversForOrder(request, serverOffers, backendAuthoritative);
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
@@ -1339,6 +1410,9 @@ export default function responses() {
   const isAllDeclined = !isAccepted && state === 'all-declined';
   const isOffer = !isAccepted && state === 'offer';
   const isList = !isAccepted && (state === 'list' || state === 'selected' || isAllDeclined);
+  // #784 CUT-4: ON + a real order with zero offers (or a failed offers read) must show the honest
+  // empty/retry state, never the local/mock board — this overrides the list/offer UI hint.
+  const showServerEmpty = backendAuthoritative && !isAccepted && drivers.length === 0;
   const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
   const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
   // `let`: declining the currently-selected driver clears the selection so the
@@ -1350,6 +1424,7 @@ export default function responses() {
   // `?state=all-declined` deep-link is an initial SEED only — it fills the set
   // once on first render; thereafter the Set is the sole source of truth.
   let sortMode = 'best';
+  let selecting = false; // #784 CUT-4: double-submit latch for the async backend select
   const declined = new Set();
   if (isAllDeclined) drivers.forEach((d) => declined.add(d.id));
 
@@ -1362,7 +1437,7 @@ export default function responses() {
 
   const status = responseStatus(effectiveState);
   const subTitle = status.subtitle;
-  const footer = (isList || isOffer || isAccepted) ? '' : `
+  const footer = ((isList || isOffer || isAccepted) && !showServerEmpty) ? '' : `
     <div class="responses__footer responses__footer--in-scroll">
       <button type="button" class="bd-btn primary responses__cta" id="responses-check">
         <span>Проверить отклики</span>
@@ -1417,9 +1492,13 @@ export default function responses() {
       </div>
       ${isAccepted
         ? renderAcceptedDriver(handoffRide, request)
-        : (isOffer ? renderOffer(drivers[0]) : (isList
-            ? `<div class="responses__board" id="responses-board">${renderList(drivers, selectedDriverId, declined, sortMode)}</div>`
-            : renderEmptyState(request)))}
+        : (showServerEmpty
+            ? renderEmptyState(request, { error: serverOffersError })
+            : (isOffer && drivers.length
+                ? renderOffer(drivers[0])
+                : (isList
+                    ? `<div class="responses__board" id="responses-board">${renderList(drivers, selectedDriverId, declined, sortMode)}</div>`
+                    : renderEmptyState(request))))}
       ${footer}
     </div>
 
@@ -1576,7 +1655,7 @@ export default function responses() {
   // restore branches self-guard: those controls only exist on the list board.
   const scrollEl = root.querySelector('.responses__scroll');
   if (scrollEl) {
-    scrollEl.addEventListener('click', (event) => {
+    scrollEl.addEventListener('click', async (event) => {
       const chip = event.target.closest('[data-sort]');
       if (chip) {
         const mode = chip.dataset.sort;
@@ -1602,13 +1681,34 @@ export default function responses() {
       const action = btn.dataset.action;
 
       if (action === 'select' || action === 'continue') {
+        if (selecting) return; // #784 CUT-4: ignore a second click while a select is in flight
         if (!canonicalOrder) {
           toast('Сначала откройте опубликованный заказ');
           return;
         }
         const driver = drivers.find((d) => d.id === driverId) || selectedDriver || drivers[0];
+        selecting = true;
+        // #784 CUT-4 (offer→select): on a live backend, the owner accepts the
+        // chosen offer server-side (POST /matching/select bootstraps the ride in
+        // one tx) BEFORE the local handoff. A 409 means another select already
+        // won — surface it and stay. On success we still build the LOCAL active
+        // ride (transitional bridge until the ride read cuts over in CUT-5);
+        // buildPassengerActiveRide pins selectedDriver.responseId from the chosen
+        // card, honouring the SAFETY>RECOVERY rule (driver is never left unpinned).
+        if (isBackendEnabled() && driver && driver.driverId && request.orderId) {
+          try {
+            await selectOfferOnBackend({ orderId: request.orderId, driverId: driver.driverId });
+          } catch (err) {
+            selecting = false;
+            toast(err && err.status === 409
+              ? 'Этот заказ уже принят другим водителем'
+              : 'Не удалось выбрать водителя. Попробуйте ещё раз.');
+            return;
+          }
+        }
         const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
         if (!handoff) {
+          selecting = false;
           toast('Сначала откройте опубликованный заказ');
           return;
         }
@@ -1633,6 +1733,13 @@ export default function responses() {
         return;
       }
       if (action === 'chat') {
+        // #784 CUT-4: pre-select chat for a SERVER offer isn't wired — the shared thread is keyed by
+        // the ride, which only exists after select; the per-card responseId (resp_<driverId>) has no
+        // local response to resolve. Chat opens post-select via active-ride; avoid a dead thread here.
+        if (backendAuthoritative) {
+          toast('Чат с водителем откроется после выбора');
+          return;
+        }
         go(`/chat?responseId=${encodeURIComponent(responseId)}&orderId=${encodeURIComponent(request.orderId)}`);
         return;
       }

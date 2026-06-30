@@ -1,7 +1,8 @@
 import { user } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { listFeedPosts } from '../mock_api.js';
+import { listFeedPosts, submitOfferToBackend } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
 
@@ -584,7 +585,7 @@ function renderPassengerRide(root, post) {
     submitLabel.textContent = on ? 'Отправляем…' : 'Отправить отклик';
   }
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     clearError();
 
@@ -697,6 +698,27 @@ function renderPassengerRide(root, post) {
       status:       'SENT',
       createdAt:    new Date().toISOString(),
     };
+
+    // #784 CUT-4 (offer→select): on a live backend, send the offer to the order
+    // owner via POST /matching/offers BEFORE the local write, so a rejected POST
+    // surfaces an error and never shows a false "sent" success. Only canonical
+    // ride orders carry an orderId; legacy/seed posts have none, so they keep the
+    // local-only path unchanged. The local response write below is preserved
+    // either way (off-path + the /chat?responseId handoff rely on it).
+    if (isBackendEnabled() && canonicalLink.orderId) {
+      try {
+        await submitOfferToBackend({
+          orderId:    canonicalLink.orderId,
+          driverName: driverSnapshot.name,
+          car:        driverSnapshot.car,
+          price:      priceNum,
+        });
+      } catch {
+        setLoading(false);
+        showError('Не удалось отправить предложение. Попробуйте ещё раз.');
+        return;
+      }
+    }
 
     saveResponse(response);
     saveResponseToMap(response);
