@@ -69,10 +69,14 @@ const baseVersion = parseVersion(baseSw);
 // hold it in the unchanged-VERSION `bazardrive-vNNN` cache and `sw.js` serves caches.match before the
 // network, while activation only purges a DIFFERENT CACHE_NAME — so it still needs a bump.
 const precache = new Set([...parsePrecacheRepoPaths(headSrc), ...parsePrecacheRepoPaths(baseSw)]);
-const precacheChanged = [...changed].filter((f) => precache.has(f) && f !== SW);
+// Runtime-cache reality (Codex #809): sw.js runtime-caches every same-origin GET under CACHE_NAME, so
+// public/vendor/** (the lazily-loaded vendored SDK) is cached after first load even though it is NOT in
+// PRECACHE — a vendor update without a bump would serve the stale lib to installed clients. So guard
+// public/vendor/ like the PRECACHE set: any change there also requires a VERSION bump.
+const precacheChanged = [...changed].filter((f) => (precache.has(f) || f.startsWith('public/vendor/')) && f !== SW);
 
 if (precacheChanged.length && headVersion && headVersion === baseVersion) {
-  console.error(`FAIL precache-drift: ${precacheChanged.length} PRECACHED file(s) changed but ${SW} VERSION did not bump (still '${headVersion}').`);
+  console.error(`FAIL precache-drift: ${precacheChanged.length} cached file(s) (PRECACHE or public/vendor/) changed but ${SW} VERSION did not bump (still '${headVersion}').`);
   console.error('A cache-first service worker would keep serving the stale module(s) on installed clients:');
   for (const f of precacheChanged) console.error(`  - ${f}`);
   console.error(`Fix: bump VERSION in ${SW} (and add a one-line header note recording what precached files changed).`);
