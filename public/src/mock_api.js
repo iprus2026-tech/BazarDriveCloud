@@ -1138,6 +1138,20 @@ export function saveDriverReceipt(receipt) {
   const list = loadDriverReceiptsRaw().filter((r) => toReceiptTripId(r.tripId) !== clean.tripId);
   list.unshift(clean);
   persistDriverReceipts(list);
+  // #784 CUT-6 — also write the receipt to the backend (POST /history/receipts). The amounts are
+  // already sanitized integers with commission signed negative — exactly the backend's shape. The
+  // server enforces driver-only + COMPLETED + write-once, so a 403/409 (non-driver / not-completed /
+  // duplicate) is EXPECTED and swallowed: the local receipt is the user-facing truth. OFF: no POST.
+  if (isBackendEnabled()) {
+    submitReceiptToBackend({
+      tripId: clean.tripId,
+      fare: clean.fare,
+      commission: clean.commission,
+      tip: clean.tip,
+      net: clean.net,
+      paymentMode: clean.paymentMode,
+    }).catch(() => {});
+  }
   return clean;
 }
 
@@ -1150,6 +1164,105 @@ export function getReceipt(tripId) {
   const persisted = loadDriverReceiptsRaw().find((r) => toReceiptTripId(r.tripId) === id);
   if (persisted) return sanitizeDriverReceipt(persisted);
   if (id === DEMO_DRIVER_RECEIPT.tripId) return { ...DEMO_DRIVER_RECEIPT };
+  return null;
+}
+
+// #784 CUT-6 (receipt/history vertical) — the backend seam for R08. Each apiFetch sits behind an
+// isBackendEnabled() guard, so the OFF/mock path (loadRideHistory / readRideHistoryStatus / getReceipt
+// on the local stores) never reaches the network. A server history entry only exists once a ride was
+// bootstrapped + completed server-side; a receipt only once the driver POSTed it.
+
+// Map a server serializeHistoryEntry to the SAME shape the local ride-history store uses, so
+// profile.js renders server rows unchanged. role-dependent counterparty: passenger rows carry the
+// driver (+ vehicle), driver rows carry the passenger (+ the earnings receipt). savedAt is derived
+// from completedAt (the server has no savedAt). fare/distance/duration pass through (formatHistory*
+// in profile handles a number or a label string).
+function mapServerHistoryEntry(e) {
+  if (!e || typeof e !== 'object') return null;
+  const role = e.role === 'driver' ? 'driver' : 'passenger';
+  const cp = e.counterparty || {};
+  const entry = {
+    role,
+    tripId: e.tripId,
+    completedAt: e.completedAt || null,
+    savedAt: e.completedAt || null,
+    route: {
+      pickupLabel: (e.route && e.route.pickupLabel) || null,
+      dropoffLabel: (e.route && e.route.dropoffLabel) || null,
+    },
+    fare: e.fare ?? null,
+    distance: e.distance ?? null,
+    duration: e.duration ?? null,
+  };
+  // The receipt (driver earnings doc) when the server carries it — mapped to the local receipt shape.
+  if (e.receipt && typeof e.receipt === 'object') {
+    entry.receipt = {
+      tripId: e.tripId,
+      completedAt: e.completedAt || null,
+      fare: e.receipt.fare,
+      commission: e.receipt.commission,
+      tip: e.receipt.tip,
+      net: e.receipt.net,
+      paymentMode: e.receipt.paymentMode,
+      status: 'completed',
+    };
+  }
+  if (role === 'driver') {
+    entry.passenger = { name: cp.name ?? null, initials: null, rating: cp.rating ?? null };
+    if (entry.receipt === undefined) entry.receipt = null;
+  } else {
+    entry.driver = { name: cp.name ?? null, initials: null, rating: cp.rating ?? null };
+    entry.vehicle = {
+      model: (e.vehicle && e.vehicle.model) || null,
+      color: (e.vehicle && e.vehicle.color) || null,
+      plate: (e.vehicle && e.vehicle.plate) || null,
+    };
+    entry.rating = typeof e.rating === 'number' ? e.rating : 0;
+    entry.tags = Array.isArray(e.tags) ? e.tags : [];
+    entry.comment = typeof e.comment === 'string' ? e.comment : '';
+  }
+  return entry;
+}
+
+// HISTORY READ — the viewer's server history (both roles), mapped to the local entry shape. Fails
+// LOUD on a malformed envelope (matches the order/offer reads). Returns [] when OFF (callers guard).
+export async function listHistoryFromBackend() {
+  if (isBackendEnabled()) {
+    const r = await apiFetch('/history');
+    if (!r || !Array.isArray(r.items)) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed /history response' });
+    }
+    return r.items.map(mapServerHistoryEntry).filter(Boolean);
+  }
+  return [];
+}
+
+// RECEIPT READ — the server receipt for a trip, resolved from the viewer's history (no dedicated
+// GET /receipt endpoint). Returns the local receipt shape, or null when absent.
+export async function getReceiptFromBackend(tripId) {
+  const id = toReceiptTripId(tripId);
+  if (!id) return null;
+  const items = await listHistoryFromBackend();
+  const entry = items.find((e) => e && e.receipt && toReceiptTripId(e.tripId) === id);
+  return entry ? entry.receipt : null;
+}
+
+// Async receipt reader used by trip_receipt (via loadResource): server when ON, local when OFF.
+// getReceipt() itself stays SYNC (the driver completion flow + the forced-preview path call it
+// synchronously) — this is the additive async path for the live receipt screen.
+export async function getReceiptResolved(tripId) {
+  if (isBackendEnabled()) return getReceiptFromBackend(tripId);
+  return getReceipt(tripId);
+}
+
+// RECEIPT WRITE — POST the driver's write-once earnings receipt. Amounts are already signed integers.
+export async function submitReceiptToBackend({ tripId, fare, commission, tip, net, paymentMode }) {
+  if (isBackendEnabled()) {
+    return apiFetch('/history/receipts', {
+      method: 'POST',
+      body: { tripId, fare, commission, tip, net, paymentMode },
+    });
+  }
   return null;
 }
 

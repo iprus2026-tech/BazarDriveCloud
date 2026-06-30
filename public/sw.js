@@ -4,7 +4,9 @@
 // v253 (CUT-4 of #784): precached respond.js / responses.js / mock_api.js changed (offer→select seam).
 // v254 (CUT-5 of #784): precached active_ride.js / active_ride_passenger.js / mock_api.js changed
 // (ride-state READ + status WRITE + realtime POLL seam).
-const VERSION    = 'v254';
+// v255 (CUT-6 of #784): precached mock_api.js / trip_receipt.js / profile.js changed
+// (receipt/history READ + receipt WRITE seam, R08).
+const VERSION    = 'v255';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

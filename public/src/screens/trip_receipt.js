@@ -23,7 +23,7 @@
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
-import { getReceipt } from '../mock_api.js';
+import { getReceipt, getReceiptResolved } from '../mock_api.js';
 import { loadResource } from '../data_layer.js';
 
 const DEMO_RECEIPT_TRIP_ID = '48-321';
@@ -199,7 +199,10 @@ async function renderResolved(content, tripId, forced, onRetry, isRetry) {
     // server_error over the next screen (the report happens in the catch, before
     // the post-await check below could run). The post-await check additionally
     // skips painting a detached node.
-    receipt = await loadResource(() => getReceipt(tripId), {
+    // #784 CUT-6 — the live receipt read resolves from the backend when on (getReceiptResolved →
+    // GET /history → the trip's receipt), else the local getReceipt. The forced cash/noncash/missing
+    // previews above stay on the local demo receipt (designer render-gate states).
+    receipt = await loadResource(() => getReceiptResolved(tripId), {
       onRetry, isRetry, fallback: null, isActive: () => content.isConnected,
     });
     if (!content.isConnected) return;
