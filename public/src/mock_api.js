@@ -603,6 +603,49 @@ export async function listNearbyOrders() {
     .slice(0, 20);
 }
 
+// #784 CUT-4 (matching, offer→select) — the three backend seam calls for the
+// offer/select resource. Each is dark by default: the apiFetch sits behind an
+// isBackendEnabled() guard, so the OFF/mock path never reaches the network and
+// the screens fall through to their existing local bazardrive.responses.v1
+// behaviour. The driver-offer write keeps its local response write (off-path +
+// the /chat?responseId handoff); these helpers add the server side only.
+
+// Driver makes an offer on a canonical ride order. Returns the server offer (or
+// null when OFF — the caller already guards, so OFF never invokes this).
+export async function submitOfferToBackend({ orderId, driverName, car, price, message }) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch('/matching/offers', {
+      method: 'POST',
+      body: { orderId, driverName, car, price, message },
+    });
+    return r.offer;
+  }
+  return null;
+}
+
+// Owner (passenger) reads the offers on their order. Fails LOUD on a malformed
+// envelope (matches listNearbyOrders) rather than masking a contract break.
+export async function listOrderOffers(orderId) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch(`/matching/offers?orderId=${encodeURIComponent(orderId)}`);
+    if (!Array.isArray(r.items)) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: true, message: 'malformed /matching/offers response' });
+    }
+    return r.items;
+  }
+  return [];
+}
+
+// Owner selects a driver's offer; the server bootstraps the ride in one tx and
+// returns { order, assignment, ride }. A 409 means another select already won.
+export async function selectOfferOnBackend({ orderId, driverId }) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch('/matching/select', { method: 'POST', body: { orderId, driverId } });
+    return r;
+  }
+  return null;
+}
+
 // BD-DRIVER-01 — driver accepts a published mock order. Mutates the
 // stored order in place: status flips from CREATED → ACCEPTED so it
 // drops out of listNearbyOrders() and a driver-side surface can pick

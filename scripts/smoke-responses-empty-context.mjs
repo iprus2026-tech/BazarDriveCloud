@@ -20,7 +20,8 @@ const src = fs.existsSync(responsesPath) ? fs.readFileSync(responsesPath, 'utf8'
 
 // renderEmptyState signature accepts request
 check(
-  /function\s+renderEmptyState\s*\(\s*request\s*\)/.test(src),
+  // request stays the first param; CUT-4 (#784) added an optional opts arg (the error variant).
+  /function\s+renderEmptyState\s*\(\s*request\b/.test(src),
   'renderEmptyState must accept a request parameter',
 );
 
@@ -28,7 +29,7 @@ check(
 // declaration and once as the actual runtime call inside the render branch.
 // A single match would only verify the declaration, not the call site.
 check(
-  (src.match(/renderEmptyState\s*\(\s*request\s*\)/g) || []).length >= 2,
+  (src.match(/renderEmptyState\s*\(\s*request\b/g) || []).length >= 2,
   'renderEmptyState(request) must appear at least twice: declaration + call site',
 );
 
