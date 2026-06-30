@@ -1740,14 +1740,23 @@ export default function activeRidePassenger(options = {}) {
       bindCancelAffordance();
       const boardedBtn = sheet.querySelector('#arp-boarded');
       if (boardedBtn) {
-        boardedBtn.addEventListener('click', () => {
-          // Persist transition to IN_PROGRESS so the driver flow sees it
-          // and re-route so the URL reflects the new mock state.
+        boardedBtn.addEventListener('click', async () => {
+          // #784 CUT-5 — on a confirmed server ride, confirm the boarded transition on the server FIRST,
+          // then advance locally + navigate. A failed PATCH (network/auth, or the driver already
+          // terminalized) must NOT strand the passenger locally IN_PROGRESS while the server stays
+          // WAITING (serverIsForward never rolls a backward move back) — stay put + surface it instead.
+          if (backendRide) {
+            try { await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); }
+            catch (err) {
+              localToast(err && err.code === 'RIDE_TERMINAL'
+                ? 'Поездка уже завершена'
+                : 'Не удалось подтвердить посадку. Попробуйте ещё раз.');
+              return;
+            }
+          }
+          // Persist transition to IN_PROGRESS so the driver flow sees it and re-route so the URL
+          // reflects the new state.
           updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
-          // #784 CUT-5 (B2) — on a confirmed server ride, mirror the boarded transition to the backend
-          // so the driver (polling) sees IN_PROGRESS. Fire-and-forget; the re-mount below hydrates the
-          // authoritative server state. OFF / local-only ride: backendRide stays false, unchanged.
-          if (backendRide) patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS).catch(() => {});
           go(`/active-ride?role=passenger&status=${RIDE_STATUS.IN_PROGRESS}&tripId=${encodeURIComponent(ride.tripId)}`);
         });
       }
@@ -1803,6 +1812,26 @@ export default function activeRidePassenger(options = {}) {
   // status writes (cancel / boarded) onto the backend so the driver sees them cross-device.
   let backendRide = false;
 
+  // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
+  // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
+  function mergeServerRide(srv) {
+    const keep = (a, b) => {
+      const out = { ...(a || {}) };
+      for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
+      return out;
+    };
+    return {
+      ...ride,
+      tripId: srv.tripId || ride.tripId,
+      status: srv.status || ride.status,
+      passenger: keep(ride.passenger, srv.passenger),
+      driver: keep(ride.driver, srv.driver),
+      route: keep(ride.route, srv.route),
+      timestamps: keep(ride.timestamps, srv.timestamps),
+      cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
+    };
+  }
+
   renderSheet();
 
   // #784 CUT-5 — passenger READ + realtime POLL (view-only; the driver owns the lifecycle). When this
@@ -1855,8 +1884,19 @@ export default function activeRidePassenger(options = {}) {
       if (!srv) return;
       backendRide = true;
       if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
+      // Statuses match (or not a forward move) — still copy the server driver/route/fare so the
+      // passenger sees the REAL driver/route immediately (the server-fed path seeds a demo until now).
+      ride = mergeServerRide(srv);
+      renderSheet();
       startPassengerRidePoll();
-    }).catch(() => { /* not a server ride / read failed — keep the local mock ride */ });
+    }).catch((err) => {
+      // Only the expected 404 (genuinely a local ride) drops to the mock. Any OTHER failure
+      // (403 / 503 / network / bad envelope) is a real server ride with a transient problem — keep
+      // polling so it recovers, rather than masking the outage as a fabricated mock ride.
+      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) return;
+      backendRide = true;
+      startPassengerRidePoll();
+    });
   }
 
   return root;

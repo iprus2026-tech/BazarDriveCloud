@@ -474,6 +474,25 @@ export default function activeRide() {
       });
   }
 
+  // #784 CUT-5 — COMPLETED is terminal AND has irreversible local side-effects: renderCompleted()
+  // saves a receipt + a ride-history entry. For a backend ride, confirm the server FIRST (PATCH); only
+  // on acceptance run the local completion (+ its receipt/history). On reject (e.g. 409 — the ride was
+  // already terminalized elsewhere) skip the local save and reconcile to the true server state, so a
+  // non-completed server ride can never leave a bogus completed receipt behind.
+  function commitDriverCompletion() {
+    if (!backendRide) { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); return; }
+    pendingStatus = RIDE_STATUS.COMPLETED;
+    patchRideStatus(ride.tripId, RIDE_STATUS.COMPLETED)
+      .then(() => { pendingStatus = null; ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); })
+      .catch((err) => {
+        pendingStatus = null;
+        showNotice(err && err.code === 'RIDE_TERMINAL'
+          ? 'Поездка уже завершена'
+          : 'Не удалось завершить поездку на сервере');
+        refetchRideAndRender();
+      });
+  }
+
   // Self-clearing realtime poll (mirrors chat.js — router.render() replaceChildren() has no
   // teardown). On a status change, re-fetch the snapshot and re-render in place.
   function startRidePoll() {
@@ -525,7 +544,9 @@ export default function activeRide() {
     }
     // #784 CUT-5 — for a confirmed server ride, mirror the (optimistically-applied) transition to the
     // backend (PATCH /ride-state/rides/:tripId/status) and reconcile from the authoritative snapshot.
-    if (backendRide) syncRideStatusToBackend(nextStatus);
+    // COMPLETED is EXCLUDED here — it has irreversible local side-effects (receipt/history) and is
+    // committed server-FIRST via commitDriverCompletion(), so it must not also fire-and-forget here.
+    if (backendRide && nextStatus !== RIDE_STATUS.COMPLETED) syncRideStatusToBackend(nextStatus);
     return nextRide || ride;
   }
   // BD-RIDE-D-10 — Driver-initiated cancel and no-show persist the same
@@ -872,7 +893,7 @@ export default function activeRide() {
     const finishPrice = ride.ride?.price || '';
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.dropoffLabel || '')}</div></div><div class="active-ride__pickup-eta active-ride__pickup-eta--progress"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.route?.etaToDestination || '')}</div><div class="active-ride__pickup-eta-label">до места</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
-    sheet.querySelector('#ar-finish').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); });
+    sheet.querySelector('#ar-finish').addEventListener('click', () => commitDriverCompletion());
     sheet.querySelector('#ar-stop').addEventListener('click', () => showNotice('Добавление остановки будет доступно позже'));
     sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { onAction: showNotice }));
     bindPassengerActions();
@@ -965,6 +986,11 @@ export default function activeRide() {
     } else if (byPassenger) {
       title = 'Пассажир отменил заказ';
       body = `${passengerName} отменил поездку после того, как вы её приняли.`;
+    } else if (backendRide && !cancel.by) {
+      // #784 CUT-5 — a server CANCELED reached us with no local cancel.by (the status-only PATCH
+      // carries no actor) and the driver did not initiate it; don't mis-attribute it as "вы отменили".
+      title = 'Заказ отменён';
+      body = 'Поездка отменена. Пассажиру отправлено уведомление.';
     } else {
       title = 'Заказ отменён';
       body = 'Вы отменили заказ. Пассажиру отправлено уведомление.';
@@ -993,18 +1019,21 @@ export default function activeRide() {
     getRideFromBackend(ride.tripId).then((srv) => {
       if (!srv) return;
       backendRide = true;
-      // A2: a driver advance taken during this hydrate window (backendRide was still false, so no PATCH
-      // fired) must not be silently dropped/reverted. When the local status differs from the server,
-      // push the local status — the PATCH reconcile adopts the truth (a backward/invalid local loses on
-      // the 409/refetch). Adopt the server snapshot directly only when they already agree.
-      if (srv.status && srv.status !== ride.status) {
-        syncRideStatusToBackend(ride.status);
-      } else {
-        ride = mergeServerRide(srv);
-        renderSheet();
-      }
+      // The server is AUTHORITATIVE at mount — adopt its snapshot. Never push the local/demo status to
+      // the server here: a driver-screen backend ride opened without a handoff seeds a demo NEW_ORDER
+      // while the server is already DRIVER_EN_ROUTE, so a push would REGRESS a real trip. A genuine
+      // advance taken in the ~200ms hydrate window is rare and the driver simply re-taps.
+      ride = mergeServerRide(srv);
+      renderSheet();
       if (!isTerminalRideStatus(ride.status)) startRidePoll();
-    }).catch(() => { /* not a server ride / read failed — keep the local mock ride */ });
+    }).catch((err) => {
+      // Only the expected 404 (genuinely a local/demo ride) drops to the mock. Any OTHER failure
+      // (403 / 503 / network / bad envelope) is a real server ride with a transient problem — keep it a
+      // backend ride and poll so it recovers, instead of masking the outage as a fabricated mock ride.
+      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) return;
+      backendRide = true;
+      if (!isTerminalRideStatus(ride.status)) startRidePoll();
+    });
   }
 
   return root;
