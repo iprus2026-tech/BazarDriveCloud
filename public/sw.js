@@ -2,7 +2,9 @@
 // export), so installed clients must refresh it (Codex #792). R06 merges before R13's reserved tail,
 // so it takes the next monotonic version; R14/R15/R16 re-sequence to v250/v251/v252.
 // v253 (CUT-4 of #784): precached respond.js / responses.js / mock_api.js changed (offer→select seam).
-const VERSION    = 'v253';
+// v254 (CUT-5 of #784): precached active_ride.js / active_ride_passenger.js / mock_api.js changed
+// (ride-state READ + status WRITE + realtime POLL seam).
+const VERSION    = 'v254';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

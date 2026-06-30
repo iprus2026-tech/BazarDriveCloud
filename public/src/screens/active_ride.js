@@ -22,6 +22,7 @@ import {
   DEMO_ACTIVE_RIDE_ID,
   findActiveRide,
   saveActiveRide,
+  isTerminalRideStatus,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import {
@@ -34,7 +35,11 @@ import {
   updateTripStatus,
   getReceipt,
   saveDriverReceipt,
+  getRideFromBackend,
+  patchRideStatus,
+  pollRide,
 } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import activeRidePassenger from './active_ride_passenger.js';
 import {
   saveRideHistoryEntry,
@@ -411,6 +416,102 @@ export default function activeRide() {
   }
   ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
+  // #784 CUT-5 — backend ride-state seam (READ + STATUS WRITE + realtime POLL). Dark by default:
+  // only engages once getRideFromBackend(tripId) confirms a server ride exists (a backend
+  // /matching/select bootstrapped it). A purely-local demo/mock ride 404s and stays on the mock, so
+  // the OFF/mock lifecycle (persistDriverRideStatus's local updateActiveRideStatus) is unchanged.
+  let backendRide = false;
+  let rideCursor = null;
+  let ridePollId = null;
+  // #784 CUT-5 — the status of an in-flight PATCH (optimistically applied locally). While set, the
+  // poll/refetch must NOT let a stale pre-PATCH server snapshot pull the UI backward off a just-applied
+  // transition; only a server status that equals pendingStatus (the PATCH committed) may override.
+  let pendingStatus = null;
+
+  // Merge the authoritative server snapshot onto the in-memory ride, preserving the local display
+  // fields the focused serializeRide doesn't carry (pricing / ETA / stats / waiting). A server null
+  // never clobbers a local string; `status` (the state-machine driver) always wins from the server.
+  function mergeServerRide(srv) {
+    const keep = (a, b) => {
+      const out = { ...(a || {}) };
+      for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
+      return out;
+    };
+    return {
+      ...ride,
+      tripId: srv.tripId || ride.tripId,
+      // While a PATCH is pending, keep the optimistic local status unless the server already reflects
+      // it (pendingStatus committed) — never revert the driver's just-applied transition (A1 race).
+      status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
+      passenger: keep(ride.passenger, srv.passenger),
+      driver: keep(ride.driver, srv.driver),
+      route: keep(ride.route, srv.route),
+      timestamps: keep(ride.timestamps, srv.timestamps),
+      cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
+    };
+  }
+
+  async function refetchRideAndRender() {
+    try {
+      const srv = await getRideFromBackend(ride.tripId);
+      if (srv) { ride = mergeServerRide(srv); renderSheet(); }
+    } catch { /* transient / no longer a server ride — keep the current view */ }
+  }
+
+  // The optimistic local UI already advanced; PATCH the server, then reconcile from the
+  // authoritative snapshot. A terminal-freeze (409 RIDE_TERMINAL) or any error surfaces an honest
+  // notice and re-syncs to the true server state, so the UI can't stay ahead of a rejected move.
+  function syncRideStatusToBackend(nextStatus) {
+    pendingStatus = nextStatus;
+    patchRideStatus(ride.tripId, nextStatus)
+      .then(() => { pendingStatus = null; refetchRideAndRender(); })
+      .catch((err) => {
+        pendingStatus = null;
+        showNotice(err && err.code === 'RIDE_TERMINAL'
+          ? 'Поездка уже завершена'
+          : 'Не удалось обновить статус на сервере');
+        refetchRideAndRender();
+      });
+  }
+
+  // #784 CUT-5 — COMPLETED is terminal AND has irreversible local side-effects: renderCompleted()
+  // saves a receipt + a ride-history entry. For a backend ride, confirm the server FIRST (PATCH); only
+  // on acceptance run the local completion (+ its receipt/history). On reject (e.g. 409 — the ride was
+  // already terminalized elsewhere) skip the local save and reconcile to the true server state, so a
+  // non-completed server ride can never leave a bogus completed receipt behind.
+  function commitDriverCompletion() {
+    if (!backendRide) { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); return; }
+    pendingStatus = RIDE_STATUS.COMPLETED;
+    patchRideStatus(ride.tripId, RIDE_STATUS.COMPLETED)
+      .then(() => { pendingStatus = null; ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); })
+      .catch((err) => {
+        pendingStatus = null;
+        showNotice(err && err.code === 'RIDE_TERMINAL'
+          ? 'Поездка уже завершена'
+          : 'Не удалось завершить поездку на сервере');
+        refetchRideAndRender();
+      });
+  }
+
+  // Self-clearing realtime poll (mirrors chat.js — router.render() replaceChildren() has no
+  // teardown). On a status change, re-fetch the snapshot and re-render in place.
+  function startRidePoll() {
+    if (ridePollId) return;
+    ridePollId = setInterval(async () => {
+      if (!document.body.contains(root)) { clearInterval(ridePollId); ridePollId = null; return; }
+      let res;
+      try { res = await pollRide(ride.tripId, rideCursor); }
+      catch { return; }
+      if (!res) return;
+      if (res.cursor) rideCursor = res.cursor;
+      // Skip the refetch while a PATCH is outstanding (A1): a stale pre-commit snapshot would revert
+      // the optimistic advance. The PATCH's own reconcile re-syncs on commit.
+      if (res.status && res.status !== ride.status && !pendingStatus) await refetchRideAndRender();
+      // A3: stop polling once the ride is terminal — no further transitions can arrive.
+      if (isTerminalRideStatus(ride.status)) { clearInterval(ridePollId); ridePollId = null; }
+    }, 2500);
+  }
+
   function persistDriverRideStatus(nextStatus, patch = {}) {
     // BD-ACTIVE-RIDE-TERM-01 P2 follow-up — when the driver is on a
     // status-simulated demo (loadCanonicalActiveRide returned null
@@ -441,6 +542,11 @@ export default function activeRide() {
     if (nextRide && nextRide.status === nextStatus) {
       syncCanonicalOrderStatus(nextRide, nextStatus);
     }
+    // #784 CUT-5 — for a confirmed server ride, mirror the (optimistically-applied) transition to the
+    // backend (PATCH /ride-state/rides/:tripId/status) and reconcile from the authoritative snapshot.
+    // COMPLETED is EXCLUDED here — it has irreversible local side-effects (receipt/history) and is
+    // committed server-FIRST via commitDriverCompletion(), so it must not also fire-and-forget here.
+    if (backendRide && nextStatus !== RIDE_STATUS.COMPLETED) syncRideStatusToBackend(nextStatus);
     return nextRide || ride;
   }
   // BD-RIDE-D-10 — Driver-initiated cancel and no-show persist the same
@@ -787,7 +893,7 @@ export default function activeRide() {
     const finishPrice = ride.ride?.price || '';
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.dropoffLabel || '')}</div></div><div class="active-ride__pickup-eta active-ride__pickup-eta--progress"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.route?.etaToDestination || '')}</div><div class="active-ride__pickup-eta-label">до места</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
-    sheet.querySelector('#ar-finish').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); });
+    sheet.querySelector('#ar-finish').addEventListener('click', () => commitDriverCompletion());
     sheet.querySelector('#ar-stop').addEventListener('click', () => showNotice('Добавление остановки будет доступно позже'));
     sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { onAction: showNotice }));
     bindPassengerActions();
@@ -880,6 +986,11 @@ export default function activeRide() {
     } else if (byPassenger) {
       title = 'Пассажир отменил заказ';
       body = `${passengerName} отменил поездку после того, как вы её приняли.`;
+    } else if (backendRide && !cancel.by) {
+      // #784 CUT-5 — a server CANCELED reached us with no local cancel.by (the status-only PATCH
+      // carries no actor) and the driver did not initiate it; don't mis-attribute it as "вы отменили".
+      title = 'Заказ отменён';
+      body = 'Поездка отменена. Пассажиру отправлено уведомление.';
     } else {
       title = 'Заказ отменён';
       body = 'Вы отменили заказ. Пассажиру отправлено уведомление.';
@@ -900,5 +1011,30 @@ export default function activeRide() {
   }
 
   renderSheet();
+
+  // #784 CUT-5 — if this tripId is a backend ride, hydrate from the server snapshot and start the
+  // realtime poll for cross-device live status. A 404/403 (a purely-local demo/mock ride) is caught
+  // and the screen stays on the mock — OFF is untouched (no fetch is attempted when the seam is off).
+  if (isBackendEnabled()) {
+    getRideFromBackend(ride.tripId).then((srv) => {
+      if (!srv) return;
+      backendRide = true;
+      // The server is AUTHORITATIVE at mount — adopt its snapshot. Never push the local/demo status to
+      // the server here: a driver-screen backend ride opened without a handoff seeds a demo NEW_ORDER
+      // while the server is already DRIVER_EN_ROUTE, so a push would REGRESS a real trip. A genuine
+      // advance taken in the ~200ms hydrate window is rare and the driver simply re-taps.
+      ride = mergeServerRide(srv);
+      renderSheet();
+      if (!isTerminalRideStatus(ride.status)) startRidePoll();
+    }).catch((err) => {
+      // Only the expected 404 (genuinely a local/demo ride) drops to the mock. Any OTHER failure
+      // (403 / 503 / network / bad envelope) is a real server ride with a transient problem — keep it a
+      // backend ride and poll so it recovers, instead of masking the outage as a fabricated mock ride.
+      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) return;
+      backendRide = true;
+      if (!isTerminalRideStatus(ride.status)) startRidePoll();
+    });
+  }
+
   return root;
 }
