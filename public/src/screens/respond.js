@@ -600,10 +600,16 @@ function renderPassengerRide(root, post) {
     offerPollId = setInterval(async () => {
       if (!document.body.contains(root)) { clearInterval(offerPollId); offerPollId = null; return; }
       const outcome = await pollOfferOutcome(orderId);
+      // Re-check after the await: the driver may have tapped «В ленту» while the request was in flight;
+      // a late 'won' must NOT navigate from a detached screen and override the user's own navigation.
+      if (!document.body.contains(root)) { clearInterval(offerPollId); offerPollId = null; return; }
       if (!outcome) return;
       if (outcome.state === 'won') {
         clearInterval(offerPollId); offerPollId = null;
-        go(`/active-ride?role=driver&tripId=${encodeURIComponent(outcome.tripId)}`);
+        // Carry the server bootstrap status (ACCEPTED at select time) so the interim demo ride matches
+        // the accepted ride instead of flashing the NEW_ORDER «Принять заказ» state before hydrate.
+        const wonStatus = (outcome.ride && outcome.ride.status) || '';
+        go(`/active-ride?role=driver&tripId=${encodeURIComponent(outcome.tripId)}${wonStatus ? `&status=${encodeURIComponent(wonStatus)}` : ''}`);
       } else if (outcome.state === 'rejected') {
         clearInterval(offerPollId); offerPollId = null;
         if (titleEl)    titleEl.textContent = 'Вас не выбрали';
