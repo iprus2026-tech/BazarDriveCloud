@@ -106,6 +106,28 @@ const CONFIRM_ROLE_VARIANTS = [
   { key: 'expired',   label: 'Истекло',  entry: 'role-agnostic: handoff expired or ?state=EXPIRED',  anchor: 'renderExpired (no party card)' },
 ];
 
+// BD-OPS R1+R5 (post-#784) — per-screen BACKEND-CUTOVER map. `backendState` is declared per screen:
+// 'dark-seam' = a backend seam is present behind isBackendEnabled() (DARK in prod, live only when an
+// API base is configured); absent ⇒ 'mock', defaulted by getScreen/getScreens. `backendContract`
+// names the live endpoints a dark-seam screen reads/writes. Kept honest by scripts/smoke-ops-screens.mjs,
+// which DERIVES wired-ness from source (an isBackendEnabled/apiFetch import OR a backend-aware mock_api
+// helper call) and asserts it matches the declared state. Shared by reference like the data-model facts.
+const RIDE_STATE_CONTRACT = {
+  reads: ['GET /api/v1/ride-state/rides/:tripId', 'GET /api/v1/realtime/poll?tripId&since'],
+  writes: ['PATCH /api/v1/ride-state/rides/:tripId/status'],
+  note: 'self-clearing realtime poll (no router teardown); status PATCH (driver advances; passenger cancel/boarded) is optimistic-local then reconciled; SAFETY>RECOVERY — accepted driver pinned, never silently rewritten.',
+};
+const ORDERS_FEED_READ = {
+  reads: ['GET /api/v1/orders (via listFeedPosts → projectOrdersResponseToFeed)'],
+  writes: [],
+  note: 'R13 dark seam; CREATED server orders projected into the feed; fail-loud on an unexpected shape.',
+};
+const ORDER_CREATE = {
+  reads: [],
+  writes: ['POST /api/v1/orders'],
+  note: 'createRideOrder; the backend create is bridged into the local store so downstream reads resolve until they cut over.',
+};
+
 const SCREENS = [
   {
     id: 'BD-ONBOARDING-01',
@@ -123,6 +145,8 @@ const SCREENS = [
     title: 'Feed',
     route: '/feed',
     file: 'public/src/screens/feed.js',
+    backendState: 'dark-seam',
+    backendContract: ORDERS_FEED_READ,
     role: 'passenger / driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -134,6 +158,8 @@ const SCREENS = [
     title: 'Post Detail',
     route: '/post',
     file: 'public/src/screens/post_detail.js',
+    backendState: 'dark-seam',
+    backendContract: ORDERS_FEED_READ,
     role: 'shared',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -145,6 +171,8 @@ const SCREENS = [
     title: 'Composer',
     route: '/new',
     file: 'public/src/screens/composer.js',
+    backendState: 'dark-seam',
+    backendContract: ORDER_CREATE,
     role: 'passenger / driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -200,6 +228,8 @@ const SCREENS = [
     title: 'Order Map Draft',
     route: '/order-map-draft',
     file: 'public/src/screens/order_map_draft.js',
+    backendState: 'dark-seam',
+    backendContract: ORDER_CREATE,
     role: 'passenger',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -225,6 +255,8 @@ const SCREENS = [
     title: 'Responses',
     route: '/responses',
     file: 'public/src/screens/responses.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/matching/offers?orderId'], writes: ['POST /api/v1/matching/select'], note: 'server-authoritative offers board; merge-not-replace; select bootstraps the ride (trip_<orderId>).' },
     role: 'passenger',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -238,6 +270,8 @@ const SCREENS = [
     title: 'Respond',
     route: '/respond',
     file: 'public/src/screens/respond.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/orders (via listFeedPosts)', 'GET /api/v1/ride-state/rides/:tripId (driver-handoff poll)'], writes: ['POST /api/v1/matching/offers'], note: 'driver offer; success-overlay polls trip_<orderId> and hands off to driver active-ride on win.' },
     role: 'driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -269,6 +303,8 @@ const SCREENS = [
     title: 'Active Ride — Driver',
     route: '/active-ride?role=driver',
     file: 'public/src/screens/active_ride.js',
+    backendState: 'dark-seam',
+    backendContract: RIDE_STATE_CONTRACT,
     role: 'driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -282,6 +318,8 @@ const SCREENS = [
     title: 'Active Ride — Passenger',
     route: '/active-ride?role=passenger',
     file: 'public/src/screens/active_ride_passenger.js',
+    backendState: 'dark-seam',
+    backendContract: RIDE_STATE_CONTRACT,
     role: 'passenger',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -295,6 +333,8 @@ const SCREENS = [
     title: 'Driver Map',
     route: '/driver-map',
     file: 'public/src/screens/driver_map.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/orders (via listNearbyOrders)'], writes: [], note: 'read live; the «Принять»/accept path is DEFERRED; the driver test-order create stays LOCAL (input.local).' },
     role: 'driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -307,6 +347,8 @@ const SCREENS = [
     title: 'Chat',
     route: '/chat',
     file: 'public/src/screens/chat.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/chat/messages?chatId'], writes: ['POST /api/v1/chat/messages'], note: 'incremental append; self-clearing poll (CUT-1).' },
     role: 'passenger / driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -342,6 +384,8 @@ const SCREENS = [
     title: 'Receipt',
     route: '/receipt',
     file: 'public/src/screens/trip_receipt.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/history (→ the trip receipt, via getReceiptResolved)'], writes: [], note: 'server-or-local fallback; forced cash/noncash/missing previews stay local.' },
     role: 'driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -353,6 +397,8 @@ const SCREENS = [
     title: 'Profile',
     route: '/profile',
     file: 'public/src/screens/profile.js',
+    backendState: 'dark-seam',
+    backendContract: { reads: ['GET /api/v1/history'], writes: [], note: 'render-then-hydrate; merged with local history (preserve passenger feedback + local-only trips).' },
     role: 'guest / passenger / driver',
     contractStatus: 'exists',
     designStatus: 'current',
@@ -388,10 +434,12 @@ const SCREENS = [
 export const IMPLEMENTATION_STATUSES = ['implemented', 'waiting', 'missing'];
 
 export function getScreens() {
-  return SCREENS.map((s) => ({ ...s }));
+  // backendState defaults to 'mock' (BD-OPS R1) — a screen declares 'dark-seam' only when it carries a
+  // backend seam; the spread lets a declared value win over the default.
+  return SCREENS.map((s) => ({ backendState: 'mock', ...s }));
 }
 
 export function getScreen(id) {
   const found = SCREENS.find((s) => s.id === id);
-  return found ? { ...found } : null;
+  return found ? { backendState: 'mock', ...found } : null;
 }

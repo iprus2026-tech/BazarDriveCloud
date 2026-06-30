@@ -24,6 +24,26 @@ function dataModelLine(screen = {}) {
     + (dm.keyedBy ? `, keyed by ${dm.keyedBy}` : '') + '.';
 }
 
+// BD-OPS R5 — the backend-seam dimension lead-in, data-driven from the registry's backendState +
+// backendContract (R1). A 'mock' screen states the dimension does not apply (and the probes below are
+// suppressed); a 'dark-seam' screen names its ACTUAL live endpoints so the auditor probes the real
+// surface; an undeclared screen degrades to "determine wired-ness first".
+function backendLine(screen = {}) {
+  const st = screen.backendState;
+  if (st === 'mock') {
+    return 'mock-only — no backend seam (no isBackendEnabled / apiFetch / backend-helper import); this dimension does not apply.';
+  }
+  if (st === 'dark-seam') {
+    const c = screen.backendContract || {};
+    const reads = (Array.isArray(c.reads) && c.reads.length) ? `reads ${c.reads.join(', ')}` : '';
+    const writes = (Array.isArray(c.writes) && c.writes.length) ? `writes ${c.writes.join(', ')}` : '';
+    const ep = [reads, writes].filter(Boolean).join('; ') || '(endpoints undeclared)';
+    return `DARK-SEAM (dark in prod; live only when an API base is set) — ${ep}.`
+      + (c.note ? ` ${c.note}` : '') + ' Probe EACH:';
+  }
+  return 'IF this screen reads or writes the backend behind isBackendEnabled() (determine wired-ness first), probe EACH:';
+}
+
 // #684 R5 — per-screen lifecycle probes. With a curated `lifecycle` fact, brief ONLY the entry
 // states the screen actually has (a screen with no RE-ENTRY isn't told to probe one) + any pre-seed
 // probe (the #743 class: a handoff linking a record seeded later). Without the fact, the generic
@@ -104,7 +124,7 @@ export function generateAuditRecipe(screen = {}, opts = {}) {
     `6. Visual / Cloud-Design parity — spacing, hierarchy, empty / loading / error states.`,
     `7. Edge / ordering states (#684 R1) — for any overlay or async/persisted flow, enumerate the SECOND-ORDER states (most are user-reachable, NOT the low-priority "edge" tier): a second overlay STACKED on top (who owns Escape/Tab?), navigation-AWAY while open (is the listener / trap released?), install-vs-mount ORDER (handler wired before the node is in the DOM?), a PROGRAMMATIC write bypassing a native constraint (el.value vs maxlength), and PERSISTED-vs-DOM ORDER divergence (append-on-retry reordering the store).`,
     `8. Contract ↔ runtime divergence (#684 R2) — open the screen's contract (docs/screen-contracts.md, the "Contract:" anchor at the foot of this brief) and DIFF it against what the runtime ACTUALLY renders: a stale or wrong row (ARIA semantics, CTA destination, acceptance state) is itself a finding. And any a11y / flow change you propose must name the contract LINE it moves in lockstep — runtime + smoke + contract land in ONE PR (BD-FEED-01 #744: a runtime aria-selected → aria-pressed swap left the contract still describing the old semantics until Codex caught it).`,
-    `9. Backend-seam / dark-cutover integrity (#784) — IF this screen reads or writes the backend behind isBackendEnabled() (the dark cutover seam), probe EACH: (a) OFF parity — with getApiBase()==='' the mock/local path must be BYTE-FOR-BYTE unchanged; every backend branch lives strictly inside an isBackendEnabled() guard (no fetch when OFF). (b) SW version — if a PRECACHED file changed, public/sw.js VERSION must bump, else a cache-first SW serves the stale module (the single most-repeated cutover miss). (c) Self-clearing polls — router.render() replaceChildren() has NO teardown, so any setInterval / poll must FIRST check document.body.contains(root) (clear + return), AND re-check it after each await before navigating/rendering (a late resolve must not paint a detached screen). (d) Fail-loud reads — a malformed / unexpected backend envelope must THROW (ApiError) so loadResource raises the retry overlay; never coerce it to a silent empty (which reads as a valid-but-empty screen). (e) Optimistic-vs-poll — an optimistically-applied local write must not be REVERTED by a poll / refetch that read the pre-commit server state (suspend the server-status override while the write is in flight), and TERMINAL side-effects (receipt / history) must be gated on server acceptance, not applied optimistically. (f) Storage / identity boundary — a NEW user-scoped key (or in-memory cache) must be classified in the static-data gate AND cleared on logout/reset, or the previous user's data flashes cross-session. (g) Accepted-identity pinning (SAFETY>RECOVERY) — never silently rewrite the accepted driver / participant; pin it at the select / accept seam. (h) Transitional bridge — when this screen's resource is cut over but a downstream read is NOT, MERGE the server result with local (do not wholesale-replace), so local-only data (just-submitted feedback, a not-yet-server-terminalized record, a just-saved receipt) survives the transition.`,
+    `9. Backend-seam / dark-cutover integrity (#784) — ` + backendLine(screen) + (screen.backendState === 'mock' ? '' : ` (a) OFF parity — with getApiBase()==='' the mock/local path must be BYTE-FOR-BYTE unchanged; every backend branch lives strictly inside an isBackendEnabled() guard (no fetch when OFF). (b) SW version — if a PRECACHED file changed, public/sw.js VERSION must bump, else a cache-first SW serves the stale module (the single most-repeated cutover miss). (c) Self-clearing polls — router.render() replaceChildren() has NO teardown, so any setInterval / poll must FIRST check document.body.contains(root) (clear + return), AND re-check it after each await before navigating/rendering (a late resolve must not paint a detached screen). (d) Fail-loud reads — a malformed / unexpected backend envelope must THROW (ApiError) so loadResource raises the retry overlay; never coerce it to a silent empty (which reads as a valid-but-empty screen). (e) Optimistic-vs-poll — an optimistically-applied local write must not be REVERTED by a poll / refetch that read the pre-commit server state (suspend the server-status override while the write is in flight), and TERMINAL side-effects (receipt / history) must be gated on server acceptance, not applied optimistically. (f) Storage / identity boundary — a NEW user-scoped key (or in-memory cache) must be classified in the static-data gate AND cleared on logout/reset, or the previous user's data flashes cross-session. (g) Accepted-identity pinning (SAFETY>RECOVERY) — never silently rewrite the accepted driver / participant; pin it at the select / accept seam. (h) Transitional bridge — when this screen's resource is cut over but a downstream read is NOT, MERGE the server result with local (do not wholesale-replace), so local-only data (just-submitted feedback, a not-yet-server-terminalized record, a just-saved receipt) survives the transition.`),
     ``,
     `Method — for every candidate finding:`,
     `- Step 0, smoke cross-check (#684 #1): grep -rlE "${pinPattern}" scripts/smoke-*.mjs — if a smoke pins the behavior as INTENDED, it is WONTFIX, not a defect.`,

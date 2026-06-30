@@ -1103,6 +1103,86 @@ expect('open-MEL badge + severity chips are defect-only (WAITING/OK excluded)',
   /DEFECT_SEVERITIES\s*=\s*MEL_SEVERITIES\.filter/.test(screenSrc)
   && /status !== 'DONE' && DEFECT_SEVERITIES\.includes/.test(screenSrc));
 
+// ── BD-OPS R1+R5 (post-#784) — the per-screen BACKEND-CUTOVER map must stay HONEST ──
+// Derive each screen's wired-ness from its SOURCE (an isBackendEnabled / apiFetch import, OR a
+// backend-aware mock_api helper import — a function whose body reaches a guarded apiFetch) and assert
+// it matches the declared backendState, so the registry can't drift into a false claim when a screen
+// gains or loses a seam. Import-based, so a helper NAME in a comment can't false-positive.
+// Assumption (current conformance): screens wire via NAMED, single-quoted imports from
+// api_config/api_client/mock_api — a namespace (import * as) or default import would not be detected;
+// add such a form only with a matching detection update here. Onboarding's auth-OTP seam (onboarding.js)
+// is intentionally OUTSIDE this map: /onboarding is KNOWN_UNREGISTERED (the allowlisted step host, same
+// family as BD-ONBOARDING-01 /welcome), so it carries no registry entry to declare a backendState on.
+const BACKEND_AWARE_HELPERS = [
+  'listFeedPosts', 'createRideOrder', 'listNearbyOrders', 'submitOfferToBackend', 'listOrderOffers',
+  'selectOfferOnBackend', 'getRideFromBackend', 'patchRideStatus', 'pollRide', 'listHistoryFromBackend',
+  'submitReceiptToBackend', 'pollOfferOutcome', 'getReceiptFromBackend', 'getReceiptResolved',
+  'saveDriverReceipt',
+];
+const BACKEND_SIGNAL = new Set(['isBackendEnabled', 'apiFetch', ...BACKEND_AWARE_HELPERS]);
+// #807 review (R1 follow-up) — SELF-POLICE the deny-list: derive every mock_api export that carries an
+// isBackendEnabled() guard (i.e. one that gates a backend call) and assert each is in BACKEND_SIGNAL, so
+// a NEW seam helper can't silently escape deriveScreenWired (the latent false-negative a hand-maintained
+// list otherwise allows — e.g. saveDriverReceipt). Fails loudly if mock_api gains a guarded export not listed.
+{
+  const mockApiSrc807 = read('../public/src/mock_api.js');
+  const guarded807 = [];
+  for (const m of mockApiSrc807.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(/g)) {
+    const next = mockApiSrc807.indexOf('\nexport ', m.index + 1);
+    // Strip comments first: the slice runs to the NEXT export, so it captures the next function's
+    // LEADING comment block — which may mention isBackendEnabled in prose (e.g. the CUT-6 helpers'
+    // header above getReceiptFromBackend) and would false-positive the sync local getReceipt.
+    const body = mockApiSrc807.slice(m.index, next === -1 ? undefined : next)
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    if (/isBackendEnabled\s*\(/.test(body)) guarded807.push(m[1]);
+  }
+  const missing807 = guarded807.filter((n) => !BACKEND_SIGNAL.has(n));
+  expect('BD-OPS R1: every isBackendEnabled-guarded mock_api export is in the smoke deny-list (self-policed, no latent false-negative)',
+    missing807.length === 0, missing807.join(', '));
+}
+function deriveScreenWired(file) {
+  let src;
+  try { src = read('../' + file); } catch { return null; } // unreadable → skip (route coverage is pinned elsewhere)
+  const re = /import\s*\{([^}]*)\}\s*from\s*'\.\.\/(?:api_config|api_client|mock_api)\.js'/g;
+  let m;
+  while ((m = re.exec(src))) {
+    for (const raw of m[1].split(',')) {
+      const name = raw.trim().split(/\s+as\s+/)[0].trim();
+      if (name && BACKEND_SIGNAL.has(name)) return true;
+    }
+  }
+  return false;
+}
+let backendMapOk = true;
+const backendMapDetail = [];
+let darkSeamCount = 0;
+for (const s of getScreens()) {
+  if (s.backendState !== 'mock' && s.backendState !== 'dark-seam') {
+    backendMapOk = false; backendMapDetail.push(`${s.id}: invalid backendState '${s.backendState}'`); continue;
+  }
+  if (!s.file) continue;
+  const wired = deriveScreenWired(s.file);
+  if (wired === null) continue;
+  const declaredSeam = s.backendState === 'dark-seam';
+  if (wired !== declaredSeam) {
+    backendMapOk = false;
+    backendMapDetail.push(`${s.id} (${s.file.split('/').pop()}): source wired=${wired} but backendState='${s.backendState}'`);
+  }
+  if (declaredSeam) {
+    darkSeamCount++;
+    const c = s.backendContract;
+    const hasContract = c && ((Array.isArray(c.reads) && c.reads.length > 0) || (Array.isArray(c.writes) && c.writes.length > 0));
+    if (!hasContract) {
+      backendMapOk = false;
+      backendMapDetail.push(`${s.id}: backendState 'dark-seam' but no backendContract reads/writes`);
+    }
+  }
+}
+expect('BD-OPS R1: registry backendState matches source-derived wired-ness for EVERY screen (+ every dark-seam carries a backendContract)',
+  backendMapOk, backendMapDetail.join('; '));
+expect('BD-OPS R1: the backend-cutover map is populated (>= 10 dark-seam screens — the #784 cutover surface)',
+  darkSeamCount >= 10);
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
