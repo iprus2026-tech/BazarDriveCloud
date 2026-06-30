@@ -1446,6 +1446,36 @@ let lastHistoryEntries = [];
 // current role, then replaceHistorySection() re-renders. OFF: stays null → local path byte-identical.
 let serverHistoryEntries = null;
 
+// #784 CUT-6 — merge server history with local instead of a wholesale swap. The server is
+// authoritative for status/route/fare/counterparty, but two things live ONLY locally during the
+// transition: (a) the passenger's rating/tags/comment (the status-only PATCH carries no feedback),
+// and (b) a locally-completed trip the driver hasn't terminalized server-side yet (absent from
+// GET /history). So overlay local feedback onto a matching server row ONLY where the server lacks it
+// (a server 0/empty must never clobber feedback the user just left), and keep local-only rows. Keyed
+// by tripId; both sides are already role-scoped; the history render sorts by date.
+function mergeServerAndLocalHistory(serverEntries, localEntries) {
+  const local = new Map();
+  for (const e of localEntries) { if (e && e.tripId != null) local.set(String(e.tripId), e); }
+  const seen = new Set();
+  const merged = serverEntries.map((srv) => {
+    const id = srv && srv.tripId != null ? String(srv.tripId) : null;
+    if (!id) return srv;
+    seen.add(id);
+    const loc = local.get(id);
+    if (!loc) return srv;
+    const out = { ...srv };
+    if (!(srv.rating > 0) && loc.rating > 0) out.rating = loc.rating;
+    if (!(Array.isArray(srv.tags) && srv.tags.length) && Array.isArray(loc.tags) && loc.tags.length) out.tags = loc.tags.slice();
+    if (!(typeof srv.comment === 'string' && srv.comment.trim()) && typeof loc.comment === 'string' && loc.comment.trim()) out.comment = loc.comment;
+    return out;
+  });
+  for (const e of localEntries) {
+    const id = e && e.tripId != null ? String(e.tripId) : null;
+    if (id && !seen.has(id)) merged.push(e);
+  }
+  return merged;
+}
+
 // BD-RIDE-HISTORY-08 — calendar view state. Persists across re-renders so
 // month navigation and day selection survive ride detail open/close. Reset
 // to today on first use; ride storage changes do not nuke it on purpose so
@@ -4293,7 +4323,14 @@ export default function profile() {
       .then((items) => {
         if (!document.body.contains(root)) return;
         const all = Array.isArray(items) ? items : [];
-        serverHistoryEntries = scopeRole ? all.filter((e) => e && e.role === scopeRole) : all;
+        const serverScoped = scopeRole ? all.filter((e) => e && e.role === scopeRole) : all;
+        // Merge with the role-scoped LOCAL history so local-only data survives the transition: the
+        // passenger's just-submitted rating/tags/comment (local-only) and a locally-completed trip the
+        // driver hasn't terminalized server-side yet (not in /history). readRideHistoryStatus is scoped
+        // to currentHistoryRole (getSmokeRole() || role) — the same role as scopeRole.
+        let localScoped = [];
+        try { const r = readRideHistoryStatus(); localScoped = Array.isArray(r.entries) ? r.entries : []; } catch { localScoped = []; }
+        serverHistoryEntries = mergeServerAndLocalHistory(serverScoped, localScoped);
         replaceHistorySection(root);
       })
       .catch(() => { /* transient/auth read failure — keep the local-rendered history */ });

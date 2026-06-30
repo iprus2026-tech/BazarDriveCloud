@@ -1251,7 +1251,14 @@ export async function getReceiptFromBackend(tripId) {
 // getReceipt() itself stays SYNC (the driver completion flow + the forced-preview path call it
 // synchronously) — this is the additive async path for the live receipt screen.
 export async function getReceiptResolved(tripId) {
-  if (isBackendEnabled()) return getReceiptFromBackend(tripId);
+  // #784 CUT-6 — backend ON: prefer the server receipt, but FALL BACK to the locally-saved canonical
+  // receipt when the server has none yet. saveDriverReceipt persists locally + fire-and-forget POSTs;
+  // while that POST is pending / failed / swallowed (403/409), the local receipt is the user-facing
+  // truth, so a payouts row -> /receipt must not render "Чек не найден". OFF: local getReceipt only.
+  if (isBackendEnabled()) {
+    const srv = await getReceiptFromBackend(tripId);
+    return srv || getReceipt(tripId);
+  }
   return getReceipt(tripId);
 }
 
