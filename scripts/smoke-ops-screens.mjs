@@ -381,6 +381,21 @@ expect('audit recipe enumerates the contract↔runtime divergence dimension (#68
   /Contract . runtime divergence \(#684 R2\)/.test(auditRecipe)
   && /docs\/screen-contracts\.md/.test(auditRecipe)
   && /name the contract LINE it moves in lockstep/.test(auditRecipe));
+// #784 — a backend-seam / dark-cutover dimension enumerates the integrity classes the #784 frontend
+// cutover (CUT-1..6 + the driver handoff) repeatedly hit, so a future backend-feature audit is
+// checklist-driven not re-improvised: OFF parity, SW-VERSION-on-precache, self-clearing polls,
+// fail-loud reads, optimistic-vs-poll, the storage/identity boundary, accepted-identity pinning, the
+// transitional-bridge merge. Self-gating ("IF this screen reads/writes the backend …") so a non-seam
+// screen degrades to today's brief.
+expect('audit recipe enumerates the backend-seam / dark-cutover dimension (#784)',
+  /Backend-seam \/ dark-cutover integrity \(#784\)/.test(auditRecipe)
+  && /isBackendEnabled\(\)/.test(auditRecipe)
+  && /OFF parity/.test(auditRecipe)
+  && /sw\.js VERSION must bump/.test(auditRecipe)
+  && /document\.body\.contains\(root\)/.test(auditRecipe)
+  && /Optimistic-vs-poll/.test(auditRecipe)
+  && /SAFETY>RECOVERY/.test(auditRecipe)
+  && /Transitional bridge/.test(auditRecipe));
 expect('audit recipe bakes in the smoke cross-check (#1), adversarial verify, selector anchor (#2) + reachability synthesis (#3)',
   /cross-check[\s\S]*grep -rlE "[^"]+" scripts\/smoke-\*\.mjs/i.test(auditRecipe)
   && /adversarial[\s\S]*refute/i.test(auditRecipe)
