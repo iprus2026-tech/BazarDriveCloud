@@ -564,8 +564,13 @@ function buildDriversForOrder(request, serverOffers, backendAuthoritative) {
   // the local MOCK_DRIVERS, which carry no driverId and would mint a phantom server-less ride on
   // select). OFF / not-authoritative, the call is byte-identical to the prior local/mock behaviour.
   if (backendAuthoritative) {
+    // #784 CUT-4: GET /offers returns ALL rows, but POST /select only accepts a 'sent', non-expired
+    // offer (else 404). Show only LIVE+selectable cards so the passenger can't tap an offer that
+    // would fail on select. All filtered out -> empty array -> the honest empty state handles it.
     return Array.isArray(serverOffers)
-      ? serverOffers.map((offer, index) => mapServerOfferToDriverCard(offer, request, index))
+      ? serverOffers
+          .filter((o) => o && o.status === 'sent' && (!o.expiresAt || Date.parse(o.expiresAt) > Date.now()))
+          .map((offer, index) => mapServerOfferToDriverCard(offer, request, index))
       : [];
   }
   const real = (request && request.orderId && !request.isFallback)
@@ -613,7 +618,7 @@ function mapServerOfferToDriverCard(offer, request, index) {
     etaTone:    'mid',
     etaBars:    2,
     etaRank:    1,
-    note:       '',
+    note:       pickStr(offer && offer.message),
     isBest:     index === 0,
   };
 }
@@ -1362,8 +1367,10 @@ export default async function responses() {
   // is AUTHORITATIVE for the board (empty => honest empty state, NEVER the local/mock drivers). A
   // fetch error sets serverOffersError so the empty state shows an honest "retry" copy instead of
   // masking the outage with fabricated drivers. OFF, backendAuthoritative is false and the board is
-  // byte-identical to before.
-  const backendAuthoritative = isBackendEnabled() && !!request.orderId && !request.isFallback;
+  // byte-identical to before. NOTE: an orderId is enough (NOT gated on !isFallback) — a server order
+  // the owner opens where it isn't locally bridged (cross-device / the server-fed /orders feed) is
+  // still server-authoritative; its offers must load and be selectable.
+  const backendAuthoritative = isBackendEnabled() && !!request.orderId;
   let serverOffers = null;
   let serverOffersError = false;
   if (backendAuthoritative) {
@@ -1682,20 +1689,19 @@ export default async function responses() {
 
       if (action === 'select' || action === 'continue') {
         if (selecting) return; // #784 CUT-4: ignore a second click while a select is in flight
-        if (!canonicalOrder) {
-          toast('Сначала откройте опубликованный заказ');
-          return;
-        }
         const driver = drivers.find((d) => d.id === driverId) || selectedDriver || drivers[0];
-        selecting = true;
-        // #784 CUT-4 (offer→select): on a live backend, the owner accepts the
-        // chosen offer server-side (POST /matching/select bootstraps the ride in
-        // one tx) BEFORE the local handoff. A 409 means another select already
-        // won — surface it and stay. On success we still build the LOCAL active
-        // ride (transitional bridge until the ride read cuts over in CUT-5);
-        // buildPassengerActiveRide pins selectedDriver.responseId from the chosen
-        // card, honouring the SAFETY>RECOVERY rule (driver is never left unpinned).
-        if (isBackendEnabled() && driver && driver.driverId && request.orderId) {
+
+        // #784 CUT-4 (offer→select): on a live backend the server is AUTHORITATIVE — the owner accepts
+        // the chosen offer server-side (POST /matching/select bootstraps the ride in one tx) and we
+        // NEVER mint a local-only ride the server didn't accept.
+        if (backendAuthoritative) {
+          // A malformed offer (missing driverId, e.g. a serializer regression) must never fall
+          // through to a local ride — keep it non-selectable.
+          if (!driver || !driver.driverId) {
+            toast('Некорректное предложение, обновите список');
+            return;
+          }
+          selecting = true;
           try {
             await selectOfferOnBackend({ orderId: request.orderId, driverId: driver.driverId });
           } catch (err) {
@@ -1705,7 +1711,24 @@ export default async function responses() {
               : 'Не удалось выбрать водителя. Попробуйте ещё раз.');
             return;
           }
+          // Server accepted. Same-device creator: build the LOCAL active-ride bridge, which pins
+          // selectedDriver.responseId (SAFETY>RECOVERY — driver never left unpinned). Cross-device /
+          // server-fed (no local order to bridge): go straight to the real server ride; tripId =
+          // trip_<orderId> from the /select tx, and active-ride's own read cuts over in CUT-5.
+          if (canonicalOrder) {
+            const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
+            if (handoff) { go(activeRideUrl(handoff.tripId)); return; }
+          }
+          go(activeRideUrl(`trip_${request.orderId}`));
+          return;
         }
+
+        // OFF / not-authoritative: prior local behaviour, byte-identical.
+        if (!canonicalOrder) {
+          toast('Сначала откройте опубликованный заказ');
+          return;
+        }
+        selecting = true;
         const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
         if (!handoff) {
           selecting = false;

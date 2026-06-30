@@ -712,6 +712,7 @@ function renderPassengerRide(root, post) {
           driverName: driverSnapshot.name,
           car:        driverSnapshot.car,
           price:      priceNum,
+          message,
         });
       } catch {
         setLoading(false);
@@ -727,9 +728,17 @@ function renderPassengerRide(root, post) {
     // opens chat with role=driver. Without this, /chat defaults viewerRole
     // to 'passenger' and renders the driver's own outgoing bubble on the
     // wrong side of the thread.
-    const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}&role=driver`;
-    root.querySelector('#respond-success-chat')
-      .addEventListener('click', () => go(chatHref));
+    // #784 CUT-4: for a LIVE offer (backend on + a canonical ride order) that responseId thread is
+    // orphaned — the passenger blocks pre-select chat and post-select chat opens by tripId — so hide
+    // the «Открыть чат» CTA (live-offer chat opens post-select via the ride). OFF / non-canonical
+    // posts keep the existing two-CTA overlay.
+    const chatBtn = root.querySelector('#respond-success-chat');
+    if (isBackendEnabled() && canonicalLink.orderId) {
+      if (chatBtn) chatBtn.hidden = true;
+    } else if (chatBtn) {
+      const chatHref = `/chat?responseId=${encodeURIComponent(responseId)}&role=driver`;
+      chatBtn.addEventListener('click', () => go(chatHref));
+    }
 
     setTimeout(() => {
       bodyEl.hidden   = true;

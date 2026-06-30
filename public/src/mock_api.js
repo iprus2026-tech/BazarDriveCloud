@@ -612,11 +612,11 @@ export async function listNearbyOrders() {
 
 // Driver makes an offer on a canonical ride order. Returns the server offer (or
 // null when OFF — the caller already guards, so OFF never invokes this).
-export async function submitOfferToBackend({ orderId, driverName, car, price }) {
+export async function submitOfferToBackend({ orderId, driverName, car, price, message }) {
   if (isBackendEnabled()) {
     const r = await apiFetch('/matching/offers', {
       method: 'POST',
-      body: { orderId, driverName, car, price },
+      body: { orderId, driverName, car, price, message },
     });
     return r.offer;
   }
