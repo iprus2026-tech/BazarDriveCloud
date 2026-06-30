@@ -14,7 +14,9 @@
 // backend-cutover map: backendState/backendContract, woven data-driven into the audit dimension).
 // v259 (BD-MAP-FOUND-01 #805): precached mapbox_config.js + mapbox_loader.js changed (real dark Mapbox
 // token surface + lazy vendored-SDK loader; inert until a token is set). The vendored lib is NOT precached.
-const VERSION    = 'v259';
+// v260 (BD-MAP-RENDER-MAP #805): precached map.js changed (DEFAULT state hydrates a real Mapbox map over
+// the placeholder when a token is set; dark/no-token path unchanged).
+const VERSION    = 'v260';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

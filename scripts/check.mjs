@@ -224,6 +224,19 @@ if (exists(mapboxFoundationSmoke)) {
   }
 }
 
+// BD-MAP-RENDER-MAP (#805) — the first per-surface real Mapbox render (/map): the live map is gated
+// behind DEFAULT + isMapboxEnabled() (dark never constructs a Map), the hydrate is dark-safe, the GL
+// context is torn down on detach, and the no-token path keeps the MapShell placeholder.
+const mapboxRenderMapSmoke = path.join(root, 'scripts', 'smoke-mapbox-render-map.mjs');
+if (exists(mapboxRenderMapSmoke)) {
+  try {
+    execFileSync(process.execPath, [mapboxRenderMapSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-mapbox-render-map.mjs failed\n${msg}`);
+  }
+}
+
 // BD-POST-01 — static regression smoke for the post-detail primary-action
 // resolver (pickCtaSpec kinds + runCtaAction per-kind routing). Audit #455
 // flagged this resolver had no behavioural pin.
