@@ -11,6 +11,12 @@
        stay 'self' (the SDK + its CSS are vendored locally, not from a CDN). -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://api.mapbox.com; font-src 'self'; connect-src 'self' https://api.mapbox.com https://events.mapbox.com; manifest-src 'self'; worker-src 'self' blob:; base-uri 'none'; object-src 'none'; form-action 'none';">
+  <!-- BD-MAP-ACTIVATE (#805): the Mapbox public token read by mapbox_config.getMapboxToken(). This is the
+       dedicated "BazarDriveCloud GitHub Pages Web Token" — a URL-RESTRICTED public token (allowed URL:
+       iprus2026-tech.github.io), NOT the unrestricted default — so committing it is safe (a public pk.*
+       token is client-exposed by design; the URL restriction prevents off-domain quota abuse). This is
+       what flips the Mapbox dark seam ON: /map (and future surfaces) now render a real map. -->
+  <meta name="bd-mapbox-token" content="pk.eyJ1IjoibXJ6ZWwiLCJhIjoiY21yMTV6Y2xhMGYxbDJxc2Rpc25kNmx4ZiJ9.MZgziXJsfD73GMgBOALkKw">
   <title>BazarDrive</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="stylesheet" href="./styles/cloud.css">
