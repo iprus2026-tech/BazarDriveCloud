@@ -51,7 +51,7 @@ function syncCanonical(ride, activeStatus) {
 }
 
 // ── COMPLETED happy path ───────────────────────────────────────
-const order = mockApi.createRideOrder({
+const order = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'Аэропорт Внуково' },
   dropoff: { id: null, label: 'м. Парк Победы' },
@@ -61,7 +61,7 @@ const order = mockApi.createRideOrder({
   passenger: { name: 'Ольга', initials: 'О', authorId: 'local-user', isCurrentUser: true, phoneMasked: '+7 ... 12-34', comment: '1 чемодан' },
 });
 expect('createRideOrder returns CREATED', order.status === 'CREATED');
-expect('listNearbyOrders includes fresh CREATED', mockApi.listNearbyOrders().some(o => o.id === order.id));
+expect('listNearbyOrders includes fresh CREATED', (await mockApi.listNearbyOrders()).some(o => o.id === order.id));
 expect('Feed projection includes fresh CREATED',
   mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order.id && p.canonical === 'ride_order'));
 
@@ -73,7 +73,7 @@ expect('Active ride seeded with ACCEPTED status', accepted?.ride?.status === rid
 expect('Passenger snapshot preserved (no demo "Анна М." leak)',
   accepted?.ride?.passenger?.name === 'Ольга',
   'passenger=' + JSON.stringify(accepted?.ride?.passenger?.name));
-expect('After accept — nearby excludes order', !mockApi.listNearbyOrders().some(o => o.id === order.id));
+expect('After accept — nearby excludes order', !(await mockApi.listNearbyOrders()).some(o => o.id === order.id));
 expect('After accept — feed projection excludes order',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order.id));
 expect('findLatestHandedOffOrderTripId resolves', mockApi.findLatestHandedOffOrderTripId() === accepted.tripId);
@@ -89,7 +89,7 @@ ride = rideState.updateActiveRideStatus(accepted.tripId, rideState.RIDE_STATUS.C
 expect('COMPLETED active ride persisted', ride.status === rideState.RIDE_STATUS.COMPLETED);
 expect('COMPLETED canonical order synced', mockApi.getOrderById(order.id)?.status === 'COMPLETED');
 expect('Terminal — findLatestHandedOffOrderTripId returns null', mockApi.findLatestHandedOffOrderTripId() === null);
-expect('Terminal — order excluded from listNearbyOrders', !mockApi.listNearbyOrders().some(o => o.id === order.id));
+expect('Terminal — order excluded from listNearbyOrders', !(await mockApi.listNearbyOrders()).some(o => o.id === order.id));
 expect('Terminal — order excluded from feed projection', !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order.id));
 
 // ── CANCELED path ─────────────────────────────────────────────
@@ -104,7 +104,7 @@ expect('Terminal — order excluded from feed projection', !mockApi.listRideOrde
 // be refused. Reset the active-ride store at every scenario boundary
 // so the scenarios stay independent regardless of clock granularity.
 rideState.clearActiveRideStore();
-const order2 = mockApi.createRideOrder({
+const order2 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'A' }, dropoff: { id: null, label: 'B' },
   estimatedPrice: 800, estimatedPriceLabel: '800', scheduledMode: 'now', comment: '',
@@ -126,7 +126,7 @@ expect('CANCEL — driver cancel metadata persisted',
 expect('CANCEL — order canceled', mockApi.getOrderById(order2.id)?.status === 'CANCELED');
 expect('CANCEL — findLatest excludes terminal', mockApi.findLatestHandedOffOrderTripId() === null);
 expect('CANCEL — order excluded from listNearbyOrders',
-  !mockApi.listNearbyOrders().some(o => o.id === order2.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order2.id));
 expect('CANCEL — order excluded from Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order2.id));
 
@@ -135,7 +135,7 @@ expect('CANCEL — order excluded from Feed projection',
 // preceding CANCEL scenario can't carry the CANCELED record into this
 // scenario's tripId.
 rideState.clearActiveRideStore();
-const order3 = mockApi.createRideOrder({
+const order3 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'A' }, dropoff: { id: null, label: 'B' },
   estimatedPrice: 800, estimatedPriceLabel: '800', scheduledMode: 'now', comment: '',
@@ -155,7 +155,7 @@ expect('NO_SHOW — cancel metadata persisted',
 expect('NO_SHOW — order canonically CANCELED', mockApi.getOrderById(order3.id)?.status === 'CANCELED');
 expect('NO_SHOW — findLatest excludes terminal', mockApi.findLatestHandedOffOrderTripId() === null);
 expect('NO_SHOW — order excluded from listNearbyOrders',
-  !mockApi.listNearbyOrders().some(o => o.id === order3.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order3.id));
 expect('NO_SHOW — order excluded from Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order3.id));
 
@@ -168,7 +168,7 @@ expect('NO_SHOW — order excluded from Feed projection',
 // leave the prior scenario's identity ('Тест3') in place instead of
 // the Refresh passenger snapshot.
 rideState.clearActiveRideStore();
-const order4 = mockApi.createRideOrder({
+const order4 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'X' }, dropoff: { id: null, label: 'Y' },
   estimatedPrice: 1200, estimatedPriceLabel: '1200', scheduledMode: 'now', comment: 'note',
@@ -184,7 +184,7 @@ expect('Refresh — passenger sees same passenger identity',
   'got=' + refreshedPassenger?.passenger?.name);
 
 // ── Passenger cancel after accept (BD-RIDE-P-10) — canonical mirrored to CANCELED ──
-const order5 = mockApi.createRideOrder({
+const order5 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'P' }, dropoff: { id: null, label: 'Q' },
   estimatedPrice: 700, estimatedPriceLabel: '700', scheduledMode: 'now', comment: '',
@@ -202,7 +202,7 @@ expect('PassengerCancel — active ride status CANCELED', ride5.status === rideS
 expect('PassengerCancel — canonical ride_orders.v1 mirrored to CANCELED',
   mockApi.getOrderById(order5.id)?.status === 'CANCELED');
 expect('PassengerCancel — canceled order NOT in listNearbyOrders()',
-  !mockApi.listNearbyOrders().some(o => o.id === order5.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order5.id));
 expect('PassengerCancel — canceled order NOT in Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order5.id));
 // findLatestHandedOffOrderTripId() walks newest-first; order5 must be
@@ -222,7 +222,7 @@ expect('PassengerCancel — findLatest excludes the canceled trip',
 // hand the driver a stale terminal trip.
 mockApi.clearRideOrdersStore();
 rideState.clearActiveRideStore();
-const order6 = mockApi.createRideOrder({
+const order6 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'S' }, dropoff: { id: null, label: 'T' },
   estimatedPrice: 600, estimatedPriceLabel: '600', scheduledMode: 'now', comment: '',
@@ -238,7 +238,7 @@ expect('BareDriver — canonical ride_orders.v1 is CANCELED',
 expect('BareDriver — findLatestHandedOffOrderTripId returns null after passenger cancel',
   mockApi.findLatestHandedOffOrderTripId() === null);
 expect('BareDriver — canceled order NOT in listNearbyOrders()',
-  !mockApi.listNearbyOrders().some(o => o.id === order6.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order6.id));
 expect('BareDriver — canceled order NOT in Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order6.id));
 
@@ -250,7 +250,7 @@ expect('BareDriver — canceled order NOT in Feed projection',
 // driver would revive a terminal trip on refresh.
 mockApi.clearRideOrdersStore();
 rideState.clearActiveRideStore();
-const order7 = mockApi.createRideOrder({
+const order7 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'U' }, dropoff: { id: null, label: 'V' },
   estimatedPrice: 500, estimatedPriceLabel: '500', scheduledMode: 'now', comment: '',
@@ -267,14 +267,14 @@ expect('BareDriverCancel — canonical ride_orders.v1 is CANCELED',
 expect('BareDriverCancel — findLatestHandedOffOrderTripId returns null after driver cancel',
   mockApi.findLatestHandedOffOrderTripId() === null);
 expect('BareDriverCancel — canceled order NOT in listNearbyOrders()',
-  !mockApi.listNearbyOrders().some(o => o.id === order7.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order7.id));
 expect('BareDriverCancel — canceled order NOT in Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order7.id));
 
 // Reset active-ride store so a clock-collision between order7 (CANCEL)
 // and order8 (NO_SHOW) ids can't carry CANCEL state into this scenario.
 rideState.clearActiveRideStore();
-const order8 = mockApi.createRideOrder({
+const order8 = await mockApi.createRideOrder({
   type: 'passenger_request', source: 'feed',
   pickup: { id: null, label: 'W' }, dropoff: { id: null, label: 'X' },
   estimatedPrice: 500, estimatedPriceLabel: '500', scheduledMode: 'now', comment: '',
@@ -292,7 +292,7 @@ expect('BareDriverNoShow — canonical ride_orders.v1 is CANCELED',
 expect('BareDriverNoShow — findLatestHandedOffOrderTripId returns null after no-show',
   mockApi.findLatestHandedOffOrderTripId() === null);
 expect('BareDriverNoShow — no-show order NOT in listNearbyOrders()',
-  !mockApi.listNearbyOrders().some(o => o.id === order8.id));
+  !(await mockApi.listNearbyOrders()).some(o => o.id === order8.id));
 expect('BareDriverNoShow — no-show order NOT in Feed projection',
   !mockApi.listRideOrdersAsFeedPosts().some(p => p.orderId === order8.id));
 

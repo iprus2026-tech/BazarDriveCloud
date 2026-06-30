@@ -755,7 +755,10 @@ export default function composer() {
     setLoading(true);
     try {
       if (d.type === 'passenger') {
-        createRideOrder(buildRideOrderFromComposerDraft(d, user.get()));
+        // #784 CUT-3: createRideOrder is async (POSTs on a live backend). AWAIT inside the try so a
+        // rejected POST is caught -> showError + setLoading(false), and clearDraft()/go('/feed') run
+        // only on success (mirrors order_map_draft.handlePublish; never a fire-and-forget false success).
+        await createRideOrder(buildRideOrderFromComposerDraft(d, user.get()));
       } else {
         createFeedPost(buildFeedPost(d));
       }

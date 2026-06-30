@@ -71,7 +71,7 @@ expect('the Inbox notification href is re-pointed at the current demo order id',
   (await inboxHref()) === `/responses?orderId=${created.id}&state=list`);
 
 expect('the demo order is excluded from DriverMap (listNearbyOrders skips demo)',
-  listNearbyOrders().every((o) => o.id !== created.id));
+  (await listNearbyOrders()).every((o) => o.id !== created.id));
 expect('the demo order is excluded from Feed (listRideOrdersAsFeedPosts skips demo)',
   listRideOrdersAsFeedPosts().every((p) => p.orderId !== created.id));
 

@@ -41,17 +41,17 @@ beforeEach(() => { globalThis.localStorage.clear(); });
 
 // ── createRideOrder / listNearbyOrders / acceptNearbyOrder ────────────────────
 
-test('createRideOrder: produces a CREATED order and lists it as nearby', () => {
-  const order = createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
+test('createRideOrder: produces a CREATED order and lists it as nearby', async () => {
+  const order = await createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
   assert.equal(order.status, 'CREATED');
   assert.ok(order.id.startsWith('order-'));
-  const nearby = listNearbyOrders();
+  const nearby = (await listNearbyOrders());
   assert.equal(nearby.length, 1);
   assert.equal(nearby[0].id, order.id);
 });
 
-test('createRideOrder: normalizes type/source and coerces numeric fields', () => {
-  const o = createRideOrder({
+test('createRideOrder: normalizes type/source and coerces numeric fields', async () => {
+  const o = await createRideOrder({
     type: 'weird', source: 'weird',
     distanceKm: 'abc', durationMin: '12', estimatedPrice: '500',
   });
@@ -62,17 +62,17 @@ test('createRideOrder: normalizes type/source and coerces numeric fields', () =>
   assert.equal(o.estimatedPrice, 500);
   assert.equal(o.comment, '');
 
-  const ride = createRideOrder({ type: 'ride_order', source: 'feed' });
+  const ride = await createRideOrder({ type: 'ride_order', source: 'feed' });
   assert.equal(ride.type, 'ride_order');
   assert.equal(ride.source, 'feed');
 });
 
-test('acceptNearbyOrder: CREATED → ACCEPTED, drops from nearby, idempotent/null guards', () => {
-  const order = createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
+test('acceptNearbyOrder: CREATED → ACCEPTED, drops from nearby, idempotent/null guards', async () => {
+  const order = await createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
   const accepted = acceptNearbyOrder(order.id);
   assert.equal(accepted.status, 'ACCEPTED');
   assert.equal(typeof accepted.acceptedAt, 'string');
-  assert.equal(listNearbyOrders().length, 0, 'accepted order drops out of nearby');
+  assert.equal((await listNearbyOrders()).length, 0, 'accepted order drops out of nearby');
   // already non-CREATED → null; unknown / non-string → null.
   assert.equal(acceptNearbyOrder(order.id), null);
   assert.equal(acceptNearbyOrder('order-ghost'), null);
@@ -80,19 +80,19 @@ test('acceptNearbyOrder: CREATED → ACCEPTED, drops from nearby, idempotent/nul
   assert.equal(acceptNearbyOrder(''), null);
 });
 
-test('listNearbyOrders: only CREATED orders, capped at 20', () => {
+test('listNearbyOrders: only CREATED orders, capped at 20', async () => {
   const many = [];
   for (let i = 0; i < 25; i++) many.push({ id: `order-${i}`, status: 'CREATED' });
   many.push({ id: 'order-acc', status: 'ACCEPTED' });
   seedOrders(many);
-  const nearby = listNearbyOrders();
+  const nearby = (await listNearbyOrders());
   assert.equal(nearby.length, 20, 'capped at 20');
   assert.ok(nearby.every((o) => o.status === 'CREATED'));
 });
 
 // ── rideOrderToFeedPost (pure projection) ─────────────────────────────────────
 
-test('rideOrderToFeedPost: projects a CREATED order into a canonical feed post', () => {
+test('rideOrderToFeedPost: projects a CREATED order into a canonical feed post', async () => {
   const post = rideOrderToFeedPost({
     id: 'order-x', status: 'CREATED', source: 'feed',
     pickup: { label: 'Home' }, dropoff: { label: 'Work' },
@@ -111,14 +111,14 @@ test('rideOrderToFeedPost: projects a CREATED order into a canonical feed post',
   assert.equal(typeof post.to, 'string');
 });
 
-test('rideOrderToFeedPost: returns null for non-CREATED / malformed / id-less orders', () => {
+test('rideOrderToFeedPost: returns null for non-CREATED / malformed / id-less orders', async () => {
   assert.equal(rideOrderToFeedPost({ id: 'o', status: 'ACCEPTED' }), null);
   assert.equal(rideOrderToFeedPost({ status: 'CREATED' }), null); // no id
   assert.equal(rideOrderToFeedPost(null), null);
   assert.equal(rideOrderToFeedPost('nope'), null);
 });
 
-test('listRideOrdersAsFeedPosts: projects only CREATED, newest-first by createdAt', () => {
+test('listRideOrdersAsFeedPosts: projects only CREATED, newest-first by createdAt', async () => {
   seedOrders([
     { id: 'order-A', status: 'CREATED', createdAt: '2026-01-01T00:00:00.000Z' },
     { id: 'order-B', status: 'ACCEPTED', createdAt: '2026-01-03T00:00:00.000Z' },
@@ -131,7 +131,7 @@ test('listRideOrdersAsFeedPosts: projects only CREATED, newest-first by createdA
 
 // ── mergeFeedAndRideOrderPosts (pure) ─────────────────────────────────────────
 
-test('mergeFeedAndRideOrderPosts: dedupes rides, prepends them, drops colliding feed', () => {
+test('mergeFeedAndRideOrderPosts: dedupes rides, prepends them, drops colliding feed', async () => {
   const rides = [{ id: 'r1' }, { id: 'r1' }, { id: 'r2' }];
   const feed = [{ id: 'f1' }, { id: 'r1' }, { orderId: 'r2' }];
   const merged = mergeFeedAndRideOrderPosts(feed, rides);
@@ -140,7 +140,7 @@ test('mergeFeedAndRideOrderPosts: dedupes rides, prepends them, drops colliding 
   assert.deepEqual(merged.map((p) => p.id ?? p.orderId), ['r1', 'r2', 'f1']);
 });
 
-test('mergeFeedAndRideOrderPosts: empty rides returns a feed copy; non-arrays tolerated', () => {
+test('mergeFeedAndRideOrderPosts: empty rides returns a feed copy; non-arrays tolerated', async () => {
   const feed = [{ id: 'f1' }];
   const copy = mergeFeedAndRideOrderPosts(feed, []);
   assert.deepEqual(copy, feed);

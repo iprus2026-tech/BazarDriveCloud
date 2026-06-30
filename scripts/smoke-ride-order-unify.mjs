@@ -104,8 +104,8 @@ expect('projection tags cards as canonical ride_order with an orderId',
 // service / announcement stay on createFeedPost (feed-only, by design).
 expect('composer imports createRideOrder from mock_api',
   /import\s*\{[^}]*createRideOrder[^}]*\}\s*from\s*'\.\.\/mock_api\.js'/s.test(composer));
-expect('composer passenger branch writes a canonical ride order',
-  /d\.type\s*===\s*'passenger'[\s\S]{0,120}createRideOrder\(\s*buildRideOrderFromComposerDraft\(/.test(composer));
+expect('composer passenger branch writes a canonical ride order (awaited — async since CUT-3)',
+  /d\.type\s*===\s*'passenger'[\s\S]{0,400}await\s+createRideOrder\(\s*buildRideOrderFromComposerDraft\(/.test(composer));
 expect('composer non-passenger branch stays on createFeedPost (feed-only contour)',
   /else\s*\{[\s\S]{0,80}createFeedPost\(/.test(composer));
 const composerBuilderBody = functionBody(composer, 'buildRideOrderFromComposerDraft') || '';

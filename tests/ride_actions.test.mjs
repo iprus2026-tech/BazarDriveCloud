@@ -43,7 +43,7 @@ const READY_DRIVER = {
 
 // ── role predicates ───────────────────────────────────────────────────────────
 
-test('isPassengerMode / isDriverMode: role-based, false on null', () => {
+test('isPassengerMode / isDriverMode: role-based, false on null', async () => {
   assert.equal(isPassengerMode({ role: 'passenger' }), true);
   assert.equal(isPassengerMode({ role: 'driver' }), false);
   assert.equal(isDriverMode({ role: 'driver' }), true);
@@ -54,7 +54,7 @@ test('isPassengerMode / isDriverMode: role-based, false on null', () => {
 
 // ── canManageOwnOrder ─────────────────────────────────────────────────────────
 
-test('canManageOwnOrder: true for any own-order marker, false otherwise', () => {
+test('canManageOwnOrder: true for any own-order marker, false otherwise', async () => {
   assert.equal(canManageOwnOrder({ createdByCurrentUser: true }), true);
   assert.equal(canManageOwnOrder({ isCurrentUser: true }), true);
   assert.equal(canManageOwnOrder({ authorId: LOCAL_USER_ID }), true);
@@ -66,13 +66,13 @@ test('canManageOwnOrder: true for any own-order marker, false otherwise', () => 
 
 // ── canAcceptOrder ────────────────────────────────────────────────────────────
 
-test('canAcceptOrder: ready driver can accept a foreign trip / passenger request', () => {
+test('canAcceptOrder: ready driver can accept a foreign trip / passenger request', async () => {
   assert.equal(canAcceptOrder({ type: 'trip', passenger: true }, READY_DRIVER), true);
   assert.equal(canAcceptOrder({ canonical: 'ride_order', orderId: 'x', type: 'trip', passenger: true }, READY_DRIVER), true);
   assert.equal(canAcceptOrder({ type: 'passenger_request' }, READY_DRIVER), true);
 });
 
-test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order', () => {
+test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order', async () => {
   const post = { type: 'trip', passenger: true };
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, role: 'passenger' }), false);
   assert.equal(canAcceptOrder(post, { ...READY_DRIVER, waybillOpen: false }), false);
@@ -84,7 +84,7 @@ test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order',
 
 // ── buildRouteSnapshotFromOrder (pure) ────────────────────────────────────────
 
-test('buildRouteSnapshotFromOrder: canonical trip id + labels; null without id', () => {
+test('buildRouteSnapshotFromOrder: canonical trip id + labels; null without id', async () => {
   const snap = buildRouteSnapshotFromOrder({
     id: 'o1', pickup: { label: 'P' }, dropoff: { label: 'D' },
     distanceKm: 10, durationMin: 20, estimatedPrice: 500,
@@ -105,7 +105,7 @@ test('buildRouteSnapshotFromOrder: canonical trip id + labels; null without id',
 
 // ── seedActiveRideFromAcceptedOrder (storage) ─────────────────────────────────
 
-test('seedActiveRideFromAcceptedOrder: persists an ACCEPTED ride at trip_<id>', () => {
+test('seedActiveRideFromAcceptedOrder: persists an ACCEPTED ride at trip_<id>', async () => {
   const out = seedActiveRideFromAcceptedOrder({
     id: 'o1', pickup: { label: 'P' }, dropoff: { label: 'D' }, estimatedPrice: 500,
   });
@@ -122,21 +122,21 @@ test('seedActiveRideFromAcceptedOrder: persists an ACCEPTED ride at trip_<id>', 
 
 // ── acceptCanonicalRideOrder (full handoff) ───────────────────────────────────
 
-test('acceptCanonicalRideOrder: CREATED order → ACCEPTED + seeded active ride', () => {
-  const order = createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' }, estimatedPrice: 700 });
+test('acceptCanonicalRideOrder: CREATED order → ACCEPTED + seeded active ride', async () => {
+  const order = await createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' }, estimatedPrice: 700 });
   const result = acceptCanonicalRideOrder(order.id);
   assert.equal(result.tripId, `trip_${order.id}`);
   assert.equal(result.order.status, 'ACCEPTED');
   assert.equal(result.ride.status, RIDE_STATUS.ACCEPTED);
   // the order drops out of the nearby (CREATED) list
-  assert.equal(listNearbyOrders().length, 0);
+  assert.equal((await listNearbyOrders()).length, 0);
   // active ride persisted under the canonical trip id
   assert.equal(findActiveRide(`trip_${order.id}`).status, RIDE_STATUS.ACCEPTED);
 });
 
-test('acceptCanonicalRideOrder: null for stale / unknown / already-accepted ids', () => {
+test('acceptCanonicalRideOrder: null for stale / unknown / already-accepted ids', async () => {
   assert.equal(acceptCanonicalRideOrder('order-ghost'), null);
-  const order = createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
+  const order = await createRideOrder({ pickup: { label: 'A' }, dropoff: { label: 'B' } });
   assert.ok(acceptCanonicalRideOrder(order.id));        // first accept works
   assert.equal(acceptCanonicalRideOrder(order.id), null); // second is stale → null
 });
