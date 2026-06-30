@@ -1108,12 +1108,38 @@ expect('open-MEL badge + severity chips are defect-only (WAITING/OK excluded)',
 // backend-aware mock_api helper import — a function whose body reaches a guarded apiFetch) and assert
 // it matches the declared backendState, so the registry can't drift into a false claim when a screen
 // gains or loses a seam. Import-based, so a helper NAME in a comment can't false-positive.
+// Assumption (current conformance): screens wire via NAMED, single-quoted imports from
+// api_config/api_client/mock_api — a namespace (import * as) or default import would not be detected;
+// add such a form only with a matching detection update here. Onboarding's auth-OTP seam (onboarding.js)
+// is intentionally OUTSIDE this map: /onboarding is KNOWN_UNREGISTERED (the allowlisted step host, same
+// family as BD-ONBOARDING-01 /welcome), so it carries no registry entry to declare a backendState on.
 const BACKEND_AWARE_HELPERS = [
   'listFeedPosts', 'createRideOrder', 'listNearbyOrders', 'submitOfferToBackend', 'listOrderOffers',
   'selectOfferOnBackend', 'getRideFromBackend', 'patchRideStatus', 'pollRide', 'listHistoryFromBackend',
   'submitReceiptToBackend', 'pollOfferOutcome', 'getReceiptFromBackend', 'getReceiptResolved',
+  'saveDriverReceipt',
 ];
 const BACKEND_SIGNAL = new Set(['isBackendEnabled', 'apiFetch', ...BACKEND_AWARE_HELPERS]);
+// #807 review (R1 follow-up) — SELF-POLICE the deny-list: derive every mock_api export that carries an
+// isBackendEnabled() guard (i.e. one that gates a backend call) and assert each is in BACKEND_SIGNAL, so
+// a NEW seam helper can't silently escape deriveScreenWired (the latent false-negative a hand-maintained
+// list otherwise allows — e.g. saveDriverReceipt). Fails loudly if mock_api gains a guarded export not listed.
+{
+  const mockApiSrc807 = read('../public/src/mock_api.js');
+  const guarded807 = [];
+  for (const m of mockApiSrc807.matchAll(/export\s+(?:async\s+)?function\s+(\w+)\s*\(/g)) {
+    const next = mockApiSrc807.indexOf('\nexport ', m.index + 1);
+    // Strip comments first: the slice runs to the NEXT export, so it captures the next function's
+    // LEADING comment block — which may mention isBackendEnabled in prose (e.g. the CUT-6 helpers'
+    // header above getReceiptFromBackend) and would false-positive the sync local getReceipt.
+    const body = mockApiSrc807.slice(m.index, next === -1 ? undefined : next)
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    if (/isBackendEnabled\s*\(/.test(body)) guarded807.push(m[1]);
+  }
+  const missing807 = guarded807.filter((n) => !BACKEND_SIGNAL.has(n));
+  expect('BD-OPS R1: every isBackendEnabled-guarded mock_api export is in the smoke deny-list (self-policed, no latent false-negative)',
+    missing807.length === 0, missing807.join(', '));
+}
 function deriveScreenWired(file) {
   let src;
   try { src = read('../' + file); } catch { return null; } // unreadable → skip (route coverage is pinned elsewhere)
