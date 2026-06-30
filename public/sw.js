@@ -6,7 +6,9 @@
 // (ride-state READ + status WRITE + realtime POLL seam).
 // v255 (CUT-6 of #784): precached mock_api.js / trip_receipt.js / profile.js changed
 // (receipt/history READ + receipt WRITE seam, R08).
-const VERSION    = 'v255';
+// v256 (driver handoff of #784): precached respond.js / mock_api.js changed (driver offer→accepted
+// active-ride handoff — the /respond success overlay polls trip_<orderId> and hands off to active-ride).
+const VERSION    = 'v256';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

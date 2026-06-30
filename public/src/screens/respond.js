@@ -1,7 +1,7 @@
 import { user } from '../state.js';
 import { go } from '../router.js';
 import { escapeHtml } from '../util.js';
-import { listFeedPosts, submitOfferToBackend } from '../mock_api.js';
+import { listFeedPosts, submitOfferToBackend, pollOfferOutcome } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
 import { loadResource } from '../data_layer.js';
 import { resolveActiveGarageVehicle } from '../garage.js';
@@ -585,6 +585,40 @@ function renderPassengerRide(root, post) {
     submitLabel.textContent = on ? 'Отправляем…' : 'Отправить отклик';
   }
 
+  // #784 driver handoff — after a LIVE offer (backend on + canonical ride order), the driver WAITS on
+  // the success overlay for the passenger's selection. Self-clearing poll (mirrors chat.js: clears once
+  // the screen is detached). WON → the driver active-ride (CUT-5 hydrates it from the server, now
+  // reachable); REJECTED → an honest "не выбрали"; PENDING/ERROR → keep waiting. Only reached when
+  // isBackendEnabled() + canonicalLink.orderId; OFF / non-canonical offers never start it.
+  let offerPollId = null;
+  function startOfferHandoffPoll(orderId) {
+    const titleEl    = root.querySelector('.respond__success-title');
+    const bodyTextEl = root.querySelector('.respond__success-body');
+    if (titleEl)    titleEl.textContent = 'Предложение отправлено';
+    if (bodyTextEl) bodyTextEl.textContent = 'Ждём выбор пассажира…';
+    if (offerPollId) return;
+    offerPollId = setInterval(async () => {
+      if (!document.body.contains(root)) { clearInterval(offerPollId); offerPollId = null; return; }
+      const outcome = await pollOfferOutcome(orderId);
+      // Re-check after the await: the driver may have tapped «В ленту» while the request was in flight;
+      // a late 'won' must NOT navigate from a detached screen and override the user's own navigation.
+      if (!document.body.contains(root)) { clearInterval(offerPollId); offerPollId = null; return; }
+      if (!outcome) return;
+      if (outcome.state === 'won') {
+        clearInterval(offerPollId); offerPollId = null;
+        // Carry the server bootstrap status (ACCEPTED at select time) so the interim demo ride matches
+        // the accepted ride instead of flashing the NEW_ORDER «Принять заказ» state before hydrate.
+        const wonStatus = (outcome.ride && outcome.ride.status) || '';
+        go(`/active-ride?role=driver&tripId=${encodeURIComponent(outcome.tripId)}${wonStatus ? `&status=${encodeURIComponent(wonStatus)}` : ''}`);
+      } else if (outcome.state === 'rejected') {
+        clearInterval(offerPollId); offerPollId = null;
+        if (titleEl)    titleEl.textContent = 'Вас не выбрали';
+        if (bodyTextEl) bodyTextEl.textContent = 'Пассажир выбрал другого водителя для этой поездки.';
+      }
+      // pending / error / off → keep waiting
+    }, 2500);
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     clearError();
@@ -745,6 +779,10 @@ function renderPassengerRide(root, post) {
       footerEl.hidden = true;
       successEl.hidden = false;
       backBtn.hidden  = true;
+      // #784 driver handoff — a LIVE offer on a canonical ride order now waits here for the passenger's
+      // selection (poll → driver active-ride on WON, or "не выбрали" on REJECTED). OFF / non-canonical
+      // offers keep the static success overlay unchanged.
+      if (isBackendEnabled() && canonicalLink.orderId) startOfferHandoffPoll(canonicalLink.orderId);
     }, 600);
   });
 

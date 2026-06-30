@@ -667,6 +667,24 @@ export async function getRideFromBackend(tripId) {
   return null;
 }
 
+// #784 driver handoff — after the driver offers (POST /matching/offers) the ride's tripId is the
+// deterministic trip_<orderId>. Poll GET /ride-state/rides/:tripId (participant-gated): 404 = the
+// passenger has not selected yet (PENDING), 200 = this driver IS the ride participant (SELECTED/WON),
+// 403 = the ride exists but another driver was chosen (REJECTED). The apiFetch stays behind the
+// isBackendEnabled() guard via getRideFromBackend (the structural seam pin holds). 'error' = transient.
+export async function pollOfferOutcome(orderId) {
+  if (!isBackendEnabled()) return { state: 'off' };
+  const tripId = `trip_${orderId}`;
+  try {
+    const ride = await getRideFromBackend(tripId);
+    return { state: 'won', tripId, ride };
+  } catch (err) {
+    if (err && err.status === 404) return { state: 'pending' };
+    if (err && err.status === 403) return { state: 'rejected' };
+    return { state: 'error' };
+  }
+}
+
 // WRITE a status transition. Idempotent (same-status is a server no-op), terminal-freeze
 // (409 RIDE_TERMINAL), participant-gated. Returns the updated serializeRide.
 export async function patchRideStatus(tripId, status) {
