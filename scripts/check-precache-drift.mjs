@@ -12,9 +12,9 @@
 // Run by .github/workflows/ci.yml on pull_request; also runnable locally on a feature branch
 // (defaults the base to origin/main). NOT a check.mjs smoke — check.mjs stays hermetic (no git/network).
 //
-// Known limitation: a precached file that is DELETED (removed from PRECACHE + disk) is not flagged
-// (it is no longer in the current PRECACHE set); the guard targets the common case — a precached
-// file's CONTENT changing, or a new precached file added, without a VERSION bump.
+// The drift set is the UNION of the base + head PRECACHE lists, so a file edited AND removed from
+// PRECACHE in the same PR (still live in the unchanged-VERSION cache on installed clients) is still
+// caught (Codex #808). Residual edge: a pure rename with no content change to a precached URL.
 
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -64,7 +64,11 @@ try { headSrc = fs.readFileSync(SW, 'utf8'); } catch { skip(`${SW} not present i
 
 const headVersion = parseVersion(headSrc);
 const baseVersion = parseVersion(baseSw);
-const precache = new Set(parsePrecacheRepoPaths(headSrc));
+// Drift set = base PRECACHE ∪ head PRECACHE. Including the BASE list catches a file that is edited AND
+// dropped from the head PRECACHE in the SAME PR without a bump (Codex #808): installed clients still
+// hold it in the unchanged-VERSION `bazardrive-vNNN` cache and `sw.js` serves caches.match before the
+// network, while activation only purges a DIFFERENT CACHE_NAME — so it still needs a bump.
+const precache = new Set([...parsePrecacheRepoPaths(headSrc), ...parsePrecacheRepoPaths(baseSw)]);
 const precacheChanged = [...changed].filter((f) => precache.has(f) && f !== SW);
 
 if (precacheChanged.length && headVersion && headVersion === baseVersion) {
