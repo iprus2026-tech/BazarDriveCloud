@@ -10,7 +10,9 @@
 // active-ride handoff — the /respond success overlay polls trip_<orderId> and hands off to active-ride).
 // v257 (BD-OPS R2): precached ./src/ops/templates/audit_recipe_template.js changed (added the #784
 // backend-seam / dark-cutover audit dimension) — bump so /ops/screens refreshes it (Codex #806).
-const VERSION    = 'v257';
+// v258 (BD-OPS R1+R5): precached ops_registry.js + audit_recipe_template.js changed (per-screen
+// backend-cutover map: backendState/backendContract, woven data-driven into the audit dimension).
+const VERSION    = 'v258';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
