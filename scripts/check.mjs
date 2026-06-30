@@ -16,6 +16,7 @@ function walk(dir, exts) {
     const p = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === 'prototypes') continue;
+      if (entry.name === 'vendor') continue; // BD-MAP-FOUND-01: don't lint vendored third-party libs (public/vendor/)
       out.push(...walk(p, exts));
     } else if (exts.includes(path.extname(entry.name))) {
       out.push(p);
@@ -207,6 +208,19 @@ if (exists(staticDataSmoke)) {
   } catch (e) {
     const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
     errors.push(`smoke-static-data-inventory.mjs failed\n${msg}`);
+  }
+}
+
+// BD-MAP-FOUND-01 (#805) — static/behavioural smoke for the DARK Mapbox foundation: the token
+// surface + lazy vendored-SDK loader are inert (null) with no token, access no Web-Storage, load only
+// the vendored ('self') SDK, and the CSP already permits the Mapbox network surface.
+const mapboxFoundationSmoke = path.join(root, 'scripts', 'smoke-mapbox-foundation.mjs');
+if (exists(mapboxFoundationSmoke)) {
+  try {
+    execFileSync(process.execPath, [mapboxFoundationSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-mapbox-foundation.mjs failed\n${msg}`);
   }
 }
 

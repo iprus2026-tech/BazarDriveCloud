@@ -12,7 +12,9 @@
 // backend-seam / dark-cutover audit dimension) — bump so /ops/screens refreshes it (Codex #806).
 // v258 (BD-OPS R1+R5): precached ops_registry.js + audit_recipe_template.js changed (per-screen
 // backend-cutover map: backendState/backendContract, woven data-driven into the audit dimension).
-const VERSION    = 'v258';
+// v259 (BD-MAP-FOUND-01 #805): precached mapbox_config.js + mapbox_loader.js changed (real dark Mapbox
+// token surface + lazy vendored-SDK loader; inert until a token is set). The vendored lib is NOT precached.
+const VERSION    = 'v259';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
