@@ -4,8 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#FF6B35">
+  <!-- BD-MAP-FOUND-01 (#805): the connect-src/img-src/worker-src entries below PERMIT the (vendored,
+       'self') Mapbox GL SDK to reach Mapbox tiles/styles/glyphs/telemetry + spawn its blob: worker.
+       They only widen what's allowed (they restrict nothing), and are INERT until a bd-mapbox-token is
+       configured — no token ⇒ the SDK never loads and nothing contacts mapbox.com. script-src/style-src
+       stay 'self' (the SDK + its CSS are vendored locally, not from a CDN). -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none';">
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://api.mapbox.com; font-src 'self'; connect-src 'self' https://api.mapbox.com https://events.mapbox.com; manifest-src 'self'; worker-src 'self' blob:; base-uri 'none'; object-src 'none'; form-action 'none';">
   <title>BazarDrive</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="stylesheet" href="./styles/cloud.css">
