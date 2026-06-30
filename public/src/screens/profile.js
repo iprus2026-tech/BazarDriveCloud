@@ -15,7 +15,8 @@ import {
 import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips } from '../mock_api.js';
+import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips, listHistoryFromBackend } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
@@ -1439,6 +1440,42 @@ function wireMyPostsSection(root) {
 // clicked entry without re-reading or re-sorting storage.
 let lastHistoryEntries = [];
 
+// #784 CUT-6 — server history cache for the render-then-hydrate. NULL until the backend read lands
+// (or always null when OFF). When set (backend on), historySectionHtml renders it instead of the
+// local readRideHistoryStatus; profile() resets it per mount, fetches GET /history, scopes it to the
+// current role, then replaceHistorySection() re-renders. OFF: stays null → local path byte-identical.
+let serverHistoryEntries = null;
+
+// #784 CUT-6 — merge server history with local instead of a wholesale swap. The server is
+// authoritative for status/route/fare/counterparty, but two things live ONLY locally during the
+// transition: (a) the passenger's rating/tags/comment (the status-only PATCH carries no feedback),
+// and (b) a locally-completed trip the driver hasn't terminalized server-side yet (absent from
+// GET /history). So overlay local feedback onto a matching server row ONLY where the server lacks it
+// (a server 0/empty must never clobber feedback the user just left), and keep local-only rows. Keyed
+// by tripId; both sides are already role-scoped; the history render sorts by date.
+function mergeServerAndLocalHistory(serverEntries, localEntries) {
+  const local = new Map();
+  for (const e of localEntries) { if (e && e.tripId != null) local.set(String(e.tripId), e); }
+  const seen = new Set();
+  const merged = serverEntries.map((srv) => {
+    const id = srv && srv.tripId != null ? String(srv.tripId) : null;
+    if (!id) return srv;
+    seen.add(id);
+    const loc = local.get(id);
+    if (!loc) return srv;
+    const out = { ...srv };
+    if (!(srv.rating > 0) && loc.rating > 0) out.rating = loc.rating;
+    if (!(Array.isArray(srv.tags) && srv.tags.length) && Array.isArray(loc.tags) && loc.tags.length) out.tags = loc.tags.slice();
+    if (!(typeof srv.comment === 'string' && srv.comment.trim()) && typeof loc.comment === 'string' && loc.comment.trim()) out.comment = loc.comment;
+    return out;
+  });
+  for (const e of localEntries) {
+    const id = e && e.tripId != null ? String(e.tripId) : null;
+    if (id && !seen.has(id)) merged.push(e);
+  }
+  return merged;
+}
+
 // BD-RIDE-HISTORY-08 — calendar view state. Persists across re-renders so
 // month navigation and day selection survive ride detail open/close. Reset
 // to today on first use; ride storage changes do not nuke it on purpose so
@@ -1937,13 +1974,21 @@ function historyErrorBodyHtml() {
 function historySectionHtml() {
   let status = 'empty';
   let rawEntries = [];
-  try {
-    const result = readRideHistoryStatus();
-    status = result.status;
-    rawEntries = Array.isArray(result.entries) ? result.entries : [];
-  } catch {
-    status = 'malformed';
-    rawEntries = [];
+  // #784 CUT-6 — when the backend is on AND the server history has loaded, it is the source
+  // (already role-scoped at hydrate). OFF (or before the fetch resolves), fall to the local
+  // readRideHistoryStatus path below — byte-identical to the prior behaviour.
+  if (isBackendEnabled() && Array.isArray(serverHistoryEntries)) {
+    status = 'ok';
+    rawEntries = serverHistoryEntries;
+  } else {
+    try {
+      const result = readRideHistoryStatus();
+      status = result.status;
+      rawEntries = Array.isArray(result.entries) ? result.entries : [];
+    } catch {
+      status = 'malformed';
+      rawEntries = [];
+    }
   }
 
   // Malformed storage: surface the friendly error card; do not attempt to
@@ -4238,6 +4283,13 @@ export default function profile() {
   else if (effectiveRole === 'driver') view = 'driver';
   else view = 'passenger';
 
+  // #784 CUT-6 — reset the server-history cache BEFORE the synchronous render so this mount's first
+  // paint always takes the null→local branch (true render-then-hydrate). This is also the cross-user
+  // privacy boundary: the prior user's/role's server history can never flash on a re-mount (post-logout
+  // included) — the cache is read only in this render path, now nulled before any paint. The fetch
+  // below re-populates it for the current viewer.
+  serverHistoryEntries = null;
+
   if (view === 'guest') {
     renderGuest(root);
   } else if (view === 'driver') {
@@ -4260,6 +4312,30 @@ export default function profile() {
   // overview / ip / docs / payouts / security tabs stay untouched: the
   // driver overview tab is already the default active pane and hosts the
   // history section, so no tab switch is needed for `section=history`.
+  // #784 CUT-6 — history READ hydrate (render-then-hydrate; the render above used the local
+  // readRideHistoryStatus, so OFF is byte-identical). When the backend is on, fetch the viewer's
+  // server history, scope it to the current role (matching readRideHistoryStatus's currentHistoryRole
+  // = getSmokeRole() || role), cache it, and re-render the history section in place. A transient/auth
+  // failure is caught — the locally-rendered history stays.
+  if (isBackendEnabled() && view !== 'guest') {
+    const scopeRole = (effectiveRole === 'passenger' || effectiveRole === 'driver') ? effectiveRole : null;
+    listHistoryFromBackend()
+      .then((items) => {
+        if (!document.body.contains(root)) return;
+        const all = Array.isArray(items) ? items : [];
+        const serverScoped = scopeRole ? all.filter((e) => e && e.role === scopeRole) : all;
+        // Merge with the role-scoped LOCAL history so local-only data survives the transition: the
+        // passenger's just-submitted rating/tags/comment (local-only) and a locally-completed trip the
+        // driver hasn't terminalized server-side yet (not in /history). readRideHistoryStatus is scoped
+        // to currentHistoryRole (getSmokeRole() || role) — the same role as scopeRole.
+        let localScoped = [];
+        try { const r = readRideHistoryStatus(); localScoped = Array.isArray(r.entries) ? r.entries : []; } catch { localScoped = []; }
+        serverHistoryEntries = mergeServerAndLocalHistory(serverScoped, localScoped);
+        replaceHistorySection(root);
+      })
+      .catch(() => { /* transient/auth read failure — keep the local-rendered history */ });
+  }
+
   const sectionParam = q.get('section');
   if (sectionParam === 'history') {
     const scrollToHistory = () => {

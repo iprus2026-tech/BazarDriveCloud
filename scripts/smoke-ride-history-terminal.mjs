@@ -583,10 +583,14 @@ const receiptScreenNoComments = stripComments(receiptScreenSrc);
 const mockApiImports = namedImportsFrom(receiptScreenSrc, 'mock_api');
 expect('E — trip_receipt.js named import list resolved from mock_api',
   Array.isArray(mockApiImports));
-expect('E — trip_receipt.js imports EXACTLY {getReceipt} from mock_api',
+// #784 CUT-6 — the receipt screen may import the two READ-ONLY receipt readers
+// (getReceipt = local/sync, getReceiptResolved = backend-aware live read); both are non-mutating.
+// The forbidden-mutator defense below still asserts no write helper (saveDriverReceipt, …) lands here.
+const RECEIPT_SCREEN_ALLOWED_IMPORTS = new Set(['getReceipt', 'getReceiptResolved']);
+expect('E — trip_receipt.js imports ONLY the read-only receipt readers from mock_api',
   Array.isArray(mockApiImports)
-  && mockApiImports.length === 1
-  && mockApiImports[0] === 'getReceipt');
+  && mockApiImports.length >= 1
+  && mockApiImports.every((name) => RECEIPT_SCREEN_ALLOWED_IMPORTS.has(name)));
 // Defense-in-depth — assert each forbidden mutating helper by name.
 for (const forbidden of [
   'saveDriverReceipt',
