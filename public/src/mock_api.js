@@ -646,6 +646,52 @@ export async function selectOfferOnBackend({ orderId, driverId }) {
   return null;
 }
 
+// #784 CUT-5 (ride-state READ + STATUS WRITE + realtime POLL) — the three backend seam calls for
+// the active-ride lifecycle. Each apiFetch sits behind an isBackendEnabled() guard (the OFF/mock
+// path — findActiveRide / updateActiveRideStatus on the local ride store — never reaches the
+// network). A server ride only exists once a backend /matching/select bootstrapped it; for a
+// purely-local demo/mock ride GET /ride-state/rides/:tripId is a 404 the caller treats as "this is
+// a local ride" and stays on the mock.
+
+// READ the participant-gated ride snapshot. Returns serializeRide (status/role/passenger/driver/
+// route/order/cancel/timestamps), or throws (404 RIDE_NOT_FOUND / 403 FORBIDDEN / bad envelope) —
+// the active-ride caller catches and keeps the local ride, so a non-server ride is unaffected.
+export async function getRideFromBackend(tripId) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}`);
+    if (!r || typeof r.ride !== 'object' || !r.ride) {
+      throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: false, message: 'malformed ride response' });
+    }
+    return r.ride;
+  }
+  return null;
+}
+
+// WRITE a status transition. Idempotent (same-status is a server no-op), terminal-freeze
+// (409 RIDE_TERMINAL), participant-gated. Returns the updated serializeRide.
+export async function patchRideStatus(tripId, status) {
+  if (isBackendEnabled()) {
+    const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}/status`, {
+      method: 'PATCH',
+      body: { status },
+    });
+    return (r && r.ride) || null;
+  }
+  return null;
+}
+
+// POLL the realtime cursor. Returns { tripId, status, events, cursor }; pass the prior cursor as
+// `since` for an incremental read. The caller re-fetches the full snapshot when `status` changes.
+export async function pollRide(tripId, since) {
+  if (isBackendEnabled()) {
+    const qs = since
+      ? `?tripId=${encodeURIComponent(tripId)}&since=${encodeURIComponent(since)}`
+      : `?tripId=${encodeURIComponent(tripId)}`;
+    return apiFetch(`/realtime/poll${qs}`);
+  }
+  return null;
+}
+
 // BD-DRIVER-01 — driver accepts a published mock order. Mutates the
 // stored order in place: status flips from CREATED → ACCEPTED so it
 // drops out of listNearbyOrders() and a driver-side surface can pick

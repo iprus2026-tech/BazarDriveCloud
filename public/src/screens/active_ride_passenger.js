@@ -22,7 +22,8 @@ import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
-import { updateTripStatus } from '../mock_api.js';
+import { updateTripStatus, getRideFromBackend, pollRide, patchRideStatus } from '../mock_api.js';
+import { isBackendEnabled } from '../api_config.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { openPassengerSafetySheet, openPassengerCancelSheet } from './active_ride_passenger_sheets.js';
 import {
@@ -1709,6 +1710,13 @@ export default function activeRidePassenger(options = {}) {
               && canceledRide.status === RIDE_STATUS.CANCELED) {
             updateTripStatus(canonicalOrderId, RIDE_STATUS.CANCELED);
           }
+          // #784 CUT-5 (B2) — mirror the passenger cancel to the server so the driver (polling) sees
+          // it cross-device (the PATCH is participant-gated). Fire-and-forget: the local terminal stub
+          // is the user-facing truth; a server-sync failure leaves the local cancel standing (the
+          // driver-side poll reconciles). OFF / local-only ride: backendRide is false, no PATCH.
+          if (backendRide && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
+            patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED).catch(() => {});
+          }
           // Hand the canceled-state copy back to the sheet. The
           // ?status=CANCELED fallback screen still renders on direct
           // entry / reload via renderPassengerCanceledFallback.
@@ -1736,6 +1744,10 @@ export default function activeRidePassenger(options = {}) {
           // Persist transition to IN_PROGRESS so the driver flow sees it
           // and re-route so the URL reflects the new mock state.
           updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
+          // #784 CUT-5 (B2) — on a confirmed server ride, mirror the boarded transition to the backend
+          // so the driver (polling) sees IN_PROGRESS. Fire-and-forget; the re-mount below hydrates the
+          // authoritative server state. OFF / local-only ride: backendRide stays false, unchanged.
+          if (backendRide) patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS).catch(() => {});
           go(`/active-ride?role=passenger&status=${RIDE_STATUS.IN_PROGRESS}&tripId=${encodeURIComponent(ride.tripId)}`);
         });
       }
@@ -1787,6 +1799,65 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
+  // #784 CUT-5 (B2) — set once the hydrate confirms a server ride; gates the passenger-initiated
+  // status writes (cancel / boarded) onto the backend so the driver sees them cross-device.
+  let backendRide = false;
+
   renderSheet();
+
+  // #784 CUT-5 — passenger READ + realtime POLL (view-only; the driver owns the lifecycle). When this
+  // is a backend ride, hydrate the server status and watch it live; a FORWARD status change re-mounts
+  // with the server status (handling the in-pipeline sheets + the terminal early-returns uniformly).
+  // A 404/403 (a local demo/mock ride) is caught and the screen stays on the mock; OFF attempts no
+  // fetch, so the mock path is unchanged.
+  let passengerPollId = null;
+  let passengerCursor = null;
+  // B1 — monotonic rank: re-mount ONLY on a FORWARD server move. The passenger status resolution has
+  // a monotonic guard that can keep the local status AHEAD of the server (e.g. a just-boarded local
+  // IN_PROGRESS vs a not-yet-synced server WAITING); re-mounting on such a BACKWARD diff would never
+  // converge -> an infinite go() loop. Terminals rank highest so a server cancel/complete always wins.
+  const STATUS_RANK = {
+    [RIDE_STATUS.NEW_ORDER]: 0,
+    [RIDE_STATUS.ACCEPTED]: 1,
+    [RIDE_STATUS.DRIVER_EN_ROUTE]: 2,
+    [RIDE_STATUS.DRIVER_APPROACHING_PICKUP]: 3,
+    [RIDE_STATUS.WAITING_PASSENGER]: 4,
+    [RIDE_STATUS.IN_PROGRESS]: 5,
+    [RIDE_STATUS.COMPLETED]: 6,
+    [RIDE_STATUS.CANCELED]: 6,
+    [RIDE_STATUS.NO_SHOW]: 6,
+  };
+  const serverIsForward = (srvStatus) => (STATUS_RANK[srvStatus] ?? 0) > (STATUS_RANK[ride.status] ?? 0);
+  // B3 — never yank away an OPEN safety/cancel overlay: defer the re-mount until it closes.
+  const aSheetIsOpen = () => !!root.querySelector('.passenger-safety-overlay, .passenger-cancel-overlay');
+  // Re-mount on a forward, non-deferred change; returns true when it navigated.
+  function maybeReMount(srvStatus) {
+    if (!srvStatus || !serverIsForward(srvStatus) || aSheetIsOpen()) return false;
+    go(`/active-ride?role=passenger&status=${encodeURIComponent(srvStatus)}&tripId=${encodeURIComponent(ride.tripId)}`);
+    return true;
+  }
+  function startPassengerRidePoll() {
+    if (passengerPollId) return;
+    passengerPollId = setInterval(async () => {
+      if (!document.body.contains(root)) { clearInterval(passengerPollId); passengerPollId = null; return; }
+      let res;
+      try { res = await pollRide(ride.tripId, passengerCursor); }
+      catch { return; }
+      if (!res) return;
+      if (res.cursor) passengerCursor = res.cursor;
+      if (res.status && res.status !== ride.status && maybeReMount(res.status)) {
+        clearInterval(passengerPollId); passengerPollId = null;
+      }
+    }, 2500);
+  }
+  if (isBackendEnabled()) {
+    getRideFromBackend(ride.tripId).then((srv) => {
+      if (!srv) return;
+      backendRide = true;
+      if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
+      startPassengerRidePoll();
+    }).catch(() => { /* not a server ride / read failed — keep the local mock ride */ });
+  }
+
   return root;
 }
