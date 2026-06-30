@@ -1,12 +1,14 @@
-// BD-MAP-01 — MapHome foundation (no real Mapbox SDK).
-// Renders 5 render-gate states over the existing MapShell visual
-// language. Stub mapbox/* modules supply state; no network calls,
-// no native geolocation prompt on mount.
+// BD-MAP-01 — MapHome render gate; BD-MAP-RENDER-MAP (#805) — first per-surface REAL Mapbox render.
+// 5 render-gate states over the MapShell placeholder. DARK by default: with no token, resolveState()
+// never reaches DEFAULT (it returns TOKEN_MISSING), so no real map is constructed and the placeholder
+// is byte-for-byte unchanged. When a token IS set (isMapboxEnabled()), the DEFAULT state hydrates a
+// real mapboxgl.Map over the placeholder (render-then-hydrate), with a self-clearing GL-context teardown.
 
 import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
-import { hasMapboxToken } from '../mapbox/mapbox_config.js';
+import { hasMapboxToken, isMapboxEnabled, getDefaultCenter, MAPBOX_STYLE } from '../mapbox/mapbox_config.js';
+import { loadMapboxSdk } from '../mapbox/mapbox_loader.js';
 import {
   MAP_STATE,
   isValidMapState,
@@ -150,6 +152,59 @@ function buildMapPlaceholder(state) {
   wrap.appendChild(watermark);
 
   return wrap;
+}
+
+// BD-MAP-RENDER-MAP (#805) — render-then-hydrate. The placeholder `container` is already painted; once
+// the vendored SDK loads (only when a token is configured), take over the container with a real map.
+// loadMapboxSdk() resolves null when DARK (no token) or on failure → the placeholder simply stays, so
+// this is inert without a token. router.render() does replaceChildren() with NO teardown, so a
+// mapboxgl.Map's WebGL context would leak; a self-clearing watcher removes it once the container leaves
+// the DOM (mirrors the chat.js / active_ride.js poll-teardown pattern).
+function hydrateRealMap(container) {
+  loadMapboxSdk().then((mapboxgl) => {
+    if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
+    // On a memoized-SDK REVISIT this .then runs as a microtask BEFORE router.js appends the screen
+    // (Codex #812), so the container isn't mounted yet — bailing here would leave /map on the
+    // placeholder forever. Defer to the next frame (after the append) instead of bailing permanently.
+    requestAnimationFrame(() => {
+      if (!document.body.contains(container)) return;   // navigated away before it mounted
+      const c = getDefaultCenter();
+      container.replaceChildren();                       // drop the placeholder shell/watermark
+      container.removeAttribute('aria-label');           // the live canvas is the map now
+      let map;
+      try {
+        map = new mapboxgl.Map({
+          container,
+          style: MAPBOX_STYLE,
+          center: [c.lng, c.lat],
+          zoom: c.zoom,
+        });
+      } catch {
+        // GL unavailable / CSP / style or token rejected — restore the dark-safe placeholder (the
+        // container was already cleared) rather than leave a blank panel (Codex #812).
+        restoreMapPlaceholder(container);
+        return;
+      }
+      // Free the GL context once the container is detached (no router teardown hook).
+      const teardown = setInterval(() => {
+        if (!document.body.contains(container)) {
+          try { map.remove(); } catch { /* already torn down */ }
+          clearInterval(teardown);
+        }
+      }, 2000);
+    });
+  }).catch(() => { /* load failed — the placeholder stays */ });
+}
+
+// Rebuild the DEFAULT-state placeholder shell after a failed Map construction (Codex #812):
+// replaceChildren() has already cleared the container, so restore the MapShell rather than a blank card.
+function restoreMapPlaceholder(container) {
+  container.setAttribute('aria-label', 'Карта-заглушка');
+  const shell = createMapShell({
+    variant: 'driver', showRoute: true, showCar: true, showPickup: true, showDropoff: true, showLabels: false,
+  });
+  shell.setAttribute('aria-hidden', 'true');
+  container.replaceChildren(shell);
 }
 
 function buildBanner(state) {
@@ -335,7 +390,12 @@ export default function mapScreen() {
 
   const stage = document.createElement('div');
   stage.className = 'map-home__stage';
-  stage.appendChild(buildMapPlaceholder(state));
+  const mapWrap = buildMapPlaceholder(state);
+  stage.appendChild(mapWrap);
+  // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
+  // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
+  // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
+  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap);
   const banner = buildBanner(state);
   if (banner) stage.appendChild(banner);
   root.appendChild(stage);
