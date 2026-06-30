@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#FF6B35">
-  <!-- BD-MAP-FOUND-01 (#805): the connect-src/img-src/worker-src entries below PERMIT the (vendored,
-       'self') Mapbox GL SDK to reach Mapbox tiles/styles/glyphs/telemetry + spawn its blob: worker.
-       They only widen what's allowed (they restrict nothing), and are INERT until a bd-mapbox-token is
-       configured — no token ⇒ the SDK never loads and nothing contacts mapbox.com. script-src/style-src
-       stay 'self' (the SDK + its CSS are vendored locally, not from a CDN). -->
+  <!-- BD-MAP-FOUND-01 / BD-MAP-ACTIVATE (#805): CSP for the (vendored, 'self') Mapbox GL JS —
+       connect-src/img-src to *.mapbox.com (tiles / styles / glyphs / sprites / telemetry),
+       worker-src + child-src blob: (its GL web worker), and style-src 'unsafe-inline' (mapbox-gl v3
+       injects inline control styles — Codex #813). script-src stays 'self' (the SDK is vendored, not a
+       CDN). With the bd-mapbox-token meta below set, the map path is now ACTIVE on the Pages origin. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://api.mapbox.com; font-src 'self'; connect-src 'self' https://api.mapbox.com https://events.mapbox.com; manifest-src 'self'; worker-src 'self' blob:; base-uri 'none'; object-src 'none'; form-action 'none';">
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.mapbox.com; font-src 'self'; connect-src 'self' https://*.mapbox.com; manifest-src 'self'; worker-src 'self' blob:; child-src blob:; base-uri 'none'; object-src 'none'; form-action 'none';">
   <!-- BD-MAP-ACTIVATE (#805): the Mapbox public token read by mapbox_config.getMapboxToken(). This is the
        dedicated "BazarDriveCloud GitHub Pages Web Token" — a URL-RESTRICTED public token (allowed URL:
        iprus2026-tech.github.io), NOT the unrestricted default — so committing it is safe (a public pk.*
