@@ -18,7 +18,10 @@
 // the placeholder when a token is set; dark/no-token path unchanged).
 // v261 (BD-MAP-ACTIVATE #805): precached index.html changed — committed the URL-restricted bd-mapbox-token
 // meta, flipping the Mapbox seam ON in prod (/map renders a real map). Installed clients must refresh.
-const VERSION    = 'v261';
+// v262 (BD-MAP-RENDER-FIX #805): precached cloud.css + map.js changed. The live /map container collapsed
+// to 0 height (mapbox-gl.css `.mapboxgl-map{position:relative}` tie-broke over our absolute rule → blank
+// map); a higher-specificity CSS rule + a post-load/ResizeObserver resize fix it. Clients must refresh.
+const VERSION    = 'v262';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

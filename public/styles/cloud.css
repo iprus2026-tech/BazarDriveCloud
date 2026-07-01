@@ -11587,6 +11587,15 @@ button.pfp-menu-row:active { opacity: 0.7; }
   inset: 0;
   display: block;
 }
+/* BD-MAP-RENDER-FIX (#805): mapbox-gl.css sets `.mapboxgl-map{position:relative}` and is injected into
+   <head> at runtime — so it loads AFTER cloud.css and tie-breaks (0,1,0 vs 0,1,0) over
+   `.map-home__map{position:absolute}`, dropping `inset:0` and collapsing the live-map container to 0
+   height (the GL canvas is position:absolute → no intrinsic height, and `overflow:hidden` clips it).
+   Re-assert absolute/inset:0 at higher specificity so the real map fills the flex `.map-home__stage`. */
+.map-home__map.mapboxgl-map {
+  position: absolute;
+  inset: 0;
+}
 .map-home__map .bd-map-shell {
   width: 100%;
   height: 100%;

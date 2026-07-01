@@ -17,6 +17,7 @@ const expect = (label, cond, detail = '') => {
 };
 
 const src = fs.readFileSync(new URL('../public/src/screens/map.js', import.meta.url), 'utf8');
+const css = fs.readFileSync(new URL('../public/styles/cloud.css', import.meta.url), 'utf8');
 
 // ── The foundation seam is imported ──
 expect('map.js imports isMapboxEnabled + getDefaultCenter + MAPBOX_STYLE from mapbox_config',
@@ -38,8 +39,28 @@ expect('hydrate re-checks document.body.contains(container) after the async load
 
 // ── Self-clearing GL-context teardown (router.render has no teardown) ──
 expect('a teardown frees the GL context (map.remove) once the container leaves the DOM',
-  /!document\.body\.contains\(container\)[\s\S]{0,80}map\.remove\(\)/.test(src)
+  /!document\.body\.contains\(container\)[\s\S]{0,180}map\.remove\(\)/.test(src)
   && /clearInterval\(/.test(src));
+
+// ── BD-MAP-RENDER-FIX: the live map keeps a real box + resizes (no 0-height blank) ──
+// mapbox-gl.css `.mapboxgl-map{position:relative}` loads after cloud.css and would tie-break over
+// `.map-home__map{position:absolute}`, collapsing the container to 0 height. A higher-specificity rule
+// must re-assert absolute/inset:0 for the mounted map, and hydrate must resize after the box settles.
+// order-independent: assert both declarations inside the `.map-home__map.mapboxgl-map { … }` block
+const mountedMapRule = (css.match(/\.map-home__map\.mapboxgl-map\s*\{([^}]*)\}/) || [, ''])[1];
+expect('cloud.css keeps the mounted map container absolute/inset:0 over .mapboxgl-map (no 0-height collapse)',
+  /position:\s*absolute/.test(mountedMapRule) && /inset:\s*0/.test(mountedMapRule));
+expect('hydrateRealMap resizes once the style loads (guards a late layout settle)',
+  /map\.once\(\s*'load'\s*,[\s\S]{0,120}map\.resize\(\)/.test(src));
+expect('hydrateRealMap observes container box changes via ResizeObserver → map.resize()',
+  /new\s+ResizeObserver\(\s*\(\)\s*=>\s*\{[\s\S]{0,80}map\.resize\(\)/.test(src)
+  && /\.observe\(container\)/.test(src));
+expect('the ResizeObserver is disconnected in the detach teardown (no leak)',
+  /ro\.disconnect\(\)/.test(src));
+// async load failure (offline / quota 429 / revoked 401) must fall back to the placeholder, pre-load only
+expect('hydrateRealMap falls back to the placeholder on a pre-load async error (offline/quota/401)',
+  /map\.on\(\s*'error'\s*,[\s\S]{0,260}restoreMapPlaceholder\(container\)/.test(src)
+  && /if\s*\(settled\)\s*return/.test(src));
 
 // ── The DARK / non-token path still renders the MapShell placeholder ──
 expect('buildMapPlaceholder still renders the MapShell placeholder (dark path unchanged)',
