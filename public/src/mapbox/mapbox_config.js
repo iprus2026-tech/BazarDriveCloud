@@ -33,13 +33,21 @@ function readMetaToken() {
   const el = document.querySelector('meta[name="bd-mapbox-token"]');
   return el && typeof el.content === 'string' ? el.content : '';
 }
+// The committed <meta> token is the PROD token, URL-restricted to the GitHub Pages host. Honor it ONLY
+// on that origin (Codex #813): a local serve / non-Pages preview would otherwise read a token Mapbox
+// rejects off-domain (403) and show a broken map instead of the dark placeholder. The __BD_MAPBOX_TOKEN__
+// override is honored on ANY origin, so local/dev work sets that instead.
+const PAGES_TOKEN_HOST = 'iprus2026-tech.github.io';
+function isCommittedTokenOriginAllowed() {
+  return typeof location !== 'undefined' && location.hostname === PAGES_TOKEN_HOST;
+}
 function readToken() {
   if (typeof globalThis !== 'undefined'
     && typeof globalThis.__BD_MAPBOX_TOKEN__ === 'string'
     && globalThis.__BD_MAPBOX_TOKEN__) {
-    return globalThis.__BD_MAPBOX_TOKEN__;
+    return globalThis.__BD_MAPBOX_TOKEN__;                          // local/dev override — any origin
   }
-  return readMetaToken();
+  return isCommittedTokenOriginAllowed() ? readMetaToken() : '';    // committed token only on its Pages origin
 }
 
 // The Mapbox access token (trimmed), or null when none is configured (DARK).

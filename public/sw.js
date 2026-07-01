@@ -16,7 +16,9 @@
 // token surface + lazy vendored-SDK loader; inert until a token is set). The vendored lib is NOT precached.
 // v260 (BD-MAP-RENDER-MAP #805): precached map.js changed (DEFAULT state hydrates a real Mapbox map over
 // the placeholder when a token is set; dark/no-token path unchanged).
-const VERSION    = 'v260';
+// v261 (BD-MAP-ACTIVATE #805): precached index.html changed — committed the URL-restricted bd-mapbox-token
+// meta, flipping the Mapbox seam ON in prod (/map renders a real map). Installed clients must refresh.
+const VERSION    = 'v261';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

@@ -31,6 +31,8 @@ expect('mapbox_loader.js performs NO localStorage/sessionStorage access', !STORA
 expect('mapbox_config reads the __BD_MAPBOX_TOKEN__ override', /__BD_MAPBOX_TOKEN__/.test(cfgSrc));
 expect('mapbox_config reads the committed <meta name="bd-mapbox-token"> tag',
   /meta\[name="bd-mapbox-token"\]/.test(cfgSrc));
+expect('mapbox_config gates the committed token to the Pages origin (Codex #813 — off-Pages serves stay dark)',
+  /location\.hostname/.test(cfgSrc) && /github\.io/.test(cfgSrc));
 
 // ── Static: the loader GUARDS all DOM/script work behind isMapboxEnabled() (no inject when dark) ──
 expect('mapbox_loader imports the isMapboxEnabled() gate', /isMapboxEnabled/.test(ldrSrc));
@@ -68,11 +70,14 @@ expect('isMapboxSdkLoaded() is false when DARK', ldr.isMapboxSdkLoaded() === fal
 const indexSrc = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const cspMatch = indexSrc.match(/Content-Security-Policy[\s\S]*?content="([^"]*)"/);
 const csp = cspMatch ? cspMatch[1] : '';
-expect('CSP connect-src permits https://api.mapbox.com',
-  /connect-src[^;]*https:\/\/api\.mapbox\.com/.test(csp));
-expect('CSP connect-src permits https://events.mapbox.com (telemetry)',
-  /connect-src[^;]*https:\/\/events\.mapbox\.com/.test(csp));
+expect('CSP connect-src permits https://*.mapbox.com (tiles/styles/glyphs/telemetry)',
+  /connect-src[^;]*https:\/\/\*\.mapbox\.com/.test(csp));
+expect('CSP img-src permits https://*.mapbox.com (sprites)',
+  /img-src[^;]*https:\/\/\*\.mapbox\.com/.test(csp));
 expect('CSP worker-src permits blob: (the GL worker)', /worker-src[^;]*blob:/.test(csp));
+expect('CSP child-src permits blob: (GL worker fallback — Codex #813)', /child-src[^;]*blob:/.test(csp));
+expect("CSP style-src permits 'unsafe-inline' (mapbox-gl v3 injects inline control styles — Codex #813)",
+  /style-src[^;]*'unsafe-inline'/.test(csp));
 expect('CSP script-src stays self-only (SDK is vendored, no CDN)', /script-src 'self'(?:;| )/.test(csp));
 
 console.log('\n' + (issues.length
