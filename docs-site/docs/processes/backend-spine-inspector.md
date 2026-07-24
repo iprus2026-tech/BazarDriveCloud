@@ -32,11 +32,13 @@ This page is the governed current-state baseline for the BazarDrive Phase-1 back
 
 ![Mini Yonder Backend Spine and DB Inspector](/img/mini-yonder-backend-spine.svg)
 
+_Historical concept mock: labels inside this image predate the implemented server and are not current runtime status. The governed matrix below is the current-state source of truth._
+
 ## Status vocabulary
 
 | Status | Meaning |
 |---|---|
-| **LIVE** | The route is registered and has a database-backed implementation. This does not mean the PWA is fully cut over or the feature is production-ready. |
+| **LIVE** | The route is registered and implemented. It uses the database where the route contract requires I/O; operational liveness may intentionally perform no I/O. This does not mean the PWA is fully cut over or the feature is production-ready. |
 | **DARK** | The route/module seam exists but intentionally returns `501 NOT_IMPLEMENTED`, or its infrastructure adapter is not active. |
 | **PILOT-BLOCKED** | The implementation exists, but a documented identity, authorization, delivery, operational, or activation gap prevents pilot use. |
 
@@ -46,12 +48,12 @@ This page is the governed current-state baseline for the BazarDrive Phase-1 back
 |---|---|---|---|---|---|
 | `GET /api/v1/health` | LIVE | Operational endpoint; no user session | No product tables; no I/O | Deployment liveness probe only | health route smoke |
 | `GET /api/v1/readyz` | LIVE | Operational endpoint; no user session | Reads PostgreSQL connectivity and migration state | Deployment readiness probe only | readiness + migration CI |
-| `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session`, `users` | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
+| `GET /api/v1/auth/session` | LIVE / PILOT-BLOCKED | Resolves an optional bearer session; expiry/revocation policy remains a pilot gate | Reads `auth_session` only; the session row mirrors identity and verification fields, with no `users` join | `api_client.getSession()`; API base remains guarded/off by default | auth route/repository tests |
 | `POST /api/v1/auth/otp/request` | LIVE / PILOT-BLOCKED | Public request; unthrottled and without a production delivery provider | Writes hashed codes to `auth_otp` | guarded auth cutover; dev response may include `devCode` only in dev mode | OTP request tests + auth hardening issue owner |
-| `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads/updates `auth_otp`, upserts `users`, inserts `auth_session` in one transaction | guarded auth/token cutover | OTP concurrency + session tests |
+| `POST /api/v1/auth/otp/verify` | LIVE / PILOT-BLOCKED | Public verification; attempt cap enforced; final session lifecycle remains a pilot gate | Reads the latest live `auth_otp` and commits its attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies `users` and inserts `auth_session`; the separate attempt count therefore persists on failed verification | guarded auth/token cutover | OTP concurrency + session tests |
 | `GET /api/v1/orders` | LIVE | Public created-order read; optional viewer session only affects ownership projection | Reads `orders` | guarded `mock_api.listFeedPosts()` seam; API base off by default | orders route + API client smoke |
-| `POST /api/v1/orders` | LIVE / PILOT-BLOCKED | Requires a verified session; passenger-role enforcement remains a pilot gate | Writes `orders` | guarded order-create seam; local fallback remains active while API base is off | orders route/validation tests |
-| `POST /api/v1/matching/offers` | LIVE / PILOT-BLOCKED | Requires a verified session; blocks self-offers; granted driver role/readiness is not enforced yet | Locks `orders`; upserts `offers` transactionally | guarded driver-offer seam | matching transaction/concurrency tests |
+| `POST /api/v1/orders` | LIVE / PILOT-BLOCKED | Requires a live authenticated session; `phone_verified` and passenger-role enforcement remain pilot gates | Writes `orders` | guarded order-create seam; local fallback remains active while API base is off | orders route/validation tests |
+| `POST /api/v1/matching/offers` | LIVE / PILOT-BLOCKED | Requires a live authenticated session and blocks self-offers; `phone_verified`, granted driver role and readiness are not enforced yet | Locks `orders`; upserts `offers` transactionally | guarded driver-offer seam | matching transaction/concurrency tests |
 | `GET /api/v1/matching/offers?orderId=…` | LIVE | Authenticated order owner only | Reads `orders`, `offers` | guarded passenger responses seam | matching ownership tests |
 | `POST /api/v1/matching/select` | LIVE / PILOT-BLOCKED | Authenticated order owner only; rejects self-selection | Locks/writes `orders`, `offers`, `assignment`, `rides` in one transaction | guarded select/handoff seam | matching race + ride-bootstrap tests |
 | `GET /api/v1/ride-state/rides/:tripId` | LIVE | Authenticated ride participant only | Reads `rides` | guarded active-ride read seam | ride participant tests + enum parity |
@@ -94,7 +96,7 @@ This page is the governed current-state baseline for the BazarDrive Phase-1 back
 
 ## Pilot envelopes and error codes
 
-The pilot contract preserves each endpoint's current success body; introducing a global success wrapper requires a versioned contract change. Errors cross the API boundary as a stable JSON object:
+The pilot contract preserves each endpoint's current success body; introducing a global success wrapper requires a versioned contract change. Product-route errors cross the API boundary as a stable JSON object:
 
 ```json
 {
@@ -104,11 +106,13 @@ The pilot contract preserves each endpoint's current success body; introducing a
 }
 ```
 
-The current machine-code inventory is descriptive of the existing routes; changing a
-code requires an explicit contract update rather than a silent PWA translation:
+Operational exception: `GET /api/v1/readyz` does not use the product problem object. A failed readiness check returns HTTP 503 as `{ status: 'degraded', db: 'down' | 'schema-incomplete' }`; success is `{ status: 'ready', db: 'up' }`. Neither envelope includes `error`, `code` or `retryable`.
+
+The route-owned machine-code inventory below is descriptive of the existing routes. The server fallback also preserves Fastify `err.code` for non-validation 4xx failures, so those framework codes are an explicit part of the current boundary. Changing or normalizing a code requires an explicit contract update rather than a silent PWA translation:
 
 | Boundary | Current success envelope(s) | Current machine codes |
 |---|---|---|
+| Operational health/readiness | `{ status, service }`, `{ status, db }` (including readiness HTTP 503) | None; `/readyz` failure intentionally bypasses the product problem object |
 | Auth/session | `{ user }`, `{ ok, expiresInSeconds, devCode? }`, `{ token, user }` | `SESSION_LOOKUP_FAILED`, `INVALID_PHONE`, `OTP_INVALID`, `OTP_LOCKED`, plus uniform `VALIDATION` |
 | Orders | `{ items }`, `{ order }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, plus uniform `VALIDATION` |
 | Matching/offers/select | `{ offer }`, `{ items }`, `{ order, offer, assignment, ride }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `ORDER_NOT_FOUND`, `CANNOT_OFFER_OWN_ORDER`, `ORDER_NOT_OPEN`, `FORBIDDEN`, `CANNOT_SELECT_SELF`, `OFFER_NOT_FOUND`, plus uniform `VALIDATION` |
@@ -117,7 +121,7 @@ code requires an explicit contract update rather than a silent PWA translation:
 | Chat | `{ items }`, `{ message }` | `INTERNAL`, plus uniform `VALIDATION`; authentication/participant errors do not exist yet and are a pilot blocker |
 | History/receipts | `{ items }`, `{ receipt }` | `SESSION_LOOKUP_FAILED`, `UNAUTHENTICATED`, `RIDE_NOT_FOUND`, `FORBIDDEN`, `RIDE_NOT_COMPLETED`, plus uniform `VALIDATION` |
 | Dark routes | problem object | `NOT_IMPLEMENTED` |
-| Uniform server fallback | problem object | `VALIDATION`, `NOT_FOUND`, `INTERNAL`, `BAD_REQUEST` |
+| Uniform server fallback | problem object | `VALIDATION`, `NOT_FOUND`, `INTERNAL`, `BAD_REQUEST`; other non-validation 4xx preserve Fastify `err.code`, including `FST_ERR_CTP_EMPTY_JSON_BODY` and `FST_ERR_CTP_INVALID_JSON_BODY` |
 | Client-only transport | n/a | `BACKEND_DISABLED`, `NETWORK`, `ABORTED`, `HTTP_<status>`, `UNKNOWN` |
 
 A route that currently emits a different code is a baseline mismatch to resolve in its implementation slice, not a reason to silently translate errors in the PWA.
