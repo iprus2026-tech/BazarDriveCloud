@@ -1,12 +1,12 @@
 // /server/src/services/matching/index.js — #3 Matching (BD-DOCS-023), partially LIVE in R04 of
 // #784. Routes (mounted at /api/v1/matching):
-//   POST /offers  -> 201 { offer }   a DRIVER (verified session) offers on an open order;
+//   POST /offers  -> 201 { offer }   an authenticated actor offers on an open order;
 //                                     idempotent per (order, driver); re-sends a withdrawn offer.
 //   GET  /offers?orderId=<legacyId> -> { items:[offer] }   OWNER-ONLY (the order's passenger).
-//   POST /select  -> 501             transactional accept lands in R05.
+//   POST /select  -> 200 { order, offer, assignment, ride }  OWNER-ONLY transactional accept [LIVE].
 //
 // Identity is recomputed per request; ownership is re-validated server-side (BD-DOCS-032 dec. 4).
-// Role-gating (only a granted driver may offer) is deferred — any verified session may offer today
+// Role-gating (only a granted driver may offer) is deferred — any live authenticated session may offer today
 // (no role grants flow until R17); R04 requires authentication, not a specific role. The PWA write
 // cutover is R18; until then only this server + tests exercise these routes.
 import { newOfferId } from '../../infra/ids.js';

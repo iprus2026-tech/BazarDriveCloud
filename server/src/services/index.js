@@ -1,8 +1,9 @@
 // /server/src/services/index.js — the Mini-Yonder service registry (ADR BD-DOCS-041).
-// One folder per service; the diagram is "wired but dark". auth carries a live session
-// read + dark OTP writes (Phase 1); #1-#8 are skeleton plugins that register their prefix
-// and return 501 until their own phase fills the folder. Promoting a service is "implement
-// a folder", never "re-architect" — this list does not change shape, only its imports do.
+// One folder per service; the registry shape remains stable while implementations advance.
+// Auth, orders, matching, ride-state and history are database-backed; availability,
+// route-price, notifications and safety remain dark 501 seams. Promoting a service is
+// "implement a folder", never "re-architect" — this list does not change shape, only its
+// imports do. See the #821 backend baseline for pilot blockers and activation state.
 import authService from './auth/index.js';
 import ordersService from './orders/index.js';
 import availabilityService from './availability/index.js';
