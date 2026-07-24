@@ -1,9 +1,10 @@
 // /server/src/server.js — buildApp(): construct the Fastify instance with config, the
 // infra singletons (db ACTIVE; cache/storage/bus structured-but-dark), the cross-cutting
-// plugins, the health/metrics routes, and the 9 Mini-Yonder service plugins (auth carries
-// a live session read + dark OTP writes; #1-#8 are dark 501 skeletons). There is NO
+// plugins, the health/metrics routes, and the 9 Mini-Yonder service plugins. Auth, orders,
+// matching, ride-state and history are database-backed; availability, route-price,
+// notifications and safety remain dark. Chat is registered separately. There is NO
 // listen() here — index.js owns the socket; tests import buildApp() directly. Per ADR
-// BD-DOCS-041.
+// BD-DOCS-041 and the #821 backend baseline.
 import Fastify from 'fastify';
 
 import { loadConfig } from './config.js';
