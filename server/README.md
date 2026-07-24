@@ -23,22 +23,31 @@ npm test                # node:test — enum-parity + route smokes
 
 ## Current route baseline
 
-`LIVE` means implemented and database-backed; `DARK` means the seam is present but
-intentionally not implemented; `PILOT-BLOCKED` means code exists but an authorization,
+`LIVE` means registered and implemented, with database I/O where the route contract
+requires it; the liveness route intentionally performs no I/O. `DARK` means the seam is
+present but intentionally not implemented; `PILOT-BLOCKED` means code exists but an authorization,
 delivery, operations or activation gap still prevents pilot use.
 
 | Module / route | State | Boundary that matters before pilot |
 |---|---|---|
 | `GET /api/v1/health`, `GET /api/v1/readyz` | LIVE | Readiness checks database connectivity and migration state. |
 | `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist; OTP throttling/delivery and final session policy remain. |
-| `/api/v1/orders` | LIVE | Created-order read is public; create requires a verified session. |
-| `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner checks exist; driver role/readiness must be enforced for offer creation. |
+| `/api/v1/orders` | LIVE | Created-order read is public; create requires a live authenticated session, while `phone_verified` and passenger-role enforcement remain pilot gates. |
+| `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner/self-offer checks exist; offer creation requires a live authenticated session, while `phone_verified`, granted driver role and readiness are not enforced yet. |
 | `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |
 | `/api/v1/realtime/poll` | LIVE | Participant-only cursor polling; WebSocket/SSE push remains dark. |
 | `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once. |
 | `/api/v1/chat` | LIVE persistence / PILOT-BLOCKED | Participant authorization is absent and sender role is still request-supplied. |
 | Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
 | Metrics | DARK | Observability policy is not frozen. |
+
+Current contract notes:
+
+- `GET /api/v1/auth/session` resolves identity from `auth_session` only; it does not read or join `users`.
+- OTP verification reads the latest live OTP and commits the attempt increment before the success transaction. On a correct code, one transaction consumes the OTP, upserts/verifies the user and inserts the session; the separately committed attempt count persists on failed verification.
+- Order and offer creation require a live authenticated session. They expose `phoneVerified` but do not enforce it yet.
+- Product-route errors use `{ error, code, retryable }`. `GET /api/v1/readyz` is an operational exception: failure is HTTP 503 `{ status: 'degraded', db }` without a machine code.
+- The fallback preserves Fastify `err.code` for non-validation 4xx failures, including `FST_ERR_CTP_EMPTY_JSON_BODY` and `FST_ERR_CTP_INVALID_JSON_BODY`.
 
 The detailed current-state matrix, PWA seams, error-code policy and delivery dependencies
 are governed by
