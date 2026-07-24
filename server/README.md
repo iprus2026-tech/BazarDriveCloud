@@ -1,15 +1,16 @@
 # `/server` — BazarDrive backend (Phase 1)
 
-> Per ADR **BD-DOCS-041** (`docs-site/docs/decisions/backend-home-and-stack.md`): a
-> self-hosted Node service lives here. This directory now holds the Phase-1 database
-> schema (`#584`/`#585`) **and the Fastify app scaffold** — the bootable foundation
-> with the data-layer + auth seams. The 8 Mini-Yonder service folders are "wired but
-> dark" (each returns `501` until its phase fills it). `status: draft` work; nothing
-> here is deployed, and no client cutover has happened (gated by `#636`).
+> Per ADR **BD-DOCS-041** (`docs-site/docs/decisions/backend-home-and-stack.md`), the
+> self-hosted Node service lives here. It contains the ordered PostgreSQL schema,
+> repository layer and Fastify application. Several Phase-1 routes are implemented
+> and database-backed, but the system is **pilot-blocked**: it is not a production
+> deployment and live server routes do not imply that the PWA may activate them.
+> Current authority and activation tracking live in **BD-BACKEND-BASELINE-01 (#821)**
+> under **Epic #820**.
 
 ## Running the server
 
-```
+```bash
 cd server
 nvm use                 # Node 22 (server's own .nvmrc; repo .nvmrc=20 is untouched)
 cp .env.example .env    # set DATABASE_URL (Postgres 16); ALLOWED_ORIGIN in prod
@@ -20,32 +21,64 @@ npm run dev             # node --watch; or `npm start` / `docker compose up`
 npm test                # node:test — enum-parity + route smokes
 ```
 
-- `GET /api/v1/health` — liveness; `GET /api/v1/readyz` — readiness (DB connectivity + migrations applied).
-- `GET /api/v1/auth/session` — resolves the presented session (live); the OTP
-  request/verify write endpoints return `501` until the next scoped PR.
-- `GET /api/v1/<service>` for the 8 services returns `501 NOT_IMPLEMENTED`.
+## Current route baseline
 
-**Two origins, two CI gates.** The PWA stays on GitHub Pages; `/server` deploys to a
-separate origin (e.g. `https://api.bazardrive.<domain>`). CORS (`@fastify/cors`) and
-the client CSP `connect-src` allow-list exactly that origin — a later, conscious,
-reviewed safety-boundary PR, never a wildcard. The service worker already excludes
-cross-origin `/api`, so no SW change is needed in Phase 1. `node scripts/check.mjs`
-(client) and `cd server && npm test` (server) never entangle. `server-ci.yml` runs two
-jobs against `postgres:16`: **migrations** (apply + idempotent re-apply + object asserts,
-via `psql`) and **app** (`npm ci` → `npm audit --omit=dev --audit-level=high` → `npm run
-migrate` → `npm test` on Node 22).
+`LIVE` means implemented and database-backed; `DARK` means the seam is present but
+intentionally not implemented; `PILOT-BLOCKED` means code exists but an authorization,
+delivery, operations or activation gap still prevents pilot use.
+
+| Module / route | State | Boundary that matters before pilot |
+|---|---|---|
+| `GET /api/v1/health`, `GET /api/v1/readyz` | LIVE | Readiness checks database connectivity and migration state. |
+| `/api/v1/auth/*` | LIVE / PILOT-BLOCKED | Session and OTP request/verify exist; OTP throttling/delivery and final session policy remain. |
+| `/api/v1/orders` | LIVE | Created-order read is public; create requires a verified session. |
+| `/api/v1/matching` | LIVE / PILOT-BLOCKED | Owner checks exist; driver role/readiness must be enforced for offer creation. |
+| `/api/v1/ride-state` | LIVE | Participant-only; terminal freeze and append-only events are authoritative. |
+| `/api/v1/realtime/poll` | LIVE | Participant-only cursor polling; WebSocket/SSE push remains dark. |
+| `/api/v1/history` | LIVE | Authenticated reads; completed-ride receipt write is driver-only and write-once. |
+| `/api/v1/chat` | LIVE persistence / PILOT-BLOCKED | Participant authorization is absent and sender role is still request-supplied. |
+| Availability, route price, notifications, safety | DARK | No pilot contract or activation. |
+| Metrics | DARK | Observability policy is not frozen. |
+
+The detailed current-state matrix, PWA seams, error-code policy and delivery dependencies
+are governed by
+`docs-site/docs/processes/backend-spine-inspector.md`.
+
+## Pilot safety boundaries
+
+- A client cutover stays guarded until its module-specific exit conditions are met.
+- PostgreSQL/server domain rules own order, offer, assignment and ride state after activation.
+- Matching selection is transactional; terminal rides are frozen; `ride_events` is append-only.
+- Chat must not be activated until sender identity and order/ride participation are session-derived.
+- OTP delivery/rate limiting, driver role/readiness, deploy/rollback and observability are pilot gates.
+- API responses remain outside the service-worker cache.
+
+## Origins and CI gates
+
+The PWA stays on GitHub Pages; `/server` deploys to a separate origin (for example,
+`https://api.bazardrive.<domain>`). CORS (`@fastify/cors`) and the client CSP
+`connect-src` allow-list exactly that origin through a later reviewed activation
+change, never a wildcard. The service worker excludes cross-origin `/api`.
+
+Client and server gates remain independent:
+
+- `node scripts/check.mjs` and `node scripts/dispatcher.mjs` for the client/docs boundary;
+- `cd server && npm test` for server enum parity and route behavior;
+- `server-ci.yml` against `postgres:16`: ordered/idempotent migrations plus object asserts,
+  then `npm ci`, production dependency audit, migration and Node 22 tests.
 
 ## Layout (ADR BD-DOCS-041 §`/server` layout)
 
-```
+```text
 src/
   server.js / index.js / config.js   buildApp() (testable, no listen) + entrypoint + env
   infra/    db(ACTIVE) cache storage bus(dark) logger
-  plugins/  error-handler cors helmet auth(session seam) realtime(dark)
+  plugins/  error-handler cors helmet auth(session seam) realtime(polling live; push dark)
   domain/   ride-status.js (VERBATIM mirror of ride_state.js) + entities.js (JSDoc)
-  services/ auth(live session + dark OTP) + #1-#8 dark 501 skeletons
-  repositories/ the ONLY SQL seam (sessions.js for the auth read; rest land per module)
-  routes/   health (live) + metrics (dark)
+  services/ auth/session/OTP, orders, matching, ride-state, history and chat implemented
+            availability, route-price, notifications and safety dark
+  repositories/ the ONLY SQL seam
+  routes/   health/readiness live; metrics dark
 scripts/    migrate.mjs        test/  node:test (enum-parity gate + route smokes)
 ```
 
