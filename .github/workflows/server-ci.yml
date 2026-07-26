@@ -113,3 +113,90 @@ jobs:
       # (the migrations job above also applies the same SQL via psql).
       - run: npm run migrate
       - run: npm test
+
+  container-smoke:
+    name: container contract (build + liveness)
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: bazardrive-server:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build, inspect and smoke container
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          container_id=
+          cleanup() {
+            status=$?
+            if [[ $status -ne 0 && -n "$container_id" ]]; then
+              docker logs "$container_id" || true
+            fi
+            if [[ -n "$container_id" ]]; then
+              docker rm -f "$container_id" >/dev/null 2>&1 || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          docker build \
+            --build-arg "OCI_SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg "OCI_REVISION=${GITHUB_SHA}" \
+            --tag "$IMAGE_TAG" \
+            server/
+
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = \
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = \
+            "$GITHUB_SHA"
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.title" }}')" = \
+            "BazarDrive API"
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{ index .Config.Labels "org.opencontainers.image.description" }}')" = \
+            "BazarDrive Fastify API container"
+          test "$(docker image inspect "$IMAGE_TAG" --format '{{ .Config.User }}')" = "node"
+
+          health_cmd="$(docker image inspect "$IMAGE_TAG" --format '{{json .Config.Healthcheck.Test}}')"
+          [[ "$health_cmd" == *"/api/v1/health"* ]]
+          [[ "$health_cmd" != *"readyz"* ]]
+
+          docker run --rm --entrypoint sh "$IMAGE_TAG" -c '
+            test ! -e /app/.env
+            test -z "$(find /app -type f -name ".env*" ! -name ".env.example" -print -quit)"
+            test -z "$(find /app -type f \( -name "*.pem" -o -name "*.key" -o -name "*.p12" -o -name "*.pfx" -o -name "*.crt" -o -name "*.cer" \) -print -quit)"
+            test -z "$(find /app -type d -name secrets -print -quit)"
+          '
+
+          container_id="$(docker run -d \
+            -p 127.0.0.1:3000:3000 \
+            -e NODE_ENV=production \
+            -e OTP_DEV_MODE=false \
+            -e ALLOWED_ORIGIN=https://example.invalid \
+            -e DATABASE_URL=postgres://unavailable:unavailable@127.0.0.1:1/unavailable \
+            "$IMAGE_TAG")"
+
+          node <<'NODE'
+          const expected = { status: 'ok', service: '@bazardrive/server' };
+          let lastError;
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            try {
+              const response = await fetch('http://127.0.0.1:3000/api/v1/health');
+              const body = await response.json();
+              if (response.status === 200 && JSON.stringify(body) === JSON.stringify(expected)) {
+                lastError = null;
+                break;
+              }
+              lastError = new Error(`unexpected health response status ${response.status}`);
+            } catch (error) {
+              lastError = error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          if (lastError) throw lastError;
+
+          const readiness = await fetch('http://127.0.0.1:3000/api/v1/readyz');
+          const readinessBody = await readiness.json();
+          if (readiness.status !== 503 || readinessBody.status !== 'degraded' || readinessBody.db !== 'down') {
+            throw new Error(`unexpected readiness response status ${readiness.status}`);
+          }
+          NODE

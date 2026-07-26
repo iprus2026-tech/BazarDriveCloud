@@ -74,7 +74,12 @@ Client and server gates remain independent:
 - `node scripts/check.mjs` and `node scripts/dispatcher.mjs` for the client/docs boundary;
 - `cd server && npm test` for server enum parity and route behavior;
 - `server-ci.yml` against `postgres:16`: ordered/idempotent migrations plus object asserts,
-  then `npm ci`, production dependency audit, migration and Node 22 tests.
+  then `npm ci`, production dependency audit, migration and Node 22 tests, plus the
+  non-publishing container contract/liveness smoke.
+
+The governed 01A container contract and future 01B staging/rollback procedure are in
+[`BD-DOCS-043`](../docs-site/docs/processes/backend-staging-container-runbook.md).
+Staging is not deployed and rollback is not rehearsed yet; Issue #823 remains open.
 
 ## Layout (ADR BD-DOCS-041 §`/server` layout)
 

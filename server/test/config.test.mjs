@@ -95,10 +95,24 @@ test('OTP/session knobs honor explicit env overrides', () => {
   assert.equal(cfg.session.ttlSeconds, 86400);
 });
 
-test('OTP dev-mode can be force-enabled in production via OTP_DEV_MODE=true', () => {
+test('production rejects OTP_DEV_MODE=true at startup', () => {
+  assert.throws(
+    () => loadConfig({
+      ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io', OTP_DEV_MODE: 'true',
+    }),
+    /Invalid OTP_DEV_MODE/,
+  );
+});
+
+test('production accepts explicit OTP_DEV_MODE=false', () => {
   const cfg = loadConfig({
-    ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io', OTP_DEV_MODE: 'true',
+    ...base, NODE_ENV: 'production', ALLOWED_ORIGIN: 'https://a.github.io', OTP_DEV_MODE: 'false',
   });
+  assert.equal(cfg.otp.devMode, false);
+});
+
+test('development still allows OTP_DEV_MODE=true', () => {
+  const cfg = loadConfig({ ...base, NODE_ENV: 'development', OTP_DEV_MODE: 'true' });
   assert.equal(cfg.otp.devMode, true);
 });
 

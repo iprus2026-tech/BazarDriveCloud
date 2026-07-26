@@ -2,7 +2,20 @@
 # .gitignore). Without this, `COPY . .` would clobber the prod-only node_modules built by
 # `npm ci --omit=dev` and could bake a local .env into the image.
 node_modules
-.env
-.env.local
+.env*
+!.env.example
 *.log
 coverage
+
+# Runtime secrets never belong in the build context. The committed .env.example is safe
+# documentation and is explicitly allowed above.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets
+secrets/**
+**/secrets
+**/secrets/**
