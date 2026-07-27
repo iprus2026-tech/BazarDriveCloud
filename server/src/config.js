@@ -77,6 +77,11 @@ export function loadConfig(env = process.env) {
   if (!Number.isInteger(config.session.ttlSeconds) || config.session.ttlSeconds < 0 || config.session.ttlSeconds > 315_360_000) {
     throw new Error(`Invalid SESSION_TTL_SECONDS: ${env.SESSION_TTL_SECONDS} — must be an integer 0..315360000 (seconds; 0 = no expiry)`);
   }
+  // Production must never echo an OTP in an API response. Fail fast instead of silently
+  // overriding an operator-supplied value so a staging/production misconfiguration is visible.
+  if (isProd && config.otp.devMode) {
+    throw new Error('Invalid OTP_DEV_MODE: true is forbidden when NODE_ENV=production');
+  }
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(', ')}`);
   }

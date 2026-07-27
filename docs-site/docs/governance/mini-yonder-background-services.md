@@ -37,16 +37,17 @@ slug: /governance/mini-yonder-background-services
 
 # Mini-Yonder Background Services
 
-> **Target / future architecture — not the shipped runtime.** This page captures
-> the *intended* multi-driver dispatch platform (a real backend, a Redis cache,
+> **Target / future architecture — not the activated PWA runtime.** This page captures
+> the *intended* multi-driver dispatch platform (the in-repo backend, a Redis cache,
 > object storage, a payment gateway and real-time services connecting many
-> passengers, drivers and vehicles). BazarDrive **today** is a backless vanilla
-> PWA — `mock_api` + `localStorage`, no server (see CLAUDE.md and
-> [Mini-Yonder Model](mini-yonder-model.md)). Read this as a planning reference;
+> passengers, drivers and vehicles). BazarDrive **today** still ships its vanilla
+> PWA on `mock_api` + `localStorage`; a pilot-blocked Fastify/PostgreSQL backend now
+> exists under `/server`, but it is not deployed or activated for PWA traffic (see
+> CLAUDE.md and [Mini-Yonder Model](mini-yonder-model.md)). Read this as a planning reference;
 > the [Current state today](#current-state-today) and
 > [How this maps to the current runtime](#how-this-maps-to-the-current-runtime)
 > sections are the honest mapping to what actually ships. `status: draft` —
-> nothing here is implemented as a backend yet.
+> the complete target architecture is not implemented or activated yet.
 
 ## Architecture overview
 
@@ -108,7 +109,7 @@ CANCELED and NO_SHOW are terminal: once reached, the state must not be reopened.
 ## External services (future / not integrated)
 
 Mapbox (maps & routes) · SMS / Push providers · Payment gateway · Telegram bot ·
-Analytics (future). **None of these is wired into the shipped app today.**
+Analytics (future). **None of these is wired into the activated PWA today.**
 
 ## Monitoring & Operations / Audit
 
@@ -132,13 +133,14 @@ A 9th concern wraps the platform: **Monitoring & Audit**.
 
 ## Current state today
 
-BazarDrive is a shipped **vanilla PWA with no backend**: ES-module screens under
-`public/src/`, a strict CSP, a service worker, and a mock data layer
-(`public/src/mock_api.js`) persisting to `localStorage`. There is **no** Order
-Dispatcher process, **no** Redis, **no** object storage, **no** payment gateway,
-**no** real Mapbox, and **no** real-time multi-driver coordination. The "services"
-above exist today only as **client-side modules and mock stores**, or not at all.
-The next section is the honest line-by-line mapping.
+BazarDrive ships a **vanilla PWA that has not activated backend traffic**:
+ES-module screens under `public/src/`, a strict CSP, a service worker, and a mock
+data layer (`public/src/mock_api.js`) persisting to `localStorage`. A
+pilot-blocked Fastify/PostgreSQL implementation exists under `/server`, with some
+database-backed routes live in isolation and other services dark, but staging,
+PWA cutover, Redis, object storage, payments, real Mapbox and full real-time
+multi-driver coordination remain absent. The next section maps the activated PWA
+runtime; the Backend Spine process document records the separate server baseline.
 
 ## How this maps to the current runtime
 
@@ -160,9 +162,10 @@ Legend: ✅ shipped (real client-side equivalent) · ◐ placeholder / mock / st
 ## From one car to a fleet (growth path)
 
 > **Target / planning only (🔮).** This section is the intended evolution, not a
-> shipped roadmap commitment. Today the repo sits at **Phase 0** (see
-> [Current state today](#current-state-today)); only services #5 and #8 ship for
-> real. Each phase below promotes one or more ◐ / 🔮 services and would be its own
+> shipped roadmap commitment. The activated PWA still sits at **Phase 0** (see
+> [Current state today](#current-state-today)); only the client-side #5 and #8
+> anchors ship for real there. The pilot-blocked `/server` baseline does not promote
+> the PWA or the complete target architecture. Each phase below promotes one or more ◐ / 🔮 services and would be its own
 > explicitly-scoped change.
 
 ### Why it is "one car" today
@@ -211,11 +214,12 @@ later phases make it fast, trustworthy and observable.
 
 ## Out of scope / future work
 
-This page is a **planning reference**, not a record of shipped behavior. None of
-the backend, Redis, object storage, payment, push, or multi-driver real-time
-pieces are implemented. Promoting any service from ◐ / 🔮 to ✅ is a separate,
-explicitly-scoped change with its own issue, contract update and tests — and would
-flip this document out of `draft`.
+This page is a **planning reference**, not a record of activated PWA behavior.
+The in-repo `/server` baseline is pilot-blocked and only partially implements the
+target; Redis, object storage, payment, push and complete multi-driver real-time
+pieces are not implemented or activated. Promoting any service from ◐ / 🔮 to ✅
+is a separate, explicitly-scoped change with its own issue, contract update and
+tests — and would flip this document out of `draft`.
 
 See [Mini-Yonder Model](mini-yonder-model.md) for the docs-as-code governance
 layer that this architecture lives under.

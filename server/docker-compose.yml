@@ -2,7 +2,8 @@
 # (redis/minio are added in their own phases — BD-DOCS-033 / BD-DOCS-037.) Per BD-DOCS-041.
 services:
   postgres:
-    image: postgres:16
+    # Index digest verified against Docker Registry for postgres:16 on 2026-07-24.
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -18,7 +19,11 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        OCI_SOURCE: ${OCI_SOURCE:-https://github.com/iprus2026-tech/BazarDriveCloud}
+        OCI_REVISION: ${OCI_REVISION:-local}
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,6 +38,13 @@ services:
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-}
     ports:
       - "3000:3000"
+    healthcheck:
+      # Liveness is deliberately DB-free; /readyz remains the traffic/readiness gate.
+      test: ["CMD", "node", "-e", "const port=process.env.PORT||'3000';fetch('http://127.0.0.1:'+port+'/api/v1/health').then(async(r)=>{const b=await r.json();if(r.status!==200||b.status!=='ok'||b.service!=='@bazardrive/server')process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     # Apply migrations, then start. (Phase-1 convenience; prod runs migrate as its own step.)
     command: sh -c "npm run migrate && node src/index.js"
 
