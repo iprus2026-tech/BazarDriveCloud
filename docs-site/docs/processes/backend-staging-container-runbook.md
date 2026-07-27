@@ -4,7 +4,7 @@ docType: runbook
 title: Backend staging container baseline — Runbook
 owner: backend-ops-agent
 status: draft
-revision: 2026-07-24
+revision: 2026-07-27
 effectiveFrom: 2026-07-24
 reviewAfter: 2026-08-24
 visibleFor: [developer, dispatcher, qa]
@@ -18,6 +18,7 @@ related:
     - server/docker-compose.yml
     - server/.env.example
     - .github/workflows/server-ci.yml
+    - infra/staging/README.md
   issues:
     - "#823"
   prs: []
@@ -27,11 +28,96 @@ slug: /processes/backend-staging-container-runbook
 
 # Backend staging container baseline — Runbook
 
-> **01A contract only.** This runbook records the reproducible container, CI smoke,
-> configuration boundary and future staging procedure for BD-BACKEND-DEPLOY-01A.
-> Staging is not deployed, rollback has not been rehearsed, and PWA/API activation
-> remains off. Provider, registry, real deployment, traffic switching and rollback
-> rehearsal belong to 01B; Issue #823 remains open after 01A.
+> **01A baseline + proposed 01B-1A contract only.** This runbook records the
+> reproducible container and CI smoke delivered by BD-BACKEND-DEPLOY-01A plus the
+> proposed provider/IaC boundary in
+> [BD-DOCS-044](../decisions/backend-staging-provider-and-iac.md). Staging is not
+> deployed, rollback has not been rehearsed, and PWA/API activation remains off.
+> Issue #823 remains open.
+
+## Proposed technical staging boundary
+
+Subject to approval of every blocking input in BD-DOCS-044, the 01B target is:
+
+| Layer | Proposed contract |
+|---|---|
+| Provider | Google Cloud technical staging, containing synthetic/non-personal data only. |
+| Registry | Artifact Registry; publish once and deploy/rollback by immutable digest. |
+| Runtime | Cloud Run with IAM-authenticated access; public unauthenticated staging is forbidden. |
+| Database | Cloud SQL for PostgreSQL 16. |
+| Secrets | Secret Manager runtime injection; no secret value in Git, image, build args, workflow output or evidence. |
+| Migrations | A separate Cloud Run Job using the same immutable digest as the candidate API revision. |
+| GitHub identity | OIDC Workload Identity Federation; static service-account JSON keys are forbidden. |
+| IaC | OpenTofu under `infra/staging/` in a future slice. Remote state requires separate approval and bootstrap. |
+
+Region, GCP project ID, billing owner and monthly budget are unresolved blocking
+inputs and must not be guessed. No GCP resource, credential, remote state, image
+publication, deployment or traffic switch exists as a result of 01B-1A.
+
+### IAM identity separation
+
+Deployment, runtime and migration must use three separate principals/service
+accounts; combining or reusing an identity across these roles and mutual
+impersonation are forbidden. `Owner`, `Editor` and equivalently broad roles are
+forbidden. Permissions must be minimal and preferably scoped to exact staging
+resources; the exact bindings remain a future IaC blocker.
+
+- The **deployment identity** is used by GitHub Actions only through OIDC/WIF. It
+  may publish/deploy approved staging resources. Any
+  `serviceAccounts.actAs` permission is limited to the exact runtime and
+  migration identities. It has no runtime database or application-secret access.
+- The **runtime identity** is used only by the Cloud Run service. It receives only
+  necessary runtime secrets, Cloud SQL connection and observability permissions;
+  it cannot deploy, publish images, run migrations, change IAM or impersonate.
+- The **migration identity** is used only by the separate Cloud Run migration
+  Job. It receives only migration-specific database/secret permissions; it cannot
+  serve traffic, deploy, change IAM or impersonate.
+
+### Secret-value boundary
+
+Secret values are forbidden in Git/source, OpenTofu configuration, `.tfvars`,
+environment files, OpenTofu state/state backups, saved plans, plan/console output,
+documentation, workflow/build/deployment/runtime logs, image layers, build args,
+CI/CD outputs, artifacts, evidence and support/debug exports.
+
+OpenTofu may manage only Secret Manager metadata, empty secret containers and IAM
+bindings. It must not create or transmit secret payloads or versions. Marking a
+value `sensitive` does not prevent storage in state. Values require a separately
+approved out-of-state channel that does not retain them in shell history, logs,
+artifacts or evidence. Its bootstrap/rotation procedure remains a blocker and is
+not implemented.
+
+### Data-location guard
+
+GCP staging permits only synthetic, non-personal data across HTTP/API requests
+and bodies, database contents, caches, logs, traces, metrics/telemetry,
+object-storage artifacts, backups/snapshots, database restores, support/debug
+dumps, CI/deployment artifacts, operational evidence and exports.
+
+Real passenger, driver, order, offer, assignment, ride, route/location,
+identity/document, compliance/safety, payment, receipt, credential or session
+data is forbidden. Production exports/restores, replayed production requests or
+logs, and production-derived personal data as fixtures are forbidden. Fixtures
+must have no reversible mapping to real people or production records.
+
+Discovery of real or production-derived data requires stopping the affected
+check/environment, restricting further access, and removing it through a
+separately approved incident procedure. Record the incident without copying
+sensitive values into evidence.
+
+Production data residency and the localization/processing of Russian personal
+data require a separate legal, security and architecture decision. This technical
+staging contract does not select or approve a production region.
+
+### Access, CORS and activation
+
+Staging invocation remains IAM-authenticated. `allUsers`,
+`--allow-unauthenticated` and equivalent public access are forbidden. CORS must
+use one explicitly approved exact origin and never `*`.
+
+Cloud Run revision traffic is not PWA/API activation. No client API base, CSP,
+service worker, GitHub Pages or other `public/**` change belongs to 01B. Activation
+remains a separate gate under Issue #828.
 
 ## Container build contract
 
@@ -57,9 +143,9 @@ digest, never a mutable tag.
 
 ## Runtime configuration and secrets
 
-Deliver configuration and secrets at container runtime through the selected 01B
-provider's secret/config mechanism. Do not place a real `.env` file in the build
-context or image.
+Deliver configuration and secrets at container runtime through the approved
+out-of-state Secret Manager channel and Cloud Run configuration. Do not place a
+real `.env` file in the build context or image.
 
 | Class | Values |
 |---|---|
@@ -83,7 +169,9 @@ require `curl` and do not use `/readyz`.
 
 ## Future 01B staging procedure
 
-This is the required order once provider and registry decisions exist:
+This is the required order only after the proposed ADR is accepted, all blocking
+inputs are supplied, reviewed OpenTofu exists and resource creation/deployment is
+separately authorized:
 
 1. Provision PostgreSQL 16 with credentials delivered outside the repository.
 2. Publish the reviewed image and record its immutable registry digest.
@@ -91,10 +179,13 @@ This is the required order once provider and registry decisions exist:
 4. Start the API by immutable image digest with the runtime policy above.
 5. Confirm `/api/v1/health` returns HTTP 200.
 6. Confirm `/api/v1/readyz` returns HTTP 200 and reports the database up.
-7. Only after both gates pass, allow staging traffic.
+7. Only after both gates pass, explicitly switch Cloud Run revision traffic.
 
 Migration failure or non-200 readiness means **no traffic switch**. Do not treat a
 healthy liveness response as permission to receive traffic.
+
+The switch above routes the IAM-authenticated staging service between Cloud Run
+revisions. It does not make staging public and does not activate the PWA.
 
 ## Rollback / recovery
 
@@ -114,5 +205,5 @@ non-root execution, rejects secret-like build artifacts, starts the API against 
 intentionally unavailable test database, proves DB-free `/health`, and proves
 `/readyz` remains a failing readiness gate rather than liveness.
 
-No 01A step changes the PWA, CSP, service worker, API traffic, provider resources
-or production/staging infrastructure.
+No 01A or 01B-1A step changes the PWA, CSP, service worker, API traffic, provider
+resources or production/staging infrastructure.
