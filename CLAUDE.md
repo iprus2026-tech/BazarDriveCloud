@@ -26,12 +26,14 @@ static app with:
 The backend (`/server`) is a separate Node/Fastify + Postgres app (ADR BD-DOCS-041),
 gated by its own `server-ci` workflow (Postgres migration replay, `npm audit` + `npm
 test`, and a container smoke test hitting `/api/v1/health` and `/api/v1/readyz`).
-Current state: auth, orders, matching, ride-state, history, and chat are real,
-DB-backed and merged, but **LIVE / PILOT-BLOCKED** — the PWA has not cut over to
-them yet. Availability, route-price, notifications, and safety remain dark `501`
-stubs. ADR BD-DOCS-041 predates this and reads as docs-only; the current-state
-source of truth is `docs-site/docs/processes/backend-spine-inspector.md`
-(BD-DOCS-042).
+Current state (per BD-DOCS-042's per-route matrix): auth (all three endpoints),
+order-writes, matching-writes (offers-create/select), and chat are real, DB-backed
+and merged, but **LIVE / PILOT-BLOCKED** — the PWA has not cut over to them yet.
+Order-reads, matching-reads, both ride-state routes, both history routes, and
+realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
+notifications, and safety remain dark `501` stubs. ADR BD-DOCS-041 predates this
+and reads as docs-only; the current-state source of truth is
+`docs-site/docs/processes/backend-spine-inspector.md` (BD-DOCS-042).
 
 ## Main source of truth
 
@@ -178,12 +180,16 @@ Use real runtime paths (public/src/screens/feed.js, etc).
 ### Onboarding
 `/onboarding` has more than one entry point, and they resolve differently — do not
 collapse them:
-- First-run welcome path and the welcome-login (`Войти`) flow both call bare
-  `go('/onboarding')`; on `finish()`, passenger -> `/feed`, driver -> `/profile`
-  (never back to `/welcome`).
-- `#/onboarding?step=phone` is a separate deep-link re-entry (used by
-  `profile.js` / `active_ride.js`) that jumps straight to the phone step and,
-  via `consumePendingAction()`, returns to the caller instead of `/feed`/`/profile`.
+- The first-run Start path (`welcome.js`'s `startLoading()`) never opens `/onboarding`
+  at all — after role + permissions + loading it routes straight to `/driver-map` or
+  `/feed` (or runs a pending action).
+- Only the welcome `Войти` handler calls bare `go('/onboarding')`; on `finish()`, a
+  pending action wins if one is set, otherwise passenger -> `/feed`, driver ->
+  `/profile` (never back to `/welcome`).
+- `#/onboarding?step=phone` is a separate deep-link re-entry, called only by
+  `profile.js` (`#pfp-verify-getcode` / `#pfp-verify-confirm`). Completing it calls
+  `completePhoneVerification()`, which navigates to the fixed `verifyReturnRoute()`
+  (`/profile` or `/profile?role=passenger`) — it does not call `consumePendingAction()`.
 
 ### Feed
 - Feed card tap goes to `/post?id=...`.
@@ -258,7 +264,10 @@ Do not silently orphan `/inbox`.
 backend, DB, dispatcher, and real push/SMS/Telegram delivery are unchanged. Contract
 source of truth: `docs/daily-communication-contract.md` (BD-DAILY-COMM-01), including
 its `communication_threads` / `communication_messages` target backend shape and
-`OPEN -> ACK_REQUIRED/NEEDS_ACTION -> ACKNOWLEDGED/RESOLVED` state machine.
+`OPEN -> ACK_REQUIRED/NEEDS_ACTION -> ACKNOWLEDGED -> RESOLVED` state machine (any
+state can jump straight to `RESOLVED`, `ACK_REQUIRED` can escalate to
+`NEEDS_ACTION`) — not one-way: a new message reopens `ACKNOWLEDGED`/`RESOLVED`
+back to `OPEN`.
 
 ### Moderation
 Wire inert standalone report CTAs (e.g. Order Detail data-action="report-order").
