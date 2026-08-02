@@ -24,7 +24,16 @@ static app with:
 - GitHub Pages
 
 The backend (`/server`) is a separate Node/Fastify + Postgres app (ADR BD-DOCS-041),
-gated by its own `server-ci` workflow.
+gated by its own `server-ci` workflow (Postgres migration replay, `npm audit` + `npm
+test`, and a container smoke test hitting `/api/v1/health` and `/api/v1/readyz`).
+Current state (per BD-DOCS-042's per-route matrix): auth (all three endpoints),
+order-writes, matching-writes (offers-create/select), and chat are real, DB-backed
+and merged, but **LIVE / PILOT-BLOCKED** — the PWA has not cut over to them yet.
+Order-reads, matching-reads, both ride-state routes, both history routes, and
+realtime-poll are plain **LIVE** (no pilot blocker). Availability, route-price,
+notifications, and safety remain dark `501` stubs. ADR BD-DOCS-041 predates this
+and reads as docs-only; the current-state source of truth is
+`docs-site/docs/processes/backend-spine-inspector.md` (BD-DOCS-042).
 
 ## Main source of truth
 
@@ -159,6 +168,7 @@ Use registered runtime routes from `public/src/app.js`. Important routes:
 - `/receipt?tripId=...`
 - `/rules`
 - `/inbox`
+- `/daily-communication`
 - `/settings` (shared role-aware shell; `?role=driver` only steers the «Назад» target)
 - `/ops/screens` (ScreenOps dev/docs tool — registered but **not** in the product tabbar; see ScreenOps flow note)
 
@@ -166,6 +176,20 @@ Do not use old sandbox file names (feed.jsx, route-picker.jsx, etc).
 Use real runtime paths (public/src/screens/feed.js, etc).
 
 ## Known flow details
+
+### Onboarding
+`/onboarding` has more than one entry point, and they resolve differently — do not
+collapse them:
+- The first-run Start path (`welcome.js`'s `startLoading()`) never opens `/onboarding`
+  at all — after role + permissions + loading it routes straight to `/driver-map` or
+  `/feed` (or runs a pending action).
+- Only the welcome `Войти` handler calls bare `go('/onboarding')`; on `finish()`, a
+  pending action wins if one is set, otherwise passenger -> `/feed`, driver ->
+  `/profile` (never back to `/welcome`).
+- `#/onboarding?step=phone` is a separate deep-link re-entry, called only by
+  `profile.js` (`#pfp-verify-getcode` / `#pfp-verify-confirm`). Completing it calls
+  `completePhoneVerification()`, which navigates to the fixed `verifyReturnRoute()`
+  (`/profile` or `/profile?role=passenger`) — it does not call `consumePendingAction()`.
 
 ### Feed
 - Feed card tap goes to `/post?id=...`.
@@ -235,6 +259,16 @@ Both entry points navigate to `/inbox` via `go('/inbox')` (profile.js): #pfp-not
 Future notification work must decide: reuse /inbox or consciously split /notifications after audit.
 Do not silently orphan `/inbox`.
 
+### Daily Communication
+`/daily-communication` (`daily_communication.js`) is a runtime PWA prototype only —
+backend, DB, dispatcher, and real push/SMS/Telegram delivery are unchanged. Contract
+source of truth: `docs/daily-communication-contract.md` (BD-DAILY-COMM-01), including
+its `communication_threads` / `communication_messages` target backend shape and
+`OPEN -> ACK_REQUIRED/NEEDS_ACTION -> ACKNOWLEDGED -> RESOLVED` state machine (any
+state can jump straight to `RESOLVED`, `ACK_REQUIRED` can escalate to
+`NEEDS_ACTION`) — not one-way: a new message reopens `ACKNOWLEDGED`/`RESOLVED`
+back to `OPEN`.
+
 ### Moderation
 Wire inert standalone report CTAs (e.g. Order Detail data-action="report-order").
 Preserve in-ride safety report sheet behavior.
@@ -258,6 +292,10 @@ node scripts/check.mjs
 node scripts/dispatcher.mjs
 ```
 If a script is missing, report that clearly instead of inventing a result.
+
+Two more standalone root scripts exist outside the `check.mjs`/`dispatcher.mjs`
+pair: `scripts/check-precache-drift.mjs` (SW precache drift guard — see
+sw-offline-agent) and `scripts/build_icons.py` (PWA icon asset generation).
 
 ### Static-data gate (BD-DATA-STATIC-01)
 
