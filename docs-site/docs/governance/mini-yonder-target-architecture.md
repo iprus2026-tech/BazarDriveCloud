@@ -24,7 +24,9 @@ related:
     - docs-site/docs/decisions/safety-compliance.md
     - docs-site/docs/decisions/monitoring-audit.md
     - public/src/ride_state.js
-  issues: [842]
+    - server/src/domain/ride-status.js
+    - server/src/infra/bus.js
+  issues: []
   prs: []
 tags: [governance, mini-yonder, architecture, target, diagram]
 slug: /governance/mini-yonder-target-architecture
@@ -41,6 +43,10 @@ slug: /governance/mini-yonder-target-architecture
 > concerns) and is not committed to the repo as an image; this page is the
 > corrected, docs-only slice instead. Any illustrative vehicle in a future
 > rendered diagram (e.g. a Prius) is an example car only, not an integration.
+> This page has no dedicated tracking Issue yet (`related.issues: []`) — one is
+> opened once PR #842's own gate clears, per the review sequencing; it is not
+> #842 itself, which is a separate schema-audit PR this page must not be mixed
+> into.
 
 ## Why this page exists
 
@@ -71,7 +77,7 @@ one role-aware shell, and `/active-ride?role=passenger|driver` is one route
 family. Any target-architecture diagram should draw **one PWA client** with
 two role-driven experiences, not two boxes.
 
-The PWA talks to the backend over exactly two seams, never anything else:
+The PWA talks to the **backend** over exactly two seams, never anything else:
 
 - The **Backend API** (REST, `/api/v1/...`) for request/response calls.
 - The **Realtime Gateway** for server-pushed events (once a transport is
@@ -84,6 +90,21 @@ deployed) the PWA's only persistence is `localStorage` via `mock_api.js`;
 already decides `localStorage` is demoted to an optimistic/offline cache once
 a server exists, read through `api_client.js` — the client still never reaches
 past the Backend API seam.
+
+**One documented exception: client-side third-party SDKs.** A handful of
+vendor integrations run *in the browser* and connect straight to the vendor,
+never through the backend at all — this is a distinct category from "talking
+to the backend" above, not a violation of it. Today this is already real, not
+future: **Mapbox GL JS** is vendored and loaded client-side
+(`public/src/mapbox/mapbox_loader.js`, `mapbox_config.js`), and on the
+production Pages origin with its committed URL-restricted token, `/map`
+renders real Mapbox tiles by calling `api.mapbox.com` **directly from the
+browser** (BD-MAP-FOUND-01 / BD-MAP-ACTIVATE) — the CSP allows it, and no
+backend call is involved. **Web Push** will be the same shape once
+BD-DOCS-036 ships: the browser's push service delivers straight to the
+service worker, not through the Realtime Gateway. See
+[§7](#7-external-integrations--one-edge-each) for the corrected list of which
+integrations are backend-mediated vs. direct-to-browser.
 
 ## 2. Edge tier — Backend API / Auth·RBAC / Realtime Gateway
 
@@ -102,22 +123,30 @@ sit **behind** this tier — a module never receives a client request or push
 directly; it always goes through the Backend API / Auth·RBAC / Realtime
 Gateway first.
 
-## 3. Orchestration — Event Bus / Job Queue
+## 3. Orchestration — Event Bus today, Job Queue still open
 
-The reviewed diagram had no place for asynchronous, fan-out, or background
-work (matching broadcast, notification delivery, receipt rendering). That seam
-already exists in BD-DOCS-041 as `infra/bus.js`: an in-process event hub today,
-structured to become Redis pub/sub once there is more than one server
-instance. Concretely, this is the seam behind:
+The reviewed diagram had no place for asynchronous or fan-out work (matching
+broadcast, notification delivery, receipt rendering) and, worse, this page
+used to call that one box "Event Bus / Job Queue" as if they were the same
+seam. They are not, and only one of them is real:
 
-- Dispatcher → drivers offer fan-out (BD-DOCS-034).
-- Domain events → the Notification fan-out hub (BD-DOCS-036).
-- Ride-history / receipt generation triggered off ride-status events
-  (service #8, [§6](#6-data-layer--one-source-of-truth-one-derived-cache)).
-
-It is a **queue/bus seam**, not a new datastore — it runs inside the same
-Backend API process today and does not imply a separate message-broker
-deployment until BD-DOCS-033/034/036 says otherwise.
+- **Event Bus — real, and it is a plain in-process `EventEmitter`.**
+  `server/src/infra/bus.js` (`createBus()`) wraps Node's `EventEmitter`
+  (`kind: 'in-proc'`, `publish`/`subscribe`). It has **no persistence, no
+  retry, no acknowledgement, no dead-letter handling** — a subscriber that is
+  down when an event fires simply misses it. It is decorated as `fastify.bus`
+  and structured to become Redis pub/sub once there is more than one server
+  instance (BD-DOCS-041), but that swap has not happened. It is the seam
+  behind Dispatcher → driver offer fan-out (BD-DOCS-034) and domain events →
+  the Notification fan-out hub (BD-DOCS-036), once those publish/subscribe.
+- **Job Queue — not decided by any ADR.** Durable background work that must
+  survive a process restart or a failed attempt (retryable notification
+  delivery, receipt rendering, any at-least-once job) needs a durable queue
+  with retry and a worker process — `infra/bus.js` provides none of that.
+  No BD-DOCS ADR picks a queue technology, a persistence store, or a worker
+  model for this. Track it as its own open gap (see
+  [§11](#11-follow-ups-not-done-on-this-page)) — a diagram must not draw one
+  box implying both are solved.
 
 ## 4. Eight logical backend modules (not mandatory microservices)
 
@@ -133,7 +162,7 @@ implied by this diagram.
 | 2 | **Driver Availability** | Online/free/shift-ready presence + vehicle/compliance status. | BD-DOCS-033 |
 | 3 | **Matching & Assignment** | Candidate lookup, scoring, ranking, vehicle-class match. | BD-DOCS-034 |
 | 4 | **Route & Price (Map)** | Route/distance/ETA, geocoding, server-authoritative fare. | BD-DOCS-035 |
-| 5 | **Ride State Machine** | **Validates**: owns the canonical `RIDE_STATUS` transition rules and the terminal-freeze check only — it does not queue or broadcast. | BD-DOCS-041 (authority) · `public/src/ride_state.js` (enum) |
+| 5 | **Ride State Machine** | **Validates**: owns the canonical `RIDE_STATUS` enum and the terminal-freeze check — it does not queue or broadcast. Full transition-sequence validation is **not yet enforced**; see the correction below. | BD-DOCS-041 (authority) · `public/src/ride_state.js` (enum) |
 | 6 | **Notification Service** | Event fan-out to push / Telegram / SMS / in-app, presence-aware routing. | BD-DOCS-036 |
 | 7 | **Safety & Compliance** | Fraud/no-show rules, document checks, moderation, risk. | BD-DOCS-037 |
 | 8 | **History & Receipt** | Ride history read model, receipt data, ratings. | this page, §6 |
@@ -141,12 +170,32 @@ implied by this diagram.
 **Dispatcher vs. State Machine — the split the reviewed diagram blurred:**
 the Dispatcher (#1) **orchestrates** — it decides *when* and *to whom* an
 order or a status change is proposed, and drives the workflow forward. The
-Ride State Machine (#5) **validates** — it is the single chokepoint that
-decides whether a proposed transition is *legal* (`canTransition()` +
-the terminal-freeze trigger, per BD-DOCS-041). The Dispatcher calls into the
-State Machine for every status change; it never bypasses it, and the State
-Machine never initiates a transition on its own. One box orchestrates, one
-box guards — they are not the same responsibility drawn as one blob.
+Ride State Machine (#5) **validates** — it is the single chokepoint every
+status change goes through. The Dispatcher calls into the State Machine for
+every status change; it never bypasses it, and the State Machine never
+initiates a transition on its own. One box orchestrates, one box guards —
+they are not the same responsibility drawn as one blob.
+
+**What "validates" actually checks today — corrected.** The shipped
+`canTransition(from, to)` (`server/src/domain/ride-status.js`, mirrored from
+the client's terminal-freeze rule) is narrower than the phrase "transition
+rules" implies:
+
+```js
+export function canTransition(from, to) {
+  if (TERMINAL_RIDE_STATUSES.has(from) && to !== from) return false;
+  return true;
+}
+```
+
+It enforces **only the terminal freeze** — a record already in `COMPLETED` /
+`CANCELED` / `NO_SHOW` cannot move to a different status. It does **not**
+check the `NEXT_STATUS` map at all: any non-terminal status may currently
+transition to **any** other status, including skipping steps or moving
+"backwards" — `NEXT_STATUS` / `getNextStatus()` is only an advance-suggestion
+helper, not a guard `canTransition()` consults. **Full transition-sequence
+validation is an open gap**, not a shipped property — track it alongside the
+other open items in [§11](#11-follow-ups-not-done-on-this-page).
 
 ## 5. Payments & Payouts — open gap, not in the 8 services
 
@@ -173,10 +222,17 @@ This page does not invent that decision. Until a dedicated ADR exists:
 - **Database (PostgreSQL 16)** is the **source of truth** from Phase 1
   onward (BD-DOCS-030, BD-DOCS-041) — users, vehicles, orders, responses,
   offers, assignment, rides, ride events, receipts.
-- **Cache (Redis)** is a **derived, rebuildable** cache only — nearby
-  drivers, active-order lookups, ETA/geo cache (BD-DOCS-023, BD-DOCS-033).
-  It is never the authority for anything; every value in it must be
-  reconstructable from the database.
+- **Cache (Redis) is never the authority for anything** — but "derived from
+  the database" only describes part of it. Two different kinds of non-authority
+  live there:
+  - **Recomputable caches** — ETA/geo estimates, active-order lookups — can be
+    thrown away and rebuilt by recomputing from the database (BD-DOCS-023).
+  - **Live liveness signals** — the presence/heartbeat TTL set (BD-DOCS-033)
+    — **cannot** be reconstructed from the database at all: "who is online
+    right now" is not a fact the database stores. If this Redis data is lost,
+    it is rebuilt only by **new heartbeats arriving**, not by a database read;
+    until they do, presence is correctly empty (fail-safe "nobody is known
+    online"), not restored from history.
 - **Object storage** holds documents, media, logs, and **rendered receipt
   artifacts** (PDF/image). The receipt's structured data always lives in the
   database first (BD-RIDE-HISTORY-D-01 is a JSON row, per BD-DOCS-041); object
@@ -191,15 +247,19 @@ one internal edge:
 
 | External service | Reaches | Status |
 | --- | --- | --- |
-| Mapbox (maps, routing, **geocoding**) | Route & Price (#4) only | future (BD-DOCS-035) |
-| Telegram bot, SMS / email, Web Push | Notification Service (#6) only | future (BD-DOCS-036) |
-| Payment gateway | Payment Gateway box only — see [§5](#5-payments--payouts--open-gap-not-in-the-8-services) | future, unintegrated (BD-DOCS-023) |
-| Analytics | Monitoring & Audit (#9) only | future (BD-DOCS-023) |
+| Mapbox GL JS — **map tile rendering only** | Nothing backend-side — direct browser ↔ `api.mapbox.com`, no module involved | **real**, conditionally active on a committed token (BD-MAP-FOUND-01 / BD-MAP-ACTIVATE) |
+| Mapbox Directions / **geocoding** (real route, ETA, fare) | Route & Price (#4) only, server-mediated | future (BD-DOCS-035) — not yet called at all, per BD-DOCS-035's own context |
+| Telegram bot, SMS / email | Notification Service (#6) only, server-mediated | future (BD-DOCS-036) |
+| Web Push | direct browser-push-service ↔ service worker, not through any backend module | future (BD-DOCS-036) |
+| Payment gateway | not wired to any internal module yet — see [§5](#5-payments--payouts--open-gap-not-in-the-8-services) | future, unintegrated (BD-DOCS-023) |
+| Analytics | Monitoring & Audit (#9) only, server-mediated | future (BD-DOCS-023) |
 
-No external service connects to more than one internal module, and none of
-them connects to the PWA client directly — every external call is
-server-mediated (BD-DOCS-035 §"Mapbox is its own track", BD-DOCS-041 CSP
-notes).
+**Corrected — not every external call is server-mediated.** Every
+*backend-mediated* integration reaches exactly one internal module (no
+integration fans into two). But two integrations bypass the backend
+entirely and talk straight to the browser — Mapbox tile rendering (already
+real, see [§1](#1-client-layer--one-pwa-two-roles-not-two-apps)) and Web Push
+(future) — that is a deliberate, documented exception, not an oversight.
 
 (Naming fix: **"Geocoding"**, one word — the term is already spelled
 correctly in BD-DOCS-035; the reviewed diagram had it as two words.)
@@ -216,11 +276,16 @@ correctly in BD-DOCS-035; the reviewed diagram had it as two words.)
   it; a diagram should not imply idempotency exists until that question
   closes.
 - **Optimistic locking / row versioning** — **not yet decided anywhere in
-  the current ADR set.** Flagged here as a second open gap (alongside
-  Payments & Payouts) that needs its own decision — likely folded into
-  BD-DOCS-041's open questions or its own short ADR — before any
-  `assignment` / `rides` write path is implemented against concurrent
-  updates.
+  the current ADR set.** Flagged here as an open gap that needs its own
+  decision — likely folded into BD-DOCS-041's open questions or its own short
+  ADR — before any `assignment` / `rides` write path is implemented against
+  concurrent updates.
+- **Full ride-status transition-sequence validation** — **not yet enforced.**
+  As corrected in [§4](#4-eight-logical-backend-modules-not-mandatory-microservices),
+  `canTransition()` today checks only the terminal freeze; it does not check
+  that a transition follows `NEXT_STATUS`. A diagram or this page must not
+  imply the State Machine already rejects an out-of-sequence, non-terminal
+  transition — it currently allows it.
 
 ## 9. Corrected ride-state flow
 
@@ -232,10 +297,16 @@ outcomes:
 
 ```text
 CREATED ──► ACCEPTED ──► EN_ROUTE ──► ARRIVED ──► IN_PROGRESS ──► COMPLETED
-   │            │            │            │
-   ▼            ▼            ▼            ▼
-CANCELED     CANCELED     CANCELED     CANCELED / NO_SHOW
+   │            │            │            │             │
+   ▼            ▼            ▼            ▼             ▼
+CANCELED     CANCELED     CANCELED     CANCELED /    CANCELED
+                                        NO_SHOW
 ```
+
+The text above already said CANCELED can branch off **any** non-terminal
+state, including `IN_PROGRESS` (an in-progress ride can still be canceled);
+the diagram is drawn with that fifth branch so it matches the prose, not just
+the four pre-handoff states.
 
 CANCELED and NO_SHOW are terminal — once reached, the state is frozen (the
 terminal-freeze rule already shipped client-side in `public/src/ride_state.js`
@@ -248,8 +319,10 @@ active-ride states — see BD-DOCS-023's own note on the full enum.
 | Style | Meaning |
 | --- | --- |
 | `──►` solid arrow | Synchronous request/response call |
+| `⇢` dashed arrow | Asynchronous event/job fan-out over the Event Bus (§3) — fire-and-forget, no durability today |
 | plain box adjacency | Same-process logical module (no network hop) |
-| "reaches … only" (prose, §7) | The one external edge an integration is allowed |
+| "reaches … only" (prose, §7) | The one external edge a backend-mediated integration is allowed |
+| "direct browser ↔ vendor" (prose, §7) | The documented exception: a client-side SDK bypassing the backend entirely |
 
 A scalable, rendered (SVG) version of this diagram with the same legend is a
 follow-up asset task — see [§11](#11-follow-ups-not-done-on-this-page).
@@ -260,10 +333,18 @@ follow-up asset task — see [§11](#11-follow-ups-not-done-on-this-page).
   internal payments module or entity is drawn as wired (§5).
 - **Idempotency-key / optimistic-lock ADR** — resolve BD-DOCS-041's open ID
   strategy question and add row-versioning for concurrent writes (§8).
-- **Rendered SVG diagram** — once the above two gaps are decided, commission
-  a scalable visual rendering of this page using the corrected boxes,
-  edge tier, and arrow legend above; track as its own issue rather than
-  attaching an image to a docs-content PR.
+- **Full ride-status transition-sequence validation** — decide and implement
+  a real `NEXT_STATUS`-checking guard; today only the terminal freeze is
+  enforced (§4, §8).
+- **Durable Job Queue** — pick a queue technology, persistence, and worker
+  model for retryable background work; `infra/bus.js` is an in-process
+  `EventEmitter` and provides none of that (§3).
+- **Dedicated tracking Issue** — opened once PR #842's own gate clears, per
+  the review sequencing (this page must not be mixed into #842 itself).
+- **Rendered SVG diagram** — once the gaps above are decided, commission a
+  scalable visual rendering of this page using the corrected boxes, edge
+  tier, and arrow legend above; track as its own issue rather than attaching
+  an image to a docs-content PR.
 
 ## Relation to existing ADRs
 
