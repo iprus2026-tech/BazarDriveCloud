@@ -82,5 +82,17 @@
     "sourceOfTruth": "repo",
     "reviewAfter": "2026-07-15",
     "reason": "Legacy source kept until incremental docs-site migration."
+  },
+  {
+    "id": "BD-LEGACY-008",
+    "path": "docs/local-dev-setup.md",
+    "title": "Local Development Setup (Termux / Android)",
+    "docType": "runbook",
+    "status": "legacy-source",
+    "verification": "pending",
+    "owner": "docs",
+    "sourceOfTruth": "repo",
+    "reviewAfter": "2027-01-01",
+    "reason": "Contributor guide for Termux/proot Android setup; documents Supabase dev-DB rationale and known non-blocking issues."
   }
 ]
