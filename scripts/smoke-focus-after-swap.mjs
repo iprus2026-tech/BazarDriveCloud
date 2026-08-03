@@ -68,8 +68,10 @@ const LEDGER = {
   },
   'screens/route_picker.js': {
     // rerender() (interaction re-renders) now moves focus into the fresh content
-    // after replaceChildren; the initial mount call is first paint → benign.
-    proofs: [/replaceChildren\(buildBody\(\)\)[\s\S]{0,420}querySelector\('\.rp-ready__cta[^']*'\)[\s\S]{0,120}querySelector\('\.rp-topbar__back'\)[\s\S]{0,120}\.focus\(\)/],
+    // after replaceChildren: the open manual form, else the pending pickup/dropoff
+    // input, else the ready CTA, else the topbar back control. The initial mount
+    // call is first paint → benign.
+    proofs: [/replaceChildren\(buildBody\(\)\)[\s\S]{0,560}data-manual="city"[\s\S]{0,320}querySelector\('\.rp-topbar__back'\)[\s\S]{0,120}\.focus\(\)/],
     benign: 1,
     gap: 0,
   },
