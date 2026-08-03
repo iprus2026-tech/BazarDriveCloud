@@ -222,4 +222,8 @@ is a separate, explicitly-scoped change with its own issue, contract update and
 tests — and would flip this document out of `draft`.
 
 See [Mini-Yonder Model](mini-yonder-model.md) for the docs-as-code governance
-layer that this architecture lives under.
+layer that this architecture lives under, and
+[Mini-Yonder Target Architecture (BD-DOCS-046)](mini-yonder-target-architecture.md)
+for the corrected diagram-level synthesis of this page and the Phase 1–7 ADRs
+(edge tier, event bus, the Dispatcher/State-Machine split, and the open
+Payments & Payouts / idempotency gaps).
