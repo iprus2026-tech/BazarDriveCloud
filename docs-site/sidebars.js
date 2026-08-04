@@ -35,7 +35,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Audits',
-      items: ['audits/BD-DOCS-039'],
+      items: ['audits/BD-DOCS-039', 'audits/BD-DOCS-045'],
     },
     {
       type: 'category',
