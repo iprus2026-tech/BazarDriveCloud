@@ -51,8 +51,13 @@ check/environment, restrict further access, and remove it through a separately
 approved incident procedure. Record the incident without copying sensitive
 values into evidence.
 
-No future OpenTofu configuration may guess the GCP region, project ID, billing
-owner or monthly budget. Those are blocking human inputs. Remote-state location,
+No future OpenTofu configuration may guess the GCP region, billing owner or
+monthly budget — those remain blocking human inputs. GCP project strategy
+(dedicated staging project) and an intended project ID are human-approved —
+see BD-DOCS-044's "Human-approved staging identity values" — but that
+project ID's real-world availability is not yet validated and continues to
+block provisioning until an authorized bootstrap slice confirms it (stopping
+for a new human decision if the ID is unavailable). Remote-state location,
 bootstrap authority, access, locking and retention must be approved and created
 in a separate slice before the first `tofu init` against a remote backend or any
 `tofu apply`.

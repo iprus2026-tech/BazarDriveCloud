@@ -4,9 +4,9 @@ docType: runbook
 title: Backend staging container baseline — Runbook
 owner: backend-ops-agent
 status: draft
-revision: 2026-07-27
+revision: 2026-08-05
 effectiveFrom: 2026-07-24
-reviewAfter: 2026-08-24
+reviewAfter: 2026-09-05
 visibleFor: [developer, dispatcher, qa]
 sourceOfTruth: docs-site
 related:
@@ -50,9 +50,13 @@ Subject to approval of every blocking input in BD-DOCS-044, the 01B target is:
 | GitHub identity | OIDC Workload Identity Federation; static service-account JSON keys are forbidden. |
 | IaC | OpenTofu under `infra/staging/` in a future slice. Remote state requires separate approval and bootstrap. |
 
-Region, GCP project ID, billing owner and monthly budget are unresolved blocking
-inputs and must not be guessed. No GCP resource, credential, remote state, image
-publication, deployment or traffic switch exists as a result of 01B-1A.
+Region, billing owner and monthly budget remain unresolved blocking inputs and
+must not be guessed. GCP project strategy (dedicated staging project) and an
+intended project ID are now human-approved — see BD-DOCS-044's "Human-approved
+staging identity values"; that project ID's real-world availability is still
+unvalidated and continues to block provisioning. No GCP resource, credential,
+remote state, image publication, deployment or traffic switch exists as a
+result of 01B-1A.
 
 ### IAM identity separation
 
@@ -113,7 +117,8 @@ staging contract does not select or approve a production region.
 
 Staging invocation remains IAM-authenticated. `allUsers`,
 `--allow-unauthenticated` and equivalent public access are forbidden. CORS must
-use one explicitly approved exact origin and never `*`.
+use one explicitly approved exact origin and never `*` — see BD-DOCS-044's
+"Human-approved staging identity values" for the approved value.
 
 Cloud Run revision traffic is not PWA/API activation. No client API base, CSP,
 service worker, GitHub Pages or other `public/**` change belongs to 01B. Activation
@@ -153,8 +158,9 @@ real `.env` file in the build context or image.
 | Configuration | `HOST`, `PORT`, `LOG_LEVEL`, `ALLOWED_ORIGIN`, `OTP_TTL_SECONDS`, `OTP_LENGTH`, `OTP_MAX_ATTEMPTS`, `SESSION_TTL_SECONDS` |
 | Mandatory staging policy | `NODE_ENV=production`, `OTP_DEV_MODE=false` |
 
-`ALLOWED_ORIGIN` must be the single exact PWA origin and never a wildcard.
-Production startup rejects `OTP_DEV_MODE=true`. Dark Redis/S3 settings stay out of
+`ALLOWED_ORIGIN` must be the single exact PWA origin and never a wildcard — the
+approved exact value is recorded in BD-DOCS-044's "Human-approved staging
+identity values." Production startup rejects `OTP_DEV_MODE=true`. Dark Redis/S3 settings stay out of
 this deployment slice.
 
 ## Probe contract
