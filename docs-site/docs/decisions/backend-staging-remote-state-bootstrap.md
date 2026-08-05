@@ -91,7 +91,7 @@ object. Sources: [OpenTofu GCS backend source
 | Identity | Allowed operations | Notes |
 |---|---|---|
 | **Bootstrap identity** (human operator, one-time) | Create the GCS state bucket and set its IAM policy; grant the deployment identity read/write on the bucket | Used only during the bootstrap sequence; must not be a shared or service account; must require MFA; must not persist as a standing service account. |
-| **Deployment identity** (GitHub Actions OIDC Workload Identity — see "Deployment identity scope" note below) | `storage.objects.get`, `storage.objects.create`, `storage.objects.delete`, `storage.objects.list` on the state bucket, plus `storage.buckets.get` | Required for OpenTofu `plan`/`apply`. `storage.objects.delete` is **not optional**: the GCS backend deletes the `.tflock` object on every unlock, and per the [Google Cloud Storage `objects.insert` API](https://docs.cloud.google.com/storage/docs/json_api/v1/objects/insert), overwriting an object that already exists — exactly what every state write after the first one does — also requires delete permission on the object being replaced. Scoped to the staging project only; no broader GCP permissions, and no object- or bucket-level `setIamPolicy`. |
+| **Deployment identity** (GitHub Actions OIDC Workload Identity — see "Deployment identity scope" note below) | `storage.objects.get`, `storage.objects.create`, `storage.objects.delete`, `storage.objects.list` on the state bucket (exact role per "Role selection" below) | Required for OpenTofu `plan`/`apply`. `storage.objects.delete` is **not optional**: the GCS backend deletes the `.tflock` object on every unlock, and per the [Google Cloud Storage `objects.insert` API](https://docs.cloud.google.com/storage/docs/json_api/v1/objects/insert), overwriting an object that already exists — exactly what every state write after the first one does — also requires delete permission on the object being replaced. Scoped to the staging project only; no broader GCP permissions. Bucket-level `storage.buckets.setIamPolicy` is forbidden under either role choice below. Object-level `storage.objects.setIamPolicy`/`getIamPolicy` comes bundled with the official `roles/storage.objectAdmin` baseline and cannot be withheld while granting that role — it is excluded only if the narrowed candidate role is validated and adopted instead (see "Role selection"). |
 | **Read-only audit identity** | `storage.objects.get`, `storage.objects.list` on the state bucket | For post-apply audit inspection; cannot modify state or lock. |
 | **No other identity** | — | No wildcard or project-wide bindings; no allUsers; no production identity binding. |
 
@@ -117,22 +117,38 @@ documentation](https://opentofu.org/docs/language/settings/backends/gcs/)
 states that credentials "must have the Storage Object Admin role on the
 bucket" (`roles/storage.objectAdmin`). This is the documented, supported
 baseline and the safe default if no narrower role has been validated.
+**Choosing this baseline means accepting the full bundle of permissions
+`roles/storage.objectAdmin` carries — including object-level
+`storage.objects.getIamPolicy`/`storage.objects.setIamPolicy` — as a
+package.** A predefined role cannot be granted while withholding one of its
+included permissions; there is no configuration in which the deployment
+identity holds `roles/storage.objectAdmin` but lacks object-level
+`setIamPolicy`. Bucket-level `storage.buckets.setIamPolicy` is not part of
+`roles/storage.objectAdmin` and remains forbidden regardless of which option
+is chosen.
 
 **B. Least-privilege narrowing — PROPOSED, requires execution validation.**
-`roles/storage.objectAdmin` also grants object-level
-`storage.objects.getIamPolicy`/`setIamPolicy`, which no code path in the GCS
-backend's `Lock`/`Unlock`/`Put`/`Get` implementation appears to exercise. A
-narrower role — `roles/storage.objectUser`, or an equivalent custom role
+A narrower role — `roles/storage.objectUser`, or an equivalent custom role
 limited to `storage.objects.get`, `storage.objects.create`,
-`storage.objects.delete`, `storage.objects.list` (bucket-level:
-`storage.buckets.get`) — is a **candidate** for tighter scoping. **This
-narrower set is not officially guaranteed sufficient by OpenTofu's
-documentation** — OpenTofu's own docs recommend the broader
-`roles/storage.objectAdmin` and do not publish a minimal permission list.
-The set above is derived from reading the backend's source implementation
-and Google's documented object-overwrite/delete semantics, not from an
-OpenTofu-published minimal-permissions guarantee, and must not be presented
-as an OpenTofu-endorsed minimum.
+`storage.objects.delete`, `storage.objects.list` — is a **candidate** for
+tighter scoping, and is the *only* path by which the deployment identity can
+avoid holding object-level `setIamPolicy`/`getIamPolicy`. **This narrower
+set is not officially guaranteed sufficient by OpenTofu's documentation** —
+OpenTofu's own docs recommend the broader `roles/storage.objectAdmin` and do
+not publish a minimal permission list. The set above is derived from reading
+the backend's source implementation and Google's documented
+object-overwrite/delete semantics, not from an OpenTofu-published
+minimal-permissions guarantee, and must not be presented as an
+OpenTofu-endorsed minimum.
+
+Neither option requires `storage.buckets.get`: OpenTofu's GCS backend
+`configure()` step calls `storage.NewClient(ctx, opts...)` and does not call
+any bucket-level API (no `bucket.Attrs(ctx)` or equivalent), and
+`storage.buckets.get` is not included in either `roles/storage.objectAdmin`
+or `roles/storage.objectUser` in any case. It is not part of the required
+permission set for the deployment identity under either option. Source:
+[OpenTofu GCS backend `configure()`
+(`backend.go`)](https://github.com/opentofu/opentofu/blob/main/internal/backend/remote-state/gcs/backend.go).
 
 Until validated (see "Validation gate for a narrowed role" below), option A
 is the accepted default; option B remains a proposal under review.
@@ -195,9 +211,14 @@ before any `tofu init` or `tofu apply` targeting staging resources.
      overwriting state after the first write, not a permission to withhold;
    - grant the read-only audit identity `roles/storage.objectViewer` on the
      bucket;
-   - do not grant any binding to `allUsers` or `allAuthenticatedUsers`, and do
-     not grant object- or bucket-level `setIamPolicy` to the deployment
-     identity.
+   - do not grant any binding to `allUsers` or `allAuthenticatedUsers`; do not
+     grant bucket-level `storage.buckets.setIamPolicy` to the deployment
+     identity under either role choice. If the narrowed candidate role
+     (option B) is used, it must also exclude object-level
+     `storage.objects.setIamPolicy`/`getIamPolicy`. If the official baseline
+     (`roles/storage.objectAdmin`) is used instead, object-level
+     `setIamPolicy`/`getIamPolicy` comes bundled with that role and cannot be
+     selectively withheld — do not claim otherwise when recording the grant.
 4. Record the bucket name, versioning status, IAM bindings, and the executing
    identity in the deployment evidence log without including any secret values.
 5. Run `tofu init` against the new backend to verify the backend is reachable
@@ -323,12 +344,17 @@ The following are **explicitly out of scope** for this record:
 - The deployment identity necessarily holds `storage.objects.delete` on the
   state bucket's objects — required for lock release and for overwriting
   state after the first write (see "Locking mechanism detail" and "Role
-  selection" above), not avoidable by a stricter role. The mitigation is
-  scoping that delete permission to only this bucket (never project-wide),
-  never granting `storage.buckets.delete` or any `setIamPolicy` permission to
+  selection" above), not avoidable by a stricter role. If the official
+  `roles/storage.objectAdmin` baseline is used, the deployment identity also
+  necessarily holds object-level `storage.objects.setIamPolicy`/
+  `getIamPolicy` as part of that bundled role — avoidable only by adopting
+  the narrowed candidate role (option B in "Role selection") after it passes
+  the validation gate. The mitigation available under either option is
+  scoping all grants to only this bucket (never project-wide), never granting
+  bucket-level `storage.buckets.setIamPolicy` or `storage.buckets.delete` to
   the deployment identity, and relying on the already-enabled GCS object
   versioning to recover from an accidental or malicious delete/overwrite
-  rather than trying to withhold delete outright.
+  rather than trying to withhold object-level delete outright.
 - GCS versioning retention adds storage cost; retention window must be
   explicitly budgeted.
 - GMEK (proposed default encryption) does not provide customer control over
