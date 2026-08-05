@@ -254,8 +254,13 @@ It can only be rolled back manually:
 The following values are **not decided** in this record and must be confirmed by
 a human before any bootstrap step is executed:
 
-1. **GCP project ID** — which project hosts the staging state bucket (from
-   BD-DOCS-044 blocking input 2).
+1. **GCP project ID** — BD-DOCS-044 blocking input 2 now records a
+   human-approved *intended* project ID (dedicated staging project; see its
+   "Human-approved staging identity values"). This record's bucket name
+   scheme (`<project-id>-tofu-state-staging`) can be filled in once that ID's
+   real-world availability is validated by an authorized bootstrap slice —
+   that validation, not the intended value itself, remains the blocking
+   input here.
 2. **GCP region** — where the state bucket is located (from BD-DOCS-044
    blocking input 1); must be confirmed alongside data-location rationale.
 3. **Billing owner and monthly budget** — cost of versioned GCS storage and

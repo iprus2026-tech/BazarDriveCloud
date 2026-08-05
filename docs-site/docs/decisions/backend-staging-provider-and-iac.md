@@ -4,9 +4,9 @@ docType: decision-record
 title: Backend staging provider and IaC — Decision Record
 owner: backend-ops-agent
 status: draft
-revision: 2026-07-27
+revision: 2026-08-05
 effectiveFrom: 2026-07-27
-reviewAfter: 2026-08-27
+reviewAfter: 2026-09-05
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
 related:
@@ -145,23 +145,54 @@ security and architecture decision before any production-data system is placed
 in Google Cloud. This ADR makes no claim that a Google Cloud region is suitable
 for those purposes.
 
+### Human-approved staging identity values (intended — execution validation pending)
+
+A human has explicitly approved the four values below. Approval fixes the
+*intended* value only — it does not create, verify, or configure any GCP
+resource. Nothing here authorizes provisioning, and none of it changes until a
+human makes a new decision.
+
+| # | Decision | Approved value | Execution-validation status |
+|---|---|---|---|
+| A | GCP project strategy | **Dedicated staging project.** BazarDriveCloud staging uses its own GCP project; production resources must never be placed in this project. | N/A — a strategy choice, not a resource. |
+| B | GCP project ID (intended) | `bazardrivecloud-staging` | **Not yet validated.** Global project-ID availability in Google Cloud has not been checked — provisioning is out of scope for this record. A future authorized bootstrap/provisioning slice must verify the ID is actually available/creatable in the intended organization before use. If it is unavailable, that slice must **stop** and request a new human decision; it must not silently substitute a different ID. |
+| C | Passenger/PWA URL (reference only) | `https://iprus2026-tech.github.io/BazarDriveCloud` | This is the GitHub Pages URL the passenger/driver PWA is served from. It is **not** itself a CORS value — see D. Recorded for context, not for use as `ALLOWED_ORIGIN`. |
+| D | Exact `ALLOWED_ORIGIN` | `https://iprus2026-tech.github.io` | **Approved.** A browser `Origin` is scheme + host + port only and never includes a path, so this value intentionally omits the `/BazarDriveCloud` path from C. Not a wildcard (`*`). Wiring this into a running service's config (`server/.env.example`, Secret Manager, Cloud Run env) is a separate, still-future deployment slice — recording it here is a docs-only contract, not a live configuration change. |
+
+Until an authorized provisioning slice proves the project actually exists, the
+only accurate way to state row B is **"approved intended staging Project ID:
+`bazardrivecloud-staging`."** Do not write "the GCP project exists" before that
+proof. Likewise, do not treat rows C/D as proof that the staging backend is
+reachable from the PWA — activation remains gated by Issue #828 (see "Access
+and activation boundary" above).
+
 ### Blocking inputs
 
-Implementation must stop until a human explicitly confirms:
+Implementation must stop until a human explicitly confirms every value below.
+Items 2 and 5 have now been confirmed by a human — see "Human-approved staging
+identity values" above; item 2's real-world project-ID availability is a
+separate, still-open execution check, not a re-opening of the decision itself.
+Items 1, 3, 4, 6, 7 and 8 remain fully open:
 
 1. the Google Cloud region, including latency and data-location rationale;
-2. the dedicated GCP project ID and its ownership boundary;
+2. the GCP project ownership boundary is confirmed as a dedicated staging
+   project (row A above), with an approved intended project ID of
+   `bazardrivecloud-staging` (row B above). Still blocking: whether that
+   project ID is actually available/creatable in Google Cloud — a future
+   authorized bootstrap slice must verify this and stop for a new human
+   decision if the ID is taken;
 3. the billing owner and cost-accountability contact;
 4. the monthly staging budget and alert thresholds;
-5. the exact non-wildcard `ALLOWED_ORIGIN`;
+5. the exact non-wildcard `ALLOWED_ORIGIN` is approved: `https://iprus2026-tech.github.io`
+   (row D above);
 6. IAM owners and exact least-privilege bindings for the separate bootstrap,
    deployment, runtime, migration and read-only audit identities;
 7. the OpenTofu remote-state project/location, access policy and bootstrap
    procedure in its own approved slice;
 8. Cloud SQL sizing, storage, backup/PITR and network-access policy.
 
-None of these values may be guessed, copied from production, or silently chosen
-by a workflow.
+None of the still-open values (1, 3, 4, 6, 7, 8) may be guessed, copied from
+production, or silently chosen by a workflow.
 
 ## Release gates inherited by future slices
 
