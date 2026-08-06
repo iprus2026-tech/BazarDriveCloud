@@ -56,8 +56,11 @@ authentication validation, disposable-resource only). Locking and
 authentication are split because they are different failure domains with
 different risk profiles — authentication carries an explicit
 "no autonomous long-lived-secret decision" gate (BD-DOCS-047, "Authentication")
-that locking does not, so a stalled human call on credentials should not block
-locking evidence, and vice versa.
+that locking does not. Keeping them as separate slices — with 01C's
+authentication outcome feeding into 01B rather than each slice inventing its
+own ad hoc credential model (see "Recommended slice architecture going
+forward" below) — means a stalled human call on credentials is resolved once,
+by 01C, instead of being independently re-litigated by both.
 
 `infra/staging/README.md` still describes the pre-pivot Google Cloud target
 verbatim and has not been updated for the Yandex pivot. It is noted here as
@@ -106,7 +109,7 @@ repo will use)** — 01B must confirm the exact OpenTofu version pinned by a
 future human/architecture decision actually includes `use_lockfile` (i.e. is
 ≥1.10) before assuming the native path is available; if an older version is
 pinned, only the DynamoDB-table path exists and the corresponding Yandex
-equivalent (see "A second locking candidate" below) becomes the only option,
+equivalent (see "YDB Document API locking" below) becomes the only option,
 not a fallback.
 
 ### S3 API semantics locking depends on
@@ -142,20 +145,45 @@ Yandex's precondition-failure response the same way it parses AWS's. That
 exact-parity question is what 01B's locking test sequence (section 5 below)
 exists to close.
 
-### A second locking candidate BD-DOCS-047 did not evaluate
+**Preferred first validation candidate.** Of the two mechanisms in the table
+above, the native Object Storage lockfile (`use_lockfile`) is the one 01B
+should validate first: it has the smaller resource footprint (no second
+managed service), and — unlike the YDB candidate below — Yandex documents the
+exact conditional-write semantics it depends on directly on the object/API
+reference. It remains `REQUIRES_EXECUTION_VALIDATION` until the exact
+OpenTofu/Yandex behavior (status-code parity, section 5's test sequence) is
+actually tested — documentation alone does not close this out.
 
-BD-DOCS-047 only evaluated the native-lockfile candidate. Yandex separately
-offers **Yandex Database (YDB) in DynamoDB-compatible mode**, which is a
-second, independently viable candidate for OpenTofu's older/default
-`dynamodb_table` locking path (conditional item insert on a `LockID` key) —
-third-party tutorials describe exactly this pairing (Object Storage for state
-+ YDB Document API for the lock table). This does not change either NOT_PROVEN
-verdict, but it means the locking question is not "does the one candidate
-Yandex offers work" — it is "which of two independent candidate mechanisms
-should be validated first," and 01A's disposable-experiment design (section 4)
-should let 01B test the native-lockfile path first (smaller footprint, no
-second service) with the YDB path as a documented fallback design rather than
-an untested afterthought.
+### YDB Document API locking — documented fallback candidate
+
+BD-DOCS-047 only evaluated the native-lockfile candidate. This pass replaces
+the earlier reliance on third-party tutorials for the second candidate with
+**Yandex's own official tutorial**, "Locking Terraform states using Managed
+Service for YDB" (`cloud.yandex.com/en/docs/tutorials/infrastructure-management/terraform-state-lock`),
+which pairs Object Storage (state) with Managed Service for YDB's
+DynamoDB-compatible Document API (locking, via OpenTofu's `dynamodb_table`
+backend argument) and documents the exact backend block
+(`endpoints = { s3 = ..., dynamodb = ... }`, `dynamodb_table = ...`), the
+required service-account roles (`storage.editor`, `ydb.admin`), and static
+access keys as its authentication step.
+
+That same official tutorial draws exactly the OpenTofu/Terraform distinction
+this correction was asked to preserve: *"Starting with Terraform 1.11, state
+locking via the Document API is deprecated and will be removed in a future
+minor version,"* while *"for OpenTofu users, both locking mechanisms are
+supported with no plans for removal."* Since BD-DOCS-047 already settled
+OpenTofu (not Terraform) as this repository's IaC tool, this is direct
+official evidence that both locking mechanisms remain live options here, not
+just a general Terraform-ecosystem pattern.
+
+This does not change either `NOT_PROVEN` verdict, and it does not become the
+default validation path while the native lockfile candidate above remains
+viable: using it would enlarge the disposable footprint by adding a
+serverless YDB database/Document API table on top of the Object Storage
+bucket, which is a bigger footprint than section 4's baseline and therefore
+requires its own explicit authorization before 01B may use it — it stays a
+documented fallback design, not an untested afterthought, and not a
+co-default.
 
 ## 2. Authentication classification
 
@@ -200,6 +228,17 @@ surface closes it) before concluding no keyless path exists.
 in 01C or any future slice, may accept a static/long-lived-key exception
 autonomously; that decision is reserved for a human, per BD-DOCS-047.
 
+**Correction note.** Section 1's locking evidence was strengthened in this
+correction pass; this section's authentication classification is unchanged by
+that improvement. Locking and authentication are independent technical
+questions — stronger evidence that Yandex documents matching conditional-write
+semantics says nothing about whether OpenTofu's S3 backend can authenticate
+without a long-lived static key. Keyless OpenTofu backend authentication
+remains `EXECUTION-DEPENDENT` / `NOT_PROVEN` unless and until authoritative
+evidence proves a compatible credential path (section 8 below). No static-key
+exception is approved here, or by any future agent acting alone; that remains
+reserved for an explicit human decision per BD-DOCS-047.
+
 ## 3. Human decisions blocking 01B/01C
 
 None of the following may be guessed, copied from the staging-environment
@@ -213,7 +252,7 @@ staging folder/budget by default.
 | 1 | Dedicated **validation** Yandex folder, distinct from the staging folder BD-DOCS-047 item 2 still blocks | `HUMAN_DECISION_REQUIRED` |
 | 2 | Validation-specific budget ceiling (smaller than BD-DOCS-047 item 4's staging budget) | `HUMAN_DECISION_REQUIRED` |
 | 3 | Billing owner / cost-accountability contact | `HUMAN_DECISION_REQUIRED` (BD-DOCS-047 item 3, unresolved) |
-| 4 | Exact AZ for the disposable bucket (`-a`/`-b`/`-d`) | Can be derived for a throwaway, non-production footprint even though BD-DOCS-047 item 1 still blocks it for staging proper — 01B/01C should record whichever AZ they use, not treat it as a re-open of the staging AZ decision |
+| 4 | Confirm the disposable bucket is created within the Russian Yandex Cloud management boundary / `ru-central1` (inherits BD-DOCS-047's already-**DECIDED** region choice; not reopened here) | Execution check, not a new human decision — Yandex's own geo-scope documentation classifies Object Storage buckets as a **global** resource, not tied to an availability zone ("VMs and disks are zonal resources. Examples of global resources: cloud networks and buckets"). No `-a`/`-b`/`-d`/`-e` zone selection applies to a bucket. AZ remains relevant only to future *zonal* resources, if any are introduced in a separately authorized slice — this record does not reopen BD-DOCS-047's still-open staging AZ decision (its blocking input 1) |
 | 5 | Naming prefix for disposable resources | Can be derived — recommend `bd-state-val-<yyyymmdd>-<random>`; 01B/01C must confirm no collision before creating anything |
 | 6 | Disposable-resource creation approval (master gate — permission to create *any* real Yandex resource at all) | `HUMAN_DECISION_REQUIRED` |
 | 7 | Human operator executing 01B/01C | `HUMAN_DECISION_REQUIRED` |
@@ -306,17 +345,24 @@ would let a reader replay access.
 ```
 01A (this record, docs-only)
   -> HUMAN_DECISION_REQUIRED gate (section 3)
-  -> 01B: Object Storage backend / locking validation (disposable-resource only)
   -> 01C: keyless authentication validation (disposable-resource only)
+  -> 01B: Object Storage backend / locking validation (disposable-resource only)
+  -> evidence + cleanup (sections 6-7, executed as part of 01B/01C themselves)
   -> a future, separately authorized Yandex remote-state bootstrap ADR
      (not drafted by this record)
 ```
 
-01B and 01C both require 01A complete and the section-3 gate cleared; they may
-then run in either order or in parallel — neither blocks the other, per this
-record's rationale for splitting them (see "Context"). Both feed a still-future
-Yandex remote-state bootstrap ADR, analogous in rigor to the now-deferred
-BD-DOCS-046, which this record does not draft.
+Both still require 01A complete and the section-3 gate cleared, but **01C now
+precedes 01B** rather than running in either order: 01B should preferably run
+using the credential model 01C already established, instead of minting a
+static key merely to test locking. If 01C cannot prove a keyless
+authentication path, execution stops for `HUMAN_DECISION_REQUIRED` (section 2)
+before 01B is allowed to fall back to a static credential — 01B does not get
+to independently request its own static-key exception just because it runs
+second; the same human gate applies to whichever slice ends up needing a
+credential decision. Both still feed a still-future Yandex remote-state
+bootstrap ADR, analogous in rigor to the now-deferred BD-DOCS-046, which this
+record does not draft.
 
 ## Issue #823
 
@@ -343,8 +389,9 @@ green server-ci/deployment checks). This record checks off nothing on #823.
 - A second, previously unevaluated locking candidate (YDB DynamoDB-compatible
   mode) is now on record rather than discovered mid-execution.
 - Splitting 01A/01B/01C keeps each slice's blast radius and review surface
-  small, and keeps a stalled authentication decision from blocking locking
-  evidence.
+  small, and resolves the authentication credential decision exactly once
+  (in 01C) instead of letting 01B re-litigate it or improvise its own static
+  key merely to test locking.
 
 **Negative / trade-offs**
 
