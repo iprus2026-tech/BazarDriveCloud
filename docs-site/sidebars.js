@@ -25,7 +25,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Decisions',
-      items: ['decisions/BD-DOCS-030', 'decisions/BD-DOCS-032', 'decisions/BD-DOCS-033', 'decisions/BD-DOCS-034', 'decisions/BD-DOCS-035', 'decisions/BD-DOCS-036', 'decisions/BD-DOCS-037', 'decisions/BD-DOCS-038', 'decisions/BD-DOCS-041', 'decisions/BD-DOCS-044', 'decisions/BD-DOCS-046'],
+      items: ['decisions/BD-DOCS-030', 'decisions/BD-DOCS-032', 'decisions/BD-DOCS-033', 'decisions/BD-DOCS-034', 'decisions/BD-DOCS-035', 'decisions/BD-DOCS-036', 'decisions/BD-DOCS-037', 'decisions/BD-DOCS-038', 'decisions/BD-DOCS-041', 'decisions/BD-DOCS-044', 'decisions/BD-DOCS-046', 'decisions/BD-DOCS-047'],
     },
     {
       type: 'category',
