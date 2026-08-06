@@ -16,6 +16,7 @@ related:
   files:
     - docs-site/docs/decisions/backend-staging-provider-and-iac.md
     - docs-site/docs/decisions/backend-staging-remote-state-bootstrap.md
+    - docs-site/docs/decisions/backend-staging-yandex-remote-state-validation-plan.md
     - docs-site/docs/processes/backend-staging-container-runbook.md
     - infra/staging/README.md
   issues:
@@ -193,6 +194,15 @@ own tooling and documentation.
 BD-DOCS-047 explicitly blocks any OpenTofu remote-state bootstrap against
 Yandex Object Storage until **both** of the following are proven. This record
 performs neither validation.
+
+> **Refined by [BD-DOCS-048](./backend-staging-yandex-remote-state-validation-plan.md).**
+> BD-DOCS-048 is the docs-only research slice (01A) that turns the two
+> `NOT_PROVEN` items below into an exact, execution-ready test/evidence/cleanup
+> contract, and splits the still-future execution work into two disposable-
+> resource-only slices (01B locking, 01C authentication). BD-DOCS-048 performs
+> no validation itself and does not change either `NOT_PROVEN` verdict below —
+> it narrows and sharpens the open questions research can resolve without
+> touching a live system.
 
 ### A. Locking
 
