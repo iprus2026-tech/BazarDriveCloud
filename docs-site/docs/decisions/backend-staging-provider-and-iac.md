@@ -3,8 +3,8 @@ id: BD-DOCS-044
 docType: decision-record
 title: Backend staging provider and IaC — Decision Record
 owner: backend-ops-agent
-status: draft
-revision: 2026-08-05
+status: superseded
+revision: 2026-08-06
 effectiveFrom: 2026-07-27
 reviewAfter: 2026-09-05
 visibleFor: [developer, dispatcher, product, qa]
@@ -26,7 +26,20 @@ slug: /decisions/backend-staging-provider-and-iac
 
 # Backend staging provider and IaC — Decision Record
 
-> **Proposed contract only — `status: draft`.** BD-BACKEND-DEPLOY-01B-1A fixes
+> **SUPERSEDED by [BD-DOCS-047](./backend-staging-provider-pivot-yandex-cloud.md).**
+> A new human architecture requirement mandates that the backend server and
+> PostgreSQL physically reside in the Russian Federation. Google Cloud has no
+> region located in the Russian Federation, so the Google Cloud provider
+> proposal in this record is **historical only** and is not the current
+> staging direction. The provider-independent decisions this record captured —
+> the dedicated staging environment strategy, the passenger/PWA URL, and the
+> approved `ALLOWED_ORIGIN` — remain valid and are restated in BD-DOCS-047.
+> Every Google-Cloud-specific choice below (project ID, Artifact Registry,
+> Cloud Run, Cloud SQL, Secret Manager, Cloud Run Job, Google Workload Identity
+> Federation) is superseded. This record is preserved as architectural history
+> and is not deleted or rewritten.
+
+> **Proposed contract only — `status: draft` (historical).** BD-BACKEND-DEPLOY-01B-1A fixes
 > the intended staging control-plane choices and safety boundaries. It creates no
 > Google Cloud project, billing relationship, registry, database, service,
 > identity, secret, remote state, image or deployment. Applying infrastructure

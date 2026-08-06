@@ -3,8 +3,8 @@ id: BD-DOCS-046
 docType: decision-record
 title: Backend staging OpenTofu remote-state bootstrap contract — Decision Record
 owner: backend-ops-agent
-status: draft
-revision: 2026-08-05
+status: superseded
+revision: 2026-08-06
 effectiveFrom: 2026-08-04
 reviewAfter: 2026-09-04
 visibleFor: [developer, dispatcher, product, qa]
@@ -25,7 +25,19 @@ slug: /decisions/backend-staging-remote-state-bootstrap
 
 # Backend staging OpenTofu remote-state bootstrap contract — Decision Record
 
-> **Proposed contract only — `status: draft`.** This record proposes the
+> **SUPERSEDED / DEFERRED by [BD-DOCS-047](./backend-staging-provider-pivot-yandex-cloud.md).**
+> Staging is pivoting away from Google Cloud to Yandex Cloud `ru-central1` for
+> Russian Federation physical-hosting reasons, so this record's GCS-specific
+> remote-state bootstrap contract — the bucket model, `.tflock` /
+> conditional-write locking, the `roles/storage.objectAdmin` vs. narrowed-role
+> analysis, and the `gcloud`-based bootstrap steps — no longer applies. This is
+> a **deferral, not a replacement**: BD-DOCS-047 does not invent a Yandex
+> Object Storage bootstrap procedure. It explicitly marks Yandex remote-state
+> locking and keyless remote-state authentication as unproven and blocks any
+> bootstrap until a future, separate, validation-backed slice closes both. This
+> record is preserved as architectural history and is not deleted or rewritten.
+
+> **Proposed contract only — `status: draft` (historical).** This record proposes the
 > OpenTofu remote-state bootstrap model for the staging environment defined in
 > [BD-DOCS-044](./backend-staging-provider-and-iac.md). It creates no Google
 > Cloud project, bucket, IAM binding, service account, database, or any
