@@ -37,6 +37,19 @@ slug: /decisions/backend-staging-yandex-remote-state-validation-plan
 > authorized execution slices (**01B**, **01C**) that this record does not
 > authorize to run.
 
+> **Correction pass — authentication candidate set expanded (same-day,
+> 2026-08-06).** Current official Yandex documentation, re-checked against this
+> record's original research snapshot, adds two authentication mechanisms the
+> first pass did not evaluate: a CLI-issued **ephemeral access key**
+> (`yc iam access-key issue-ephemeral`, added in Yandex Cloud CLI 0.181.0,
+> 2025-12-11) governed by the `iam.serviceAccounts.ephemeralAccessKeyAdmin`
+> role, and a separately documented **STS temporary key** (`aws sts
+> assume-role` against Yandex's STS endpoint, `duration-seconds` capped at
+> 43200/12h). Section 2 below is corrected accordingly. Neither addition
+> changes either `NOT_PROVEN` verdict, and neither is execution-validated by
+> this pass — this remains a documentation-only correction, exactly as strict
+> about no cloud contact as the record it corrects.
+
 ## Context
 
 BD-DOCS-047 pivoted staging to Yandex Cloud `ru-central1` and left two
@@ -188,56 +201,117 @@ co-default.
 ## 2. Authentication classification
 
 BD-DOCS-047 frames the authentication question as "no keyless route found for
-the state backend." Deeper reading during this research pass narrows and
-partially revises that: Yandex Object Storage's S3 API itself supports more
-than static keys, but the specific mechanism the OpenTofu S3 backend can
+the state backend." Deeper reading during the original research pass narrowed
+and partially revised that: Yandex Object Storage's S3 API itself supports
+more than static keys, but the specific mechanism the OpenTofu S3 backend can
 actually consume is narrower than what Yandex's data plane accepts in general.
 **Distinguishing "Yandex IAM control-plane auth," "GitHub → Yandex Workload
 Identity Federation," and "Object Storage's S3-compatible data-plane auth" as
 three separate surfaces — per this record's mandate — is exactly what resolves
 that apparent tension:**
 
+This correction pass adds two rows the original pass did not evaluate — a
+CLI-issued **ephemeral access key** and a separately documented **STS
+temporary key** — and splits them apart because current official documentation
+shows they are two different mechanisms with two different credential shapes,
+not one generic "temporary key" concept:
+
 | Method | Documentation status | Execution validation needed | Long-lived secret | Classification |
 |---|---|---|---|---|
 | Static S3 access key/secret (`YC...`/`YC...`, no expiry) | `DOCUMENTED` — Yandex's own IAM docs: "a static key has no expiration date" | No — behavior is known | **Yes** | `SUPPORTED` (technically works), but any *use* requires an explicit human exception per BD-DOCS-047 — never an autonomous default |
-| Temporary/"ephemeral" access keys | `DOCUMENTED` to exist, but **derived from a static key** ("from a static key, you can create a temporary access key") — not from GitHub OIDC/WIF directly | Yes — exact API/CLI, TTL, and whether disabling static keys also disables these were not found in this pass | No (bounded TTL), but rooted in a static key at creation time | `NOT_PROVEN` — reduces blast radius of a leaked credential, does **not** eliminate the static-secret dependency at the root; not a genuine keyless bootstrap |
+| **Ephemeral access key** (`yc iam access-key issue-ephemeral`, Yandex Cloud CLI ≥0.181.0) | `DOCUMENTED` to exist as a distinct feature ("issuing ephemeral static access keys"), gated by the `iam.serviceAccounts.ephemeralAccessKeyAdmin` role. **Not documented in current public sources found:** the exact returned credential shape (documentation describes it as an "ephemeral *static* access key," i.e. plausibly the same two-part `YC...` Key ID/Secret format as a static key, not confirmed to include a session-token component), the exact TTL/duration range, or whether the *caller* can authenticate with only a Yandex IAM token (no pre-existing static key) to invoke it | Yes — output shape, TTL, and caller-authentication requirements were not found in current public documentation | No, if the issuing call itself needs no static key (unconfirmed); the *issued* credential is still secret-bearing but bounded-TTL | `REQUIRES_EXECUTION_VALIDATION` — existence and the governing role are `DOCUMENTED`; the WIF→issue-ephemeral chain and output shape are not |
+| **STS temporary key** (`aws sts assume-role` against Yandex's STS endpoint) | `DOCUMENTED` — official tutorial: `--duration-seconds` "cannot exceed 43200" (12h); response shape is the full AWS triple (`AccessKeyId`/`SecretAccessKey`/`SessionToken`/`Expiration`), matching what OpenTofu's S3 backend expects | Yes — but the same tutorial's own documented workflow assumes the caller **already has a static access key** created in a prior step before calling `assume-role`; no path from an IAM token or WIF-derived credential to this call was found | Rooted in a static key at the point of *calling* `assume-role`, even though the *returned* credential is short-lived | `NOT_PROVEN`, leaning **not a genuine keyless bootstrap** — reduces exposure of the long-lived key (it need not be reused directly for signing), but does not eliminate the static-secret dependency at the root |
 | Yandex IAM token (Yandex account / service account) | `DOCUMENTED` for the S3 API directly — passed as `Authorization: Bearer ${IAM_TOKEN}`, a **non-SigV4** auth mode; TTL ≤ 12h, refresh hourly recommended | Yes — see backend-compatibility gap below | No | `NOT_SUPPORTED` **for OpenTofu's stock S3 backend specifically**, `SUPPORTED` for the Object Storage S3 API in general — see next row |
-| GitHub → Yandex Workload Identity Federation | `DOCUMENTED` for Yandex's own control-plane API only: the OIDC exchange "exchanges the JWT token for an IAM token of the Yandex Cloud service account," used for "the required Yandex Cloud API requests." No documentation found of this producing an AWS-SigV4-shaped credential (access key/secret/session token) for Object Storage. | Yes — this is the central open question | No | `NOT_PROVEN`, `REQUIRES_EXECUTION_VALIDATION` |
+| GitHub → Yandex Workload Identity Federation | `DOCUMENTED` for Yandex's own control-plane API only: the OIDC exchange "exchanges the JWT token for an IAM token of the Yandex Cloud service account," used for "the required Yandex Cloud API requests." No documentation found of this producing an AWS-SigV4-shaped credential (access key/secret/session token) for Object Storage directly. **Newly relevant to this correction:** because `yc iam access-key issue-ephemeral` is a Yandex Cloud control-plane API call (like other `yc iam` operations), not an S3-signed call, it is plausible in principle that a WIF-derived IAM token holding `iam.serviceAccounts.ephemeralAccessKeyAdmin` could call it directly — but no documentation found confirms this, and this record does not assume it. | Yes — the central open question, now sharpened to: "can a WIF-derived IAM token call `issue-ephemeral` without a pre-existing static key?" | No | `NOT_PROVEN`, `REQUIRES_EXECUTION_VALIDATION` |
 | Service-account IAM token (short-lived, minted from an SA key or WIF) | Same control-plane/data-plane distinction as above | Yes | No (but see below re: how it's minted) | `NOT_PROVEN` for the same reason |
-| AWS-compatible credential-provider-chain / STS-equivalent (`assume_role_with_web_identity`) | **`DOCUMENTED` on the OpenTofu side**: the S3 backend supports `assume_role_with_web_identity { role_arn, web_identity_token_file }`, calling AWS STS's `AssumeRoleWithWebIdentity` API. **No documentation found that Yandex Cloud exposes an STS-compatible `AssumeRoleWithWebIdentity` endpoint.** Yandex's own WIF instead exchanges the OIDC token for a native Yandex IAM token via Yandex's own control-plane API — a structurally different mechanism, not an STS-compatible one. | Yes — confirm absence/presence of an STS-compatible endpoint definitively | No (if it existed) | `NOT_PROVEN`, leaning `NOT_SUPPORTED` pending confirmation |
+| AWS-compatible credential-provider-chain / STS-equivalent (`assume_role_with_web_identity`) | **`DOCUMENTED` on the OpenTofu side**, re-confirmed against current OpenTofu S3 backend documentation: the backend supports `assume_role_with_web_identity { role_arn, web_identity_token / web_identity_token_file }`, calling AWS STS's `AssumeRoleWithWebIdentity` API, and its `endpoints` block can override `sts` to a non-AWS endpoint. **No documentation found that Yandex's STS endpoint implements the `AssumeRoleWithWebIdentity` action** — Yandex's own documented STS operation is plain `assume-role`, which (per the row above) itself requires a pre-existing static key to invoke. Yandex's WIF instead exchanges the OIDC token for a native Yandex IAM token via Yandex's own control-plane API — a structurally different mechanism, not an STS-compatible one. | Yes — confirm absence/presence of an `AssumeRoleWithWebIdentity`-equivalent action definitively | No (if it existed) | `NOT_PROVEN`, leaning `NOT_SUPPORTED` — this correction pass found additional negative evidence (the documented `assume-role` workflow's static-key prerequisite) but no positive evidence changing the original verdict |
 | Metadata/workload-identity auto-injected credentials | Applies to code running *on* Yandex Compute/Serverless; GitHub Actions runners are external, so this surface does not apply to CI-driven `tofu` runs | Moot for this use case | No | `NOT_SUPPORTED` for the CI use case |
 
-**The precise gap, stated once and not to be re-litigated as a vague
-"unproven": OpenTofu's S3 backend is built on the AWS SDK, which authenticates
-every request by SigV4-signing it with an access-key/secret-key/session-token
-credential triple. Object Storage's S3 API separately accepts a raw
-`Authorization: Bearer` IAM token as a non-SigV4 alternative — but that mode is
-a property of the Yandex S3 endpoint, not something OpenTofu's stock S3
-backend implementation is documented to send.** So a WIF-obtained Yandex IAM
-token is usable against Object Storage by a client that implements Yandex's
-Bearer-token scheme, but not — on current evidence — by OpenTofu's S3 backend
-as shipped, which expects AWS-shaped credentials or a genuine
-`AssumeRoleWithWebIdentity`-compatible endpoint, neither of which is confirmed
-to exist on the Yandex side. This is 01C's exact reason for existing: confirm
-or refute this gap experimentally (e.g. whether a custom `endpoints`/signing
-override, a wrapper credential process, or an as-yet-undocumented Yandex STS
-surface closes it) before concluding no keyless path exists.
+**The precise gap, restated with the corrected candidate set:** OpenTofu's S3
+backend is built on the AWS SDK and its standard credential chain, confirmed
+against current OpenTofu documentation to accept `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` (the full temporary-credential
+triple) via environment variables, shared AWS CLI configuration, or
+`assume_role_with_web_identity`. **That is not the open question — OpenTofu's
+side of the compatibility gap is confirmed and documented.** The open question
+is entirely on the Yandex side: which of the two newly distinguished
+mechanisms, if either, can be reached from a WIF-derived IAM token without an
+intervening static key. The ephemeral-access-key path (`issue-ephemeral`) is
+the more plausible keyless candidate of the two — it is a control-plane API
+call, the kind WIF-derived IAM tokens are documented to authenticate — but its
+exact caller-authentication requirement and output shape are undocumented in
+current public sources found by this pass. The STS `assume-role` path, by
+contrast, is documented to require a pre-existing static key as its own
+prerequisite and therefore does not close the keyless gap even though its
+*output* shape is the most OpenTofu-familiar of the two.
+
+**This record does not classify the ephemeral-access-key candidate as
+`KEYLESS_BACKEND_AUTH_PROVEN`.** No execution has occurred. It is classified
+`REQUIRES_EXECUTION_VALIDATION`, per the same standard the original pass
+applied to every other unverified candidate. The revised 01C execution ladder
+(section 2a below) exists specifically to close this experimentally.
 
 **If 01C finds no keyless route, the resulting contract returns
 `HUMAN_DECISION_REQUIRED` — it must not default to a static key.** No agent,
 in 01C or any future slice, may accept a static/long-lived-key exception
-autonomously; that decision is reserved for a human, per BD-DOCS-047.
+autonomously; that decision is reserved for a human, per BD-DOCS-047. This
+correction does not change that gate and does not pre-approve any exception —
+including for the STS `assume-role` path's static-key prerequisite, which
+remains exactly the kind of long-lived-secret dependency the "no static key by
+default" rule exists to catch, not a loophole around it.
 
-**Correction note.** Section 1's locking evidence was strengthened in this
-correction pass; this section's authentication classification is unchanged by
-that improvement. Locking and authentication are independent technical
-questions — stronger evidence that Yandex documents matching conditional-write
-semantics says nothing about whether OpenTofu's S3 backend can authenticate
-without a long-lived static key. Keyless OpenTofu backend authentication
-remains `EXECUTION-DEPENDENT` / `NOT_PROVEN` unless and until authoritative
-evidence proves a compatible credential path (section 8 below). No static-key
-exception is approved here, or by any future agent acting alone; that remains
-reserved for an explicit human decision per BD-DOCS-047.
+**Correction note (round 1).** Section 1's locking evidence was strengthened in
+an earlier correction pass; that pass's improvement to the locking section is
+unrelated to and unchanged by this authentication correction. Locking and
+authentication remain independent technical questions.
+
+**Correction note (round 2 — this pass).** Current official Yandex
+documentation, not found at the time of the original research pass, adds the
+ephemeral-access-key CLI feature and the STS temporary-key mechanism as two
+distinct, previously unevaluated rows. Neither upgrades the authentication
+verdict past `NOT_PROVEN`/`REQUIRES_EXECUTION_VALIDATION`. Keyless OpenTofu
+backend authentication remains `EXECUTION-DEPENDENT` until 01C actually tests
+the ephemeral-access-key chain end to end. No static-key exception is approved
+here, or by any future agent acting alone; that remains reserved for an
+explicit human decision per BD-DOCS-047.
+
+### 2a. Revised 01C execution ladder
+
+This correction replaces the implicit single-shot framing of "01C tests
+authentication" with an explicit three-stage ladder, sequenced to fail as
+cheaply as possible:
+
+- **01C-A — WIF control-plane authentication.** GitHub OIDC → Yandex WIF →
+  short-lived Yandex IAM token. No Object Storage bucket needed — this is a
+  pure control-plane test. Evidence: issuer, subject/principal ID, TTL, expiry
+  timestamp, HTTP status. `PASS` proves only that the control-plane exchange
+  works; it does not by itself advance the data-plane question.
+- **01C-B — ephemeral credential issuance.** Using the 01C-A IAM session (or a
+  service account it can act as, if the role requires one), call the
+  `iam.serviceAccounts.ephemeralAccessKeyAdmin`-gated `issue-ephemeral`
+  operation and record the returned credential's *shape* (Key ID/Secret only,
+  or a full triple with session token), TTL, and whether the call succeeded
+  using only the IAM token with no static key involved anywhere in the chain.
+  **If current documentation does not fully prove the exact
+  WIF → `issue-ephemeral` chain before 01C-B runs, that is expected and is not
+  a reason to mark the candidate `NOT_SUPPORTED`** — this record already marks
+  it `REQUIRES_EXECUTION_VALIDATION`, and 01C-B's job is to execute that
+  validation, not to have already resolved it on paper.
+- **01C-C — OpenTofu S3 backend authentication.** Using only the ephemeral
+  AWS-compatible credential from 01C-B (never a static key), demonstrate
+  authenticated backend access. Prefer `tofu init -reconfigure` plus the
+  minimal backend operation sufficient to prove the credential is accepted —
+  **do not run `tofu plan` merely to test authentication**, and do not create
+  any provider-managed resource. State write and locking behavior belong
+  primarily to 01B, not 01C-C; 01C-C's scope is authentication only.
+
+The IAM Bearer-token test (the original H2) is preserved but **reclassified**:
+it remains a useful Yandex-data-plane sanity check (confirms Object Storage
+honors Yandex's own Bearer auth mode), but it is **no longer treated as a
+prerequisite** for 01C-C if the ephemeral-credential path is what OpenTofu will
+actually consume. A Bearer-mode success or failure does not gate 01C-B/01C-C;
+it may run in parallel with, or be skipped in favor of, the ephemeral-key
+chain.
 
 ## 3. Human decisions blocking 01B/01C
 
@@ -256,9 +330,10 @@ staging folder/budget by default.
 | 5 | Naming prefix for disposable resources | Can be derived — recommend `bd-state-val-<yyyymmdd>-<random>`; 01B/01C must confirm no collision before creating anything |
 | 6 | Disposable-resource creation approval (master gate — permission to create *any* real Yandex resource at all) | `HUMAN_DECISION_REQUIRED` |
 | 7 | Human operator executing 01B/01C | `HUMAN_DECISION_REQUIRED` |
-| 8 | Authentication method for the run (which row of section 2's matrix, or an explicit static-key exception) | `HUMAN_DECISION_REQUIRED` — never defaulted |
+| 8 | Authentication method for the run — **recommended default (this correction): `WIF → IAM token → ephemeral access key (issue-ephemeral) → OpenTofu S3 backend`** (section 2a's 01C-A→B→C ladder), or an explicit static-key exception | `HUMAN_DECISION_REQUIRED` — the recommendation is not a selection; static key stays `NO` by default |
 | 9 | IAM role bindings for the validation identity | Policy is settled (least-privilege, no `Owner`/`Editor`-equivalent, scoped to the one disposable bucket); exact Yandex role names are `EXECUTION-DEPENDENT`, to be confirmed at 01B/01C time, not invented here |
 | 10 | Cleanup authority (who confirms teardown, mirroring BD-DOCS-046's bootstrap-identity precedent) | `HUMAN_DECISION_REQUIRED` |
+| 11 | Ephemeral-key issuance permission grant (`iam.serviceAccounts.ephemeralAccessKeyAdmin`) scoped to the validation identity — new in this correction | `HUMAN_DECISION_REQUIRED` — must be granted narrowly (validation identity only), never folder-wide |
 
 ## 4. Disposable-experiment design
 
@@ -315,10 +390,22 @@ Mandatory, part of 01B/01C itself — not a follow-up task:
 
 - Every created object, bucket, and lock is deleted before the slice reports
   complete.
-- Any issued key/token is invalidated at the provider (not just discarded
-  locally) immediately after use.
-- Any IAM binding created for the validation identity is removed; the
-  identity itself is deleted if it existed solely for this test.
+- **Correction (this pass): credentials are handled per their
+  provider-documented lifecycle, not by one blanket claim.** Where the
+  provider supports **explicit revocation/deletion** (static access keys; an
+  ephemeral access key, if a delete/revoke operation is confirmed to exist for
+  it), that revocation is performed and confirmed. For credentials with **no
+  documented explicit-revoke path found** (Yandex IAM tokens; the STS
+  temporary-key/ephemeral-access-key outputs, unless a revoke API is
+  separately confirmed at execution time), cleanup instead records the
+  credential's TTL and confirms it was never persisted anywhere outside the
+  run's memory/environment. "Every issued token is invalidated at the
+  provider" is not asserted where no such provider mechanism is confirmed to
+  exist — the original wording overstated what is currently documented.
+- Any IAM binding (including any WIF federated-credential binding and the
+  `iam.serviceAccounts.ephemeralAccessKeyAdmin` grant) created for the
+  validation identity is removed; the identity itself is deleted if it existed
+  solely for this test.
 - Any stale/held lock is explicitly resolved (normal unlock or logged
   force-unlock) — never left dangling.
 - Any temporary local file (`.tf`, state, credentials) is removed from disk/CI
@@ -345,7 +432,9 @@ would let a reader replay access.
 ```
 01A (this record, docs-only)
   -> HUMAN_DECISION_REQUIRED gate (section 3)
-  -> 01C: keyless authentication validation (disposable-resource only)
+  -> 01C-A: WIF control-plane authentication (no bucket)
+  -> 01C-B: ephemeral credential issuance (issue-ephemeral, via 01C-A session)
+  -> 01C-C: OpenTofu S3 backend authentication (ephemeral credential only)
   -> 01B: Object Storage backend / locking validation (disposable-resource only)
   -> evidence + cleanup (sections 6-7, executed as part of 01B/01C themselves)
   -> a future, separately authorized Yandex remote-state bootstrap ADR
@@ -355,14 +444,21 @@ would let a reader replay access.
 Both still require 01A complete and the section-3 gate cleared, but **01C now
 precedes 01B** rather than running in either order: 01B should preferably run
 using the credential model 01C already established, instead of minting a
-static key merely to test locking. If 01C cannot prove a keyless
-authentication path, execution stops for `HUMAN_DECISION_REQUIRED` (section 2)
-before 01B is allowed to fall back to a static credential — 01B does not get
-to independently request its own static-key exception just because it runs
-second; the same human gate applies to whichever slice ends up needing a
-credential decision. Both still feed a still-future Yandex remote-state
-bootstrap ADR, analogous in rigor to the now-deferred BD-DOCS-046, which this
-record does not draft.
+static key merely to test locking. Within 01C itself, 01C-A → 01C-B → 01C-C
+(section 2a) is a strict sequence with its own stop gate at each stage — a
+failure at 01C-A means 01C-B/C do not run at all. **This correction's
+recommended default execution hypothesis is `WIF → IAM token → ephemeral
+access key (issue-ephemeral) → OpenTofu S3 backend`** (the 01C-A→B→C ladder
+above); that is a recommendation for a human to approve, not an autonomous
+selection, and it does not remove the human's authority to pick a different
+candidate row from section 2's table. If 01C cannot prove a keyless
+authentication path through *any* candidate, execution stops for
+`HUMAN_DECISION_REQUIRED` (section 2) before 01B is allowed to fall back to a
+static credential — 01B does not get to independently request its own
+static-key exception just because it runs second; the same human gate applies
+to whichever slice ends up needing a credential decision. Both still feed a
+still-future Yandex remote-state bootstrap ADR, analogous in rigor to the
+now-deferred BD-DOCS-046, which this record does not draft.
 
 ## Issue #823
 
@@ -392,6 +488,10 @@ green server-ci/deployment checks). This record checks off nothing on #823.
   small, and resolves the authentication credential decision exactly once
   (in 01C) instead of letting 01B re-litigate it or improvise its own static
   key merely to test locking.
+- **This correction pass** adds a materially more plausible keyless candidate
+  (the ephemeral-access-key path) than the original pass had evidence for, and
+  gives 01C an explicit three-stage ladder (01C-A/B/C, section 2a) with its
+  own stop gates instead of one undifferentiated authentication test.
 
 **Negative / trade-offs**
 
@@ -404,15 +504,22 @@ green server-ci/deployment checks). This record checks off nothing on #823.
   pins, not assumed to hold indefinitely.
 - No `STATE_LOCKING_PROVEN` or authentication verdict exists yet — bootstrap
   remains blocked exactly as BD-DOCS-047 already states.
+- The ephemeral-access-key candidate's exact output shape and caller-
+  authentication requirement remain undocumented in current public sources;
+  this correction upgrades it from unconsidered to
+  `REQUIRES_EXECUTION_VALIDATION`, not to a proven path — 01C-B could still
+  find it requires a static key at some step not visible in current
+  documentation.
 
 **Follow-ups**
 
 - A future execution slice (01B) must run the section 5 test sequence against
   a disposable bucket once the section 3 human decisions are resolved.
-- A future execution slice (01C) must resolve the authentication gap in
-  section 2, particularly whether any Yandex-side mechanism can supply
-  OpenTofu's S3 backend with AWS-shaped or `assume_role_with_web_identity`-
-  compatible credentials without a long-lived static key.
+- A future execution slice (01C), now sequenced as 01C-A → 01C-B → 01C-C
+  (section 2a), must resolve the authentication gap in section 2 — in
+  particular whether a WIF-derived IAM token can call `issue-ephemeral`
+  without a pre-existing static key, what the returned credential's exact
+  shape is, and whether OpenTofu's stock S3 backend accepts it.
 - `infra/staging/README.md`'s stale Google Cloud narrative should be
   refreshed to match BD-DOCS-047 in a separate, docs-only follow-up — not part
   of this record's scope.
