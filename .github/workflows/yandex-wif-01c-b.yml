@@ -1,0 +1,253 @@
+name: BD-BACKEND-DEPLOY-01C-B Yandex ephemeral credential proof
+
+# Issue #858, 01C-B only.
+# Proves the narrow authentication path:
+# GitHub OIDC -> Yandex WIF -> short-lived IAM token -> CreateEphemeral.
+#
+# This workflow is committed first in CONTRACT-ONLY state. It does not contact
+# Yandex until the temporary 01C-B service-account and federation IDs replace
+# the PENDING markers after the reviewed IAM setup gate.
+#
+# Forbidden here: Object Storage/S3 data-plane calls, OpenTofu/Terraform,
+# PostgreSQL, Serverless Containers, staging deployment, static access keys,
+# JSON keys, and application/runtime changes.
+
+on:
+  push:
+    branches:
+      - infra/backend-deploy-01c-b-ephemeral-proof
+
+permissions:
+  contents: read
+
+jobs:
+  yandex-ephemeral-proof:
+    name: GitHub OIDC -> Yandex WIF -> CreateEphemeral
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+      EXPECTED_GITHUB_AUDIENCE: https://github.com/iprus2026-tech
+      EXPECTED_SUBJECT: repo:iprus2026-tech/BazarDriveCloud:ref:refs/heads/infra/backend-deploy-01c-b-ephemeral-proof
+      EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
+      EXPECTED_REF: refs/heads/infra/backend-deploy-01c-b-ephemeral-proof
+      YANDEX_SERVICE_ACCOUNT_ID: PENDING
+      YANDEX_FEDERATION_ID: PENDING
+      YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
+      YANDEX_EPHEMERAL_ENDPOINT: https://iam.api.cloud.yandex.net/iam/aws-compatibility/v1/ephemeralAccessKeys
+      REQUESTED_EPHEMERAL_DURATION: 900s
+    steps:
+      - name: Contract gate and secret-safe ephemeral credential proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ "${YANDEX_SERVICE_ACCOUNT_ID}" == "PENDING" || "${YANDEX_FEDERATION_ID}" == "PENDING" ]]; then
+            echo '01C-B contract-only marker: execution is not armed; no Yandex endpoint was contacted.'
+            {
+              echo '## BD-BACKEND-DEPLOY-01C-B — contract only'
+              echo
+              echo '- Execution armed: `NO`'
+              echo '- Yandex contacted: `NO`'
+              echo '- Object Storage contacted: `NO`'
+              echo '- OpenTofu/Terraform run: `NO`'
+              echo '- Static/JSON credential used: `NO`'
+              echo
+              echo 'Temporary 01C-B IAM resource IDs must be reviewed and committed before proof execution.'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          [[ "${YANDEX_SERVICE_ACCOUNT_ID}" =~ ^[a-z0-9]+$ ]]
+          [[ "${YANDEX_FEDERATION_ID}" =~ ^[a-z0-9]+$ ]]
+
+          echo '01C-B marker: requesting GitHub OIDC token'
+          oidc_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${EXPECTED_GITHUB_AUDIENCE}")"
+          oidc_token="$(jq -er '.value' <<<"${oidc_response}")"
+          echo "::add-mask::${oidc_token}"
+
+          payload_b64="${oidc_token#*.}"
+          payload_b64="${payload_b64%%.*}"
+          claims="$(PAYLOAD_B64="${payload_b64}" python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          payload = os.environ['PAYLOAD_B64']
+          payload += '=' * (-len(payload) % 4)
+          decoded = base64.urlsafe_b64decode(payload.encode('ascii'))
+          obj = json.loads(decoded)
+          safe_keys = (
+              'iss', 'aud', 'sub', 'repository', 'ref', 'sha',
+              'workflow', 'job_workflow_ref', 'iat', 'exp'
+          )
+          print(json.dumps({key: obj.get(key) for key in safe_keys}, separators=(',', ':')))
+          PY
+          )"
+
+          issuer="$(jq -er '.iss' <<<"${claims}")"
+          github_audience="$(jq -er '.aud' <<<"${claims}")"
+          subject="$(jq -er '.sub' <<<"${claims}")"
+          repository="$(jq -er '.repository' <<<"${claims}")"
+          ref="$(jq -er '.ref' <<<"${claims}")"
+          sha="$(jq -er '.sha' <<<"${claims}")"
+          issued_at="$(jq -er '.iat' <<<"${claims}")"
+          expires_at="$(jq -er '.exp' <<<"${claims}")"
+          oidc_ttl_seconds="$((expires_at - issued_at))"
+
+          [[ "${issuer}" == "${EXPECTED_ISSUER}" ]]
+          [[ "${github_audience}" == "${EXPECTED_GITHUB_AUDIENCE}" ]]
+          [[ "${subject}" == "${EXPECTED_SUBJECT}" ]]
+          [[ "${repository}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${ref}" == "${EXPECTED_REF}" ]]
+          (( oidc_ttl_seconds > 0 ))
+          echo '01C-B marker: GitHub OIDC claims match the approved exact binding'
+
+          echo '01C-B marker: exchanging OIDC JWT for short-lived Yandex IAM token'
+          exchange_with_status="$(curl --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode 'requested_token_type=urn:ietf:params:oauth:token-type:access_token' \
+            --data-urlencode "audience=${YANDEX_SERVICE_ACCOUNT_ID}" \
+            --data-urlencode "subject_token=${oidc_token}" \
+            --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:id_token' \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_TOKEN_ENDPOINT}")"
+
+          exchange_http_status="${exchange_with_status##*$'\n'}"
+          exchange_response="${exchange_with_status%$'\n'*}"
+          [[ "${exchange_http_status}" == "200" ]]
+
+          iam_token="$(jq -er '.access_token' <<<"${exchange_response}")"
+          echo "::add-mask::${iam_token}"
+          iam_token_type="$(jq -er '.token_type' <<<"${exchange_response}")"
+          iam_ttl_seconds="$(jq -er '.expires_in' <<<"${exchange_response}")"
+          [[ "${iam_token_type}" == "Bearer" ]]
+          [[ "${iam_ttl_seconds}" =~ ^[0-9]+$ ]]
+          (( iam_ttl_seconds > 0 ))
+
+          unset exchange_with_status exchange_response oidc_response payload_b64 oidc_token claims
+          echo '01C-B marker: Yandex WIF token exchange succeeded'
+
+          session_name="bd-01c-b-${GITHUB_RUN_ID}"
+          issue_request_epoch="$(date +%s)"
+          issue_body="$(jq -cn \
+            --arg subjectId "${YANDEX_SERVICE_ACCOUNT_ID}" \
+            --arg sessionName "${session_name}" \
+            --arg duration "${REQUESTED_EPHEMERAL_DURATION}" \
+            '{subjectId:$subjectId,sessionName:$sessionName,duration:$duration}')"
+
+          echo '01C-B marker: requesting 15-minute ephemeral AWS-compatible credential metadata'
+          issue_with_status="$(curl --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${iam_token}" \
+            --header 'Content-Type: application/json' \
+            --data "${issue_body}" \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_EPHEMERAL_ENDPOINT}")"
+
+          issue_http_status="${issue_with_status##*$'\n'}"
+          issue_response="${issue_with_status%$'\n'*}"
+          unset iam_token issue_with_status issue_body
+          [[ "${issue_http_status}" == "200" ]]
+
+          access_key_id="$(jq -er '.accessKeyId' <<<"${issue_response}")"
+          secret_access_key="$(jq -er '.secret' <<<"${issue_response}")"
+          session_token="$(jq -er '.sessionToken' <<<"${issue_response}")"
+          credential_expires_at="$(jq -er '.expiresAt' <<<"${issue_response}")"
+
+          echo "::add-mask::${access_key_id}"
+          echo "::add-mask::${secret_access_key}"
+          echo "::add-mask::${session_token}"
+
+          [[ -n "${access_key_id}" ]]
+          [[ -n "${secret_access_key}" ]]
+          [[ -n "${session_token}" ]]
+          [[ -n "${credential_expires_at}" ]]
+
+          credential_expires_epoch="$(EXPIRES_AT="${credential_expires_at}" python3 - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          import re
+
+          value = os.environ['EXPIRES_AT']
+          match = re.fullmatch(r'(.*?)(?:\.(\d+))?Z', value)
+          if not match:
+              raise SystemExit('expiresAt is not RFC3339 UTC')
+          base, fraction = match.groups()
+          fraction = (fraction or '')[:6].ljust(6, '0')
+          normalized = f'{base}.{fraction}+00:00'
+          dt = datetime.fromisoformat(normalized).astimezone(timezone.utc)
+          print(int(dt.timestamp()))
+          PY
+          )"
+          observed_ephemeral_ttl_seconds="$((credential_expires_epoch - issue_request_epoch))"
+
+          # The approved request is exactly 15 minutes (900s). Allow only small
+          # network/clock skew while rejecting a materially longer credential.
+          (( observed_ephemeral_ttl_seconds >= 840 ))
+          (( observed_ephemeral_ttl_seconds <= 930 ))
+
+          access_key_id_present=YES
+          secret_access_key_present=YES
+          session_token_present=YES
+
+          unset issue_response access_key_id secret_access_key session_token
+          echo '01C-B marker: ephemeral credential shape and TTL validated without exposing credential values'
+
+          echo '--- BEGIN 01C-B SAFE EPHEMERAL EVIDENCE ---'
+          echo "github_oidc_issuer=${issuer}"
+          echo "github_oidc_audience=${github_audience}"
+          echo "github_oidc_subject=${subject}"
+          echo "github_oidc_repository=${repository}"
+          echo "github_oidc_ref=${ref}"
+          echo "github_oidc_sha=${sha}"
+          echo "github_oidc_ttl_seconds=${oidc_ttl_seconds}"
+          echo "yandex_federation_id=${YANDEX_FEDERATION_ID}"
+          echo "yandex_service_account_id=${YANDEX_SERVICE_ACCOUNT_ID}"
+          echo "yandex_token_exchange_http_status=${exchange_http_status}"
+          echo "yandex_iam_token_type=${iam_token_type}"
+          echo "yandex_iam_token_ttl_seconds=${iam_ttl_seconds}"
+          echo "ephemeral_issue_http_status=${issue_http_status}"
+          echo "ephemeral_requested_duration=${REQUESTED_EPHEMERAL_DURATION}"
+          echo "ephemeral_observed_ttl_seconds=${observed_ephemeral_ttl_seconds}"
+          echo "ephemeral_expires_at=${credential_expires_at}"
+          echo "ephemeral_access_key_id_present=${access_key_id_present}"
+          echo "ephemeral_secret_access_key_present=${secret_access_key_present}"
+          echo "ephemeral_session_token_present=${session_token_present}"
+          echo 'ephemeral_credential_values_printed_or_persisted=NO'
+          echo 'static_credentials_used=NO'
+          echo 'json_service_account_key_used=NO'
+          echo 'object_storage_contacted=NO'
+          echo 'opentofu_or_terraform_run=NO'
+          echo 'postgresql_contacted=NO'
+          echo 'serverless_containers_contacted=NO'
+          echo '--- END 01C-B SAFE EPHEMERAL EVIDENCE ---'
+
+          {
+            echo '## BD-BACKEND-DEPLOY-01C-B — ephemeral credential proof'
+            echo
+            echo "- GitHub issuer: \`${issuer}\`"
+            echo "- GitHub audience: \`${github_audience}\`"
+            echo "- GitHub subject: \`${subject}\`"
+            echo "- GitHub OIDC TTL: \`${oidc_ttl_seconds}s\`"
+            echo "- Yandex federation: \`${YANDEX_FEDERATION_ID}\`"
+            echo "- Yandex service account: \`${YANDEX_SERVICE_ACCOUNT_ID}\`"
+            echo "- Token exchange HTTP: \`${exchange_http_status}\`"
+            echo "- Ephemeral issuance HTTP: \`${issue_http_status}\`"
+            echo "- Requested duration: \`${REQUESTED_EPHEMERAL_DURATION}\`"
+            echo "- Observed TTL: \`${observed_ephemeral_ttl_seconds}s\`"
+            echo "- Access key ID field present: \`${access_key_id_present}\`"
+            echo "- Secret access key field present: \`${secret_access_key_present}\`"
+            echo "- Session token field present: \`${session_token_present}\`"
+            echo
+            echo 'No raw OIDC/IAM/AWS-compatible credential value was printed or persisted. No static credential was used.'
+            echo 'Object Storage was not contacted. OpenTofu/Terraform was not run.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo '::notice title=01C-B PASS candidate::GitHub OIDC -> Yandex WIF -> short-lived IAM token -> 15-minute ephemeral AWS-compatible credential issuance completed with secret-safe evidence.'
