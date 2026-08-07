@@ -17,8 +17,8 @@
     "check": "npm run validate:frontmatter && npm run validate:registry && npm run validate:self && npm run validate:nav && npm run build"
   },
   "dependencies": {
-    "@docusaurus/core": "^3.6.0",
-    "@docusaurus/preset-classic": "^3.6.0",
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
     "clsx": "^2.1.1",
     "prism-react-renderer": "^2.4.0",
     "react": "^18.3.1",
@@ -26,7 +26,7 @@
   },
   "devDependencies": {
     "gray-matter": "^4.0.3",
-    "js-yaml": "^5.1.0"
+    "js-yaml": "^5.2.3"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5"
