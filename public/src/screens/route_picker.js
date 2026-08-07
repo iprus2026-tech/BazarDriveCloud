@@ -974,7 +974,24 @@ function focusInput(root, kind) {
 function rerender(root, focusKind = null) {
   root.dataset.status = routeDraft.status;
   root.replaceChildren(buildBody());
-  if (focusKind) focusInput(root, focusKind);
+  if (focusKind) {
+    focusInput(root, focusKind);
+    return;
+  }
+  // BD-A11Y-FOCUS-SWAP-01 (#779) — replaceChildren drops whatever control the
+  // interaction used. Without an explicit target, land on whatever the new
+  // content actually surfaces next: the open manual-address form's first
+  // field, else the pending pickup/dropoff input (routeDraft.focus), else
+  // the enabled ready CTA, else the topbar back control as a last resort.
+  const manualTarget = routeDraft.manual ? root.querySelector('[data-manual="city"]') : null;
+  const pendingInput = ALLOWED_FOCUS.has(routeDraft.focus)
+    ? root.querySelector(`[data-input="${routeDraft.focus}"]`)
+    : null;
+  const focusTarget = manualTarget
+    || pendingInput
+    || root.querySelector('.rp-ready__cta:not([disabled])')
+    || root.querySelector('.rp-topbar__back');
+  if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
 }
 
 function findSuggestion(id) {
