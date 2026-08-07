@@ -1,0 +1,101 @@
+name: BD-BACKEND-DEPLOY-01C-A GitHub OIDC preflight
+
+# Issue #856, phase 0 only.
+# This workflow intentionally stops before any Yandex Cloud request.
+# It captures the non-secret GitHub OIDC claims needed to configure the
+# BazarDriveCloud-specific Yandex WIF federation in the next reviewed step.
+#
+# Forbidden here: Object Storage, issue-ephemeral, OpenTofu/Terraform,
+# PostgreSQL, Serverless Containers, staging deployment, static credentials.
+
+on:
+  push:
+    branches:
+      - infra/backend-deploy-01c-a-wif-proof
+
+permissions:
+  contents: read
+
+jobs:
+  github-oidc-preflight:
+    name: capture GitHub OIDC claims (no Yandex contact)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+      EXPECTED_AUDIENCE: https://github.com/iprus2026-tech
+      EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
+      EXPECTED_REF: refs/heads/infra/backend-deploy-01c-a-wif-proof
+    steps:
+      - name: Capture non-secret OIDC evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          oidc_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${EXPECTED_AUDIENCE}")"
+          oidc_token="$(jq -er '.value' <<<"${oidc_response}")"
+
+          # Decode only the JWT payload. Never print or persist the bearer token.
+          payload_b64="${oidc_token#*.}"
+          payload_b64="${payload_b64%%.*}"
+          claims="$(PAYLOAD_B64="${payload_b64}" python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          payload = os.environ['PAYLOAD_B64']
+          payload += '=' * (-len(payload) % 4)
+          decoded = base64.urlsafe_b64decode(payload.encode('ascii'))
+          obj = json.loads(decoded)
+          safe_keys = (
+              'iss', 'aud', 'sub', 'repository', 'ref', 'sha',
+              'workflow', 'job_workflow_ref', 'iat', 'exp'
+          )
+          print(json.dumps({key: obj.get(key) for key in safe_keys}, separators=(',', ':')))
+          PY
+          )"
+
+          unset oidc_token oidc_response payload_b64
+
+          issuer="$(jq -er '.iss' <<<"${claims}")"
+          audience="$(jq -er '.aud' <<<"${claims}")"
+          subject="$(jq -er '.sub' <<<"${claims}")"
+          repository="$(jq -er '.repository' <<<"${claims}")"
+          ref="$(jq -er '.ref' <<<"${claims}")"
+          sha="$(jq -er '.sha' <<<"${claims}")"
+          workflow="$(jq -er '.workflow' <<<"${claims}")"
+          issued_at="$(jq -er '.iat' <<<"${claims}")"
+          expires_at="$(jq -er '.exp' <<<"${claims}")"
+          oidc_ttl_seconds="$((expires_at - issued_at))"
+
+          [[ "${issuer}" == "${EXPECTED_ISSUER}" ]]
+          [[ "${audience}" == "${EXPECTED_AUDIENCE}" ]]
+          [[ "${repository}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${ref}" == "${EXPECTED_REF}" ]]
+          [[ -n "${subject}" ]]
+          (( oidc_ttl_seconds > 0 ))
+
+          {
+            echo '## BD-BACKEND-DEPLOY-01C-A — GitHub OIDC preflight'
+            echo
+            echo '> No Yandex Cloud request was made by this workflow.'
+            echo
+            echo "- issuer: \`${issuer}\`"
+            echo "- audience: \`${audience}\`"
+            echo "- subject: \`${subject}\`"
+            echo "- repository: \`${repository}\`"
+            echo "- ref: \`${ref}\`"
+            echo "- sha: \`${sha}\`"
+            echo "- workflow: \`${workflow}\`"
+            echo "- GitHub OIDC iat: \`${issued_at}\`"
+            echo "- GitHub OIDC exp: \`${expires_at}\`"
+            echo "- GitHub OIDC TTL: \`${oidc_ttl_seconds}s\`"
+            echo
+            echo 'The raw GitHub OIDC JWT was neither printed nor persisted.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "::notice title=01C-A preflight::OIDC issuer/audience/subject captured without Yandex Cloud contact or token logging."
