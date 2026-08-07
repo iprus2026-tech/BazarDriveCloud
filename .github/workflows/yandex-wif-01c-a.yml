@@ -1,12 +1,12 @@
-name: BD-BACKEND-DEPLOY-01C-A GitHub OIDC preflight
+name: BD-BACKEND-DEPLOY-01C-A Yandex WIF proof
 
-# Issue #856, phase 0 only.
-# This workflow intentionally stops before any Yandex Cloud request.
-# It captures only the non-secret GitHub OIDC claims needed to configure the
-# BazarDriveCloud-specific Yandex WIF federation in the next reviewed step.
+# Issue #856, 01C-A only.
+# Proves the narrow control-plane path:
+# GitHub OIDC -> Yandex WIF -> short-lived IAM token -> ServiceAccount.Get.
 #
-# Forbidden here: Object Storage, issue-ephemeral, OpenTofu/Terraform,
-# PostgreSQL, Serverless Containers, staging deployment, static credentials.
+# Forbidden here: Object Storage, issue-ephemeral, AWS/STS credentials,
+# OpenTofu/Terraform, PostgreSQL, Serverless Containers, staging deployment,
+# static credentials, JSON keys, and application/runtime changes.
 
 on:
   push:
@@ -17,19 +17,26 @@ permissions:
   contents: read
 
 jobs:
-  github-oidc-preflight:
-    name: capture GitHub OIDC claims (no Yandex contact)
+  yandex-wif-proof:
+    name: GitHub OIDC -> Yandex WIF -> IAM control-plane
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     env:
       EXPECTED_ISSUER: https://token.actions.githubusercontent.com
-      EXPECTED_AUDIENCE: https://github.com/iprus2026-tech
+      EXPECTED_GITHUB_AUDIENCE: https://github.com/iprus2026-tech
+      EXPECTED_SUBJECT: repo:iprus2026-tech/BazarDriveCloud:ref:refs/heads/infra/backend-deploy-01c-a-wif-proof
       EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
       EXPECTED_REF: refs/heads/infra/backend-deploy-01c-a-wif-proof
+      YANDEX_SERVICE_ACCOUNT_ID: ajef0ne22fuvrp99h2co
+      YANDEX_SERVICE_ACCOUNT_NAME: bd-01c-a-wif
+      YANDEX_FOLDER_ID: b1gh8nb79rifsekssbgu
+      YANDEX_FEDERATION_ID: ajesp86tah8nv4d1c7fd
+      YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
+      YANDEX_CONTROL_PLANE_ENDPOINT: https://iam.api.cloud.yandex.net/iam/v1/serviceAccounts/ajef0ne22fuvrp99h2co
     steps:
-      - name: Capture and validate non-secret OIDC evidence
+      - name: Exchange GitHub OIDC for Yandex IAM token and prove read-only control-plane access
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -37,11 +44,10 @@ jobs:
           echo '01C-A marker: requesting GitHub OIDC token'
           oidc_response="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${EXPECTED_AUDIENCE}")"
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${EXPECTED_GITHUB_AUDIENCE}")"
           oidc_token="$(jq -er '.value' <<<"${oidc_response}")"
-          echo '01C-A marker: GitHub OIDC token request succeeded'
+          echo "::add-mask::${oidc_token}"
 
-          # Decode only the JWT payload. Never print or persist the bearer token.
           payload_b64="${oidc_token#*.}"
           payload_b64="${payload_b64%%.*}"
           claims="$(PAYLOAD_B64="${payload_b64}" python3 - <<'PY'
@@ -61,62 +67,114 @@ jobs:
           PY
           )"
 
-          unset oidc_token oidc_response payload_b64
-
           issuer="$(jq -er '.iss' <<<"${claims}")"
-          audience="$(jq -er '.aud' <<<"${claims}")"
+          github_audience="$(jq -er '.aud' <<<"${claims}")"
           subject="$(jq -er '.sub' <<<"${claims}")"
           repository="$(jq -er '.repository' <<<"${claims}")"
           ref="$(jq -er '.ref' <<<"${claims}")"
           sha="$(jq -er '.sha' <<<"${claims}")"
-          workflow="$(jq -er '.workflow' <<<"${claims}")"
-          job_workflow_ref="$(jq -r '.job_workflow_ref // ""' <<<"${claims}")"
           issued_at="$(jq -er '.iat' <<<"${claims}")"
           expires_at="$(jq -er '.exp' <<<"${claims}")"
           oidc_ttl_seconds="$((expires_at - issued_at))"
 
           [[ "${issuer}" == "${EXPECTED_ISSUER}" ]]
-          [[ "${audience}" == "${EXPECTED_AUDIENCE}" ]]
+          [[ "${github_audience}" == "${EXPECTED_GITHUB_AUDIENCE}" ]]
+          [[ "${subject}" == "${EXPECTED_SUBJECT}" ]]
           [[ "${repository}" == "${EXPECTED_REPOSITORY}" ]]
           [[ "${ref}" == "${EXPECTED_REF}" ]]
-          [[ -n "${subject}" ]]
           (( oidc_ttl_seconds > 0 ))
+          echo '01C-A marker: GitHub OIDC claims match approved federation binding'
 
-          echo '01C-A marker: OIDC claim assertions passed'
-          echo '--- BEGIN 01C-A SAFE OIDC EVIDENCE ---'
-          echo "issuer=${issuer}"
-          echo "audience=${audience}"
-          echo "subject=${subject}"
-          echo "repository=${repository}"
-          echo "ref=${ref}"
-          echo "sha=${sha}"
-          echo "workflow=${workflow}"
-          echo "job_workflow_ref=${job_workflow_ref}"
-          echo "oidc_iat=${issued_at}"
-          echo "oidc_exp=${expires_at}"
-          echo "oidc_ttl_seconds=${oidc_ttl_seconds}"
-          echo 'yandex_cloud_contacted=NO'
-          echo 'raw_oidc_jwt_printed_or_persisted=NO'
-          echo '--- END 01C-A SAFE OIDC EVIDENCE ---'
+          echo '01C-A marker: exchanging OIDC JWT for short-lived Yandex IAM token'
+          exchange_with_status="$(curl --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode 'requested_token_type=urn:ietf:params:oauth:token-type:access_token' \
+            --data-urlencode "audience=${YANDEX_SERVICE_ACCOUNT_ID}" \
+            --data-urlencode "subject_token=${oidc_token}" \
+            --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:id_token' \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_TOKEN_ENDPOINT}")"
+
+          exchange_http_status="${exchange_with_status##*$'\n'}"
+          exchange_response="${exchange_with_status%$'\n'*}"
+          [[ "${exchange_http_status}" == "200" ]]
+
+          iam_token="$(jq -er '.access_token' <<<"${exchange_response}")"
+          echo "::add-mask::${iam_token}"
+          iam_token_type="$(jq -er '.token_type' <<<"${exchange_response}")"
+          iam_ttl_seconds="$(jq -er '.expires_in' <<<"${exchange_response}")"
+          [[ "${iam_token_type}" == "Bearer" ]]
+          [[ "${iam_ttl_seconds}" =~ ^[0-9]+$ ]]
+          (( iam_ttl_seconds > 0 ))
+          iam_expires_at_epoch="$(( $(date +%s) + iam_ttl_seconds ))"
+
+          unset exchange_with_status exchange_response oidc_response payload_b64 oidc_token claims
+          echo '01C-A marker: Yandex WIF token exchange succeeded'
+
+          echo '01C-A marker: calling read-only Yandex IAM ServiceAccount.Get'
+          control_with_status="$(curl --silent --show-error \
+            --header "Authorization: Bearer ${iam_token}" \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_CONTROL_PLANE_ENDPOINT}")"
+          control_http_status="${control_with_status##*$'\n'}"
+          control_response="${control_with_status%$'\n'*}"
+          unset iam_token control_with_status
+
+          [[ "${control_http_status}" == "200" ]]
+          returned_id="$(jq -er '.id' <<<"${control_response}")"
+          returned_name="$(jq -er '.name' <<<"${control_response}")"
+          returned_folder="$(jq -er '.folderId' <<<"${control_response}")"
+          [[ "${returned_id}" == "${YANDEX_SERVICE_ACCOUNT_ID}" ]]
+          [[ "${returned_name}" == "${YANDEX_SERVICE_ACCOUNT_NAME}" ]]
+          [[ "${returned_folder}" == "${YANDEX_FOLDER_ID}" ]]
+          unset control_response
+          echo '01C-A marker: authenticated Yandex control-plane request succeeded'
+
+          echo '--- BEGIN 01C-A SAFE WIF EVIDENCE ---'
+          echo "github_oidc_issuer=${issuer}"
+          echo "github_oidc_audience=${github_audience}"
+          echo "github_oidc_subject=${subject}"
+          echo "github_oidc_repository=${repository}"
+          echo "github_oidc_ref=${ref}"
+          echo "github_oidc_sha=${sha}"
+          echo "github_oidc_ttl_seconds=${oidc_ttl_seconds}"
+          echo "yandex_federation_id=${YANDEX_FEDERATION_ID}"
+          echo "yandex_service_account_id=${YANDEX_SERVICE_ACCOUNT_ID}"
+          echo "yandex_token_exchange_http_status=${exchange_http_status}"
+          echo "yandex_iam_token_type=${iam_token_type}"
+          echo "yandex_iam_token_ttl_seconds=${iam_ttl_seconds}"
+          echo "yandex_iam_token_expires_at_epoch=${iam_expires_at_epoch}"
+          echo "yandex_control_plane_endpoint=${YANDEX_CONTROL_PLANE_ENDPOINT}"
+          echo "yandex_control_plane_http_status=${control_http_status}"
+          echo "returned_service_account_id=${returned_id}"
+          echo "returned_service_account_name=${returned_name}"
+          echo "returned_folder_id=${returned_folder}"
+          echo 'static_credentials_used=NO'
+          echo 'oidc_or_iam_token_printed_or_persisted=NO'
+          echo 'object_storage_contacted=NO'
+          echo 'issue_ephemeral_called=NO'
+          echo 'opentofu_or_terraform_run=NO'
+          echo 'postgresql_contacted=NO'
+          echo 'serverless_containers_contacted=NO'
+          echo '--- END 01C-A SAFE WIF EVIDENCE ---'
 
           {
-            echo '## BD-BACKEND-DEPLOY-01C-A — GitHub OIDC preflight'
+            echo '## BD-BACKEND-DEPLOY-01C-A — Yandex WIF proof'
             echo
-            echo '> No Yandex Cloud request was made by this workflow.'
-            echo
-            echo "- issuer: \`${issuer}\`"
-            echo "- audience: \`${audience}\`"
-            echo "- subject: \`${subject}\`"
-            echo "- repository: \`${repository}\`"
-            echo "- ref: \`${ref}\`"
-            echo "- sha: \`${sha}\`"
-            echo "- workflow: \`${workflow}\`"
-            echo "- job_workflow_ref: \`${job_workflow_ref}\`"
-            echo "- GitHub OIDC iat: \`${issued_at}\`"
-            echo "- GitHub OIDC exp: \`${expires_at}\`"
+            echo "- GitHub issuer: \`${issuer}\`"
+            echo "- GitHub audience: \`${github_audience}\`"
+            echo "- GitHub subject: \`${subject}\`"
             echo "- GitHub OIDC TTL: \`${oidc_ttl_seconds}s\`"
+            echo "- Yandex federation: \`${YANDEX_FEDERATION_ID}\`"
+            echo "- Yandex service account: \`${YANDEX_SERVICE_ACCOUNT_ID}\`"
+            echo "- Token exchange HTTP: \`${exchange_http_status}\`"
+            echo "- Yandex IAM token TTL: \`${iam_ttl_seconds}s\`"
+            echo "- Yandex control-plane HTTP: \`${control_http_status}\`"
+            echo "- Returned service account: \`${returned_id}\` / \`${returned_name}\`"
             echo
-            echo 'The raw GitHub OIDC JWT was neither printed nor persisted.'
+            echo 'No raw OIDC/IAM token was printed or persisted. No static credential was used.'
           } >> "${GITHUB_STEP_SUMMARY}"
 
-          echo "::notice title=01C-A preflight::OIDC issuer/audience/subject captured without Yandex Cloud contact or token logging."
+          echo "::notice title=01C-A PASS candidate::GitHub OIDC -> Yandex WIF -> short-lived IAM token -> ServiceAccount.Get completed with secret-safe evidence."
