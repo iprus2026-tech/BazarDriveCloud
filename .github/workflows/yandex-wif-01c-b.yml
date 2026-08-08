@@ -121,7 +121,22 @@ jobs:
 
           exchange_http_status="${exchange_with_status##*$'\n'}"
           exchange_response="${exchange_with_status%$'\n'*}"
-          [[ "${exchange_http_status}" == "200" ]]
+          if [[ "${exchange_http_status}" != "200" ]]; then
+            exchange_error_code="$(jq -r '
+              if type == "object" then
+                (.error // .code // .status // empty)
+              else
+                empty
+              end
+            ' <<<"${exchange_response}" 2>/dev/null || true)"
+            if [[ -z "${exchange_error_code}" || ! "${exchange_error_code}" =~ ^[A-Za-z0-9_.:/-]{1,128}$ ]]; then
+              exchange_error_code=UNAVAILABLE
+            fi
+            echo "yandex_token_exchange_http_status=${exchange_http_status}"
+            echo "yandex_token_exchange_error_code=${exchange_error_code}"
+            unset exchange_with_status exchange_response oidc_response payload_b64 oidc_token claims
+            exit 1
+          fi
 
           iam_token="$(jq -er '.access_token' <<<"${exchange_response}")"
           echo "::add-mask::${iam_token}"
