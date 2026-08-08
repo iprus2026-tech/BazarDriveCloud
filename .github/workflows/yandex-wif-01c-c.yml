@@ -1,0 +1,374 @@
+name: BD-BACKEND-DEPLOY-01C-C OpenTofu S3 backend auth proof
+
+# Issue #860, 01C-C only.
+# Proves the narrow authentication path:
+# GitHub OIDC -> Yandex WIF -> short-lived IAM token -> CreateEphemeral
+# -> three-part AWS-compatible session credential -> OpenTofu S3 backend auth.
+#
+# Contract-only by default. Real temporary IAM/WIF IDs and the disposable
+# bucket remain PENDING until an independent pre-execution review passes.
+# The PENDING gate exits before any network request or OpenTofu execution.
+#
+# Forbidden here: state-locking claims/tests, tofu plan/apply, staging deploy,
+# PostgreSQL, Serverless Containers, application/runtime changes, static AWS
+# credentials, JSON service-account keys, and long-lived credentials.
+
+on:
+  push:
+    branches:
+      - infra/backend-deploy-01c-c-opentofu-auth
+
+permissions:
+  contents: read
+
+jobs:
+  opentofu-s3-auth-proof:
+    name: GitHub OIDC -> Yandex ephemeral credential -> OpenTofu S3 auth
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      OPEN_TOFU_VERSION: 1.12.0
+      EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+      EXPECTED_GITHUB_AUDIENCE: https://github.com/iprus2026-tech
+      EXPECTED_SUBJECT: repo:iprus2026-tech/BazarDriveCloud:ref:refs/heads/infra/backend-deploy-01c-c-opentofu-auth
+      EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
+      EXPECTED_REF: refs/heads/infra/backend-deploy-01c-c-opentofu-auth
+      YANDEX_SERVICE_ACCOUNT_ID: PENDING
+      YANDEX_FEDERATION_ID: PENDING
+      YANDEX_BUCKET: PENDING
+      YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
+      YANDEX_EPHEMERAL_ENDPOINT: https://iam.api.cloud.yandex.net/iam/aws-compatibility/v1/ephemeralAccessKeys
+      YANDEX_S3_ENDPOINT: https://storage.yandexcloud.net
+      YANDEX_REGION: ru-central1
+      REQUESTED_EPHEMERAL_DURATION: 900s
+      TF_IN_AUTOMATION: "1"
+    steps:
+      - name: Contract gate and secret-safe OpenTofu backend authentication proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ "${YANDEX_SERVICE_ACCOUNT_ID}" == "PENDING" || \
+                "${YANDEX_FEDERATION_ID}" == "PENDING" || \
+                "${YANDEX_BUCKET}" == "PENDING" ]]; then
+            echo '01C-C contract-only marker: execution is not armed; no network endpoint was contacted and OpenTofu was not run.'
+            {
+              echo '## BD-BACKEND-DEPLOY-01C-C — contract only'
+              echo
+              echo '- Execution armed: `NO`'
+              echo "- OpenTofu pinned version: \`${OPEN_TOFU_VERSION}\`"
+              echo '- GitHub OIDC contacted: `NO`'
+              echo '- Yandex IAM/WIF contacted: `NO`'
+              echo '- Object Storage contacted: `NO`'
+              echo '- OpenTofu run: `NO`'
+              echo '- Static/JSON credential used: `NO`'
+              echo '- State locking tested/claimed: `NO`'
+              echo '- `tofu plan/apply` run: `NO`'
+              echo
+              echo 'Temporary 01C-C IAM/WIF IDs and disposable bucket must be independently reviewed before arming.'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          [[ "${OPEN_TOFU_VERSION}" == "1.12.0" ]]
+          [[ "${YANDEX_SERVICE_ACCOUNT_ID}" =~ ^[a-z0-9]+$ ]]
+          [[ "${YANDEX_FEDERATION_ID}" =~ ^[a-z0-9]+$ ]]
+          [[ "${YANDEX_BUCKET}" =~ ^bd-state-val-01c-c-[a-z0-9-]+$ ]]
+
+          if [[ -n "${AWS_ACCESS_KEY_ID:-}" || \
+                -n "${AWS_SECRET_ACCESS_KEY:-}" || \
+                -n "${AWS_SESSION_TOKEN:-}" ]]; then
+            echo 'unexpected_ambient_aws_credentials=YES'
+            exit 1
+          fi
+
+          workdir="$(mktemp -d)"
+          cleanup() {
+            unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN || true
+            unset oidc_token iam_token access_key_id secret_access_key session_token || true
+            rm -rf "${workdir}" || true
+          }
+          trap cleanup EXIT
+
+          echo '01C-C marker: installing pinned OpenTofu release'
+          tofu_zip="tofu_${OPEN_TOFU_VERSION}_linux_amd64.zip"
+          tofu_base_url="https://github.com/opentofu/opentofu/releases/download/v${OPEN_TOFU_VERSION}"
+          curl --fail --silent --show-error --location \
+            "${tofu_base_url}/${tofu_zip}" \
+            --output "${workdir}/${tofu_zip}"
+          curl --fail --silent --show-error --location \
+            "${tofu_base_url}/tofu_${OPEN_TOFU_VERSION}_SHA256SUMS" \
+            --output "${workdir}/SHA256SUMS"
+          (
+            cd "${workdir}"
+            grep " ${tofu_zip}$" SHA256SUMS | sha256sum --check --strict -
+            unzip -q "${tofu_zip}"
+          )
+          tofu_bin="${workdir}/tofu"
+          [[ -x "${tofu_bin}" ]]
+          tofu_version_line="$(${tofu_bin} version | head -n1)"
+          [[ "${tofu_version_line}" == "OpenTofu v${OPEN_TOFU_VERSION}" ]]
+          echo "opentofu_version=${OPEN_TOFU_VERSION}"
+
+          echo '01C-C marker: requesting GitHub OIDC token'
+          oidc_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${EXPECTED_GITHUB_AUDIENCE}")"
+          oidc_token="$(jq -er '.value' <<<"${oidc_response}")"
+          echo "::add-mask::${oidc_token}"
+
+          payload_b64="${oidc_token#*.}"
+          payload_b64="${payload_b64%%.*}"
+          claims="$(PAYLOAD_B64="${payload_b64}" python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          payload = os.environ['PAYLOAD_B64']
+          payload += '=' * (-len(payload) % 4)
+          decoded = base64.urlsafe_b64decode(payload.encode('ascii'))
+          obj = json.loads(decoded)
+          safe_keys = (
+              'iss', 'aud', 'sub', 'repository', 'ref', 'sha',
+              'workflow', 'job_workflow_ref', 'iat', 'exp'
+          )
+          print(json.dumps({key: obj.get(key) for key in safe_keys}, separators=(',', ':')))
+          PY
+          )"
+
+          issuer="$(jq -er '.iss' <<<"${claims}")"
+          github_audience="$(jq -er '.aud' <<<"${claims}")"
+          subject="$(jq -er '.sub' <<<"${claims}")"
+          repository="$(jq -er '.repository' <<<"${claims}")"
+          ref="$(jq -er '.ref' <<<"${claims}")"
+          sha="$(jq -er '.sha' <<<"${claims}")"
+          issued_at="$(jq -er '.iat' <<<"${claims}")"
+          expires_at="$(jq -er '.exp' <<<"${claims}")"
+          oidc_ttl_seconds="$((expires_at - issued_at))"
+
+          [[ "${issuer}" == "${EXPECTED_ISSUER}" ]]
+          [[ "${github_audience}" == "${EXPECTED_GITHUB_AUDIENCE}" ]]
+          [[ "${subject}" == "${EXPECTED_SUBJECT}" ]]
+          [[ "${repository}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${ref}" == "${EXPECTED_REF}" ]]
+          (( oidc_ttl_seconds > 0 ))
+          echo '01C-C marker: GitHub OIDC claims match the approved exact binding'
+
+          echo '01C-C marker: exchanging OIDC JWT for short-lived Yandex IAM token'
+          exchange_with_status="$(curl --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode 'requested_token_type=urn:ietf:params:oauth:token-type:access_token' \
+            --data-urlencode "audience=${YANDEX_SERVICE_ACCOUNT_ID}" \
+            --data-urlencode "subject_token=${oidc_token}" \
+            --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:id_token' \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_TOKEN_ENDPOINT}")"
+
+          exchange_http_status="${exchange_with_status##*$'\n'}"
+          exchange_response="${exchange_with_status%$'\n'*}"
+          if [[ "${exchange_http_status}" != "200" ]]; then
+            exchange_error_code="$(jq -r '
+              if type == "object" then
+                (.error // .code // .status // empty)
+              else
+                empty
+              end
+            ' <<<"${exchange_response}" 2>/dev/null || true)"
+            if [[ -z "${exchange_error_code}" || ! "${exchange_error_code}" =~ ^[A-Za-z0-9_.:/-]{1,128}$ ]]; then
+              exchange_error_code=UNAVAILABLE
+            fi
+            echo "yandex_token_exchange_http_status=${exchange_http_status}"
+            echo "yandex_token_exchange_error_code=${exchange_error_code}"
+            unset exchange_with_status exchange_response oidc_response payload_b64 oidc_token claims
+            exit 1
+          fi
+
+          iam_token="$(jq -er '.access_token' <<<"${exchange_response}")"
+          echo "::add-mask::${iam_token}"
+          iam_token_type="$(jq -er '.token_type' <<<"${exchange_response}")"
+          iam_ttl_seconds="$(jq -er '.expires_in' <<<"${exchange_response}")"
+          [[ "${iam_token_type}" == "Bearer" ]]
+          [[ "${iam_ttl_seconds}" =~ ^[0-9]+$ ]]
+          (( iam_ttl_seconds > 0 ))
+
+          unset exchange_with_status exchange_response oidc_response payload_b64 oidc_token claims
+          echo '01C-C marker: Yandex WIF token exchange succeeded'
+
+          session_name="bd-01c-c-${GITHUB_RUN_ID}"
+          issue_request_epoch="$(date +%s)"
+          issue_body="$(jq -cn \
+            --arg subjectId "${YANDEX_SERVICE_ACCOUNT_ID}" \
+            --arg sessionName "${session_name}" \
+            --arg duration "${REQUESTED_EPHEMERAL_DURATION}" \
+            '{subjectId:$subjectId,sessionName:$sessionName,duration:$duration}')"
+
+          echo '01C-C marker: requesting 15-minute ephemeral AWS-compatible session credential'
+          issue_with_status="$(curl --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${iam_token}" \
+            --header 'Content-Type: application/json' \
+            --data "${issue_body}" \
+            --write-out $'\n%{http_code}' \
+            "${YANDEX_EPHEMERAL_ENDPOINT}")"
+
+          issue_http_status="${issue_with_status##*$'\n'}"
+          issue_response="${issue_with_status%$'\n'*}"
+          unset iam_token issue_with_status issue_body
+          if [[ "${issue_http_status}" != "200" ]]; then
+            issue_error_code="$(jq -r '
+              if type == "object" then
+                (.error // .code // .status // empty)
+              else
+                empty
+              end
+            ' <<<"${issue_response}" 2>/dev/null || true)"
+            if [[ -z "${issue_error_code}" || ! "${issue_error_code}" =~ ^[A-Za-z0-9_.:/-]{1,128}$ ]]; then
+              issue_error_code=UNAVAILABLE
+            fi
+            echo "ephemeral_issue_http_status=${issue_http_status}"
+            echo "ephemeral_issue_error_code=${issue_error_code}"
+            unset issue_response
+            exit 1
+          fi
+
+          access_key_id="$(jq -er '.accessKeyId' <<<"${issue_response}")"
+          secret_access_key="$(jq -er '.secret' <<<"${issue_response}")"
+          session_token="$(jq -er '.sessionToken' <<<"${issue_response}")"
+          credential_expires_at="$(jq -er '.expiresAt' <<<"${issue_response}")"
+
+          echo "::add-mask::${access_key_id}"
+          echo "::add-mask::${secret_access_key}"
+          echo "::add-mask::${session_token}"
+
+          [[ -n "${access_key_id}" ]]
+          [[ -n "${secret_access_key}" ]]
+          [[ -n "${session_token}" ]]
+          [[ -n "${credential_expires_at}" ]]
+
+          credential_expires_epoch="$(EXPIRES_AT="${credential_expires_at}" python3 - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          import re
+
+          value = os.environ['EXPIRES_AT']
+          match = re.fullmatch(r'(.*?)(?:\.(\d+))?Z', value)
+          if not match:
+              raise SystemExit('expiresAt is not RFC3339 UTC')
+          base, fraction = match.groups()
+          fraction = (fraction or '')[:6].ljust(6, '0')
+          normalized = f'{base}.{fraction}+00:00'
+          dt = datetime.fromisoformat(normalized).astimezone(timezone.utc)
+          print(int(dt.timestamp()))
+          PY
+          )"
+          observed_ephemeral_ttl_seconds="$((credential_expires_epoch - issue_request_epoch))"
+          (( observed_ephemeral_ttl_seconds >= 840 ))
+          (( observed_ephemeral_ttl_seconds <= 930 ))
+
+          access_key_id_present=YES
+          secret_access_key_present=YES
+          session_token_present=YES
+          unset issue_response
+
+          mkdir -p "${workdir}/backend"
+          cat > "${workdir}/backend/main.tf" <<'HCL'
+          terraform {
+            backend "s3" {}
+          }
+          HCL
+
+          cat > "${workdir}/backend/backend.hcl" <<HCL
+          bucket                      = "${YANDEX_BUCKET}"
+          key                         = "01c-c/auth-only.tfstate"
+          region                      = "${YANDEX_REGION}"
+          endpoints                   = { s3 = "${YANDEX_S3_ENDPOINT}" }
+          skip_region_validation      = true
+          skip_credentials_validation = true
+          skip_requesting_account_id  = true
+          skip_s3_checksum            = true
+          HCL
+
+          export AWS_ACCESS_KEY_ID="${access_key_id}"
+          export AWS_SECRET_ACCESS_KEY="${secret_access_key}"
+          export AWS_SESSION_TOKEN="${session_token}"
+
+          echo '01C-C marker: running the approved minimum OpenTofu S3 backend authentication operation'
+          (
+            cd "${workdir}/backend"
+            "${tofu_bin}" init \
+              -reconfigure \
+              -input=false \
+              -no-color \
+              -backend-config=backend.hcl
+          )
+          opentofu_init_exit_status=0
+
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          unset access_key_id secret_access_key session_token
+          echo '01C-C marker: OpenTofu S3 backend initialization accepted the ephemeral session credential'
+
+          echo '--- BEGIN 01C-C SAFE BACKEND AUTH EVIDENCE ---'
+          echo "opentofu_version=${OPEN_TOFU_VERSION}"
+          echo "github_oidc_issuer=${issuer}"
+          echo "github_oidc_audience=${github_audience}"
+          echo "github_oidc_subject=${subject}"
+          echo "github_oidc_repository=${repository}"
+          echo "github_oidc_ref=${ref}"
+          echo "github_oidc_sha=${sha}"
+          echo "github_oidc_ttl_seconds=${oidc_ttl_seconds}"
+          echo "yandex_federation_id=${YANDEX_FEDERATION_ID}"
+          echo "yandex_service_account_id=${YANDEX_SERVICE_ACCOUNT_ID}"
+          echo "yandex_token_exchange_http_status=${exchange_http_status}"
+          echo "yandex_iam_token_type=${iam_token_type}"
+          echo "yandex_iam_token_ttl_seconds=${iam_ttl_seconds}"
+          echo "ephemeral_issue_http_status=${issue_http_status}"
+          echo "ephemeral_requested_duration=${REQUESTED_EPHEMERAL_DURATION}"
+          echo "ephemeral_observed_ttl_seconds=${observed_ephemeral_ttl_seconds}"
+          echo "ephemeral_access_key_id_present=${access_key_id_present}"
+          echo "ephemeral_secret_access_key_present=${secret_access_key_present}"
+          echo "ephemeral_session_token_present=${session_token_present}"
+          echo "object_storage_endpoint=${YANDEX_S3_ENDPOINT}"
+          echo "object_storage_bucket=${YANDEX_BUCKET}"
+          echo "opentofu_init_exit_status=${opentofu_init_exit_status}"
+          echo 'opentofu_backend_auth_result=PASS'
+          echo 'ephemeral_credential_values_printed_or_persisted=NO'
+          echo 'static_credentials_used=NO'
+          echo 'json_service_account_key_used=NO'
+          echo 'credential_injection_path=process_environment_only'
+          echo 'github_env_used_for_credentials=NO'
+          echo 'credentials_file_used=NO'
+          echo 'tofu_plan_run=NO'
+          echo 'tofu_apply_run=NO'
+          echo 'state_locking_tested_or_claimed=NO'
+          echo 'postgresql_contacted=NO'
+          echo 'serverless_containers_contacted=NO'
+          echo '--- END 01C-C SAFE BACKEND AUTH EVIDENCE ---'
+
+          {
+            echo '## BD-BACKEND-DEPLOY-01C-C — OpenTofu S3 backend auth proof'
+            echo
+            echo "- OpenTofu: \`${OPEN_TOFU_VERSION}\`"
+            echo "- GitHub issuer: \`${issuer}\`"
+            echo "- GitHub audience: \`${github_audience}\`"
+            echo "- GitHub subject: \`${subject}\`"
+            echo "- GitHub OIDC TTL: \`${oidc_ttl_seconds}s\`"
+            echo "- Yandex federation: \`${YANDEX_FEDERATION_ID}\`"
+            echo "- Yandex service account: \`${YANDEX_SERVICE_ACCOUNT_ID}\`"
+            echo "- Token exchange HTTP: \`${exchange_http_status}\`"
+            echo "- Ephemeral issuance HTTP: \`${issue_http_status}\`"
+            echo "- Requested ephemeral duration: \`${REQUESTED_EPHEMERAL_DURATION}\`"
+            echo "- Observed ephemeral TTL: \`${observed_ephemeral_ttl_seconds}s\`"
+            echo "- Object Storage endpoint: \`${YANDEX_S3_ENDPOINT}\`"
+            echo "- Disposable bucket: \`${YANDEX_BUCKET}\`"
+            echo "- \`tofu init -reconfigure -input=false\`: \`PASS\`"
+            echo
+            echo 'No raw OIDC/IAM/AWS-compatible credential value was printed or persisted.'
+            echo 'No static/JSON credential was used. Credentials existed only in the current process environment for the init call and were unset immediately afterward.'
+            echo 'No tofu plan/apply ran. No state-locking claim is made by this proof.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo '::notice title=01C-C PASS candidate::GitHub OIDC -> Yandex WIF -> ephemeral AWS-compatible session credential -> OpenTofu S3 backend authentication completed with secret-safe evidence.'
