@@ -4,9 +4,9 @@ name: BD-BACKEND-DEPLOY-01C-B Yandex ephemeral credential proof
 # Proves the narrow authentication path:
 # GitHub OIDC -> Yandex WIF -> short-lived IAM token -> CreateEphemeral.
 #
-# This workflow is committed first in CONTRACT-ONLY state. It does not contact
-# Yandex until the temporary 01C-B service-account and federation IDs replace
-# the PENDING markers after the reviewed IAM setup gate.
+# The temporary 01C-B service-account and federation IDs are armed only after
+# the reviewed IAM setup gate. Failed WIF exchange diagnostics emit only a
+# safe HTTP status and normalized error code, never a raw response body.
 #
 # Forbidden here: Object Storage/S3 data-plane calls, OpenTofu/Terraform,
 # PostgreSQL, Serverless Containers, staging deployment, static access keys,
