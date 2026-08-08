@@ -35,9 +35,9 @@ jobs:
       EXPECTED_SUBJECT: repo:iprus2026-tech/BazarDriveCloud:ref:refs/heads/infra/backend-deploy-01c-c-opentofu-auth
       EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
       EXPECTED_REF: refs/heads/infra/backend-deploy-01c-c-opentofu-auth
-      YANDEX_SERVICE_ACCOUNT_ID: PENDING
-      YANDEX_FEDERATION_ID: PENDING
-      YANDEX_BUCKET: PENDING
+      YANDEX_SERVICE_ACCOUNT_ID: ajeqcv0o9e7erh4ebqk8
+      YANDEX_FEDERATION_ID: ajeh4fe06mqi61fgci6h
+      YANDEX_BUCKET: bd-state-val-01c-c-20260808-7erh4ebqk8
       YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
       YANDEX_EPHEMERAL_ENDPOINT: https://iam.api.cloud.yandex.net/iam/aws-compatibility/v1/ephemeralAccessKeys
       YANDEX_S3_ENDPOINT: https://storage.yandexcloud.net
