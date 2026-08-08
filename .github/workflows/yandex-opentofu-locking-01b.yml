@@ -18,6 +18,9 @@ name: BD-BACKEND-DEPLOY-01B OpenTofu native S3 locking proof
 # real staging state, PostgreSQL, Serverless Containers, application/runtime
 # changes, static AWS credentials, JSON service-account keys, artifacts, and
 # any force-unlock that is not tied to the separately approved exact lock ID.
+# Any armed failure emits a read-only, sanitized state/lock snapshot before local
+# logs and process-local credentials are scrubbed. The failure handler never
+# unlocks or deletes remote objects.
 
 on:
   push:
@@ -155,6 +158,10 @@ jobs:
 
           workdir="$(mktemp -d)"
           active_pid=''
+          failure_stage='opentofu_install'
+          failure_snapshot_emitted='NO'
+          snapshot_helpers_ready='NO'
+
           cleanup() {
             set +e
             if [[ -n "${active_pid:-}" ]] && kill -0 "${active_pid}" 2>/dev/null; then
@@ -166,7 +173,122 @@ jobs:
             unset oidc_token iam_token access_key_id secret_access_key session_token
             rm -rf "${workdir}"
           }
-          trap cleanup EXIT
+
+          capture_failure_snapshot() {
+            local exit_status="$1"
+            local github_sha="${sha:-${GITHUB_SHA:-UNAVAILABLE}}"
+            local lock_status='UNAVAILABLE'
+            local lock_id='UNAVAILABLE'
+            local lock_etag='UNAVAILABLE'
+            local state_status='UNAVAILABLE'
+            local state_lineage='UNAVAILABLE'
+            local state_serial='UNAVAILABLE'
+            local state_etag='UNAVAILABLE'
+            local candidate=''
+            local candidate_lineage=''
+            local candidate_serial=''
+
+            [[ "${failure_snapshot_emitted}" == 'NO' ]] || return 0
+            failure_snapshot_emitted='YES'
+
+            if [[ "${snapshot_helpers_ready}" == 'YES' ]]; then
+              if candidate="$(s3_object_status "${LOCK_KEY}")"; then
+                lock_status="${candidate}"
+              else
+                lock_status='ERROR'
+              fi
+
+              if [[ "${lock_status}" == 'PRESENT' ]]; then
+                if candidate="$(read_lock_id 2>/dev/null)" &&
+                   [[ "${candidate}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+                  lock_id="${candidate}"
+                fi
+                if candidate="$(read_lock_etag 2>/dev/null)" &&
+                   [[ "${candidate}" =~ ^[0-9a-fA-F\"-]{16,128}$ ]]; then
+                  lock_etag="${candidate}"
+                fi
+              elif [[ "${lock_status}" == 'ABSENT' ]]; then
+                lock_id='ABSENT'
+                lock_etag='ABSENT'
+              fi
+
+              if candidate="$(s3_object_status "${STATE_KEY}")"; then
+                state_status="${candidate}"
+              else
+                state_status='ERROR'
+              fi
+
+              if [[ "${state_status}" == 'PRESENT' ]]; then
+                if candidate="$(read_state_snapshot 2>/dev/null)"; then
+                  IFS=$'\t' read -r candidate_lineage candidate_serial <<<"${candidate}"
+                  if [[ "${candidate_lineage}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+                    state_lineage="${candidate_lineage}"
+                  fi
+                  if [[ "${candidate_serial}" =~ ^[0-9]+$ ]]; then
+                    state_serial="${candidate_serial}"
+                  fi
+                fi
+                if candidate="$(read_state_etag 2>/dev/null)" &&
+                   [[ "${candidate}" =~ ^[0-9a-fA-F\"-]{16,128}$ ]]; then
+                  state_etag="${candidate}"
+                fi
+              elif [[ "${state_status}" == 'ABSENT' ]]; then
+                state_lineage='ABSENT'
+                state_serial='ABSENT'
+                state_etag='ABSENT'
+              fi
+            fi
+
+            echo '--- BEGIN 01B SAFE FAILURE SNAPSHOT ---'
+            echo "proof_phase=${PROOF_PHASE}"
+            echo "github_sha=${github_sha}"
+            echo "failure_stage=${failure_stage}"
+            echo "failure_exit_status=${exit_status}"
+            echo "lock_object_status=${lock_status}"
+            echo "lock_id=${lock_id}"
+            echo "lock_etag=${lock_etag}"
+            echo "state_object_status=${state_status}"
+            echo "state_lineage=${state_lineage}"
+            echo "state_serial=${state_serial}"
+            echo "state_etag=${state_etag}"
+            echo 'cleanup_required=YES'
+            echo 'failure_handler_unlock_or_delete=NO'
+            echo 'local_sensitive_logs_retained=NO'
+            echo 'workflow_artifacts_created=NO'
+            echo '--- END 01B SAFE FAILURE SNAPSHOT ---'
+
+            if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+              {
+                echo '## BD-BACKEND-DEPLOY-01B — safe failure snapshot'
+                echo
+                echo '- Result: `FAIL / CLEANUP_REQUIRED`'
+                echo "- Proof phase: \`${PROOF_PHASE}\`"
+                echo "- Exact HEAD: \`${github_sha}\`"
+                echo "- Failure stage: \`${failure_stage}\`"
+                echo "- Lock object / ID / ETag: \`${lock_status}\` / \`${lock_id}\` / \`${lock_etag}\`"
+                echo "- State object: \`${state_status}\`"
+                echo "- State lineage / serial / ETag: \`${state_lineage}\` / \`${state_serial}\` / \`${state_etag}\`"
+                echo '- Cleanup required: `YES`'
+                echo '- Failure handler unlock/delete: `NO`'
+                echo '- Workflow artifacts: `0`'
+                echo
+                echo 'Stop. Preserve this sanitized evidence and use the separately authorized recovery/cleanup sequence; do not rerun this credential-bearing HEAD.'
+              } >> "${GITHUB_STEP_SUMMARY}" || true
+            fi
+          }
+
+          on_exit() {
+            local exit_status=$?
+            trap - EXIT
+            set +e
+            if (( exit_status != 0 )); then
+              capture_failure_snapshot "${exit_status}"
+            fi
+            cleanup
+            exit "${exit_status}"
+          }
+
+          trap on_exit EXIT
 
           echo '01B marker: installing pinned OpenTofu release before requesting credentials'
           tofu_zip="tofu_${OPEN_TOFU_VERSION}_linux_amd64.zip"
@@ -188,6 +310,7 @@ jobs:
           [[ "${tofu_version_line}" == "OpenTofu v${OPEN_TOFU_VERSION}" ]]
           echo "opentofu_version=${OPEN_TOFU_VERSION}"
 
+          failure_stage='github_oidc'
           echo '01B marker: requesting GitHub OIDC token'
           oidc_response="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -235,6 +358,7 @@ jobs:
           (( oidc_ttl_seconds > 0 ))
           echo '01B marker: GitHub OIDC claims match the approved exact binding'
 
+          failure_stage='yandex_token_exchange'
           echo '01B marker: exchanging OIDC JWT for a short-lived Yandex IAM token'
           exchange_with_status="$(curl --silent --show-error \
             --request POST \
@@ -285,6 +409,7 @@ jobs:
             --arg duration "${REQUESTED_EPHEMERAL_DURATION}" \
             '{subjectId:$subjectId,sessionName:$sessionName,duration:$duration}')"
 
+          failure_stage='ephemeral_credential_issue'
           echo '01B marker: requesting a 15-minute ephemeral AWS-compatible session credential'
           issue_with_status="$(curl --silent --show-error \
             --request POST \
@@ -365,6 +490,7 @@ jobs:
 
           unset access_key_id secret_access_key session_token
 
+          failure_stage='s3_client_setup'
           command -v aws >/dev/null
           command -v ps >/dev/null
           command -v setsid >/dev/null
@@ -460,6 +586,54 @@ jobs:
               --output json
           }
 
+          aws_error_code_from_file() {
+            local error_file="$1"
+            sed -nE 's/^An error occurred \(([^)]*)\).*/\1/p' "${error_file}" | sed -n '1p'
+          }
+
+          s3_object_status() {
+            local key="$1"
+            local stdout_file
+            local stderr_file
+            local exit_status
+            local error_code
+            stdout_file="$(mktemp "${workdir}/s3-head-stdout.XXXXXX")"
+            stderr_file="$(mktemp "${workdir}/s3-head-stderr.XXXXXX")"
+
+            if aws s3api head-object \
+              --endpoint-url "${YANDEX_S3_ENDPOINT}" \
+              --bucket "${YANDEX_BUCKET}" \
+              --key "${key}" \
+              --output json >"${stdout_file}" 2>"${stderr_file}"; then
+              : > "${stdout_file}"
+              : > "${stderr_file}"
+              rm -f "${stdout_file}" "${stderr_file}"
+              printf 'PRESENT\n'
+              return 0
+            else
+              exit_status=$?
+            fi
+
+            error_code="$(aws_error_code_from_file "${stderr_file}")"
+            : > "${stdout_file}"
+            : > "${stderr_file}"
+            rm -f "${stdout_file}" "${stderr_file}"
+
+            case "${error_code}" in
+              404|NoSuchKey|NotFound)
+                printf 'ABSENT\n'
+                return 0
+                ;;
+              *)
+                if [[ -z "${error_code}" || ! "${error_code}" =~ ^[A-Za-z0-9_.:/-]{1,128}$ ]]; then
+                  error_code='UNAVAILABLE'
+                fi
+                echo "s3_head_result=ERROR key=${key} exit_status=${exit_status} error_code=${error_code}" >&2
+                return 1
+                ;;
+            esac
+          }
+
           s3_get() {
             local key="$1"
             local destination="$2"
@@ -473,11 +647,24 @@ jobs:
 
           wait_for_lock_present() {
             local attempt
+            local object_status
             for attempt in $(seq 1 30); do
-              if s3_head "${LOCK_KEY}" >/dev/null 2>&1; then
-                return 0
+              if ! object_status="$(s3_object_status "${LOCK_KEY}")"; then
+                echo 'lock_wait_result=HEAD_ERROR'
+                return 1
               fi
-              sleep 1
+              case "${object_status}" in
+                PRESENT)
+                  return 0
+                  ;;
+                ABSENT)
+                  sleep 1
+                  ;;
+                *)
+                  echo 'lock_wait_result=INVALID_HEAD_STATUS'
+                  return 1
+                  ;;
+              esac
             done
             echo 'lock_wait_result=NOT_PRESENT'
             return 1
@@ -485,11 +672,24 @@ jobs:
 
           wait_for_lock_absent() {
             local attempt
+            local object_status
             for attempt in $(seq 1 30); do
-              if ! s3_head "${LOCK_KEY}" >/dev/null 2>&1; then
-                return 0
+              if ! object_status="$(s3_object_status "${LOCK_KEY}")"; then
+                echo 'lock_wait_result=HEAD_ERROR'
+                return 1
               fi
-              sleep 1
+              case "${object_status}" in
+                ABSENT)
+                  return 0
+                  ;;
+                PRESENT)
+                  sleep 1
+                  ;;
+                *)
+                  echo 'lock_wait_result=INVALID_HEAD_STATUS'
+                  return 1
+                  ;;
+              esac
             done
             echo 'lock_wait_result=STILL_PRESENT'
             return 1
@@ -524,63 +724,151 @@ jobs:
 
           read_lock_id() {
             local lock_file
+            local lock_id
             lock_file="$(mktemp "${workdir}/lock.XXXXXX.json")"
-            s3_get "${LOCK_KEY}" "${lock_file}"
-            jq -er '.ID | select(type == "string")' "${lock_file}"
+            if ! s3_get "${LOCK_KEY}" "${lock_file}"; then
+              echo 'lock_read_result=GET_ERROR' >&2
+              : > "${lock_file}"
+              rm -f "${lock_file}"
+              return 1
+            fi
+            if ! lock_id="$(jq -er '.ID | select(type == "string")' "${lock_file}")"; then
+              echo 'lock_read_result=INVALID_JSON' >&2
+              : > "${lock_file}"
+              rm -f "${lock_file}"
+              return 1
+            fi
             : > "${lock_file}"
             rm -f "${lock_file}"
+            printf '%s\n' "${lock_id}"
           }
 
           read_state_snapshot() {
             local state_file
+            local state_snapshot
             state_file="$(mktemp "${workdir}/state.XXXXXX.json")"
-            s3_get "${STATE_KEY}" "${state_file}"
-            jq -er '
+            if ! s3_get "${STATE_KEY}" "${state_file}"; then
+              echo 'state_read_result=GET_ERROR' >&2
+              : > "${state_file}"
+              rm -f "${state_file}"
+              return 1
+            fi
+            if ! jq -er '
               (.lineage | type == "string" and length > 0) and
               (.serial | type == "number" and . >= 0)
-            ' "${state_file}" >/dev/null
-            jq -r '[.lineage, (.serial | tostring)] | @tsv' "${state_file}"
+            ' "${state_file}" >/dev/null; then
+              echo 'state_read_result=INVALID_JSON' >&2
+              : > "${state_file}"
+              rm -f "${state_file}"
+              return 1
+            fi
+            if ! state_snapshot="$(jq -er '[.lineage, (.serial | tostring)] | @tsv' "${state_file}")"; then
+              echo 'state_read_result=SNAPSHOT_ERROR' >&2
+              : > "${state_file}"
+              rm -f "${state_file}"
+              return 1
+            fi
             : > "${state_file}"
             rm -f "${state_file}"
+            printf '%s\n' "${state_snapshot}"
           }
 
           read_state_etag() {
-            s3_head "${STATE_KEY}" | jq -er '.ETag | select(type == "string" and length > 0)'
+            local head_response
+            local etag
+            if ! head_response="$(s3_head "${STATE_KEY}")"; then
+              echo 'state_etag_result=HEAD_ERROR' >&2
+              return 1
+            fi
+            if ! etag="$(jq -er '.ETag | select(type == "string" and length > 0)' <<<"${head_response}")"; then
+              echo 'state_etag_result=INVALID_JSON' >&2
+              return 1
+            fi
+            printf '%s\n' "${etag}"
           }
 
           read_lock_etag() {
-            s3_head "${LOCK_KEY}" | jq -er '.ETag | select(type == "string" and length > 0)'
+            local head_response
+            local etag
+            if ! head_response="$(s3_head "${LOCK_KEY}")"; then
+              echo 'lock_etag_result=HEAD_ERROR' >&2
+              return 1
+            fi
+            if ! etag="$(jq -er '.ETag | select(type == "string" and length > 0)' <<<"${head_response}")"; then
+              echo 'lock_etag_result=INVALID_JSON' >&2
+              return 1
+            fi
+            printf '%s\n' "${etag}"
           }
 
           verify_inventory() {
             local inventory
+            local inventory_error_file
+            local list_exit_status
+            local error_code
             local versions
             local delete_markers
             local total_bytes
-            inventory="$(aws s3api list-object-versions \
+            inventory_error_file="$(mktemp "${workdir}/inventory-stderr.XXXXXX")"
+            if inventory="$(aws s3api list-object-versions \
               --endpoint-url "${YANDEX_S3_ENDPOINT}" \
               --bucket "${YANDEX_BUCKET}" \
               --prefix "${STATE_KEY}" \
-              --output json)"
+              --output json 2>"${inventory_error_file}")"; then
+              :
+            else
+              list_exit_status=$?
+              error_code="$(aws_error_code_from_file "${inventory_error_file}")"
+              : > "${inventory_error_file}"
+              rm -f "${inventory_error_file}"
+              if [[ -z "${error_code}" || ! "${error_code}" =~ ^[A-Za-z0-9_.:/-]{1,128}$ ]]; then
+                error_code='UNAVAILABLE'
+              fi
+              echo "inventory_result=AWS_ERROR exit_status=${list_exit_status} error_code=${error_code}" >&2
+              return 1
+            fi
+            : > "${inventory_error_file}"
+            rm -f "${inventory_error_file}"
 
-            jq -e \
+            if ! jq -e \
               --arg state "${STATE_KEY}" \
               --arg lock "${LOCK_KEY}" \
               '((.Versions // []) + (.DeleteMarkers // [])) |
                map(select(.Key != $state and .Key != $lock)) |
-               length == 0' <<<"${inventory}" >/dev/null
+               length == 0' <<<"${inventory}" >/dev/null; then
+              echo 'inventory_result=INVALID_JSON_OR_UNAPPROVED_KEY' >&2
+              return 1
+            fi
 
-            versions="$(jq -r '(.Versions // []) | length' <<<"${inventory}")"
-            delete_markers="$(jq -r '(.DeleteMarkers // []) | length' <<<"${inventory}")"
-            total_bytes="$(jq -r '[((.Versions // [])[]? | (.Size // 0))] | add // 0' <<<"${inventory}")"
-            [[ "${versions}" =~ ^[0-9]+$ ]]
-            [[ "${delete_markers}" =~ ^[0-9]+$ ]]
-            [[ "${total_bytes}" =~ ^[0-9]+$ ]]
-            (( total_bytes <= MAX_BUCKET_BYTES ))
+            if ! versions="$(jq -er '(.Versions // []) | length' <<<"${inventory}")"; then
+              echo 'inventory_result=VERSION_COUNT_ERROR' >&2
+              return 1
+            fi
+            if ! delete_markers="$(jq -er '(.DeleteMarkers // []) | length' <<<"${inventory}")"; then
+              echo 'inventory_result=DELETE_MARKER_COUNT_ERROR' >&2
+              return 1
+            fi
+            if ! total_bytes="$(jq -er '[((.Versions // [])[]? | (.Size // 0))] | add // 0' <<<"${inventory}")"; then
+              echo 'inventory_result=BYTE_COUNT_ERROR' >&2
+              return 1
+            fi
+            if [[ ! "${versions}" =~ ^[0-9]+$ ||
+                  ! "${delete_markers}" =~ ^[0-9]+$ ||
+                  ! "${total_bytes}" =~ ^[0-9]+$ ]]; then
+              echo 'inventory_result=NON_NUMERIC_COUNT' >&2
+              return 1
+            fi
+            if (( total_bytes > MAX_BUCKET_BYTES )); then
+              echo 'inventory_result=BUCKET_CAP_EXCEEDED' >&2
+              return 1
+            fi
             unset inventory
             printf '%s\t%s\t%s\n' "${versions}" "${delete_markers}" "${total_bytes}"
           }
 
+          snapshot_helpers_ready='YES'
+
+          failure_stage='backend_init'
           root_a="${workdir}/root-a"
           make_root "${root_a}"
           init_root "${root_a}" "${workdir}/init-a.log"
@@ -591,6 +879,7 @@ jobs:
             make_root "${root_b}"
             init_root "${root_b}" "${workdir}/init-b.log"
 
+            failure_stage='baseline_state_write'
             run_apply \
               "${root_a}" \
               "baseline-${GITHUB_RUN_ID}" \
@@ -602,6 +891,7 @@ jobs:
             IFS=$'\t' read -r baseline_lineage baseline_serial <<<"${baseline_snapshot}"
             baseline_etag="$(read_state_etag)"
 
+            failure_stage='normal_lock_holder'
             echo '01B marker: starting bounded normal lock holder'
             setsid "${tofu_bin}" -chdir="${root_a}" apply \
               -auto-approve \
@@ -626,6 +916,7 @@ jobs:
             IFS=$'\t' read -r conflict_before_lineage conflict_before_serial <<<"${conflict_before_snapshot}"
             conflict_before_etag="$(read_state_etag)"
 
+            failure_stage='concurrent_lock_conflict'
             set +e
             timeout 20s "${tofu_bin}" -chdir="${root_b}" apply \
               -auto-approve \
@@ -655,6 +946,7 @@ jobs:
             [[ "${conflict_after_etag}" == "${conflict_before_etag}" ]]
             echo '01B marker: second independent operation was rejected by the exact held lock without a state write'
 
+            failure_stage='normal_unlock'
             set +e
             wait "${active_pid}"
             holder_exit_status=$?
@@ -671,6 +963,7 @@ jobs:
             [[ "${normal_etag}" != "${conflict_before_etag}" ]]
             echo '01B marker: normal operation completed and released the native lock'
 
+            failure_stage='repeated_state_write'
             run_apply \
               "${root_b}" \
               "rewrite-${GITHUB_RUN_ID}" \
@@ -686,6 +979,7 @@ jobs:
             [[ "${rewrite_etag}" != "${normal_etag}" ]]
             echo '01B marker: independent repeated state write advanced the same lineage'
 
+            failure_stage='controlled_interruption'
             echo '01B marker: starting the controlled interrupted operation'
             setsid "${tofu_bin}" -chdir="${root_a}" apply \
               -auto-approve \
@@ -720,6 +1014,7 @@ jobs:
             (( interrupted_exit_status != 0 ))
             sleep 2
 
+            failure_stage='stale_lock_integrity'
             s3_head "${LOCK_KEY}" >/dev/null
             [[ "$(read_lock_id)" == "${interrupted_lock_id}" ]]
             [[ "$(read_lock_etag)" == "${interrupted_lock_etag}" ]]
@@ -731,6 +1026,7 @@ jobs:
             [[ "${interrupted_after_serial}" == "${interrupted_before_serial}" ]]
             [[ "${interrupted_after_etag}" == "${interrupted_before_etag}" ]]
 
+            failure_stage='inventory_validation'
             inventory_snapshot="$(verify_inventory)"
             IFS=$'\t' read -r version_count delete_marker_count total_version_bytes <<<"${inventory_snapshot}"
 
@@ -822,6 +1118,7 @@ jobs:
             exit 0
           fi
 
+          failure_stage='recovery_precheck'
           echo '01B marker: RECOVERY manifest is armed with one separately approved exact stale lock ID'
           s3_head "${LOCK_KEY}" >/dev/null
           observed_lock_id="$(read_lock_id)"
@@ -831,6 +1128,7 @@ jobs:
           IFS=$'\t' read -r recovery_before_lineage recovery_before_serial <<<"${recovery_before_snapshot}"
           recovery_before_etag="$(read_state_etag)"
 
+          failure_stage='approved_force_unlock'
           if ! "${tofu_bin}" -chdir="${root_a}" force-unlock \
             -force \
             "${STALE_LOCK_ID}" >"${workdir}/force-unlock.log" 2>&1; then
@@ -840,6 +1138,7 @@ jobs:
           wait_for_lock_absent
           echo '01B marker: exact separately approved stale lock was removed'
 
+          failure_stage='recovery_state_write'
           run_apply \
             "${root_a}" \
             "recovery-${GITHUB_RUN_ID}" \
@@ -854,24 +1153,35 @@ jobs:
           (( recovery_after_serial > recovery_before_serial ))
           [[ "${recovery_after_etag}" != "${recovery_before_etag}" ]]
 
+          failure_stage='pre_cleanup_inventory'
           inventory_before_cleanup="$(verify_inventory)"
           IFS=$'\t' read -r versions_before_cleanup markers_before_cleanup bytes_before_cleanup <<<"${inventory_before_cleanup}"
 
+          failure_stage='current_object_cleanup'
           aws s3api delete-object \
             --endpoint-url "${YANDEX_S3_ENDPOINT}" \
             --bucket "${YANDEX_BUCKET}" \
             --key "${STATE_KEY}" \
             --output json >/dev/null
 
-          if s3_head "${STATE_KEY}" >/dev/null 2>&1; then
+          if ! current_state_status="$(s3_object_status "${STATE_KEY}")"; then
+            echo 'current_state_cleanup_result=HEAD_ERROR'
+            exit 1
+          fi
+          if [[ "${current_state_status}" != 'ABSENT' ]]; then
             echo 'current_state_cleanup_result=FAIL'
             exit 1
           fi
-          if s3_head "${LOCK_KEY}" >/dev/null 2>&1; then
+          if ! current_lock_status="$(s3_object_status "${LOCK_KEY}")"; then
+            echo 'current_lock_cleanup_result=HEAD_ERROR'
+            exit 1
+          fi
+          if [[ "${current_lock_status}" != 'ABSENT' ]]; then
             echo 'current_lock_cleanup_result=FAIL'
             exit 1
           fi
 
+          failure_stage='post_cleanup_inventory'
           inventory_after_cleanup="$(verify_inventory)"
           IFS=$'\t' read -r versions_after_cleanup markers_after_cleanup bytes_after_cleanup <<<"${inventory_after_cleanup}"
 
