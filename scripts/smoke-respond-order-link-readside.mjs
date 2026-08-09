@@ -120,7 +120,7 @@ expect('responses still defines the MOCK_DRIVERS fallback board',
 
 // ── Invariant 5 — the board call-site uses the selector, not bare buildDrivers ──
 expect('responses() builds the board via buildDriversForOrder(request, …)',
-  /const\s+drivers\s*=\s*buildDriversForOrder\(\s*request\b/.test(responses));
+  /let\s+drivers[\s\S]{0,180}buildDriversForOrder\(\s*request\b/.test(responses));
 
 // ── Invariant 6 — read-only: never writes responses.v1, never mutates canon ──
 // Comment-stripped scan targets so a "// never setItem(RESPONSES_KEY)" /

@@ -133,7 +133,7 @@ expect('isAccepted overrides the URL state on the offer/list derivations',
 expect('accepted state renders renderAcceptedDriver instead of the empty search',
   /isAccepted[\s\S]*?renderAcceptedDriver\(/.test(responsesBody));
 expect('footer is hidden in the accepted state',
-  /\(isList\s*\|\|\s*isOffer\s*\|\|\s*isAccepted\)/.test(responsesBody));
+  /else if \(isAccepted\) \{\s*content = renderAcceptedDriver\(handoffRide, request\);\s*\}/.test(responsesBody));
 expect('accepted CTA exposes the open-active-ride action',
   /data-action="open-active-ride"/.test(responses));
 expect('open-active-ride CTA opens the passenger active ride (go(activeRideUrl(...)))',

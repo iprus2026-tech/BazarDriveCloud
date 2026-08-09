@@ -187,6 +187,30 @@ function getRouteParam(name) {
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
 }
 
+// BD-CLOUD-DESIGN-LOADING-02A — request-state previews live beside the
+// existing domain `state` query instead of overloading it. Unknown values are
+// deliberately ignored so a misspelled fixture follows normal runtime.
+const RESPONSE_FIXTURES = new Set(['loading', 'loaded', 'empty', 'error']);
+
+function getResponsesFixture() {
+  const value = getRouteParam('fixture') || '';
+  return RESPONSE_FIXTURES.has(value) ? value : '';
+}
+
+function requestFromFixture(explicitOrderId = '') {
+  const orderId = String(explicitOrderId || 'order_demo').trim() || 'order_demo';
+  return {
+    ...MOCK_REQUEST,
+    id: orderId,
+    orderId,
+    legacyPostId: '',
+    time: 'Сейчас',
+    isFallback: false,
+    isLegacyMock: false,
+    isFixture: true,
+  };
+}
+
 function markFeedTabActive() {
   const tabbar = document.getElementById('tabbar');
   if (!tabbar) return;
@@ -886,6 +910,62 @@ function renderEmptyState(request, opts = {}) {
   `;
 }
 
+// BD-CLOUD-DESIGN-LOADING-02A — only the replaceable offers footprint is
+// skeletonized. The announcement is a sibling of the aria-hidden decorative
+// geometry, so assistive technology receives one concise status message and no
+// fabricated driver/card content.
+function renderOffersLoading() {
+  const card = `
+    <article class="responses__skeleton-card">
+      <div class="responses__skeleton-head">
+        <span class="responses__skeleton-bone responses__skeleton-avatar"></span>
+        <span class="responses__skeleton-lines">
+          <span class="responses__skeleton-bone responses__skeleton-line responses__skeleton-line--name"></span>
+          <span class="responses__skeleton-bone responses__skeleton-line responses__skeleton-line--car"></span>
+          <span class="responses__skeleton-bone responses__skeleton-line responses__skeleton-line--meta"></span>
+        </span>
+      </div>
+      <div class="responses__skeleton-stats">
+        <span class="responses__skeleton-bone responses__skeleton-stat"></span>
+        <span class="responses__skeleton-bone responses__skeleton-stat"></span>
+      </div>
+      <span class="responses__skeleton-bone responses__skeleton-note"></span>
+      <span class="responses__skeleton-bone responses__skeleton-action"></span>
+    </article>`;
+
+  return `
+    <div class="responses__loading">
+      <p class="responses__loading-status" role="status">Загружаем отклики…</p>
+      <div class="responses__skeleton" aria-hidden="true">
+        <div class="responses__skeleton-toolbar">
+          <span class="responses__skeleton-bone responses__skeleton-count"></span>
+          <span class="responses__skeleton-bone responses__skeleton-filter"></span>
+        </div>
+        ${card}
+        ${card}
+      </div>
+    </div>`;
+}
+
+function renderResponsesFooter({ retry = false } = {}) {
+  const primary = retry
+    ? `<button type="button" class="bd-btn primary responses__cta" data-action="retry-offers">
+         <span>Проверить отклики</span>
+       </button>`
+    : `<button type="button" class="bd-btn primary responses__cta" id="responses-check">
+         <span>Проверить отклики</span>
+       </button>`;
+
+  return `
+    <div class="responses__footer responses__footer--in-scroll">
+      ${primary}
+      <button type="button" class="bd-btn responses__cta responses__cta--secondary" id="responses-map">
+        ${PENCIL_SVG}
+        <span>Изменить заказ</span>
+      </button>
+    </div>`;
+}
+
 // BD-DRIVER-MAP-X-15 — accepted-driver handoff card. Rendered in place of the
 // empty search once the linked order has an active trip. Reads the driver-seeded
 // (or passenger-selected) active ride record, falling back to the request when a
@@ -1232,9 +1312,10 @@ function responseStatus(state) {
   return RESPONSE_STATUS[state] || RESPONSE_STATUS.empty;
 }
 
-function renderStatusChip(status) {
+function renderStatusChip(status, { announce = true } = {}) {
+  const statusRole = announce ? ' role="status"' : '';
   return `
-    <div class="responses__status-chip responses__status-chip--${escapeHtml(status.tone)}" role="status">
+    <div class="responses__status-chip responses__status-chip--${escapeHtml(status.tone)}"${statusRole}>
       <span class="responses__status-chip-dot" aria-hidden="true"></span>
       <span class="responses__status-chip-text">${escapeHtml(status.chip)}</span>
     </div>
@@ -1354,30 +1435,25 @@ function responseUrl(request, state, driverId = '') {
   return `/responses?${params.toString()}`;
 }
 
-export default async function responses() {
+export default function responses() {
+  const fixture = getResponsesFixture();
   const explicitOrderId = getRouteParam('orderId') || '';
   const legacyPostId = explicitOrderId ? '' : (getRouteParam('postId') || '');
-  const canonicalOrder = resolveCanonicalOrder();
-  const request = canonicalOrder
-    ? requestFromOrder(canonicalOrder, explicitOrderId)
-    : (legacyPostId ? requestFromLegacyPost(legacyPostId) : requestFromOrder(null, explicitOrderId));
+  // Known fixtures are synthetic and bypass both production/local stores and
+  // the guarded backend. Unknown values already collapsed to normal runtime.
+  const canonicalOrder = fixture ? null : resolveCanonicalOrder();
+  const request = fixture
+    ? requestFromFixture(explicitOrderId)
+    : (canonicalOrder
+        ? requestFromOrder(canonicalOrder, explicitOrderId)
+        : (legacyPostId ? requestFromLegacyPost(legacyPostId) : requestFromOrder(null, explicitOrderId)));
   const postId = request.legacyPostId || request.orderId || request.id;
-  const state = getRouteParam('state') || 'empty';
+  const requestedState = getRouteParam('state') || 'empty';
   // #784 CUT-4: on a live backend the owner's offers come from GET /matching/offers, and the server
   // is AUTHORITATIVE for the board (empty => honest empty state, NEVER the local/mock drivers). A
-  // fetch error sets serverOffersError so the empty state shows an honest "retry" copy instead of
-  // masking the outage with fabricated drivers. OFF, backendAuthoritative is false and the board is
-  // byte-identical to before. NOTE: an orderId is enough (NOT gated on !isFallback) — a server order
-  // the owner opens where it isn't locally bridged (cross-device / the server-fed /orders feed) is
-  // still server-authoritative; its offers must load and be selectable.
-  const backendAuthoritative = isBackendEnabled() && !!request.orderId;
-  let serverOffers = null;
-  let serverOffersError = false;
-  if (backendAuthoritative) {
-    try { serverOffers = await listOrderOffers(request.orderId); }
-    catch { serverOffers = null; serverOffersError = true; }
-  }
-  const drivers = buildDriversForOrder(request, serverOffers, backendAuthoritative);
+  // fetch error now settles the persistent board region to an explicit retryable
+  // `error` state. OFF remains byte-identical to the prior local/mock path.
+  const backendAuthoritative = !fixture && isBackendEnabled() && !!request.orderId;
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
@@ -1388,7 +1464,7 @@ export default async function responses() {
   // authoritative signal that the trip is over, so it suppresses the handoff
   // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
   // status fallback only applies when there is no linked terminal ride.
-  const handoffTripId = request.orderId ? `trip_${request.orderId}` : '';
+  const handoffTripId = !fixture && request.orderId ? `trip_${request.orderId}` : '';
   let handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
   const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
   const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
@@ -1412,19 +1488,19 @@ export default async function responses() {
     if (upgraded && upgraded !== handoffRide) handoffRide = upgraded;
   }
   const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
-  const effectiveState = isAccepted ? 'accepted' : state;
+  let effectiveState = isAccepted ? 'accepted' : requestedState;
 
-  const isAllDeclined = !isAccepted && state === 'all-declined';
-  const isOffer = !isAccepted && state === 'offer';
-  const isList = !isAccepted && (state === 'list' || state === 'selected' || isAllDeclined);
-  // #784 CUT-4: ON + a real order with zero offers (or a failed offers read) must show the honest
-  // empty/retry state, never the local/mock board — this overrides the list/offer UI hint.
-  const showServerEmpty = backendAuthoritative && !isAccepted && drivers.length === 0;
-  const routeDriverId = state === 'selected' ? getRouteParam('driverId') : null;
-  const selectedDriver = routeDriverId ? drivers.find((d) => d.id === routeDriverId) : null;
-  // `let`: declining the currently-selected driver clears the selection so the
-  // board drops the dimming + stale "selected" header (BD-RESPONSES-01 fix).
-  let selectedDriverId = selectedDriver ? selectedDriver.id : null;
+  // Local/mock data still resolves synchronously. A live backend starts with no
+  // fabricated drivers and hydrates after mount; fixtures use the synthetic card
+  // seed only and never touch localStorage/backend data.
+  let drivers = fixture === 'loaded'
+    ? buildDrivers(request)
+    : (fixture || backendAuthoritative
+        ? []
+        : buildDriversForOrder(request, null, false));
+  let readState = isAccepted ? 'loaded' : (fixture || (backendAuthoritative ? 'loading' : 'loaded'));
+  let selectedDriver = null;
+  let selectedDriverId = null;
 
   // BD-RESPONSES-01 — in-memory sort + decline state. Session-only: never
   // persisted to localStorage, so a reload returns every card to normal. The
@@ -1433,27 +1509,57 @@ export default async function responses() {
   let sortMode = 'best';
   let selecting = false; // #784 CUT-4: double-submit latch for the async backend select
   const declined = new Set();
-  if (isAllDeclined) drivers.forEach((d) => declined.add(d.id));
+  const isAllDeclined = !isAccepted && requestedState === 'all-declined';
+  let declinedSeeded = false;
+
+  function loadedDomainState() {
+    if (isAccepted) return 'accepted';
+    if (!drivers.length) return 'empty';
+    if (requestedState === 'offer'
+        || requestedState === 'list'
+        || requestedState === 'selected'
+        || requestedState === 'all-declined') return requestedState;
+    // A successful authoritative/fixture read with usable offers exposes those
+    // cards. The backend-OFF legacy `state=empty` presentation stays unchanged.
+    return (backendAuthoritative || fixture === 'loaded') ? 'list' : requestedState;
+  }
+
+  function reconcileDriverState() {
+    const routeDriverId = requestedState === 'selected' ? getRouteParam('driverId') : null;
+    selectedDriver = routeDriverId ? drivers.find((driver) => driver.id === routeDriverId) : null;
+    selectedDriverId = selectedDriver ? selectedDriver.id : null;
+    if (isAllDeclined && !declinedSeeded) {
+      drivers.forEach((driver) => declined.add(driver.id));
+      declinedSeeded = true;
+    }
+  }
+
+  if (readState === 'loaded') {
+    if (fixture === 'loaded') effectiveState = loadedDomainState();
+    reconcileDriverState();
+  }
+
+  function headerStatus() {
+    if (readState === 'loading') {
+      return { subtitle: 'Загружаем отклики', chip: 'Загружаем отклики', tone: 'searching' };
+    }
+    if (readState === 'error') {
+      return { subtitle: 'Отклики недоступны', chip: 'Ошибка загрузки', tone: 'declined' };
+    }
+    return responseStatus(effectiveState);
+  }
 
   const root = document.createElement('section');
   root.className = 'screen screen--responses';
   root.dataset.postId = postId;
   root.dataset.orderId = request.orderId;
   root.dataset.state = effectiveState;
+  root.dataset.readState = readState;
+  if (fixture) root.dataset.fixture = fixture;
   root.dataset.source = canonicalOrder ? 'ride-order' : (request.isLegacyMock ? 'legacy-post' : 'mock');
 
-  const status = responseStatus(effectiveState);
+  const status = headerStatus();
   const subTitle = status.subtitle;
-  const footer = ((isList || isOffer || isAccepted) && !showServerEmpty) ? '' : `
-    <div class="responses__footer responses__footer--in-scroll">
-      <button type="button" class="bd-btn primary responses__cta" id="responses-check">
-        <span>Проверить отклики</span>
-      </button>
-      <button type="button" class="bd-btn responses__cta responses__cta--secondary" id="responses-map">
-        ${PENCIL_SVG}
-        <span>Изменить заказ</span>
-      </button>
-    </div>`;
 
   root.innerHTML = `
     <div class="responses__topbar">
@@ -1467,7 +1573,7 @@ export default async function responses() {
 
     <div class="bd-scroll responses__scroll">
       <div class="bd-card responses__request" aria-label="Ваш опубликованный заказ">
-        ${renderStatusChip(status)}
+        ${renderStatusChip(status, { announce: readState !== 'loading' })}
         <div class="responses__request-main">
           <div class="responses__route">
             <div class="responses__stop">
@@ -1497,16 +1603,9 @@ export default async function responses() {
           </button>
         </div>
       </div>
-      ${isAccepted
-        ? renderAcceptedDriver(handoffRide, request)
-        : (showServerEmpty
-            ? renderEmptyState(request, { error: serverOffersError })
-            : (isOffer && drivers.length
-                ? renderOffer(drivers[0])
-                : (isList
-                    ? `<div class="responses__board" id="responses-board">${renderList(drivers, selectedDriverId, declined, sortMode)}</div>`
-                    : renderEmptyState(request))))}
-      ${footer}
+      <div class="responses__read-region" id="responses-read-region"
+           data-read-state="${escapeHtml(readState)}"
+           aria-busy="${readState === 'loading' ? 'true' : 'false'}"></div>
     </div>
 
     <div class="responses__toast" id="responses-toast" role="status" aria-live="polite" hidden></div>
@@ -1619,42 +1718,120 @@ export default async function responses() {
     go('/order-map-draft');
   });
 
-  const checkBtn = root.querySelector('#responses-check');
-  if (checkBtn) {
-    checkBtn.addEventListener('click', () => {
-      go(responseUrl(request, 'list'));
-    });
-  }
-
-  const mapBtn = root.querySelector('#responses-map');
-  if (mapBtn) {
-    mapBtn.addEventListener('click', () => {
-      go('/order-map-draft');
-    });
-  }
+  const readRegion = root.querySelector('#responses-read-region');
+  let boardEl = null;
+  let offersReadRunId = 0;
+  let missingSelectedAnnounced = false;
 
   // BD-RESPONSES-01 — sort + decline are re-rendered in place on the
-  // #responses-board shell (list/declined state only). syncHeader keeps the
-  // topbar subtitle + status chip + root.dataset.state aligned with the live
-  // declined/selected state — otherwise restoring a card seeded from
-  // ?state=all-declined (or declining the selected driver) would leave a stale
-  // header.
-  const boardEl = root.querySelector('#responses-board');
-  function syncHeader() {
-    if (!boardEl) return;
-    const allDeclinedNow = drivers.length > 0 && declined.size === drivers.length;
-    const liveState = allDeclinedNow ? 'all-declined' : (selectedDriverId ? 'selected' : 'list');
-    root.dataset.state = liveState;
-    const liveStatus = responseStatus(liveState);
+  // #responses-board shell (list/declined state only). The request-state owner
+  // around it is persistent across loading → settled transitions.
+  function syncHeader({ reconcileBoard = false } = {}) {
+    if (reconcileBoard && boardEl && readState === 'loaded') {
+      const allDeclinedNow = drivers.length > 0 && declined.size === drivers.length;
+      effectiveState = allDeclinedNow ? 'all-declined' : (selectedDriverId ? 'selected' : 'list');
+    }
+    root.dataset.state = effectiveState;
+    root.dataset.readState = readState;
+    const liveStatus = headerStatus();
     const subEl = root.querySelector('.responses__sub');
     if (subEl) subEl.textContent = liveStatus.subtitle;
     const chipEl = root.querySelector('.responses__status-chip');
-    if (chipEl) chipEl.outerHTML = renderStatusChip(liveStatus);
+    if (chipEl) chipEl.outerHTML = renderStatusChip(liveStatus, { announce: readState !== 'loading' });
   }
+
+  function renderReadRegion() {
+    if (!readRegion) return;
+    let content;
+    if (readState === 'loading') {
+      content = renderOffersLoading();
+    } else if (isAccepted) {
+      content = renderAcceptedDriver(handoffRide, request);
+    } else if (readState === 'error') {
+      content = `${renderEmptyState(request, { error: true })}${renderResponsesFooter({ retry: true })}`;
+    } else if (readState === 'empty') {
+      content = `${renderEmptyState(request)}${renderResponsesFooter({ retry: backendAuthoritative || !!fixture })}`;
+    } else {
+      const isOffer = effectiveState === 'offer';
+      const isList = effectiveState === 'list'
+        || effectiveState === 'selected'
+        || effectiveState === 'all-declined';
+      content = isOffer && drivers.length
+        ? renderOffer(drivers[0])
+        : (isList
+            ? `<div class="responses__board" id="responses-board">${renderList(drivers, selectedDriverId, declined, sortMode)}</div>`
+            : `${renderEmptyState(request)}${renderResponsesFooter()}`);
+    }
+
+    readRegion.dataset.readState = readState;
+    readRegion.setAttribute('aria-busy', readState === 'loading' ? 'true' : 'false');
+    readRegion.innerHTML = content;
+    boardEl = readRegion.querySelector('#responses-board');
+    syncHeader();
+
+    if (readState === 'loaded'
+        && requestedState === 'selected'
+        && !selectedDriver
+        && !missingSelectedAnnounced) {
+      missingSelectedAnnounced = true;
+      queueMicrotask(() => {
+        if (document.body.contains(root)) toast('Этап подтверждения водителя будет добавлен позже');
+      });
+    }
+  }
+
+  function setRetryBusy(busy) {
+    const retryBtn = readRegion && readRegion.querySelector('[data-action="retry-offers"]');
+    if (!retryBtn) return;
+    retryBtn.disabled = busy;
+    retryBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    const label = retryBtn.querySelector('span');
+    if (label) label.textContent = busy ? 'Проверяем отклики…' : 'Проверить отклики';
+  }
+
+  async function loadServerOffers({ isRetry = false } = {}) {
+    if (!backendAuthoritative || fixture || !document.body.contains(root)) return;
+    const runId = ++offersReadRunId;
+    if (isRetry) setRetryBusy(true);
+
+    try {
+      const serverOffers = await listOrderOffers(request.orderId);
+      if (runId !== offersReadRunId || !document.body.contains(root)) return;
+      // Accepted-ride handoff was authoritative before the read started. Keep
+      // its rendered button/focus untouched even though the one guarded read is
+      // still performed for parity with the pre-02A path.
+      if (isAccepted) return;
+      drivers = buildDriversForOrder(request, serverOffers, true);
+      readState = drivers.length ? 'loaded' : 'empty';
+      effectiveState = readState === 'loaded' ? loadedDomainState() : 'empty';
+      selectedDriver = null;
+      selectedDriverId = null;
+      reconcileDriverState();
+      renderReadRegion();
+    } catch {
+      if (runId !== offersReadRunId || !document.body.contains(root)) return;
+      if (isAccepted) return;
+      // A failed retry from the already-rendered error state keeps the same
+      // button node/focus and only clears its local command progress.
+      if (isRetry && readState === 'error') {
+        setRetryBusy(false);
+        return;
+      }
+      drivers = [];
+      selectedDriver = null;
+      selectedDriverId = null;
+      effectiveState = 'empty';
+      readState = 'error';
+      renderReadRegion();
+    }
+  }
+
   function refreshBoard() {
     if (boardEl) boardEl.innerHTML = renderList(drivers, selectedDriverId, declined, sortMode);
-    syncHeader();
+    syncHeader({ reconcileBoard: true });
   }
+
+  renderReadRegion();
 
   // One delegated listener on the stable scroll container — present in EVERY
   // card state — so the offer card (renderOffer, rendered outside
@@ -1663,6 +1840,25 @@ export default async function responses() {
   const scrollEl = root.querySelector('.responses__scroll');
   if (scrollEl) {
     scrollEl.addEventListener('click', async (event) => {
+      if (event.target.closest('#responses-check')) {
+        go(responseUrl(request, 'list'));
+        return;
+      }
+
+      if (event.target.closest('#responses-map')) {
+        go('/order-map-draft');
+        return;
+      }
+
+      if (event.target.closest('[data-action="retry-offers"]')) {
+        if (fixture) {
+          toast('Предпросмотр не выполняет сетевые запросы');
+          return;
+        }
+        await loadServerOffers({ isRetry: true });
+        return;
+      }
+
       const chip = event.target.closest('[data-sort]');
       if (chip) {
         const mode = chip.dataset.sort;
@@ -1686,6 +1882,16 @@ export default async function responses() {
       const driverId = card.dataset.driverId;
       const responseId = card.dataset.responseId;
       const action = btn.dataset.action;
+
+      // Fixture cards are representative design/smoke content. Their data
+      // actions never call backend helpers or write order/ride/local state.
+      if (fixture && (action === 'select'
+          || action === 'continue'
+          || action === 'chat'
+          || action === 'call')) {
+        toast('Действие недоступно в режиме предпросмотра');
+        return;
+      }
 
       if (action === 'select' || action === 'continue') {
         if (selecting) return; // #784 CUT-4: ignore a second click while a select is in flight
@@ -1780,8 +1986,14 @@ export default async function responses() {
     openActiveRideBtn.addEventListener('click', () => go(activeRideUrl(handoffTripId)));
   }
 
-  if (state === 'selected' && !selectedDriver) {
-    queueMicrotask(() => toast('Этап подтверждения водителя будет добавлен позже'));
+  if (backendAuthoritative) {
+    // The router awaits the loader and appends its return value afterwards. A
+    // macrotask starts the one guarded read only once the stable shell is in the
+    // document, guaranteeing a visible pending owner and a valid teardown guard.
+    setTimeout(() => {
+      if (!document.body.contains(root)) return;
+      void loadServerOffers();
+    }, 0);
   }
 
   queueMicrotask(markFeedTabActive);

@@ -30,8 +30,8 @@ function expect(label, cond, detail = '') {
 const slice = (re) => { const m = responses.match(re); return m ? m[0] : ''; };
 
 // ── A. read-side board source of truth is preserved ─────────
-expect('responses() still builds the board via buildDriversForOrder(request, …)',
-  /const\s+drivers\s*=\s*buildDriversForOrder\(\s*request\b/.test(responses));
+expect('responses() still builds the local/mock board via buildDriversForOrder(request, …)',
+  /let\s+drivers[\s\S]{0,180}buildDriversForOrder\(\s*request\b/.test(responses));
 
 // ── B. derived sort covers all four modes, never mutating drivers ───
 const sortBody = slice(/function sortDrivers\(drivers, mode\)[\s\S]*?\n}/);
@@ -83,7 +83,7 @@ expect('restore-all clears the whole Set', /declined\.clear\(\)/.test(responses)
 expect('declined Set is not written to localStorage',
   !/setItem\([^)]*declined/.test(responses) && !/declined[\s\S]{0,60}setItem/.test(responses));
 expect('?state=all-declined seeds the Set once on first render',
-  /if \(isAllDeclined\) drivers\.forEach\(\(d\) => declined\.add\(d\.id\)\)/.test(responses));
+  /if \(isAllDeclined && !declinedSeeded\)[\s\S]{0,120}drivers\.forEach\(\(driver\) => declined\.add\(driver\.id\)\)/.test(responses));
 
 // ── G. out-of-scope guard — call stays a stub ───────────────
 expect('call action remains a toast stub (out of scope)',
@@ -119,12 +119,12 @@ expect('declining the selected driver clears selectedDriverId',
 
 // ── K. header reconciles after sort/decline/restore ─────────
 expect('refreshBoard reconciles the header via syncHeader()',
-  /function syncHeader\(\)/.test(responses)
-  && /function refreshBoard\(\)[\s\S]{0,160}syncHeader\(\)/.test(responses));
+  /function syncHeader\(\{ reconcileBoard = false \} = \{\}\)/.test(responses)
+  && /function refreshBoard\(\)[\s\S]{0,180}syncHeader\(\{ reconcileBoard: true \}\)/.test(responses));
 expect('syncHeader updates subtitle + status chip + dataset.state',
-  /root\.dataset\.state\s*=\s*liveState/.test(responses)
+  /root\.dataset\.state\s*=\s*effectiveState/.test(responses)
   && /\.responses__sub/.test(responses)
-  && /renderStatusChip\(liveStatus\)/.test(responses));
+  && /renderStatusChip\(liveStatus, \{ announce: readState !== 'loading' \}\)/.test(responses));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
