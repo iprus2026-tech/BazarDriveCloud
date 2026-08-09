@@ -30,7 +30,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Design',
-      items: ['design/BD-DOCS-031'],
+      items: ['design/BD-DOCS-031', 'design/BD-DOCS-049'],
     },
     {
       type: 'category',
