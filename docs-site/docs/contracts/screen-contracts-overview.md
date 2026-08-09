@@ -4,15 +4,15 @@ docType: screen-contract
 title: Screen Contracts — Overview
 owner: docs-contract-agent
 status: current
-revision: 2026-06-15
+revision: 2026-08-09
 effectiveFrom: 2026-06-15
 reviewAfter: 2026-12-16
 visibleFor: [developer, designer, qa]
 sourceOfTruth: docs/screen-contracts.md
 related:
   routes: []
-  files: ["docs/screen-contracts.md", "docs/flow-contracts.md", "docs/screen-map.md"]
-  issues: []
+  files: ["docs/screen-contracts.md", "docs/flow-contracts.md", "docs/screen-map.md", "docs-site/docs/design/pwa-loading-state-contract.md"]
+  issues: ["#864"]
   prs: []
 tags: [contracts, screens]
 slug: /contracts/screen-contracts-overview
@@ -26,6 +26,7 @@ Shipped screen behaviour is pinned by **contracts in the repo**, not by this pag
 - `docs/flow-contracts.md` — cross-screen flows.
 - `docs/screen-map.md` · `docs/full-flow-map.md` · `docs/screen-transitions.md` — the navigation map.
 - `docs/design-registry.json` — the Cloud Design render-gate registry.
+- [PWA Loading States — Cloud Design Contract](../design/pwa-loading-state-contract.md) — the shared `loading | loaded | empty | error` model, pattern selection, accessibility boundary, and reproducible preview rule for network-backed screens.
 
 ## How contracts are enforced
 
