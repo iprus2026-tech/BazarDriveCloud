@@ -18,7 +18,9 @@
 // the placeholder when a token is set; dark/no-token path unchanged).
 // v261 (BD-MAP-ACTIVATE #805): precached index.html changed — committed the URL-restricted bd-mapbox-token
 // meta, flipping the Mapbox seam ON in prod (/map renders a real map). Installed clients must refresh.
-const VERSION    = 'v261';
+// v262 (BD-CLOUD-DESIGN-LOADING-02A #866): precached responses.js + cloud.css changed (persistent
+// Responses shell, four guarded read states, deterministic fixtures, and structural skeleton).
+const VERSION    = 'v262';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

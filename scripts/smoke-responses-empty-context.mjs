@@ -33,10 +33,11 @@ check(
   'renderEmptyState(request) must appear at least twice: declaration + call site',
 );
 
-// Targeted call-site shape: the render branch ternary calls renderEmptyState(request)
+// Targeted call-site shape: the settled empty request-state branch renders the
+// context-aware empty state (02A moved this out of the original root ternary).
 check(
-  /:\s*renderEmptyState\s*\(\s*request\s*\)/.test(src),
-  'render branch must call renderEmptyState(request) as a ternary arm',
+  /readState\s*===\s*'empty'[\s\S]{0,220}renderEmptyState\s*\(\s*request\s*\)/.test(src),
+  'settled empty request-state branch must call renderEmptyState(request)',
 );
 
 // Context-aware copy: published-order branch present

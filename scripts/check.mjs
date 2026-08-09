@@ -1229,6 +1229,19 @@ if (exists(responsesDeclineSortSmoke)) {
   }
 }
 
+// BD-CLOUD-DESIGN-LOADING-02A (#866) — Responses stable shell + four
+// matching-offers read states, deterministic fixtures, a11y skeleton, retry,
+// teardown guard, backend-OFF parity, and the version-only SW refresh.
+const responsesLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-responses-loading-states.mjs');
+if (exists(responsesLoadingStatesSmoke)) {
+  try {
+    execFileSync(process.execPath, [responsesLoadingStatesSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-1200);
+    errors.push(`smoke-responses-loading-states.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RESPONSES-SAFETY-01 — pre-ride safety sheet on /responses. Asserts the
 // shield opens the 4-view sheet, the exact strings, the report-submit stub, and
 // the BD-RIDE-P-07 non-reuse boundary (no SOS / share-trip / driver coupling).
