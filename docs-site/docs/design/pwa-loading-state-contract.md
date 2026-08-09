@@ -68,7 +68,7 @@ These are existing implementations, not yet a shared component or API.
 | `profile.js` (`renderDriverSkeleton`) | Driver-profile chrome plus structural bones | `/profile?role=driver&state=loading`; content region has `aria-busy="true"`; one `role="status"` message | Structural skeleton precedent |
 | `trip_receipt.js` (`receiptSkeletonHtml`) | Document-shaped receipt placeholder while the receipt resolves | `/receipt?state=loading`; document owns `role="status"`, `aria-live="polite"`, and `aria-busy="true"` | Document skeleton precedent |
 | `order_detail.js` (`bodyS1`) | Centered `od-loading__spinner` driven by `order.__loading` | One `role="status"` / `aria-live="polite"` message; no owning-region `aria-busy` yet | Existing spinner exception to review when migrated |
-| `respond.js` (`setLoading`) | Submit-button progress while publishing a response | Button is disabled and toggles `loading` plus `aria-busy` | Action-button loader; not a screen state |
+| `respond.js` (`setLoading`) | Submit-button progress while publishing a response | Button is disabled, toggles `loading`, and changes its label; it does not set `aria-busy` | Action-button loader; not a screen state |
 | `order_map_draft.js` (publish action) | Submit-button spinner and “Публикуем…” label | Button is disabled and gains `aria-busy="true"` | Action-button loader; not a screen state |
 
 **Baseline correction.** The initial Issue #864 inventory described two Feed
