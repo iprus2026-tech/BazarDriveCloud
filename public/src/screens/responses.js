@@ -1743,6 +1743,7 @@ export default function responses() {
   let boardEl = null;
   let offersReadRunId = 0;
   let missingSelectedAnnounced = false;
+  let missingSelectedAnnouncementPending = false;
 
   // BD-RESPONSES-01 — sort + decline are re-rendered in place on the
   // #responses-board shell (list/declined state only). The request-state owner
@@ -1759,6 +1760,20 @@ export default function responses() {
     if (subEl) subEl.textContent = liveStatus.subtitle;
     const chipEl = root.querySelector('.responses__status-chip');
     if (chipEl) chipEl.outerHTML = renderStatusChip(liveStatus, { announce: readState !== 'loading' });
+  }
+
+  function announceMissingSelectedAfterMount() {
+    if (missingSelectedAnnounced || missingSelectedAnnouncementPending) return;
+    missingSelectedAnnouncementPending = true;
+    // `responses()` returns synchronously, but router.render() resumes from its
+    // `await loader()` in a later microtask. A macrotask therefore observes the
+    // real mounted shell; only then may the one-shot flag suppress later renders.
+    setTimeout(() => {
+      missingSelectedAnnouncementPending = false;
+      if (missingSelectedAnnounced || !document.body.contains(root)) return;
+      missingSelectedAnnounced = true;
+      toast('Этап подтверждения водителя будет добавлен позже');
+    }, 0);
   }
 
   function renderReadRegion() {
@@ -1807,10 +1822,7 @@ export default function responses() {
         && requestedState === 'selected'
         && !selectedDriver
         && !missingSelectedAnnounced) {
-      missingSelectedAnnounced = true;
-      queueMicrotask(() => {
-        if (document.body.contains(root)) toast('Этап подтверждения водителя будет добавлен позже');
-      });
+      announceMissingSelectedAfterMount();
     }
   }
 

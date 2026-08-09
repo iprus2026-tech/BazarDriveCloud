@@ -35,6 +35,11 @@ const handoffResolver = between(
   'refreshHandoffState({ upgradeSnapshot: true });',
 );
 const readRenderer = between(responses, 'function renderReadRegion()', 'function setRetryBusy');
+const missingSelectedMountAnnouncement = between(
+  responses,
+  'function announceMissingSelectedAfterMount()',
+  'function renderReadRegion()',
+);
 const handoffSettlement = between(responses, 'function settleLatestHandoff()', 'async function loadServerOffers');
 const loader = between(responses, 'async function loadServerOffers', 'function refreshBoard');
 const fixtureActionGuard = between(responses, '// Fixture cards are representative', "if (action === 'select'");
@@ -117,8 +122,75 @@ expect('settlement preserves descendant focus on the stable read owner before re
   && /readRegion\.focus\(\{ preventScroll: true \}\)/.test(readRenderer)
   && readRenderer.indexOf("readRegion.focus({ preventScroll: true });")
     < readRenderer.indexOf('readRegion.innerHTML = content;'));
+expect('missing selected-driver notice is deferred until the Responses shell is mounted',
+  /missingSelectedAnnouncementPending/.test(responses)
+  && /if \(missingSelectedAnnounced \|\| missingSelectedAnnouncementPending\) return;/.test(missingSelectedMountAnnouncement)
+  && /setTimeout\(\(\) => \{/.test(missingSelectedMountAnnouncement)
+  && /!document\.body\.contains\(root\)/.test(missingSelectedMountAnnouncement)
+  && missingSelectedMountAnnouncement.indexOf('document.body.contains(root)')
+    < missingSelectedMountAnnouncement.indexOf('missingSelectedAnnounced = true')
+  && /announceMissingSelectedAfterMount\(\)/.test(readRenderer)
+  && !/queueMicrotask/.test(missingSelectedMountAnnouncement));
 expect('backend-OFF local/mock source remains buildDriversForOrder',
   /buildDriversForOrder\(request, null, false\)/.test(responses));
+
+// Execute the exact extracted helper behind a tiny timer/mount harness. This
+// catches the original ordering regression: a detached callback must not burn
+// the one-shot flag, duplicate renders must not queue duplicate notices, and a
+// later mounted callback must announce exactly once.
+function makeMissingSelectedHarness() {
+  const timers = [];
+  const messages = [];
+  const root = {};
+  let mounted = false;
+  const document = { body: { contains: (candidate) => mounted && candidate === root } };
+  const setTimeout = (fn, delay) => {
+    timers.push({ fn, delay });
+    return timers.length;
+  };
+  const toast = (message) => messages.push(message);
+  const factory = new Function('document', 'setTimeout', 'toast', 'root', `
+    let missingSelectedAnnounced = false;
+    let missingSelectedAnnouncementPending = false;
+    ${missingSelectedMountAnnouncement}
+    return {
+      announce: announceMissingSelectedAfterMount,
+      state: () => ({
+        announced: missingSelectedAnnounced,
+        pending: missingSelectedAnnouncementPending,
+      }),
+    };
+  `);
+  return {
+    timers,
+    messages,
+    mount: () => { mounted = true; },
+    helper: factory(document, setTimeout, toast, root),
+  };
+}
+
+{
+  const harness = makeMissingSelectedHarness();
+  harness.helper.announce();
+  harness.helper.announce();
+  expect('backend-OFF selected fallback queues one zero-delay mount check',
+    harness.timers.length === 1 && harness.timers[0].delay === 0);
+  expect('one-shot notice is pending but not announced before mount',
+    harness.helper.state().pending && !harness.helper.state().announced);
+  harness.timers.shift().fn();
+  expect('detached mount check neither toasts nor burns the one-shot flag',
+    harness.messages.length === 0
+    && !harness.helper.state().pending
+    && !harness.helper.state().announced);
+  harness.mount();
+  harness.helper.announce();
+  harness.timers.shift().fn();
+  harness.helper.announce();
+  expect('mounted selected fallback announces exactly once',
+    harness.messages.length === 1
+    && harness.helper.state().announced
+    && harness.timers.length === 0);
+}
 
 // E. Version-only SW refresh for changed precached assets.
 expect('Service Worker VERSION is bumped exactly to v262 for #866',
