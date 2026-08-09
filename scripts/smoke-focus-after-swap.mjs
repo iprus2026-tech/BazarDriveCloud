@@ -66,8 +66,21 @@ const LEDGER = {
     benign: 1,
     gap: 0,
   },
-  'screens/route_picker.js': { proofs: [], benign: 0, gap: 2 },  // TODO #779 focus retrofit
-  'screens/route_preview.js': { proofs: [], benign: 0, gap: 1 }, // TODO #779 focus retrofit
+  'screens/route_picker.js': {
+    // rerender() (interaction re-renders) now moves focus into the fresh content
+    // after replaceChildren: the open manual form, else the pending pickup/dropoff
+    // input, else the ready CTA, else the topbar back control. The initial mount
+    // call is first paint → benign.
+    proofs: [/replaceChildren\(buildBody\(\)\)[\s\S]{0,560}data-manual="city"[\s\S]{0,320}querySelector\('\.rp-topbar__back'\)[\s\S]{0,120}\.focus\(\)/],
+    benign: 1,
+    gap: 0,
+  },
+  'screens/route_preview.js': {
+    // Only swap site is the initial mount (first paint) → benign, no fix needed.
+    proofs: [],
+    benign: 1,
+    gap: 0,
+  },
 };
 
 const issues = [];
