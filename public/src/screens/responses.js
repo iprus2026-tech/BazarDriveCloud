@@ -1469,7 +1469,7 @@ export default function responses() {
   let isAccepted = false;
   let isAllDeclined = false;
 
-  function refreshHandoffState() {
+  function refreshHandoffState({ upgradeSnapshot = false } = {}) {
     if (!handoffTripId) {
       handoffRide = null;
       isAccepted = false;
@@ -1499,7 +1499,7 @@ export default function responses() {
     // through upgradeRideFromDriverSnapshot — the outer `!rideTerminal` check
     // is kept as a perf gate so we do not even read the responses store on a
     // ride that is already over.
-    if (handoffRide && !rideTerminal && request.orderId) {
+    if (upgradeSnapshot && handoffRide && !rideTerminal && request.orderId) {
       const upgraded = upgradeStoredActiveRideForOrder(request.orderId);
       if (upgraded && upgraded !== handoffRide) handoffRide = upgraded;
     }
@@ -1508,7 +1508,7 @@ export default function responses() {
     return isAccepted;
   }
 
-  refreshHandoffState();
+  refreshHandoffState({ upgradeSnapshot: true });
   let effectiveState = isAccepted ? 'accepted' : requestedState;
 
   // Local/mock data still resolves synchronously. A live backend starts with no
@@ -1763,9 +1763,9 @@ export default function responses() {
 
   function renderReadRegion() {
     if (!readRegion) return;
-    const focusedRetry = document.activeElement
-      && readRegion.contains(document.activeElement)
-      && document.activeElement.closest('[data-action="retry-offers"]');
+    const focusedDescendant = document.activeElement
+      && document.activeElement !== readRegion
+      && readRegion.contains(document.activeElement);
     let content;
     if (readState === 'loading') {
       content = renderOffersLoading();
@@ -1789,9 +1789,10 @@ export default function responses() {
 
     readRegion.dataset.readState = readState;
     readRegion.setAttribute('aria-busy', readState === 'loading' ? 'true' : 'false');
-    // Successful retry replaces its command button. Move focus to the stable
-    // owning region before removing that button so focus never falls to body.
-    if (focusedRetry && typeof readRegion.focus === 'function') {
+    // A successful retry or a domain-precedence change can replace the focused
+    // command. Move focus to the stable owner before removal so it never falls
+    // to body.
+    if (focusedDescendant && typeof readRegion.focus === 'function') {
       readRegion.focus({ preventScroll: true });
     }
     readRegion.innerHTML = content;

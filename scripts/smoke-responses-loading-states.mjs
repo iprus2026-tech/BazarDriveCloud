@@ -29,7 +29,11 @@ function between(source, start, end) {
 
 const fixtureHelper = between(responses, 'const RESPONSE_FIXTURES', 'function markFeedTabActive');
 const loadingMarkup = between(responses, 'function renderOffersLoading()', 'function renderResponsesFooter');
-const handoffResolver = between(responses, 'function refreshHandoffState()', 'refreshHandoffState();');
+const handoffResolver = between(
+  responses,
+  'function refreshHandoffState({ upgradeSnapshot = false } = {})',
+  'refreshHandoffState({ upgradeSnapshot: true });',
+);
 const readRenderer = between(responses, 'function renderReadRegion()', 'function setRetryBusy');
 const handoffSettlement = between(responses, 'function settleLatestHandoff()', 'async function loadServerOffers');
 const loader = between(responses, 'async function loadServerOffers', 'function refreshBoard');
@@ -101,12 +105,15 @@ expect('settlement re-reads canonical order and active ride after the pending in
   && /isAllDeclined = !isAccepted && requestedState === 'all-declined'/.test(handoffResolver));
 expect('success and failure both settle against the latest handoff precedence',
   /refreshHandoffState\(\)/.test(handoffSettlement)
+  && !/upgradeSnapshot: true/.test(handoffSettlement)
+  && /if \(upgradeSnapshot && handoffRide/.test(handoffResolver)
   && /readState = 'loaded'/.test(handoffSettlement)
   && /effectiveState = 'accepted'/.test(handoffSettlement)
   && (loader.match(/if \(settleLatestHandoff\(\)\) return;/g) || []).length === 2);
-expect('successful retry preserves focus on the stable read owner before replacing its button',
+expect('settlement preserves descendant focus on the stable read owner before replacement',
   /id="responses-read-region"[\s\S]{0,180}tabindex="-1"/.test(responses)
-  && /document\.activeElement\.closest\('\[data-action="retry-offers"\]'\)/.test(readRenderer)
+  && /document\.activeElement !== readRegion/.test(readRenderer)
+  && /readRegion\.contains\(document\.activeElement\)/.test(readRenderer)
   && /readRegion\.focus\(\{ preventScroll: true \}\)/.test(readRenderer)
   && readRenderer.indexOf("readRegion.focus({ preventScroll: true });")
     < readRenderer.indexOf('readRegion.innerHTML = content;'));
