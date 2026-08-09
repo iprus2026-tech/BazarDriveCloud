@@ -3,8 +3,9 @@
 //
 // Pins the four primary request states, deterministic production-data-free
 // fixtures, the persistent aria-busy owner, structural skeleton accessibility,
-// one guarded read + retry, detached/superseded completion protection, existing
-// backend-OFF fallback, and the version-only Service Worker bump.
+// one guarded read + retry, detached/superseded completion protection, fresh
+// handoff precedence, focus settlement, existing backend-OFF fallback, and the
+// version-only Service Worker bump.
 
 import fs from 'node:fs';
 
@@ -28,6 +29,9 @@ function between(source, start, end) {
 
 const fixtureHelper = between(responses, 'const RESPONSE_FIXTURES', 'function markFeedTabActive');
 const loadingMarkup = between(responses, 'function renderOffersLoading()', 'function renderResponsesFooter');
+const handoffResolver = between(responses, 'function refreshHandoffState()', 'refreshHandoffState();');
+const readRenderer = between(responses, 'function renderReadRegion()', 'function setRetryBusy');
+const handoffSettlement = between(responses, 'function settleLatestHandoff()', 'async function loadServerOffers');
 const loader = between(responses, 'async function loadServerOffers', 'function refreshBoard');
 const fixtureActionGuard = between(responses, '// Fixture cards are representative', "if (action === 'select'");
 
@@ -61,7 +65,7 @@ expect('fixture allowlist is exactly loading/loaded/empty/error',
 expect('unknown fixture values fall back to normal runtime',
   /return RESPONSE_FIXTURES\.has\(value\) \? value : ''/.test(fixtureHelper));
 expect('known fixtures bypass canonical store and backend authority',
-  /const canonicalOrder = fixture \? null : resolveCanonicalOrder\(\)/.test(responses)
+  /let canonicalOrder = fixture \? null : resolveCanonicalOrder\(\)/.test(responses)
   && /const backendAuthoritative = !fixture && isBackendEnabled\(\)/.test(responses)
   && /const handoffTripId = !fixture && request\.orderId/.test(responses));
 expect('loaded fixture uses synthetic cards; other fixtures start with no drivers',
@@ -88,8 +92,24 @@ expect('retry repeats only loadServerOffers and carries button-local aria-busy',
   && /retryBtn\.setAttribute\('aria-busy', busy \? 'true' : 'false'\)/.test(responses));
 expect('late/superseded completions cannot paint a detached screen',
   (loader.match(/runId !== offersReadRunId \|\| !document\.body\.contains\(root\)/g) || []).length >= 2);
-expect('accepted ride handoff is not replaced when the read settles',
-  /if \(isAccepted\) return/.test(loader));
+expect('settlement re-reads canonical order and active ride after the pending interval',
+  /canonicalOrder = resolveCanonicalOrder\(\)/.test(handoffResolver)
+  && /handoffRide = findActiveRide\(handoffTripId\)/.test(handoffResolver)
+  && /RIDE_STATUS\.COMPLETED/.test(handoffResolver)
+  && /RIDE_STATUS\.CANCELED/.test(handoffResolver)
+  && /RIDE_STATUS\.NO_SHOW/.test(handoffResolver)
+  && /isAllDeclined = !isAccepted && requestedState === 'all-declined'/.test(handoffResolver));
+expect('success and failure both settle against the latest handoff precedence',
+  /refreshHandoffState\(\)/.test(handoffSettlement)
+  && /readState = 'loaded'/.test(handoffSettlement)
+  && /effectiveState = 'accepted'/.test(handoffSettlement)
+  && (loader.match(/if \(settleLatestHandoff\(\)\) return;/g) || []).length === 2);
+expect('successful retry preserves focus on the stable read owner before replacing its button',
+  /id="responses-read-region"[\s\S]{0,180}tabindex="-1"/.test(responses)
+  && /document\.activeElement\.closest\('\[data-action="retry-offers"\]'\)/.test(readRenderer)
+  && /readRegion\.focus\(\{ preventScroll: true \}\)/.test(readRenderer)
+  && readRenderer.indexOf("readRegion.focus({ preventScroll: true });")
+    < readRenderer.indexOf('readRegion.innerHTML = content;'));
 expect('backend-OFF local/mock source remains buildDriversForOrder',
   /buildDriversForOrder\(request, null, false\)/.test(responses));
 

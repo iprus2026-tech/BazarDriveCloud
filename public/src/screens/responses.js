@@ -1441,7 +1441,7 @@ export default function responses() {
   const legacyPostId = explicitOrderId ? '' : (getRouteParam('postId') || '');
   // Known fixtures are synthetic and bypass both production/local stores and
   // the guarded backend. Unknown values already collapsed to normal runtime.
-  const canonicalOrder = fixture ? null : resolveCanonicalOrder();
+  let canonicalOrder = fixture ? null : resolveCanonicalOrder();
   const request = fixture
     ? requestFromFixture(explicitOrderId)
     : (canonicalOrder
@@ -1465,29 +1465,50 @@ export default function responses() {
   // even when the order status still reads ACCEPTED / IN_PROGRESS — the order
   // status fallback only applies when there is no linked terminal ride.
   const handoffTripId = !fixture && request.orderId ? `trip_${request.orderId}` : '';
-  let handoffRide = handoffTripId ? findActiveRide(handoffTripId) : null;
-  const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
-  const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
-  const rideTerminal = !!handoffRide
-    && (handoffRide.status === RIDE_STATUS.COMPLETED
-      || handoffRide.status === RIDE_STATUS.CANCELED
-      || handoffRide.status === RIDE_STATUS.NO_SHOW);
-  const rideLive = !!handoffRide && !rideTerminal;
+  let handoffRide = null;
+  let isAccepted = false;
+  let isAllDeclined = false;
 
-  // BD-LIFE-05 — if a stale handoff ride is sitting in localStorage with the
-  // demo "Рустам К." seed (legacy DriverMap accept or createDemoActiveRide
-  // fallback), upgrade it from the matching passenger_response driverSnapshot
-  // so renderAcceptedDriver below sees the actual driver. The orchestrator
-  // gates pinned-by-responseId first, latest fallback for unlinked handoffs,
-  // and skips terminal rides (COMPLETED / CANCELED / NO_SHOW) on its own
-  // through upgradeRideFromDriverSnapshot — the outer `!rideTerminal` check
-  // is kept as a perf gate so we do not even read the responses store on a
-  // ride that is already over.
-  if (handoffRide && !rideTerminal && request.orderId) {
-    const upgraded = upgradeStoredActiveRideForOrder(request.orderId);
-    if (upgraded && upgraded !== handoffRide) handoffRide = upgraded;
+  function refreshHandoffState() {
+    if (!handoffTripId) {
+      handoffRide = null;
+      isAccepted = false;
+      isAllDeclined = requestedState === 'all-declined';
+      return isAccepted;
+    }
+
+    // The offers read can settle after another tab/device changes the linked
+    // order or ride. Re-read both sources at settlement time so accepted and
+    // terminal precedence never relies on the pre-request snapshot.
+    canonicalOrder = resolveCanonicalOrder();
+    handoffRide = findActiveRide(handoffTripId);
+    const orderStatus = canonicalOrder && typeof canonicalOrder.status === 'string' ? canonicalOrder.status : '';
+    const orderHandedOff = orderStatus === 'ACCEPTED' || orderStatus === 'IN_PROGRESS';
+    const rideTerminal = !!handoffRide
+      && (handoffRide.status === RIDE_STATUS.COMPLETED
+        || handoffRide.status === RIDE_STATUS.CANCELED
+        || handoffRide.status === RIDE_STATUS.NO_SHOW);
+    const rideLive = !!handoffRide && !rideTerminal;
+
+    // BD-LIFE-05 — if a stale handoff ride is sitting in localStorage with the
+    // demo "Рустам К." seed (legacy DriverMap accept or createDemoActiveRide
+    // fallback), upgrade it from the matching passenger_response driverSnapshot
+    // so renderAcceptedDriver below sees the actual driver. The orchestrator
+    // gates pinned-by-responseId first, latest fallback for unlinked handoffs,
+    // and skips terminal rides (COMPLETED / CANCELED / NO_SHOW) on its own
+    // through upgradeRideFromDriverSnapshot — the outer `!rideTerminal` check
+    // is kept as a perf gate so we do not even read the responses store on a
+    // ride that is already over.
+    if (handoffRide && !rideTerminal && request.orderId) {
+      const upgraded = upgradeStoredActiveRideForOrder(request.orderId);
+      if (upgraded && upgraded !== handoffRide) handoffRide = upgraded;
+    }
+    isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
+    isAllDeclined = !isAccepted && requestedState === 'all-declined';
+    return isAccepted;
   }
-  const isAccepted = !!canonicalOrder && !rideTerminal && (rideLive || orderHandedOff);
+
+  refreshHandoffState();
   let effectiveState = isAccepted ? 'accepted' : requestedState;
 
   // Local/mock data still resolves synchronously. A live backend starts with no
@@ -1509,7 +1530,6 @@ export default function responses() {
   let sortMode = 'best';
   let selecting = false; // #784 CUT-4: double-submit latch for the async backend select
   const declined = new Set();
-  const isAllDeclined = !isAccepted && requestedState === 'all-declined';
   let declinedSeeded = false;
 
   function loadedDomainState() {
@@ -1605,6 +1625,7 @@ export default function responses() {
       </div>
       <div class="responses__read-region" id="responses-read-region"
            data-read-state="${escapeHtml(readState)}"
+           tabindex="-1"
            aria-busy="${readState === 'loading' ? 'true' : 'false'}"></div>
     </div>
 
@@ -1742,6 +1763,9 @@ export default function responses() {
 
   function renderReadRegion() {
     if (!readRegion) return;
+    const focusedRetry = document.activeElement
+      && readRegion.contains(document.activeElement)
+      && document.activeElement.closest('[data-action="retry-offers"]');
     let content;
     if (readState === 'loading') {
       content = renderOffersLoading();
@@ -1765,8 +1789,17 @@ export default function responses() {
 
     readRegion.dataset.readState = readState;
     readRegion.setAttribute('aria-busy', readState === 'loading' ? 'true' : 'false');
+    // Successful retry replaces its command button. Move focus to the stable
+    // owning region before removing that button so focus never falls to body.
+    if (focusedRetry && typeof readRegion.focus === 'function') {
+      readRegion.focus({ preventScroll: true });
+    }
     readRegion.innerHTML = content;
     boardEl = readRegion.querySelector('#responses-board');
+    const openActiveRideBtn = readRegion.querySelector('[data-action="open-active-ride"]');
+    if (openActiveRideBtn && handoffTripId) {
+      openActiveRideBtn.addEventListener('click', () => go(activeRideUrl(handoffTripId)));
+    }
     syncHeader();
 
     if (readState === 'loaded'
@@ -1789,6 +1822,20 @@ export default function responses() {
     if (label) label.textContent = busy ? 'Проверяем отклики…' : 'Проверить отклики';
   }
 
+  function settleLatestHandoff() {
+    const wasAccepted = isAccepted;
+    refreshHandoffState();
+    if (!isAccepted) return false;
+    if (!wasAccepted) {
+      readState = 'loaded';
+      effectiveState = 'accepted';
+      selectedDriver = null;
+      selectedDriverId = null;
+      renderReadRegion();
+    }
+    return true;
+  }
+
   async function loadServerOffers({ isRetry = false } = {}) {
     if (!backendAuthoritative || fixture || !document.body.contains(root)) return;
     const runId = ++offersReadRunId;
@@ -1797,10 +1844,10 @@ export default function responses() {
     try {
       const serverOffers = await listOrderOffers(request.orderId);
       if (runId !== offersReadRunId || !document.body.contains(root)) return;
-      // Accepted-ride handoff was authoritative before the read started. Keep
-      // its rendered button/focus untouched even though the one guarded read is
-      // still performed for parity with the pre-02A path.
-      if (isAccepted) return;
+      // Re-resolve domain precedence after the pending interval. An accepted
+      // handoff wins; a newly terminal ride suppresses the stale accepted card
+      // and lets this successful offers result settle normally.
+      if (settleLatestHandoff()) return;
       drivers = buildDriversForOrder(request, serverOffers, true);
       readState = drivers.length ? 'loaded' : 'empty';
       effectiveState = readState === 'loaded' ? loadedDomainState() : 'empty';
@@ -1810,7 +1857,7 @@ export default function responses() {
       renderReadRegion();
     } catch {
       if (runId !== offersReadRunId || !document.body.contains(root)) return;
-      if (isAccepted) return;
+      if (settleLatestHandoff()) return;
       // A failed retry from the already-rendered error state keeps the same
       // button node/focus and only clears its local command progress.
       if (isRetry && readState === 'error') {
@@ -1976,14 +2023,6 @@ export default function responses() {
         toast('Звонок будет доступен после подтверждения поездки');
       }
     });
-  }
-
-  // BD-DRIVER-MAP-X-15 — accepted-driver handoff CTA. The #responses-board
-  // listener above only covers the list/declined board; the accepted state
-  // renders outside that shell and needs its own handler to open the ride.
-  const openActiveRideBtn = root.querySelector('[data-action="open-active-ride"]');
-  if (openActiveRideBtn && handoffTripId) {
-    openActiveRideBtn.addEventListener('click', () => go(activeRideUrl(handoffTripId)));
   }
 
   if (backendAuthoritative) {
