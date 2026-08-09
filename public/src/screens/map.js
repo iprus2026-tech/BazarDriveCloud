@@ -185,13 +185,40 @@ function hydrateRealMap(container) {
         restoreMapPlaceholder(container);
         return;
       }
+      // BD-MAP-RENDER-FIX (#805): the container is a flex-sized stage box; if mapbox measures it before
+      // the layout settles (or the box later changes — sheet drag / orientation) it keeps a 0-size
+      // canvas → a blank map. Force a resize once the style loads and whenever the container box
+      // changes. (The CSS specificity fix keeps the container at absolute/inset:0; this is belt-and-
+      // suspenders for late layout settle and future size changes.)
+      let settled = false;
+      map.once('load', () => { settled = true; try { map.resize(); } catch { /* torn down */ } });
+      let ro = null;
+      if (typeof ResizeObserver === 'function') {
+        ro = new ResizeObserver(() => { try { map.resize(); } catch { /* torn down */ } });
+        ro.observe(container);
+      }
       // Free the GL context once the container is detached (no router teardown hook).
       const teardown = setInterval(() => {
         if (!document.body.contains(container)) {
+          try { if (ro) ro.disconnect(); } catch { /* noop */ }
           try { map.remove(); } catch { /* already torn down */ }
           clearInterval(teardown);
         }
       }, 2000);
+      // The placeholder is already gone (replaceChildren above), so an ASYNC style/tile load failure —
+      // offline (Mapbox tiles/style are never SW-cached), quota 429, or a revoked token 401 — would
+      // leave a sized-but-blank canvas. mapbox-gl reports these via an 'error' event, not a throw, so
+      // the constructor try/catch can't catch them. Fall back to the dark-safe MapShell, but ONLY
+      // before the first successful load: post-load per-tile hiccups are non-fatal and must not nuke a
+      // working map (adversarial review of #805).
+      map.on('error', () => {
+        if (settled) return;
+        settled = true;
+        try { if (ro) ro.disconnect(); } catch { /* noop */ }
+        clearInterval(teardown);
+        try { map.remove(); } catch { /* already torn down */ }
+        restoreMapPlaceholder(container);
+      });
     });
   }).catch(() => { /* load failed — the placeholder stays */ });
 }
