@@ -24,5 +24,5 @@ expect('epoch and detached-view guards reject stale settlement', /epoch === read
 expect('late settlement rechecks role and readiness before actions', /!isCurrent\(epoch\) \|\| !keepDriverPrecedence\(\) \|\| !isDriverLineReady\(user.get\(\)\)/.test(src));
 expect('read adapter/source remain unchanged imports', /loadResource\(timedRead,/.test(src) && /from '..\/mock_api.js'/.test(src));
 expect('skeleton motion only runs when motion is allowed', /@media \(prefers-reduced-motion: no-preference\)[\s\S]*driver-map__skeleton-bone::after/.test(css));
-expect('version-only SW bump is v265 and assets remain precached', /const VERSION\s*=\s*'v265'/.test(sw) && sw.includes("'./src/screens/driver_map.js'") && sw.includes("'./styles/cloud.css'"));
+expect('v265 Driver Map evidence remains and the SW version stays monotonic', /v265 \(BD-CLOUD-DESIGN-LOADING-02B cancellation repair #869\)/.test(sw) && Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 265 && sw.includes("'./src/screens/driver_map.js'") && sw.includes("'./styles/cloud.css'"));
 if(failures.length){console.error('\nFAIL '+failures.length+' expectation(s):\n  - '+failures.join('\n  - '));process.exit(1);}console.log('\nALL PASSED');

@@ -47,11 +47,99 @@ const QUICK_REPLIES = [
   'Сколько мест свободно?',
 ];
 
+const CHAT_READ_STATE = Object.freeze({
+  LOADING: 'loading',
+  LOADED:  'loaded',
+  EMPTY:   'empty',
+  ERROR:   'error',
+});
+const CHAT_FIXTURES = new Set(Object.values(CHAT_READ_STATE));
+const CHAT_READ_TIMEOUT_MS = 12_000;
+const CHAT_POLL_MS = 2_500;
+const CHAT_FIXTURE_MESSAGES = Object.freeze([
+  Object.freeze({ id: 'fixture_chat_passenger_1', senderRole: 'passenger', text: 'Здравствуйте! Я у главного входа.', time: '14:21' }),
+  Object.freeze({ id: 'fixture_chat_driver_1', senderRole: 'driver', text: 'Вижу вас, подъеду через пару минут.', time: '14:22' }),
+  Object.freeze({ id: 'fixture_chat_passenger_2', senderRole: 'passenger', text: 'Хорошо, ожидаю здесь.', time: '14:23' }),
+]);
+
 function getRouteParam(name) {
   const hash = window.location.hash || '';
   const qi = hash.indexOf('?');
   if (qi === -1) return null;
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
+}
+
+function getChatFixture() {
+  const value = getRouteParam('fixture') || '';
+  return CHAT_FIXTURES.has(value) ? value : '';
+}
+
+function createReadAbortError(message) {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+// One operation owner for the initial GET and later poll GETs. Superseding
+// reads reject immediately, abort the underlying fetch and clear their timer;
+// background polls can opt out of supersession so intervals never overlap.
+// The scheduler arguments keep the lifecycle deterministic in the focused
+// smoke without introducing a shared runtime abstraction.
+function createChatReadManager(fetchMessages, timeoutMs, schedule = setTimeout, unschedule = clearTimeout) {
+  let activeRead = null;
+
+  function cancel(message = 'chat messages read canceled') {
+    const operation = activeRead;
+    if (!operation) return;
+    activeRead = null;
+    unschedule(operation.timeoutId);
+    operation.controller.abort();
+    operation.reject(createReadAbortError(message));
+  }
+
+  function run(chatId, epoch, { supersede = true } = {}) {
+    if (activeRead) {
+      if (!supersede) return null;
+      cancel('chat messages read superseded');
+    }
+
+    let operation;
+    const result = new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      operation = { controller, epoch, reject, timeoutId: null };
+      activeRead = operation;
+      operation.timeoutId = schedule(() => {
+        if (activeRead !== operation) return;
+        unschedule(operation.timeoutId);
+        activeRead = null;
+        controller.abort();
+        const error = new Error('chat messages read timed out');
+        error.name = 'TimeoutError';
+        reject(error);
+      }, timeoutMs);
+
+      Promise.resolve()
+        .then(() => {
+          if (activeRead !== operation || controller.signal.aborted) {
+            throw createReadAbortError('chat messages read canceled before start');
+          }
+          return fetchMessages(chatId, controller.signal);
+        })
+        .then(resolve, reject);
+    });
+
+    return result.finally(() => {
+      if (activeRead !== operation) return;
+      unschedule(operation.timeoutId);
+      activeRead = null;
+    });
+  }
+
+  return {
+    cancel,
+    run,
+    isActive: () => activeRead !== null,
+  };
 }
 
 function loadChatStore() {
@@ -141,9 +229,16 @@ function mapServerMsg(m) {
     time: m.displayTime || isoToHm(m.createdAt),
   };
 }
-async function fetchServerMessages(chatId) {
-  const r = await apiFetch(`/chat/messages?chatId=${encodeURIComponent(chatId)}`);
-  return Array.isArray(r && r.items) ? r.items.map(mapServerMsg) : [];
+async function fetchServerMessages(chatId, signal) {
+  const r = await apiFetch(`/chat/messages?chatId=${encodeURIComponent(chatId)}`, { signal });
+  if (!r || !Array.isArray(r.items)) {
+    throw new TypeError('chat messages response is unusable');
+  }
+  const items = r.items.map(mapServerMsg);
+  if (!items.every((item) => item && item.id != null && typeof item.text === 'string')) {
+    throw new TypeError('chat messages response contains an unusable item');
+  }
+  return items;
 }
 function postServerMessage(chatId, msg) {
   return apiFetch('/chat/messages', {
@@ -385,6 +480,8 @@ const CHAT_EMPTY_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 function renderEmptyThread(viewerRole) {
   const wrap = document.createElement('div');
   wrap.className = 'chat__empty';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-labelledby', 'chat-empty-title');
 
   const pill = document.createElement('div');
   pill.className = 'chat__sys-pill';
@@ -395,8 +492,9 @@ function renderEmptyThread(viewerRole) {
   ic.setAttribute('aria-hidden', 'true');
   ic.innerHTML = CHAT_EMPTY_SVG;
 
-  const title = document.createElement('p');
+  const title = document.createElement('h2');
   title.className = 'chat__empty-title';
+  title.id = 'chat-empty-title';
   title.textContent = 'Сообщений пока нет';
 
   const text = document.createElement('p');
@@ -406,6 +504,65 @@ function renderEmptyThread(viewerRole) {
     : 'Напишите водителю — он уже в курсе вашей поездки.';
 
   wrap.append(pill, ic, title, text);
+  return wrap;
+}
+
+function renderChatLoading() {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat__loading';
+
+  const status = document.createElement('p');
+  status.className = 'chat__loading-status';
+  status.setAttribute('role', 'status');
+  status.textContent = 'Загружаем сообщения…';
+
+  const skeleton = document.createElement('div');
+  skeleton.className = 'chat__skeleton';
+  skeleton.setAttribute('aria-hidden', 'true');
+  skeleton.innerHTML = `
+    <div class="chat__skeleton-message chat__skeleton-message--in">
+      <span class="chat__skeleton-author chat__skeleton-bone"></span>
+      <span class="chat__skeleton-bubble chat__skeleton-bubble--wide chat__skeleton-bone"></span>
+      <span class="chat__skeleton-time chat__skeleton-bone"></span>
+    </div>
+    <div class="chat__skeleton-message chat__skeleton-message--out">
+      <span class="chat__skeleton-bubble chat__skeleton-bubble--medium chat__skeleton-bone"></span>
+      <span class="chat__skeleton-time chat__skeleton-bone"></span>
+    </div>
+    <div class="chat__skeleton-message chat__skeleton-message--in">
+      <span class="chat__skeleton-author chat__skeleton-bone"></span>
+      <span class="chat__skeleton-bubble chat__skeleton-bubble--short chat__skeleton-bone"></span>
+      <span class="chat__skeleton-time chat__skeleton-bone"></span>
+    </div>
+  `;
+
+  wrap.append(status, skeleton);
+  return wrap;
+}
+
+function renderChatReadError() {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat__read-error';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-labelledby', 'chat-read-error-title');
+
+  const title = document.createElement('h2');
+  title.className = 'chat__read-error-title';
+  title.id = 'chat-read-error-title';
+  title.textContent = 'Не удалось загрузить сообщения';
+
+  const text = document.createElement('p');
+  text.className = 'chat__read-error-text';
+  text.textContent = 'Проверьте соединение и повторите загрузку истории чата.';
+
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'bd-btn primary chat__read-retry';
+  retry.dataset.action = 'retry-chat-read';
+  retry.textContent = 'Повторить';
+  retry.setAttribute('aria-label', 'Повторить загрузку сообщений');
+
+  wrap.append(title, text, retry);
   return wrap;
 }
 
@@ -434,6 +591,7 @@ const SEND_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 export default function chat() {
   const tripId     = getRouteParam('tripId');
   const responseId = getRouteParam('responseId');
+  const fixture    = getChatFixture();
   // BD-CHAT-02 — `orderId` is the canonical ride-order id when the chat
   // was opened from /responses (the driver-side board) — back must return
   // to /responses?orderId= so the board's context is preserved. /respond
@@ -453,15 +611,21 @@ export default function chat() {
       ? `response-${responseId}`
       : 'demo';
 
-  const stored  = loadMessages(chatId);
+  // Canonical fixtures are message-region-only synthetic inputs. They bypass
+  // the local chat store just as they bypass the guarded GET and polling.
+  const stored  = fixture ? null : loadMessages(chatId);
   // BD-CHAT-01 (Cloud Design port) — a REAL thread (trip/response) with no stored
   // messages shows the designed empty / first-message state, not a fabricated mock
   // conversation. The demo thread (chatId === 'demo') keeps MOCK_MESSAGES as a showcase.
   const isRealThread = chatId !== 'demo';
   // #784 cutover: on a live backend a real thread reads the SHARED SERVER thread (the source of
   // truth), so local pre-cutover stored messages are ignored to avoid mixing the two histories.
-  const backendRead = isBackendEnabled() && isRealThread;
-  let messages  = backendRead ? [] : (stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((m) => ({ ...m }))));
+  const backendRead = !fixture && isBackendEnabled() && isRealThread;
+  let messages = fixture === CHAT_READ_STATE.LOADED
+    ? CHAT_FIXTURE_MESSAGES.map((message) => ({ ...message }))
+    : fixture || backendRead
+      ? []
+      : (stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((message) => ({ ...message }))));
 
   const rideContext = resolveRideContext({ responseId, viewerRole });
   // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
@@ -481,6 +645,7 @@ export default function chat() {
 
   const root = document.createElement('section');
   root.className = 'screen screen--chat';
+  if (fixture) root.dataset.fixture = fixture;
 
   root.innerHTML = `
     <div class="chat__header">
@@ -527,8 +692,9 @@ export default function chat() {
       </p>
     </div>
 
-    <div class="chat__messages" id="chat-messages"
-         role="log" aria-live="polite" aria-label="Сообщения чата"></div>
+    <div class="chat__messages" id="chat-messages" tabindex="-1"
+         role="log" aria-live="polite" aria-label="Сообщения чата"
+         aria-busy="${backendRead || fixture === CHAT_READ_STATE.LOADING ? 'true' : 'false'}"></div>
 
     <div class="chat__quick-replies" id="chat-qr"
          role="group" aria-label="Быстрые ответы"></div>
@@ -583,12 +749,16 @@ export default function chat() {
     if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
   }
 
-  // ── Empty thread, or date separator + messages ──────────────────
-  // `rendered` tracks message ids already in the DOM so the backend poll appends INCREMENTALLY
-  // (never a wholesale replaceChildren) — preserving optimistic / failed-send bubbles + their retry
-  // control across poll ticks, and letting us keep the scroll position when reading scrollback.
+  // ── Initial message-list state + incremental backend refresh ─────
+  // `rendered` tracks message ids already in the DOM so background refreshes
+  // append incrementally. Optimistic / failed-send bubbles and scrollback stay
+  // intact after the honest initial read has settled.
   const rendered = new Set();
   let threadShellReady = false;
+  let readState = fixture || (backendRead
+    ? CHAT_READ_STATE.LOADING
+    : messages.length ? CHAT_READ_STATE.LOADED : CHAT_READ_STATE.EMPTY);
+
   function ensureThreadShell() {
     messagesEl.replaceChildren();
     rendered.clear();
@@ -598,65 +768,194 @@ export default function chat() {
     messagesEl.appendChild(sep);
     threadShellReady = true;
   }
+
   // Dedupe key = senderRole + id. The server treats the same clientMsgId from DIFFERENT senderRoles
   // as distinct messages (its unique index is chat_id + sender_role + client_msg_id), so keying by id
   // alone would drop one side's message if both devices mint the same Date.now() id in a thread. The
   // role discriminator still matches the local optimistic echo (same sender, same id) for dedup.
-  const keyOf = (m) => `${m.senderRole || '~'}:${m.id}`;
-  function renderMessage(msg) {
-    if (rendered.has(keyOf(msg))) return null;
-    rendered.add(keyOf(msg));
-    const el = createMsgEl(msg, viewerRole, counterpart.name);
-    messagesEl.appendChild(el);
-    return el;
-  }
-  if (isRealThread && messages.length === 0) {
-    messagesEl.appendChild(renderEmptyThread(viewerRole));
-  } else {
-    ensureThreadShell();
-    for (const msg of messages) renderMessage(msg);
-  }
-
-  // ── #784 cutover — read the shared server thread. A non-terminal thread POLLS it for cross-device
-  // freshness; a terminal (read-only) thread reads it ONCE so a completed ride's chat still shows on
-  // another device. The poll self-clears once the screen is gone (router replaceChildren removes
-  // messagesEl), APPENDS only new ids (so optimistic/failed local bubbles survive), and auto-scrolls
-  // only when the user was already at the bottom (never yanks someone reading scrollback).
-  const backendChat = backendRead && !isTerminal;
-  // Gate the composer until the first server fetch settles, so a send before history loads can't
-  // append the optimistic bubble ahead of older fetched messages (Codex #798). Off / terminal
-  // threads have no gate (true immediately).
-  let initialFetchDone = !backendChat;
-  if (backendRead) {
-    const nearBottom = () => (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
-    const refresh = async () => {
-      let list;
-      try { list = await fetchServerMessages(chatId); }
-      catch { initialFetchDone = true; return; }
-      initialFetchDone = true;
-      if (!list.length) return;
-      const wasNear = nearBottom();
-      if (!threadShellReady) ensureThreadShell();
-      let grew = false;
-      for (const msg of list) { if (renderMessage(msg)) grew = true; }
-      if (grew && wasNear) scrollBottom();
-    };
-    refresh();
-    if (!isTerminal) {
-      const pollId = setInterval(() => {
-        if (!document.body.contains(messagesEl)) { clearInterval(pollId); return; }
-        refresh();
-      }, 2500);
-    }
+  const keyOf = (message) => `${message.senderRole || '~'}:${message.id}`;
+  function renderMessage(message) {
+    if (rendered.has(keyOf(message))) return null;
+    rendered.add(keyOf(message));
+    const element = createMsgEl(message, viewerRole, counterpart.name);
+    messagesEl.appendChild(element);
+    return element;
   }
 
   function scrollBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function renderReadState(nextState, list = []) {
+    const ownedFocus = messagesEl.contains(document.activeElement)
+      && document.activeElement !== messagesEl;
+    if (ownedFocus && typeof messagesEl.focus === 'function') {
+      messagesEl.focus({ preventScroll: true });
+    }
+
+    readState = nextState;
+    messagesEl.dataset.readState = nextState;
+    messagesEl.setAttribute('aria-busy', nextState === CHAT_READ_STATE.LOADING ? 'true' : 'false');
+    threadShellReady = false;
+    rendered.clear();
+
+    if (nextState === CHAT_READ_STATE.LOADING) {
+      messages = [];
+      messagesEl.replaceChildren(renderChatLoading());
+    } else if (nextState === CHAT_READ_STATE.ERROR) {
+      messages = [];
+      messagesEl.replaceChildren(renderChatReadError());
+    } else if (nextState === CHAT_READ_STATE.EMPTY) {
+      messages = [];
+      messagesEl.replaceChildren(renderEmptyThread(viewerRole));
+    } else {
+      messages = [...list];
+      ensureThreadShell();
+      for (const message of list) renderMessage(message);
+    }
+    syncComposerAvailability();
+  }
+
+  if (readState === CHAT_READ_STATE.LOADED) {
+    renderReadState(CHAT_READ_STATE.LOADED, messages);
+  } else {
+    renderReadState(readState);
+  }
+
+  // ── #784 cutover — guarded initial GET, then non-overlapping poll ──
+  // Backend activation remains unchanged. A terminal thread reads once; a
+  // non-terminal thread begins the existing 2.5 s poll only after success.
+  const backendChat = backendRead && !isTerminal;
+  let initialFetchDone = !backendRead;
+  let readEpoch = 0;
+  let pollId = null;
+  let rootWasConnected = false;
+  let mountCheckPassed = false;
+  const readManager = createChatReadManager(fetchServerMessages, CHAT_READ_TIMEOUT_MS);
+  setTimeout(() => { mountCheckPassed = true; }, 0);
+  const isCurrentRead = (epoch) => epoch === readEpoch
+    && (!mountCheckPassed || root.isConnected);
+  const nearBottom = () => (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) < 80;
+
+  function stopPolling() {
+    if (pollId !== null) clearInterval(pollId);
+    pollId = null;
+  }
+
+  function teardownReads() {
+    readEpoch += 1;
+    stopPolling();
+    readManager.cancel('chat screen torn down');
+  }
+
+  const teardownObserver = new MutationObserver(() => {
+    if (root.isConnected) {
+      rootWasConnected = true;
+    } else if (rootWasConnected) {
+      teardownReads();
+      teardownObserver.disconnect();
+    }
+  });
+  teardownObserver.observe(document.body, { childList: true, subtree: true });
+
+  function appendRefreshMessages(list) {
+    if (!list.length) return;
+    const wasNear = nearBottom();
+    if (!threadShellReady) ensureThreadShell();
+    let grew = false;
+    for (const message of list) {
+      if (renderMessage(message)) {
+        grew = true;
+        if (!messages.some((current) => keyOf(current) === keyOf(message))) messages.push(message);
+      }
+    }
+    if (grew) {
+      readState = CHAT_READ_STATE.LOADED;
+      messagesEl.dataset.readState = CHAT_READ_STATE.LOADED;
+      messagesEl.setAttribute('aria-busy', 'false');
+    }
+    if (grew && wasNear) scrollBottom();
+  }
+
+  async function refreshServerMessages(epoch) {
+    if (!isCurrentRead(epoch) || readManager.isActive()) return;
+    const pending = readManager.run(chatId, epoch, { supersede: false });
+    if (!pending) return;
+    let list;
+    try {
+      list = await pending;
+    } catch {
+      // A refresh failure is non-destructive: existing usable content,
+      // optimistic bubbles, focus and scrollback remain untouched.
+      return;
+    }
+    if (!isCurrentRead(epoch)) return;
+    appendRefreshMessages(list);
+  }
+
+  function startPolling(epoch) {
+    stopPolling();
+    if (isTerminal || fixture) return;
+    pollId = setInterval(() => {
+      if (!isCurrentRead(epoch)) {
+        stopPolling();
+        readManager.cancel('chat poll epoch ended');
+        return;
+      }
+      void refreshServerMessages(epoch);
+    }, CHAT_POLL_MS);
+  }
+
+  async function loadInitialServerMessages() {
+    const epoch = ++readEpoch;
+    readManager.cancel('chat initial read superseded');
+    stopPolling();
+    initialFetchDone = false;
+    renderReadState(CHAT_READ_STATE.LOADING);
+
+    let list;
+    try {
+      list = await readManager.run(chatId, epoch, { supersede: true });
+    } catch {
+      if (!isCurrentRead(epoch)) return;
+      renderReadState(CHAT_READ_STATE.ERROR);
+      return;
+    }
+    if (!isCurrentRead(epoch)) return;
+
+    initialFetchDone = true;
+    renderReadState(list.length ? CHAT_READ_STATE.LOADED : CHAT_READ_STATE.EMPTY, list);
+    startPolling(epoch);
+    requestAnimationFrame(scrollBottom);
+  }
+
   requestAnimationFrame(scrollBottom);
 
   // ── Quick replies ───────────────────────────────────────────────
+  function syncComposerAvailability() {
+    const readLocked = backendRead
+      && (readState === CHAT_READ_STATE.LOADING || readState === CHAT_READ_STATE.ERROR);
+    const writeLocked = isTerminal || Boolean(fixture) || readLocked;
+    const composerEl = root.querySelector('.chat__composer');
+
+    if (!isTerminal) {
+      inputEl.disabled = writeLocked;
+      inputEl.placeholder = fixture
+        ? 'Режим предпросмотра'
+        : readState === CHAT_READ_STATE.LOADING
+          ? 'История загружается…'
+          : readState === CHAT_READ_STATE.ERROR
+            ? 'Сначала повторите загрузку'
+            : 'Сообщение…';
+    }
+    if (composerEl) {
+      composerEl.classList.toggle('chat__composer--read-locked', !isTerminal && writeLocked);
+    }
+    qrEl.setAttribute('aria-disabled', writeLocked ? 'true' : 'false');
+    for (const chip of qrEl.querySelectorAll('[data-reply]')) chip.disabled = writeLocked;
+    updateSend();
+  }
+
   for (const reply of (isTerminal ? [] : QUICK_REPLIES)) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -668,7 +967,7 @@ export default function chat() {
 
   qrEl.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-reply]');
-    if (!chip) return;
+    if (!chip || chip.disabled || inputEl.disabled || fixture) return;
     // #732 — append the quick reply to whatever the user already typed (separated by a space)
     // instead of overwriting it, so a chip tap never silently discards a half-written message.
     const existing = inputEl.value;
@@ -690,11 +989,28 @@ export default function chat() {
   // ── Send button state ───────────────────────────────────────────
   function updateSend() {
     const has = inputEl.value.trim().length > 0;
-    sendBtn.disabled = !has;
-    sendBtn.classList.toggle('chat__send--active', has);
+    const enabled = has && !inputEl.disabled && !isTerminal && !fixture;
+    sendBtn.disabled = !enabled;
+    sendBtn.classList.toggle('chat__send--active', enabled);
   }
 
   inputEl.addEventListener('input', updateSend);
+  syncComposerAvailability();
+
+  const confirmBtn = root.querySelector('#chat-confirm');
+  if (fixture && confirmBtn) confirmBtn.disabled = true;
+
+  messagesEl.addEventListener('click', (event) => {
+    const retry = event.target.closest('[data-action="retry-chat-read"]');
+    if (!retry) return;
+    if (fixture) {
+      renderReadState(CHAT_READ_STATE.ERROR);
+      return;
+    }
+    if (backendRead) void loadInitialServerMessages();
+  });
+
+  if (backendRead) void loadInitialServerMessages();
 
   // ── Send ────────────────────────────────────────────────────────
   // BD-CHAT-01 (#18) — flag a bubble whose persist failed: a visual + AT failed state with an
@@ -738,6 +1054,7 @@ export default function chat() {
   }
 
   function doSend() {
+    if (fixture || isTerminal || inputEl.disabled) return;
     const text = inputEl.value.trim();
     if (!text) return;
     // On a live backend, wait for the first server fetch so the optimistic bubble can't land ahead of
@@ -761,7 +1078,12 @@ export default function chat() {
     // failed-state retry) on the next tick.
     if (backendChat && !threadShellReady) ensureThreadShell();
     messagesEl.appendChild(msgEl);
-    if (backendChat) rendered.add(keyOf(msg));
+    if (backendChat) {
+      rendered.add(keyOf(msg));
+      readState = CHAT_READ_STATE.LOADED;
+      messagesEl.dataset.readState = CHAT_READ_STATE.LOADED;
+      messagesEl.setAttribute('aria-busy', 'false');
+    }
     scrollBottom();
 
     inputEl.value = '';
@@ -835,7 +1157,7 @@ export default function chat() {
     // entry twice or stacking two navigations onto the router.
     let confirming = false;
     confirmBtn.addEventListener('click', () => {
-      if (confirming || confirmBtn.disabled) return;
+      if (fixture || confirming || confirmBtn.disabled) return;
       confirming = true;
       confirmBtn.disabled = true;
 
