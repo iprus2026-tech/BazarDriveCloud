@@ -587,10 +587,10 @@ export async function createRideOrder(input = {}) {
   return order;
 }
 
-export async function listNearbyOrders() {
+export async function listNearbyOrders({ signal } = {}) {
   // #784 CUT-3: on a live backend, the nearby/feed read is the server's CREATED orders.
   if (isBackendEnabled()) {
-    const r = await apiFetch('/orders');
+    const r = await apiFetch('/orders', { signal });
     // Fail LOUD on a malformed envelope (matches the feed cutover) so loadResource shows the retry
     // overlay instead of masking a contract break as an empty DriverMap.
     if (!Array.isArray(r.items)) {

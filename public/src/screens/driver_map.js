@@ -30,6 +30,21 @@ const STATE = {
   NOT_READY: 'not_ready',
 };
 
+const READ_STATE = { LOADING: 'loading', LOADED: 'loaded', EMPTY: 'empty', ERROR: 'error' };
+const DRIVER_MAP_FIXTURES = new Set(Object.values(READ_STATE));
+const READ_FAILED = Symbol('driver-map-read-failed');
+const READ_TIMEOUT_MS = 12_000;
+const FIXTURE_ORDERS = Object.freeze([
+  Object.freeze({ id: 'fixture_driver_order_1', pickup: Object.freeze({ label: 'Ленинградский проспект, 36' }), dropoff: Object.freeze({ label: 'Белорусский вокзал' }), distanceKm: 4.8, durationMin: 16, scheduledMode: 'now', estimatedPrice: 510 }),
+  Object.freeze({ id: 'fixture_driver_order_2', pickup: Object.freeze({ label: 'Улица Правды, 8' }), dropoff: Object.freeze({ label: 'Савёловский вокзал' }), distanceKm: 3.1, durationMin: 12, scheduledMode: 'now', estimatedPrice: 390 }),
+]);
+
+function driverMapFixture() {
+  const query = location.hash.split('?')[1] || '';
+  const value = new URLSearchParams(query).get('fixture') || '';
+  return DRIVER_MAP_FIXTURES.has(value) ? value : '';
+}
+
 // Inline glyphs for the BD-DRIVER-02 readiness gate (no icon dependency).
 const SVG_WARN = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 const SVG_CHECK_SM = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -237,6 +252,30 @@ function buildEmptyCard() {
       Вернуться в ленту
     </button>
   `;
+  return card;
+}
+
+function buildLoadingCard({ locked = false } = {}) {
+  const card = document.createElement('div');
+  card.className = 'map-home__sheet driver-map__sheet driver-map__loading';
+  card.dataset.readState = READ_STATE.LOADING;
+  card.innerHTML = `<div class="map-home__sheet-grip" aria-hidden="true"></div>
+    <p class="driver-map__loading-status" role="status">Загружаем заказы рядом…</p>
+    <div class="driver-map__skeleton" aria-hidden="true">
+      <div class="driver-map__skeleton-count driver-map__skeleton-bone"></div>
+      <div class="driver-map__skeleton-card"><div class="driver-map__skeleton-avatar driver-map__skeleton-bone"></div>
+        <div class="driver-map__skeleton-copy"><div class="driver-map__skeleton-line driver-map__skeleton-bone"></div><div class="driver-map__skeleton-line driver-map__skeleton-line--short driver-map__skeleton-bone"></div></div>
+        <div class="driver-map__skeleton-price driver-map__skeleton-bone"></div></div>
+      <div class="driver-map__skeleton-foot driver-map__skeleton-bone"></div>
+    </div>${locked ? '<p class="driver-map__loading-lock">Заказы останутся заблокированы до готовности к линии.</p>' : ''}`;
+  return card;
+}
+
+function buildReadErrorCard({ locked = false } = {}) {
+  const card = document.createElement('div');
+  card.className = 'map-home__sheet driver-map__sheet driver-map__read-error';
+  card.dataset.readState = READ_STATE.ERROR;
+  card.innerHTML = `<div class="map-home__sheet-grip" aria-hidden="true"></div><div class="bd-empty"><div class="bd-empty__title">Не удалось загрузить заказы рядом</div><p>Проверьте соединение и повторите только загрузку списка.</p></div><button class="bd-btn primary map-home__cta" type="button" data-action="retry-nearby">Повторить</button>${locked ? '<p class="driver-map__loading-lock">Приём заказов недоступен, пока профиль не готов.</p>' : ''}`;
   return card;
 }
 
@@ -474,12 +513,11 @@ function renderPassengerGuard() {
 // same contract holds when listNearbyOrders() becomes a real (async, rejectable)
 // backend call — today it resolves from the mock store and does not reject, so
 // the failure path is dormant. loadResource reports server_error with a guarded
-// retry and falls back to [] — the screen's own empty state (buildEmptyCard) is
-// preserved (the overlay is additive); 'retrying' on retry, dismiss only on a
-// successful reload (guarded by onlyIfState). Both reads — the working-surface
-// renderList and the readiness gate — pass their own retry callback.
+// retry and returns the screen-local READ_FAILED sentinel, so a rejected,
+// timed-out, or unusable read renders the honest panel error rather than the
+// successful empty state. The global overlay remains additive.
 
-export default async function driverMapScreen() {
+export default function driverMapScreen() {
   // BD-ROLE-01 — only role=driver sees the working DriverMap. Any other
   // role (passenger, guest, null) gets a safe Cloud fallback so the
   // passenger flow can never leak into driver-side actions like
@@ -501,6 +539,9 @@ export default async function driverMapScreen() {
 
   const sheetSlot = document.createElement('div');
   sheetSlot.className = 'driver-map__sheet-slot';
+  sheetSlot.id = 'driver-map-read-region';
+  sheetSlot.setAttribute('aria-busy', 'true');
+  sheetSlot.tabIndex = -1;
   root.appendChild(sheetSlot);
 
   // BD-DRIVER-02 — readiness gate. A driver who is not isDriverLineReady()
@@ -509,6 +550,75 @@ export default async function driverMapScreen() {
   // render LOCKED, and "Завершить готовность" routes to /profile. No accept
   // wiring is attached in this branch, so an order can't be taken from here.
   const u = user.get();
+  const fixture = driverMapFixture();
+  let readEpoch = 0;
+  let activeRead = null;
+  let rootWasConnected = false;
+  let mountCheckPassed = false;
+  setTimeout(() => { mountCheckPassed = true; }, 0);
+  const isCurrent = (epoch) => epoch === readEpoch && (!mountCheckPassed || root.isConnected);
+  function cancelActiveRead() {
+    const operation = activeRead;
+    if (!operation) return;
+    activeRead = null;
+    clearTimeout(operation.timeoutId);
+    const error = new Error('nearby orders read canceled');
+    error.name = 'AbortError';
+    operation.reject(error);
+    operation.controller.abort();
+  }
+  const teardownObserver = new MutationObserver(() => {
+    if (root.isConnected) {
+      rootWasConnected = true;
+    } else if (rootWasConnected) {
+      cancelActiveRead();
+      teardownObserver.disconnect();
+    }
+  });
+  teardownObserver.observe(document.body, { childList: true, subtree: true });
+  function keepDriverPrecedence() {
+    if (resolveEffectiveRole() === 'driver') return true;
+    if (root.isConnected) root.replaceWith(renderPassengerGuard());
+    return false;
+  }
+  function renderReadState(state, content) {
+    if (sheetSlot.contains(document.activeElement) && typeof sheetSlot.focus === 'function') {
+      sheetSlot.focus({ preventScroll: true });
+    }
+    sheetSlot.dataset.readState = state;
+    sheetSlot.setAttribute('aria-busy', state === READ_STATE.LOADING ? 'true' : 'false');
+    sheetSlot.replaceChildren(content);
+  }
+  function fixtureResult() {
+    if (fixture === READ_STATE.LOADED) return [...FIXTURE_ORDERS];
+    if (fixture === READ_STATE.EMPTY) return [];
+    if (fixture === READ_STATE.ERROR) return READ_FAILED;
+    return null;
+  }
+  async function readNearbyOrders({ isRetry = false, onRetry, epoch }) {
+    if (fixture) return fixtureResult();
+    const timedRead = () => new Promise((resolve, reject) => {
+      cancelActiveRead();
+      const controller = new AbortController();
+      const operation = { controller, epoch, reject, timeoutId: null };
+      activeRead = operation;
+      operation.timeoutId = setTimeout(() => {
+        if (activeRead !== operation) return;
+        reject(new Error('nearby orders read timed out'));
+        controller.abort();
+      }, READ_TIMEOUT_MS);
+      Promise.resolve().then(() => listNearbyOrders({ signal: controller.signal })).then(resolve, reject);
+    }).finally(() => {
+      if (activeRead?.epoch !== epoch) return;
+      clearTimeout(activeRead.timeoutId);
+      activeRead = null;
+    });
+    const result = await loadResource(timedRead, { onRetry, isRetry, fallback: READ_FAILED, isActive: () => isCurrent(epoch) });
+    const usable = Array.isArray(result) && result.every((order) => order && typeof order.id === 'string'
+      && order.pickup && typeof order.pickup === 'object'
+      && order.dropoff && typeof order.dropoff === 'object');
+    return usable ? result : READ_FAILED;
+  }
 
   // BD-ERROR-01C-F — the readiness gate's locked-order decoration is also a
   // nearby-orders read, so it carries the same guarded retry as the working
@@ -516,26 +626,45 @@ export default async function driverMapScreen() {
   // «Повторить» re-renders the gate (without a retry callback the overlay button
   // would just dismiss — app_error_overlay.js). renderReadinessGate is hoisted;
   // the const onReadinessRetry must be initialised before the first gate render.
-  const onReadinessRetry = () => { renderReadinessGate(true); };
+  const onReadinessRetry = () => { void renderReadinessGate(true); };
   async function renderReadinessGate(isRetry) {
+    const epoch = ++readEpoch;
     root.dataset.state = STATE.NOT_READY;
     stage.replaceChildren(buildMapPlaceholder(0, { variant: MAP_VARIANT.EMPTY, dimmed: true }));
-    sheetSlot.replaceChildren(buildReadinessGate(user.get(), await loadResource(listNearbyOrders, { onRetry: onReadinessRetry, isRetry })));
+    const gate = buildReadinessGate(user.get(), []);
+    const decoration = document.createElement('div');
+    decoration.className = 'driver-map__locked-read';
+    gate.appendChild(decoration);
+    renderReadState(READ_STATE.LOADING, gate);
+    decoration.replaceChildren(buildLoadingCard({ locked: true }));
+    if (fixture === READ_STATE.LOADING) return;
+    const live = await readNearbyOrders({ isRetry, onRetry: onReadinessRetry, epoch });
+    if (!isCurrent(epoch) || !keepDriverPrecedence() || isDriverLineReady(user.get())) return;
+    if (live === READ_FAILED) {
+      decoration.replaceChildren(buildReadErrorCard({ locked: true }));
+      sheetSlot.dataset.readState = READ_STATE.ERROR;
+    } else {
+      renderReadState(live.length ? READ_STATE.LOADED : READ_STATE.EMPTY, buildReadinessGate(user.get(), live));
+    }
+    sheetSlot.setAttribute('aria-busy', 'false');
   }
 
   if (!isDriverLineReady(u)) {
-    await renderReadinessGate(false);
+    void renderReadinessGate(false);
 
     root.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action]');
       if (!btn || btn.disabled) return;
       const action = btn.dataset.action;
+      if (!keepDriverPrecedence()) return;
       if (action === 'complete-readiness') {
         go('/profile');
       } else if (action === 'feed') {
         go('/feed');
       } else if (action === 'map') {
         go('/map');
+      } else if (action === 'retry-nearby') {
+        void renderReadinessGate(true);
       }
     });
 
@@ -546,15 +675,24 @@ export default async function driverMapScreen() {
   // replaces stage + sheetSlot). renderList is hoisted, so referencing it from
   // onDriverMapRetry before its declaration is safe — the arrow only runs when
   // the user taps «Повторить».
-  const onDriverMapRetry = () => { renderList(true); };
+  const onDriverMapRetry = () => { void renderList(true); };
   async function renderList(isRetry) {
-    const live = await loadResource(listNearbyOrders, { onRetry: onDriverMapRetry, isRetry });
+    const epoch = ++readEpoch;
+    renderReadState(READ_STATE.LOADING, buildLoadingCard());
+    root.dataset.state = STATE.LIST;
+    if (fixture === READ_STATE.LOADING) return;
+    const live = await readNearbyOrders({ isRetry, onRetry: onDriverMapRetry, epoch });
+    if (!isCurrent(epoch) || !keepDriverPrecedence() || !isDriverLineReady(user.get())) return;
+    if (live === READ_FAILED) {
+      renderReadState(READ_STATE.ERROR, buildReadErrorCard());
+      return;
+    }
     const hasLive = live.length > 0;
 
     stage.replaceChildren(buildMapPlaceholder(live.length, {
       variant: hasLive ? MAP_VARIANT.NEARBY : MAP_VARIANT.EMPTY,
     }));
-    sheetSlot.replaceChildren(hasLive ? buildListCard(live) : buildEmptyCard());
+    renderReadState(hasLive ? READ_STATE.LOADED : READ_STATE.EMPTY, hasLive ? buildListCard(live) : buildEmptyCard());
     root.dataset.state = hasLive ? STATE.LIST : STATE.EMPTY;
   }
 
@@ -585,6 +723,8 @@ export default async function driverMapScreen() {
     const btn = e.target.closest('[data-action]');
     if (!btn || btn.disabled) return;
     const action = btn.dataset.action;
+    if (!keepDriverPrecedence()) return;
+    if (fixture && action !== 'retry-nearby') return;
 
     if (action === 'accept') {
       // BD-DRIVER-02 — re-check readiness at accept time. The list rendered
@@ -617,6 +757,9 @@ export default async function driverMapScreen() {
       // Reachable once the accept-time re-check above swaps the gate into this
       // (originally ready) surface — keep the gate's CTA / locked rows live.
       go('/profile');
+    } else if (action === 'retry-nearby') {
+      if (isDriverLineReady(user.get())) void renderList(true);
+      else void renderReadinessGate(true);
     } else if (action === 'create-order') {
       // BD-MAP-08 — "Создать тестовый заказ" must seed a visible order from
       // the driver surface itself. It cannot route to /order-map-draft: that
@@ -652,7 +795,7 @@ export default async function driverMapScreen() {
         },
       });
       } catch { /* #784 CUT-3: live POST failed — no unhandled rejection; the re-render shows current state */ }
-      renderList();
+      void renderList();
     } else if (action === 'map') {
       go('/map');
     } else if (action === 'feed') {
@@ -664,10 +807,10 @@ export default async function driverMapScreen() {
         : 'status=ACCEPTED';
       go(`/active-ride?role=driver&${query}`);
     } else if (action === 'driver-map') {
-      renderList();
+      void renderList();
     }
   });
 
-  await renderList(false);
+  void renderList(false);
   return root;
 }

@@ -61,18 +61,18 @@ expect('neither retry closure pre-emptively dismisses before the reload result i
   !/on(?:DriverMap|Readiness)Retry\s*=\s*\(\)\s*=>\s*\{[\s\S]*?dismissAppShellError\(\)/.test(driverMap));
 
 // ── C. BOTH load sites go through loadResource(listNearbyOrders, …) WITH a retry callback ──
-expect('initial working surface renders via renderList(false)',
-  /await\s+renderList\(\s*false\s*\)/.test(driverMap));
-expect('renderList(isRetry) loads via loadResource(listNearbyOrders, { onRetry: onDriverMapRetry, isRetry })',
-  /async\s+function\s+renderList\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listNearbyOrders\s*,\s*\{\s*onRetry:\s*onDriverMapRetry\s*,\s*isRetry\s*\}\s*\)/.test(driverMap));
-expect('renderReadinessGate(isRetry) loads via loadResource(listNearbyOrders, { onRetry: onReadinessRetry, isRetry })',
-  /async\s+function\s+renderReadinessGate\(\s*isRetry\s*\)[\s\S]{0,360}await\s+loadResource\(\s*listNearbyOrders\s*,\s*\{\s*onRetry:\s*onReadinessRetry\s*,\s*isRetry\s*\}\s*\)/.test(driverMap));
-expect('both readiness-gate sites render via renderReadinessGate(false) (not-ready branch + accept-recheck)',
-  (driverMap.match(/await\s+renderReadinessGate\(\s*false\s*\)/g) || []).length === 2,
-  'expected 2 gate render sites');
-expect('both reads route through loadResource(listNearbyOrders, …) (appears 2x: renderList + renderReadinessGate)',
-  (driverMap.match(/loadResource\(\s*listNearbyOrders\s*,/g) || []).length === 2,
-  'expected 2 adapter call sites');
+expect('initial working surface starts renderList(false) without blocking shell return',
+  /void\s+renderList\(\s*false\s*\)/.test(driverMap));
+expect('working list delegates through readNearbyOrders with its retry callback',
+  /readNearbyOrders\(\{\s*isRetry,\s*onRetry:\s*onDriverMapRetry,\s*epoch\s*\}\)/.test(driverMap));
+expect('readiness decoration delegates through readNearbyOrders with its retry callback',
+  /readNearbyOrders\(\{\s*isRetry,\s*onRetry:\s*onReadinessRetry,\s*epoch\s*\}\)/.test(driverMap));
+expect('readiness gate starts immediately and accept-time recheck still awaits it',
+  /void\s+renderReadinessGate\(\s*false\s*\)/.test(driverMap)
+    && /await\s+renderReadinessGate\(\s*false\s*\)/.test(driverMap));
+expect('the centralized nearby read routes through loadResource(timedRead, …) exactly once',
+  (driverMap.match(/loadResource\(timedRead,/g) || []).length === 1,
+  'expected 1 centralized adapter call site');
 expect('driver_map.js reads only through the adapter (no direct listNearbyOrders() call)',
   (driverMap.match(/await\s+listNearbyOrders\(\)/g) || []).length === 0,
   'listNearbyOrders is passed by reference to loadResource, never called directly in driver_map.js');
