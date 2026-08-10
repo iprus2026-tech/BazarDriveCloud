@@ -13129,6 +13129,25 @@ button.pfp-menu-row:active { opacity: 0.7; }
   min-width: 0;
 }
 
+/* BD-CLOUD-DESIGN-LOADING-02B — nearby-order read region */
+.driver-map__loading-status { margin: 0 0 12px; color: var(--text-2); font-size: 13px; }
+.driver-map__skeleton { display: grid; gap: 12px; }
+.driver-map__skeleton-bone { position: relative; overflow: hidden; border-radius: 9px; background: var(--bg-2); }
+.driver-map__skeleton-count { width: 42%; height: 22px; }
+.driver-map__skeleton-card { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.driver-map__skeleton-avatar { width: 38px; height: 38px; flex: 0 0 auto; border-radius: 50%; }
+.driver-map__skeleton-copy { flex: 1; display: grid; gap: 8px; }
+.driver-map__skeleton-line { width: 88%; height: 12px; }
+.driver-map__skeleton-line--short { width: 58%; }
+.driver-map__skeleton-price { width: 54px; height: 18px; }
+.driver-map__skeleton-foot { width: 100%; height: 42px; }
+.driver-map__loading-lock { margin: 12px 0 0; color: var(--text-3); font-size: 12px; text-align: center; }
+.driver-map__read-error .bd-empty { padding-top: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .driver-map__skeleton-bone::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent); animation: driver-map-skeleton-shimmer 1.4s ease-in-out infinite; }
+}
+@keyframes driver-map-skeleton-shimmer { to { transform: translateX(100%); } }
+
 /* ── BD-DRIVER-02 — DriverMap readiness gate (not_ready) ────────────────── */
 .driver-map__map--dimmed {
   filter: saturate(0.55) brightness(0.7);

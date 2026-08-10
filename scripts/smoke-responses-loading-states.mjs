@@ -193,9 +193,9 @@ function makeMissingSelectedHarness() {
 }
 
 // E. Version-only SW refresh for changed precached assets.
-expect('Service Worker VERSION is bumped exactly to v262 for #866',
+expect('Service Worker retains the v262 02A evidence and stays monotonic',
   /v262 \(BD-CLOUD-DESIGN-LOADING-02A #866\)/.test(sw)
-  && /const VERSION\s*=\s*'v262'/.test(sw));
+  && Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 262);
 expect('responses.js and cloud.css remain precached',
   sw.includes("'./src/screens/responses.js'")
   && sw.includes("'./styles/cloud.css'"));

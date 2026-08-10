@@ -1,0 +1,28 @@
+// BD-CLOUD-DESIGN-LOADING-02B (#868) — focused static Driver Map read-state smoke.
+import fs from 'node:fs';
+const read=(rel)=>fs.readFileSync(new URL(rel,import.meta.url),'utf8');
+const src=read('../public/src/screens/driver_map.js'); const css=read('../public/styles/cloud.css'); const sw=read('../public/sw.js');
+const failures=[]; const expect=(label,value)=>{const ok=Boolean(value);console.log((ok?'PASS':'FAIL')+' — '+label);if(!ok)failures.push(label);};
+const between=(a,b)=>{const x=src.indexOf(a),y=src.indexOf(b,x+a.length);return x>=0&&y>x?src.slice(x,y):'';};
+const loader=between('export default function driverMapScreen()', '\n  return root;\n}');
+const loading=between('function buildLoadingCard', 'function buildReadErrorCard');
+expect('role resolves before fixture parsing', src.indexOf('const role = resolveEffectiveRole()') < src.indexOf('const fixture = driverMapFixture()'));
+expect('loader returns a stable shell without top-level await', /export default function driverMapScreen\(\)/.test(src) && !/export default async function driverMapScreen/.test(src));
+expect('persistent read owner toggles aria-busy', /id = 'driver-map-read-region'/.test(src) && /setAttribute\('aria-busy', state === READ_STATE.LOADING/.test(src));
+expect('four canonical fixtures and unknown fallback are explicit', /Object.values\(READ_STATE\)/.test(src) && /DRIVER_MAP_FIXTURES.has\(value\) \? value : ''/.test(src));
+expect('fixtures bypass loadResource and normal source', /if \(fixture\) return fixtureResult\(\)/.test(src));
+expect('loading fixture remains pending', /fixture === READ_STATE.LOADING\) return/.test(src));
+expect('loaded fixture is deterministic synthetic data', /FIXTURE_ORDERS/.test(src) && /fixture_driver_order_1/.test(src));
+expect('fixture actions cannot invoke commands or writes', /if \(fixture && action !== 'retry-nearby'\) return/.test(src));
+expect('loading has one status outside decorative bones', (loading.match(/role="status"/g)||[]).length===1 && /driver-map__skeleton" aria-hidden="true"/.test(loading));
+expect('skeleton contains no fake controls or production data', !/<button|data-action|Принять|₽/.test(loading));
+expect('error is distinct and retry-only', /buildReadErrorCard/.test(src) && /data-action="retry-nearby"/.test(src));
+expect('rejected or unusable reads cannot become empty', /fallback: READ_FAILED/.test(src) && /result.every/.test(src) && /live === READ_FAILED/.test(src));
+expect('settlement preserves descendant focus on persistent owner', /sheetSlot.contains\(document.activeElement\)/.test(src) && /sheetSlot.focus\(\{ preventScroll: true \}\)/.test(src));
+expect('retry repeats only nearby read', /action === 'retry-nearby'[\s\S]{0,180}renderList\(true\)/.test(src));
+expect('epoch and detached-view guards reject stale settlement', /epoch === readEpoch/.test(src) && /root.isConnected/.test(src) && /!isCurrent\(epoch\)/.test(src));
+expect('late settlement rechecks readiness before actions', /!isCurrent\(epoch\) \|\| !isDriverLineReady\(user.get\(\)\)/.test(src));
+expect('read adapter/source remain unchanged imports', /loadResource\(listNearbyOrders,/.test(src) && /from '..\/mock_api.js'/.test(src));
+expect('skeleton motion only runs when motion is allowed', /@media \(prefers-reduced-motion: no-preference\)[\s\S]*driver-map__skeleton-bone::after/.test(css));
+expect('version-only SW bump is v263 and assets remain precached', /const VERSION\s*=\s*'v263'/.test(sw) && sw.includes("'./src/screens/driver_map.js'") && sw.includes("'./styles/cloud.css'"));
+if(failures.length){console.error('\nFAIL '+failures.length+' expectation(s):\n  - '+failures.join('\n  - '));process.exit(1);}console.log('\nALL PASSED');

@@ -57,12 +57,12 @@ expect('guard copy "Это экран водителя" present',
   src.includes('Это экран водителя'));
 
 // 4) Role must NOT be derivable from the URL — no ?role= override.
-expect('driver_map.js does not use URLSearchParams for role override',
-  !/URLSearchParams/.test(src));
-expect('driver_map.js does not read location.hash for role override',
-  !/location\.hash/.test(src));
-expect('driver_map.js does not read location.search for role override',
-  !/location\.search/.test(src));
+expect('resolveEffectiveRole does not use URLSearchParams for role override',
+  !!resolveBody && !/URLSearchParams/.test(resolveBody));
+expect('resolveEffectiveRole does not read location.hash for role override',
+  !!resolveBody && !/location\.hash/.test(resolveBody));
+expect('resolveEffectiveRole does not read location.search for role override',
+  !!resolveBody && !/location\.search/.test(resolveBody));
 
 // 5) The guard render path must expose no driver-only accept action.
 const guardSources = [

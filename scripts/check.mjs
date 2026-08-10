@@ -1216,6 +1216,14 @@ if (exists(profileNotifBellSmoke)) {
   }
 }
 
+// BD-CLOUD-DESIGN-LOADING-02B (#868) — Driver Map stable shell, four nearby-order
+// read states, deterministic fixtures, a11y skeleton, retry and stale/teardown guards.
+const driverMapLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-driver-map-loading-states.mjs');
+if (exists(driverMapLoadingStatesSmoke)) {
+  try { execFileSync(process.execPath, [driverMapLoadingStatesSmoke], { stdio: 'pipe' }); }
+  catch (e) { const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-1200); errors.push(`smoke-driver-map-loading-states.mjs failed\n${msg}`); }
+}
+
 // BD-RESPONSES-01 — /responses decline + sort. Asserts the segmented sort
 // chips, the in-memory per-driver declined Set (session-only, no localStorage),
 // single-driver restore + restore-all, and the all-declined notice.

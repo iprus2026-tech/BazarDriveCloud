@@ -20,7 +20,9 @@
 // meta, flipping the Mapbox seam ON in prod (/map renders a real map). Installed clients must refresh.
 // v262 (BD-CLOUD-DESIGN-LOADING-02A #866): precached responses.js + cloud.css changed (persistent
 // Responses shell, four guarded read states, deterministic fixtures, and structural skeleton).
-const VERSION    = 'v262';
+// v263 (BD-CLOUD-DESIGN-LOADING-02B #868): precached driver_map.js + cloud.css changed (stable
+// Driver Map shell, four guarded nearby-order read states, fixtures, and structural skeleton).
+const VERSION    = 'v263';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
