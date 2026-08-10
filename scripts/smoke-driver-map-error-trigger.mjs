@@ -70,8 +70,8 @@ expect('readiness decoration delegates through readNearbyOrders with its retry c
 expect('readiness gate starts immediately and accept-time recheck still awaits it',
   /void\s+renderReadinessGate\(\s*false\s*\)/.test(driverMap)
     && /await\s+renderReadinessGate\(\s*false\s*\)/.test(driverMap));
-expect('the centralized nearby read routes through loadResource(listNearbyOrders, …) exactly once',
-  (driverMap.match(/loadResource\(listNearbyOrders,/g) || []).length === 1,
+expect('the centralized nearby read routes through loadResource(timedRead, …) exactly once',
+  (driverMap.match(/loadResource\(timedRead,/g) || []).length === 1,
   'expected 1 centralized adapter call site');
 expect('driver_map.js reads only through the adapter (no direct listNearbyOrders() call)',
   (driverMap.match(/await\s+listNearbyOrders\(\)/g) || []).length === 0,

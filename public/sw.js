@@ -22,7 +22,9 @@
 // Responses shell, four guarded read states, deterministic fixtures, and structural skeleton).
 // v263 (BD-CLOUD-DESIGN-LOADING-02B #868): precached driver_map.js + cloud.css changed (stable
 // Driver Map shell, four guarded nearby-order read states, fixtures, and structural skeleton).
-const VERSION    = 'v263';
+// v264 (BD-CLOUD-DESIGN-LOADING-02B repair #869): precached driver_map.js changed (effective-role
+// settlement/accept guard and bounded nearby-order read timeout).
+const VERSION    = 'v264';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

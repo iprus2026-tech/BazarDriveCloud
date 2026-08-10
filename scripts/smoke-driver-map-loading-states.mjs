@@ -21,8 +21,8 @@ expect('rejected or unusable reads cannot become empty', /fallback: READ_FAILED/
 expect('settlement preserves descendant focus on persistent owner', /sheetSlot.contains\(document.activeElement\)/.test(src) && /sheetSlot.focus\(\{ preventScroll: true \}\)/.test(src));
 expect('retry repeats only nearby read', /action === 'retry-nearby'[\s\S]{0,180}renderList\(true\)/.test(src));
 expect('epoch and detached-view guards reject stale settlement', /epoch === readEpoch/.test(src) && /root.isConnected/.test(src) && /!isCurrent\(epoch\)/.test(src));
-expect('late settlement rechecks readiness before actions', /!isCurrent\(epoch\) \|\| !isDriverLineReady\(user.get\(\)\)/.test(src));
-expect('read adapter/source remain unchanged imports', /loadResource\(listNearbyOrders,/.test(src) && /from '..\/mock_api.js'/.test(src));
+expect('late settlement rechecks role and readiness before actions', /!isCurrent\(epoch\) \|\| !keepDriverPrecedence\(\) \|\| !isDriverLineReady\(user.get\(\)\)/.test(src));
+expect('read adapter/source remain unchanged imports', /loadResource\(timedRead,/.test(src) && /from '..\/mock_api.js'/.test(src));
 expect('skeleton motion only runs when motion is allowed', /@media \(prefers-reduced-motion: no-preference\)[\s\S]*driver-map__skeleton-bone::after/.test(css));
-expect('version-only SW bump is v263 and assets remain precached', /const VERSION\s*=\s*'v263'/.test(sw) && sw.includes("'./src/screens/driver_map.js'") && sw.includes("'./styles/cloud.css'"));
+expect('version-only SW bump is v264 and assets remain precached', /const VERSION\s*=\s*'v264'/.test(sw) && sw.includes("'./src/screens/driver_map.js'") && sw.includes("'./styles/cloud.css'"));
 if(failures.length){console.error('\nFAIL '+failures.length+' expectation(s):\n  - '+failures.join('\n  - '));process.exit(1);}console.log('\nALL PASSED');
