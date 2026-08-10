@@ -26,6 +26,13 @@ const MOCK_DRIVER = {
   rating:   '4.92',
 };
 
+const MOCK_PASSENGER = {
+  initials: 'АП',
+  name:     'Анна П.',
+  status:   'в сети',
+  rating:   '4.91',
+};
+
 const MOCK_TRIP = {
   from:  'Москва',
   to:    'Тула',
@@ -288,6 +295,20 @@ function saveTripConfirmation(handoff) {
     map[handoff.tripId] = handoff;
     localStorage.setItem(TRIP_CONFIRM_KEY, JSON.stringify(map));
   } catch {}
+}
+
+// Fixture previews are fully synthetic. Even when the URL carries tripId or
+// responseId values that exist in persisted stores, the preview must not read
+// or expose production-like ride/response data in its header, trip bar or CTA.
+function resolveFixtureHydration(viewerRole) {
+  const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
+  const counterpart = counterpartRole === 'passenger' ? MOCK_PASSENGER : MOCK_DRIVER;
+  return {
+    counterpart,
+    trip: { ...MOCK_TRIP, status: 'Принят' },
+    response: null,
+    counterpartRole,
+  };
 }
 
 // Decide whether this chat surface belongs to a passenger-side ride
@@ -611,8 +632,8 @@ export default function chat() {
       ? `response-${responseId}`
       : 'demo';
 
-  // Canonical fixtures are message-region-only synthetic inputs. They bypass
-  // the local chat store just as they bypass the guarded GET and polling.
+  // Canonical fixtures are fully synthetic inputs. They bypass local message
+  // reads as well as persisted ride/response hydration, guarded GET and polling.
   const stored  = fixture ? null : loadMessages(chatId);
   // BD-CHAT-01 (Cloud Design port) — a REAL thread (trip/response) with no stored
   // messages shows the designed empty / first-message state, not a fabricated mock
@@ -627,11 +648,16 @@ export default function chat() {
       ? []
       : (stored ? [...stored] : (isRealThread ? [] : MOCK_MESSAGES.map((message) => ({ ...message }))));
 
-  const rideContext = resolveRideContext({ responseId, viewerRole });
+  const rideContext = resolveRideContext({
+    responseId: fixture ? null : responseId,
+    viewerRole,
+  });
   // BD-CHAT-02 — header + trip-bar hydration source. `counterpart` is the
   // person on the other end of the thread (driver for passenger viewers,
   // passenger for driver viewers); `trip` carries route + price + status.
-  const hydration   = resolveChatHydration({ tripId, responseId, viewerRole });
+  const hydration = fixture
+    ? resolveFixtureHydration(viewerRole)
+    : resolveChatHydration({ tripId, responseId, viewerRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
   // BD-CHAT-01 (Cloud Design parity) — the header avatar carries the COUNTERPART's

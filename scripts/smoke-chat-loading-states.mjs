@@ -25,6 +25,7 @@ function between(source, start, end) {
 
 const fixtureContract = between(chat, 'const CHAT_READ_STATE', 'function createReadAbortError');
 const readManagerSource = between(chat, 'function createChatReadManager', 'function loadChatStore');
+const fixtureHydrationSource = between(chat, 'function resolveFixtureHydration', '// Decide whether this chat surface');
 const loadingRenderer = between(chat, 'function renderChatLoading()', 'function renderChatReadError()');
 const errorRenderer = between(chat, 'function renderChatReadError()', 'const BACK_SVG');
 const initialLoader = between(chat, 'async function loadInitialServerMessages()', 'requestAnimationFrame(scrollBottom);');
@@ -91,6 +92,16 @@ expect('known fixtures bypass local message read, backend authority and polling'
   /const stored\s+= fixture \? null : loadMessages\(chatId\)/.test(chat)
   && /const backendRead = !fixture && isBackendEnabled\(\) && isRealThread/.test(chat)
   && /if \(isTerminal \|\| fixture\) return/.test(pollStarter));
+expect('fixture hydration stays synthetic even when tripId or responseId match persisted data',
+  /const counterpartRole = viewerRole === 'driver' \? 'passenger' : 'driver'/.test(fixtureHydrationSource)
+  && /MOCK_PASSENGER/.test(fixtureHydrationSource)
+  && /MOCK_DRIVER/.test(fixtureHydrationSource)
+  && /trip: \{ \.\.\.MOCK_TRIP, status: 'Принят' \}/.test(fixtureHydrationSource)
+  && /response: null/.test(fixtureHydrationSource)
+  && !/localStorage|loadResponse|findActiveRide|resolveRideContext|resolveChatHydration/.test(fixtureHydrationSource)
+  && /function loadResponse\(responseId\) \{\s*if \(!responseId\) return null;/.test(chat)
+  && /const rideContext = resolveRideContext\(\{\s*responseId: fixture \? null : responseId,\s*viewerRole,\s*\}\)/.test(chat)
+  && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, viewerRole \}\)/.test(chat));
 expect('loaded fixture is deterministic and role-aware',
   /CHAT_FIXTURE_MESSAGES/.test(fixtureContract)
   && /senderRole: 'passenger'/.test(fixtureContract)
