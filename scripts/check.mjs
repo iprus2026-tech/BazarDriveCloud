@@ -1225,7 +1225,7 @@ if (exists(driverMapLoadingStatesSmoke)) {
 }
 
 // BD-CLOUD-DESIGN-LOADING-02B repair (#869) — role-race and bounded-read regressions.
-for (const smokeName of ['smoke-driver-map-role-race.mjs', 'smoke-driver-map-read-timeout.mjs']) {
+for (const smokeName of ['smoke-driver-map-role-race.mjs', 'smoke-driver-map-read-timeout.mjs', 'smoke-driver-map-read-cancellation.mjs']) {
   const smokePath = path.join(root, 'scripts', smokeName);
   if (exists(smokePath)) {
     try { execFileSync(process.execPath, [smokePath], { stdio: 'pipe' }); }

@@ -552,9 +552,30 @@ export default function driverMapScreen() {
   const u = user.get();
   const fixture = driverMapFixture();
   let readEpoch = 0;
+  let activeRead = null;
+  let rootWasConnected = false;
   let mountCheckPassed = false;
   setTimeout(() => { mountCheckPassed = true; }, 0);
   const isCurrent = (epoch) => epoch === readEpoch && (!mountCheckPassed || root.isConnected);
+  function cancelActiveRead() {
+    const operation = activeRead;
+    if (!operation) return;
+    activeRead = null;
+    clearTimeout(operation.timeoutId);
+    const error = new Error('nearby orders read canceled');
+    error.name = 'AbortError';
+    operation.reject(error);
+    operation.controller.abort();
+  }
+  const teardownObserver = new MutationObserver(() => {
+    if (root.isConnected) {
+      rootWasConnected = true;
+    } else if (rootWasConnected) {
+      cancelActiveRead();
+      teardownObserver.disconnect();
+    }
+  });
+  teardownObserver.observe(document.body, { childList: true, subtree: true });
   function keepDriverPrecedence() {
     if (resolveEffectiveRole() === 'driver') return true;
     if (root.isConnected) root.replaceWith(renderPassengerGuard());
@@ -577,11 +598,20 @@ export default function driverMapScreen() {
   async function readNearbyOrders({ isRetry = false, onRetry, epoch }) {
     if (fixture) return fixtureResult();
     const timedRead = () => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('nearby orders read timed out')), READ_TIMEOUT_MS);
-      Promise.resolve().then(listNearbyOrders).then(
-        (value) => { clearTimeout(timer); resolve(value); },
-        (error) => { clearTimeout(timer); reject(error); },
-      );
+      cancelActiveRead();
+      const controller = new AbortController();
+      const operation = { controller, epoch, reject, timeoutId: null };
+      activeRead = operation;
+      operation.timeoutId = setTimeout(() => {
+        if (activeRead !== operation) return;
+        reject(new Error('nearby orders read timed out'));
+        controller.abort();
+      }, READ_TIMEOUT_MS);
+      Promise.resolve().then(() => listNearbyOrders({ signal: controller.signal })).then(resolve, reject);
+    }).finally(() => {
+      if (activeRead?.epoch !== epoch) return;
+      clearTimeout(activeRead.timeoutId);
+      activeRead = null;
     });
     const result = await loadResource(timedRead, { onRetry, isRetry, fallback: READ_FAILED, isActive: () => isCurrent(epoch) });
     const usable = Array.isArray(result) && result.every((order) => order && typeof order.id === 'string'
