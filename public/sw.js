@@ -48,7 +48,9 @@
 // changed (recovery settlement refreshes the existing map from authoritative ride/route data).
 // v276 (BD-CLOUD-DESIGN-LOADING-02D ninth review repair #873): precached active_ride_passenger.js
 // changed (deferred terminal cancel gate and monotonic locally-ahead recovery status merge).
-const VERSION    = 'v276';
+// v277 (BD-CLOUD-DESIGN-LOADING-02D tenth review repair #873): precached active_ride_passenger.js +
+// active_ride_passenger_sheets.js changed (terminal cancel reconciliation + HTTP transient recovery classification).
+const VERSION    = 'v277';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

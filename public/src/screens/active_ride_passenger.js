@@ -1934,7 +1934,10 @@ export default function activeRidePassenger(options = {}) {
           // persist local CANCELED after the server has already terminalized the ride.
           if (deferredTerminalPassengerStatusBlocksCancel()) {
             toast('Поездка уже завершена. Обновляем статус.');
-            return null;
+            return {
+              aborted: true,
+              reconcile: 'deferred-terminal',
+            };
           }
           // BD-RIDE-SIM-01 — passenger cancels after the driver has
           // already accepted. Persist the current view first so the
@@ -2449,12 +2452,18 @@ export default function activeRidePassenger(options = {}) {
   function isPassengerRideRecoveryRetryable(err) {
     if (!err) return true;
     if (err.retryable === true) return true;
-    if (err.retryable === false) return false;
     if (err.name === 'TimeoutError') return true;
     const status = Number(err.status);
-    if (!Number.isFinite(status)) return true;
-    if (status === 401 || status === 403) return false;
-    return status === 408 || status === 429 || status >= 500;
+    if (Number.isFinite(status)) {
+      if (status === 401 || status === 403) return false;
+      // Review10 P2: HTTP transport truth wins when a gateway/proxy cannot
+      // provide the API retryability envelope. 408/429/5xx remain transient
+      // even when ApiError carries the default retryable:false hint.
+      if (status === 408 || status === 429 || status >= 500) return true;
+      return false;
+    }
+    if (err.retryable === false) return false;
+    return true;
   }
 
   function schedulePassengerRideRecovery() {

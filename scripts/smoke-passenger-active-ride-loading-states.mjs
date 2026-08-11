@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const passenger = read('../public/src/screens/active_ride_passenger.js');
+const passengerSheets = read('../public/src/screens/active_ride_passenger_sheets.js');
 const activeRide = read('../public/src/screens/active_ride.js');
 const mockApi = read('../public/src/mock_api.js');
 const css = read('../public/styles/cloud.css');
@@ -215,6 +216,14 @@ expect('deferred terminal status immediately blocks stale cancel confirmation be
     && deferredTerminalGate.includes('button.disabled = true')
     && review9CancelBinder.includes('deferredTerminalPassengerStatusBlocksCancel()')
     && review9CancelBinder.indexOf('deferredTerminalPassengerStatusBlocksCancel()') < review9CancelBinder.indexOf('saveActiveRide(ride)'));
+const cancelSheetCommit = functionBody(passengerSheets, 'commitCancel');
+expect('terminal cancel abort closes the stale sheet before false canceled UI and exposes reconciliation intent',
+  review9CancelBinder.includes('aborted: true')
+    && review9CancelBinder.includes("reconcile: 'deferred-terminal'")
+    && cancelSheetCommit.includes('if (meta.aborted === true)')
+    && cancelSheetCommit.includes('close()')
+    && cancelSheetCommit.indexOf('if (meta.aborted === true)') < cancelSheetCommit.indexOf('cancelTimer = setTimeout')
+    && cancelSheetCommit.indexOf('close()') < cancelSheetCommit.indexOf("overlay.dataset.stage = 'canceled'"));
 expect('deferred forward status keeps the highest pending lifecycle rank while overlays stay open',
   remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
     && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
@@ -249,6 +258,11 @@ expect('automatic recovery excludes permanent authorization failures',
     && retryability.includes('return false')
     && retryability.includes("err.name === 'TimeoutError'")
     && retryability.includes('status === 408 || status === 429 || status >= 500'));
+expect('HTTP 408/429/5xx stay transient even when retryable metadata is false or absent',
+  retryability.includes('if (Number.isFinite(status))')
+    && retryability.includes('if (status === 408 || status === 429 || status >= 500) return true')
+    && retryability.indexOf('status === 408 || status === 429 || status >= 500') < retryability.indexOf('err.retryable === false')
+    && retryability.includes('if (err.retryable === false) return false'));
 const recovery = functionBody(passenger, 'schedulePassengerRideRecovery');
 expect('local fallback recovery retries only persisted participant-gated rides without overlapping poll semantics',
   recovery.includes('!hasPersistedLocalRide')
@@ -321,8 +335,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v276',
-  /const VERSION\s*=\s*'v276'/.test(sw));
+expect('service worker moves monotonically to v277',
+  /const VERSION\s*=\s*'v277'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

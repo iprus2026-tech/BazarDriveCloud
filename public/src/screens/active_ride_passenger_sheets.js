@@ -649,6 +649,14 @@ export function openPassengerCancelSheet(root, options = {}) {
     // Persist immediately so the cancel is durable even if the brief
     // loading delay is interrupted; the screen returns the display meta.
     const meta = (onConfirm && onConfirm(selectedReason, comment)) || {};
+    // Review10 P2: an authoritative terminal snapshot can invalidate the
+    // cancel while this overlay is in-flight. Honor the screen's explicit
+    // abort result, close the stale overlay, and let the screen observer
+    // flush its deferred terminal reconciliation instead of showing DONE.
+    if (meta.aborted === true) {
+      close();
+      return;
+    }
     cancelTimer = setTimeout(() => {
       cancelTimer = null;
       if (doneMeta) {
