@@ -28,7 +28,29 @@
 // mock_api.js changed (operation-scoped abort, teardown/epoch/retry cleanup, signal propagation).
 // v266 (BD-CLOUD-DESIGN-LOADING-02C #870): precached chat.js + cloud.css changed (honest
 // message read states, deterministic fixtures, bounded cancellation, and bubble skeleton).
-const VERSION    = 'v266';
+// v267 (BD-CLOUD-DESIGN-LOADING-02D #872): precached active_ride_passenger.js,
+// mock_api.js + cloud.css changed (passenger ride read states, fixture isolation and cancellable poll).
+// v268 (BD-CLOUD-DESIGN-LOADING-02D review repair #873): precached active_ride.js +
+// active_ride_passenger.js changed (outer fixture gate, local fallback, empty/safety fixture isolation).
+// v269 (BD-CLOUD-DESIGN-LOADING-02D second review repair #873): precached active_ride_passenger.js
+// changed (non-blocking local refresh, recovery loop, unavailable-map isolation, fixture retry, scoped busy state).
+// v270 (BD-CLOUD-DESIGN-LOADING-02D third review repair #873): precached active_ride_passenger.js
+// changed (bounded poll, honest 404 empty, retryable recovery filter, stable loading announcement).
+// v271 (BD-CLOUD-DESIGN-LOADING-02D fourth review repair #873): precached active_ride_passenger.js
+// changed (retryable read/write intent separation and built-in demo 404 fallback).
+// v272 (BD-CLOUD-DESIGN-LOADING-02D fifth review repair #873): precached active_ride_passenger.js
+// changed (auth mutation gate and focus-safe background recovery settlement).
+// v273 (BD-CLOUD-DESIGN-LOADING-02D sixth review repair #873): precached active_ride_passenger.js
+// changed (deferred forward-status replay and permanent read-failure mutation gate).
+// v274 (BD-CLOUD-DESIGN-LOADING-02D seventh review repair #873): precached active_ride_passenger.js
+// changed (ownership settlement gate and focus-safe in-place recovery field refresh).
+// v275 (BD-CLOUD-DESIGN-LOADING-02D eighth review repair #873): precached active_ride_passenger.js
+// changed (recovery settlement refreshes the existing map from authoritative ride/route data).
+// v276 (BD-CLOUD-DESIGN-LOADING-02D ninth review repair #873): precached active_ride_passenger.js
+// changed (deferred terminal cancel gate and monotonic locally-ahead recovery status merge).
+// v277 (BD-CLOUD-DESIGN-LOADING-02D tenth review repair #873): precached active_ride_passenger.js +
+// active_ride_passenger_sheets.js changed (terminal cancel reconciliation + HTTP transient recovery classification).
+const VERSION    = 'v277';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

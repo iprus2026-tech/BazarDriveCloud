@@ -139,6 +139,210 @@ function normalizePhase(phaseQuery) {
   return null;
 }
 
+// BD-CLOUD-DESIGN-LOADING-02D (#872) — request state belongs to the
+// participant-gated initial ride read, never to the Ride State Machine.
+const PASSENGER_RIDE_READ_STATE = Object.freeze({
+  LOADING: 'loading',
+  LOADED: 'loaded',
+  EMPTY: 'empty',
+  ERROR: 'error',
+});
+const PASSENGER_RIDE_FIXTURES = new Set(Object.values(PASSENGER_RIDE_READ_STATE));
+const PASSENGER_RIDE_READ_TIMEOUT_MS = 12_000;
+const PASSENGER_RIDE_POLL_MS = 2_500;
+const PASSENGER_RIDE_POLL_TIMEOUT_MS = 12_000;
+const PASSENGER_RIDE_FIXTURE_RETRY_MS = 400;
+
+function getPassengerRideFixture() {
+  const hash = window.location.hash || '';
+  const qi = hash.indexOf('?');
+  if (qi === -1) return '';
+  const value = new URLSearchParams(hash.slice(qi + 1)).get('fixture') || '';
+  return PASSENGER_RIDE_FIXTURES.has(value) ? value : '';
+}
+
+function hasUsablePassengerRideSource(tripId) {
+  const canonicalRide = loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  if (canonicalRide) return true;
+  return Boolean(loadDriverHandoffSnapshot(tripId));
+}
+
+// Fixtures are synthetic before any canonical/local hydration. In particular,
+// a colliding tripId must never cause loadCanonicalActiveRide, Responses,
+// driver-handoff, history or receipt stores to become preview input.
+function createPassengerFixtureRide(tripId) {
+  return createDemoActiveRide({
+    tripId: tripId || DEMO_ACTIVE_RIDE_ID,
+    role: 'passenger',
+    status: RIDE_STATUS.ACCEPTED,
+    passenger: {
+      name: 'Анна П.',
+      initials: 'АП',
+      rating: '4,91',
+      phoneMasked: '+7 ... 12-34',
+      luggage: '1 чемодан',
+    },
+    driver: {
+      name: 'Илья С.',
+      initials: 'ИС',
+      rating: '4,95',
+      onlineLabel: 'На линии',
+      shiftDuration: '4ч 20м',
+    },
+    order: {
+      offerPrice: '1 240 ₽',
+      rate: '12 ₽ / км',
+      commission: '8%',
+      pickupEta: '4 мин',
+      pickupDistance: '1,3 км',
+      destinationEta: '31 мин',
+      destinationDistance: '24 км',
+      destinationNote: 'до главного входа',
+      tags: ['★ 4,95', '1 чемодан'],
+    },
+    route: {
+      pickupLabel: 'Москва, Тверская улица, 12',
+      dropoffLabel: 'Москва, Ленинградский вокзал',
+      currentInstruction: 'Прямо 300 м',
+      currentStreet: 'Тверская улица',
+      distanceToPickup: '1,3 км',
+      etaToPickup: '4 мин',
+      etaToDestination: '31 мин',
+      pickup: { lng: 37.6048, lat: 55.7638 },
+      dropoff: { lng: 37.6552, lat: 55.7766 },
+    },
+    ride: { price: '1 240 ₽' },
+    timestamps: {
+      createdAt: '2026-08-11T00:00:00.000Z',
+      acceptedAt: '2026-08-11T00:01:00.000Z',
+      approachingAt: null,
+      arrivedAt: null,
+      startedAt: null,
+      completedAt: null,
+      canceledAt: null,
+    },
+  });
+}
+
+function createPassengerReadAbortError(message) {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function createPassengerRideReadManager(
+  readRide,
+  timeoutMs,
+  schedule = setTimeout,
+  unschedule = clearTimeout,
+) {
+  let activeRead = null;
+
+  function cancel(message = 'passenger ride read canceled') {
+    const operation = activeRead;
+    if (!operation) return;
+    activeRead = null;
+    unschedule(operation.timeoutId);
+    operation.controller.abort();
+    operation.reject(createPassengerReadAbortError(message));
+  }
+
+  function run(tripId) {
+    if (activeRead) cancel('passenger ride read superseded');
+
+    let operation;
+    const result = new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      operation = { controller, reject, timeoutId: null };
+      activeRead = operation;
+      operation.timeoutId = schedule(() => {
+        if (activeRead !== operation) return;
+        activeRead = null;
+        controller.abort();
+        const error = new Error('passenger ride read timed out');
+        error.name = 'TimeoutError';
+        reject(error);
+      }, timeoutMs);
+
+      Promise.resolve()
+        .then(() => {
+          if (activeRead !== operation || controller.signal.aborted) {
+            throw createPassengerReadAbortError('passenger ride read canceled before start');
+          }
+          return readRide(tripId, { signal: controller.signal });
+        })
+        .then(resolve, reject);
+    });
+
+    return result.finally(() => {
+      if (activeRead !== operation) return;
+      unschedule(operation.timeoutId);
+      activeRead = null;
+    });
+  }
+
+  return {
+    cancel,
+    run,
+    isActive: () => activeRead !== null,
+  };
+}
+
+function passengerRideLoadingDriverHtml() {
+  return `
+    <div class="active-ride-passenger__top-card active-ride-passenger__read-skeleton" aria-hidden="true">
+      <div class="active-ride-passenger__read-driver-row">
+        <span class="active-ride-passenger__read-avatar active-ride-passenger__read-bone"></span>
+        <span class="active-ride-passenger__read-driver-lines">
+          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--name active-ride-passenger__read-bone"></span>
+          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--car active-ride-passenger__read-bone"></span>
+        </span>
+        <span class="active-ride-passenger__read-eta active-ride-passenger__read-bone"></span>
+      </div>
+      <div class="active-ride-passenger__read-actions">
+        <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+        <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+      </div>
+    </div>
+  `;
+}
+
+function passengerRideLoadingSheetHtml() {
+  return `
+    <div class="active-ride-passenger__read-state">
+      <div class="active-ride-passenger__read-sheet-skeleton" aria-hidden="true">
+        <span class="active-ride-passenger__read-line active-ride-passenger__read-line--title active-ride-passenger__read-bone"></span>
+        <span class="active-ride-passenger__read-line active-ride-passenger__read-line--sub active-ride-passenger__read-bone"></span>
+        <span class="active-ride-passenger__read-block active-ride-passenger__read-bone"></span>
+        <span class="active-ride-passenger__read-block active-ride-passenger__read-block--short active-ride-passenger__read-bone"></span>
+      </div>
+    </div>
+  `;
+}
+
+function passengerRideEmptyHtml() {
+  return `
+    <div class="active-ride-passenger__read-state active-ride-passenger__read-state--settled"
+         role="group" aria-labelledby="arp-read-empty-title">
+      <h2 class="active-ride-passenger__read-title" id="arp-read-empty-title">Активной поездки нет</h2>
+      <p class="active-ride-passenger__read-copy">Вернитесь в ленту, чтобы выбрать или создать поездку.</p>
+      <button type="button" class="bd-btn primary active-ride-passenger__read-cta" id="arp-read-feed">Вернуться в ленту</button>
+    </div>
+  `;
+}
+
+function passengerRideErrorHtml() {
+  return `
+    <div class="active-ride-passenger__read-state active-ride-passenger__read-state--settled"
+         role="group" aria-labelledby="arp-read-error-title">
+      <h2 class="active-ride-passenger__read-title" id="arp-read-error-title">Не удалось загрузить поездку</h2>
+      <p class="active-ride-passenger__read-copy">Проверьте соединение и повторите загрузку данных поездки.</p>
+      <button type="button" class="bd-btn primary active-ride-passenger__read-cta" id="arp-read-retry"
+              aria-label="Повторить загрузку поездки">Повторить</button>
+    </div>
+  `;
+}
+
 // View-only: never persists status by default. The driver flow owns the
 // canonical ride lifecycle; the passenger view derives a display status
 // without touching shared state for DEMO_ACTIVE_RIDE_ID. Falls back to an
@@ -1502,9 +1706,21 @@ export default function activeRidePassenger(options = {}) {
   const showNotice = typeof options.showNotice === 'function'
     ? options.showNotice
     : null;
+  const fixture = getPassengerRideFixture();
+  const hasPersistedLocalRide = !fixture && hasUsablePassengerRideSource(tripId);
+  const isBuiltInDemoRide = !fixture && tripId === DEMO_ACTIVE_RIDE_ID;
+  const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide;
 
-  let ride = loadPassengerRideView(tripId, statusQuery);
-  ride = applyPassengerStatusFromQuery(ride, statusQuery);
+  // Fixture isolation happens before every persisted ride / response / handoff
+  // read. createDemoActiveRide is a pure in-memory constructor.
+  let ride = fixture
+    ? createPassengerFixtureRide(tripId)
+    : loadPassengerRideView(tripId, statusQuery);
+  if (!fixture) ride = applyPassengerStatusFromQuery(ride, statusQuery);
+  const backendRead = !fixture && isBackendEnabled();
+  let readState = fixture || (backendRead && !hasUsableLocalRide
+    ? PASSENGER_RIDE_READ_STATE.LOADING
+    : PASSENGER_RIDE_READ_STATE.LOADED);
 
   // BD-RIDE-P-06 · State D — Passenger lands here after confirming a
   // cancel, or when arriving from an audit URL with
@@ -1536,6 +1752,8 @@ export default function activeRidePassenger(options = {}) {
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride active-ride-passenger';
+  root.dataset.readState = readState;
+  if (fixture) root.dataset.fixture = fixture;
 
   // Display label (e.g. №48-321) reused by the cancel / safety sheets.
   const tripLabel = formatTripNumber(ride.tripId);
@@ -1543,12 +1761,30 @@ export default function activeRidePassenger(options = {}) {
   // ── Map layer ────────────────────────────────────────────
   const mapWrap = document.createElement('div');
   mapWrap.className = 'active-ride__map';
-  const mapEl = createMapShell({
-    variant: 'passenger',
-    status: ride.status,
-    route: ride.route,
-  });
-  mapWrap.appendChild(mapEl);
+  let mapEl = null;
+  let mapRenderKey = '';
+  function renderMapForReadState(nextState) {
+    const hasRideData = nextState === PASSENGER_RIDE_READ_STATE.LOADED;
+    const route = hasRideData ? ride.route : null;
+    const pickupLabel = route && route.pickupLabel ? route.pickupLabel : '';
+    const dropoffLabel = route && route.dropoffLabel ? route.dropoffLabel : '';
+    const key = hasRideData ? `ride:${ride.status}|${pickupLabel}|${dropoffLabel}` : 'unavailable';
+    if (mapEl && mapRenderKey === key) return;
+    const nextMap = createMapShell({
+      variant: 'passenger',
+      status: hasRideData ? ride.status : '',
+      route,
+      showRoute: hasRideData,
+      showCar: hasRideData,
+      showPickup: hasRideData,
+      showDropoff: hasRideData,
+      showLabels: hasRideData,
+    });
+    if (mapEl) mapEl.replaceWith(nextMap);
+    else mapWrap.appendChild(nextMap);
+    mapEl = nextMap;
+    mapRenderKey = key;
+  }
   root.appendChild(mapWrap);
 
   // ── Top overlay (chevron · trip number · shield) ─────────
@@ -1576,8 +1812,6 @@ export default function activeRidePassenger(options = {}) {
   // slot below.
   const topCard = document.createElement('div');
   topCard.className = 'active-ride-passenger__top-card-wrap';
-  topCard.dataset.status = ride.status;
-  topCard.innerHTML = topDriverCardHtml(ride, { phase: phaseQuery });
   root.appendChild(topCard);
 
   // ── Sheet ────────────────────────────────────────────────
@@ -1612,20 +1846,36 @@ export default function activeRidePassenger(options = {}) {
   });
 
   // ── Top driver card handlers ─────────────────────────────
-  // Call is a safe stub (no real telephony). Message routes into
-  // the existing /chat screen so the unread badge and history
-  // both stay in one place.
-  const topCallBtn = topCard.querySelector('#arp-top-call');
-  if (topCallBtn) {
-    topCallBtn.addEventListener('click', () => {
-      toast('Звонок водителю пока заглушка');
-    });
+  // Re-bound after a successful initial server hydration because the loaded
+  // card replaces the structural skeleton. Fixture actions stay inert.
+  function bindTopCardHandlers() {
+    const topCallBtn = topCard.querySelector('#arp-top-call');
+    const topChatBtn = topCard.querySelector('#arp-top-chat');
+    if (fixture) {
+      for (const btn of [topCallBtn, topChatBtn]) {
+        if (!btn) continue;
+        btn.disabled = true;
+        btn.setAttribute('aria-disabled', 'true');
+      }
+      return;
+    }
+    if (topCallBtn) {
+      topCallBtn.addEventListener('click', () => {
+        toast('Звонок водителю пока заглушка');
+      });
+    }
+    if (topChatBtn) {
+      topChatBtn.addEventListener('click', () => {
+        go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=passenger`);
+      });
+    }
   }
-  const topChatBtn = topCard.querySelector('#arp-top-chat');
-  if (topChatBtn) {
-    topChatBtn.addEventListener('click', () => {
-      go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=passenger`);
-    });
+
+  function renderTopCard() {
+    topCard.hidden = false;
+    topCard.dataset.status = ride.status;
+    topCard.innerHTML = topDriverCardHtml(ride, { phase: phaseQuery });
+    bindTopCardHandlers();
   }
 
   // ── Per-sheet bindings shared across statuses ────────────
@@ -1639,7 +1889,10 @@ export default function activeRidePassenger(options = {}) {
       });
     }
     const sosBtn = sheet.querySelector('#arp-sos');
-    if (sosBtn) {
+    if (sosBtn && fixture) {
+      sosBtn.disabled = true;
+      sosBtn.setAttribute('aria-disabled', 'true');
+    } else if (sosBtn) {
       sosBtn.addEventListener('click', () => {
         openPassengerSafetySheet(root, { toast, ride, tripLabel });
       });
@@ -1661,11 +1914,31 @@ export default function activeRidePassenger(options = {}) {
   function bindCancelAffordance() {
     const cancelBtn = sheet.querySelector('#arp-cancel');
     if (!cancelBtn) return;
+    if (fixture) {
+      cancelBtn.disabled = true;
+      cancelBtn.setAttribute('aria-disabled', 'true');
+      return;
+    }
     cancelBtn.addEventListener('click', () => {
+      if (passengerMutationIsBlocked()) {
+        toast('Изменение статуса временно недоступно. Дождитесь обновления поездки.');
+        return;
+      }
       openPassengerCancelSheet(root, {
         ride,
         tripLabel,
         onConfirm: (reasonId, comment) => {
+          // Review9 P1: a terminal server snapshot deferred behind this overlay is
+          // authoritative enough to close the stale cancel commit path immediately.
+          // Re-check here as well as disabling the buttons so a queued click cannot
+          // persist local CANCELED after the server has already terminalized the ride.
+          if (deferredTerminalPassengerStatusBlocksCancel()) {
+            toast('Поездка уже завершена. Обновляем статус.');
+            return {
+              aborted: true,
+              reconcile: 'deferred-terminal',
+            };
+          }
           // BD-RIDE-SIM-01 — passenger cancels after the driver has
           // already accepted. Persist the current view first so the
           // ride's passenger identity (sim overrides — Алексей,
@@ -1713,8 +1986,8 @@ export default function activeRidePassenger(options = {}) {
           // #784 CUT-5 (B2) — mirror the passenger cancel to the server so the driver (polling) sees
           // it cross-device (the PATCH is participant-gated). Fire-and-forget: the local terminal stub
           // is the user-facing truth; a server-sync failure leaves the local cancel standing (the
-          // driver-side poll reconciles). OFF / local-only ride: backendRide is false, no PATCH.
-          if (backendRide && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
+          // driver-side poll reconciles). OFF / authoritative local-only ride: no server write candidate.
+          if (backendWriteCandidate && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
             patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED).catch(() => {});
           }
           // Hand the canceled-state copy back to the sheet. The
@@ -1739,13 +2012,22 @@ export default function activeRidePassenger(options = {}) {
       bindCommonSheetHandlers();
       bindCancelAffordance();
       const boardedBtn = sheet.querySelector('#arp-boarded');
+      if (boardedBtn && fixture) {
+        boardedBtn.disabled = true;
+        boardedBtn.setAttribute('aria-disabled', 'true');
+        return;
+      }
       if (boardedBtn) {
         boardedBtn.addEventListener('click', async () => {
+          if (passengerMutationIsBlocked()) {
+            toast('Изменение статуса временно недоступно. Дождитесь обновления поездки.');
+            return;
+          }
           // #784 CUT-5 — on a confirmed server ride, confirm the boarded transition on the server FIRST,
           // then advance locally + navigate. A failed PATCH (network/auth, or the driver already
           // terminalized) must NOT strand the passenger locally IN_PROGRESS while the server stays
           // WAITING (serverIsForward never rolls a backward move back) — stay put + surface it instead.
-          if (backendRide) {
+          if (backendWriteCandidate) {
             try { await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); }
             catch (err) {
               localToast(err && err.code === 'RIDE_TERMINAL'
@@ -1808,39 +2090,126 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
-  // #784 CUT-5 (B2) — set once the hydrate confirms a server ride; gates the passenger-initiated
-  // status writes (cancel / boarded) onto the backend so the driver sees them cross-device.
+  // 02D review9 terminal/backward-recovery contract:
+  // - backend API, persisted stores, lifecycle enum/transitions and Mapbox behavior are unchanged;
+  // - a forward terminal server status deferred behind an open overlay stays authoritative
+  //   in memory and immediately blocks the stale cancel-confirm commit path until reconciliation;
+  // - a recovery GET may refresh authoritative display sub-objects, but when its lifecycle
+  //   status ranks behind the locally displayed status it must not lower ride.status.
+  //
+  // 02D review7 ownership/write contract:
+  // - backend API, persisted stores and Ride State Machine statuses are unchanged;
+  // - a backend-enabled ride begins UNCONFIRMED. Status mutations stay blocked until the
+  //   participant-gated GET settles ownership as SERVER_BACKED or LOCAL_ONLY;
+  // - SERVER_BACKED owns the existing PATCH writer and keeps that identity across retryable
+  //   read failures; permanent non-404 failures block mutations until a later successful GET;
+  // - LOCAL_ONLY is established only by backend OFF / authoritative null / 404 RIDE_NOT_FOUND
+  //   and never attempts the server status writer. Ownership is in-memory UI/read state only.
+  const PASSENGER_RIDE_OWNERSHIP = Object.freeze({
+    UNCONFIRMED: 'unconfirmed',
+    SERVER_BACKED: 'server-backed',
+    LOCAL_ONLY: 'local-only',
+  });
+  let passengerRideOwnership = backendRead
+    ? PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED
+    : PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY;
   let backendRide = false;
+  let backendWriteCandidate = false;
+  let backendMutationBlocked = false;
+
+  function passengerMutationIsBlocked() {
+    const ownershipPending = passengerRideOwnership === PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED;
+    return hasUsableLocalRide && (ownershipPending || backendMutationBlocked);
+  }
+
+  function syncPassengerMutationGate() {
+    const ownershipPending = passengerRideOwnership === PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED;
+    const blocked = passengerMutationIsBlocked();
+    root.dataset.ownershipState = passengerRideOwnership;
+    if (blocked) root.dataset.mutationState = ownershipPending ? 'ownership-unconfirmed' : 'server-blocked';
+    else delete root.dataset.mutationState;
+
+    for (const selector of ['#arp-cancel', '#arp-boarded']) {
+      const button = sheet.querySelector(selector);
+      if (!button || fixture) continue;
+      button.disabled = blocked;
+      button.setAttribute('aria-disabled', blocked ? 'true' : 'false');
+    }
+
+    // A cancel overlay may already be open when a late permanent read failure settles.
+    // Disable its commit gates as well so it cannot race the underlying sheet.
+    if (blocked) {
+      for (const selector of ['#arp-cancel-confirm', '#arp-cancel-confirm-yes']) {
+        const button = root.querySelector(selector);
+        if (!button) continue;
+        button.disabled = true;
+        button.setAttribute('aria-disabled', 'true');
+      }
+    }
+  }
+
+  function setPassengerRideOwnership(nextOwnership) {
+    passengerRideOwnership = nextOwnership;
+    backendWriteCandidate = nextOwnership === PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED;
+    syncPassengerMutationGate();
+  }
+
+  function setPassengerMutationBlocked(blocked) {
+    backendMutationBlocked = Boolean(blocked);
+    syncPassengerMutationGate();
+  }
+
+  function isPassengerRideAuthorizationFailure(err) {
+    const status = Number(err && err.status);
+    return status === 401 || status === 403;
+  }
 
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
-  function mergeServerRide(srv) {
+  function mergeServerRide(srv, preserveLocallyAheadStatus = false) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
       for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
       return out;
     };
+    const serverStatus = srv.status || ride.status;
+    const localRank = STATUS_RANK[ride.status] ?? 0;
+    const serverRank = STATUS_RANK[serverStatus] ?? 0;
+    const mergedStatus = preserveLocallyAheadStatus && localRank > serverRank
+      ? ride.status
+      : serverStatus;
     return {
       ...ride,
       tripId: srv.tripId || ride.tripId,
-      status: srv.status || ride.status,
+      status: mergedStatus,
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
+      vehicle: keep(ride.vehicle, srv.vehicle),
+      order: keep(ride.order, srv.order),
       route: keep(ride.route, srv.route),
+      payment: keep(ride.payment, srv.payment),
+      waiting: keep(ride.waiting, srv.waiting),
+      ride: keep(ride.ride, srv.ride),
+      chat: keep(ride.chat, srv.chat),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
   }
 
-  renderSheet();
-
-  // #784 CUT-5 — passenger READ + realtime POLL (view-only; the driver owns the lifecycle). When this
-  // is a backend ride, hydrate the server status and watch it live; a FORWARD status change re-mounts
-  // with the server status (handling the in-pipeline sheets + the terminal early-returns uniformly).
-  // A 404/403 (a local demo/mock ride) is caught and the screen stays on the mock; OFF attempts no
-  // fetch, so the mock path is unchanged.
   let passengerPollId = null;
   let passengerCursor = null;
+  let passengerPollBusy = false;
+  let passengerPollController = null;
+  let passengerRecoveryId = null;
+  let fixtureRetryId = null;
+  let readEpoch = 0;
+  let destroyed = false;
+  let deferredPassengerServerStatus = null;
+  const readManager = createPassengerRideReadManager(
+    getRideFromBackend,
+    PASSENGER_RIDE_READ_TIMEOUT_MS,
+  );
+
   // B1 — monotonic rank: re-mount ONLY on a FORWARD server move. The passenger status resolution has
   // a monotonic guard that can keep the local status AHEAD of the server (e.g. a just-boarded local
   // IN_PROGRESS vs a not-yet-synced server WAITING); re-mounting on such a BACKWARD diff would never
@@ -1857,47 +2226,414 @@ export default function activeRidePassenger(options = {}) {
     [RIDE_STATUS.NO_SHOW]: 6,
   };
   const serverIsForward = (srvStatus) => (STATUS_RANK[srvStatus] ?? 0) > (STATUS_RANK[ride.status] ?? 0);
-  // B3 — never yank away an OPEN safety/cancel overlay: defer the re-mount until it closes.
+  function isPassengerTerminalStatus(status) {
+    return status === RIDE_STATUS.COMPLETED
+      || status === RIDE_STATUS.CANCELED
+      || status === RIDE_STATUS.NO_SHOW;
+  }
+
+  function deferredTerminalPassengerStatusBlocksCancel() {
+    return isPassengerTerminalStatus(deferredPassengerServerStatus);
+  }
+
+  function syncDeferredTerminalCancelGate() {
+    if (!deferredTerminalPassengerStatusBlocksCancel()) return;
+    root.dataset.deferredTerminalStatus = deferredPassengerServerStatus;
+    for (const selector of ['#arp-cancel-confirm', '#arp-cancel-confirm-yes']) {
+      const button = root.querySelector(selector);
+      if (!button) continue;
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    }
+  }
+
+  // B3 — never yank away an OPEN safety/cancel overlay. A forward server status
+  // stays pending OUTSIDE ride.status until the overlay closes, otherwise merging
+  // it would make later polls think the transition was already rendered.
   const aSheetIsOpen = () => !!root.querySelector('.passenger-safety-overlay, .passenger-cancel-overlay');
-  // Re-mount on a forward, non-deferred change; returns true when it navigated.
+  const PASSENGER_REMOUNT_RESULT = Object.freeze({
+    NONE: 'none',
+    DEFERRED: 'deferred',
+    NAVIGATED: 'navigated',
+  });
   function maybeReMount(srvStatus) {
-    if (!srvStatus || !serverIsForward(srvStatus) || aSheetIsOpen()) return false;
+    if (!srvStatus || !serverIsForward(srvStatus)) return PASSENGER_REMOUNT_RESULT.NONE;
+    if (aSheetIsOpen()) {
+      const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1;
+      const nextRank = STATUS_RANK[srvStatus] ?? 0;
+      if (!deferredPassengerServerStatus || nextRank > pendingRank) {
+        deferredPassengerServerStatus = srvStatus;
+      }
+      // A terminal deferred snapshot is sticky while an overlay is open and
+      // immediately closes the stale cancellation commit race.
+      syncDeferredTerminalCancelGate();
+      return PASSENGER_REMOUNT_RESULT.DEFERRED;
+    }
+    deferredPassengerServerStatus = null;
     go(`/active-ride?role=passenger&status=${encodeURIComponent(srvStatus)}&tripId=${encodeURIComponent(ride.tripId)}`);
+    return PASSENGER_REMOUNT_RESULT.NAVIGATED;
+  }
+
+  function flushDeferredPassengerStatus() {
+    if (!deferredPassengerServerStatus || destroyed || aSheetIsOpen()) return false;
+    const pendingStatus = deferredPassengerServerStatus;
+    if (!serverIsForward(pendingStatus)) {
+      deferredPassengerServerStatus = null;
+      return false;
+    }
+    return maybeReMount(pendingStatus) === PASSENGER_REMOUNT_RESULT.NAVIGATED;
+  }
+
+  function setReadState(nextState) {
+    readState = nextState;
+    root.dataset.readState = nextState;
+    const busy = nextState === PASSENGER_RIDE_READ_STATE.LOADING ? 'true' : 'false';
+    topCard.setAttribute('aria-busy', busy);
+    sheet.setAttribute('aria-busy', busy);
+    if (nextState === PASSENGER_RIDE_READ_STATE.LOADING) {
+      notice.dataset.readStatus = 'loading';
+      notice.textContent = 'Загружаем поездку…';
+      notice.hidden = false;
+    } else if (notice.dataset.readStatus === 'loading') {
+      delete notice.dataset.readStatus;
+      notice.textContent = '';
+      notice.hidden = true;
+    }
+    renderMapForReadState(nextState);
+
+    const shieldBtn = top.querySelector('#arp-shield');
+    if (shieldBtn) {
+      const disabled = nextState !== PASSENGER_RIDE_READ_STATE.LOADED || Boolean(fixture);
+      shieldBtn.disabled = disabled;
+      shieldBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    }
+
+    if (nextState === PASSENGER_RIDE_READ_STATE.LOADING) {
+      topCard.hidden = false;
+      topCard.dataset.status = PASSENGER_RIDE_READ_STATE.LOADING;
+      topCard.innerHTML = passengerRideLoadingDriverHtml();
+      sheet.dataset.status = PASSENGER_RIDE_READ_STATE.LOADING;
+      sheet.innerHTML = passengerRideLoadingSheetHtml();
+      return;
+    }
+
+    if (nextState === PASSENGER_RIDE_READ_STATE.EMPTY) {
+      topCard.hidden = true;
+      sheet.dataset.status = PASSENGER_RIDE_READ_STATE.EMPTY;
+      sheet.innerHTML = passengerRideEmptyHtml();
+      const feedBtn = sheet.querySelector('#arp-read-feed');
+      if (feedBtn) feedBtn.addEventListener('click', () => go('/feed'));
+      return;
+    }
+
+    if (nextState === PASSENGER_RIDE_READ_STATE.ERROR) {
+      topCard.hidden = true;
+      sheet.dataset.status = PASSENGER_RIDE_READ_STATE.ERROR;
+      sheet.innerHTML = passengerRideErrorHtml();
+      const retryBtn = sheet.querySelector('#arp-read-retry');
+      if (retryBtn) retryBtn.addEventListener('click', retryInitialRead);
+      return;
+    }
+
+    renderTopCard();
+    renderSheet();
+    syncPassengerMutationGate();
+  }
+
+  function updatePassengerText(scope, selector, value) {
+    const node = scope.querySelector(selector);
+    if (!node) return;
+    node.textContent = value == null ? '' : String(value);
+  }
+
+  function refreshPassengerRideFieldsInPlace() {
+    if (readState !== PASSENGER_RIDE_READ_STATE.LOADED) return;
+
+    const driver = (ride && ride.driver) || {};
+    const driverName = driver.name || 'Рустам К.';
+    const driverInitials = driver.initials || 'РК';
+    const driverRating = driver.rating || '';
+    const driverNameNode = topCard.querySelector('.active-ride-passenger__driver-name');
+    if (driverNameNode) {
+      const textNode = Array.from(driverNameNode.childNodes)
+        .find((node) => node.nodeType === 3 && String(node.nodeValue || '').trim());
+      if (textNode) textNode.nodeValue = driverName + ' ';
+    }
+    updatePassengerText(topCard, '.active-ride-passenger__avatar', driverInitials);
+    updatePassengerText(topCard, '.active-ride-passenger__driver-rating', '★ ' + driverRating);
+    updatePassengerText(topCard, '.active-ride-passenger__driver-sub', carLine(ride));
+
+    const eta = topDriverCardEta(ride, phaseQuery);
+    const etaBox = topCard.querySelector('.active-ride-passenger__top-card-eta');
+    if (etaBox) etaBox.setAttribute('aria-label', eta.value + ' ' + eta.label);
+    const topCardBody = topCard.querySelector('.active-ride-passenger__top-card');
+    if (topCardBody) topCardBody.dataset.tone = eta.tone;
+    updatePassengerText(topCard, '.active-ride-passenger__top-card-eta-value', eta.value);
+    updatePassengerText(topCard, '.active-ride-passenger__top-card-eta-label', eta.label);
+
+    const chat = chatLabelFor(ride);
+    const topChatBtn = topCard.querySelector('#arp-top-chat');
+    if (topChatBtn) {
+      topChatBtn.setAttribute('aria-label', chat.label);
+      let badge = topChatBtn.querySelector('.active-ride-passenger__chat-badge--inline');
+      if (chat.unreadCount > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'active-ride-passenger__chat-badge active-ride-passenger__chat-badge--inline';
+          badge.setAttribute('aria-hidden', 'true');
+          topChatBtn.appendChild(badge);
+        }
+        badge.textContent = String(chat.unreadCount);
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    const route = (ride && ride.route) || {};
+    const routeFields = sheet.querySelectorAll('.active-ride-passenger__route-main');
+    if (routeFields[0]) routeFields[0].textContent = route.pickupLabel || 'ул. Малая Бронная, 28';
+    if (routeFields[1]) routeFields[1].textContent = route.dropoffLabel || 'Аэропорт Шереметьево, терминал В';
+
+    const pay = paymentInfo(ride);
+    const amount = ride.status === RIDE_STATUS.IN_PROGRESS
+      && phaseQuery === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF
+      ? arrivingDropoffAmount(ride)
+      : pay.amount;
+    updatePassengerText(sheet, '.active-ride-passenger__payment-title', '•• ' + pay.last4 + ' · ' + pay.method);
+    updatePassengerText(sheet, '.active-ride-passenger__payment-note', pay.note);
+    updatePassengerText(sheet, '.active-ride-passenger__payment-amount', amount);
+
+    if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
+      const waiting = waitingInfo(ride);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-badge-value', waiting.remaining);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value', waiting.remaining + ' / ' + waiting.freeLimit);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot', 'Дальше — ' + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
+      const progress = sheet.querySelector('.active-ride-passenger__progress-bar');
+      if (progress) progress.setAttribute('aria-valuenow', String(waiting.pct));
+      const fill = sheet.querySelector('.active-ride-passenger__progress-bar-fill');
+      if (fill) fill.dataset.step = String(Math.round(waiting.pct / 10));
+    } else if (ride.status === RIDE_STATUS.IN_PROGRESS
+      && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
+      const info = inProgressInfo(ride);
+      updatePassengerText(sheet, '.active-ride-passenger__sub', 'Расчётное время прибытия ' + info.arrivalTime);
+    } else {
+      updatePassengerText(sheet, '.active-ride-passenger__car', carLine(ride));
+    }
+  }
+
+  // Background recovery is a refresh of an already usable ride, not a new
+  // screen settlement. When preserveDom is true, keep the existing controls
+  // (and their focus/listeners) intact and update only refresh/mutation state.
+  function renderLoadedRide(preserveDom = false) {
+    if (preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED) {
+      refreshPassengerRideFieldsInPlace();
+      // Review8: recovery settlement must refresh the map from the same authoritative
+      // ride/route snapshot without replacing loaded passenger controls.
+      renderMapForReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+      syncPassengerMutationGate();
+      return;
+    }
+    setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+  }
+
+  function stopPassengerRidePoll() {
+    if (passengerPollId) clearInterval(passengerPollId);
+    passengerPollId = null;
+    passengerPollBusy = false;
+    if (passengerPollController) passengerPollController.abort();
+    passengerPollController = null;
+  }
+
+  function stopPassengerRideRecovery() {
+    if (passengerRecoveryId) clearTimeout(passengerRecoveryId);
+    passengerRecoveryId = null;
+  }
+
+  function isPassengerRideRecoveryRetryable(err) {
+    if (!err) return true;
+    if (err.retryable === true) return true;
+    if (err.name === 'TimeoutError') return true;
+    const status = Number(err.status);
+    if (Number.isFinite(status)) {
+      if (status === 401 || status === 403) return false;
+      // Review10 P2: HTTP transport truth wins when a gateway/proxy cannot
+      // provide the API retryability envelope. 408/429/5xx remain transient
+      // even when ApiError carries the default retryable:false hint.
+      if (status === 408 || status === 429 || status >= 500) return true;
+      return false;
+    }
+    if (err.retryable === false) return false;
     return true;
   }
+
+  function schedulePassengerRideRecovery() {
+    if (passengerRecoveryId || fixture || destroyed || !hasPersistedLocalRide) return;
+    passengerRecoveryId = setTimeout(() => {
+      passengerRecoveryId = null;
+      if (destroyed) return;
+      runInitialRead(true);
+    }, PASSENGER_RIDE_POLL_MS);
+  }
+
+  function teardownPassengerReads() {
+    if (destroyed) return;
+    destroyed = true;
+    readEpoch += 1;
+    readManager.cancel('passenger ride screen teardown');
+    stopPassengerRidePoll();
+    stopPassengerRideRecovery();
+    if (fixtureRetryId) clearTimeout(fixtureRetryId);
+    fixtureRetryId = null;
+  }
+
   function startPassengerRidePoll() {
-    if (passengerPollId) return;
+    if (passengerPollId || fixture || !backendRide) return;
     passengerPollId = setInterval(async () => {
-      if (!document.body.contains(root)) { clearInterval(passengerPollId); passengerPollId = null; return; }
-      let res;
-      try { res = await pollRide(ride.tripId, passengerCursor); }
-      catch { return; }
-      if (!res) return;
-      if (res.cursor) passengerCursor = res.cursor;
-      if (res.status && res.status !== ride.status && maybeReMount(res.status)) {
-        clearInterval(passengerPollId); passengerPollId = null;
+      if (!document.body.contains(root)) {
+        teardownPassengerReads();
+        return;
       }
-    }, 2500);
+      if (passengerPollBusy) return;
+      passengerPollBusy = true;
+      const controller = new AbortController();
+      passengerPollController = controller;
+      const timeoutId = setTimeout(() => controller.abort(), PASSENGER_RIDE_POLL_TIMEOUT_MS);
+      let res;
+      try {
+        res = await pollRide(ride.tripId, passengerCursor, { signal: controller.signal });
+      } catch {
+        return;
+      } finally {
+        clearTimeout(timeoutId);
+        if (passengerPollController === controller) passengerPollController = null;
+        passengerPollBusy = false;
+      }
+      if (destroyed || controller.signal.aborted || !res) return;
+      if (res.cursor) passengerCursor = res.cursor;
+      if (res.status && res.status !== ride.status) {
+        const remountResult = maybeReMount(res.status);
+        if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) {
+          stopPassengerRidePoll();
+        }
+      }
+    }, PASSENGER_RIDE_POLL_MS);
   }
-  if (isBackendEnabled()) {
-    getRideFromBackend(ride.tripId).then((srv) => {
-      if (!srv) return;
+
+  async function runInitialRead(recovery = false) {
+    const epoch = ++readEpoch;
+    if (hasUsableLocalRide) {
+      root.dataset.refreshState = 'loading';
+      renderLoadedRide(true);
+    } else {
+      setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
+    }
+    try {
+      const srv = await readManager.run(ride.tripId);
+      if (destroyed || epoch !== readEpoch) return;
+      if (!srv) {
+        backendRide = false;
+        setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY);
+        setPassengerMutationBlocked(false);
+        stopPassengerRideRecovery();
+        delete root.dataset.refreshState;
+        renderLoadedRide(true);
+        return;
+      }
       backendRide = true;
-      if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
-      // Statuses match (or not a forward move) — still copy the server driver/route/fare so the
-      // passenger sees the REAL driver/route immediately (the server-fed path seeds a demo until now).
-      ride = mergeServerRide(srv);
-      renderSheet();
+      setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED);
+      setPassengerMutationBlocked(false);
+      stopPassengerRideRecovery();
+      delete root.dataset.refreshState;
+      if (srv.status && srv.status !== ride.status) {
+        const remountResult = maybeReMount(srv.status);
+        if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
+        if (remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED) {
+          startPassengerRidePoll();
+          return;
+        }
+      }
+      ride = mergeServerRide(srv, recovery);
+      renderLoadedRide(recovery);
       startPassengerRidePoll();
-    }).catch((err) => {
-      // Only the expected 404 (genuinely a local ride) drops to the mock. Any OTHER failure
-      // (403 / 503 / network / bad envelope) is a real server ride with a transient problem — keep
-      // polling so it recovers, rather than masking the outage as a fabricated mock ride.
-      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) return;
-      backendRide = true;
-      startPassengerRidePoll();
-    });
+    } catch (err) {
+      if (destroyed || epoch !== readEpoch) return;
+      if (err && (err.name === 'AbortError' || err.code === 'ABORTED')) return;
+      // A 404 preserves an existing local/canonical ride, but an unknown trip
+      // with no usable local source is genuinely empty rather than a demo ride.
+      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
+        backendRide = false;
+        setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY);
+        setPassengerMutationBlocked(false);
+        stopPassengerRideRecovery();
+        delete root.dataset.refreshState;
+        if (hasUsableLocalRide) renderLoadedRide(recovery);
+        else setReadState(PASSENGER_RIDE_READ_STATE.EMPTY);
+        return;
+      }
+      const retryable = isPassengerRideRecoveryRetryable(err);
+      const permanentFailure = !retryable;
+      const authFailure = isPassengerRideAuthorizationFailure(err);
+      backendRide = false;
+      if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true);
+      if (hasUsableLocalRide) {
+        root.dataset.refreshState = 'error';
+        renderLoadedRide(recovery);
+        if (!recovery) toast(permanentFailure && hasPersistedLocalRide
+          ? (authFailure
+            ? 'Не удалось подтвердить авторизацию. Изменение статуса временно недоступно.'
+            : 'Не удалось подтвердить данные поездки. Изменение статуса временно недоступно.')
+          : 'Не удалось обновить поездку. Показаны сохранённые данные.');
+        if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery();
+        else stopPassengerRideRecovery();
+        return;
+      }
+      setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
+    }
   }
+
+  function retryInitialRead() {
+    if (destroyed) return;
+    const stableFocus = top.querySelector('#arp-collapse');
+    if (stableFocus && typeof stableFocus.focus === 'function') stableFocus.focus();
+    if (fixture) {
+      if (fixture !== PASSENGER_RIDE_READ_STATE.ERROR) return;
+      if (fixtureRetryId) clearTimeout(fixtureRetryId);
+      setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
+      fixtureRetryId = setTimeout(() => {
+        fixtureRetryId = null;
+        if (destroyed) return;
+        setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
+      }, PASSENGER_RIDE_FIXTURE_RETRY_MS);
+      return;
+    }
+    stopPassengerRideRecovery();
+    stopPassengerRidePoll();
+    runInitialRead();
+  }
+
+  // Route replacement / teardown abort both the bounded initial read and any
+  // in-flight realtime poll. The observer handles router replaceChildren();
+  // hashchange handles navigation before the detached-root mutation arrives.
+  const initialHash = window.location.hash || '';
+  const onHashChange = () => {
+    if ((window.location.hash || '') !== initialHash) teardownPassengerReads();
+  };
+  window.addEventListener('hashchange', onHashChange);
+  let rootWasConnected = false;
+  const teardownObserver = new MutationObserver(() => {
+    if (document.body.contains(root)) {
+      rootWasConnected = true;
+      flushDeferredPassengerStatus();
+    } else if (rootWasConnected) {
+      teardownPassengerReads();
+      teardownObserver.disconnect();
+      window.removeEventListener('hashchange', onHashChange);
+    }
+  });
+  teardownObserver.observe(document.body, { childList: true, subtree: true });
+
+  setReadState(readState);
+  if (!fixture && backendRead) runInitialRead();
 
   return root;
 }

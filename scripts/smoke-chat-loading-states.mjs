@@ -267,7 +267,10 @@ if (createManager) {
 // E. Version-only offline refresh.
 expect('Service Worker records 02C v266 and keeps changed assets precached',
   /v266 \(BD-CLOUD-DESIGN-LOADING-02C #870\)/.test(sw)
-  && /const VERSION\s*=\s*'v266'/.test(sw)
+  && (() => {
+    const version = sw.match(/const VERSION\s*=\s*'v(\d+)'/);
+    return version && Number(version[1]) >= 266;
+  })()
   && sw.includes("'./src/screens/chat.js'")
   && sw.includes("'./styles/cloud.css'"));
 

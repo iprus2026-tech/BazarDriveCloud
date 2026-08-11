@@ -7590,6 +7590,111 @@ body {
   .passenger-complete__submitted-star svg { width: 26px; height: 26px; }
 }
 
+/* BD-CLOUD-DESIGN-LOADING-02D (#872) — Passenger Active Ride request-state
+   geometry. The map shell remains stable; only ride-data panels skeletonize. */
+.active-ride-passenger__read-state {
+  display: grid;
+  gap: 12px;
+  padding: 10px 2px 2px;
+}
+.active-ride-passenger__read-state--settled {
+  justify-items: center;
+  padding: 28px 16px 18px;
+  text-align: center;
+}
+.active-ride-passenger__read-status {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  text-align: center;
+}
+.active-ride-passenger__read-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.3;
+}
+.active-ride-passenger__read-copy {
+  max-width: 320px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.active-ride-passenger__read-cta {
+  min-width: 176px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.active-ride-passenger__read-skeleton {
+  display: grid;
+  gap: 12px;
+}
+.active-ride-passenger__read-driver-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 56px;
+  gap: 12px;
+  align-items: center;
+}
+.active-ride-passenger__read-driver-lines,
+.active-ride-passenger__read-actions,
+.active-ride-passenger__read-sheet-skeleton {
+  display: grid;
+  gap: 8px;
+}
+.active-ride-passenger__read-actions {
+  grid-template-columns: 1fr 1fr;
+}
+.active-ride-passenger__read-bone {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+.active-ride-passenger__read-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+}
+.active-ride-passenger__read-line {
+  height: 10px;
+  border-radius: 999px;
+}
+.active-ride-passenger__read-line--name { width: 58%; }
+.active-ride-passenger__read-line--car { width: 78%; height: 8px; }
+.active-ride-passenger__read-line--title { width: 54%; height: 16px; }
+.active-ride-passenger__read-line--sub { width: 70%; height: 9px; }
+.active-ride-passenger__read-eta {
+  width: 56px;
+  height: 34px;
+  border-radius: 10px;
+}
+.active-ride-passenger__read-action {
+  height: 42px;
+  border-radius: 12px;
+}
+.active-ride-passenger__read-block {
+  height: 86px;
+  border-radius: var(--radius-md);
+}
+.active-ride-passenger__read-block--short { height: 64px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .active-ride-passenger__read-bone::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+    animation: passenger-ride-read-shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes passenger-ride-read-shimmer {
+  to { transform: translateX(100%); }
+}
+
 /* ═══════════════════════════════════════════════════════════
    BD-SETTINGS-01 — Settings screen
    Net-new surface; reuses bd-card / bd-scroll / bd-btn / bd-list-icon /
