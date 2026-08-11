@@ -63,11 +63,12 @@ const usableSource = functionBody(passenger, 'hasUsablePassengerRideSource');
 expect('persisted local fallback recognizes canonical and handoff sources',
   usableSource.includes('loadCanonicalActiveRide')
     && usableSource.includes('loadDriverHandoffSnapshot'));
-expect('built-in demo is renderable fallback but not an initial server-write candidate',
+expect('built-in demo is renderable fallback but remains UNCONFIRMED before backend settlement',
   passenger.includes('const hasPersistedLocalRide = !fixture && hasUsablePassengerRideSource(tripId)')
     && passenger.includes('const isBuiltInDemoRide = !fixture && tripId === DEMO_ACTIVE_RIDE_ID')
     && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
-    && passenger.includes('let backendWriteCandidate = backendRead && hasPersistedLocalRide'));
+    && passenger.includes("UNCONFIRMED: 'unconfirmed'")
+    && passenger.includes('let backendWriteCandidate = false'));
 expect('fixture is exposed only as a render marker',
   /if\s*\(fixture\)\s*root\.dataset\.fixture\s*=\s*fixture/.test(passenger));
 expect('aria-busy is scoped to replaceable ride-data panels',
@@ -119,21 +120,52 @@ expect('error fixture retry cycles through loading and back to error without bac
     && retry.includes('PASSENGER_RIDE_FIXTURE_RETRY_MS'));
 
 const initialRead = functionBody(passenger, 'runInitialRead');
-expect('404/RIDE_NOT_FOUND preserves persisted or built-in demo fallback but unknown IDs render empty',
+const ownershipSetter = functionBody(passenger, 'setPassengerRideOwnership');
+const mutationGate = functionBody(passenger, 'syncPassengerMutationGate');
+const mutationBlocked = functionBody(passenger, 'passengerMutationIsBlocked');
+expect('ownership begins UNCONFIRMED under backend and settles only to SERVER_BACKED or LOCAL_ONLY',
+  passenger.includes("UNCONFIRMED: 'unconfirmed'")
+    && passenger.includes("SERVER_BACKED: 'server-backed'")
+    && passenger.includes("LOCAL_ONLY: 'local-only'")
+    && passenger.includes('let passengerRideOwnership = backendRead')
+    && passenger.includes('let backendWriteCandidate = false')
+    && ownershipSetter.includes('backendWriteCandidate = nextOwnership === PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED')
+    && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED)')
+    && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)'));
+expect('404/RIDE_NOT_FOUND settles local ownership while unknown IDs still render empty',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
-    && initialRead.includes('backendWriteCandidate = false')
+    && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)')
     && initialRead.includes('setPassengerMutationBlocked(false)')
     && initialRead.includes('if (hasUsableLocalRide) renderLoadedRide(recovery)')
     && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
 const loadedRenderer = functionBody(passenger, 'renderLoadedRide');
+const inPlaceRefresh = functionBody(passenger, 'refreshPassengerRideFieldsInPlace');
 expect('usable local ride stays loaded while backend refresh starts without replacing its DOM',
   /backendRead\s*&&\s*!hasUsableLocalRide[\s\S]{0,120}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger)
     && initialRead.includes("root.dataset.refreshState = 'loading'")
     && initialRead.includes('renderLoadedRide(true)')
     && loadedRenderer.includes('preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED')
+    && loadedRenderer.includes('refreshPassengerRideFieldsInPlace()')
     && loadedRenderer.includes('syncPassengerMutationGate()'));
+expect('successful recovery refreshes mutable driver, route, fare and ETA fields in place',
+  inPlaceRefresh.includes('.active-ride-passenger__driver-sub')
+    && inPlaceRefresh.includes('.active-ride-passenger__route-main')
+    && inPlaceRefresh.includes('.active-ride-passenger__payment-amount')
+    && inPlaceRefresh.includes('.active-ride-passenger__top-card-eta-value')
+    && inPlaceRefresh.includes('.active-ride-passenger__waiting-card-value')
+    && !inPlaceRefresh.includes('innerHTML')
+    && !inPlaceRefresh.includes('renderTopCard()')
+    && !inPlaceRefresh.includes('renderSheet()'));
+const mergeServer = functionBody(passenger, 'mergeServerRide');
+expect('server merge accepts all display sub-objects without clobbering local fallbacks',
+  mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
+    && mergeServer.includes('order: keep(ride.order, srv.order)')
+    && mergeServer.includes('payment: keep(ride.payment, srv.payment)')
+    && mergeServer.includes('waiting: keep(ride.waiting, srv.waiting)')
+    && mergeServer.includes('ride: keep(ride.ride, srv.ride)')
+    && mergeServer.includes('chat: keep(ride.chat, srv.chat)'));
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
@@ -141,21 +173,18 @@ expect('non-404 initial/recovery failure keeps usable local content non-destruct
     && initialRead.includes('schedulePassengerRideRecovery()')
     && initialRead.includes('renderLoadedRide(recovery)')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
-expect('retryable read failure preserves server-write intent while every permanent non-404 failure blocks mutations',
+expect('UNCONFIRMED blocks mutations until the first ownership settlement',
+  mutationBlocked.includes('passengerRideOwnership === PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED')
+    && mutationBlocked.includes('ownershipPending || backendMutationBlocked')
+    && mutationGate.includes("root.dataset.mutationState = ownershipPending ? 'ownership-unconfirmed' : 'server-blocked'")
+    && mutationGate.includes("['#arp-cancel', '#arp-boarded']")
+    && mutationGate.includes('button.disabled = blocked'));
+expect('retryable failures preserve confirmed server ownership while permanent non-404 failures block mutations',
   initialRead.includes('const retryable = isPassengerRideRecoveryRetryable(err)')
     && initialRead.includes('const permanentFailure = !retryable')
-    && initialRead.includes('const authFailure = isPassengerRideAuthorizationFailure(err)')
-    && initialRead.includes('if (permanentFailure) backendWriteCandidate = false')
-    && initialRead.includes('if (permanentFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true)')
+    && initialRead.includes('if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true)')
     && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
-    && initialRead.includes('backendWriteCandidate = true'));
-const mutationGate = functionBody(passenger, 'syncPassengerMutationGate');
-expect('permanent non-404 failures block persisted mutation controls and an already-open cancel commit gate',
-  passenger.includes('let backendMutationBlocked = false')
-    && mutationGate.includes("root.dataset.mutationState = 'server-blocked'")
-    && mutationGate.includes("['#arp-cancel', '#arp-boarded']")
-    && mutationGate.includes("['#arp-cancel-confirm', '#arp-cancel-confirm-yes']")
-    && mutationGate.includes('button.disabled = true'));
+    && !initialRead.includes('if (permanentFailure) backendWriteCandidate = false'));
 expect('successful/null/404 server settlement clears the permanent mutation block',
   initialRead.match(/setPassengerMutationBlocked\(false\)/g)?.length >= 3);
 const remount = functionBody(passenger, 'maybeReMount');
@@ -173,18 +202,20 @@ expect('deferred recovery returns before merging server status into the current 
     && initialRead.includes('startPassengerRidePoll()'));
 expect('background recovery settlement preserves the already-loaded controls and focus',
   initialRead.includes('renderLoadedRide(recovery)')
+    && loadedRenderer.includes('refreshPassengerRideFieldsInPlace()')
     && !loadedRenderer.includes('innerHTML')
     && loadedRenderer.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
 const cancelBinder = functionBody(passenger, 'bindCancelAffordance');
 const sheetRenderer = functionBody(passenger, 'renderSheet');
-expect('cancel and boarded PATCH writers use server-write intent instead of read-confirmed polling state',
+expect('cancel and boarded PATCH writers run only for confirmed SERVER_BACKED ownership',
   cancelBinder.includes('if (backendWriteCandidate && canceledRide')
     && cancelBinder.includes('patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED)')
     && sheetRenderer.includes('if (backendWriteCandidate)')
-    && sheetRenderer.includes('patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
-expect('blocked cancel and boarded handlers return before local status mutation',
-  cancelBinder.indexOf('if (backendMutationBlocked)') < cancelBinder.indexOf('saveActiveRide(ride)')
-    && sheetRenderer.indexOf('if (backendMutationBlocked)') < sheetRenderer.indexOf('updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
+    && sheetRenderer.includes('patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)')
+    && ownershipSetter.includes('PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED'));
+expect('unconfirmed/permanent mutation guards return before any local status mutation',
+  cancelBinder.indexOf('if (passengerMutationIsBlocked())') < cancelBinder.indexOf('saveActiveRide(ride)')
+    && sheetRenderer.indexOf('if (passengerMutationIsBlocked())') < sheetRenderer.indexOf('updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
 const retryability = functionBody(passenger, 'isPassengerRideRecoveryRetryable');
 expect('automatic recovery excludes permanent authorization failures',
   retryability.includes('status === 401 || status === 403')
@@ -199,9 +230,9 @@ expect('local fallback recovery retries only persisted participant-gated rides w
     && recovery.includes('PASSENGER_RIDE_POLL_MS'));
 expect('poll starts only after a successful server ride is identified',
   initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
-expect('read-confirmed backendRide remains poll-only and distinct from writer intent',
+expect('read-confirmed backendRide remains poll-only and distinct from ownership/write intent',
   passenger.includes('let backendRide = false;')
-    && passenger.includes('let backendWriteCandidate = backendRead && hasPersistedLocalRide')
+    && passenger.includes('let backendWriteCandidate = false;')
     && !cancelBinder.includes('if (backendRide')
     && !sheetRenderer.includes('if (backendRide)'));
 
@@ -263,8 +294,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v273',
-  /const VERSION\s*=\s*'v273'/.test(sw));
+expect('service worker moves monotonically to v274',
+  /const VERSION\s*=\s*'v274'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

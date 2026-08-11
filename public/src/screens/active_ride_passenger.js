@@ -1920,8 +1920,8 @@ export default function activeRidePassenger(options = {}) {
       return;
     }
     cancelBtn.addEventListener('click', () => {
-      if (backendMutationBlocked) {
-        toast('Действие недоступно до восстановления авторизации.');
+      if (passengerMutationIsBlocked()) {
+        toast('Изменение статуса временно недоступно. Дождитесь обновления поездки.');
         return;
       }
       openPassengerCancelSheet(root, {
@@ -2008,8 +2008,8 @@ export default function activeRidePassenger(options = {}) {
       }
       if (boardedBtn) {
         boardedBtn.addEventListener('click', async () => {
-          if (backendMutationBlocked) {
-            toast('Действие недоступно до восстановления авторизации.');
+          if (passengerMutationIsBlocked()) {
+            toast('Изменение статуса временно недоступно. Дождитесь обновления поездки.');
             return;
           }
           // #784 CUT-5 — on a confirmed server ride, confirm the boarded transition on the server FIRST,
@@ -2079,26 +2079,36 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
-  // 02D retryable-read/write contract (review4):
-  // - existing stores and Ride State Machine statuses are unchanged; no recovery flag is persisted;
-  // - GET + realtime poll remain readers, PATCH remains the server status writer;
-  // - backendRide means a participant-gated GET positively identified the ride and gates polling only;
-  // - backendWriteCandidate is in-memory write intent. A persisted local/handoff ride under backend ON
-  //   remains a candidate across retryable read failures, so cancel/boarded still attempt the existing PATCH;
-  // - authoritative missing/permanent read outcomes clear write intent; the built-in demo is renderable
-  //   fallback only and is never a write candidate unless a GET actually identifies it on the server.
+  // 02D review7 ownership/write contract:
+  // - backend API, persisted stores and Ride State Machine statuses are unchanged;
+  // - a backend-enabled ride begins UNCONFIRMED. Status mutations stay blocked until the
+  //   participant-gated GET settles ownership as SERVER_BACKED or LOCAL_ONLY;
+  // - SERVER_BACKED owns the existing PATCH writer and keeps that identity across retryable
+  //   read failures; permanent non-404 failures block mutations until a later successful GET;
+  // - LOCAL_ONLY is established only by backend OFF / authoritative null / 404 RIDE_NOT_FOUND
+  //   and never attempts the server status writer. Ownership is in-memory UI/read state only.
+  const PASSENGER_RIDE_OWNERSHIP = Object.freeze({
+    UNCONFIRMED: 'unconfirmed',
+    SERVER_BACKED: 'server-backed',
+    LOCAL_ONLY: 'local-only',
+  });
+  let passengerRideOwnership = backendRead
+    ? PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED
+    : PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY;
   let backendRide = false;
-  let backendWriteCandidate = backendRead && hasPersistedLocalRide;
+  let backendWriteCandidate = false;
   let backendMutationBlocked = false;
 
-  // 02D review6: a permanent non-404 read failure must not turn a known
-  // server-backed ride into a local-only writer. Keep the saved ride visible,
-  // but block status-mutating controls until a participant-gated GET succeeds
-  // again. This gate is in-memory UI/read state only; no lifecycle status or
-  // backend contract is persisted or renamed.
+  function passengerMutationIsBlocked() {
+    const ownershipPending = passengerRideOwnership === PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED;
+    return hasUsableLocalRide && (ownershipPending || backendMutationBlocked);
+  }
+
   function syncPassengerMutationGate() {
-    const blocked = backendMutationBlocked && hasPersistedLocalRide;
-    if (blocked) root.dataset.mutationState = 'server-blocked';
+    const ownershipPending = passengerRideOwnership === PASSENGER_RIDE_OWNERSHIP.UNCONFIRMED;
+    const blocked = passengerMutationIsBlocked();
+    root.dataset.ownershipState = passengerRideOwnership;
+    if (blocked) root.dataset.mutationState = ownershipPending ? 'ownership-unconfirmed' : 'server-blocked';
     else delete root.dataset.mutationState;
 
     for (const selector of ['#arp-cancel', '#arp-boarded']) {
@@ -2118,6 +2128,12 @@ export default function activeRidePassenger(options = {}) {
         button.setAttribute('aria-disabled', 'true');
       }
     }
+  }
+
+  function setPassengerRideOwnership(nextOwnership) {
+    passengerRideOwnership = nextOwnership;
+    backendWriteCandidate = nextOwnership === PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED;
+    syncPassengerMutationGate();
   }
 
   function setPassengerMutationBlocked(blocked) {
@@ -2144,7 +2160,13 @@ export default function activeRidePassenger(options = {}) {
       status: srv.status || ride.status,
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
+      vehicle: keep(ride.vehicle, srv.vehicle),
+      order: keep(ride.order, srv.order),
       route: keep(ride.route, srv.route),
+      payment: keep(ride.payment, srv.payment),
+      waiting: keep(ride.waiting, srv.waiting),
+      ride: keep(ride.ride, srv.ride),
+      chat: keep(ride.chat, srv.chat),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
@@ -2266,11 +2288,93 @@ export default function activeRidePassenger(options = {}) {
     syncPassengerMutationGate();
   }
 
+  function updatePassengerText(scope, selector, value) {
+    const node = scope.querySelector(selector);
+    if (!node) return;
+    node.textContent = value == null ? '' : String(value);
+  }
+
+  function refreshPassengerRideFieldsInPlace() {
+    if (readState !== PASSENGER_RIDE_READ_STATE.LOADED) return;
+
+    const driver = (ride && ride.driver) || {};
+    const driverName = driver.name || 'Рустам К.';
+    const driverInitials = driver.initials || 'РК';
+    const driverRating = driver.rating || '';
+    const driverNameNode = topCard.querySelector('.active-ride-passenger__driver-name');
+    if (driverNameNode) {
+      const textNode = Array.from(driverNameNode.childNodes)
+        .find((node) => node.nodeType === 3 && String(node.nodeValue || '').trim());
+      if (textNode) textNode.nodeValue = driverName + ' ';
+    }
+    updatePassengerText(topCard, '.active-ride-passenger__avatar', driverInitials);
+    updatePassengerText(topCard, '.active-ride-passenger__driver-rating', '★ ' + driverRating);
+    updatePassengerText(topCard, '.active-ride-passenger__driver-sub', carLine(ride));
+
+    const eta = topDriverCardEta(ride, phaseQuery);
+    const etaBox = topCard.querySelector('.active-ride-passenger__top-card-eta');
+    if (etaBox) etaBox.setAttribute('aria-label', eta.value + ' ' + eta.label);
+    const topCardBody = topCard.querySelector('.active-ride-passenger__top-card');
+    if (topCardBody) topCardBody.dataset.tone = eta.tone;
+    updatePassengerText(topCard, '.active-ride-passenger__top-card-eta-value', eta.value);
+    updatePassengerText(topCard, '.active-ride-passenger__top-card-eta-label', eta.label);
+
+    const chat = chatLabelFor(ride);
+    const topChatBtn = topCard.querySelector('#arp-top-chat');
+    if (topChatBtn) {
+      topChatBtn.setAttribute('aria-label', chat.label);
+      let badge = topChatBtn.querySelector('.active-ride-passenger__chat-badge--inline');
+      if (chat.unreadCount > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'active-ride-passenger__chat-badge active-ride-passenger__chat-badge--inline';
+          badge.setAttribute('aria-hidden', 'true');
+          topChatBtn.appendChild(badge);
+        }
+        badge.textContent = String(chat.unreadCount);
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    const route = (ride && ride.route) || {};
+    const routeFields = sheet.querySelectorAll('.active-ride-passenger__route-main');
+    if (routeFields[0]) routeFields[0].textContent = route.pickupLabel || 'ул. Малая Бронная, 28';
+    if (routeFields[1]) routeFields[1].textContent = route.dropoffLabel || 'Аэропорт Шереметьево, терминал В';
+
+    const pay = paymentInfo(ride);
+    const amount = ride.status === RIDE_STATUS.IN_PROGRESS
+      && phaseQuery === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF
+      ? arrivingDropoffAmount(ride)
+      : pay.amount;
+    updatePassengerText(sheet, '.active-ride-passenger__payment-title', '•• ' + pay.last4 + ' · ' + pay.method);
+    updatePassengerText(sheet, '.active-ride-passenger__payment-note', pay.note);
+    updatePassengerText(sheet, '.active-ride-passenger__payment-amount', amount);
+
+    if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
+      const waiting = waitingInfo(ride);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-badge-value', waiting.remaining);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value', waiting.remaining + ' / ' + waiting.freeLimit);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot', 'Дальше — ' + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
+      const progress = sheet.querySelector('.active-ride-passenger__progress-bar');
+      if (progress) progress.setAttribute('aria-valuenow', String(waiting.pct));
+      const fill = sheet.querySelector('.active-ride-passenger__progress-bar-fill');
+      if (fill) fill.dataset.step = String(Math.round(waiting.pct / 10));
+    } else if (ride.status === RIDE_STATUS.IN_PROGRESS
+      && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
+      const info = inProgressInfo(ride);
+      updatePassengerText(sheet, '.active-ride-passenger__sub', 'Расчётное время прибытия ' + info.arrivalTime);
+    } else {
+      updatePassengerText(sheet, '.active-ride-passenger__car', carLine(ride));
+    }
+  }
+
   // Background recovery is a refresh of an already usable ride, not a new
   // screen settlement. When preserveDom is true, keep the existing controls
   // (and their focus/listeners) intact and update only refresh/mutation state.
   function renderLoadedRide(preserveDom = false) {
     if (preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED) {
+      refreshPassengerRideFieldsInPlace();
       syncPassengerMutationGate();
       return;
     }
@@ -2367,7 +2471,7 @@ export default function activeRidePassenger(options = {}) {
       if (destroyed || epoch !== readEpoch) return;
       if (!srv) {
         backendRide = false;
-        backendWriteCandidate = false;
+        setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY);
         setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
@@ -2375,7 +2479,7 @@ export default function activeRidePassenger(options = {}) {
         return;
       }
       backendRide = true;
-      backendWriteCandidate = true;
+      setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED);
       setPassengerMutationBlocked(false);
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
@@ -2397,7 +2501,7 @@ export default function activeRidePassenger(options = {}) {
       // with no usable local source is genuinely empty rather than a demo ride.
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
-        backendWriteCandidate = false;
+        setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY);
         setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
@@ -2409,8 +2513,7 @@ export default function activeRidePassenger(options = {}) {
       const permanentFailure = !retryable;
       const authFailure = isPassengerRideAuthorizationFailure(err);
       backendRide = false;
-      if (permanentFailure) backendWriteCandidate = false;
-      if (permanentFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true);
+      if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true);
       if (hasUsableLocalRide) {
         root.dataset.refreshState = 'error';
         renderLoadedRide(recovery);
