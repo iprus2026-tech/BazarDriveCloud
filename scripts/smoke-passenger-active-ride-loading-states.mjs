@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const passenger = read('../public/src/screens/active_ride_passenger.js');
+const activeRide = read('../public/src/screens/active_ride.js');
 const mockApi = read('../public/src/mock_api.js');
 const css = read('../public/styles/cloud.css');
 const sw = read('../public/sw.js');
@@ -34,6 +35,10 @@ for (const state of ['loading', 'loaded', 'empty', 'error']) {
 }
 expect('fixture parser uses the canonical fixture query',
   /URLSearchParams[\s\S]{0,220}get\('fixture'\)/.test(passenger));
+expect('outer passenger fixture gate skips persisted handoff lookup',
+  activeRide.includes("const passengerFixture = query.get('fixture') || '';")
+    && activeRide.includes("new Set(['loading', 'loaded', 'empty', 'error']).has(passengerFixture)")
+    && activeRide.includes('|| (passengerFixtureMode ? null : findLatestHandedOffOrderTripId())'));
 expect('fixture mode is selected before persisted passenger hydration',
   passenger.indexOf('createPassengerFixtureRide(tripId)') < passenger.indexOf('loadPassengerRideView(tripId, statusQuery)'));
 
@@ -54,6 +59,10 @@ for (const forbidden of [
 }
 expect('backend read is explicitly gated out of fixture mode',
   /const\s+backendRead\s*=\s*!fixture\s*&&\s*isBackendEnabled\(\)/.test(passenger));
+const usableSource = functionBody(passenger, 'hasUsablePassengerRideSource');
+expect('usable local fallback recognizes canonical and handoff sources',
+  usableSource.includes('loadCanonicalActiveRide')
+    && usableSource.includes('loadDriverHandoffSnapshot'));
 expect('fixture is exposed only as a render marker',
   /if\s*\(fixture\)\s*root\.dataset\.fixture\s*=\s*fixture/.test(passenger));
 expect('one root aria-busy owner tracks initial loading',
@@ -96,8 +105,11 @@ expect('404/RIDE_NOT_FOUND preserves loaded local fallback',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED'));
-expect('non-404 initial failure settles honest error',
-  initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
+expect('non-404 initial failure keeps usable local content non-destructively',
+  initialRead.includes('if (hasUsableLocalRide)')
+    && initialRead.includes("root.dataset.refreshState = 'error'")
+    && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
+    && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
 expect('poll starts only after a successful server ride is identified',
   initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
 
@@ -122,6 +134,17 @@ expect('fixture cancel action is disabled/inert',
   /if\s*\(fixture\)\s*\{\s*cancelBtn\.disabled\s*=\s*true/.test(passenger));
 expect('fixture boarded action is disabled/inert',
   /if\s*\(boardedBtn\s*&&\s*fixture\)\s*\{\s*boardedBtn\.disabled\s*=\s*true/.test(passenger));
+const commonBindings = functionBody(passenger, 'bindCommonSheetHandlers');
+expect('fixture bottom-sheet safety path is disabled before safety/chat handoff',
+  commonBindings.includes('if (sosBtn && fixture)')
+    && commonBindings.includes('sosBtn.disabled = true'));
+expect('empty fixture keeps the map shell but removes synthetic route and markers',
+  passenger.includes('const emptyFixture = fixture === PASSENGER_RIDE_READ_STATE.EMPTY')
+    && passenger.includes('showRoute: !emptyFixture')
+    && passenger.includes('showCar: !emptyFixture')
+    && passenger.includes('showPickup: !emptyFixture')
+    && passenger.includes('showDropoff: !emptyFixture')
+    && passenger.includes('showLabels: !emptyFixture'));
 
 expect('ride GET accepts and forwards an optional signal',
   /getRideFromBackend\(tripId,\s*\{\s*signal\s*\}\s*=\s*\{\}\)/.test(mockApi)
@@ -136,8 +159,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v267',
-  /const VERSION\s*=\s*'v267'/.test(sw));
+expect('service worker moves monotonically to v268',
+  /const VERSION\s*=\s*'v268'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

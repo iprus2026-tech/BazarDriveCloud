@@ -159,6 +159,12 @@ function getPassengerRideFixture() {
   return PASSENGER_RIDE_FIXTURES.has(value) ? value : '';
 }
 
+function hasUsablePassengerRideSource(tripId) {
+  const canonicalRide = loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  if (canonicalRide) return true;
+  return Boolean(loadDriverHandoffSnapshot(tripId));
+}
+
 // Fixtures are synthetic before any canonical/local hydration. In particular,
 // a colliding tripId must never cause loadCanonicalActiveRide, Responses,
 // driver-handoff, history or receipt stores to become preview input.
@@ -1700,6 +1706,7 @@ export default function activeRidePassenger(options = {}) {
     ? options.showNotice
     : null;
   const fixture = getPassengerRideFixture();
+  const hasUsableLocalRide = !fixture && hasUsablePassengerRideSource(tripId);
 
   // Fixture isolation happens before every persisted ride / response / handoff
   // read. createDemoActiveRide is a pure in-memory constructor.
@@ -1752,10 +1759,16 @@ export default function activeRidePassenger(options = {}) {
   // ── Map layer ────────────────────────────────────────────
   const mapWrap = document.createElement('div');
   mapWrap.className = 'active-ride__map';
+  const emptyFixture = fixture === PASSENGER_RIDE_READ_STATE.EMPTY;
   const mapEl = createMapShell({
     variant: 'passenger',
-    status: ride.status,
-    route: ride.route,
+    status: emptyFixture ? '' : ride.status,
+    route: emptyFixture ? null : ride.route,
+    showRoute: !emptyFixture,
+    showCar: !emptyFixture,
+    showPickup: !emptyFixture,
+    showDropoff: !emptyFixture,
+    showLabels: !emptyFixture,
   });
   mapWrap.appendChild(mapEl);
   root.appendChild(mapWrap);
@@ -1862,7 +1875,10 @@ export default function activeRidePassenger(options = {}) {
       });
     }
     const sosBtn = sheet.querySelector('#arp-sos');
-    if (sosBtn) {
+    if (sosBtn && fixture) {
+      sosBtn.disabled = true;
+      sosBtn.setAttribute('aria-disabled', 'true');
+    } else if (sosBtn) {
       sosBtn.addEventListener('click', () => {
         openPassengerSafetySheet(root, { toast, ride, tripLabel });
       });
@@ -2200,6 +2216,7 @@ export default function activeRidePassenger(options = {}) {
         return;
       }
       backendRide = true;
+      delete root.dataset.refreshState;
       if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
       ride = mergeServerRide(srv);
       setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
@@ -2211,10 +2228,17 @@ export default function activeRidePassenger(options = {}) {
       // local/canonical view and do not start the server poll.
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
+        delete root.dataset.refreshState;
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         return;
       }
       backendRide = false;
+      if (hasUsableLocalRide) {
+        root.dataset.refreshState = 'error';
+        setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+        toast('Не удалось обновить поездку. Показаны сохранённые данные.');
+        return;
+      }
       setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
     }
   }

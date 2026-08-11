@@ -30,7 +30,9 @@
 // message read states, deterministic fixtures, bounded cancellation, and bubble skeleton).
 // v267 (BD-CLOUD-DESIGN-LOADING-02D #872): precached active_ride_passenger.js,
 // mock_api.js + cloud.css changed (passenger ride read states, fixture isolation and cancellable poll).
-const VERSION    = 'v267';
+// v268 (BD-CLOUD-DESIGN-LOADING-02D review repair #873): precached active_ride.js +
+// active_ride_passenger.js changed (outer fixture gate, local fallback, empty/safety fixture isolation).
+const VERSION    = 'v268';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

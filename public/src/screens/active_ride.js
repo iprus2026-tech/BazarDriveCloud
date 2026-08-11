@@ -271,8 +271,10 @@ function renderPassenger() {
   // order so the screen shows their real handed-off trip (shared
   // active_ride.v1 record, orderId-linked) instead of the demo ride.
   // Falls back to the demo trip when no live order has been accepted.
+  const passengerFixture = query.get('fixture') || '';
+  const passengerFixtureMode = new Set(['loading', 'loaded', 'empty', 'error']).has(passengerFixture);
   const tripId = query.get('tripId')
-    || findLatestHandedOffOrderTripId()
+    || (passengerFixtureMode ? null : findLatestHandedOffOrderTripId())
     || DEMO_ACTIVE_RIDE_ID;
   return activeRidePassenger({
     tripId,
