@@ -34,7 +34,9 @@
 // active_ride_passenger.js changed (outer fixture gate, local fallback, empty/safety fixture isolation).
 // v269 (BD-CLOUD-DESIGN-LOADING-02D second review repair #873): precached active_ride_passenger.js
 // changed (non-blocking local refresh, recovery loop, unavailable-map isolation, fixture retry, scoped busy state).
-const VERSION    = 'v269';
+// v270 (BD-CLOUD-DESIGN-LOADING-02D third review repair #873): precached active_ride_passenger.js
+// changed (bounded poll, honest 404 empty, retryable recovery filter, stable loading announcement).
+const VERSION    = 'v270';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

@@ -150,6 +150,7 @@ const PASSENGER_RIDE_READ_STATE = Object.freeze({
 const PASSENGER_RIDE_FIXTURES = new Set(Object.values(PASSENGER_RIDE_READ_STATE));
 const PASSENGER_RIDE_READ_TIMEOUT_MS = 12_000;
 const PASSENGER_RIDE_POLL_MS = 2_500;
+const PASSENGER_RIDE_POLL_TIMEOUT_MS = 12_000;
 const PASSENGER_RIDE_FIXTURE_RETRY_MS = 400;
 
 function getPassengerRideFixture() {
@@ -309,7 +310,6 @@ function passengerRideLoadingDriverHtml() {
 function passengerRideLoadingSheetHtml() {
   return `
     <div class="active-ride-passenger__read-state">
-      <p class="active-ride-passenger__read-status" role="status">Загружаем поездку…</p>
       <div class="active-ride-passenger__read-sheet-skeleton" aria-hidden="true">
         <span class="active-ride-passenger__read-line active-ride-passenger__read-line--title active-ride-passenger__read-bone"></span>
         <span class="active-ride-passenger__read-line active-ride-passenger__read-line--sub active-ride-passenger__read-bone"></span>
@@ -2137,6 +2137,15 @@ export default function activeRidePassenger(options = {}) {
     const busy = nextState === PASSENGER_RIDE_READ_STATE.LOADING ? 'true' : 'false';
     topCard.setAttribute('aria-busy', busy);
     sheet.setAttribute('aria-busy', busy);
+    if (nextState === PASSENGER_RIDE_READ_STATE.LOADING) {
+      notice.dataset.readStatus = 'loading';
+      notice.textContent = 'Загружаем поездку…';
+      notice.hidden = false;
+    } else if (notice.dataset.readStatus === 'loading') {
+      delete notice.dataset.readStatus;
+      notice.textContent = '';
+      notice.hidden = true;
+    }
     renderMapForReadState(nextState);
 
     const shieldBtn = top.querySelector('#arp-shield');
@@ -2190,6 +2199,17 @@ export default function activeRidePassenger(options = {}) {
     passengerRecoveryId = null;
   }
 
+  function isPassengerRideRecoveryRetryable(err) {
+    if (!err) return true;
+    if (err.retryable === true) return true;
+    if (err.retryable === false) return false;
+    if (err.name === 'TimeoutError') return true;
+    const status = Number(err.status);
+    if (!Number.isFinite(status)) return true;
+    if (status === 401 || status === 403) return false;
+    return status === 408 || status === 429 || status >= 500;
+  }
+
   function schedulePassengerRideRecovery() {
     if (passengerRecoveryId || fixture || destroyed || !hasUsableLocalRide) return;
     passengerRecoveryId = setTimeout(() => {
@@ -2221,12 +2241,14 @@ export default function activeRidePassenger(options = {}) {
       passengerPollBusy = true;
       const controller = new AbortController();
       passengerPollController = controller;
+      const timeoutId = setTimeout(() => controller.abort(), PASSENGER_RIDE_POLL_TIMEOUT_MS);
       let res;
       try {
         res = await pollRide(ride.tripId, passengerCursor, { signal: controller.signal });
       } catch {
         return;
       } finally {
+        clearTimeout(timeoutId);
         if (passengerPollController === controller) passengerPollController = null;
         passengerPollBusy = false;
       }
@@ -2266,13 +2288,15 @@ export default function activeRidePassenger(options = {}) {
     } catch (err) {
       if (destroyed || epoch !== readEpoch) return;
       if (err && (err.name === 'AbortError' || err.code === 'ABORTED')) return;
-      // A 404 is the pre-existing local-only ride contract. Preserve that usable
-      // local/canonical view and do not start the server poll.
+      // A 404 preserves an existing local/canonical ride, but an unknown trip
+      // with no usable local source is genuinely empty rather than a demo ride.
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
-        setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+        setReadState(hasUsableLocalRide
+          ? PASSENGER_RIDE_READ_STATE.LOADED
+          : PASSENGER_RIDE_READ_STATE.EMPTY);
         return;
       }
       backendRide = false;
@@ -2280,7 +2304,8 @@ export default function activeRidePassenger(options = {}) {
         root.dataset.refreshState = 'error';
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         if (!recovery) toast('Не удалось обновить поездку. Показаны сохранённые данные.');
-        schedulePassengerRideRecovery();
+        if (isPassengerRideRecoveryRetryable(err)) schedulePassengerRideRecovery();
+        else stopPassengerRideRecovery();
         return;
       }
       setReadState(PASSENGER_RIDE_READ_STATE.ERROR);

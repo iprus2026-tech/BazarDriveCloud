@@ -69,8 +69,14 @@ expect('aria-busy is scoped to replaceable ride-data panels',
   !passenger.includes("root.setAttribute('aria-busy'")
     && passenger.includes("topCard.setAttribute('aria-busy', busy)")
     && passenger.includes("sheet.setAttribute('aria-busy', busy)"));
-expect('loading has one polite status outside decorative bones',
-  passenger.includes('role="status">Загружаем поездку…</p>')
+const loadingSheet = functionBody(passenger, 'passengerRideLoadingSheetHtml');
+const readStateSetter = functionBody(passenger, 'setReadState');
+expect('loading announcement stays in the stable non-busy notice outside replaceable panels',
+  passenger.includes("notice.setAttribute('role', 'status')")
+    && !loadingSheet.includes('role="status"')
+    && readStateSetter.includes("notice.dataset.readStatus = 'loading'")
+    && readStateSetter.includes("notice.textContent = 'Загружаем поездку…'")
+    && readStateSetter.includes('notice.hidden = false')
     && passenger.includes('active-ride-passenger__read-sheet-skeleton" aria-hidden="true"'));
 expect('empty and error have accessible headings',
   passenger.includes('id="arp-read-empty-title"')
@@ -108,10 +114,12 @@ expect('error fixture retry cycles through loading and back to error without bac
     && retry.includes('PASSENGER_RIDE_FIXTURE_RETRY_MS'));
 
 const initialRead = functionBody(passenger, 'runInitialRead');
-expect('404/RIDE_NOT_FOUND preserves loaded local fallback',
+expect('404/RIDE_NOT_FOUND preserves local rides but renders empty without one',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
-    && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED'));
+    && initialRead.includes('setReadState(hasUsableLocalRide')
+    && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
+    && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
 expect('usable local ride stays loaded while the backend refresh is pending',
   /backendRead\s*&&\s*!hasUsableLocalRide[\s\S]{0,120}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger)
     && initialRead.includes("root.dataset.refreshState = 'loading'")
@@ -119,9 +127,16 @@ expect('usable local ride stays loaded while the backend refresh is pending',
 expect('non-404 initial failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
+    && initialRead.includes('isPassengerRideRecoveryRetryable(err)')
     && initialRead.includes('schedulePassengerRideRecovery()')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
+const retryability = functionBody(passenger, 'isPassengerRideRecoveryRetryable');
+expect('automatic recovery excludes permanent authorization failures',
+  retryability.includes('status === 401 || status === 403')
+    && retryability.includes('return false')
+    && retryability.includes("err.name === 'TimeoutError'")
+    && retryability.includes('status === 408 || status === 429 || status >= 500'));
 const recovery = functionBody(passenger, 'schedulePassengerRideRecovery');
 expect('local fallback recovery retries the participant-gated GET without overlapping poll semantics',
   recovery.includes('setTimeout')
@@ -140,6 +155,11 @@ expect('poll has a no-overlap busy guard',
 expect('poll owns a cancellable AbortController',
   poll.includes('new AbortController()')
     && poll.includes('{ signal: controller.signal }'));
+expect('each realtime poll has a bounded abort deadline and always releases the busy guard',
+  /PASSENGER_RIDE_POLL_TIMEOUT_MS\s*=\s*12_000/.test(passenger)
+    && poll.includes('setTimeout(() => controller.abort(), PASSENGER_RIDE_POLL_TIMEOUT_MS)')
+    && poll.includes('clearTimeout(timeoutId)')
+    && poll.includes('passengerPollBusy = false'));
 expect('teardown aborts read, poll, recovery and fixture retry work',
   /readManager\.cancel\('passenger ride screen teardown'\)/.test(passenger)
     && /passengerPollController\) passengerPollController\.abort\(\)/.test(passenger)
@@ -179,8 +199,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v269',
-  /const VERSION\s*=\s*'v269'/.test(sw));
+expect('service worker moves monotonically to v270',
+  /const VERSION\s*=\s*'v270'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);
