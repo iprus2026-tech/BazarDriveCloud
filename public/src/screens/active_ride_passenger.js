@@ -1928,6 +1928,14 @@ export default function activeRidePassenger(options = {}) {
         ride,
         tripLabel,
         onConfirm: (reasonId, comment) => {
+          // Review9 P1: a terminal server snapshot deferred behind this overlay is
+          // authoritative enough to close the stale cancel commit path immediately.
+          // Re-check here as well as disabling the buttons so a queued click cannot
+          // persist local CANCELED after the server has already terminalized the ride.
+          if (deferredTerminalPassengerStatusBlocksCancel()) {
+            toast('Поездка уже завершена. Обновляем статус.');
+            return null;
+          }
           // BD-RIDE-SIM-01 — passenger cancels after the driver has
           // already accepted. Persist the current view first so the
           // ride's passenger identity (sim overrides — Алексей,
@@ -2079,6 +2087,13 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
+  // 02D review9 terminal/backward-recovery contract:
+  // - backend API, persisted stores, lifecycle enum/transitions and Mapbox behavior are unchanged;
+  // - a forward terminal server status deferred behind an open overlay stays authoritative
+  //   in memory and immediately blocks the stale cancel-confirm commit path until reconciliation;
+  // - a recovery GET may refresh authoritative display sub-objects, but when its lifecycle
+  //   status ranks behind the locally displayed status it must not lower ride.status.
+  //
   // 02D review7 ownership/write contract:
   // - backend API, persisted stores and Ride State Machine statuses are unchanged;
   // - a backend-enabled ride begins UNCONFIRMED. Status mutations stay blocked until the
@@ -2148,16 +2163,22 @@ export default function activeRidePassenger(options = {}) {
 
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
-  function mergeServerRide(srv) {
+  function mergeServerRide(srv, preserveLocallyAheadStatus = false) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
       for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
       return out;
     };
+    const serverStatus = srv.status || ride.status;
+    const localRank = STATUS_RANK[ride.status] ?? 0;
+    const serverRank = STATUS_RANK[serverStatus] ?? 0;
+    const mergedStatus = preserveLocallyAheadStatus && localRank > serverRank
+      ? ride.status
+      : serverStatus;
     return {
       ...ride,
       tripId: srv.tripId || ride.tripId,
-      status: srv.status || ride.status,
+      status: mergedStatus,
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
       vehicle: keep(ride.vehicle, srv.vehicle),
@@ -2202,6 +2223,27 @@ export default function activeRidePassenger(options = {}) {
     [RIDE_STATUS.NO_SHOW]: 6,
   };
   const serverIsForward = (srvStatus) => (STATUS_RANK[srvStatus] ?? 0) > (STATUS_RANK[ride.status] ?? 0);
+  function isPassengerTerminalStatus(status) {
+    return status === RIDE_STATUS.COMPLETED
+      || status === RIDE_STATUS.CANCELED
+      || status === RIDE_STATUS.NO_SHOW;
+  }
+
+  function deferredTerminalPassengerStatusBlocksCancel() {
+    return isPassengerTerminalStatus(deferredPassengerServerStatus);
+  }
+
+  function syncDeferredTerminalCancelGate() {
+    if (!deferredTerminalPassengerStatusBlocksCancel()) return;
+    root.dataset.deferredTerminalStatus = deferredPassengerServerStatus;
+    for (const selector of ['#arp-cancel-confirm', '#arp-cancel-confirm-yes']) {
+      const button = root.querySelector(selector);
+      if (!button) continue;
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    }
+  }
+
   // B3 — never yank away an OPEN safety/cancel overlay. A forward server status
   // stays pending OUTSIDE ride.status until the overlay closes, otherwise merging
   // it would make later polls think the transition was already rendered.
@@ -2214,7 +2256,14 @@ export default function activeRidePassenger(options = {}) {
   function maybeReMount(srvStatus) {
     if (!srvStatus || !serverIsForward(srvStatus)) return PASSENGER_REMOUNT_RESULT.NONE;
     if (aSheetIsOpen()) {
-      deferredPassengerServerStatus = srvStatus;
+      const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1;
+      const nextRank = STATUS_RANK[srvStatus] ?? 0;
+      if (!deferredPassengerServerStatus || nextRank > pendingRank) {
+        deferredPassengerServerStatus = srvStatus;
+      }
+      // A terminal deferred snapshot is sticky while an overlay is open and
+      // immediately closes the stale cancellation commit race.
+      syncDeferredTerminalCancelGate();
       return PASSENGER_REMOUNT_RESULT.DEFERRED;
     }
     deferredPassengerServerStatus = null;
@@ -2494,7 +2543,7 @@ export default function activeRidePassenger(options = {}) {
           return;
         }
       }
-      ride = mergeServerRide(srv);
+      ride = mergeServerRide(srv, recovery);
       renderLoadedRide(recovery);
       startPassengerRidePoll();
     } catch (err) {

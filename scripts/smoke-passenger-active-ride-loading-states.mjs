@@ -159,6 +159,13 @@ expect('successful recovery refreshes mutable driver, route, fare and ETA fields
     && !inPlaceRefresh.includes('renderTopCard()')
     && !inPlaceRefresh.includes('renderSheet()'));
 const mergeServer = functionBody(passenger, 'mergeServerRide');
+expect('recovery merge preserves a locally-ahead lifecycle status while accepting display fields',
+  passenger.includes('function mergeServerRide(srv, preserveLocallyAheadStatus = false)')
+    && mergeServer.includes('const localRank = STATUS_RANK[ride.status] ?? 0')
+    && mergeServer.includes('const serverRank = STATUS_RANK[serverStatus] ?? 0')
+    && mergeServer.includes('preserveLocallyAheadStatus && localRank > serverRank')
+    && mergeServer.includes('? ride.status')
+    && initialRead.includes('ride = mergeServerRide(srv, recovery)'));
 expect('server merge accepts all display sub-objects without clobbering local fallbacks',
   mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
     && mergeServer.includes('order: keep(ride.order, srv.order)')
@@ -196,9 +203,25 @@ expect('forward server status stays pending outside ride until an open overlay c
     && deferredFlush.includes('const pendingStatus = deferredPassengerServerStatus')
     && deferredFlush.includes('maybeReMount(pendingStatus)')
     && passenger.includes('flushDeferredPassengerStatus();'));
+const terminalStatus = functionBody(passenger, 'isPassengerTerminalStatus');
+const deferredTerminalGate = functionBody(passenger, 'syncDeferredTerminalCancelGate');
+const review9CancelBinder = functionBody(passenger, 'bindCancelAffordance');
+expect('deferred terminal status immediately blocks stale cancel confirmation before local writes',
+  terminalStatus.includes('RIDE_STATUS.COMPLETED')
+    && terminalStatus.includes('RIDE_STATUS.CANCELED')
+    && terminalStatus.includes('RIDE_STATUS.NO_SHOW')
+    && remount.includes('syncDeferredTerminalCancelGate()')
+    && deferredTerminalGate.includes("['#arp-cancel-confirm', '#arp-cancel-confirm-yes']")
+    && deferredTerminalGate.includes('button.disabled = true')
+    && review9CancelBinder.includes('deferredTerminalPassengerStatusBlocksCancel()')
+    && review9CancelBinder.indexOf('deferredTerminalPassengerStatusBlocksCancel()') < review9CancelBinder.indexOf('saveActiveRide(ride)'));
+expect('deferred forward status keeps the highest pending lifecycle rank while overlays stay open',
+  remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
+    && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
+    && remount.includes('nextRank > pendingRank'));
 expect('deferred recovery returns before merging server status into the current ride',
   initialRead.includes('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED')
-    && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.indexOf('ride = mergeServerRide(srv)')
+    && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
     && initialRead.includes('startPassengerRidePoll()'));
 expect('background recovery settlement preserves controls/focus and refreshes the map in place',
   initialRead.includes('renderLoadedRide(recovery)')
@@ -298,8 +321,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v275',
-  /const VERSION\s*=\s*'v275'/.test(sw));
+expect('service worker moves monotonically to v276',
+  /const VERSION\s*=\s*'v276'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);
