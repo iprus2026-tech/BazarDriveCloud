@@ -276,8 +276,8 @@ function buildRideOrderFromComposerDraft(d, u) {
   return {
     type: 'passenger_request',
     source: 'feed',
-    pickup: enrichOrderPointWithCoords({ id: null, label: d.from }, d.from),
-    dropoff: enrichOrderPointWithCoords({ id: null, label: d.to }, d.to),
+    pickup: enrichOrderPointWithCoords({ id: null, label: d.from }),
+    dropoff: enrichOrderPointWithCoords({ id: null, label: d.to }),
     distanceKm: 0,
     durationMin: 0,
     estimatedPrice: parseMoneyLike(d.budget),
