@@ -123,26 +123,44 @@ expect('404/RIDE_NOT_FOUND preserves persisted or built-in demo fallback but unk
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
     && initialRead.includes('backendWriteCandidate = false')
-    && initialRead.includes('setReadState(hasUsableLocalRide')
+    && initialRead.includes('setPassengerMutationBlocked(false)')
+    && initialRead.includes('if (hasUsableLocalRide) renderLoadedRide(recovery)')
     && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
-    && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
-expect('usable local ride stays loaded while the backend refresh is pending',
+const loadedRenderer = functionBody(passenger, 'renderLoadedRide');
+expect('usable local ride stays loaded while backend refresh starts without replacing its DOM',
   /backendRead\s*&&\s*!hasUsableLocalRide[\s\S]{0,120}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger)
     && initialRead.includes("root.dataset.refreshState = 'loading'")
-    && initialRead.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
-expect('non-404 initial failure keeps usable local content non-destructively',
+    && initialRead.includes('renderLoadedRide(true)')
+    && loadedRenderer.includes('preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED')
+    && loadedRenderer.includes('syncPassengerMutationGate()'));
+expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
     && initialRead.includes('isPassengerRideRecoveryRetryable(err)')
     && initialRead.includes('schedulePassengerRideRecovery()')
-    && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
+    && initialRead.includes('renderLoadedRide(recovery)')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
-expect('retryable read failure preserves persisted server-write intent while permanent outcomes clear it',
+expect('retryable read failure preserves server-write intent while permanent auth blocks mutations',
   initialRead.includes('const retryable = isPassengerRideRecoveryRetryable(err)')
+    && initialRead.includes('const authFailure = isPassengerRideAuthorizationFailure(err)')
     && initialRead.includes('if (!retryable) backendWriteCandidate = false')
+    && initialRead.includes('if (authFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true)')
     && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
     && initialRead.includes('backendWriteCandidate = true'));
+const mutationGate = functionBody(passenger, 'syncPassengerMutationGate');
+expect('401/403 blocks persisted mutation controls and an already-open cancel commit gate',
+  passenger.includes('let backendMutationBlocked = false')
+    && mutationGate.includes("root.dataset.mutationState = 'auth-blocked'")
+    && mutationGate.includes("['#arp-cancel', '#arp-boarded']")
+    && mutationGate.includes("['#arp-cancel-confirm', '#arp-cancel-confirm-yes']")
+    && mutationGate.includes('button.disabled = true'));
+expect('successful/null/404 server settlement clears the auth mutation block',
+  initialRead.match(/setPassengerMutationBlocked\(false\)/g)?.length >= 3);
+expect('background recovery settlement preserves the already-loaded controls and focus',
+  initialRead.includes('renderLoadedRide(recovery)')
+    && !loadedRenderer.includes('innerHTML')
+    && loadedRenderer.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
 const cancelBinder = functionBody(passenger, 'bindCancelAffordance');
 const sheetRenderer = functionBody(passenger, 'renderSheet');
 expect('cancel and boarded PATCH writers use server-write intent instead of read-confirmed polling state',
@@ -150,6 +168,9 @@ expect('cancel and boarded PATCH writers use server-write intent instead of read
     && cancelBinder.includes('patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED)')
     && sheetRenderer.includes('if (backendWriteCandidate)')
     && sheetRenderer.includes('patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
+expect('blocked cancel and boarded handlers return before local status mutation',
+  cancelBinder.indexOf('if (backendMutationBlocked)') < cancelBinder.indexOf('saveActiveRide(ride)')
+    && sheetRenderer.indexOf('if (backendMutationBlocked)') < sheetRenderer.indexOf('updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
 const retryability = functionBody(passenger, 'isPassengerRideRecoveryRetryable');
 expect('automatic recovery excludes permanent authorization failures',
   retryability.includes('status === 401 || status === 403')
@@ -224,8 +245,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v271',
-  /const VERSION\s*=\s*'v271'/.test(sw));
+expect('service worker moves monotonically to v272',
+  /const VERSION\s*=\s*'v272'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

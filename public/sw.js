@@ -38,7 +38,9 @@
 // changed (bounded poll, honest 404 empty, retryable recovery filter, stable loading announcement).
 // v271 (BD-CLOUD-DESIGN-LOADING-02D fourth review repair #873): precached active_ride_passenger.js
 // changed (retryable read/write intent separation and built-in demo 404 fallback).
-const VERSION    = 'v271';
+// v272 (BD-CLOUD-DESIGN-LOADING-02D fifth review repair #873): precached active_ride_passenger.js
+// changed (auth mutation gate and focus-safe background recovery settlement).
+const VERSION    = 'v272';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

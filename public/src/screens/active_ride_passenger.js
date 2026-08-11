@@ -1920,6 +1920,10 @@ export default function activeRidePassenger(options = {}) {
       return;
     }
     cancelBtn.addEventListener('click', () => {
+      if (backendMutationBlocked) {
+        toast('Действие недоступно до восстановления авторизации.');
+        return;
+      }
       openPassengerCancelSheet(root, {
         ride,
         tripLabel,
@@ -2004,6 +2008,10 @@ export default function activeRidePassenger(options = {}) {
       }
       if (boardedBtn) {
         boardedBtn.addEventListener('click', async () => {
+          if (backendMutationBlocked) {
+            toast('Действие недоступно до восстановления авторизации.');
+            return;
+          }
           // #784 CUT-5 — on a confirmed server ride, confirm the boarded transition on the server FIRST,
           // then advance locally + navigate. A failed PATCH (network/auth, or the driver already
           // terminalized) must NOT strand the passenger locally IN_PROGRESS while the server stays
@@ -2081,6 +2089,46 @@ export default function activeRidePassenger(options = {}) {
   //   fallback only and is never a write candidate unless a GET actually identifies it on the server.
   let backendRide = false;
   let backendWriteCandidate = backendRead && hasPersistedLocalRide;
+  let backendMutationBlocked = false;
+
+  // 02D review5: a permanent authorization failure must not turn a known
+  // server-backed ride into a local-only writer. Keep the saved ride visible,
+  // but block status-mutating controls until a participant-gated GET succeeds
+  // again. This gate is in-memory UI/read state only; no lifecycle status or
+  // backend contract is persisted or renamed.
+  function syncPassengerMutationGate() {
+    const blocked = backendMutationBlocked && hasPersistedLocalRide;
+    if (blocked) root.dataset.mutationState = 'auth-blocked';
+    else delete root.dataset.mutationState;
+
+    for (const selector of ['#arp-cancel', '#arp-boarded']) {
+      const button = sheet.querySelector(selector);
+      if (!button || fixture) continue;
+      button.disabled = blocked;
+      button.setAttribute('aria-disabled', blocked ? 'true' : 'false');
+    }
+
+    // A cancel overlay may already be open when a late 401/403 settles.
+    // Disable its commit gates as well so it cannot race the underlying sheet.
+    if (blocked) {
+      for (const selector of ['#arp-cancel-confirm', '#arp-cancel-confirm-yes']) {
+        const button = root.querySelector(selector);
+        if (!button) continue;
+        button.disabled = true;
+        button.setAttribute('aria-disabled', 'true');
+      }
+    }
+  }
+
+  function setPassengerMutationBlocked(blocked) {
+    backendMutationBlocked = Boolean(blocked);
+    syncPassengerMutationGate();
+  }
+
+  function isPassengerRideAuthorizationFailure(err) {
+    const status = Number(err && err.status);
+    return status === 401 || status === 403;
+  }
 
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
@@ -2193,6 +2241,18 @@ export default function activeRidePassenger(options = {}) {
 
     renderTopCard();
     renderSheet();
+    syncPassengerMutationGate();
+  }
+
+  // Background recovery is a refresh of an already usable ride, not a new
+  // screen settlement. When preserveDom is true, keep the existing controls
+  // (and their focus/listeners) intact and update only refresh/mutation state.
+  function renderLoadedRide(preserveDom = false) {
+    if (preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED) {
+      syncPassengerMutationGate();
+      return;
+    }
+    setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
   }
 
   function stopPassengerRidePoll() {
@@ -2273,7 +2333,7 @@ export default function activeRidePassenger(options = {}) {
     const epoch = ++readEpoch;
     if (hasUsableLocalRide) {
       root.dataset.refreshState = 'loading';
-      setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+      renderLoadedRide(true);
     } else {
       setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
     }
@@ -2283,18 +2343,20 @@ export default function activeRidePassenger(options = {}) {
       if (!srv) {
         backendRide = false;
         backendWriteCandidate = false;
+        setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
-        setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+        renderLoadedRide(true);
         return;
       }
       backendRide = true;
       backendWriteCandidate = true;
+      setPassengerMutationBlocked(false);
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
       if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
       ride = mergeServerRide(srv);
-      setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+      renderLoadedRide(recovery);
       startPassengerRidePoll();
     } catch (err) {
       if (destroyed || epoch !== readEpoch) return;
@@ -2304,20 +2366,25 @@ export default function activeRidePassenger(options = {}) {
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
         backendWriteCandidate = false;
+        setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
-        setReadState(hasUsableLocalRide
-          ? PASSENGER_RIDE_READ_STATE.LOADED
-          : PASSENGER_RIDE_READ_STATE.EMPTY);
+        if (hasUsableLocalRide) renderLoadedRide(recovery);
+        else setReadState(PASSENGER_RIDE_READ_STATE.EMPTY);
         return;
       }
       const retryable = isPassengerRideRecoveryRetryable(err);
+      const authFailure = isPassengerRideAuthorizationFailure(err);
       backendRide = false;
       if (!retryable) backendWriteCandidate = false;
+      if (authFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true);
+      else if (!retryable) setPassengerMutationBlocked(false);
       if (hasUsableLocalRide) {
         root.dataset.refreshState = 'error';
-        setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
-        if (!recovery) toast('Не удалось обновить поездку. Показаны сохранённые данные.');
+        renderLoadedRide(recovery);
+        if (!recovery) toast(authFailure && hasPersistedLocalRide
+          ? 'Не удалось подтвердить авторизацию. Изменение статуса временно недоступно.'
+          : 'Не удалось обновить поездку. Показаны сохранённые данные.');
         if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery();
         else stopPassengerRideRecovery();
         return;
