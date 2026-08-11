@@ -1247,6 +1247,18 @@ if (exists(chatLoadingStatesSmoke)) {
   }
 }
 
+// BD-CLOUD-DESIGN-LOADING-02D (#872) — Passenger Active Ride stable map
+// shell, four ride-read states, deterministic fixture isolation and poll lifecycle.
+const passengerActiveRideLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-passenger-active-ride-loading-states.mjs');
+if (exists(passengerActiveRideLoadingStatesSmoke)) {
+  try { execFileSync(process.execPath, [passengerActiveRideLoadingStatesSmoke], { stdio: 'pipe' }); }
+  catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-1800);
+    errors.push(`smoke-passenger-active-ride-loading-states.mjs failed
+${msg}`);
+  }
+}
+
 // BD-RESPONSES-01 — /responses decline + sort. Asserts the segmented sort
 // chips, the in-memory per-driver declined Set (session-only, no localStorage),
 // single-driver restore + restore-all, and the all-declined notice.

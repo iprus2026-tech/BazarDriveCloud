@@ -28,7 +28,9 @@
 // mock_api.js changed (operation-scoped abort, teardown/epoch/retry cleanup, signal propagation).
 // v266 (BD-CLOUD-DESIGN-LOADING-02C #870): precached chat.js + cloud.css changed (honest
 // message read states, deterministic fixtures, bounded cancellation, and bubble skeleton).
-const VERSION    = 'v266';
+// v267 (BD-CLOUD-DESIGN-LOADING-02D #872): precached active_ride_passenger.js,
+// mock_api.js + cloud.css changed (passenger ride read states, fixture isolation and cancellable poll).
+const VERSION    = 'v267';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

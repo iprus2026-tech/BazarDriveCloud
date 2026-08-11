@@ -656,9 +656,9 @@ export async function selectOfferOnBackend({ orderId, driverId }) {
 // READ the participant-gated ride snapshot. Returns serializeRide (status/role/passenger/driver/
 // route/order/cancel/timestamps), or throws (404 RIDE_NOT_FOUND / 403 FORBIDDEN / bad envelope) —
 // the active-ride caller catches and keeps the local ride, so a non-server ride is unaffected.
-export async function getRideFromBackend(tripId) {
+export async function getRideFromBackend(tripId, { signal } = {}) {
   if (isBackendEnabled()) {
-    const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}`);
+    const r = await apiFetch(`/ride-state/rides/${encodeURIComponent(tripId)}`, { signal });
     if (!r || typeof r.ride !== 'object' || !r.ride) {
       throw new ApiError({ status: 0, code: 'BAD_RESPONSE', retryable: false, message: 'malformed ride response' });
     }
@@ -700,12 +700,12 @@ export async function patchRideStatus(tripId, status) {
 
 // POLL the realtime cursor. Returns { tripId, status, events, cursor }; pass the prior cursor as
 // `since` for an incremental read. The caller re-fetches the full snapshot when `status` changes.
-export async function pollRide(tripId, since) {
+export async function pollRide(tripId, since, { signal } = {}) {
   if (isBackendEnabled()) {
     const qs = since
       ? `?tripId=${encodeURIComponent(tripId)}&since=${encodeURIComponent(since)}`
       : `?tripId=${encodeURIComponent(tripId)}`;
-    return apiFetch(`/realtime/poll${qs}`);
+    return apiFetch(`/realtime/poll${qs}`, { signal });
   }
   return null;
 }
