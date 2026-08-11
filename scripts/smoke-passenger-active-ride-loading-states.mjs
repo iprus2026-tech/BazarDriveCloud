@@ -65,8 +65,10 @@ expect('usable local fallback recognizes canonical and handoff sources',
     && usableSource.includes('loadDriverHandoffSnapshot'));
 expect('fixture is exposed only as a render marker',
   /if\s*\(fixture\)\s*root\.dataset\.fixture\s*=\s*fixture/.test(passenger));
-expect('one root aria-busy owner tracks initial loading',
-  /root\.setAttribute\('aria-busy',[\s\S]{0,160}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger));
+expect('aria-busy is scoped to replaceable ride-data panels',
+  !passenger.includes("root.setAttribute('aria-busy'")
+    && passenger.includes("topCard.setAttribute('aria-busy', busy)")
+    && passenger.includes("sheet.setAttribute('aria-busy', busy)"));
 expect('loading has one polite status outside decorative bones',
   passenger.includes('role="status">Загружаем поездку…</p>')
     && passenger.includes('active-ride-passenger__read-sheet-skeleton" aria-hidden="true"'));
@@ -99,17 +101,32 @@ for (const writer of [
 }
 expect('retry preserves focus on stable chrome before content replacement',
   retry.includes("top.querySelector('#arp-collapse')") && retry.includes('.focus()'));
+expect('error fixture retry cycles through loading and back to error without backend reads',
+  retry.includes('fixture !== PASSENGER_RIDE_READ_STATE.ERROR')
+    && retry.includes('PASSENGER_RIDE_READ_STATE.LOADING')
+    && retry.includes('PASSENGER_RIDE_READ_STATE.ERROR')
+    && retry.includes('PASSENGER_RIDE_FIXTURE_RETRY_MS'));
 
 const initialRead = functionBody(passenger, 'runInitialRead');
 expect('404/RIDE_NOT_FOUND preserves loaded local fallback',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED'));
+expect('usable local ride stays loaded while the backend refresh is pending',
+  /backendRead\s*&&\s*!hasUsableLocalRide[\s\S]{0,120}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger)
+    && initialRead.includes("root.dataset.refreshState = 'loading'")
+    && initialRead.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
 expect('non-404 initial failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
+    && initialRead.includes('schedulePassengerRideRecovery()')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
+const recovery = functionBody(passenger, 'schedulePassengerRideRecovery');
+expect('local fallback recovery retries the participant-gated GET without overlapping poll semantics',
+  recovery.includes('setTimeout')
+    && recovery.includes('runInitialRead(true)')
+    && recovery.includes('PASSENGER_RIDE_POLL_MS'));
 expect('poll starts only after a successful server ride is identified',
   initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
 
@@ -123,9 +140,11 @@ expect('poll has a no-overlap busy guard',
 expect('poll owns a cancellable AbortController',
   poll.includes('new AbortController()')
     && poll.includes('{ signal: controller.signal }'));
-expect('teardown aborts read and poll work',
+expect('teardown aborts read, poll, recovery and fixture retry work',
   /readManager\.cancel\('passenger ride screen teardown'\)/.test(passenger)
-    && /passengerPollController\) passengerPollController\.abort\(\)/.test(passenger));
+    && /passengerPollController\) passengerPollController\.abort\(\)/.test(passenger)
+    && passenger.includes('stopPassengerRideRecovery()')
+    && passenger.includes('if (fixtureRetryId) clearTimeout(fixtureRetryId)'));
 expect('route replacement + detached root are teardown signals',
   passenger.includes("window.addEventListener('hashchange', onHashChange)")
     && passenger.includes('new MutationObserver'));
@@ -138,13 +157,14 @@ const commonBindings = functionBody(passenger, 'bindCommonSheetHandlers');
 expect('fixture bottom-sheet safety path is disabled before safety/chat handoff',
   commonBindings.includes('if (sosBtn && fixture)')
     && commonBindings.includes('sosBtn.disabled = true'));
-expect('empty fixture keeps the map shell but removes synthetic route and markers',
-  passenger.includes('const emptyFixture = fixture === PASSENGER_RIDE_READ_STATE.EMPTY')
-    && passenger.includes('showRoute: !emptyFixture')
-    && passenger.includes('showCar: !emptyFixture')
-    && passenger.includes('showPickup: !emptyFixture')
-    && passenger.includes('showDropoff: !emptyFixture')
-    && passenger.includes('showLabels: !emptyFixture'));
+const mapRender = functionBody(passenger, 'renderMapForReadState');
+expect('loading, empty and error states keep the map shell but remove synthetic ride data',
+  mapRender.includes('const hasRideData = nextState === PASSENGER_RIDE_READ_STATE.LOADED')
+    && mapRender.includes('showRoute: hasRideData')
+    && mapRender.includes('showCar: hasRideData')
+    && mapRender.includes('showPickup: hasRideData')
+    && mapRender.includes('showDropoff: hasRideData')
+    && mapRender.includes('showLabels: hasRideData'));
 
 expect('ride GET accepts and forwards an optional signal',
   /getRideFromBackend\(tripId,\s*\{\s*signal\s*\}\s*=\s*\{\}\)/.test(mockApi)
@@ -159,8 +179,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v268',
-  /const VERSION\s*=\s*'v268'/.test(sw));
+expect('service worker moves monotonically to v269',
+  /const VERSION\s*=\s*'v269'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

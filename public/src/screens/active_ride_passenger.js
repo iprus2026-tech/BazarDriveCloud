@@ -150,6 +150,7 @@ const PASSENGER_RIDE_READ_STATE = Object.freeze({
 const PASSENGER_RIDE_FIXTURES = new Set(Object.values(PASSENGER_RIDE_READ_STATE));
 const PASSENGER_RIDE_READ_TIMEOUT_MS = 12_000;
 const PASSENGER_RIDE_POLL_MS = 2_500;
+const PASSENGER_RIDE_FIXTURE_RETRY_MS = 400;
 
 function getPassengerRideFixture() {
   const hash = window.location.hash || '';
@@ -1715,7 +1716,7 @@ export default function activeRidePassenger(options = {}) {
     : loadPassengerRideView(tripId, statusQuery);
   if (!fixture) ride = applyPassengerStatusFromQuery(ride, statusQuery);
   const backendRead = !fixture && isBackendEnabled();
-  let readState = fixture || (backendRead
+  let readState = fixture || (backendRead && !hasUsableLocalRide
     ? PASSENGER_RIDE_READ_STATE.LOADING
     : PASSENGER_RIDE_READ_STATE.LOADED);
 
@@ -1750,7 +1751,6 @@ export default function activeRidePassenger(options = {}) {
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride active-ride-passenger';
   root.dataset.readState = readState;
-  root.setAttribute('aria-busy', readState === PASSENGER_RIDE_READ_STATE.LOADING ? 'true' : 'false');
   if (fixture) root.dataset.fixture = fixture;
 
   // Display label (e.g. №48-321) reused by the cancel / safety sheets.
@@ -1759,18 +1759,30 @@ export default function activeRidePassenger(options = {}) {
   // ── Map layer ────────────────────────────────────────────
   const mapWrap = document.createElement('div');
   mapWrap.className = 'active-ride__map';
-  const emptyFixture = fixture === PASSENGER_RIDE_READ_STATE.EMPTY;
-  const mapEl = createMapShell({
-    variant: 'passenger',
-    status: emptyFixture ? '' : ride.status,
-    route: emptyFixture ? null : ride.route,
-    showRoute: !emptyFixture,
-    showCar: !emptyFixture,
-    showPickup: !emptyFixture,
-    showDropoff: !emptyFixture,
-    showLabels: !emptyFixture,
-  });
-  mapWrap.appendChild(mapEl);
+  let mapEl = null;
+  let mapRenderKey = '';
+  function renderMapForReadState(nextState) {
+    const hasRideData = nextState === PASSENGER_RIDE_READ_STATE.LOADED;
+    const route = hasRideData ? ride.route : null;
+    const pickupLabel = route && route.pickupLabel ? route.pickupLabel : '';
+    const dropoffLabel = route && route.dropoffLabel ? route.dropoffLabel : '';
+    const key = hasRideData ? `ride:${ride.status}|${pickupLabel}|${dropoffLabel}` : 'unavailable';
+    if (mapEl && mapRenderKey === key) return;
+    const nextMap = createMapShell({
+      variant: 'passenger',
+      status: hasRideData ? ride.status : '',
+      route,
+      showRoute: hasRideData,
+      showCar: hasRideData,
+      showPickup: hasRideData,
+      showDropoff: hasRideData,
+      showLabels: hasRideData,
+    });
+    if (mapEl) mapEl.replaceWith(nextMap);
+    else mapWrap.appendChild(nextMap);
+    mapEl = nextMap;
+    mapRenderKey = key;
+  }
   root.appendChild(mapWrap);
 
   // ── Top overlay (chevron · trip number · shield) ─────────
@@ -2085,6 +2097,8 @@ export default function activeRidePassenger(options = {}) {
   let passengerCursor = null;
   let passengerPollBusy = false;
   let passengerPollController = null;
+  let passengerRecoveryId = null;
+  let fixtureRetryId = null;
   let readEpoch = 0;
   let destroyed = false;
   const readManager = createPassengerRideReadManager(
@@ -2120,7 +2134,10 @@ export default function activeRidePassenger(options = {}) {
   function setReadState(nextState) {
     readState = nextState;
     root.dataset.readState = nextState;
-    root.setAttribute('aria-busy', nextState === PASSENGER_RIDE_READ_STATE.LOADING ? 'true' : 'false');
+    const busy = nextState === PASSENGER_RIDE_READ_STATE.LOADING ? 'true' : 'false';
+    topCard.setAttribute('aria-busy', busy);
+    sheet.setAttribute('aria-busy', busy);
+    renderMapForReadState(nextState);
 
     const shieldBtn = top.querySelector('#arp-shield');
     if (shieldBtn) {
@@ -2168,12 +2185,29 @@ export default function activeRidePassenger(options = {}) {
     passengerPollController = null;
   }
 
+  function stopPassengerRideRecovery() {
+    if (passengerRecoveryId) clearTimeout(passengerRecoveryId);
+    passengerRecoveryId = null;
+  }
+
+  function schedulePassengerRideRecovery() {
+    if (passengerRecoveryId || fixture || destroyed || !hasUsableLocalRide) return;
+    passengerRecoveryId = setTimeout(() => {
+      passengerRecoveryId = null;
+      if (destroyed) return;
+      runInitialRead(true);
+    }, PASSENGER_RIDE_POLL_MS);
+  }
+
   function teardownPassengerReads() {
     if (destroyed) return;
     destroyed = true;
     readEpoch += 1;
     readManager.cancel('passenger ride screen teardown');
     stopPassengerRidePoll();
+    stopPassengerRideRecovery();
+    if (fixtureRetryId) clearTimeout(fixtureRetryId);
+    fixtureRetryId = null;
   }
 
   function startPassengerRidePoll() {
@@ -2204,18 +2238,26 @@ export default function activeRidePassenger(options = {}) {
     }, PASSENGER_RIDE_POLL_MS);
   }
 
-  async function runInitialRead() {
+  async function runInitialRead(recovery = false) {
     const epoch = ++readEpoch;
-    setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
+    if (hasUsableLocalRide) {
+      root.dataset.refreshState = 'loading';
+      setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
+    } else {
+      setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
+    }
     try {
       const srv = await readManager.run(ride.tripId);
       if (destroyed || epoch !== readEpoch) return;
       if (!srv) {
         backendRide = false;
+        stopPassengerRideRecovery();
+        delete root.dataset.refreshState;
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         return;
       }
       backendRide = true;
+      stopPassengerRideRecovery();
       delete root.dataset.refreshState;
       if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
       ride = mergeServerRide(srv);
@@ -2228,6 +2270,7 @@ export default function activeRidePassenger(options = {}) {
       // local/canonical view and do not start the server poll.
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
+        stopPassengerRideRecovery();
         delete root.dataset.refreshState;
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         return;
@@ -2236,7 +2279,8 @@ export default function activeRidePassenger(options = {}) {
       if (hasUsableLocalRide) {
         root.dataset.refreshState = 'error';
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
-        toast('Не удалось обновить поездку. Показаны сохранённые данные.');
+        if (!recovery) toast('Не удалось обновить поездку. Показаны сохранённые данные.');
+        schedulePassengerRideRecovery();
         return;
       }
       setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
@@ -2244,9 +2288,21 @@ export default function activeRidePassenger(options = {}) {
   }
 
   function retryInitialRead() {
-    if (fixture || destroyed) return;
+    if (destroyed) return;
     const stableFocus = top.querySelector('#arp-collapse');
     if (stableFocus && typeof stableFocus.focus === 'function') stableFocus.focus();
+    if (fixture) {
+      if (fixture !== PASSENGER_RIDE_READ_STATE.ERROR) return;
+      if (fixtureRetryId) clearTimeout(fixtureRetryId);
+      setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
+      fixtureRetryId = setTimeout(() => {
+        fixtureRetryId = null;
+        if (destroyed) return;
+        setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
+      }, PASSENGER_RIDE_FIXTURE_RETRY_MS);
+      return;
+    }
+    stopPassengerRideRecovery();
     stopPassengerRidePoll();
     runInitialRead();
   }
