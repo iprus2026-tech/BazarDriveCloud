@@ -26,7 +26,9 @@
 // settlement/accept guard and bounded nearby-order read timeout).
 // v265 (BD-CLOUD-DESIGN-LOADING-02B cancellation repair #869): precached driver_map.js +
 // mock_api.js changed (operation-scoped abort, teardown/epoch/retry cleanup, signal propagation).
-const VERSION    = 'v265';
+// v266 (BD-CLOUD-DESIGN-LOADING-02C #870): precached chat.js + cloud.css changed (honest
+// message read states, deterministic fixtures, bounded cancellation, and bubble skeleton).
+const VERSION    = 'v266';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

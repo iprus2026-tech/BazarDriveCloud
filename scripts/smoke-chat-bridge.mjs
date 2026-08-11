@@ -136,7 +136,7 @@ expect("createMsgEl threads viewerRole through to directionForMessage",
   /directionForMessage\(\s*msg\s*,\s*viewerRole\s*\)/.test(chat));
 
 expect("chat.js call sites pass viewerRole + counterpart name into createMsgEl",
-  (chat.match(/createMsgEl\(\s*msg\s*,\s*viewerRole\s*,\s*counterpart\.name\s*\)/g) || []).length >= 2);
+  (chat.match(/createMsgEl\(\s*(?:msg|message)\s*,\s*viewerRole\s*,\s*counterpart\.name\s*\)/g) || []).length >= 2);
 
 // ── F4. chat.js — BD-CHAT-01 sender attribution (Cloud Design port, #5) ──
 // The in/out side was conveyed by alignment + colour only — invisible to a screen
@@ -344,7 +344,7 @@ expect("chat.js gates MOCK_MESSAGES on the demo thread (real empty threads get [
   && /isRealThread\s*\?\s*\[\]\s*:\s*MOCK_MESSAGES/.test(chat));
 expect("chat.js defines renderEmptyThread and renders it for a real empty thread",
   /function\s+renderEmptyThread\s*\(/.test(chat)
-  && /isRealThread\s*&&\s*messages\.length\s*===\s*0[\s\S]{0,80}renderEmptyThread\(/.test(chat));
+  && /nextState === CHAT_READ_STATE\.EMPTY[\s\S]{0,120}renderEmptyThread\(viewerRole\)/.test(chat));
 expect("chat.js empty state carries role-specific copy (no fabricated history)",
   /Сообщений пока нет/.test(chat) && /chat__empty-title/.test(chat));
 expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
@@ -402,15 +402,15 @@ expect("chat.js doSend surfaces a failed message write to the user via showNotic
 // ── I4. #784 chat cutover — a real thread on a live backend reads/sends the shared server
 // thread via apiFetch (behind isBackendEnabled), while the local-storage path stays the fallback. ──
 expect('chat.js routes the chat thread through apiFetch when the backend is enabled (#784 cutover)',
-  /const backendRead = isBackendEnabled\(\) && isRealThread/.test(chat)
+  /const backendRead = !fixture && isBackendEnabled\(\) && isRealThread/.test(chat)
   && /apiFetch\(`\/chat\/messages\?chatId=/.test(chat)
   && /postServerMessage\(chatId, msg\)/.test(chat));
 expect('chat.js poll appends incrementally (no wholesale repaint) — preserves optimistic/failed bubbles',
   /const rendered = new Set\(\)/.test(chat)
-  && /if \(rendered\.has\(keyOf\(msg\)\)\) return null/.test(chat)
+  && /if \(rendered\.has\(keyOf\(message\)\)\) return null/.test(chat)
   && /if \(grew && wasNear\) scrollBottom\(\)/.test(chat));
 expect('chat.js dedupe key includes senderRole (server distinguishes same clientMsgId across roles)',
-  /const keyOf = \(m\) => `\$\{m\.senderRole/.test(chat));
+  /const keyOf = \(message\) => `\$\{message\.senderRole/.test(chat));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

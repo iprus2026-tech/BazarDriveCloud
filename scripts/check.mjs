@@ -1236,6 +1236,17 @@ for (const smokeName of ['smoke-driver-map-role-race.mjs', 'smoke-driver-map-rea
   }
 }
 
+// BD-CLOUD-DESIGN-LOADING-02C (#870) — Chat stable shell, four guarded
+// message-read states, deterministic fixtures, cancellation and poll lifecycle.
+const chatLoadingStatesSmoke = path.join(root, 'scripts', 'smoke-chat-loading-states.mjs');
+if (exists(chatLoadingStatesSmoke)) {
+  try { execFileSync(process.execPath, [chatLoadingStatesSmoke], { stdio: 'pipe' }); }
+  catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-1600);
+    errors.push(`smoke-chat-loading-states.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RESPONSES-01 — /responses decline + sort. Asserts the segmented sort
 // chips, the in-memory per-driver declined Set (session-only, no localStorage),
 // single-driver restore + restore-all, and the all-declined notice.
