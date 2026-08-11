@@ -44,7 +44,9 @@
 // changed (deferred forward-status replay and permanent read-failure mutation gate).
 // v274 (BD-CLOUD-DESIGN-LOADING-02D seventh review repair #873): precached active_ride_passenger.js
 // changed (ownership settlement gate and focus-safe in-place recovery field refresh).
-const VERSION    = 'v274';
+// v275 (BD-CLOUD-DESIGN-LOADING-02D eighth review repair #873): precached active_ride_passenger.js
+// changed (recovery settlement refreshes the existing map from authoritative ride/route data).
+const VERSION    = 'v275';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

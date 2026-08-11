@@ -2375,6 +2375,9 @@ export default function activeRidePassenger(options = {}) {
   function renderLoadedRide(preserveDom = false) {
     if (preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED) {
       refreshPassengerRideFieldsInPlace();
+      // Review8: recovery settlement must refresh the map from the same authoritative
+      // ride/route snapshot without replacing loaded passenger controls.
+      renderMapForReadState(PASSENGER_RIDE_READ_STATE.LOADED);
       syncPassengerMutationGate();
       return;
     }

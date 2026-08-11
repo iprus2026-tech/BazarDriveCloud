@@ -200,10 +200,14 @@ expect('deferred recovery returns before merging server status into the current 
   initialRead.includes('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED')
     && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.indexOf('ride = mergeServerRide(srv)')
     && initialRead.includes('startPassengerRidePoll()'));
-expect('background recovery settlement preserves the already-loaded controls and focus',
+expect('background recovery settlement preserves controls/focus and refreshes the map in place',
   initialRead.includes('renderLoadedRide(recovery)')
     && loadedRenderer.includes('refreshPassengerRideFieldsInPlace()')
+    && loadedRenderer.includes('renderMapForReadState(PASSENGER_RIDE_READ_STATE.LOADED)')
+    && loadedRenderer.indexOf('refreshPassengerRideFieldsInPlace()') < loadedRenderer.indexOf('renderMapForReadState(PASSENGER_RIDE_READ_STATE.LOADED)')
     && !loadedRenderer.includes('innerHTML')
+    && !loadedRenderer.includes('renderTopCard()')
+    && !loadedRenderer.includes('renderSheet()')
     && loadedRenderer.includes('setReadState(PASSENGER_RIDE_READ_STATE.LOADED)'));
 const cancelBinder = functionBody(passenger, 'bindCancelAffordance');
 const sheetRenderer = functionBody(passenger, 'renderSheet');
@@ -294,8 +298,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v274',
-  /const VERSION\s*=\s*'v274'/.test(sw));
+expect('service worker moves monotonically to v275',
+  /const VERSION\s*=\s*'v275'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);
