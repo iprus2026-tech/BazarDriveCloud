@@ -122,6 +122,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Route | `/feed` |
 | File | `public/src/screens/feed.js` |
 | Data | `listFeedPosts()` from `mock_api.js`; merges seed feed + local ride-order posts. |
+| Topbar subtitle | Derived from `user.city` + current date (`ru-RU`), with `Москва` fallback for empty city. |
 | Main states | All, trips, passenger requests, announcements, marketplace; loading skeleton (first load, `aria-busy`), zero-data (no posts at all) and filtered-empty (filter matched nothing) states. |
 | Actions | Category chips, topbar plus, global FAB; card body tap → Post Detail; per-card CTA: respond / chat / driver-accept / own-order. Search, post-menu (⋮) and like / comment / share are `data-noop` UI-only stubs. |
 | Transitions | Card body tap → `/post?id=...` (BD-POST-01). Card CTA exits: respond → `/respond?postId=...`; chat → `/chat?tripId=...`; driver accept → `/active-ride?role=driver&tripId=...` (canonical ride-order also appends `&status=ACCEPTED`); owned canonical ride-order «К моему заказу» → `/responses?orderId=...` (non-canonical owned post falls back to `/post?id=...`). Feed cards never link to `/order/<id>`. |
@@ -135,6 +136,7 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | File | `public/src/screens/composer.js` |
 | Storage | `bazardrive.draft.v2` |
 | Data | `createFeedPost()` creates local authored feed posts. |
+| Passenger intent note | `Попутчик` is a quick request path (no route map estimate); the screen shows a direct link to `/route-picker` for route-based order creation. |
 | Main states | Driver offer, passenger request, marketplace item, announcement, service, preview, validation error, draft saved, submit loading. |
 | Actions | Save draft, preview/edit, publish, back to feed, switch type, autosave. |
 | Photo affordance | `#c-photo-btn` ("Добавить фото") has no upload backend yet, so it ships an honest disabled "Скоро" state (`disabled` + `aria-disabled="true"`, muted, non-interactive, a «Скоро» pill) — **not** a clickable no-op. No silent no-op controls (CLAUDE.md), matching the #763 Rules «Скоро» precedent (#774). |
@@ -980,7 +982,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | File | `public/src/screens/map.js` |
 | Storage | `bazardrive.map_prefs.v1` as device preference if used. |
 | Map layer | `createMapShell()` only. No Mapbox SDK. |
-| Main states | Home map, location prompt, nearby orders preview, fallback copy. |
+| Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the count badge equals the rendered nearby-order list length. |
 | Actions | My location mock, choose route, orders nearby, route to driver map for driver role through `app.js`. |
 | Acceptance | Works without token, network, or geolocation permission. |
 
@@ -1002,6 +1004,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/route-picker` |
 | File | `public/src/screens/route_picker.js` |
 | Storage | `bazardrive.route_draft.v1` |
+| Route point shape | Draft points persist deterministic mock `coords` derived from address labels; the flow stays mock-only and does not call real geocoding/routing APIs. |
 | Main states | Pickup focus, dropoff focus, route ready, malformed draft fallback, clear state. |
 | Actions | Set pickup, set dropoff, swap, clear point, clear all, continue to `/route-preview`. |
 | Acceptance | Clear only touches route draft, not composer draft, feed, profile, orders or active ride. |
@@ -1024,6 +1027,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/order-map-draft` |
 | File | `public/src/screens/order_map_draft.js` |
 | Storage | Reads `bazardrive.route_draft.v1`; writes `bazardrive.order_form.v1` and `bazardrive.ride_orders.v1`. |
+| Publish payload | Published order points include `pickup.lat/lng` and `dropoff.lat/lng` from the route draft point coords. |
 | Main states | Valid route form, missing route, validation feedback, publishing, success. |
 | Actions | Publish order, edit route, set now/later, set price/comment, go to my order/feed. |
 | Acceptance | Publish CTA always gives visible feedback and never silently fails. |

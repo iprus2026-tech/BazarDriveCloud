@@ -1471,6 +1471,21 @@ body {
   line-height: 1.45;
   margin: 0;
 }
+.composer-passenger__note-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0;
+}
+.composer-passenger__note-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.composer-passenger__note-link:hover,
+.composer-passenger__note-link:focus-visible {
+  text-decoration: underline;
+}
 
 /* ── Validation error strip ──────────────────────────────── */
 .composer__error {

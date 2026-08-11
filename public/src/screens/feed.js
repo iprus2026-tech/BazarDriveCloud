@@ -20,6 +20,19 @@ const CATS = [
   { key: 'marketplace',  label: 'Маркет' },
 ];
 
+function feedLocationLabel(u) {
+  const city = typeof u?.city === 'string' ? u.city.trim() : '';
+  return city || 'Москва';
+}
+
+function feedDateLabel(now = new Date()) {
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(now);
+  } catch {
+    return 'сегодня';
+  }
+}
+
 // BD-ERROR-01C-B / BD-ERROR-02A — route a feed data-load failure through the
 // global app-shell overlay via the shared data_layer.loadResource adapter (the
 // per-screen wrapper was consolidated in 02A). Defensive wire: today
@@ -38,6 +51,7 @@ export default function feed() {
   const onFeedRetry = () => { refreshList(true); };
   let posts = [];
   let activeKey = 'all';
+  const subtitle = `${feedLocationLabel(user.get())} · ${feedDateLabel()}`;
 
   const root = document.createElement('section');
   root.className = 'screen screen--feed';
@@ -46,7 +60,7 @@ export default function feed() {
     <div class="bd-topbar">
       <div class="bd-topbar__titles">
         <h1 class="bd-topbar__title">Лента</h1>
-        <p class="bd-topbar__sub">Москва · сегодня</p>
+        <p class="bd-topbar__sub">${escapeHtml(subtitle)}</p>
       </div>
       <div class="feed-topbar-actions">
         <button class="bd-iconbtn" type="button" data-noop aria-label="Поиск">

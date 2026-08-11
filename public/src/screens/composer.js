@@ -4,6 +4,7 @@ import { createFeedPost, createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
 import { escapeHtml } from '../util.js';
 import { consumeRepeatRouteDraft } from '../repeat_route.js';
 import { isDriverMode, isPassengerMode } from '../ride_actions.js';
+import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
 
 const DRAFT_KEY = 'bazardrive.draft.v2';
 
@@ -244,17 +245,6 @@ function parseMoneyLike(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// BD-ACTIVE-07 — Mirror order_map_draft.js phone masking so a composer
-// passenger request carries the same phoneMasked shape that the
-// driver-side ActiveRide row already expects. Tiny duplicate kept local
-// on purpose: no shared util module touched in this PR.
-function maskedPhoneForSnapshot(phone) {
-  const digits = String(phone || '').replace(/\D+/g, '');
-  if (digits.length < 11) return '';
-  const last4 = digits.slice(-4);
-  return `+7 (${digits.slice(-10, -7)}) ··· ${last4.slice(0, 2)}-${last4.slice(2)}`;
-}
-
 // BD-ACTIVE-07 — Capture the order author's identity at publish time so
 // composer-created passenger requests hand the right passenger to the
 // driver-side accept path (instead of the generic "Пассажир" fallback).
@@ -273,7 +263,7 @@ function buildPassengerSnapshotFromUser(u, commentText) {
   return {
     name,
     initials,
-    phoneMasked: maskedPhoneForSnapshot(u.phone),
+    phoneMasked: maskPassengerPhone(u.phone, ''),
     comment: commentText,
     authorId: LOCAL_USER_ID,
     isCurrentUser: true,
@@ -286,8 +276,8 @@ function buildRideOrderFromComposerDraft(d, u) {
   return {
     type: 'passenger_request',
     source: 'feed',
-    pickup: { id: null, label: d.from },
-    dropoff: { id: null, label: d.to },
+    pickup: enrichOrderPointWithCoords({ id: null, label: d.from }, d.from),
+    dropoff: enrichOrderPointWithCoords({ id: null, label: d.to }, d.to),
     distanceKm: 0,
     durationMin: 0,
     estimatedPrice: parseMoneyLike(d.budget),
@@ -416,6 +406,19 @@ export default function composer() {
         </svg>
         <p class="composer-role__note-text" id="composer-role-note-text"></p>
         <button type="button" class="bd-btn ghost sm composer-role__note-btn" id="composer-role-switch">Создать как водитель</button>
+      </div>
+      <div class="bd-alert info composer-passenger__note" id="composer-passenger-note" role="status" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+             width="20" height="20" class="composer-passenger__note-icon">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M8 12h8"/>
+          <path d="M12 8v8"/>
+        </svg>
+        <p class="composer-passenger__note-text">
+          «Попутчик» — быстрый запрос без карты и расчёта маршрута. Для заказа с маршрутом откройте
+          <a href="#/route-picker" class="composer-passenger__note-link">Выбрать маршрут</a>.
+        </p>
       </div>
       <form id="composer-form" novalidate>
 
@@ -593,6 +596,7 @@ export default function composer() {
   const roleNote           = root.querySelector('#composer-role-note');
   const roleNoteText       = root.querySelector('#composer-role-note-text');
   const roleSwitchBtn      = root.querySelector('#composer-role-switch');
+  const passengerNote      = root.querySelector('#composer-passenger-note');
 
   // BD-ROLE-01 — Driver-mode guard. When a driver lands on the passenger
   // request chip (e.g. via the explicit "Перейти в режим пассажира" intent),
@@ -643,6 +647,7 @@ export default function composer() {
     priceField.hidden        = passenger;
     budgetField.hidden       = !passenger;
     listingPriceField.hidden = announce;
+    if (passengerNote) passengerNote.hidden = !passenger;
     updateRoleNote();
   }
 

@@ -10,6 +10,7 @@ import { createMapShell } from '../mapbox/map_shell.js';
 import { peekRepeatRouteDraft, clearRepeatRouteDraft } from '../repeat_route.js';
 import { peekFavoriteNotice, clearFavoriteNotice } from '../favorite_routes.js';
 import { findLatestHandedOffOrderTripId } from '../mock_api.js';
+import { deriveMockCoordsFromLabel, resolvePointCoords } from '../passenger_order_utils.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const ALLOWED_SOURCES = new Set(['current', 'search', 'manual']);
@@ -161,7 +162,7 @@ function makePoint(id, label, hint, source) {
     label,
     hint,
     source,
-    coords: null,
+    coords: deriveMockCoordsFromLabel(label),
   };
 }
 
@@ -213,7 +214,7 @@ function sanitizePoint(raw) {
   if (!id || !label) return null;
   const hint = typeof raw.hint === 'string' ? raw.hint : '';
   const source = ALLOWED_SOURCES.has(raw.source) ? raw.source : 'manual';
-  return { id, label, hint, source, coords: null };
+  return { id, label, hint, source, coords: resolvePointCoords(raw, label) };
 }
 
 function readPersistedDraft() {

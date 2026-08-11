@@ -9,6 +9,7 @@ import { go } from '../router.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { user } from '../state.js';
 import { createRideOrder, LOCAL_USER_ID } from '../mock_api.js';
+import { enrichOrderPointWithCoords, maskPassengerPhone } from '../passenger_order_utils.js';
 
 const ROUTE_DRAFT_KEY = 'bazardrive.route_draft.v1';
 const FORM_DRAFT_KEY = 'bazardrive.order_form.v1';
@@ -270,15 +271,6 @@ function formatDate(iso) {
   return `${d}.${m}.${y}`;
 }
 
-function maskedPhone(phone) {
-  const digits = String(phone || '').replace(/\D+/g, '');
-  if (digits.length < 11) return PHONE_FALLBACK;
-  const last4 = digits.slice(-4);
-  const a = last4.slice(0, 2);
-  const b = last4.slice(2);
-  return `+7 (${digits.slice(-10, -7)}) ··· ${a}-${b}`;
-}
-
 function validate(draft) {
   const errors = [];
   if (form.mode === 'later') {
@@ -478,6 +470,7 @@ function renderPriceRow(draft) {
         <span class="omd-price__label">ЦЕНА ПАССАЖИРА</span>
         <span class="omd-price__hint">ОЦЕНКА ОТ ${escapeHtml(String(estimate))} ₽</span>
       </div>
+      <p class="omd-price__note">Это финальная цена для водителя. При желании измените ориентир шагом 50 ₽.</p>
       <div class="omd-price__stepper">
         <button class="omd-price__btn" type="button" data-action="price-down"
                 aria-label="Уменьшить цену на 50 ₽">−50</button>
@@ -513,7 +506,7 @@ function renderCommentField() {
 
 function renderPhoneRow() {
   const u = user.get();
-  const phone = maskedPhone(u.phone);
+  const phone = maskPassengerPhone(u.phone, PHONE_FALLBACK);
   return `
     <div class="omd-phone">
       <div class="omd-phone__icon" aria-hidden="true">
@@ -830,7 +823,7 @@ function buildPassengerSnapshotFromUser(u, commentText) {
   return {
     name,
     initials,
-    phoneMasked: maskedPhone(u.phone),
+    phoneMasked: maskPassengerPhone(u.phone, PHONE_FALLBACK),
     comment: commentText,
     authorId: LOCAL_USER_ID,
     isCurrentUser: true,
@@ -842,8 +835,8 @@ async function publishOrder(draft) {
   const commentText = form.comment.trim();
   const order = await createRideOrder({
     type: 'passenger_request',
-    pickup: { id: draft.pickup.id ?? null, label: draft.pickup.label },
-    dropoff: { id: draft.dropoff.id ?? null, label: draft.dropoff.label },
+    pickup: enrichOrderPointWithCoords(draft.pickup),
+    dropoff: enrichOrderPointWithCoords(draft.dropoff),
     distanceKm: draft.distanceKm,
     durationMin: draft.durationMin,
     estimatedPrice: currentPrice(draft),
