@@ -141,22 +141,36 @@ expect('non-404 initial/recovery failure keeps usable local content non-destruct
     && initialRead.includes('schedulePassengerRideRecovery()')
     && initialRead.includes('renderLoadedRide(recovery)')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
-expect('retryable read failure preserves server-write intent while permanent auth blocks mutations',
+expect('retryable read failure preserves server-write intent while every permanent non-404 failure blocks mutations',
   initialRead.includes('const retryable = isPassengerRideRecoveryRetryable(err)')
+    && initialRead.includes('const permanentFailure = !retryable')
     && initialRead.includes('const authFailure = isPassengerRideAuthorizationFailure(err)')
-    && initialRead.includes('if (!retryable) backendWriteCandidate = false')
-    && initialRead.includes('if (authFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true)')
+    && initialRead.includes('if (permanentFailure) backendWriteCandidate = false')
+    && initialRead.includes('if (permanentFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true)')
     && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
     && initialRead.includes('backendWriteCandidate = true'));
 const mutationGate = functionBody(passenger, 'syncPassengerMutationGate');
-expect('401/403 blocks persisted mutation controls and an already-open cancel commit gate',
+expect('permanent non-404 failures block persisted mutation controls and an already-open cancel commit gate',
   passenger.includes('let backendMutationBlocked = false')
-    && mutationGate.includes("root.dataset.mutationState = 'auth-blocked'")
+    && mutationGate.includes("root.dataset.mutationState = 'server-blocked'")
     && mutationGate.includes("['#arp-cancel', '#arp-boarded']")
     && mutationGate.includes("['#arp-cancel-confirm', '#arp-cancel-confirm-yes']")
     && mutationGate.includes('button.disabled = true'));
-expect('successful/null/404 server settlement clears the auth mutation block',
+expect('successful/null/404 server settlement clears the permanent mutation block',
   initialRead.match(/setPassengerMutationBlocked\(false\)/g)?.length >= 3);
+const remount = functionBody(passenger, 'maybeReMount');
+const deferredFlush = functionBody(passenger, 'flushDeferredPassengerStatus');
+expect('forward server status stays pending outside ride until an open overlay closes',
+  passenger.includes('let deferredPassengerServerStatus = null')
+    && remount.includes('deferredPassengerServerStatus = srvStatus')
+    && remount.includes('PASSENGER_REMOUNT_RESULT.DEFERRED')
+    && deferredFlush.includes('const pendingStatus = deferredPassengerServerStatus')
+    && deferredFlush.includes('maybeReMount(pendingStatus)')
+    && passenger.includes('flushDeferredPassengerStatus();'));
+expect('deferred recovery returns before merging server status into the current ride',
+  initialRead.includes('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED')
+    && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.indexOf('ride = mergeServerRide(srv)')
+    && initialRead.includes('startPassengerRidePoll()'));
 expect('background recovery settlement preserves the already-loaded controls and focus',
   initialRead.includes('renderLoadedRide(recovery)')
     && !loadedRenderer.includes('innerHTML')
@@ -198,6 +212,10 @@ expect('poll cadence remains exactly 2.5 seconds',
 expect('poll has a no-overlap busy guard',
   poll.includes('if (passengerPollBusy) return')
     && poll.includes('passengerPollBusy = true'));
+expect('poll only stops for a navigated forward status and keeps deferred overlays recoverable',
+  poll.includes('const remountResult = maybeReMount(res.status)')
+    && poll.includes('remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED')
+    && poll.includes('stopPassengerRidePoll()'));
 expect('poll owns a cancellable AbortController',
   poll.includes('new AbortController()')
     && poll.includes('{ signal: controller.signal }'));
@@ -245,8 +263,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v272',
-  /const VERSION\s*=\s*'v272'/.test(sw));
+expect('service worker moves monotonically to v273',
+  /const VERSION\s*=\s*'v273'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

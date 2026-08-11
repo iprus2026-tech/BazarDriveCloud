@@ -2091,14 +2091,14 @@ export default function activeRidePassenger(options = {}) {
   let backendWriteCandidate = backendRead && hasPersistedLocalRide;
   let backendMutationBlocked = false;
 
-  // 02D review5: a permanent authorization failure must not turn a known
+  // 02D review6: a permanent non-404 read failure must not turn a known
   // server-backed ride into a local-only writer. Keep the saved ride visible,
   // but block status-mutating controls until a participant-gated GET succeeds
   // again. This gate is in-memory UI/read state only; no lifecycle status or
   // backend contract is persisted or renamed.
   function syncPassengerMutationGate() {
     const blocked = backendMutationBlocked && hasPersistedLocalRide;
-    if (blocked) root.dataset.mutationState = 'auth-blocked';
+    if (blocked) root.dataset.mutationState = 'server-blocked';
     else delete root.dataset.mutationState;
 
     for (const selector of ['#arp-cancel', '#arp-boarded']) {
@@ -2108,7 +2108,7 @@ export default function activeRidePassenger(options = {}) {
       button.setAttribute('aria-disabled', blocked ? 'true' : 'false');
     }
 
-    // A cancel overlay may already be open when a late 401/403 settles.
+    // A cancel overlay may already be open when a late permanent read failure settles.
     // Disable its commit gates as well so it cannot race the underlying sheet.
     if (blocked) {
       for (const selector of ['#arp-cancel-confirm', '#arp-cancel-confirm-yes']) {
@@ -2158,6 +2158,7 @@ export default function activeRidePassenger(options = {}) {
   let fixtureRetryId = null;
   let readEpoch = 0;
   let destroyed = false;
+  let deferredPassengerServerStatus = null;
   const readManager = createPassengerRideReadManager(
     getRideFromBackend,
     PASSENGER_RIDE_READ_TIMEOUT_MS,
@@ -2179,13 +2180,34 @@ export default function activeRidePassenger(options = {}) {
     [RIDE_STATUS.NO_SHOW]: 6,
   };
   const serverIsForward = (srvStatus) => (STATUS_RANK[srvStatus] ?? 0) > (STATUS_RANK[ride.status] ?? 0);
-  // B3 — never yank away an OPEN safety/cancel overlay: defer the re-mount until it closes.
+  // B3 — never yank away an OPEN safety/cancel overlay. A forward server status
+  // stays pending OUTSIDE ride.status until the overlay closes, otherwise merging
+  // it would make later polls think the transition was already rendered.
   const aSheetIsOpen = () => !!root.querySelector('.passenger-safety-overlay, .passenger-cancel-overlay');
-  // Re-mount on a forward, non-deferred change; returns true when it navigated.
+  const PASSENGER_REMOUNT_RESULT = Object.freeze({
+    NONE: 'none',
+    DEFERRED: 'deferred',
+    NAVIGATED: 'navigated',
+  });
   function maybeReMount(srvStatus) {
-    if (!srvStatus || !serverIsForward(srvStatus) || aSheetIsOpen()) return false;
+    if (!srvStatus || !serverIsForward(srvStatus)) return PASSENGER_REMOUNT_RESULT.NONE;
+    if (aSheetIsOpen()) {
+      deferredPassengerServerStatus = srvStatus;
+      return PASSENGER_REMOUNT_RESULT.DEFERRED;
+    }
+    deferredPassengerServerStatus = null;
     go(`/active-ride?role=passenger&status=${encodeURIComponent(srvStatus)}&tripId=${encodeURIComponent(ride.tripId)}`);
-    return true;
+    return PASSENGER_REMOUNT_RESULT.NAVIGATED;
+  }
+
+  function flushDeferredPassengerStatus() {
+    if (!deferredPassengerServerStatus || destroyed || aSheetIsOpen()) return false;
+    const pendingStatus = deferredPassengerServerStatus;
+    if (!serverIsForward(pendingStatus)) {
+      deferredPassengerServerStatus = null;
+      return false;
+    }
+    return maybeReMount(pendingStatus) === PASSENGER_REMOUNT_RESULT.NAVIGATED;
   }
 
   function setReadState(nextState) {
@@ -2323,8 +2345,11 @@ export default function activeRidePassenger(options = {}) {
       }
       if (destroyed || controller.signal.aborted || !res) return;
       if (res.cursor) passengerCursor = res.cursor;
-      if (res.status && res.status !== ride.status && maybeReMount(res.status)) {
-        stopPassengerRidePoll();
+      if (res.status && res.status !== ride.status) {
+        const remountResult = maybeReMount(res.status);
+        if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) {
+          stopPassengerRidePoll();
+        }
       }
     }, PASSENGER_RIDE_POLL_MS);
   }
@@ -2354,7 +2379,14 @@ export default function activeRidePassenger(options = {}) {
       setPassengerMutationBlocked(false);
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
-      if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
+      if (srv.status && srv.status !== ride.status) {
+        const remountResult = maybeReMount(srv.status);
+        if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
+        if (remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED) {
+          startPassengerRidePoll();
+          return;
+        }
+      }
       ride = mergeServerRide(srv);
       renderLoadedRide(recovery);
       startPassengerRidePoll();
@@ -2374,16 +2406,18 @@ export default function activeRidePassenger(options = {}) {
         return;
       }
       const retryable = isPassengerRideRecoveryRetryable(err);
+      const permanentFailure = !retryable;
       const authFailure = isPassengerRideAuthorizationFailure(err);
       backendRide = false;
-      if (!retryable) backendWriteCandidate = false;
-      if (authFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true);
-      else if (!retryable) setPassengerMutationBlocked(false);
+      if (permanentFailure) backendWriteCandidate = false;
+      if (permanentFailure && hasPersistedLocalRide) setPassengerMutationBlocked(true);
       if (hasUsableLocalRide) {
         root.dataset.refreshState = 'error';
         renderLoadedRide(recovery);
-        if (!recovery) toast(authFailure && hasPersistedLocalRide
-          ? 'Не удалось подтвердить авторизацию. Изменение статуса временно недоступно.'
+        if (!recovery) toast(permanentFailure && hasPersistedLocalRide
+          ? (authFailure
+            ? 'Не удалось подтвердить авторизацию. Изменение статуса временно недоступно.'
+            : 'Не удалось подтвердить данные поездки. Изменение статуса временно недоступно.')
           : 'Не удалось обновить поездку. Показаны сохранённые данные.');
         if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery();
         else stopPassengerRideRecovery();
@@ -2425,6 +2459,7 @@ export default function activeRidePassenger(options = {}) {
   const teardownObserver = new MutationObserver(() => {
     if (document.body.contains(root)) {
       rootWasConnected = true;
+      flushDeferredPassengerStatus();
     } else if (rootWasConnected) {
       teardownPassengerReads();
       teardownObserver.disconnect();
