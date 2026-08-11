@@ -1707,7 +1707,9 @@ export default function activeRidePassenger(options = {}) {
     ? options.showNotice
     : null;
   const fixture = getPassengerRideFixture();
-  const hasUsableLocalRide = !fixture && hasUsablePassengerRideSource(tripId);
+  const hasPersistedLocalRide = !fixture && hasUsablePassengerRideSource(tripId);
+  const isBuiltInDemoRide = !fixture && tripId === DEMO_ACTIVE_RIDE_ID;
+  const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide;
 
   // Fixture isolation happens before every persisted ride / response / handoff
   // read. createDemoActiveRide is a pure in-memory constructor.
@@ -1969,8 +1971,8 @@ export default function activeRidePassenger(options = {}) {
           // #784 CUT-5 (B2) — mirror the passenger cancel to the server so the driver (polling) sees
           // it cross-device (the PATCH is participant-gated). Fire-and-forget: the local terminal stub
           // is the user-facing truth; a server-sync failure leaves the local cancel standing (the
-          // driver-side poll reconciles). OFF / local-only ride: backendRide is false, no PATCH.
-          if (backendRide && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
+          // driver-side poll reconciles). OFF / authoritative local-only ride: no server write candidate.
+          if (backendWriteCandidate && canceledRide && canceledRide.status === RIDE_STATUS.CANCELED) {
             patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED).catch(() => {});
           }
           // Hand the canceled-state copy back to the sheet. The
@@ -2006,7 +2008,7 @@ export default function activeRidePassenger(options = {}) {
           // then advance locally + navigate. A failed PATCH (network/auth, or the driver already
           // terminalized) must NOT strand the passenger locally IN_PROGRESS while the server stays
           // WAITING (serverIsForward never rolls a backward move back) — stay put + surface it instead.
-          if (backendRide) {
+          if (backendWriteCandidate) {
             try { await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS); }
             catch (err) {
               localToast(err && err.code === 'RIDE_TERMINAL'
@@ -2069,9 +2071,16 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
-  // #784 CUT-5 (B2) — set only after the initial participant-gated GET has
-  // positively identified a server ride. Passenger status writers stay unchanged.
+  // 02D retryable-read/write contract (review4):
+  // - existing stores and Ride State Machine statuses are unchanged; no recovery flag is persisted;
+  // - GET + realtime poll remain readers, PATCH remains the server status writer;
+  // - backendRide means a participant-gated GET positively identified the ride and gates polling only;
+  // - backendWriteCandidate is in-memory write intent. A persisted local/handoff ride under backend ON
+  //   remains a candidate across retryable read failures, so cancel/boarded still attempt the existing PATCH;
+  // - authoritative missing/permanent read outcomes clear write intent; the built-in demo is renderable
+  //   fallback only and is never a write candidate unless a GET actually identifies it on the server.
   let backendRide = false;
+  let backendWriteCandidate = backendRead && hasPersistedLocalRide;
 
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
@@ -2211,7 +2220,7 @@ export default function activeRidePassenger(options = {}) {
   }
 
   function schedulePassengerRideRecovery() {
-    if (passengerRecoveryId || fixture || destroyed || !hasUsableLocalRide) return;
+    if (passengerRecoveryId || fixture || destroyed || !hasPersistedLocalRide) return;
     passengerRecoveryId = setTimeout(() => {
       passengerRecoveryId = null;
       if (destroyed) return;
@@ -2273,12 +2282,14 @@ export default function activeRidePassenger(options = {}) {
       if (destroyed || epoch !== readEpoch) return;
       if (!srv) {
         backendRide = false;
+        backendWriteCandidate = false;
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         return;
       }
       backendRide = true;
+      backendWriteCandidate = true;
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
       if (srv.status && srv.status !== ride.status && maybeReMount(srv.status)) return;
@@ -2292,6 +2303,7 @@ export default function activeRidePassenger(options = {}) {
       // with no usable local source is genuinely empty rather than a demo ride.
       if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) {
         backendRide = false;
+        backendWriteCandidate = false;
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
         setReadState(hasUsableLocalRide
@@ -2299,12 +2311,14 @@ export default function activeRidePassenger(options = {}) {
           : PASSENGER_RIDE_READ_STATE.EMPTY);
         return;
       }
+      const retryable = isPassengerRideRecoveryRetryable(err);
       backendRide = false;
+      if (!retryable) backendWriteCandidate = false;
       if (hasUsableLocalRide) {
         root.dataset.refreshState = 'error';
         setReadState(PASSENGER_RIDE_READ_STATE.LOADED);
         if (!recovery) toast('Не удалось обновить поездку. Показаны сохранённые данные.');
-        if (isPassengerRideRecoveryRetryable(err)) schedulePassengerRideRecovery();
+        if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery();
         else stopPassengerRideRecovery();
         return;
       }

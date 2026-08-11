@@ -60,9 +60,14 @@ for (const forbidden of [
 expect('backend read is explicitly gated out of fixture mode',
   /const\s+backendRead\s*=\s*!fixture\s*&&\s*isBackendEnabled\(\)/.test(passenger));
 const usableSource = functionBody(passenger, 'hasUsablePassengerRideSource');
-expect('usable local fallback recognizes canonical and handoff sources',
+expect('persisted local fallback recognizes canonical and handoff sources',
   usableSource.includes('loadCanonicalActiveRide')
     && usableSource.includes('loadDriverHandoffSnapshot'));
+expect('built-in demo is renderable fallback but not an initial server-write candidate',
+  passenger.includes('const hasPersistedLocalRide = !fixture && hasUsablePassengerRideSource(tripId)')
+    && passenger.includes('const isBuiltInDemoRide = !fixture && tripId === DEMO_ACTIVE_RIDE_ID')
+    && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
+    && passenger.includes('let backendWriteCandidate = backendRead && hasPersistedLocalRide'));
 expect('fixture is exposed only as a render marker',
   /if\s*\(fixture\)\s*root\.dataset\.fixture\s*=\s*fixture/.test(passenger));
 expect('aria-busy is scoped to replaceable ride-data panels',
@@ -114,10 +119,12 @@ expect('error fixture retry cycles through loading and back to error without bac
     && retry.includes('PASSENGER_RIDE_FIXTURE_RETRY_MS'));
 
 const initialRead = functionBody(passenger, 'runInitialRead');
-expect('404/RIDE_NOT_FOUND preserves local rides but renders empty without one',
+expect('404/RIDE_NOT_FOUND preserves persisted or built-in demo fallback but unknown IDs render empty',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
+    && initialRead.includes('backendWriteCandidate = false')
     && initialRead.includes('setReadState(hasUsableLocalRide')
+    && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
 expect('usable local ride stays loaded while the backend refresh is pending',
@@ -131,6 +138,18 @@ expect('non-404 initial failure keeps usable local content non-destructively',
     && initialRead.includes('schedulePassengerRideRecovery()')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.LOADED')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.ERROR'));
+expect('retryable read failure preserves persisted server-write intent while permanent outcomes clear it',
+  initialRead.includes('const retryable = isPassengerRideRecoveryRetryable(err)')
+    && initialRead.includes('if (!retryable) backendWriteCandidate = false')
+    && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
+    && initialRead.includes('backendWriteCandidate = true'));
+const cancelBinder = functionBody(passenger, 'bindCancelAffordance');
+const sheetRenderer = functionBody(passenger, 'renderSheet');
+expect('cancel and boarded PATCH writers use server-write intent instead of read-confirmed polling state',
+  cancelBinder.includes('if (backendWriteCandidate && canceledRide')
+    && cancelBinder.includes('patchRideStatus(ride.tripId, RIDE_STATUS.CANCELED)')
+    && sheetRenderer.includes('if (backendWriteCandidate)')
+    && sheetRenderer.includes('patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)'));
 const retryability = functionBody(passenger, 'isPassengerRideRecoveryRetryable');
 expect('automatic recovery excludes permanent authorization failures',
   retryability.includes('status === 401 || status === 403')
@@ -138,12 +157,18 @@ expect('automatic recovery excludes permanent authorization failures',
     && retryability.includes("err.name === 'TimeoutError'")
     && retryability.includes('status === 408 || status === 429 || status >= 500'));
 const recovery = functionBody(passenger, 'schedulePassengerRideRecovery');
-expect('local fallback recovery retries the participant-gated GET without overlapping poll semantics',
-  recovery.includes('setTimeout')
+expect('local fallback recovery retries only persisted participant-gated rides without overlapping poll semantics',
+  recovery.includes('!hasPersistedLocalRide')
+    && recovery.includes('setTimeout')
     && recovery.includes('runInitialRead(true)')
     && recovery.includes('PASSENGER_RIDE_POLL_MS'));
 expect('poll starts only after a successful server ride is identified',
   initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
+expect('read-confirmed backendRide remains poll-only and distinct from writer intent',
+  passenger.includes('let backendRide = false;')
+    && passenger.includes('let backendWriteCandidate = backendRead && hasPersistedLocalRide')
+    && !cancelBinder.includes('if (backendRide')
+    && !sheetRenderer.includes('if (backendRide)'));
 
 const poll = functionBody(passenger, 'startPassengerRidePoll');
 expect('poll cadence remains exactly 2.5 seconds',
@@ -199,8 +224,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v270',
-  /const VERSION\s*=\s*'v270'/.test(sw));
+expect('service worker moves monotonically to v271',
+  /const VERSION\s*=\s*'v271'/.test(sw));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);
