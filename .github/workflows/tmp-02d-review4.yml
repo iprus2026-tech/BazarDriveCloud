@@ -1,0 +1,57 @@
+name: TMP 02D Review4 Gate
+
+on:
+  push:
+    branches:
+      - tmp/02d-review4-contract-repair
+
+permissions:
+  contents: write
+
+jobs:
+  repair-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: tmp/02d-review4-contract-repair
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Apply contract repair and run full gate
+        env:
+          ORIGINAL_HEAD: 286172e934d7b425ddbf6a9245d804b851da323a
+          PR_BASE_SHA: e49de3ac8ef63e45d7b60d67fbcb6dbcb4bd2212
+        run: |
+          set -euo pipefail
+          node scripts/tmp-repair-02d-review4.mjs
+          rm -f scripts/tmp-repair-02d-review4.mjs .github/workflows/tmp-02d-review4.yml
+
+          git diff --check
+          node scripts/smoke-passenger-active-ride-loading-states.mjs
+          node scripts/check.mjs
+          node scripts/check-precache-drift.mjs
+          node scripts/dispatcher.mjs
+
+          git add -A
+          changed="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' \
+            public/src/screens/active_ride_passenger.js \
+            public/sw.js \
+            scripts/smoke-passenger-active-ride-loading-states.mjs | sort)"
+          if [ "$changed" != "$expected" ]; then
+            echo 'Unexpected final tree paths:'
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+
+          tree_sha="$(git write-tree)"
+          export GIT_AUTHOR_NAME='github-actions[bot]'
+          export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          export GIT_COMMITTER_NAME='github-actions[bot]'
+          export GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          final_sha="$(printf '%s\n' 'fix(active-ride): preserve retryable server write intent' | git commit-tree "$tree_sha" -p "$ORIGINAL_HEAD")"
+          echo "FINAL_TREE_SHA=$tree_sha"
+          echo "FINAL_REPAIR_SHA=$final_sha"
+          git push --force origin "$final_sha:refs/heads/tmp/02d-review4-result"
