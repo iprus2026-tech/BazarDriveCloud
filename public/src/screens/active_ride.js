@@ -757,12 +757,13 @@ export default function activeRide() {
         <div class="active-ride-passenger__read-sheet-skeleton" aria-hidden="true">
           <span class="active-ride-passenger__read-line active-ride-passenger__read-line--title active-ride-passenger__read-bone"></span>
           <span class="active-ride-passenger__read-line active-ride-passenger__read-line--sub active-ride-passenger__read-bone"></span>
-          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--wide active-ride-passenger__read-bone"></span>
-          <div class="active-ride-passenger__read-driver">
-            <span class="active-ride-passenger__read-avatar active-ride-passenger__read-bone"></span>
-            <span class="active-ride-passenger__read-line active-ride-passenger__read-line--driver active-ride-passenger__read-bone"></span>
-          </div>
+          <span class="active-ride-passenger__read-block active-ride-passenger__read-bone"></span>
+          <span class="active-ride-passenger__read-block active-ride-passenger__read-block--short active-ride-passenger__read-bone"></span>
           <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+          <div class="active-ride-passenger__read-actions">
+            <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+            <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+          </div>
         </div>
         <div class="active-ride-passenger__read-status" role="status" aria-live="polite">Загружаем данные поездки…</div>
       </div>`;
