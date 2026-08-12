@@ -5,6 +5,9 @@
 // refactor could drop the ring, the expired variant, or unwire its actions.
 // STATIC source assertions only — no browser, no DOM.
 
+// 02E piggy-backs on this already-registered Driver Active Ride smoke entry
+// so the focused read-state smoke runs in check.mjs without moving Passenger 02D.
+import './smoke-driver-active-ride-loading-states.mjs';
 import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
@@ -70,8 +73,10 @@ expect('cloud.css defines the paid-wait alert', /\.ns-alert\s*\{/.test(css) && /
 expect('screen has start/clear wait-timer helpers',
   /function\s+startWaitTimer\s*\(/.test(screen) && /function\s+clearWaitTimer\s*\(/.test(screen));
 expect('renderWaiting starts the live timer', /startWaitTimer\(\);/.test(waiting));
+// 02E adds focus-preservation bookkeeping at the top of renderSheet before
+// dispatch cleanup; keep the invariant pinned without coupling to 60 chars.
 expect('renderSheet clears the timer on every dispatch',
-  /function\s+renderSheet[\s\S]{0,60}clearWaitTimer\(\)/.test(screen));
+  /function\s+renderSheet[\s\S]{0,180}clearWaitTimer\(\)/.test(screen));
 const timerBody = functionBody(screen, 'startWaitTimer');
 expect('timer ticks via setInterval and auto-transitions to the paid view at 0:00',
   /setInterval\(/.test(timerBody) && /waitFreeSec\s*<=\s*0[\s\S]{0,140}renderWaitingExpired\(\)/.test(timerBody));
