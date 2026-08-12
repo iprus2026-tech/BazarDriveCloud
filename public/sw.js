@@ -50,7 +50,10 @@
 // changed (deferred terminal cancel gate and monotonic locally-ahead recovery status merge).
 // v277 (BD-CLOUD-DESIGN-LOADING-02D tenth review repair #873): precached active_ride_passenger.js +
 // active_ride_passenger_sheets.js changed (terminal cancel reconciliation + HTTP transient recovery classification).
-const VERSION    = 'v277';
+// v278 (passenger-flow repair for #874): precached passenger-flow assets changed:
+// composer.js, feed.js, map.js, route_picker.js, order_map_draft.js, cloud.css,
+// order_map_draft.css and new helper passenger_order_utils.js.
+const VERSION    = 'v278';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -76,6 +79,7 @@ const PRECACHE = [
   './src/util.js',
   './src/overlay.js',
   './src/storage_boundary.js',
+  './src/passenger_order_utils.js',
   './src/mock_auth.js',
   './src/api_config.js',
   './src/api_client.js',

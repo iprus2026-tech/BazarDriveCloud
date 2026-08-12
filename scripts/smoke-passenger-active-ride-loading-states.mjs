@@ -335,8 +335,8 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('service worker moves monotonically to v277',
-  /const VERSION\s*=\s*'v277'/.test(sw));
+expect('service worker moves monotonically to v277+',
+  Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 277);
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);

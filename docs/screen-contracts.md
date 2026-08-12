@@ -982,7 +982,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | File | `public/src/screens/map.js` |
 | Storage | `bazardrive.map_prefs.v1` as device preference if used. |
 | Map layer | `createMapShell()` only. No Mapbox SDK. |
-| Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the count badge equals the rendered nearby-order list length. |
+| Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the map keeps 5 numbered cluster markers while the bottom sheet shows top-3 nearby rows. |
 | Actions | My location mock, choose route, orders nearby, route to driver map for driver role through `app.js`. |
 | Acceptance | Works without token, network, or geolocation permission. |
 

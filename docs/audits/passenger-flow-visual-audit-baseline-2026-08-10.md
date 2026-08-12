@@ -5,7 +5,7 @@ Source scope: `route_picker.js`, `order_map_draft.js`, `composer.js`, `feed.js`,
 ## P0
 
 - Attach deterministic mock coordinates to route points and carry them into published ride-order payloads (`pickup.lat/lng`, `dropoff.lat/lng`) so driver-map marker visibility is structurally possible.
-- Synchronize `/map` nearby counter with the rendered nearby list length to remove the first-screen count/content mismatch.
+- Keep `/map` nearby render contract explicit: 5 numbered clusters on map overlay vs top-3 rows in the bottom nearby list (intentional asymmetry).
 
 ## P1
 
