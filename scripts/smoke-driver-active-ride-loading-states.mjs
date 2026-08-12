@@ -62,13 +62,19 @@ expect('loading skeleton is decorative and has one polite announcement outside i
 for (const forbidden of ['Анна П.', 'Тверская', '1 240 ₽', 'ar-start', 'ar-finish', 'ar-cancel', 'ar-no-show']) {
   expect(`loading view contains no pseudo-data/action ${forbidden}`, !loadingView.includes(forbidden));
 }
-expect('loading/error/empty hide route-specific map data without rebuilding the map shell',
+expect('loading hides route-specific map data without rebuilding the map shell',
   activeRide.includes('function setDriverMapReadVisibility')
     && loadingView.includes('setDriverMapReadVisibility(false)')
     && activeRide.includes('const mapShell = createMapShell')
-    && activeRide.match(/createMapShell\(/g)?.length === 1);
+    && !loadingView.includes('createMapShell('));
 
 const errorView = between(activeRide, 'function renderDriverReadError', 'function setDriverReadState');
+const emptyView = between(activeRide, 'function renderDriverReadEmpty', 'function renderDriverReadError');
+expect('empty/error also preserve the existing map shell instance',
+  emptyView.includes('setDriverMapReadVisibility(false)')
+    && errorView.includes('setDriverMapReadVisibility(false)')
+    && !emptyView.includes('createMapShell(')
+    && !errorView.includes('createMapShell('));
 expect('error has accessible heading and unambiguous neutral retry',
   errorView.includes('id="ar-driver-read-error-title"')
     && errorView.includes('class="bd-btn ghost" id="ar-driver-read-retry"')

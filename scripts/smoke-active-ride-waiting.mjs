@@ -70,8 +70,10 @@ expect('cloud.css defines the paid-wait alert', /\.ns-alert\s*\{/.test(css) && /
 expect('screen has start/clear wait-timer helpers',
   /function\s+startWaitTimer\s*\(/.test(screen) && /function\s+clearWaitTimer\s*\(/.test(screen));
 expect('renderWaiting starts the live timer', /startWaitTimer\(\);/.test(waiting));
+// 02E adds focus-preservation bookkeeping at the top of renderSheet before
+// dispatch cleanup; keep the invariant pinned without coupling to 60 chars.
 expect('renderSheet clears the timer on every dispatch',
-  /function\s+renderSheet[\s\S]{0,60}clearWaitTimer\(\)/.test(screen));
+  /function\s+renderSheet[\s\S]{0,180}clearWaitTimer\(\)/.test(screen));
 const timerBody = functionBody(screen, 'startWaitTimer');
 expect('timer ticks via setInterval and auto-transitions to the paid view at 0:00',
   /setInterval\(/.test(timerBody) && /waitFreeSec\s*<=\s*0[\s\S]{0,140}renderWaitingExpired\(\)/.test(timerBody));
