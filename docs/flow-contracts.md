@@ -85,10 +85,10 @@ Unknown routes still fall back through the router to `/feed`.
 | 1 | `/welcome` | Start or guest entry | `bazardrive.user.v1` unlocks app shell. |
 | 2 | `/onboarding` | Pick passenger, fill profile/phone mock | `user.role = 'passenger'`, `user.onboarded = true`. |
 | 3 | `/feed` | Browse trips/posts | Feed uses seed posts plus local authored posts and local ride-order posts. |
-| 4 | `/new` | Create passenger request | Draft stored in `bazardrive.draft.v2`; publish calls `createFeedPost()`. |
-| 5 | `/route-picker` | Choose pickup/dropoff | Writes `bazardrive.route_draft.v1`. |
+| 4 | `/new` | Create passenger request | Quick text request path (no route map estimate). Draft stored in `bazardrive.draft.v2`; passenger publish writes canonical ride-order via `createRideOrder()`. |
+| 5 | `/route-picker` | Choose pickup/dropoff | Writes `bazardrive.route_draft.v1` with deterministic mock point coords (`coords.lat/lng`) for downstream map visibility. |
 | 6 | `/route-preview` | Review route | Shows distance, duration and estimated price from local mock data. |
-| 7 | `/order-map-draft` | Publish order | Writes `bazardrive.order_form.v1` and `bazardrive.ride_orders.v1`. |
+| 7 | `/order-map-draft` | Publish order | Writes `bazardrive.order_form.v1` and `bazardrive.ride_orders.v1`; route estimate is editable as passenger final price before publish. |
 | 8 | `/feed` or `/driver-map` | Driver sees order | Local ride order appears as a mock passenger order. |
 | 9 | `/responses` or `/chat` | Review response / talk to driver | Response/chat stores keep the handoff. |
 | 10 | `/trip-confirmation` | Confirm trip mock | Writes confirmation state and can hand off to active ride. |

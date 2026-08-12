@@ -311,6 +311,9 @@ function buildDeniedCard() {
 
 function buildNearbyOrdersCard() {
   const card = makeCardRoot(MAP_STATE.NEARBY);
+  // Intentional render-gate asymmetry: map overlay shows 5 numbered clusters,
+  // while the bottom sheet lists top-3 nearby rows.
+  const nearbyCount = 5;
   const rows = NEARBY_ORDERS.map((o, i) => `
     <li class="map-home__order">
       <div class="map-home__order-num" aria-hidden="true">${i + 1}</div>
@@ -322,12 +325,9 @@ function buildNearbyOrdersCard() {
       <div class="map-home__order-price">${escapeHtml(o.price)}</div>
     </li>
   `).join('');
-  // The verified render gate keeps a 5-vs-3 asymmetry on purpose:
-  // 5 numbered clusters on the map, only the top 3 fit in the bottom
-  // card. The counter therefore must read «5», not the visible row count.
   card.insertAdjacentHTML('beforeend', `
     <div class="map-home__count">
-      <span class="map-home__count-num">5</span>
+      <span class="map-home__count-num">${nearbyCount}</span>
       <span class="map-home__count-label">заказов рядом</span>
     </div>
     <ul class="map-home__order-list" aria-label="Заказы рядом">${rows}</ul>
