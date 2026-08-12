@@ -53,7 +53,9 @@
 // v278 (passenger-flow repair for #874): precached passenger-flow assets changed:
 // composer.js, feed.js, map.js, route_picker.js, order_map_draft.js, cloud.css,
 // order_map_draft.css and new helper passenger_order_utils.js.
-const VERSION    = 'v278';
+// v279 (BD-CLOUD-DESIGN-LOADING-02E #876): precached active_ride.js changed
+// (Driver Active Ride honest initial read states, fixtures and bounded realtime refresh).
+const VERSION    = 'v279';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

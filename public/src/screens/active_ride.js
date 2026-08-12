@@ -60,7 +60,7 @@ import { openDriverNoShowFlow } from './active_ride_driver_noshow.js';
 // (#ar-call) icon buttons, the nav-card icon, and the order-card bullet. Glyph-only swap — ids,
 // aria-labels, handlers and the BD-RIDE-P-07 safety wiring are untouched.
 const AR_ICONS = {
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   chat: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/>',
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7 12.8 12.8 0 0 0 .7 2.8 2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4 12.8 12.8 0 0 0 2.8.7 2 2 0 0 1 1.7 2z"/>',
@@ -69,7 +69,6 @@ const AR_ICONS = {
 function arIcon(name, size = 20) {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AR_ICONS[name] || ''}</svg>`;
 }
-// The order-card bullet is a filled accent dot (not a stroke icon).
 function arDot() {
   return '<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="currentColor"></circle></svg>';
 }
@@ -89,10 +88,122 @@ const DRIVER_SIMULATION_STATUSES = new Set([
   RIDE_STATUS.NO_SHOW,
 ]);
 
-// BD-RIDE-D-SHEETS-01 — Driver cancel reasons / problem types and the
-// cancel + problem sheet UI now live in active_ride_driver_sheets.js (the
-// driver counterpart of active_ride_passenger_sheets.js). This screen only
-// imports the openers + the reason-label lookup used by the canceled stub.
+// BD-CLOUD-DESIGN-LOADING-02E (#876) — request state is a driver ride-read
+// concern only. It must never become a Ride State Machine status or reuse the
+// existing Driver Earnings `state=loading` vocabulary.
+const DRIVER_RIDE_READ_STATE = Object.freeze({
+  LOADING: 'loading',
+  LOADED: 'loaded',
+  EMPTY: 'empty',
+  ERROR: 'error',
+});
+const DRIVER_RIDE_FIXTURES = new Set(Object.values(DRIVER_RIDE_READ_STATE));
+const DRIVER_RIDE_READ_TIMEOUT_MS = 12_000;
+const DRIVER_RIDE_POLL_MS = 2_500;
+const DRIVER_RIDE_POLL_TIMEOUT_MS = 12_000;
+const DRIVER_RIDE_FIXTURE_RETRY_MS = 400;
+
+function createDriverFixtureRide(tripId) {
+  return createDemoActiveRide({
+    tripId: tripId || DEMO_ACTIVE_RIDE_ID,
+    role: 'driver',
+    status: RIDE_STATUS.DRIVER_EN_ROUTE,
+    passenger: {
+      name: 'Анна П.',
+      initials: 'АП',
+      rating: '4,91',
+      phoneMasked: '+7 ... 12-34',
+      luggage: '1 чемодан',
+    },
+    driver: {
+      name: 'Илья С.',
+      initials: 'ИС',
+      rating: '4,95',
+      onlineLabel: 'На линии',
+      shiftDuration: '4ч 20м',
+    },
+    order: {
+      offerPrice: '1 240 ₽',
+      rate: '12 ₽ / км',
+      commission: '8%',
+      pickupEta: '4 мин',
+      pickupDistance: '1,3 км',
+      destinationEta: '31 мин',
+      destinationDistance: '24 км',
+      destinationNote: 'до главного входа',
+      tags: ['★ 4,95', '1 чемодан'],
+    },
+    route: {
+      pickupLabel: 'Москва, Тверская улица, 12',
+      dropoffLabel: 'Москва, Ленинградский вокзал',
+      currentInstruction: 'Прямо 300 м',
+      currentStreet: 'Тверская улица',
+      distanceToPickup: '1,3 км',
+      etaToPickup: '4 мин',
+      etaToDestination: '31 мин',
+      pickup: { lng: 37.6048, lat: 55.7638 },
+      dropoff: { lng: 37.6552, lat: 55.7766 },
+    },
+    ride: { price: '1 240 ₽', todayEarnings: '4 720 ₽', tripsToday: 7, rating: '4,92' },
+    timestamps: {
+      createdAt: '2026-08-12T00:00:00.000Z',
+      acceptedAt: '2026-08-12T00:01:00.000Z',
+    },
+  });
+}
+
+function isExpectedDriverLocalRideMiss(err) {
+  return Boolean(err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND'));
+}
+
+function createDriverRideReadManager(request) {
+  let epoch = 0;
+  let controller = null;
+  let timeoutId = null;
+
+  function cancel() {
+    epoch += 1;
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = null;
+    if (controller) controller.abort();
+    controller = null;
+  }
+
+  async function run() {
+    const currentEpoch = ++epoch;
+    if (timeoutId) clearTimeout(timeoutId);
+    if (controller) controller.abort();
+    const currentController = new AbortController();
+    controller = currentController;
+    let timedOut = false;
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      currentController.abort();
+    }, DRIVER_RIDE_READ_TIMEOUT_MS);
+    try {
+      const value = await request(currentController.signal);
+      if (currentEpoch !== epoch) return { stale: true };
+      return { value };
+    } catch (error) {
+      if (currentEpoch !== epoch) return { stale: true };
+      if (timedOut) {
+        const timeoutError = new Error('driver ride read timeout');
+        timeoutError.code = 'RIDE_READ_TIMEOUT';
+        return { error: timeoutError };
+      }
+      if (error && error.name === 'AbortError') return { stale: true };
+      return { error };
+    } finally {
+      if (currentEpoch === epoch) {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = null;
+        if (controller === currentController) controller = null;
+      }
+    }
+  }
+
+  return { run, cancel };
+}
 
 export function parseMoney(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -116,12 +227,6 @@ function getHashQuery() {
   return qi === -1 ? new URLSearchParams() : new URLSearchParams(hash.slice(qi + 1));
 }
 
-// Keep the address-bar ?status= in sync after a driver lifecycle hop so a
-// reload reflects the real persisted phase. Uses replaceState (no hashchange,
-// so the router does not re-render mid-flow) and only rewrites the param when
-// one is already present, leaving status-less entry URLs untouched. The
-// safeApplyStatusFromQuery guard is the durable backstop; this just keeps the
-// visible URL honest.
 function syncDriverStatusQuery(nextStatus) {
   try {
     const hash = window.location.hash || '';
@@ -150,9 +255,6 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   const ts = ride.timestamps || {};
   if (statusQuery === RIDE_STATUS.NEW_ORDER) {
     if (ts.acceptedAt || ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
-    // BD-RIDE-D-10 — In-memory override only. ?status= must not
-    // permanently rewrite the stored canonical record; later user
-    // actions (accept / cancel / etc.) persist via updateActiveRideStatus.
     return { ...ride, status: RIDE_STATUS.NEW_ORDER };
   }
   if (statusQuery === RIDE_STATUS.ACCEPTED) {
@@ -168,10 +270,6 @@ function safeApplyStatusFromQuery(ride, statusQuery) {
   }
   if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE || statusQuery === RIDE_STATUS.DRIVER_APPROACHING_PICKUP) {
     if (ts.arrivedAt || ts.startedAt || ts.completedAt || ts.canceledAt) return ride;
-    // A stale ?status=DRIVER_EN_ROUTE (the address bar still carries the
-    // entry status after the driver tapped "Подъезжаю") must not pull a ride
-    // that already advanced to DRIVER_APPROACHING_PICKUP back to the en-route
-    // phase on reload — that would re-enable the approaching auto-message.
     if (statusQuery === RIDE_STATUS.DRIVER_EN_ROUTE
       && (ride.status === RIDE_STATUS.DRIVER_APPROACHING_PICKUP || ts.approachingAt)) {
       return ride;
@@ -220,12 +318,6 @@ function syncCanonicalOrderStatus(ride, activeStatus) {
   if (!orderStatus) return;
   const orderId = canonicalOrderIdForRide(ride);
   if (!orderId) return;
-
-  // BD-ORDER-P-09 — active_ride.v1 is the status source while the driver
-  // lifecycle is running, but Feed/DriverMap read ride_orders.v1. Keep the
-  // canonical order moving forward as active ride actions persist, including
-  // a defensive CREATED→ACCEPTED bridge for older handoffs that failed to
-  // mark the order accepted before the driver completed the trip.
   if (updateTripStatus(orderId, orderStatus)) return;
   if (orderStatus === RIDE_STATUS.IN_PROGRESS) {
     updateTripStatus(orderId, RIDE_STATUS.ACCEPTED);
@@ -252,10 +344,6 @@ function appendDriverChatMessage(tripId, text) {
     const chatId = `trip-${tripId}`;
     const list = Array.isArray(store[chatId]) ? store[chatId].slice() : [];
     const now = new Date();
-    // senderRole pins the author so a passenger-facing chat renders this
-    // driver auto-notice as incoming. `dir: 'out'` stays for back-compat
-    // (it is outgoing from the driver's own perspective); the chat renderer
-    // prefers senderRole when deciding which side of the thread to show.
     list.push({ id: Date.now(), dir: 'out', senderRole: 'driver', text, time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` });
     store[chatId] = list;
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(store));
@@ -266,11 +354,6 @@ function appendDriverChatMessage(tripId, text) {
 
 function renderPassenger() {
   const query = getHashQuery();
-  // BD-MAP-06 — Passenger order → DriverMap handoff. With no explicit
-  // tripId in the URL, resolve the passenger's most recent driver-taken
-  // order so the screen shows their real handed-off trip (shared
-  // active_ride.v1 record, orderId-linked) instead of the demo ride.
-  // Falls back to the demo trip when no live order has been accepted.
   const passengerFixture = query.get('fixture') || '';
   const passengerFixtureMode = new Set(['loading', 'loaded', 'empty', 'error']).has(passengerFixture);
   const tripId = query.get('tripId')
@@ -299,11 +382,6 @@ function renderDriverEmpty() {
   return root;
 }
 
-// BD-RIDE-D-09 — builds the mock earnings payload for DriverEarningsSheet.
-// Fixed 12% commission + a mock tip so the net equals the noncash balance
-// delta (1 475 ₽). Every value is pre-formatted here so the sheet module
-// stays data-free (it never imports ride_state). No real payments, no real
-// balances, no tax/accounting math — UI hints only.
 function buildDriverEarningsPayload(ride) {
   const fare = parseMoney(ride.ride?.price) || 1540;
   const commissionRate = 0.12;
@@ -316,13 +394,8 @@ function buildDriverEarningsPayload(ride) {
     { val: String(Number(ride.ride?.tripsToday || 7)), lbl: 'Поездок' },
     { val: ride.ride?.rating ? String(ride.ride.rating) : '4,92', lbl: 'Рейтинг' },
   ];
-  // BD-RIDE-D-11 — passenger + trip context for the completed earnings sheet
-  // (issue #403). Pre-formatted here so the sheet module stays data-free.
   const tripNumber = ride.order?.number;
   return {
-    // BD-RIDE-D-09 follow-up (Codex #3) — expose the raw numerics so
-    // renderCompleted persists the exact earnings the sheet shows. The sheet
-    // itself only reads the *Label fields below; these are for history parity.
     fare,
     commissionRate,
     commissionAmount,
@@ -338,7 +411,6 @@ function buildDriverEarningsPayload(ride) {
     balanceDeltaLabel: `+${formatRub(net)}`,
     dropoffLabel: ride.route?.dropoffLabel || 'Точка назначения',
     stats,
-    // BD-RIDE-D-11 — passenger context row + trip-number eyebrow.
     passengerName: ride.passenger?.name || '',
     passengerInitials: ride.passenger?.initials || 'АМ',
     pickupLabel: ride.route?.pickupLabel || '',
@@ -354,56 +426,33 @@ export default function activeRide() {
   if (role !== 'driver') return renderPassenger();
   ensureDriverSheetsCss();
 
-  const rawTripId = query.get('tripId');
-  // BD-ORDER-P-08 — DriverMap accept → ActiveRide handoff. Driver
-  // mirrors the passenger resolver: when the URL omits tripId, look up
-  // the latest live handed-off order before falling back to the demo id.
-  // findLatestHandedOffOrderTripId() skips terminal canonical rides, so
-  // completed/canceled/no-show trips do not reopen from the bare driver URL.
+  const fixtureValue = (query.get('fixture') || '').toLowerCase();
+  const driverFixture = DRIVER_RIDE_FIXTURES.has(fixtureValue) ? fixtureValue : '';
+  const driverFixtureMode = Boolean(driverFixture);
+  const rawTripIdParam = query.get('tripId');
+  // Seed a recognized fixture with the demo id before handoff resolution so
+  // fixture mode never touches persisted active rides or handoff state.
+  const rawTripId = rawTripIdParam || (driverFixtureMode ? DEMO_ACTIVE_RIDE_ID : null);
   const latestHandedOffTripId = rawTripId ? null : findLatestHandedOffOrderTripId();
   const tripId = rawTripId || latestHandedOffTripId || DEMO_ACTIVE_RIDE_ID;
   const statusQuery = query.get('status');
-  // BD-RIDE-D-09 — entry stage for the driver completion sheet
-  // (?state=summary|cash|noncash|shift|loading|closed|empty). Ignored by
-  // every other status; the sheet itself falls back to "summary".
-  //
-  // BD-RIDE-D-09 polish — `?payment=cash|noncash` is the documented
-  // manual-test URL for the cash / noncash earnings variants. When `?state`
-  // is absent we map the payment query onto the equivalent entry stage so
-  // operators don't need to know about the internal state name. Unknown
-  // payment values fall through to the sheet's own "summary" default.
   const paymentQuery = (query.get('payment') || '').toLowerCase();
   const earningsState = query.get('state')
     || (paymentQuery === 'cash' || paymentQuery === 'noncash' ? paymentQuery : null);
-  // BD-RIDE-D-WAITING-01 — ?wait=expired forces the paid-wait variant; the live
-  // free-wait timer also flips it true at 0:00. Mutable for those two writers.
   let waitExpired = (query.get('wait') || '').toLowerCase() === 'expired';
-  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown state.
   let waitTimer = null;
   let waitFreeSec = 0;
   let waitDeadline = 0;
   let waitPaidStart = 0;
-  // BD-RIDE-D-10 — Cross-role canonical lookup. Reads any persisted
-  // active-ride record first, then tries to seed from a confirmed
-  // handoff for either role so driver and passenger converge on one
-  // canonical trip identity (passenger, driver, vehicle, route, fare).
-  let ride = loadCanonicalActiveRide({ tripId, role: 'driver' });
-  // BD-HANDOFF-05 — replace generic/demo strings with the driver-side
-  // confirmed handoff snapshot (passenger name, pickup/dropoff labels,
-  // agreed price, arrival ETA) when one was pinned right before the
-  // /trip-confirmation → /active-ride?role=driver hop. A snapshot is
-  // sufficient on its own to materialize the driver sheet: when no
-  // ?status= is supplied we fall back to the snapshot's own status
-  // (DRIVER_EN_ROUTE by default) instead of the empty placeholder.
+
+  let ride = driverFixtureMode
+    ? createDriverFixtureRide(tripId)
+    : loadCanonicalActiveRide({ tripId, role: 'driver' });
   let effectiveStatusQuery = statusQuery;
-  if (!ride) {
+  if (!driverFixtureMode && !ride) {
     const driverSnapshot = loadDriverHandoffSnapshot(tripId);
     const hasValidStatusQuery = statusQuery && DRIVER_SIMULATION_STATUSES.has(statusQuery);
-    // BD-RIDE-D-10 / BD-ORDER-P-08 — Only show the driver empty
-    // placeholder when nothing can identify a real/simulated ride: no
-    // explicit tripId, no latest live DriverMap handoff, no valid status
-    // simulation, no driver handoff snapshot, and no canonical ride.
-    const hasExplicitTripId = Boolean(rawTripId);
+    const hasExplicitTripId = Boolean(rawTripIdParam);
     const hasLatestHandedOffTripId = Boolean(latestHandedOffTripId);
     if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty();
     const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
@@ -416,23 +465,35 @@ export default function activeRide() {
       }
     }
   }
-  ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
 
-  // #784 CUT-5 — backend ride-state seam (READ + STATUS WRITE + realtime POLL). Dark by default:
-  // only engages once getRideFromBackend(tripId) confirms a server ride exists (a backend
-  // /matching/select bootstrapped it). A purely-local demo/mock ride 404s and stays on the mock, so
-  // the OFF/mock lifecycle (persistDriverRideStatus's local updateActiveRideStatus) is unchanged.
+  const backendRead = !driverFixtureMode && isBackendEnabled();
+  if (!backendRead && !driverFixtureMode) {
+    ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
+  }
+
+  let driverReadState = driverFixture || (backendRead ? DRIVER_RIDE_READ_STATE.LOADING : DRIVER_RIDE_READ_STATE.LOADED);
   let backendRide = false;
   let rideCursor = null;
   let ridePollId = null;
-  // #784 CUT-5 — the status of an in-flight PATCH (optimistically applied locally). While set, the
-  // poll/refetch must NOT let a stale pre-PATCH server snapshot pull the UI backward off a just-applied
-  // transition; only a server status that equals pendingStatus (the PATCH committed) may override.
+  let ridePollInFlight = false;
+  let ridePollController = null;
+  let ridePollTimeoutId = null;
+  let rideRefetchController = null;
+  let rideRefetchTimeoutId = null;
   let pendingStatus = null;
+  let fixtureRetryTimer = null;
+  let destroyed = false;
+  let hasMounted = false;
 
-  // Merge the authoritative server snapshot onto the in-memory ride, preserving the local display
-  // fields the focused serializeRide doesn't carry (pricing / ETA / stats / waiting). A server null
-  // never clobbers a local string; `status` (the state-machine driver) always wins from the server.
+  function currentViewIsUsable() {
+    if (destroyed) return false;
+    if (root.isConnected) {
+      hasMounted = true;
+      return true;
+    }
+    return !hasMounted;
+  }
+
   function mergeServerRide(srv) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
@@ -442,8 +503,6 @@ export default function activeRide() {
     return {
       ...ride,
       tripId: srv.tripId || ride.tripId,
-      // While a PATCH is pending, keep the optimistic local status unless the server already reflects
-      // it (pendingStatus committed) — never revert the driver's just-applied transition (A1 race).
       status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
@@ -453,16 +512,37 @@ export default function activeRide() {
     };
   }
 
-  async function refetchRideAndRender() {
-    try {
-      const srv = await getRideFromBackend(ride.tripId);
-      if (srv) { ride = mergeServerRide(srv); renderSheet(); }
-    } catch { /* transient / no longer a server ride — keep the current view */ }
+  function clearRideRefetch() {
+    if (rideRefetchTimeoutId) clearTimeout(rideRefetchTimeoutId);
+    rideRefetchTimeoutId = null;
+    if (rideRefetchController) rideRefetchController.abort();
+    rideRefetchController = null;
   }
 
-  // The optimistic local UI already advanced; PATCH the server, then reconcile from the
-  // authoritative snapshot. A terminal-freeze (409 RIDE_TERMINAL) or any error surfaces an honest
-  // notice and re-syncs to the true server state, so the UI can't stay ahead of a rejected move.
+  async function refetchRideAndRender() {
+    if (driverReadState !== DRIVER_RIDE_READ_STATE.LOADED || driverFixtureMode || destroyed) return;
+    if (ridePollController) ridePollController.abort();
+    clearRideRefetch();
+    const controller = new AbortController();
+    rideRefetchController = controller;
+    rideRefetchTimeoutId = setTimeout(() => controller.abort(), DRIVER_RIDE_POLL_TIMEOUT_MS);
+    try {
+      const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
+      if (srv && currentViewIsUsable() && rideRefetchController === controller) {
+        ride = mergeServerRide(srv);
+        renderSheet(true);
+      }
+    } catch {
+      // Writer reconciliation remains non-destructive on transient read failure.
+    } finally {
+      if (rideRefetchController === controller) {
+        if (rideRefetchTimeoutId) clearTimeout(rideRefetchTimeoutId);
+        rideRefetchTimeoutId = null;
+        rideRefetchController = null;
+      }
+    }
+  }
+
   function syncRideStatusToBackend(nextStatus) {
     pendingStatus = nextStatus;
     patchRideStatus(ride.tripId, nextStatus)
@@ -476,11 +556,6 @@ export default function activeRide() {
       });
   }
 
-  // #784 CUT-5 — COMPLETED is terminal AND has irreversible local side-effects: renderCompleted()
-  // saves a receipt + a ride-history entry. For a backend ride, confirm the server FIRST (PATCH); only
-  // on acceptance run the local completion (+ its receipt/history). On reject (e.g. 409 — the ride was
-  // already terminalized elsewhere) skip the local save and reconcile to the true server state, so a
-  // non-completed server ride can never leave a bogus completed receipt behind.
   function commitDriverCompletion() {
     if (!backendRide) { ride = persistDriverRideStatus(RIDE_STATUS.COMPLETED); renderSheet(); return; }
     pendingStatus = RIDE_STATUS.COMPLETED;
@@ -495,67 +570,65 @@ export default function activeRide() {
       });
   }
 
-  // Self-clearing realtime poll (mirrors chat.js — router.render() replaceChildren() has no
-  // teardown). On a status change, re-fetch the snapshot and re-render in place.
-  function startRidePoll() {
-    if (ridePollId) return;
-    ridePollId = setInterval(async () => {
-      if (!document.body.contains(root)) { clearInterval(ridePollId); ridePollId = null; return; }
-      let res;
-      try { res = await pollRide(ride.tripId, rideCursor); }
-      catch { return; }
-      if (!res) return;
+  function stopRidePoll() {
+    if (ridePollId) clearInterval(ridePollId);
+    ridePollId = null;
+    if (ridePollTimeoutId) clearTimeout(ridePollTimeoutId);
+    ridePollTimeoutId = null;
+    if (ridePollController) ridePollController.abort();
+    ridePollController = null;
+    ridePollInFlight = false;
+  }
+
+  async function pollRideOnce() {
+    if (ridePollInFlight || destroyed || pendingStatus || driverReadState !== DRIVER_RIDE_READ_STATE.LOADED) return;
+    if (!root.isConnected) {
+      if (hasMounted) teardownDriverRead();
+      return;
+    }
+    ridePollInFlight = true;
+    const controller = new AbortController();
+    ridePollController = controller;
+    ridePollTimeoutId = setTimeout(() => controller.abort(), DRIVER_RIDE_POLL_TIMEOUT_MS);
+    try {
+      const res = await pollRide(ride.tripId, rideCursor, { signal: controller.signal });
+      if (!res || !currentViewIsUsable() || ridePollController !== controller) return;
       if (res.cursor) rideCursor = res.cursor;
-      // Skip the refetch while a PATCH is outstanding (A1): a stale pre-commit snapshot would revert
-      // the optimistic advance. The PATCH's own reconcile re-syncs on commit.
-      if (res.status && res.status !== ride.status && !pendingStatus) await refetchRideAndRender();
-      // A3: stop polling once the ride is terminal — no further transitions can arrive.
-      if (isTerminalRideStatus(ride.status)) { clearInterval(ridePollId); ridePollId = null; }
-    }, 2500);
+      if (res.status && res.status !== ride.status && !pendingStatus) {
+        const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
+        if (srv && currentViewIsUsable() && ridePollController === controller) {
+          ride = mergeServerRide(srv);
+          renderSheet(true);
+        }
+      }
+      if (isTerminalRideStatus(ride.status)) stopRidePoll();
+    } catch {
+      // Background refresh failure is deliberately non-destructive.
+    } finally {
+      if (ridePollController === controller) {
+        if (ridePollTimeoutId) clearTimeout(ridePollTimeoutId);
+        ridePollTimeoutId = null;
+        ridePollController = null;
+        ridePollInFlight = false;
+      }
+    }
+  }
+
+  function startRidePoll() {
+    if (ridePollId || driverFixtureMode || driverReadState !== DRIVER_RIDE_READ_STATE.LOADED) return;
+    ridePollId = setInterval(() => { void pollRideOnce(); }, DRIVER_RIDE_POLL_MS);
   }
 
   function persistDriverRideStatus(nextStatus, patch = {}) {
-    // BD-ACTIVE-RIDE-TERM-01 P2 follow-up — when the driver is on a
-    // status-simulated demo (loadCanonicalActiveRide returned null
-    // and we built `ride` via createDemoActiveRide / handoff
-    // snapshot above), the ride hasn't been persisted to
-    // `bazardrive.active_ride.v1` yet. The terminal-write existing-
-    // ride guard inside `updateActiveRideStatus` refuses unknown
-    // tripIds for CANCELED / NO_SHOW / COMPLETED — so a legitimate
-    // Finish / No-show / Cancel click on a status-simulated ride
-    // would otherwise silently fall back to the in-memory snapshot
-    // and the screen would never advance. Pre-save the in-memory
-    // ride once so the terminal write has an existing record to
-    // mutate. Idempotent: when the ride is already in the store,
-    // the saveActiveRide terminal-record freeze either passes through
-    // (non-terminal snapshot, non-terminal stored) or refuses
-    // verbatim (terminal already landed); either way the
-    // updateActiveRideStatus call right after sees the canonical
-    // store state.
     if (!findActiveRide(ride.tripId)) saveActiveRide(ride);
     const nextRide = updateActiveRideStatus(ride.tripId, nextStatus, patch);
-    // BD-ACTIVE-RIDE-TERM-01 — only sync the canonical order when the
-    // status actually changed to `nextStatus`. `updateActiveRideStatus`
-    // returns the existing terminal record verbatim on refused
-    // transitions (CANCELED / NO_SHOW / COMPLETED → non-terminal), so
-    // without this guard `syncCanonicalOrderStatus` would write the
-    // stale requested status (e.g. IN_PROGRESS / COMPLETED) onto the
-    // canonical order even though the active ride record didn't move.
     if (nextRide && nextRide.status === nextStatus) {
       syncCanonicalOrderStatus(nextRide, nextStatus);
     }
-    // #784 CUT-5 — for a confirmed server ride, mirror the (optimistically-applied) transition to the
-    // backend (PATCH /ride-state/rides/:tripId/status) and reconcile from the authoritative snapshot.
-    // COMPLETED is EXCLUDED here — it has irreversible local side-effects (receipt/history) and is
-    // committed server-FIRST via commitDriverCompletion(), so it must not also fire-and-forget here.
     if (backendRide && nextStatus !== RIDE_STATUS.COMPLETED) syncRideStatusToBackend(nextStatus);
     return nextRide || ride;
   }
-  // BD-RIDE-D-10 — Driver-initiated cancel and no-show persist the same
-  // `cancel: { by, reason }` metadata shape passenger cancel already uses
-  // (see active_ride_passenger). It is informational only — terminal status
-  // is still the single source of truth for ride_state and the canonical
-  // order — but it lets the canceled stub explain *why* the trip closed.
+
   function persistDriverCancel(nextStatus, reasonCode) {
     return persistDriverRideStatus(nextStatus, {
       cancel: { by: 'driver', reason: reasonCode || 'other' },
@@ -564,24 +637,15 @@ export default function activeRide() {
 
   const root = document.createElement('section');
   root.className = 'screen screen--active-ride';
+  root.dataset.driverReadState = driverReadState;
+  if (driverFixtureMode) root.dataset.fixture = driverFixture;
+
   const mapWrap = document.createElement('div');
   mapWrap.className = 'active-ride__map';
-  // BD-RIDE-D-09 follow-up (Codex #2) — keep a handle on the map shell so
-  // renderSheet() can re-sync its data-status as ride.status changes. Without
-  // this the COMPLETED polish (hidden car marker, green finish pin) only
-  // applied after a reload, since the shell is created once up front.
   const mapShell = createMapShell({ variant: 'driver', status: ride.status, route: ride.route });
   mapWrap.appendChild(mapShell);
   root.appendChild(mapWrap);
 
-  // BD-LIFE-07 — Drop the '5ч 12м' demo fallback from the driver status
-  // pill. BD-LIFE-06 stops writing shiftDuration onto real accepted rides
-  // (the snapshot from buildAcceptedDriverSnapshot omits it entirely
-  // because profiles don't track shift duration), so a `|| '5ч 12м'`
-  // chain here would leak the demo seed onto every real DriverMap accept.
-  // Render the separator + time only when shiftDuration is actually
-  // present; legacy demo paths still carry the field on ride.driver from
-  // buildDemoRide() so they keep showing "На линии | 5ч 12м" unchanged.
   const shiftDuration = ride.driver?.shiftDuration || '';
   const shiftPillSuffix = shiftDuration
     ? `<span class="active-ride__status-sep" aria-hidden="true">|</span><span class="active-ride__status-time">${escapeHtml(shiftDuration)}</span>`
@@ -597,6 +661,8 @@ export default function activeRide() {
 
   const sheet = document.createElement('div');
   sheet.className = 'active-ride__sheet';
+  sheet.dataset.readState = driverReadState;
+  sheet.setAttribute('aria-busy', driverReadState === DRIVER_RIDE_READ_STATE.LOADING ? 'true' : 'false');
   root.appendChild(sheet);
   const notice = document.createElement('div');
   notice.className = 'active-ride__notice';
@@ -618,11 +684,20 @@ export default function activeRide() {
     mapBannerText.textContent = text || '';
     mapBanner.hidden = !text;
   }
+
+  function setDriverMapReadVisibility(visible) {
+    for (const selector of [
+      '.bd-map-shell__route',
+      '.bd-map-shell__marker--pickup',
+      '.bd-map-shell__marker--dropoff',
+      '.bd-map-shell__marker--car',
+      '.bd-map-shell__label',
+    ]) {
+      for (const el of mapShell.querySelectorAll(selector)) el.hidden = !visible;
+    }
+  }
+
   top.querySelector('#ar-gear').addEventListener('click', () => showNotice('Настройки смены будут добавлены позже'));
-  // BD-RIDE-D-SAFETY-01 — the top-bar shield opens the driver safety sheet
-  // (share / emergency-112 demo / support). Demo-only: toast feedback via
-  // onAction → showNotice, no ride-status change, no problem-report (that is
-  // #ar-issue), no passenger-sheet reuse.
   top.querySelector('#ar-shield').addEventListener('click', () => openDriverSafetySheet(root, { onAction: showNotice }));
 
   function passengerRowHtml(passenger) {
@@ -637,12 +712,26 @@ export default function activeRide() {
     if (callBtn) callBtn.addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
   }
 
-  function renderSheet() {
+  function lockFixtureActions() {
+    if (!driverFixtureMode) return;
+    for (const button of sheet.querySelectorAll('button')) {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    }
+  }
+
+  function renderSheet(preserveFocus = false) {
+    const focusedId = preserveFocus && sheet.contains(document.activeElement)
+      ? document.activeElement.id
+      : '';
     clearWaitTimer();
     sheet.replaceChildren();
     sheet.dataset.status = ride.status;
+    sheet.dataset.readState = DRIVER_RIDE_READ_STATE.LOADED;
+    sheet.setAttribute('aria-busy', 'false');
     mapShell.dataset.status = ride.status;
     setMapBanner('');
+    setDriverMapReadVisibility(true);
     if (ride.status === RIDE_STATUS.NEW_ORDER) renderNewOrder();
     else if (ride.status === RIDE_STATUS.ACCEPTED) renderAccepted();
     else if (ride.status === RIDE_STATUS.DRIVER_EN_ROUTE) renderEnRoute();
@@ -652,6 +741,70 @@ export default function activeRide() {
     else if (ride.status === RIDE_STATUS.COMPLETED) renderCompleted();
     else if (ride.status === RIDE_STATUS.CANCELED || ride.status === RIDE_STATUS.NO_SHOW) renderCanceledStub();
     else renderGenericStub();
+    lockFixtureActions();
+    if (focusedId) {
+      const nextFocused = document.getElementById(focusedId);
+      if (nextFocused && sheet.contains(nextFocused)) nextFocused.focus({ preventScroll: true });
+    }
+  }
+
+  function renderDriverReadLoading() {
+    clearWaitTimer();
+    setMapBanner('');
+    setDriverMapReadVisibility(false);
+    sheet.innerHTML = `
+      <div class="active-ride-passenger__read-state active-ride__driver-read-state" data-driver-read-view="loading">
+        <div class="active-ride-passenger__read-sheet-skeleton" aria-hidden="true">
+          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--title active-ride-passenger__read-bone"></span>
+          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--sub active-ride-passenger__read-bone"></span>
+          <span class="active-ride-passenger__read-line active-ride-passenger__read-line--wide active-ride-passenger__read-bone"></span>
+          <div class="active-ride-passenger__read-driver">
+            <span class="active-ride-passenger__read-avatar active-ride-passenger__read-bone"></span>
+            <span class="active-ride-passenger__read-line active-ride-passenger__read-line--driver active-ride-passenger__read-bone"></span>
+          </div>
+          <span class="active-ride-passenger__read-action active-ride-passenger__read-bone"></span>
+        </div>
+        <div class="active-ride-passenger__read-status" role="status" aria-live="polite">Загружаем данные поездки…</div>
+      </div>`;
+  }
+
+  function renderDriverReadEmpty() {
+    clearWaitTimer();
+    setMapBanner('');
+    setDriverMapReadVisibility(false);
+    sheet.innerHTML = `
+      <div class="active-ride-passenger__read-state active-ride__driver-read-state" data-driver-read-view="empty" aria-labelledby="ar-driver-read-empty-title">
+        <div class="active-ride-passenger__read-title" id="ar-driver-read-empty-title">Активной поездки нет</div>
+        <div class="active-ride-passenger__read-copy">Вернитесь к заказам, чтобы выбрать следующую поездку.</div>
+        <button type="button" class="bd-btn ghost" id="ar-driver-read-empty-action">К заказам</button>
+      </div>`;
+    sheet.querySelector('#ar-driver-read-empty-action').addEventListener('click', () => {
+      go(driverFixtureMode ? '/driver-map?fixture=empty' : '/driver-map');
+    });
+  }
+
+  function renderDriverReadError() {
+    clearWaitTimer();
+    setMapBanner('');
+    setDriverMapReadVisibility(false);
+    sheet.innerHTML = `
+      <div class="active-ride-passenger__read-state active-ride__driver-read-state" data-driver-read-view="error" aria-labelledby="ar-driver-read-error-title">
+        <div class="active-ride-passenger__read-title" id="ar-driver-read-error-title">Не удалось загрузить поездку</div>
+        <div class="active-ride-passenger__read-copy">Проверьте соединение и повторите загрузку данных поездки.</div>
+        <button type="button" class="bd-btn ghost" id="ar-driver-read-retry" aria-label="Повторить загрузку поездки">Повторить загрузку поездки</button>
+      </div>`;
+    sheet.querySelector('#ar-driver-read-retry').addEventListener('click', () => retryInitialDriverRead());
+  }
+
+  function setDriverReadState(nextState, { preserveFocus = false } = {}) {
+    driverReadState = nextState;
+    root.dataset.driverReadState = nextState;
+    sheet.dataset.readState = nextState;
+    sheet.setAttribute('aria-busy', nextState === DRIVER_RIDE_READ_STATE.LOADING ? 'true' : 'false');
+    if (nextState === DRIVER_RIDE_READ_STATE.LOADING) renderDriverReadLoading();
+    else if (nextState === DRIVER_RIDE_READ_STATE.EMPTY) renderDriverReadEmpty();
+    else if (nextState === DRIVER_RIDE_READ_STATE.ERROR) renderDriverReadError();
+    else renderSheet(preserveFocus);
   }
 
   function routeRows() {
@@ -670,7 +823,6 @@ export default function activeRide() {
     return `<div class="active-ride__nav-card"><div class="active-ride__nav-icon" aria-hidden="true">${arIcon('nav', 20)}</div><div class="active-ride__nav-body"><div class="active-ride__nav-main">${escapeHtml(ride.route?.currentInstruction || '')}</div><div class="active-ride__nav-sub">${escapeHtml(ride.route?.currentStreet || '')}</div></div><button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button></div>`;
   }
 
-
   function renderAccepted() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.pickupLabel || 'Точка подачи')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
     sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
@@ -682,9 +834,6 @@ export default function activeRide() {
   function renderEnRoute() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-approaching">Подъезжаю</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-enroute">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
     sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
-    // BD-RIDE-D — entering DRIVER_APPROACHING_PICKUP auto-notifies the
-    // passenger via the chat store, so the standalone "написать подъезжаю"
-    // button is no longer needed.
     sheet.querySelector('#ar-approaching').addEventListener('click', () => {
       appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи');
       ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_APPROACHING_PICKUP);
@@ -727,10 +876,6 @@ export default function activeRide() {
   function clearWaitTimer() {
     if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
   }
-  // BD-RIDE-D-WAIT-TIMER-01 (Codex P2) — anchor the free-wait deadline to the
-  // persisted arrival time so a reload / re-render reflects time already
-  // elapsed instead of restarting; fall back to now + the static remaining.
-  // Cached so the initial render and the tick agree (no first-tick jump).
   function waitDeadlineMs() {
     if (waitDeadline) return waitDeadline;
     const waiting = ride.waiting || {};
@@ -741,14 +886,6 @@ export default function activeRide() {
       : Date.now() + parseWaitClock(waiting.remaining || '2:30') * 1000;
     return waitDeadline;
   }
-  // BD-RIDE-D-WAIT-TIMER-01 — live free-wait countdown. Drives the ring /
-  // progress / value down toward a WALL-CLOCK deadline (Codex P2: not callback
-  // count — a backgrounded/throttled tab would otherwise drift past the
-  // deadline and delay the paid auto-transition), and switches to the paid view
-  // at 0:00. The tick self-clears when the screen detaches, the ride leaves
-  // WAITING_PASSENGER, OR the free-wait ring is no longer in the sheet (Codex
-  // P2: a subflow like the no-show sheet replaced it — never overwrite it). No
-  // DOM rebuild per tick — only textContent / data-step / aria / offset attrs.
   function startWaitTimer() {
     clearWaitTimer();
     if (waitExpired) return;
@@ -786,11 +923,6 @@ export default function activeRide() {
     const m = String(s || '').match(/\d+/);
     return m ? Number(m[0]) : 0;
   }
-  // BD-RIDE-D-PAID-TIMER-01 (Codex P2) — live accrued paid-wait amount, anchored
-  // to when paid wait began: waitPaidStart once the paid view set it, else the
-  // free deadline. So a no-show opened from FREE wait but confirmed AFTER the
-  // deadline still counts the paid time (0 ₽ before the deadline). Passed as the
-  // resolver to both #ar-no-show entries so the no-show receipt matches the sheet.
   function paidWaitAnchorMs() {
     return waitPaidStart || waitDeadlineMs();
   }
@@ -798,11 +930,6 @@ export default function activeRide() {
     const sec = Math.max(0, Math.floor((Date.now() - paidWaitAnchorMs()) / 1000));
     return Math.round(sec / 60 * (parsePaidRatePerMin((ride.waiting || {}).paidRate) || 8));
   }
-  // BD-RIDE-D-PAID-TIMER-01 — live paid-wait counter. Ticks the elapsed paid
-  // time UP and grows the accrued amount at the displayed rate (mock, no real
-  // billing). Anchored via waitPaidStart (set in renderWaitingExpired) so a
-  // reload reflects real elapsed paid time. Same guards as the free timer
-  // (detach / status / a subflow replaced the sheet).
   function startPaidTimer() {
     clearWaitTimer();
     const ratePerMin = parsePaidRatePerMin((ride.waiting || {}).paidRate) || 8;
@@ -823,8 +950,6 @@ export default function activeRide() {
     const freeLimit = waiting.freeLimit || '3:00';
     const freeLimitSec = parseWaitClock(freeLimit) || 180;
     const remSec = Math.max(0, Math.ceil((waitDeadlineMs() - Date.now()) / 1000));
-    // Already-expired ride loaded fresh (arrivedAt + freeLimit already past) →
-    // go straight to paid instead of flashing a 0:00 free-wait view for a tick.
     if (remSec <= 0) { waitExpired = true; renderWaitingExpired(); return; }
     const remaining = formatWaitClock(remSec);
     const waitPct = Math.max(0, Math.min(1, remSec / freeLimitSec));
@@ -833,12 +958,6 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
-    // BD-RIDE-D-NOSHOW-01 — «Не приехал» opens the dedicated no-show sub-flow
-    // (action → confirm → result → compensation → done), replacing the prior
-    // cancel-sheet preset. The flow renders in place over this sheet and fires
-    // the SAME NO_SHOW persist at its confirm step; «Вернуться к ожиданию» /
-    // close re-render the waiting state. Mock-only: the compensation figures
-    // are demo values, no backend.
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
       paidWaitAmount: liveAccruedPaid,
@@ -851,15 +970,9 @@ export default function activeRide() {
     startWaitTimer();
   }
 
-  // BD-RIDE-D-WAITING-01 — paid-wait variant (free wait elapsed). Reached via
-  // ?wait=expired or the live timer hitting 0:00. Mock/demo figures; «Пассажир
-  // сел» starts the trip, «Пассажир не вышел» opens the no-show flow.
   function renderWaitingExpired() {
     const waiting = ride.waiting || {};
     const ratePerMin = parsePaidRatePerMin(waiting.paidRate) || 8;
-    // Anchor paid wait to when the free wait expired; on a pure ?wait=expired
-    // demo jump (deadline still in the future, no real expiry) seed a synthetic
-    // start from the demo paidElapsed so the counter shows a plausible value.
     if (!waitPaidStart) {
       const deadline = waitDeadlineMs();
       waitPaidStart = deadline <= Date.now()
@@ -872,15 +985,10 @@ export default function activeRide() {
     const paidRate = waiting.paidRate || '8 ₽/мин';
     setMapBanner('Платное ожидание · пассажир не выходит');
     sheet.innerHTML = `<div class="ns-alert warning"><span class="ns-alert-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><div class="ns-alert-body"><div class="ns-alert-title">Бесплатное ожидание закончилось</div><div class="ns-alert-sub">Идёт платное ожидание · начислено <span id="ar-paid-accrued">${escapeHtml(accrued)}</span></div></div></div><div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Пассажир не выходит</div><div class="active-ride__sheet-sub">Платное ожидание · ${escapeHtml(paidRate)}</div></div><div class="ns-timer tone-warning"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="62.08" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(paidElapsed)}</div></div><div class="ns-timer-lbl">платно</div></div></div>${passengerRowHtml(ride.passenger || {})}<div class="ns-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Позвоните пассажиру перед тем, как отметить, что он не вышел.</span></div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Пассажир сел — начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Пассажир не вышел</button></div></div>`;
-    // Codex P2 — keep a direct start-trip path if the passenger arrives during
-    // paid wait (the auto-expired view previously had no IN_PROGRESS action).
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
       ride,
-      // Same resolver as the free-wait entry — recomputed at the no-show confirm
-      // step (Codex P2), anchored to when paid wait began, so it matches the
-      // sheet and counts dwell time across the deadline.
       paidWaitAmount: liveAccruedPaid,
       onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
       onBack: () => renderSheet(),
@@ -902,30 +1010,7 @@ export default function activeRide() {
   }
 
   function renderCompleted() {
-    // BD-RIDE-D-09 — the completed driver flow is now the seven-state
-    // DriverEarningsSheet (active_ride_driver_sheets.js) mounted over the
-    // completed map shell, replacing the old inline completion card. Ride
-    // history is still persisted here exactly as before; only the visible
-    // card was swapped for the terminal sheet.
-    //
-    // BD-RIDE-D-09 follow-up (Codex #3) — history is now derived from the same
-    // payload the sheet renders, so the profile receipt and the sheet never
-    // disagree (net 1 475 ₽, 12% commission + tip). order.commission on the
-    // shared demo ride is never mutated.
     const payload = buildDriverEarningsPayload(ride);
-    // BD-RIDE-HISTORY-D-01 (issue #381) — net is computed ONCE here (in
-    // buildDriverEarningsPayload). Persist the canonical receipt object so
-    // ride history, Driver payouts and the /receipt screen can READ the same
-    // stored fare / commission / tip / net and never recompute them. The
-    // ?state=cash entry stage marks a cash-collected fare; everything else
-    // records a non-cash (balance) settlement. commission is stored signed.
-    //
-    // PR #382 (Codex #1) — re-rendering COMPLETED must be idempotent. Reopening
-    // /active-ride?role=driver&status=COMPLETED without ?state=cash would
-    // otherwise re-run saveDriverReceipt() and silently flip an already-saved
-    // cash receipt back to noncash. So the receipt is written only on the FIRST
-    // completion; once one exists for this tripId its whole money payload
-    // (fare/commission/tip/net/paymentMode) is preserved verbatim.
     const paymentMode = earningsState === 'cash' ? 'cash' : 'noncash';
     const receipt = getReceipt(ride.tripId) || saveDriverReceipt({
       tripId:      ride.tripId,
@@ -938,9 +1023,6 @@ export default function activeRide() {
       status:      'completed',
     });
     const entry = buildDriverHistoryEntry(ride, {
-      // History reads the persisted receipt — no recalculation. The legacy
-      // earnings block is kept (sourced from the same single payload) so older
-      // calendar/aggregate readers still resolve a net while they migrate.
       receipt,
       earnings: {
         gross: payload.fare,
@@ -951,24 +1033,13 @@ export default function activeRide() {
       },
     });
     if (entry) saveRideHistoryEntry(entry);
-    // The bottom sheet stays empty so the completed map + chrome read as a
-    // calm background; the earnings overlay (mounted on root) is the UI.
     sheet.innerHTML = '';
-    // BD-RIDE-D-09 follow-up (Codex #1) — dismissing the sheet (X / backdrop /
-    // Escape) must leave an exit; without onClose the driver was stranded on a
-    // blank completed map. /driver-map is the online driver's home route.
     openDriverEarningsSheet(root, {
       state: earningsState,
       payload,
       onClose:   () => go('/driver-map'),
       onOrders:  () => go('/driver-map'),
       onFeed:    () => go('/feed'),
-      // BD-RIDE-D-09 polish — explicit "В историю поездок" exit, mirroring
-      // the passenger COMPLETED handoff (BD-RIDE-P-08). The history section
-      // lives inside the profile (passenger main view + driver overview pane,
-      // both anchored as #profile-history-section), so deep-link via
-      // ?section=history so the profile screen scrolls the history into view
-      // instead of dropping the driver at the top of the overview.
       onHistory: () => go('/profile?section=history'),
     });
   }
@@ -989,8 +1060,6 @@ export default function activeRide() {
       title = 'Пассажир отменил заказ';
       body = `${passengerName} отменил поездку после того, как вы её приняли.`;
     } else if (backendRide && !cancel.by) {
-      // #784 CUT-5 — a server CANCELED reached us with no local cancel.by (the status-only PATCH
-      // carries no actor) and the driver did not initiate it; don't mis-attribute it as "вы отменили".
       title = 'Заказ отменён';
       body = 'Поездка отменена. Пассажиру отправлено уведомление.';
     } else {
@@ -1012,30 +1081,78 @@ export default function activeRide() {
     sheet.innerHTML = '<div class="active-ride__sheet-head"><div class="active-ride__sheet-title">Поездка</div></div><div class="active-ride__stub">Этот этап поездки будет реализован позже</div>';
   }
 
-  renderSheet();
+  const initialReadManager = createDriverRideReadManager(
+    (signal) => getRideFromBackend(ride.tripId, { signal }),
+  );
 
-  // #784 CUT-5 — if this tripId is a backend ride, hydrate from the server snapshot and start the
-  // realtime poll for cross-device live status. A 404/403 (a purely-local demo/mock ride) is caught
-  // and the screen stays on the mock — OFF is untouched (no fetch is attempted when the seam is off).
-  if (isBackendEnabled()) {
-    getRideFromBackend(ride.tripId).then((srv) => {
-      if (!srv) return;
+  function teardownDriverRead() {
+    if (destroyed) return;
+    destroyed = true;
+    initialReadManager.cancel();
+    stopRidePoll();
+    clearRideRefetch();
+    clearWaitTimer();
+    if (fixtureRetryTimer) clearTimeout(fixtureRetryTimer);
+    fixtureRetryTimer = null;
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = null;
+    window.removeEventListener('hashchange', handleDriverRouteChange);
+  }
+
+  function handleDriverRouteChange() {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#/active-ride')) teardownDriverRead();
+  }
+  window.addEventListener('hashchange', handleDriverRouteChange);
+  queueMicrotask(() => { if (root.isConnected) hasMounted = true; });
+
+  async function runInitialDriverRead() {
+    if (!backendRead || driverFixtureMode || destroyed) return;
+    stopRidePoll();
+    setDriverReadState(DRIVER_RIDE_READ_STATE.LOADING);
+    const result = await initialReadManager.run();
+    if (!result || result.stale || !currentViewIsUsable()) return;
+    if (result.value) {
       backendRide = true;
-      // The server is AUTHORITATIVE at mount — adopt its snapshot. Never push the local/demo status to
-      // the server here: a driver-screen backend ride opened without a handoff seeds a demo NEW_ORDER
-      // while the server is already DRIVER_EN_ROUTE, so a push would REGRESS a real trip. A genuine
-      // advance taken in the ~200ms hydrate window is rare and the driver simply re-taps.
-      ride = mergeServerRide(srv);
-      renderSheet();
+      ride = mergeServerRide(result.value);
+      setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
       if (!isTerminalRideStatus(ride.status)) startRidePoll();
-    }).catch((err) => {
-      // Only the expected 404 (genuinely a local/demo ride) drops to the mock. Any OTHER failure
-      // (403 / 503 / network / bad envelope) is a real server ride with a transient problem — keep it a
-      // backend ride and poll so it recovers, instead of masking the outage as a fabricated mock ride.
-      if (err && (err.status === 404 || err.code === 'RIDE_NOT_FOUND')) return;
-      backendRide = true;
-      if (!isTerminalRideStatus(ride.status)) startRidePoll();
-    });
+      return;
+    }
+    const err = result.error;
+    if (isExpectedDriverLocalRideMiss(err)) {
+      backendRide = false;
+      ride = safeApplyStatusFromQuery(ride, effectiveStatusQuery);
+      setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
+      return;
+    }
+    backendRide = false;
+    setDriverReadState(DRIVER_RIDE_READ_STATE.ERROR);
+  }
+
+  function retryInitialDriverRead() {
+    const stableFocus = top.querySelector('#ar-gear');
+    if (stableFocus && sheet.contains(document.activeElement)) stableFocus.focus({ preventScroll: true });
+    if (driverFixtureMode) {
+      if (driverFixture !== DRIVER_RIDE_READ_STATE.ERROR) return;
+      setDriverReadState(DRIVER_RIDE_READ_STATE.LOADING);
+      if (fixtureRetryTimer) clearTimeout(fixtureRetryTimer);
+      fixtureRetryTimer = setTimeout(() => {
+        fixtureRetryTimer = null;
+        if (currentViewIsUsable()) setDriverReadState(DRIVER_RIDE_READ_STATE.ERROR);
+      }, DRIVER_RIDE_FIXTURE_RETRY_MS);
+      return;
+    }
+    void runInitialDriverRead();
+  }
+
+  if (driverFixtureMode) {
+    setDriverReadState(driverFixture);
+  } else if (backendRead) {
+    setDriverReadState(DRIVER_RIDE_READ_STATE.LOADING);
+    void runInitialDriverRead();
+  } else {
+    setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
   }
 
   return root;
