@@ -5,6 +5,9 @@
 // refactor could drop the ring, the expired variant, or unwire its actions.
 // STATIC source assertions only — no browser, no DOM.
 
+// 02E piggy-backs on this already-registered Driver Active Ride smoke entry
+// so the focused read-state smoke runs in check.mjs without moving Passenger 02D.
+import './smoke-driver-active-ride-loading-states.mjs';
 import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
