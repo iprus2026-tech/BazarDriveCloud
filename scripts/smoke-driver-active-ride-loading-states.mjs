@@ -26,9 +26,10 @@ for (const state of ['loading', 'loaded', 'empty', 'error']) {
 expect('driver fixture is parsed from canonical fixture query',
   activeRide.includes("const fixtureValue = (query.get('fixture') || '').toLowerCase()")
     && activeRide.includes('DRIVER_RIDE_FIXTURES.has(fixtureValue)'));
-expect('recognized fixture seeds trip identity before persisted handoff lookup',
+expect('recognized fixture seeds trip identity before persisted driver handoff lookup',
   activeRide.includes('const rawTripId = rawTripIdParam || (driverFixtureMode ? DEMO_ACTIVE_RIDE_ID : null)')
-    && activeRide.indexOf('const rawTripId = rawTripIdParam') < activeRide.indexOf('findLatestHandedOffOrderTripId()'));
+    && activeRide.indexOf('const rawTripId = rawTripIdParam')
+      < activeRide.indexOf('const latestHandedOffTripId = rawTripId ? null : findLatestHandedOffOrderTripId()'));
 expect('fixture ride is selected before canonical driver hydration',
   activeRide.indexOf('? createDriverFixtureRide(tripId)') < activeRide.indexOf(": loadCanonicalActiveRide({ tripId, role: 'driver' })"));
 
@@ -167,6 +168,7 @@ expect('realtime poll adapter already accepts optional AbortSignal',
 
 if (issues.length) {
   console.error(`\n${issues.length} Driver Active Ride loading-state smoke assertion(s) failed.`);
+  for (const issue of issues) console.error(`  - ${issue}`);
   process.exit(1);
 }
 console.log('\nDriver Active Ride loading-state smoke PASS.');
