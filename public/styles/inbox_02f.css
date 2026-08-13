@@ -1,0 +1,28 @@
+/* BD-CLOUD-DESIGN-LOADING-02F — visual/fresh-audit repairs.
+   Reserve the Inbox unread slot in every request state while preserving the
+   original semantic contract: the actual badge exists visually only for unread > 0. */
+.screen--inbox .inbox-unread-slot {
+  width: 36px;
+  min-width: 36px;
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.screen--inbox .inbox-unread-badge {
+  width: 36px;
+  padding-inline: 0;
+  justify-content: center;
+}
+
+.screen--inbox .inbox-unread-badge[hidden] {
+  display: none;
+}
+
+/* Final 02F audit repair: keep the push prompt as a stable sibling inside the
+   scroll container while only the read-body is replaced between request states. */
+.screen--inbox .inbox-read-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}

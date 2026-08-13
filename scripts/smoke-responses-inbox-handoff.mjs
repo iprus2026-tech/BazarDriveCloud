@@ -2,7 +2,7 @@
 // the active ride. The notification previously pointed at a legacy `postId`, so
 // resolveCanonicalOrder() returned null and the board's «Выбрать водителя» CTA
 // dead-ended. ensureDemoResponseOrder() now materialises a canonical demo order on
-// Inbox mount and re-points the notification's href at it. The order id regenerates
+// normal Inbox mount and re-points the notification's href at it. The order id regenerates
 // per lifecycle (a fresh tripId each time) so a finished demo ride never leaks stale
 // per-trip state (chat / ride_history / driver_receipts), and the order is kept out
 // of the shared Feed/DriverMap surfaces. Static pins + a behavioural lifecycle walk.
@@ -28,8 +28,8 @@ expect('the Inbox notification no longer uses the legacy postId (re-pointed at r
 expect('mock_api exports DEMO_RESPONSE_KIND + ensureDemoResponseOrder',
   /export const DEMO_RESPONSE_KIND\s*=\s*'inbox-response'/.test(mockApi)
   && /export function ensureDemoResponseOrder\s*\(/.test(mockApi));
-expect('inbox.js calls ensureDemoResponseOrder on mount',
-  /export default async function inbox\(\)[\s\S]{0,400}ensureDemoResponseOrder\(\)/.test(inbox));
+expect('inbox.js calls ensureDemoResponseOrder on normal mount but not recognized fixture previews',
+  /export default function inbox\(\)[\s\S]{0,500}if\s*\(!fixtureMode\)\s*ensureDemoResponseOrder\(\)/.test(inbox));
 expect('the demo order id regenerates per lifecycle (fresh id, located by marker)',
   mockApi.includes("'order-demo-response-' + Date.now()")
   && /demoKind === DEMO_RESPONSE_KIND/.test(mockApi));

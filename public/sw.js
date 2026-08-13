@@ -55,7 +55,15 @@
 // order_map_draft.css and new helper passenger_order_utils.js.
 // v279 (BD-CLOUD-DESIGN-LOADING-02E #876): precached active_ride.js changed
 // (Driver Active Ride honest initial read states, fixtures and bounded realtime refresh).
-const VERSION    = 'v279';
+// v280 (BD-CLOUD-DESIGN-LOADING-02F #878): precached inbox.js changed
+// (Inbox hub honest list read states, deterministic fixtures and non-destructive refresh).
+// v281 (BD-CLOUD-DESIGN-LOADING-02F visual P2 repair #878): precached inbox.js, index.html
+// and inbox_02f.css changed (stable unread-badge footprint and representative message fixture metadata).
+// v282 (BD-CLOUD-DESIGN-LOADING-02F fresh-audit repair #878): precached inbox.js +
+// inbox_02f.css changed (error-side auxiliary composition, original unread semantics and focus-safe refresh).
+// v283 (BD-CLOUD-DESIGN-LOADING-02F final-audit repair #878): precached inbox.js +
+// inbox_02f.css changed (list-only request state, stable prompt host and exact prompt-focus identity).
+const VERSION    = 'v283';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -63,6 +71,7 @@ const PRECACHE = [
   './index.html',
   './manifest.webmanifest',
   './styles/cloud.css',
+  './styles/inbox_02f.css',
   './styles/map_shell_foundation.css',
   './styles/driver_sheets.css',
   './styles/route_picker.css',

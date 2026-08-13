@@ -9,14 +9,13 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import { user } from '../state.js';
 
-// BD-ERROR-01C-C / BD-ERROR-02A — route an inbox data-load failure through the
-// global app-shell overlay via the shared data_layer.loadResource adapter (the
-// per-screen wrapper was consolidated in 02A). Defensive wire: today
-// listInboxItems() resolves from mock/localStorage and does not reject, so the
-// failure path is dormant. loadResource shows 'retrying' on retry, dismisses only
-// on a successful reload (guarded by onlyIfState), reports server_error with the
-// guarded onRetry on failure, and falls back to [] so the inbox's own empty state
-// is preserved (the overlay is additive).
+// BD-CLOUD-DESIGN-LOADING-02F — Inbox owns an honest list-read boundary while
+// preserving the shared app-shell error overlay as an additive channel. The
+// screen shell mounts synchronously; only .inbox-read-body owns loading/loaded/
+// empty/error. A local sentinel distinguishes a failed read from a genuine empty
+// list without changing data_layer.loadResource.
+const INBOX_READ_FAILED = Symbol('inbox-read-failed');
+const INBOX_FIXTURES = new Set(['loading', 'loaded', 'empty', 'error']);
 
 const TABS = [
   { key: 'all',       label: 'Все' },
@@ -43,6 +42,48 @@ const EMPTY_HINTS = {
   messages:  'В чатах пока тишина — напишите водителю или попутчику.',
   rides:     'Событий по поездкам ещё нет — они появятся после первого заказа.',
 };
+
+const FIXTURE_ITEMS = [
+  {
+    id: 'inbox-fixture-response',
+    tab: 'responses',
+    kind: 'response',
+    actor: 'Алексей М.',
+    actorRole: 'Водитель',
+    status: 'NEW_RESPONSE',
+    unread: true,
+    time: '2 мин',
+    route: { from: 'Тверская улица', to: 'Шереметьево' },
+    summary: 'Водитель готов забрать заказ через несколько минут.',
+    href: '',
+  },
+  {
+    id: 'inbox-fixture-message',
+    tab: 'messages',
+    kind: 'message',
+    actor: 'Алексей М.',
+    actorRole: 'Водитель',
+    status: '',
+    unread: false,
+    time: '8 мин',
+    route: null,
+    summary: 'Я подъехал к указанному входу.',
+    href: '',
+  },
+  {
+    id: 'inbox-fixture-ride',
+    tab: 'rides',
+    kind: 'ride',
+    actor: 'Поездка',
+    actorRole: 'Событие',
+    status: 'DRIVER_EN_ROUTE',
+    unread: false,
+    time: '12 мин',
+    route: { from: 'Ленинградский проспект', to: 'Белорусский вокзал' },
+    summary: 'Водитель назначен. Следите за поездкой в активном заказе.',
+    href: '',
+  },
+];
 
 const ARROW_SVG = `
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -79,11 +120,11 @@ function promptHtml(view) {
           <div class="inbox-pushprompt__title">Включите push-уведомления</div>
           <p class="inbox-pushprompt__text">Чтобы не пропустить новые отклики и сообщения. Демо-режим — реальные push не отправляются.</p>
         </div>
-        <button type="button" class="inbox-pushprompt__close" data-notif-prompt="later" aria-label="Скрыть">×</button>
+        <button type="button" class="inbox-pushprompt__close" data-notif-prompt="later" data-notif-focus="close" aria-label="Скрыть">×</button>
       </div>
       <div class="inbox-pushprompt__actions">
-        <button type="button" class="bd-btn primary sm" data-notif-prompt="enable">Включить</button>
-        <button type="button" class="bd-btn ghost sm" data-notif-prompt="later">Позже</button>
+        <button type="button" class="bd-btn primary sm" data-notif-prompt="enable" data-notif-focus="enable">Включить</button>
+        <button type="button" class="bd-btn ghost sm" data-notif-prompt="later" data-notif-focus="later">Позже</button>
       </div>
       <div class="inbox-pushprompt__done" role="status">
         <span class="inbox-pushprompt__done-ic" aria-hidden="true">${CHECK_SVG}</span>
@@ -98,6 +139,11 @@ function getRouteParam(name) {
   const qi = hash.indexOf('?');
   if (qi === -1) return null;
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
+}
+
+function getInboxFixture() {
+  const raw = (getRouteParam('fixture') || '').toLowerCase();
+  return INBOX_FIXTURES.has(raw) ? raw : '';
 }
 
 function resolveActiveTab() {
@@ -249,7 +295,8 @@ function renderDailyCommunicationEntry() {
     </article>
   `;
 }
-function renderEmpty(tab) {
+
+function renderEmpty(tab, fixtureMode = false) {
   const hint = EMPTY_HINTS[tab] || EMPTY_HINTS.all;
   return `
     <div class="bd-card inbox-empty" role="status">
@@ -257,46 +304,68 @@ function renderEmpty(tab) {
       <div class="inbox-empty__title">Пока ничего нового</div>
       <p class="inbox-empty__body">${escapeHtml(hint)}</p>
       <button type="button" class="bd-btn primary sm inbox-empty__cta"
-              data-inbox-empty-cta="feed">
+              data-inbox-empty-cta="feed"${fixtureMode ? ' disabled aria-disabled="true"' : ''}>
         Перейти в ленту
       </button>
     </div>
   `;
 }
 
-export default async function inbox() {
-  // BD-RESPONSES-01 — materialise the canonical demo order that the static
-  // "driver responded" notification (inbox-response-1) points at, so its primary
-  // CTA opens a real offers board where the passenger can select a driver and
-  // build the active ride — instead of a dead-end toast. Idempotent.
-  ensureDemoResponseOrder();
-  // Retry re-runs the inbox load (isRetry=true → 'retrying' progress, dismiss on
-  // success). refreshInbox is hoisted, so referencing it here before its
-  // declaration is safe — the arrow only runs when the user taps «Повторить».
-  const onInboxRetry = () => { refreshInbox(true); };
-  let items = await loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry: false });
+function renderLoadingSkeleton() {
+  return `
+    <div role="status" aria-live="polite" class="muted">Загружаем входящие…</div>
+    ${Array.from({ length: 3 }, () => `
+      <article class="bd-card inbox-item" aria-hidden="true">
+        <div class="feed-skeleton__head">
+          <div class="feed-skeleton__avatar"></div>
+          <div class="feed-skeleton__lines">
+            <div class="feed-skeleton__line feed-skeleton__line--name"></div>
+            <div class="feed-skeleton__line feed-skeleton__line--meta"></div>
+          </div>
+        </div>
+        <div class="feed-skeleton__line"></div>
+        <div class="feed-skeleton__line feed-skeleton__line--short"></div>
+        <div class="feed-skeleton__line feed-skeleton__line--meta"></div>
+      </article>`).join('')}
+  `;
+}
+
+function renderReadError(retrying = false) {
+  return `
+    <div class="bd-empty" role="alert" aria-labelledby="inbox-read-error-title">
+      <div class="bd-empty__title" id="inbox-read-error-title">Не удалось загрузить входящие</div>
+      <p>Проверьте соединение и попробуйте ещё раз.</p>
+      <button type="button" class="bd-btn ghost sm" data-inbox-retry
+              ${retrying ? 'disabled aria-disabled="true"' : ''}>
+        ${retrying ? 'Повторяем…' : 'Повторить'}
+      </button>
+    </div>
+  `;
+}
+
+export default function inbox() {
+  const fixture = getInboxFixture();
+  const fixtureMode = Boolean(fixture);
+  if (!fixtureMode) ensureDemoResponseOrder();
+
+  let items = fixture === 'loaded' ? FIXTURE_ITEMS.map((item) => ({ ...item })) : [];
   let activeTab = resolveActiveTab();
+  let readState = fixture || 'loading';
+  let readEpoch = 0;
+  let readPending = false;
 
   const root = document.createElement('section');
   root.className = 'screen screen--inbox';
-
-  const unread = unreadCount(items);
-  const subText = unread > 0
-    ? `${unread} ${pluralUnread(unread)}`
-    : 'Все события прочитаны';
 
   root.innerHTML = `
     <div class="bd-topbar">
       <div class="bd-topbar__titles">
         <h1 class="bd-topbar__title">Входящие</h1>
-        <p class="bd-topbar__sub" data-inbox-sub>${escapeHtml(subText)}</p>
+        <p class="bd-topbar__sub" data-inbox-sub aria-hidden="true">&nbsp;</p>
       </div>
-      ${unread > 0
-        ? `<span class="bd-badge accent" data-inbox-unread-badge
-                  aria-label="Непрочитанных событий: ${escapeHtml(String(unread))}">
-             ${escapeHtml(String(unread))}
-           </span>`
-        : ''}
+      <span class="inbox-unread-slot">
+        <span class="bd-badge accent inbox-unread-badge" data-inbox-unread-badge hidden></span>
+      </span>
     </div>
     <div class="feed-chip-row" role="group" aria-label="Категории входящих">
       ${TABS.map((t) =>
@@ -308,38 +377,202 @@ export default async function inbox() {
          </button>`
       ).join('')}
     </div>
-    <div class="bd-scroll inbox-list" role="feed" aria-label="События"></div>
+    <div class="bd-scroll inbox-list">
+      <div class="inbox-prompt-host" data-inbox-prompt-host></div>
+      <div class="inbox-read-body" role="feed" aria-label="События" aria-busy="true" tabindex="-1"></div>
+    </div>
   `;
 
   const chipRow = root.querySelector('.feed-chip-row');
-  const listEl  = root.querySelector('.inbox-list');
+  const promptHost = root.querySelector('[data-inbox-prompt-host]');
+  const listEl = root.querySelector('.inbox-read-body');
+  const subEl = root.querySelector('[data-inbox-sub]');
+  const unreadBadge = root.querySelector('[data-inbox-unread-badge]');
 
-  // BD-NOTIF-01 — push-permission prompt state. Session-only: dismiss/enable
-  // never reappear within the session. `?prompt=1` force-shows it for QA even
-  // when notificationsEnabled is already true (the default). `promptDone`
-  // shows the brief "enabled" confirmation right after «Включить».
-  const forcePrompt = getRouteParam('prompt') === '1';
+  // BD-NOTIF-01 — push-permission prompt state. Fixtures never read or write the
+  // preference, keeping preview output deterministic and production-state-free.
+  const forcePrompt = !fixtureMode && getRouteParam('prompt') === '1';
   let promptDismissed = false;
   let promptDone = false;
   function promptShown() {
-    return promptDone || ((forcePrompt || !user.get().notificationsEnabled) && !promptDismissed);
+    return !fixtureMode
+      && (promptDone || ((forcePrompt || !user.get().notificationsEnabled) && !promptDismissed));
+  }
+
+  function renderPrompt() {
+    promptHost.innerHTML = promptShown() ? promptHtml(promptDone ? 'done' : 'prompt') : '';
+  }
+
+  function hideUnreadBadge() {
+    unreadBadge.hidden = true;
+    unreadBadge.textContent = '';
+    unreadBadge.removeAttribute('aria-label');
+  }
+
+  function clearTopbarSummary() {
+    subEl.textContent = '\u00a0';
+    subEl.setAttribute('aria-hidden', 'true');
+    hideUnreadBadge();
+  }
+
+  function updateTopbar() {
+    if (readState === 'loading' || readState === 'error') {
+      clearTopbarSummary();
+      return;
+    }
+    const unread = unreadCount(items);
+    subEl.removeAttribute('aria-hidden');
+    subEl.textContent = unread > 0
+      ? `${unread} ${pluralUnread(unread)}`
+      : 'Все события прочитаны';
+    if (unread > 0) {
+      unreadBadge.hidden = false;
+      unreadBadge.textContent = String(unread);
+      unreadBadge.setAttribute('aria-label', `Непрочитанных событий: ${unread}`);
+    } else {
+      hideUnreadBadge();
+    }
+  }
+
+  function captureScreenFocus() {
+    const active = document.activeElement;
+    if (!active || active === document.body) return null;
+
+    const promptControl = active.closest?.('[data-notif-focus]');
+    if (promptControl && promptHost.contains(promptControl)) {
+      return { kind: 'prompt', key: promptControl.dataset.notifFocus || '' };
+    }
+
+    if (!listEl.contains(active)) return null;
+    if (active === listEl) return { kind: 'list' };
+
+    const card = active.closest?.('[data-inbox-id]');
+    if (card) {
+      const action = active.closest?.('[data-inbox-action]');
+      return {
+        kind: 'item',
+        id: card.dataset.inboxId || '',
+        action: action?.dataset.inboxAction || '',
+      };
+    }
+
+    if (active.closest?.('[data-inbox-daily-communication]')) return { kind: 'daily' };
+    if (active.closest?.('[data-inbox-empty-cta]')) return { kind: 'empty' };
+    if (active.closest?.('[data-inbox-retry]')) return { kind: 'retry' };
+    return { kind: 'list' };
+  }
+
+  function restoreScreenFocus(snapshot) {
+    if (!snapshot) return;
+    let target = null;
+
+    if (snapshot.kind === 'prompt') {
+      target = Array.from(promptHost.querySelectorAll('[data-notif-focus]'))
+        .find((node) => node.dataset.notifFocus === snapshot.key);
+      if (!target) return;
+    } else if (snapshot.kind === 'list') {
+      target = listEl;
+    } else if (snapshot.kind === 'item') {
+      const card = Array.from(listEl.querySelectorAll('[data-inbox-id]'))
+        .find((node) => node.dataset.inboxId === snapshot.id);
+      if (card) {
+        target = snapshot.action
+          ? Array.from(card.querySelectorAll('[data-inbox-action]'))
+            .find((node) => node.dataset.inboxAction === snapshot.action)
+          : card;
+      }
+    } else if (snapshot.kind === 'daily') {
+      target = listEl.querySelector('[data-inbox-daily-communication]');
+    } else if (snapshot.kind === 'empty') {
+      target = listEl.querySelector('[data-inbox-empty-cta]');
+    } else if (snapshot.kind === 'retry') {
+      target = listEl.querySelector('[data-inbox-retry]');
+    }
+
+    (target || listEl).focus?.({ preventScroll: true });
   }
 
   function renderList() {
+    updateTopbar();
+    if (readState === 'loading') {
+      listEl.setAttribute('aria-busy', 'true');
+      listEl.innerHTML = renderLoadingSkeleton();
+      return;
+    }
+    listEl.setAttribute('aria-busy', 'false');
+    if (readState === 'error') {
+      const daily = fixtureMode ? '' : renderDailyCommunicationEntry();
+      listEl.innerHTML = daily + renderReadError(false);
+      return;
+    }
     const visible = filterItems(items, activeTab);
     const body = visible.length
       ? visible.map(renderItem).join('')
-      : renderEmpty(activeTab);
-    const prompt = promptShown() ? promptHtml(promptDone ? 'done' : 'prompt') : '';
-    listEl.innerHTML = prompt + renderDailyCommunicationEntry() + body;
+      : renderEmpty(activeTab, fixtureMode);
+    const daily = fixtureMode ? '' : renderDailyCommunicationEntry();
+    listEl.innerHTML = daily + body;
   }
 
-  // Re-run the inbox load and re-render the list. Mirrors feed's refreshList:
-  // the list is re-rendered, while the static topbar (unread sub/badge) is left
-  // as-is — the retry path is a dormant defensive wire.
-  async function refreshInbox(isRetry) {
-    items = await loadResource(listInboxItems, { onRetry: onInboxRetry, isRetry });
+  const onInboxRetry = () => { refreshInbox('retry'); };
+
+  function setRetryPending(pending) {
+    listEl.setAttribute('aria-busy', pending ? 'true' : 'false');
+    const retryBtn = listEl.querySelector('[data-inbox-retry]');
+    if (!retryBtn) return;
+    retryBtn.disabled = pending;
+    retryBtn.setAttribute('aria-disabled', pending ? 'true' : 'false');
+    retryBtn.textContent = pending ? 'Повторяем…' : 'Повторить';
+  }
+
+  async function refreshInbox(mode = 'background') {
+    if (fixtureMode || readPending) return;
+    const isInitial = mode === 'initial';
+    const isRetry = mode === 'retry';
+    const hadUsableContent = readState === 'loaded' || readState === 'empty';
+    const epoch = ++readEpoch;
+    readPending = true;
+
+    if (isInitial) {
+      readState = 'loading';
+      renderList();
+    } else if (isRetry && readState === 'error') {
+      setRetryPending(true);
+    }
+
+    const result = await loadResource(listInboxItems, {
+      onRetry: onInboxRetry,
+      isRetry,
+      fallback: INBOX_READ_FAILED,
+      isActive: () => (window.location.hash || '').startsWith('#/inbox'),
+    });
+
+    if (epoch !== readEpoch) return;
+    readPending = false;
+
+    if (result === INBOX_READ_FAILED) {
+      if (hadUsableContent) {
+        listEl.setAttribute('aria-busy', 'false');
+        return;
+      }
+      readState = 'error';
+      if (isRetry) {
+        setRetryPending(false);
+        updateTopbar();
+      } else {
+        renderList();
+      }
+      return;
+    }
+
+    // Snapshot at settlement time, not request start: if the user moved focus
+    // outside the replaceable Inbox read-body while awaiting the read, do not
+    // steal it back. Prompt controls use unique focus keys even when their
+    // semantic action is the same (close and bottom «Позже» both dismiss).
+    const focusSnapshot = captureScreenFocus();
+    items = Array.isArray(result) ? result : [];
+    readState = items.length ? 'loaded' : 'empty';
     renderList();
+    restoreScreenFocus(focusSnapshot);
   }
 
   function setActiveTab(key) {
@@ -350,10 +583,14 @@ export default async function inbox() {
       btn.classList.toggle('active', isActive);
       btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
-    const nextHash = activeTab === 'all' ? '#/inbox' : `#/inbox?tab=${activeTab}`;
-    if (location.hash !== nextHash) {
-      history.replaceState(null, '', nextHash);
-    }
+    const currentHash = window.location.hash || '#/inbox';
+    const qi = currentHash.indexOf('?');
+    const params = new URLSearchParams(qi === -1 ? '' : currentHash.slice(qi + 1));
+    if (activeTab === 'all') params.delete('tab');
+    else params.set('tab', activeTab);
+    const query = params.toString();
+    const nextHash = query ? `#/inbox?${query}` : '#/inbox';
+    if (location.hash !== nextHash) history.replaceState(null, '', nextHash);
     renderList();
   }
 
@@ -364,27 +601,47 @@ export default async function inbox() {
   });
 
   function openHref(href) {
-    if (!href) return;
+    if (!href || fixtureMode) return;
     go(href);
   }
 
-  listEl.addEventListener('click', (e) => {
-    // BD-NOTIF-01 — push-permission prompt controls (own data-notif-prompt
-    // attribute so they never collide with the item [data-inbox-action]/card).
+  promptHost.addEventListener('click', (e) => {
     const promptBtn = e.target.closest('[data-notif-prompt]');
-    if (promptBtn) {
+    if (!promptBtn) return;
+    e.stopPropagation();
+    if (fixtureMode) return;
+    const act = promptBtn.dataset.notifPrompt;
+    if (act === 'later') {
+      promptDismissed = true;
+      renderPrompt();
+      return;
+    }
+    if (act === 'enable') {
+      // UI-only: flip the persisted preference, no native push registration.
+      user.set({ notificationsEnabled: true });
+      promptDone = true;
+      renderPrompt();
+      setTimeout(() => {
+        promptDone = false;
+        promptDismissed = true;
+        renderPrompt();
+      }, 2400);
+    }
+  });
+
+  listEl.addEventListener('click', (e) => {
+    const retryBtn = e.target.closest('[data-inbox-retry]');
+    if (retryBtn) {
       e.stopPropagation();
-      const act = promptBtn.dataset.notifPrompt;
-      if (act === 'later') { promptDismissed = true; renderList(); return; }
-      if (act === 'enable') {
-        // UI-only: flip the persisted preference, no native push registration.
-        user.set({ notificationsEnabled: true });
-        promptDone = true;
-        renderList();
-        setTimeout(() => { promptDone = false; promptDismissed = true; renderList(); }, 2400);
+      if (fixtureMode) {
+        setRetryPending(true);
+        queueMicrotask(() => setRetryPending(false));
+      } else {
+        refreshInbox('retry');
       }
       return;
     }
+
     const dailyEntry = e.target.closest('[data-inbox-daily-communication]');
     if (dailyEntry) {
       e.stopPropagation();
@@ -399,7 +656,7 @@ export default async function inbox() {
     }
     const emptyCta = e.target.closest('[data-inbox-empty-cta]');
     if (emptyCta) {
-      go('/feed');
+      if (!fixtureMode) go('/feed');
       return;
     }
     const card = e.target.closest('[data-inbox-id]');
@@ -421,6 +678,15 @@ export default async function inbox() {
     openHref(card.dataset.href);
   });
 
+  renderPrompt();
   renderList();
+
+  if (fixture === 'error') {
+    readState = 'error';
+    renderList();
+  } else if (!fixtureMode) {
+    refreshInbox('initial');
+  }
+
   return root;
 }
