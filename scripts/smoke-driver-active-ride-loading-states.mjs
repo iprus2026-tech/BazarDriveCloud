@@ -160,9 +160,9 @@ expect('waiting/no-show/completion renderers are reachable only through loaded d
 expect('02D reduced-motion skeleton visual primitive remains available for driver reuse',
   css.includes('@media (prefers-reduced-motion: no-preference)')
     && css.includes('.active-ride-passenger__read-bone::after'));
-expect('service worker bumps monotonically for precached active_ride.js',
-  /const VERSION\s*=\s*'v279'/.test(sw)
-    && sw.includes('BD-CLOUD-DESIGN-LOADING-02E'));
+const swVersion = Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0);
+expect('service worker remains at or above the 02E cache version for precached active_ride.js',
+  swVersion >= 279 && sw.includes('BD-CLOUD-DESIGN-LOADING-02E'));
 expect('realtime poll adapter already accepts optional AbortSignal',
   /pollRide\(tripId,\s*since,\s*\{\s*signal\s*\}\s*=\s*\{\}\)/.test(mockApi));
 
