@@ -197,7 +197,7 @@ test('two-session pilot cycle: auth -> order -> offer -> select -> ride -> COMPL
 
   // ---- 12. Chat thread over the shared messages table, with clientMsgId dedup.
   // TODO(#825): asserted per TODAY's contract — no 401 gate, senderRole from the body (see header).
-  const chatId = `chat_${tripId}`;
+  const chatId = `trip-${tripId}`;
   chatIds.push(chatId);
   const m1 = await post(app, '/api/v1/chat/messages', { chatId, body: 'Я на месте', senderRole: 'driver', clientMsgId: 1 });
   assert.equal(m1.statusCode, 201);
