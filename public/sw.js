@@ -63,7 +63,9 @@
 // inbox_02f.css changed (error-side auxiliary composition, original unread semantics and focus-safe refresh).
 // v283 (BD-CLOUD-DESIGN-LOADING-02F final-audit repair #878): precached inbox.js +
 // inbox_02f.css changed (list-only request state, stable prompt host and exact prompt-focus identity).
-const VERSION    = 'v283';
+// v284 (BD-RIDE-P-06 stage-honest cancel-sheet copy #885): precached
+// active_ride_passenger_sheets.js changed (status-dependent warning/confirm copy, conditional «ещё далеко» note).
+const VERSION    = 'v284';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

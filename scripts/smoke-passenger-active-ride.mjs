@@ -181,6 +181,16 @@ expect('cancel confirm gate shows "Точно отменить?" title',
   sheets.includes('Точно отменить?'));
 expect('cancel confirm gate shows "Водитель уже в пути" subcopy',
   sheets.includes('Водитель уже в пути. Частые отмены могут влиять на рейтинг.'));
+// BD-RIDE-P-06 stage-honest copy — the sheet copy is status-dependent:
+// WAITING_PASSENGER (driver arrived) must say the driver is already here,
+// never «уже в пути», and the «ещё далеко» free-cancel note is en-route-only.
+expect('cancel sheet has the WAITING_PASSENGER arrived-stage warning',
+  sheets.includes('Водитель уже на месте и ждёт вас. Отмена может повлиять на рейтинг.'));
+expect('cancel confirm gate has the WAITING_PASSENGER arrived-stage subcopy',
+  sheets.includes('Водитель уже на месте и ждёт вас. Частые отмены могут влиять на рейтинг.'));
+expect('«ещё далеко» free-cancel note is suppressed once the driver is waiting',
+  /isDriverWaiting\s*\?\s*''/.test(sheets)
+  && sheets.includes('Если водитель ещё далеко, отмена бесплатна и не влияет на рейтинг.'));
 expect('cancel confirm gate shows "Не отменять" button',
   sheets.includes('Не отменять'));
 expect('cancel confirm gate shows "Да, отменить поездку" button',
