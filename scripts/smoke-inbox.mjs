@@ -199,11 +199,11 @@ expect('listInboxItems() body resolved', listBody.length > 0);
 expect('listInboxItems() returns a defensive per-item copy (map + spread)',
   /INBOX_ITEMS_V1\.map\(/.test(listBody) && /\{\s*\.\.\.\s*item\s*\}/.test(listBody));
 
-// ── I. sw.js — precache + 02F monotonic cache bump ────────────
+// ── I. sw.js — precache + current monotonic cache pin ─────────
 expect('sw.js PRECACHE includes ./src/screens/inbox.js', /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw));
 expect('sw.js PRECACHE includes ./styles/inbox_02f.css', /['"]\.\/styles\/inbox_02f\.css['"]/.test(sw));
 expect('index.html loads the scoped Inbox 02F stylesheet', /href=["']\.\/styles\/inbox_02f\.css["']/.test(index));
-expect('02F final-audit repair bumps service worker VERSION to v284', /const\s+VERSION\s*=\s*'v284'/.test(sw));
+expect('current service worker VERSION follows #887 to v286', /const\s+VERSION\s*=\s*'v286'/.test(sw));
 
 // ── I2. BD-CLOUD-DESIGN-LOADING-02F read-state contract ──────
 const inboxBody = functionBody(inbox, 'inbox') || '';
