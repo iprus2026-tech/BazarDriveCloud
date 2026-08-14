@@ -11,6 +11,7 @@ import {
   createDemoActiveRide,
   updateActiveRideStatus,
   saveActiveRide,
+  findActiveRide,
   SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   resolveRideStatusLabel,
@@ -2284,6 +2285,33 @@ export default function activeRidePassenger(options = {}) {
     return maybeReMount(pendingStatus) === PASSENGER_REMOUNT_RESULT.NAVIGATED;
   }
 
+  // #887 P1 repair — LOCAL_ONLY forward reconciliation. Another same-origin
+  // browsing context can advance bazardrive.active_ride.v1 through the driver
+  // lifecycle while this screen is mounted; observe that forward move through
+  // the SAME maybeReMount / deferredPassengerServerStatus / queued-click-abort
+  // pipeline the SERVER_BACKED poll already drives, instead of a second
+  // hand-rolled reconciliation controller (the former, deleted
+  // passenger_local_ride_sync.js). Critically, this always re-reads by the
+  // tripId THIS screen mounted with — the closed-over `ride.tripId` — and never
+  // re-derives trip identity from the URL / findLatestHandedOffOrderTripId().
+  // findLatestHandedOffOrderTripId() intentionally stops surfacing a trip once
+  // it goes terminal, so re-deriving here would drift the observer onto a
+  // different trip (or the demo fallback) right when a terminal status lands —
+  // exactly when it must keep observing the same trip it started with.
+  const ACTIVE_RIDE_LOCAL_STORAGE_KEY = 'bazardrive.active_ride.v1';
+  function reconcileLocalOnlyRide() {
+    if (destroyed || fixture) return PASSENGER_REMOUNT_RESULT.NONE;
+    if (passengerRideOwnership !== PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY) return PASSENGER_REMOUNT_RESULT.NONE;
+    const nextRide = findActiveRide(ride.tripId);
+    if (!nextRide || !nextRide.status) return PASSENGER_REMOUNT_RESULT.NONE;
+    return maybeReMount(nextRide.status);
+  }
+
+  function onActiveRideStorage(event) {
+    if (!event || event.key !== ACTIVE_RIDE_LOCAL_STORAGE_KEY) return;
+    reconcileLocalOnlyRide();
+  }
+
   function setReadState(nextState) {
     readState = nextState;
     root.dataset.readState = nextState;
@@ -2484,6 +2512,7 @@ export default function activeRidePassenger(options = {}) {
     stopPassengerRideRecovery();
     if (fixtureRetryId) clearTimeout(fixtureRetryId);
     fixtureRetryId = null;
+    window.removeEventListener('storage', onActiveRideStorage);
   }
 
   function startPassengerRidePoll() {
@@ -2536,6 +2565,11 @@ export default function activeRidePassenger(options = {}) {
         setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
+        // #887 — a store transition can land while this screen was still
+        // UNCONFIRMED (no 'storage' subscription yet). Re-read once now that
+        // LOCAL_ONLY ownership settles so that missed pre-subscription write
+        // cannot strand the passenger on an older lifecycle stage.
+        if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
         renderLoadedRide(true);
         return;
       }
@@ -2566,6 +2600,7 @@ export default function activeRidePassenger(options = {}) {
         setPassengerMutationBlocked(false);
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
+        if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
         if (hasUsableLocalRide) renderLoadedRide(recovery);
         else setReadState(PASSENGER_RIDE_READ_STATE.EMPTY);
         return;
@@ -2619,6 +2654,11 @@ export default function activeRidePassenger(options = {}) {
     if ((window.location.hash || '') !== initialHash) teardownPassengerReads();
   };
   window.addEventListener('hashchange', onHashChange);
+  // #887 — LOCAL_ONLY forward reconciliation subscribes for the life of this
+  // mounted screen only; teardownPassengerReads() (hashchange above /
+  // detached-root below) always removes it, matching the SERVER_BACKED
+  // poll/read teardown symmetry. Fixture screens stay fully inert.
+  if (!fixture) window.addEventListener('storage', onActiveRideStorage);
   let rootWasConnected = false;
   const teardownObserver = new MutationObserver(() => {
     if (document.body.contains(root)) {

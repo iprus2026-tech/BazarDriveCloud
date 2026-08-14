@@ -67,7 +67,12 @@
 // active_ride_passenger_sheets.js changed (status-dependent warning/confirm copy, conditional «ещё далеко» note).
 // v285 (BD-RIDE-P-LOCAL-SYNC-01 #886): precached app.js changed and new
 // passenger_local_ride_sync.js wires LOCAL_ONLY cross-tab ride-store reconciliation for Passenger Active Ride.
-const VERSION    = 'v285';
+// v286 (BD-RIDE-P-LOCAL-SYNC-01 #887 repair): passenger_local_ride_sync.js removed —
+// LOCAL_ONLY reconciliation folded into active_ride_passenger.js's existing
+// maybeReMount/deferred-terminal pipeline (mounted-trip-identity + queued-click-abort
+// fixes). Precached app.js changed (import/init call removed) and
+// active_ride_passenger.js changed; passenger_local_ride_sync.js dropped from PRECACHE.
+const VERSION    = 'v286';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -95,7 +100,6 @@ const PRECACHE = [
   './src/overlay.js',
   './src/storage_boundary.js',
   './src/passenger_order_utils.js',
-  './src/passenger_local_ride_sync.js',
   './src/mock_auth.js',
   './src/api_config.js',
   './src/api_client.js',

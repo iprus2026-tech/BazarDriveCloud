@@ -1259,6 +1259,26 @@ ${msg}`);
   }
 }
 
+// BD-RIDE-P-LOCAL-SYNC-01 (#886/#887) — runtime guard. Mounts the REAL
+// router.js + active_ride.js + active_ride_passenger.js + sheets modules
+// against a minimal-but-real DOM/localStorage shim: bare-URL mount identity,
+// forward LOCAL_ONLY reconciliation through the whole lifecycle to COMPLETED,
+// terminal CANCELED/NO_SHOW, mounted-trip-identity stability once
+// findLatestHandedOffOrderTripId() stops surfacing the terminal trip,
+// backward/unrelated/malformed-store no-ops, SERVER_BACKED non-reaction,
+// missed-pre-subscription settlement, teardown, and the open-overlay
+// queued-click deferred-terminal abort. The #872 smoke above stays static
+// (source-text pins); this one actually executes the code.
+const passengerActiveRideLocalSyncRuntimeSmoke = path.join(root, 'scripts', 'smoke-passenger-active-ride-local-sync-runtime.mjs');
+if (exists(passengerActiveRideLocalSyncRuntimeSmoke)) {
+  try { execFileSync(process.execPath, [passengerActiveRideLocalSyncRuntimeSmoke], { stdio: 'pipe' }); }
+  catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-2400);
+    errors.push(`smoke-passenger-active-ride-local-sync-runtime.mjs failed
+${msg}`);
+  }
+}
+
 // BD-RESPONSES-01 — /responses decline + sort. Asserts the segmented sort
 // chips, the in-memory per-driver declined Set (session-only, no localStorage),
 // single-driver restore + restore-all, and the all-declined notice.

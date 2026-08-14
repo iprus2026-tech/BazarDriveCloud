@@ -6,7 +6,6 @@ const passenger = read('../public/src/screens/active_ride_passenger.js');
 const passengerSheets = read('../public/src/screens/active_ride_passenger_sheets.js');
 const activeRide = read('../public/src/screens/active_ride.js');
 const app = read('../public/src/app.js');
-const localSync = read('../public/src/passenger_local_ride_sync.js');
 const mockApi = read('../public/src/mock_api.js');
 const css = read('../public/styles/cloud.css');
 const sw = read('../public/sw.js');
@@ -307,55 +306,43 @@ expect('route replacement + detached root are teardown signals',
   passenger.includes("window.addEventListener('hashchange', onHashChange)")
     && passenger.includes('new MutationObserver'));
 
-// #886 — LOCAL_ONLY cross-tab store reconciliation. The controller is deliberately
-// shell-wired so it can attach/detach with the mounted passenger root without adding
-// a second poll loop or changing active_ride_passenger.js's backend authority rules.
-const localSyncInit = functionBody(localSync, 'initPassengerLocalRideSync');
-const localForward = functionBody(localSync, 'isForwardPassengerLocalStatus');
-const localEligible = functionBody(localSync, 'getEligibleLocalPassengerContext');
-expect('#886 app boots the LOCAL_ONLY passenger sync controller after router start',
-  /import\s*\{\s*initPassengerLocalRideSync\s*\}\s*from\s*'\.\/passenger_local_ride_sync\.js'/.test(app)
-    && app.indexOf('start();') < app.indexOf('initPassengerLocalRideSync();'));
-expect('#886 observes only the canonical active-ride storage key and removes the listener on detach',
-  localSync.includes("const ACTIVE_RIDE_STORAGE_KEY = 'bazardrive.active_ride.v1'")
-    && localSyncInit.includes("window.addEventListener('storage', onStorage)")
-    && localSyncInit.includes("window.removeEventListener('storage', onStorage)"));
-expect('#886 subscription is LOCAL_ONLY + mounted-root + non-fixture gated',
-  localEligible.includes("root.dataset.ownershipState !== PASSENGER_LOCAL_ONLY_OWNERSHIP")
-    && localEligible.includes('!root.isConnected')
-    && localEligible.includes('root.dataset.fixture'));
-expect('#886 storage notification re-reads the canonical ride instead of trusting raw event payload',
-  localSyncInit.includes('findActiveRide(context.route.tripId)')
-    && !localSync.includes('JSON.parse(event.newValue)')
-    && !localSyncInit.includes('event.newValue'));
-expect('#886 resolves the same explicit → latest handoff → demo tripId chain as Active Ride',
-  localSync.includes("params.get('tripId')")
-    && localSync.includes('findLatestHandedOffOrderTripId() || DEMO_ACTIVE_RIDE_ID'));
-expect('#886 accepts only monotonic forward lifecycle movement',
-  localForward.includes('nextRank > currentRank')
-    && localSync.includes('[RIDE_STATUS.ACCEPTED]: 1')
-    && localSync.includes('[RIDE_STATUS.DRIVER_EN_ROUTE]: 2')
-    && localSync.includes('[RIDE_STATUS.DRIVER_APPROACHING_PICKUP]: 3')
-    && localSync.includes('[RIDE_STATUS.WAITING_PASSENGER]: 4')
-    && localSync.includes('[RIDE_STATUS.IN_PROGRESS]: 5')
-    && localSync.includes('[RIDE_STATUS.COMPLETED]: 6'));
-expect('#886 defers forward local status behind safety/cancel overlays and terminal-blocks stale cancel',
-  localSyncInit.includes('passengerOverlayIsOpen(context.root)')
-    && localSyncInit.includes('rememberPendingStatus(nextStatus)')
-    && localSyncInit.includes('blockStaleTerminalCancel(subscribedRoot)')
-    && localSync.includes("['#arp-cancel-confirm', '#arp-cancel-confirm-yes']"));
-expect('#886 terminal vocabulary covers completed, canceled and no-show',
-  localSync.includes('RIDE_STATUS.COMPLETED')
-    && localSync.includes('RIDE_STATUS.CANCELED')
-    && localSync.includes('RIDE_STATUS.NO_SHOW'));
-expect('#886 flush re-reads the canonical store after overlay closure before navigating',
-  localSyncInit.includes('return reconcileFromCanonicalStore();')
-    && localSyncInit.includes('new MutationObserver'));
-expect('#886 local observer is read-only and cannot become a status writer',
-  !/\bupdateActiveRideStatus\b|\bsaveActiveRide\b|\bpatchRideStatus\b|\bupdateTripStatus\b/.test(localSync));
-expect('#886 forward convergence remounts only the current passenger trip',
-  localSyncInit.includes('liveContext.route.tripId !== context.route.tripId')
-    && localSyncInit.includes('role=passenger&status=${encodeURIComponent(nextStatus)}&tripId=${encodeURIComponent(context.route.tripId)}'));
+// #887 — LOCAL_ONLY cross-tab store reconciliation (repair of #886). The former
+// standalone passenger_local_ride_sync.js re-derived trip identity independently
+// on every reconciliation (explicit tripId → findLatestHandedOffOrderTripId() →
+// demo) and duplicated the SERVER_BACKED forward/deferred-terminal/queued-click
+// pipeline. The repair deletes that controller and folds LOCAL_ONLY observation
+// into active_ride_passenger.js itself, reusing the mounted `ride.tripId`, the
+// existing STATUS_RANK table, maybeReMount and the deferred-terminal cancel gate.
+const reconcileLocalOnly = functionBody(passenger, 'reconcileLocalOnlyRide');
+const onActiveRideStorage = functionBody(passenger, 'onActiveRideStorage');
+const teardownReads = functionBody(passenger, 'teardownPassengerReads');
+expect('#887 standalone passenger_local_ride_sync.js controller is removed',
+  !app.includes('passenger_local_ride_sync')
+    && !app.includes('initPassengerLocalRideSync')
+    && !sw.includes("'./src/passenger_local_ride_sync.js'"));
+expect('#887 observes only the canonical active-ride storage key and removes the listener on teardown',
+  passenger.includes("const ACTIVE_RIDE_LOCAL_STORAGE_KEY = 'bazardrive.active_ride.v1'")
+    && onActiveRideStorage.includes('event.key !== ACTIVE_RIDE_LOCAL_STORAGE_KEY')
+    && passenger.includes("if (!fixture) window.addEventListener('storage', onActiveRideStorage)")
+    && teardownReads.includes("window.removeEventListener('storage', onActiveRideStorage)"));
+expect('#887 reconciliation re-reads by the tripId this screen mounted with, never re-derives it',
+  reconcileLocalOnly.includes('findActiveRide(ride.tripId)')
+    && !reconcileLocalOnly.includes('findLatestHandedOffOrderTripId')
+    && !onActiveRideStorage.includes('findLatestHandedOffOrderTripId'));
+expect('#887 subscription is gated to LOCAL_ONLY ownership and skips fixture/destroyed screens',
+  reconcileLocalOnly.includes('if (destroyed || fixture) return PASSENGER_REMOUNT_RESULT.NONE')
+    && reconcileLocalOnly.includes('passengerRideOwnership !== PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY'));
+expect('#887 LOCAL_ONLY forward reconciliation delegates to the existing maybeReMount pipeline (no duplicate rank table)',
+  reconcileLocalOnly.includes('return maybeReMount(nextRide.status)')
+    && !/LOCAL_STATUS_RANK|isForwardPassengerLocalStatus/.test(passenger));
+expect('#887 ownership settlement re-checks the store for a transition missed before subscription',
+  initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)')
+    && (initialRead.match(/reconcileLocalOnlyRide\(\) === PASSENGER_REMOUNT_RESULT\.NAVIGATED/g)?.length ?? 0) >= 2);
+expect('#887 local observer is read-only and cannot become a status writer',
+  !/\bupdateActiveRideStatus\(|\bsaveActiveRide\(|\bpatchRideStatus\(|\bupdateTripStatus\(/.test(reconcileLocalOnly + onActiveRideStorage));
+expect('#887 SERVER_BACKED ownership does not react to a local storage write (guard precedes the read)',
+  reconcileLocalOnly.indexOf('passengerRideOwnership !== PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY')
+    < reconcileLocalOnly.indexOf('findActiveRide(ride.tripId)'));
 
 expect('fixture cancel action is disabled/inert',
   /if\s*\(fixture\)\s*\{\s*cancelBtn\.disabled\s*=\s*true/.test(passenger));
@@ -387,9 +374,9 @@ expect('skeleton shimmer is reduced-motion safe',
 expect('Passenger Active Ride map shell code is untouched by request helper vocabulary',
   !fixtureBody.includes('createMapShell') && !manager.includes('createMapShell'));
 
-expect('#886 service worker moves monotonically to v285+ and precaches the controller',
-  Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 285
-    && sw.includes("'./src/passenger_local_ride_sync.js'"));
+expect('#887 service worker moves monotonically to v286+ and no longer precaches the deleted controller',
+  Number(sw.match(/const VERSION\s*=\s*'v(\d+)'/)?.[1] || 0) >= 286
+    && !sw.includes("'./src/passenger_local_ride_sync.js'"));
 
 if (issues.length) {
   console.error(`\n${issues.length} 02D regression(s) failed.`);
