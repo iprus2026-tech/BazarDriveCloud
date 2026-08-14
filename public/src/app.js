@@ -4,6 +4,7 @@ import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
 import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
+import { initPassengerLocalRideSync } from './passenger_local_ride_sync.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 
 import welcome    from './screens/welcome.js';
@@ -106,6 +107,10 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 start();
+// #886 — lifecycle observer is a shell-level controller but subscribes only while
+// Passenger Active Ride explicitly owns a LOCAL_ONLY ride. SERVER_BACKED remains
+// on its existing GET/poll reconciliation path inside active_ride_passenger.js.
+initPassengerLocalRideSync();
 initSwUpdate();
 initFavoriteRoutes();
 // BD-ERROR-01A — app-shell singleton error/offline overlay. Not a route:

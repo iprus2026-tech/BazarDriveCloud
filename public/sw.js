@@ -65,7 +65,9 @@
 // inbox_02f.css changed (list-only request state, stable prompt host and exact prompt-focus identity).
 // v284 (BD-RIDE-P-06 stage-honest cancel-sheet copy #885): precached
 // active_ride_passenger_sheets.js changed (status-dependent warning/confirm copy, conditional «ещё далеко» note).
-const VERSION    = 'v284';
+// v285 (BD-RIDE-P-LOCAL-SYNC-01 #886): precached app.js changed and new
+// passenger_local_ride_sync.js wires LOCAL_ONLY cross-tab ride-store reconciliation for Passenger Active Ride.
+const VERSION    = 'v285';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -93,6 +95,7 @@ const PRECACHE = [
   './src/overlay.js',
   './src/storage_boundary.js',
   './src/passenger_order_utils.js',
+  './src/passenger_local_ride_sync.js',
   './src/mock_auth.js',
   './src/api_config.js',
   './src/api_client.js',
