@@ -203,7 +203,7 @@ expect('listInboxItems() returns a defensive per-item copy (map + spread)',
 expect('sw.js PRECACHE includes ./src/screens/inbox.js', /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw));
 expect('sw.js PRECACHE includes ./styles/inbox_02f.css', /['"]\.\/styles\/inbox_02f\.css['"]/.test(sw));
 expect('index.html loads the scoped Inbox 02F stylesheet', /href=["']\.\/styles\/inbox_02f\.css["']/.test(index));
-expect('02F final-audit repair bumps service worker VERSION to v283', /const\s+VERSION\s*=\s*'v283'/.test(sw));
+expect('02F final-audit repair bumps service worker VERSION to v284', /const\s+VERSION\s*=\s*'v284'/.test(sw));
 
 // ── I2. BD-CLOUD-DESIGN-LOADING-02F read-state contract ──────
 const inboxBody = functionBody(inbox, 'inbox') || '';
