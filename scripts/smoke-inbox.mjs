@@ -190,7 +190,7 @@ expect('every item.status has an INBOX_STATUS_TONE entry', missingTone.length ==
 
 const hrefs = collect(/href:\s*'([^']*)'/g, itemsBody);
 expect('INBOX_ITEMS_V1 exposes href values', hrefs.length > 0);
-const externalHrefs = [...new Set(hrefs.filter((h) => !h.startsWith('/')) )];
+const externalHrefs = [...new Set(hrefs.filter((h) => !h.startsWith('/')))];
 expect('every primary/secondary/fallback href is an internal route (starts with "/")', externalHrefs.length === 0, 'external=' + JSON.stringify(externalHrefs));
 
 // ── H. mock_api.js — defensive copy ──────────────────────────
