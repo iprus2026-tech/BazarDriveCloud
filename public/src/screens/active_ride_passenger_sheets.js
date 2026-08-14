@@ -471,6 +471,42 @@ export function openPassengerCancelSheet(root, options = {}) {
   const onConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
   const tripLabel = options.tripLabel || DEMO_TRIP_LABEL;
 
+  // BD-RIDE-P-06 stage-honest copy — the cancel sheet must describe the SAME
+  // trip stage as the active-ride sheet behind it. The single caller
+  // (active_ride_passenger.js bindCancelAffordance) already passes the live
+  // ride, so this is pure presentation over the existing status: no
+  // lifecycle, status-name, store or flow change. WAITING_PASSENGER (driver
+  // arrived; the main sheet says «Водитель ждёт вас») must not claim
+  // «Водитель уже в пути», and the «ещё далеко» free-cancel note cannot
+  // apply once the driver is at the pickup — it renders only for the
+  // pre-arrival stages. ACCEPTED matches its «Водитель назначен» sheet. A
+  // missing / unknown status keeps the legacy en-route copy verbatim,
+  // including the exact confirm-gate literal pinned by
+  // scripts/smoke-passenger-active-ride.mjs.
+  const rideStatus = options.ride && options.ride.status;
+  // Status LITERALS (not a RIDE_STATUS import): the E4 pin in
+  // scripts/smoke-passenger-active-ride.mjs forbids this module from
+  // importing ride_state.js at all, so the store writers stay unreachable
+  // from the UI-only sheets. The vocabulary is stable — RIDE_STATUS keys
+  // equal their values and are mirrored server-side by
+  // ride-status-parity.test.mjs; the copy below is pinned by the same smoke.
+  const isDriverWaiting = rideStatus === 'WAITING_PASSENGER';
+  const isDriverAssigned = rideStatus === 'ACCEPTED';
+  const cancelWarningText = isDriverWaiting
+    ? 'Водитель уже на месте и ждёт вас. Отмена может повлиять на рейтинг.'
+    : isDriverAssigned
+      ? 'Водитель уже назначен. Отмена может повлиять на рейтинг.'
+      : 'Водитель уже в пути. Отмена может повлиять на рейтинг.';
+  const cancelConfirmText = isDriverWaiting
+    ? 'Водитель уже на месте и ждёт вас. Частые отмены могут влиять на рейтинг.'
+    : isDriverAssigned
+      ? 'Водитель уже назначен. Частые отмены могут влиять на рейтинг.'
+      : 'Водитель уже в пути. Частые отмены могут влиять на рейтинг.';
+  const farPolicyHtml = isDriverWaiting ? '' : `<div class="passenger-cancel-sheet__policy" role="note">
+          <span class="passenger-cancel-sheet__policy-dot" aria-hidden="true"></span>
+          Если водитель ещё далеко, отмена бесплатна и не влияет на рейтинг.
+        </div>`;
+
   const overlay = document.createElement('div');
   overlay.className = 'passenger-cancel-overlay';
   overlay.dataset.stage = 'default';
@@ -499,7 +535,7 @@ export function openPassengerCancelSheet(root, options = {}) {
 
         <div class="passenger-cancel-sheet__warning" role="note">
           <span class="passenger-cancel-sheet__warning-ic" aria-hidden="true">${ALERT_TRI_SVG}</span>
-          Водитель уже в пути. Отмена может повлиять на рейтинг.
+          ${escapeHtml(cancelWarningText)}
         </div>
 
         <div class="passenger-cancel-sheet__list-label">Причина отмены</div>
@@ -519,10 +555,7 @@ export function openPassengerCancelSheet(root, options = {}) {
             placeholder="Добавьте детали для водителя"></textarea>
         </div>
 
-        <div class="passenger-cancel-sheet__policy" role="note">
-          <span class="passenger-cancel-sheet__policy-dot" aria-hidden="true"></span>
-          Если водитель ещё далеко, отмена бесплатна и не влияет на рейтинг.
-        </div>
+        ${farPolicyHtml}
 
         <div class="passenger-cancel-sheet__actions">
           <button type="button" class="passenger-cancel-sheet__btn-back" id="arp-cancel-back">
@@ -543,7 +576,7 @@ export function openPassengerCancelSheet(root, options = {}) {
         <div class="passenger-cancel-sheet__confirm-icon" aria-hidden="true">${ALERT_TRI_SVG}</div>
         <div id="arp-cancel-confirm-title" class="passenger-cancel-sheet__confirm-title">Точно отменить?</div>
         <div class="passenger-cancel-sheet__confirm-body">
-          Водитель уже в пути. Частые отмены могут влиять на рейтинг.
+          ${escapeHtml(cancelConfirmText)}
         </div>
         <div class="passenger-cancel-sheet__confirm-actions">
           <button type="button" class="passenger-cancel-sheet__btn-back" id="arp-cancel-confirm-no">
