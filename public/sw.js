@@ -72,7 +72,8 @@
 // maybeReMount/deferred-terminal pipeline (mounted-trip-identity + queued-click-abort
 // fixes). Precached app.js changed (import/init call removed) and
 // active_ride_passenger.js changed; passenger_local_ride_sync.js dropped from PRECACHE.
-const VERSION    = 'v286';
+// v287 (#888): precached cloud.css changed (driver active-ride empty-state layout fix).
+const VERSION    = 'v287';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
