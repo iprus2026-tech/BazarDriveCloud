@@ -476,6 +476,28 @@ expect("chat.js drops the quick replies on a terminal trip",
 expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud Design port)",
   /\.chat__readonly-note\s*\{/.test(css) && /\.chat__composer--locked\s*\{/.test(css));
 
+// ── R. chat.js — BD-CHAT-FALLBACK-05 failed-send retry respects terminal lock (#891 Codex P2 follow-up) ──
+// A retry button predating a late terminal confirm, or one created AFTER it
+// (the original POST was already in flight when applyTerminalLock ran), must
+// never be able to actually resend. Three scenarios, each pinned below:
+//   1. non-terminal failed message -> retry stays available (unconditional
+//      creation, no disabled attribute forced).
+//   2. a retry button that already existed before a late terminal confirm ->
+//      applyTerminalLock's querySelectorAll sweep disables it.
+//   3. a retry button created AFTER the lock (late-rejected POST) -> the
+//      click handler's live `if (isTerminal) return;` guard is the
+//      authoritative block, independent of the disabled attribute.
+const markSendFailedBody = functionBody(chat, 'markSendFailed');
+expect("markSendFailed creates the retry button unconditionally (non-terminal failed sends still get a working retry — Scenario 1)",
+  /const retry = document\.createElement\('button'\);/.test(markSendFailedBody)
+  && /retry\.className = 'chat__msg-retry';/.test(markSendFailedBody));
+expect("markSendFailed disables the retry button from creation ONLY when the thread is already terminal (a late-rejected POST landing after the lock — Scenario 3, defense-in-depth)",
+  /if \(isTerminal\) retry\.disabled = true;/.test(markSendFailedBody));
+expect("the retry click handler's FIRST statement re-checks isTerminal live and returns before any postServerMessage/persistMessageInOrder call — the authoritative guard for Scenario 3, independent of the disabled attribute",
+  /retry\.addEventListener\('click', \(\) => \{\s*if \(isTerminal\) return;/.test(markSendFailedBody));
+expect("applyTerminalLock disables every existing .chat__msg-retry button when the lock fires (Scenario 2 — a retry that predates a late terminal confirm)",
+  /for \(const btn of root\.querySelectorAll\('\.chat__msg-retry'\)\) btn\.disabled = true;/.test(chat));
+
 // ── H. chat.js — send returns focus to the input (#4, a11y) ──────────
 // A click-send disables the (focused) send button, which would otherwise drop
 // focus to <body>; doSend must end by returning focus to the input so keyboard /

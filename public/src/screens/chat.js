@@ -876,6 +876,10 @@ export default function chat() {
     inputEl.placeholder = 'Чат закрыт';
     sendBtn.disabled = true;
     qrEl.hidden = true;
+    // BD-CHAT-FALLBACK-05 — a failed-send retry button rendered before the
+    // lock must not remain visually clickable in a read-only thread; its own
+    // click handler also re-checks isTerminal live (#891 Codex P2 follow-up).
+    for (const btn of root.querySelectorAll('.chat__msg-retry')) btn.disabled = true;
     if (!root.querySelector('.chat__readonly-note')) {
       const note = document.createElement('div');
       note.className = 'chat__readonly-note';
@@ -1265,7 +1269,18 @@ export default function chat() {
     retry.className = 'chat__msg-retry';
     retry.textContent = 'Повторить';
     retry.setAttribute('aria-label', 'Повторить отправку');
+    // BD-CHAT-FALLBACK-05 — a failed send can land AFTER a late terminal
+    // confirm: the original POST was already in flight when
+    // applyConfirmedRide locked the thread, so this button is being created
+    // into an ALREADY-terminal chat. Disable it from creation as a visual
+    // match for the read-only state, but the click handler below is the
+    // authoritative guard — it re-checks isTerminal live, so a retry button
+    // that predates the lock (disabled separately by applyTerminalLock's
+    // sweep) is blocked the same way even if its disabled attribute were
+    // ever bypassed (#891 Codex P2 follow-up).
+    if (isTerminal) retry.disabled = true;
     retry.addEventListener('click', () => {
+      if (isTerminal) return;
       const ok = () => { clearSendFailed(msgEl); showNotice('Сообщение отправлено'); inputEl.focus(); };
       if (backendChat) {
         postServerMessage(chatId, msg).then(ok).catch(() => showNotice('Не удалось отправить сообщение — проверьте соединение.'));
