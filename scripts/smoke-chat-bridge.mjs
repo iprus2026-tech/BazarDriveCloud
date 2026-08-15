@@ -382,17 +382,33 @@ expect("resolveChatHydration's tripId real-ride branch delegates to hydrateFromR
 expect("resolveChatHydration's server-backed local-miss branch requires BOTH hasExplicitRole AND isBackendEnabled() — neither alone is sufficient (Finding 2)",
   /if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)/.test(resolveChatHydrationBody)
   && !/hasExplicitRole\s*\|\|\s*isBackendEnabled\(\)/.test(resolveChatHydrationBody));
-expect("resolveChatHydration's server-backed local-miss branch does NOT assert confirmed:true or 'Принят' synchronously — it returns confirmed:false + pendingBackendConfirm:true and a neutral status, deferring to chat()'s async backend read",
-  /if\s*\(tripId\)\s*\{[\s\S]*?if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)\s*\{[\s\S]{0,300}status:\s*'Не подтверждено'[\s\S]{0,60}\}[\s\S]{0,60}confirmed:\s*false[\s\S]{0,60}pendingBackendConfirm:\s*true/.test(resolveChatHydrationBody));
+// The hasExplicitRole && isBackendEnabled() sub-block now has TWO pending
+// outcomes (BD-CHAT-FALLBACK-03, #891 Codex P2 follow-up): a response-backed
+// one when trip_confirmation.js's tripId+responseId+role handoff finds a
+// stored offer, and the generic MOCK_TRIP one otherwise. Slice just that
+// sub-block (bounded by the following `if (responseId)`) for precise checks.
+const backendMissBranchStart = resolveChatHydrationBody.indexOf('if (hasExplicitRole && isBackendEnabled())');
+const backendMissBranchBody = resolveChatHydrationBody.slice(
+  backendMissBranchStart,
+  resolveChatHydrationBody.indexOf('if (responseId) {', backendMissBranchStart));
+expect("resolveChatHydration's server-backed local-miss branch does NOT assert confirmed:true synchronously — neither of its two outcomes (response-backed, generic) ever affirms before chat()'s async backend read",
+  !/confirmed:\s*true/.test(backendMissBranchBody)
+  && (backendMissBranchBody.match(/confirmed: false/g) || []).length === 2
+  && (backendMissBranchBody.match(/pendingBackendConfirm: true/g) || []).length === 2);
+expect("resolveChatHydration's server-backed local-miss branch prefers the response-backed hydration (a real stored offer's price) over generic MOCK_TRIP when trip_confirmation.js's tripId+responseId+role handoff has one (Finding 3)",
+  /const pendingResponse = responseId \? loadResponse\(responseId\) : null;/.test(backendMissBranchBody)
+  && /if \(pendingResponse\) \{/.test(backendMissBranchBody)
+  && /price:\s*pendingResponse\.driverPrice \? `\$\{pendingResponse\.driverPrice\} ₽` : MOCK_TRIP\.price/.test(backendMissBranchBody)
+  && /response:\s*pendingResponse,/.test(backendMissBranchBody));
 expect("resolveChatHydration's responseId+orderId branch looks up trip_${orderId} and confirms ONLY on an exact selectedDriver.responseId match (Finding 1)",
   /findActiveRide\(`trip_\$\{orderId\}`\)/.test(resolveChatHydrationBody)
   && /existingRide\.selectedDriver\s*&&\s*existingRide\.selectedDriver\.responseId\s*===\s*responseId/.test(resolveChatHydrationBody)
   && /return\s*\{\s*\.\.\.hydrateFromRealRide\(existingRide,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
 expect("hydrateFromRealRide is reused (not duplicated) by exactly the two SYNCHRONOUS real-ride call sites in resolveChatHydration (the async server-confirm path reuses it separately, inside chat()'s applyConfirmedRide)",
   (resolveChatHydrationBody.match(/hydrateFromRealRide\(/g) || []).length === 2);
-expect("resolveChatHydration marks confirmed:false with a neutral status in all three non-affirming paths (pending server-confirm, responseId-only mismatch, generic fallback)",
-  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 3
-  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 3);
+expect("resolveChatHydration marks confirmed:false with a neutral status in all four non-affirming paths (pending server-confirm response-backed, pending server-confirm generic, responseId-only mismatch, generic fallback)",
+  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 4
+  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 4);
 expect("resolveFixtureHydration (canonical preview) keeps its historical 'Принят' + confirmed:true unchanged",
   /status:\s*'Принят'/.test(resolveFixtureHydrationBody)
   && /confirmed:\s*true/.test(resolveFixtureHydrationBody));

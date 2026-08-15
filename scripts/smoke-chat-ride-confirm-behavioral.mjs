@@ -82,6 +82,27 @@ expect('backend ON + local miss + explicit role -> confirmed:false + pendingBack
   && onExplicitRole.pendingBackendConfirm === true
   && onExplicitRole.trip.status === 'Не подтверждено');
 
+// ── B2. Finding 3 (Codex P2 follow-up) — trip_confirmation.js's passenger
+//      chat handoff (chatHref, #732/#743) threads tripId + responseId +
+//      role=passenger together on purpose: responseId hydrates the thread
+//      from the stored driver offer BEFORE the active ride is seeded. The
+//      server-backed local-miss branch must reuse that response-backed
+//      hydration (the real offered price) instead of generic MOCK_TRIP data
+//      while the backend confirm is pending ─────────────────────────────
+const seededResponseId = 'resp_behavioral_pending';
+_store.set('bazardrive.responses.v1', JSON.stringify({
+  [seededResponseId]: { driverPrice: 3300, requestId: 'req_behavioral_pending' },
+}));
+const onWithResponse = withBackend('https://fake.test', () => resolveChatHydration({
+  tripId: missingTripId, responseId: seededResponseId, orderId: null, viewerRole: 'passenger', hasExplicitRole: true,
+}));
+expect('backend ON + local miss + explicit role + a stored response (trip_confirmation.js\'s tripId+responseId+role handoff) -> confirmed:false + pendingBackendConfirm:true, but hydrated from the REAL stored offer price (3300 ₽), not MOCK_TRIP\'s placeholder',
+  onWithResponse.confirmed === false
+  && onWithResponse.pendingBackendConfirm === true
+  && onWithResponse.trip.price === '3300 ₽'
+  && onWithResponse.response && onWithResponse.response.driverPrice === 3300);
+_store.delete('bazardrive.responses.v1');
+
 const onBareFeedLink = withBackend('https://fake.test', () => resolveChatHydration({
   tripId: missingTripId, responseId: null, orderId: null, viewerRole: 'passenger', hasExplicitRole: false,
 }));

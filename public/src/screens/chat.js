@@ -381,6 +381,37 @@ function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExpl
     // 'Принят') and let chat() await getRideFromBackend(tripId) before
     // upgrading — pendingBackendConfirm is that request, not the answer.
     if (hasExplicitRole && isBackendEnabled()) {
+      // BD-CHAT-FALLBACK-03 — trip_confirmation.js's passenger chat handoff
+      // (chatHref, #732/#743) threads tripId + responseId + role=passenger
+      // together on purpose: responseId hydrates the thread from the stored
+      // driver offer BEFORE the active ride is seeded, since tripId only
+      // resolves once findActiveRide(tripId) actually finds it. Don't
+      // clobber that already-known offer (e.g. the driver's price) with
+      // generic MOCK_TRIP data while a backend confirm is pending — reuse
+      // the same response-backed hydration the responseId branch below
+      // would produce, still tagged pendingBackendConfirm so a successful
+      // read still upgrades to the real ride via hydrateFromRealRide, and a
+      // 404/403/failed read leaves the response hydration in place instead
+      // of a fabricated 'Принят' (#891 Codex P2 follow-up).
+      const pendingResponse = responseId ? loadResponse(responseId) : null;
+      if (pendingResponse) {
+        const trip = {
+          from:   MOCK_TRIP.from,
+          to:     MOCK_TRIP.to,
+          price:  pendingResponse.driverPrice ? `${pendingResponse.driverPrice} ₽` : MOCK_TRIP.price,
+          when:   MOCK_TRIP.when,
+          seats:  MOCK_TRIP.seats,
+          status: 'Не подтверждено',
+        };
+        return {
+          counterpart: MOCK_DRIVER,
+          trip,
+          response: pendingResponse,
+          counterpartRole: 'driver',
+          confirmed: false,
+          pendingBackendConfirm: true,
+        };
+      }
       const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
       const counterpart = counterpartRole === 'passenger' ? MOCK_PASSENGER : MOCK_DRIVER;
       return {
