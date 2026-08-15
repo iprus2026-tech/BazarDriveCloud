@@ -350,34 +350,54 @@ expect("chat.js empty state carries role-specific copy (no fabricated history)",
 expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
   /\.chat__empty\s*\{/.test(css) && /\.chat__empty-title\s*\{/.test(css) && /\.chat__empty-ic\s*\{/.test(css));
 
-// ── P. chat.js — BD-CHAT-FALLBACK-01 no false "Принят" without a real ride (#891) ──
+// ── P. chat.js — BD-CHAT-FALLBACK-01/02 no false "Принят" without a real ride (#891, Codex P2 repair) ──
 // A chat opened for a tripId/responseId that resolves to no real ride and no
 // stored response (e.g. /chat?tripId=<feed-post-id> for a post that was never
 // ordered/accepted) must not claim the order was accepted — neither in the
 // header status pill nor in the empty-thread system pill. A genuine backing
-// ride (findActiveRide found one) keeps its historical 'Принят' fallback and
-// confirmed:true unchanged — this only guards the no-real-backing paths.
-// functionBody() mis-scopes this one: its destructured parameter
-// `({ tripId, responseId, viewerRole })` opens a `{` before the real body
-// does, so the brace-matcher stops at the parameter's own closing `}`.
-// Slice to the next top-level function declaration instead.
+// ride keeps its historical 'Принят' + confirmed:true via three routes:
+// (a) findActiveRide(tripId) hit, (b) trip_${orderId} with a matching
+// selectedDriver.responseId (Finding 1), (c) tripId + explicit &role= + a
+// live backend (Finding 2) — a local-store miss alone proves nothing in
+// either (b) or (c).
+// functionBody() mis-scopes resolveChatHydration: its destructured parameter
+// `({ tripId, responseId, ... })` opens a `{` before the real body does, so
+// the brace-matcher stops at the parameter's own closing `}`. Slice to the
+// next top-level function declaration instead.
 const resolveChatHydrationStart = chat.indexOf('function resolveChatHydration(');
 const resolveChatHydrationBody = chat.slice(
   resolveChatHydrationStart,
   chat.indexOf('function resolveBackHref(', resolveChatHydrationStart));
 const resolveFixtureHydrationBody = functionBody(chat, 'resolveFixtureHydration');
-expect("resolveChatHydration's real-ride branch is untouched (confirmed:true, historical 'Принят' fallback)",
-  /status:\s*ride\.status\s*\|\|\s*'Принят'/.test(resolveChatHydrationBody)
-  && /return\s*\{\s*counterpart,\s*trip,\s*response:\s*null,\s*counterpartRole,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
-expect("resolveChatHydration's no-real-ride branches (responseId-only and generic fallback) no longer claim 'Принят' and mark confirmed:false",
-  !/status:\s*'Принят'/.test(resolveChatHydrationBody)
-  && (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 2
+const hydrateFromRealRideBody = functionBody(chat, 'hydrateFromRealRide');
+expect("hydrateFromRealRide is the single shared real-ride hydration shape (status: ride.status || 'Принят')",
+  /status:\s*ride\.status\s*\|\|\s*'Принят'/.test(hydrateFromRealRideBody)
+  && /return\s*\{\s*counterpart,\s*trip,\s*counterpartRole\s*\}/.test(hydrateFromRealRideBody));
+expect("resolveChatHydration's tripId real-ride branch delegates to hydrateFromRealRide with confirmed:true (behaviorally unchanged contract)",
+  /if\s*\(ride\)\s*\{\s*return\s*\{\s*\.\.\.hydrateFromRealRide\(ride,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's server-backed local-miss branch requires BOTH hasExplicitRole AND isBackendEnabled() — neither alone is sufficient (Finding 2)",
+  /if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)/.test(resolveChatHydrationBody)
+  && !/hasExplicitRole\s*\|\|\s*isBackendEnabled\(\)/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's server-backed local-miss branch is nested inside the tripId block, after the real-ride miss, and returns confirmed:true / status 'Принят'",
+  /if\s*\(tripId\)\s*\{[\s\S]*?if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)\s*\{[\s\S]{0,300}status:\s*'Принят'[\s\S]{0,150}confirmed:\s*true/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's responseId+orderId branch looks up trip_${orderId} and confirms ONLY on an exact selectedDriver.responseId match (Finding 1)",
+  /findActiveRide\(`trip_\$\{orderId\}`\)/.test(resolveChatHydrationBody)
+  && /existingRide\.selectedDriver\s*&&\s*existingRide\.selectedDriver\.responseId\s*===\s*responseId/.test(resolveChatHydrationBody)
+  && /return\s*\{\s*\.\.\.hydrateFromRealRide\(existingRide,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
+expect("hydrateFromRealRide is reused (not duplicated) by exactly the two real-ride call sites in resolveChatHydration",
+  (resolveChatHydrationBody.match(/hydrateFromRealRide\(/g) || []).length === 2);
+expect("resolveChatHydration's remaining no-real-ride paths (responseId-only mismatch and the generic fallback) still mark confirmed:false with a neutral status, never 'Принят'",
+  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 2
   && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 2);
 expect("resolveFixtureHydration (canonical preview) keeps its historical 'Принят' + confirmed:true unchanged",
   /status:\s*'Принят'/.test(resolveFixtureHydrationBody)
   && /confirmed:\s*true/.test(resolveFixtureHydrationBody));
 expect("renderEmptyThread's system pill reflects confirmed (no unconditional 'Заказ принят')",
   /pill\.textContent\s*=\s*confirmed\s*\?\s*'Заказ принят'\s*:\s*'Не подтверждено'/.test(chat));
+expect("chat() extracts orderId and hasExplicitRole and forwards both into resolveChatHydration",
+  /const\s+orderId\s*=\s*getRouteParam\('orderId'\)/.test(chat)
+  && /const\s+hasExplicitRole\s*=\s*rawRole\s*===\s*'driver'\s*\|\|\s*rawRole\s*===\s*'passenger'/.test(chat)
+  && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, orderId, viewerRole, hasExplicitRole \}\)/.test(chat));
 expect("chat() derives confirmed from hydration and forwards it to renderEmptyThread",
   /const\s+confirmed\s*=\s*hydration\.confirmed\s*!==\s*false/.test(chat));
 

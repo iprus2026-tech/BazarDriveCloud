@@ -329,6 +329,29 @@ function resolveRideContext({ responseId, viewerRole }) {
   return { isRide: false, tripId: null };
 }
 
+// BD-CHAT-FALLBACK-02 — shared real-ride hydration shape, used by both the
+// tripId branch (findActiveRide hit) and the orderId-derived responseId
+// branch (#891 Codex P2 Finding 1) so the two real-ride paths render
+// identically instead of drifting apart. Behaviorally-unchanged contract:
+// same counterpart/trip/counterpartRole shape as before extraction.
+function hydrateFromRealRide(ride, viewerRole) {
+  const counterpart = viewerRole === 'driver'
+    ? (ride.passenger || {})
+    : (ride.driver || {});
+  // The avatar colour must match the counterpart actually rendered here:
+  // viewer=driver renders the passenger, viewer=passenger renders the driver.
+  const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
+  const trip = {
+    from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
+    to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
+    price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
+    when:   MOCK_TRIP.when,
+    seats:  MOCK_TRIP.seats,
+    status: ride.status || 'Принят',
+  };
+  return { counterpart, trip, counterpartRole };
+}
+
 // BD-CHAT-02 — Hydrate header + trip bar from the canonical ride when the
 // caller supplies tripId, fall back to the stored response payload when only
 // responseId is present, and otherwise show the demo card. The ride store
@@ -336,28 +359,49 @@ function resolveRideContext({ responseId, viewerRole }) {
 // owns `driverPrice` and the originating `requestId`. We never throw — every
 // lookup degrades gracefully so a stale/unknown id renders the demo instead
 // of a blank screen.
-function resolveChatHydration({ tripId, responseId, viewerRole }) {
+function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole }) {
   if (tripId) {
     const ride = findActiveRide(tripId);
     if (ride) {
-      const counterpart = viewerRole === 'driver'
-        ? (ride.passenger || {})
-        : (ride.driver || {});
-      // The avatar colour must match the counterpart actually rendered here:
-      // viewer=driver renders the passenger, viewer=passenger renders the driver.
+      return { ...hydrateFromRealRide(ride, viewerRole), response: null, confirmed: true };
+    }
+    // BD-CHAT-FALLBACK-02 — a local-store miss on tripId is not proof no ride
+    // exists: active-ride/trip-confirmation chat buttons always append &role=,
+    // and on a live backend the authoritative ride can be cross-device /
+    // in-memory-only (merged from the server without a local write — see
+    // active_ride.js mergeServerRide / loadCanonicalActiveRide) (#891 Codex P2
+    // Finding 2). Require BOTH signals together: an internal-navigation
+    // provenance marker (hasExplicitRole) AND a live backend (isBackendEnabled())
+    // — role= alone can be hand-typed into a URL and proves nothing by itself;
+    // with the backend OFF every real local ride is always synchronously
+    // persisted, so a miss there is genuine absence, not a caching gap.
+    if (hasExplicitRole && isBackendEnabled()) {
       const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
-      const trip = {
-        from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
-        to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
-        price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
-        when:   MOCK_TRIP.when,
-        seats:  MOCK_TRIP.seats,
-        status: ride.status || 'Принят',
+      const counterpart = counterpartRole === 'passenger' ? MOCK_PASSENGER : MOCK_DRIVER;
+      return {
+        counterpart,
+        trip: { ...MOCK_TRIP, status: 'Принят' },
+        response: null,
+        counterpartRole,
+        confirmed: true,
       };
-      return { counterpart, trip, response: null, counterpartRole, confirmed: true };
     }
   }
   if (responseId) {
+    if (orderId) {
+      // BD-CHAT-FALLBACK-02 — a passenger who already selected a driver has a
+      // real active ride at trip_${orderId} (buildPassengerActiveRide,
+      // responses.js) with ride.selectedDriver.responseId pinned to that
+      // choice. Reopening /chat?responseId=...&orderId=... for THAT driver
+      // must reflect the real ride, not the generic unconfirmed state (#891
+      // Codex P2 Finding 1). A responseId for a driver who was NOT selected
+      // (or no ride yet) still falls through unconfirmed below.
+      const existingRide = findActiveRide(`trip_${orderId}`);
+      if (existingRide && existingRide.selectedDriver
+          && existingRide.selectedDriver.responseId === responseId) {
+        return { ...hydrateFromRealRide(existingRide, viewerRole), response: null, confirmed: true };
+      }
+    }
     const response = loadResponse(responseId);
     if (response) {
       // BD-CHAT-FALLBACK-01 — a stored response is a driver OFFER, not an
@@ -670,7 +714,7 @@ export default function chat() {
   // passenger for driver viewers); `trip` carries route + price + status.
   const hydration = fixture
     ? resolveFixtureHydration(viewerRole)
-    : resolveChatHydration({ tripId, responseId, viewerRole });
+    : resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
   const confirmed   = hydration.confirmed !== false;

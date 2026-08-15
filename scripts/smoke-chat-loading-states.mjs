@@ -101,7 +101,7 @@ expect('fixture hydration stays synthetic even when tripId or responseId match p
   && !/localStorage|loadResponse|findActiveRide|resolveRideContext|resolveChatHydration/.test(fixtureHydrationSource)
   && /function loadResponse\(responseId\) \{\s*if \(!responseId\) return null;/.test(chat)
   && /const rideContext = resolveRideContext\(\{\s*responseId: fixture \? null : responseId,\s*viewerRole,\s*\}\)/.test(chat)
-  && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, viewerRole \}\)/.test(chat));
+  && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, orderId, viewerRole, hasExplicitRole \}\)/.test(chat));
 expect('loaded fixture is deterministic and role-aware',
   /CHAT_FIXTURE_MESSAGES/.test(fixtureContract)
   && /senderRole: 'passenger'/.test(fixtureContract)
