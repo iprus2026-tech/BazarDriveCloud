@@ -75,7 +75,9 @@
 // v287 (#888): precached cloud.css changed (driver active-ride empty-state layout fix).
 // v288 (driver cancel-sheet audit repair): precached active_ride_driver_sheets.js changed
 // (cancel sheet's persistent header no longer asks a question after the ride is canceled).
-const VERSION    = 'v288';
+// v289 (driver sheet layering repair): precached cloud.css changed (.active-ride-driver-sheet
+// now paints above .active-ride__notice so a lingering toast can't overlap a sheet's controls).
+const VERSION    = 'v289';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
