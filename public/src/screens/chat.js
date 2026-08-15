@@ -330,15 +330,40 @@ function resolveRideContext({ responseId, viewerRole }) {
   return { isRide: false, tripId: null };
 }
 
+// BD-CHAT-FALLBACK-06 — server rides can legitimately arrive with no
+// initials: bootstrapRide (server/src/repositories/rides.js) writes
+// driver_name/driver_car/driver_rating but never driver_initials, so
+// serializeRide's `row.driver_initials ?? null` is a real, reachable gap,
+// not a hypothetical one. Derive up to two letters from the real name
+// (matching profile.js's own convention) instead of showing a blank
+// avatar; '' (never null/undefined) if there's no name either, so the
+// existing `counterpart.initials || ''` template fallback stays graceful
+// (#891 Codex P2 follow-up).
+function deriveInitials(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
 // BD-CHAT-FALLBACK-02 — shared real-ride hydration shape, used by both the
 // tripId branch (findActiveRide hit) and the orderId-derived responseId
 // branch (#891 Codex P2 Finding 1) so the two real-ride paths render
 // identically instead of drifting apart. Behaviorally-unchanged contract:
 // same counterpart/trip/counterpartRole shape as before extraction.
+// BD-CHAT-FALLBACK-06 — `counterpart` is now always a FRESH object (spread,
+// never ride.driver/ride.passenger by reference): applyConfirmedRide
+// mutates its caller's counterpart via Object.assign, and mutating the raw
+// server payload in place would be a second reference-sharing hazard on
+// top of the MOCK_DRIVER/MOCK_PASSENGER one this same follow-up fixes at
+// the chat() call site.
 function hydrateFromRealRide(ride, viewerRole) {
-  const counterpart = viewerRole === 'driver'
+  const rawCounterpart = viewerRole === 'driver'
     ? (ride.passenger || {})
     : (ride.driver || {});
+  const counterpart = {
+    ...rawCounterpart,
+    initials: rawCounterpart.initials || deriveInitials(rawCounterpart.name),
+  };
   // The avatar colour must match the counterpart actually rendered here:
   // viewer=driver renders the passenger, viewer=passenger renders the driver.
   const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
@@ -759,7 +784,15 @@ export default function chat() {
   const hydration = fixture
     ? resolveFixtureHydration(viewerRole)
     : resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole });
-  const counterpart = hydration.counterpart;
+  // BD-CHAT-FALLBACK-06 — shallow-cloned, never a direct reference to
+  // hydration.counterpart. Several no-real-ride paths in resolveChatHydration
+  // / resolveFixtureHydration return the module-level MOCK_DRIVER/
+  // MOCK_PASSENGER constants directly; applyConfirmedRide's
+  // Object.assign(counterpart, real.counterpart) would otherwise permanently
+  // overwrite that shared singleton with one real user's driver identity for
+  // the rest of the session — leaking it into every later unconfirmed/demo
+  // chat that also hydrates from the same mock (#891 Codex P2 follow-up).
+  const counterpart = { ...hydration.counterpart };
   const trip        = hydration.trip;
   // BD-CHAT-FALLBACK-02 — `let`, not `const`: a pending server-backed ride
   // (hydration.pendingBackendConfirm) starts confirmed:false and may flip to
@@ -1002,6 +1035,23 @@ export default function chat() {
     }
   }
 
+  // BD-CHAT-FALLBACK-06 — a late backend confirm can arrive AFTER incoming
+  // messages already rendered under the stale mock name (the message GET can
+  // settle before the ride-confirm read does — independent async races).
+  // Object.assign(counterpart, ...) only fixes FUTURE renderMessage() calls;
+  // this re-labels the already-rendered bubbles' visible author + aria-label
+  // in place, without touching messagesEl's children list, so optimistic /
+  // failed-send bubble state (classes, retry buttons, the `rendered` dedupe
+  // set) is untouched — never a full re-render (#891 Codex P2 follow-up).
+  function refreshIncomingAuthors(name) {
+    const label = name || 'Собеседник';
+    for (const msgEl of messagesEl.querySelectorAll('.chat__msg--in')) {
+      msgEl.setAttribute('aria-label', label);
+      const authorEl = msgEl.querySelector('.chat__author');
+      if (authorEl) authorEl.textContent = label;
+    }
+  }
+
   // BD-CHAT-FALLBACK-02 — apply a successfully-confirmed server ride to the
   // already-rendered header + trip-bar (+ the empty-thread pill, if still
   // showing) in place, via the SAME hydrateFromRealRide shape the tripId and
@@ -1021,6 +1071,7 @@ export default function chat() {
     // call — incoming poll messages, the user's own next send — reads the
     // real name instead of the stale mock one (#891 Codex P2 follow-up).
     Object.assign(counterpart, real.counterpart);
+    refreshIncomingAuthors(counterpart.name);
 
     const avatarEl = root.querySelector('.chat__avatar');
     if (avatarEl) {

@@ -459,6 +459,32 @@ expect("teardownReads aborts an in-flight rideConfirmController (no orphaned fet
 expect("chat.js exports resolveChatHydration and hydrateFromRealRide as named exports for behavioral testing (smoke-chat-ride-confirm-behavioral.mjs)",
   /export \{ resolveChatHydration, hydrateFromRealRide \};/.test(chat));
 
+// ── S. chat.js — BD-CHAT-FALLBACK-06 no shared-mock mutation, missing server initials, stale rendered bubbles (#891 Codex P2 follow-up) ──
+// Three findings from the fresh review on f04fcfe:
+//   1. Several resolveChatHydration/resolveFixtureHydration paths return
+//      the module-level MOCK_DRIVER/MOCK_PASSENGER constants BY REFERENCE;
+//      applyConfirmedRide's Object.assign would otherwise permanently
+//      corrupt that shared singleton for the rest of the session. Fixed by
+//      cloning once at the chat() consumption point, not at every source.
+//   2. bootstrapRide (server) never writes driver_initials, so a real
+//      server ride can legitimately hydrate with initials:null.
+//      hydrateFromRealRide now derives up to two letters from the real
+//      name when the server didn't supply initials.
+//   3. createMsgEl bakes the counterpart name into already-rendered
+//      incoming bubbles (visible .chat__author + aria-label); a message
+//      GET that settles before the ride-confirm read leaves those bubbles
+//      stuck on the stale name. refreshIncomingAuthors re-labels them in
+//      place without a full re-render (preserves optimistic/failed-send
+//      bubble state).
+expect("chat() clones hydration.counterpart (spread) instead of binding it directly — protects MOCK_DRIVER/MOCK_PASSENGER from permanent mutation by applyConfirmedRide's Object.assign",
+  /const counterpart = \{ \.\.\.hydration\.counterpart \};/.test(chat));
+expect("hydrateFromRealRide's counterpart is also a fresh spread (not ride.driver/ride.passenger by reference) with initials derived from the real name when the server didn't supply any",
+  /const counterpart = \{\s*\.\.\.rawCounterpart,\s*initials: rawCounterpart\.initials \|\| deriveInitials\(rawCounterpart\.name\),\s*\};/.test(hydrateFromRealRideBody)
+  && /function deriveInitials\(name\) \{/.test(chat));
+expect("applyConfirmedRide re-labels already-rendered incoming bubbles (visible author + aria-label) via refreshIncomingAuthors, without touching messagesEl's children list (no full re-render, no lost optimistic/failed-send state)",
+  /function refreshIncomingAuthors\(name\) \{[\s\S]{0,80}for \(const msgEl of messagesEl\.querySelectorAll\('\.chat__msg--in'\)\) \{\s*msgEl\.setAttribute\('aria-label', label\);\s*const authorEl = msgEl\.querySelector\('\.chat__author'\);\s*if \(authorEl\) authorEl\.textContent = label;/.test(chat)
+  && /Object\.assign\(counterpart, real\.counterpart\);\s*refreshIncomingAuthors\(counterpart\.name\);/.test(chat));
+
 // ── G. chat.js — BD-CHAT-01 terminal read-only state (Cloud Design port, #2) ──
 // A completed / canceled / no-show trip must lock the composer to read-only:
 // disable the input + send, drop the quick replies, and show a "trip ended" note.

@@ -169,6 +169,55 @@ expect('COMPLETED server ride -> the REAL isTerminalRideStatus(trip.status) is t
 expect('CANCELED and NO_SHOW server rides are ALSO terminal via the same real resolver (not just COMPLETED) — the late-lock guard covers all three, matching isTerminalRideStatus\'s own contract',
   isTerminalRideStatus(RIDE_STATUS.CANCELED) === true && isTerminalRideStatus(RIDE_STATUS.NO_SHOW) === true);
 
+// ── E. Finding 6 (Codex P2 follow-up on f04fcfe) — hydrateFromRealRide
+//      derives initials from the real name when the server omitted them
+//      (bootstrapRide never writes driver_initials), and never returns
+//      ride.driver/ride.passenger by reference ─────────────────────────
+const mockRideNoInitials = {
+  status: RIDE_STATUS.ACCEPTED,
+  route: { pickupLabel: 'Тверь', dropoffLabel: 'Клин' },
+  driver: { name: 'Сергей Волков', initials: null, rating: '4.60' },
+  passenger: {},
+  ride: { price: 550 },
+};
+const hydratedNoInitials = hydrateFromRealRide(mockRideNoInitials, 'passenger');
+expect('a server ride with initials:null (the real bootstrapRide gap — driver_initials is never written) derives two letters from the real name instead of showing a blank avatar',
+  hydratedNoInitials.counterpart.initials === 'СВ');
+expect('hydrateFromRealRide never returns ride.driver by reference — mutating the returned counterpart does NOT mutate the caller\'s original ride object (applyConfirmedRide + a future Object.assign must not be able to corrupt the raw server payload)',
+  (() => {
+    const before = mockRideNoInitials.driver.name;
+    hydratedNoInitials.counterpart.name = 'MUTATED';
+    const unaffected = mockRideNoInitials.driver.name === before;
+    hydratedNoInitials.counterpart.name = before; // restore, this object is otherwise reused below
+    return unaffected;
+  })());
+const mockRideEmptyName = { status: RIDE_STATUS.ACCEPTED, route: {}, driver: {}, passenger: {}, ride: {} };
+expect('a server ride with no name AND no initials degrades to an empty string (never null/undefined/"undefined"), matching the existing counterpart.initials || \'\' template fallback',
+  hydrateFromRealRide(mockRideEmptyName, 'passenger').counterpart.initials === '');
+
+// Proves the shared-mock hazard is REAL, not hypothetical: two independent
+// pending-branch calls that both fall through to the module-level MOCK_DRIVER
+// share the exact same object — mutating one is observable through the
+// other. This is why chat() MUST clone hydration.counterpart before
+// applyConfirmedRide's Object.assign ever touches it (pinned + mutation-
+// tested separately in smoke-chat-bridge.mjs, since that clone lives inside
+// chat()'s private, DOM-bound closure and can't be exercised here).
+const missingTripIdForMockCheck = 'trip_behavioral_mock_shared_ref_check';
+const pendingA = withBackend('https://fake.test', () => resolveChatHydration({
+  tripId: missingTripIdForMockCheck, responseId: null, orderId: null, viewerRole: 'driver', hasExplicitRole: false,
+}));
+const pendingB = withBackend('https://fake.test', () => resolveChatHydration({
+  tripId: 'trip_behavioral_mock_shared_ref_check_2', responseId: null, orderId: null, viewerRole: 'driver', hasExplicitRole: false,
+}));
+expect('two unrelated resolveChatHydration calls that both fall through to the generic no-real-ride fallback share the SAME counterpart object reference (confirms the hazard applyConfirmedRide\'s Object.assign would otherwise trigger)',
+  pendingA.counterpart === pendingB.counterpart);
+const originalName = pendingA.counterpart.name;
+pendingA.counterpart.name = 'LEAKED';
+const leaked = pendingB.counterpart.name === 'LEAKED';
+pendingA.counterpart.name = originalName; // restore the shared mock for any later smoke run in this process
+expect('mutating one call\'s counterpart is observable through the other unrelated call\'s counterpart (the exact cross-screen leak Codex flagged) — proves chat()\'s defensive clone is necessary, not defensive-for-nothing',
+  leaked === true);
+
 const fails = issues.length;
 console.log(`\n=== smoke-chat-ride-confirm-behavioral: ${fails ? 'FAIL' : 'PASS'} (${fails} issue(s)) ===`);
 if (fails) {
