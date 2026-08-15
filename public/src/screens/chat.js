@@ -9,6 +9,7 @@ import {
 } from '../ride_state.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
+import { getRideFromBackend } from '../mock_api.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -375,15 +376,20 @@ function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExpl
     // — role= alone can be hand-typed into a URL and proves nothing by itself;
     // with the backend OFF every real local ride is always synchronously
     // persisted, so a miss there is genuine absence, not a caching gap.
+    // Neither signal alone is proof the ride is REAL and ACCEPTED, only that
+    // it's worth *asking the backend*: stay confirmed:false (never render
+    // 'Принят') and let chat() await getRideFromBackend(tripId) before
+    // upgrading — pendingBackendConfirm is that request, not the answer.
     if (hasExplicitRole && isBackendEnabled()) {
       const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
       const counterpart = counterpartRole === 'passenger' ? MOCK_PASSENGER : MOCK_DRIVER;
       return {
         counterpart,
-        trip: { ...MOCK_TRIP, status: 'Принят' },
+        trip: { ...MOCK_TRIP, status: 'Не подтверждено' },
         response: null,
         counterpartRole,
-        confirmed: true,
+        confirmed: false,
+        pendingBackendConfirm: true,
       };
     }
   }
@@ -433,6 +439,13 @@ function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExpl
     confirmed: false,
   };
 }
+
+// Named exports (in addition to the default screen export below) — both
+// functions are pure (no DOM/localStorage side effects of their own), so a
+// static smoke can import and execute them directly with a constructed mock
+// ride to prove the real hydration/label pipeline behaviorally, not just
+// pattern-match the source text (#891 Codex P2 repair).
+export { resolveChatHydration, hydrateFromRealRide };
 
 // BD-CHAT-02 — Back link respects the entry point. When the user arrives
 // from /active-ride (tripId + explicit role), return there. For respond/
@@ -717,7 +730,10 @@ export default function chat() {
     : resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
-  const confirmed   = hydration.confirmed !== false;
+  // BD-CHAT-FALLBACK-02 — `let`, not `const`: a pending server-backed ride
+  // (hydration.pendingBackendConfirm) starts confirmed:false and may flip to
+  // true once getRideFromBackend resolves (see confirmRideFromBackend below).
+  let confirmed      = hydration.confirmed !== false;
   // BD-CHAT-01 (Cloud Design parity) — the header avatar carries the COUNTERPART's
   // identity colour (driver = green, passenger = purple), matching the
   // .cf-avatar--driver/--passenger convention. The role comes from the hydrated
@@ -753,7 +769,7 @@ export default function chat() {
       <div class="chat__trip-left">
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
-          <span>${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
+          <span class="chat__trip-route-text">${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
           ${(() => {
             const raw   = trip.status || '';
             const tone  = resolveRideStatusTone(raw);
@@ -915,6 +931,12 @@ export default function chat() {
   let pollId = null;
   let rootWasConnected = false;
   let mountCheckPassed = false;
+  // BD-CHAT-FALLBACK-02 — one-shot backend ride confirmation (#891 Codex P2
+  // Finding 2), independent of the message readManager below: this asks
+  // getRideFromBackend(tripId) once for a tripId that missed locally but
+  // came with an explicit &role= on a live backend. No retry/poll loop —
+  // 404/403/network failure/abort all leave confirmed:false untouched.
+  let rideConfirmController = null;
   const readManager = createChatReadManager(fetchServerMessages, CHAT_READ_TIMEOUT_MS);
   setTimeout(() => { mountCheckPassed = true; }, 0);
   const isCurrentRead = (epoch) => epoch === readEpoch
@@ -930,6 +952,73 @@ export default function chat() {
     readEpoch += 1;
     stopPolling();
     readManager.cancel('chat screen torn down');
+    if (rideConfirmController) {
+      rideConfirmController.abort();
+      rideConfirmController = null;
+    }
+  }
+
+  // BD-CHAT-FALLBACK-02 — apply a successfully-confirmed server ride to the
+  // already-rendered header + trip-bar (+ the empty-thread pill, if still
+  // showing) in place, via the SAME hydrateFromRealRide shape the tripId and
+  // orderId real-ride branches already use — so a late confirmation renders
+  // identically to one that was available synchronously (#891 Codex P2).
+  function applyConfirmedRide(srv) {
+    const real = hydrateFromRealRide(srv, viewerRole);
+    confirmed = true;
+    trip.from   = real.trip.from;
+    trip.to     = real.trip.to;
+    trip.price  = real.trip.price;
+    trip.when   = real.trip.when;
+    trip.seats  = real.trip.seats;
+    trip.status = real.trip.status;
+
+    const avatarEl = root.querySelector('.chat__avatar');
+    if (avatarEl) {
+      avatarEl.className = `chat__avatar chat__avatar--${real.counterpartRole}`;
+      avatarEl.textContent = real.counterpart.initials || '';
+    }
+    const nameEl = root.querySelector('.chat__driver-name');
+    if (nameEl) nameEl.textContent = real.counterpart.name || '';
+    const metaEl = root.querySelector('.chat__driver-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `<span class="chat__online-dot" aria-hidden="true"></span>`
+        + `${escapeHtml(real.counterpart.onlineLabel || real.counterpart.status || 'в сети')} · ★ ${escapeHtml(real.counterpart.rating || '')}`;
+    }
+    const routeTextEl = root.querySelector('.chat__trip-route-text');
+    if (routeTextEl) routeTextEl.textContent = `${trip.from} → ${trip.to}`;
+    const statusEl = root.querySelector('.chat__trip-status');
+    if (statusEl) {
+      const tone  = resolveRideStatusTone(trip.status);
+      const label = resolveRideStatusLabel(trip.status) || 'Принят';
+      statusEl.className = `inbox-item__status inbox-item__status--${tone} chat__trip-status`;
+      statusEl.textContent = label;
+      statusEl.setAttribute('aria-label', `Статус поездки: ${label}`);
+    }
+    const priceEl = root.querySelector('.chat__trip-price');
+    if (priceEl) priceEl.textContent = String(trip.price || '');
+    const metaTripEl = root.querySelector('.chat__trip-meta');
+    if (metaTripEl) metaTripEl.textContent = `${trip.when || ''} · ${trip.seats || ''} места`;
+    if (readState === CHAT_READ_STATE.EMPTY) {
+      messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
+    }
+  }
+
+  async function confirmRideFromBackend() {
+    const controller = new AbortController();
+    rideConfirmController = controller;
+    let srv = null;
+    try {
+      srv = await getRideFromBackend(tripId, { signal: controller.signal });
+    } catch {
+      // 404 (no such ride) / 403 (not a participant) / network failure /
+      // abort — all leave confirmed:false untouched. Never fabricate 'Принят'
+      // from a failed or incomplete read.
+      srv = null;
+    }
+    if (rideConfirmController !== controller || !root.isConnected) return;
+    rideConfirmController = null;
+    if (srv) applyConfirmedRide(srv);
   }
 
   const teardownObserver = new MutationObserver(() => {
@@ -1095,6 +1184,9 @@ export default function chat() {
   });
 
   if (backendRead) void loadInitialServerMessages();
+  // BD-CHAT-FALLBACK-02 — independent of the message read above: a one-shot
+  // attempt to confirm a server-backed ride that missed the local store.
+  if (hydration.pendingBackendConfirm) void confirmRideFromBackend();
 
   // ── Send ────────────────────────────────────────────────────────
   // BD-CHAT-01 (#18) — flag a bubble whose persist failed: a visual + AT failed state with an

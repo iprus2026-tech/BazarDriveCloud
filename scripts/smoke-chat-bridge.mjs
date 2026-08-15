@@ -355,11 +355,15 @@ expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
 // stored response (e.g. /chat?tripId=<feed-post-id> for a post that was never
 // ordered/accepted) must not claim the order was accepted — neither in the
 // header status pill nor in the empty-thread system pill. A genuine backing
-// ride keeps its historical 'Принят' + confirmed:true via three routes:
-// (a) findActiveRide(tripId) hit, (b) trip_${orderId} with a matching
-// selectedDriver.responseId (Finding 1), (c) tripId + explicit &role= + a
-// live backend (Finding 2) — a local-store miss alone proves nothing in
-// either (b) or (c).
+// ride keeps its historical 'Принят' + confirmed:true via two SYNCHRONOUS
+// routes: (a) findActiveRide(tripId) hit, (b) trip_${orderId} with a
+// matching selectedDriver.responseId (Finding 1). A third, server-backed
+// route (c) — tripId + explicit &role= + a live backend, local-store miss
+// (Finding 2) — never asserts confirmed:true synchronously: it starts
+// confirmed:false + pendingBackendConfirm:true, and chat() only upgrades to
+// confirmed:true + the real ride's own status after getRideFromBackend(tripId)
+// resolves successfully (404/403/network failure/abort all leave it
+// confirmed:false — see the behavioral block below).
 // functionBody() mis-scopes resolveChatHydration: its destructured parameter
 // `({ tripId, responseId, ... })` opens a `{` before the real body does, so
 // the brace-matcher stops at the parameter's own closing `}`. Slice to the
@@ -378,17 +382,17 @@ expect("resolveChatHydration's tripId real-ride branch delegates to hydrateFromR
 expect("resolveChatHydration's server-backed local-miss branch requires BOTH hasExplicitRole AND isBackendEnabled() — neither alone is sufficient (Finding 2)",
   /if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)/.test(resolveChatHydrationBody)
   && !/hasExplicitRole\s*\|\|\s*isBackendEnabled\(\)/.test(resolveChatHydrationBody));
-expect("resolveChatHydration's server-backed local-miss branch is nested inside the tripId block, after the real-ride miss, and returns confirmed:true / status 'Принят'",
-  /if\s*\(tripId\)\s*\{[\s\S]*?if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)\s*\{[\s\S]{0,300}status:\s*'Принят'[\s\S]{0,150}confirmed:\s*true/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's server-backed local-miss branch does NOT assert confirmed:true or 'Принят' synchronously — it returns confirmed:false + pendingBackendConfirm:true and a neutral status, deferring to chat()'s async backend read",
+  /if\s*\(tripId\)\s*\{[\s\S]*?if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)\s*\{[\s\S]{0,300}status:\s*'Не подтверждено'[\s\S]{0,60}\}[\s\S]{0,60}confirmed:\s*false[\s\S]{0,60}pendingBackendConfirm:\s*true/.test(resolveChatHydrationBody));
 expect("resolveChatHydration's responseId+orderId branch looks up trip_${orderId} and confirms ONLY on an exact selectedDriver.responseId match (Finding 1)",
   /findActiveRide\(`trip_\$\{orderId\}`\)/.test(resolveChatHydrationBody)
   && /existingRide\.selectedDriver\s*&&\s*existingRide\.selectedDriver\.responseId\s*===\s*responseId/.test(resolveChatHydrationBody)
   && /return\s*\{\s*\.\.\.hydrateFromRealRide\(existingRide,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
-expect("hydrateFromRealRide is reused (not duplicated) by exactly the two real-ride call sites in resolveChatHydration",
+expect("hydrateFromRealRide is reused (not duplicated) by exactly the two SYNCHRONOUS real-ride call sites in resolveChatHydration (the async server-confirm path reuses it separately, inside chat()'s applyConfirmedRide)",
   (resolveChatHydrationBody.match(/hydrateFromRealRide\(/g) || []).length === 2);
-expect("resolveChatHydration's remaining no-real-ride paths (responseId-only mismatch and the generic fallback) still mark confirmed:false with a neutral status, never 'Принят'",
-  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 2
-  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 2);
+expect("resolveChatHydration marks confirmed:false with a neutral status in all three non-affirming paths (pending server-confirm, responseId-only mismatch, generic fallback)",
+  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 3
+  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 3);
 expect("resolveFixtureHydration (canonical preview) keeps its historical 'Принят' + confirmed:true unchanged",
   /status:\s*'Принят'/.test(resolveFixtureHydrationBody)
   && /confirmed:\s*true/.test(resolveFixtureHydrationBody));
@@ -398,8 +402,43 @@ expect("chat() extracts orderId and hasExplicitRole and forwards both into resol
   /const\s+orderId\s*=\s*getRouteParam\('orderId'\)/.test(chat)
   && /const\s+hasExplicitRole\s*=\s*rawRole\s*===\s*'driver'\s*\|\|\s*rawRole\s*===\s*'passenger'/.test(chat)
   && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, orderId, viewerRole, hasExplicitRole \}\)/.test(chat));
-expect("chat() derives confirmed from hydration and forwards it to renderEmptyThread",
-  /const\s+confirmed\s*=\s*hydration\.confirmed\s*!==\s*false/.test(chat));
+expect("chat() derives confirmed from hydration (let, not const — applyConfirmedRide may flip it after an async backend confirm) and forwards it to renderEmptyThread",
+  /let\s+confirmed\s*=\s*hydration\.confirmed\s*!==\s*false/.test(chat));
+
+// ── Q. chat.js — BD-CHAT-FALLBACK-02 async backend ride-confirm wiring (#891 Codex P2 Finding 2) ──
+// resolveChatHydration only DECIDES a server ride is worth asking about
+// (pendingBackendConfirm); this section pins that chat() actually performs
+// that one-shot ask via the existing, already-tested getRideFromBackend
+// (no new endpoint), never upgrades confirmed on a failed/aborted read, and
+// tears the in-flight request down on unmount.
+expect("chat.js imports the existing getRideFromBackend from mock_api.js (no new backend endpoint)",
+  /import\s*\{\s*getRideFromBackend\s*\}\s*from\s*'\.\.\/mock_api\.js'/.test(chat));
+expect("confirmRideFromBackend calls getRideFromBackend(tripId, ...) inside try/catch and sets srv=null on ANY failure (404/403/network/abort) — never fabricates a confirmed ride on error",
+  /async function confirmRideFromBackend\(\)/.test(chat)
+  && /srv = await getRideFromBackend\(tripId, \{ signal: controller\.signal \}\)/.test(chat)
+  && /\} catch \{[\s\S]{0,220}srv = null;/.test(chat));
+expect("confirmRideFromBackend only calls applyConfirmedRide when the read actually returned a server ride (if (srv) applyConfirmedRide(srv);) — no unconditional upgrade",
+  /if \(srv\) applyConfirmedRide\(srv\);/.test(chat));
+expect("applyConfirmedRide reuses hydrateFromRealRide (the same shape as the two synchronous real-ride branches) and only then sets confirmed = true",
+  /function applyConfirmedRide\(srv\) \{\s*const real = hydrateFromRealRide\(srv, viewerRole\);\s*confirmed = true;/.test(chat));
+expect("applyConfirmedRide updates the SAME DOM hooks the initial template renders with (avatar/name/meta/route-text/status-pill/price/meta), not a parallel markup shape",
+  /root\.querySelector\('\.chat__avatar'\)/.test(chat)
+  && /root\.querySelector\('\.chat__driver-name'\)/.test(chat)
+  && /root\.querySelector\('\.chat__driver-meta'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-route-text'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-status'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-price'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-meta'\)/.test(chat)
+  && /<span class="chat__trip-route-text">/.test(chat));
+expect("applyConfirmedRide re-renders the empty-thread pill (via the same renderEmptyThread + confirmed contract) when the thread is still showing it",
+  /if \(readState === CHAT_READ_STATE\.EMPTY\) \{\s*messagesEl\.replaceChildren\(renderEmptyThread\(viewerRole, confirmed\)\);/.test(chat));
+expect("chat() kicks off confirmRideFromBackend exactly once, gated on hydration.pendingBackendConfirm",
+  (chat.match(/void confirmRideFromBackend\(\);/g) || []).length === 1
+  && /if \(hydration\.pendingBackendConfirm\) void confirmRideFromBackend\(\);/.test(chat));
+expect("teardownReads aborts an in-flight rideConfirmController (no orphaned fetch after the screen unmounts)",
+  /function teardownReads\(\) \{[\s\S]{0,220}if \(rideConfirmController\) \{\s*rideConfirmController\.abort\(\);\s*rideConfirmController = null;/.test(chat));
+expect("chat.js exports resolveChatHydration and hydrateFromRealRide as named exports for behavioral testing (smoke-chat-ride-confirm-behavioral.mjs)",
+  /export \{ resolveChatHydration, hydrateFromRealRide \};/.test(chat));
 
 // ── G. chat.js — BD-CHAT-01 terminal read-only state (Cloud Design port, #2) ──
 // A completed / canceled / no-show trip must lock the composer to read-only:
