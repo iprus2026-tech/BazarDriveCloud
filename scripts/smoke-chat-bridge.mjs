@@ -437,6 +437,9 @@ expect("confirmRideFromBackend only calls applyConfirmedRide when the read actua
   /if \(srv\) applyConfirmedRide\(srv\);/.test(chat));
 expect("applyConfirmedRide reuses hydrateFromRealRide (the same shape as the two synchronous real-ride branches) and only then sets confirmed = true",
   /function applyConfirmedRide\(srv\) \{\s*const real = hydrateFromRealRide\(srv, viewerRole\);\s*confirmed = true;/.test(chat));
+expect("applyConfirmedRide mutates the SAME counterpart object in place (Object.assign), not just the header DOM, so future renderMessage()/createMsgEl() calls stop reading the stale mock name (#891 Codex P2 follow-up)",
+  /Object\.assign\(counterpart, real\.counterpart\);/.test(chat)
+  && (chat.match(/counterpart\.name/g) || []).length >= 2); // renderMessage() + doSend()'s createMsgEl both read it live
 expect("applyConfirmedRide updates the SAME DOM hooks the initial template renders with (avatar/name/meta/route-text/status-pill/price/meta), not a parallel markup shape",
   /root\.querySelector\('\.chat__avatar'\)/.test(chat)
   && /root\.querySelector\('\.chat__driver-name'\)/.test(chat)
@@ -463,10 +466,11 @@ expect("ride_state.js exports isTerminalRideStatus (canonical terminal check)",
   /export\s+function\s+isTerminalRideStatus\s*\(/.test(rideState));
 expect("chat.js imports isTerminalRideStatus from ride_state.js",
   /import\s*\{[\s\S]*?\bisTerminalRideStatus\b[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
-expect("chat.js computes isTerminal from trip.status via isTerminalRideStatus",
-  /const\s+isTerminal\s*=\s*isTerminalRideStatus\(\s*trip\.status\s*\)/.test(chat));
-expect("chat.js locks the composer read-only on a terminal trip (disable input/send + note)",
-  /if\s*\(\s*isTerminal\s*\)[\s\S]{0,400}inputEl\.disabled\s*=\s*true[\s\S]{0,220}chat__readonly-note/.test(chat));
+expect("chat.js computes isTerminal from trip.status via isTerminalRideStatus (let, not const — a late backend confirm can flip it, #891 Codex P2 follow-up)",
+  /let\s+isTerminal\s*=\s*isTerminalRideStatus\(\s*trip\.status\s*\)/.test(chat));
+expect("chat.js extracts applyTerminalLock() (disable input/send + note) and calls it both synchronously (if (isTerminal)) and from applyConfirmedRide on a late-terminal confirm",
+  /function applyTerminalLock\(\) \{[\s\S]{0,400}inputEl\.disabled\s*=\s*true[\s\S]{0,600}chat__readonly-note[\s\S]{0,600}\}\s*\n\s*if \(isTerminal\) applyTerminalLock\(\);/.test(chat)
+  && /if \(!isTerminal && isTerminalRideStatus\(trip\.status\)\) \{\s*isTerminal = true;\s*stopPolling\(\);\s*applyTerminalLock\(\);\s*syncComposerAvailability\(\);\s*\}/.test(chat));
 expect("chat.js drops the quick replies on a terminal trip",
   /for\s*\(\s*const\s+reply\s+of\s*\(\s*isTerminal\s*\?\s*\[\]\s*:\s*QUICK_REPLIES\s*\)\s*\)/.test(chat));
 expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud Design port)",

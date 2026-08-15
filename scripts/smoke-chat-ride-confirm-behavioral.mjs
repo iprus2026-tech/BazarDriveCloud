@@ -28,7 +28,7 @@ function expect(label, cond, detail = '') {
 const chatMod = await import(new URL('../public/src/screens/chat.js', import.meta.url).href);
 const rideState = await import(new URL('../public/src/ride_state.js', import.meta.url).href);
 const { resolveChatHydration, hydrateFromRealRide } = chatMod;
-const { RIDE_STATUS, resolveRideStatusLabel, resolveRideStatusTone, saveActiveRideStore } = rideState;
+const { RIDE_STATUS, resolveRideStatusLabel, resolveRideStatusTone, saveActiveRideStore, isTerminalRideStatus } = rideState;
 
 // ── A. hydrateFromRealRide + the REAL label/tone resolvers, given a mocked
 //      server ride with status: IN_PROGRESS ─────────────────────────────
@@ -130,6 +130,44 @@ expect('a genuine local active-ride hit resolves confirmed:true with the REAL se
   localHit.confirmed === true && localHit.trip.status === RIDE_STATUS.WAITING_PASSENGER
   && localHit.trip.from === 'Казань' && localHit.trip.to === 'Самара');
 _store.clear();
+
+// ── D. Finding 4/5 (Codex P2 follow-up on fb0ae01) — the exact decision
+//      inputs applyConfirmedRide uses to decide a late terminal lock and to
+//      refresh the counterpart. applyConfirmedRide itself is a private,
+//      DOM-mutating closure inside chat() (no DOM in smokes, repo-wide
+//      rule), so this drives its INPUT through the same two real functions
+//      it actually calls — hydrateFromRealRide, then the REAL
+//      isTerminalRideStatus from ride_state.js (not a reimplementation) —
+//      proving the decision chat.js's `if (!isTerminal &&
+//      isTerminalRideStatus(trip.status)) { isTerminal = true; stopPolling();
+//      applyTerminalLock(); syncComposerAvailability(); }` makes for each
+//      status. That exact wiring (the DOM/state side) is pinned statically
+//      in smoke-chat-bridge.mjs and mutation-tested there ──────────────────
+const mockInProgressRide = {
+  status: RIDE_STATUS.IN_PROGRESS,
+  route: { pickupLabel: 'Уфа', dropoffLabel: 'Стерлитамак' },
+  driver: { name: 'Олег О.', initials: 'ОО', rating: '4.70' },
+  passenger: {},
+  ride: { price: 700 },
+};
+const hydratedInProgress = hydrateFromRealRide(mockInProgressRide, 'passenger');
+expect('IN_PROGRESS server ride -> the REAL isTerminalRideStatus(trip.status) is false: applyConfirmedRide\'s late-lock guard stays closed, the thread remains writable (poll keeps running, send/quick-replies stay enabled)',
+  isTerminalRideStatus(hydratedInProgress.trip.status) === false);
+expect('IN_PROGRESS server ride -> hydrateFromRealRide carries the REAL counterpart identity, which Object.assign(counterpart, real.counterpart) copies onto the live object every future renderMessage() reads',
+  hydratedInProgress.counterpart.name === 'Олег О.' && hydratedInProgress.counterpart.initials === 'ОО');
+
+const mockCompletedRide = {
+  status: RIDE_STATUS.COMPLETED,
+  route: { pickupLabel: 'Уфа', dropoffLabel: 'Стерлитамак' },
+  driver: { name: 'Олег О.', initials: 'ОО', rating: '4.70' },
+  passenger: {},
+  ride: { price: 700 },
+};
+const hydratedCompleted = hydrateFromRealRide(mockCompletedRide, 'passenger');
+expect('COMPLETED server ride -> the REAL isTerminalRideStatus(trip.status) is true: applyConfirmedRide\'s late-lock guard opens (isTerminal flips, stopPolling() stops the message poll, applyTerminalLock() disables send + hides quick-replies + shows the terminal note)',
+  isTerminalRideStatus(hydratedCompleted.trip.status) === true);
+expect('CANCELED and NO_SHOW server rides are ALSO terminal via the same real resolver (not just COMPLETED) — the late-lock guard covers all three, matching isTerminalRideStatus\'s own contract',
+  isTerminalRideStatus(RIDE_STATUS.CANCELED) === true && isTerminalRideStatus(RIDE_STATUS.NO_SHOW) === true);
 
 const fails = issues.length;
 console.log(`\n=== smoke-chat-ride-confirm-behavioral: ${fails ? 'FAIL' : 'PASS'} (${fails} issue(s)) ===`);

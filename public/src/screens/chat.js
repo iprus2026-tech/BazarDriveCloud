@@ -862,23 +862,32 @@ export default function chat() {
   // drop the quick replies, and show a "trip ended" note. The composer stays
   // in the DOM (disabled) so the message log + confirm bar are unaffected, and
   // the send/keydown listeners below are inert against a disabled input.
-  const isTerminal = isTerminalRideStatus(trip.status);
-  if (isTerminal) {
+  // BD-CHAT-FALLBACK-04 — `let`, not `const`: a late backend confirmation
+  // (applyConfirmedRide) can resolve trip.status to a terminal value AFTER
+  // this initial check already ran with the pending 'Не подтверждено'
+  // status. applyTerminalLock() is extracted so both the synchronous path
+  // below and the async late-terminal path call the exact same DOM/state
+  // transition (#891 Codex P2 follow-up).
+  let isTerminal = isTerminalRideStatus(trip.status);
+  function applyTerminalLock() {
     const composerEl = root.querySelector('.chat__composer');
     if (composerEl) composerEl.classList.add('chat__composer--locked');
     inputEl.disabled = true;
     inputEl.placeholder = 'Чат закрыт';
     sendBtn.disabled = true;
     qrEl.hidden = true;
-    const note = document.createElement('div');
-    note.className = 'chat__readonly-note';
-    note.setAttribute('role', 'note');
-    note.textContent =
-      trip.status === RIDE_STATUS.COMPLETED ? 'Поездка завершена. Чат доступен только для просмотра.'
-      : trip.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не пришёл. Чат закрыт.'
-      : 'Поездка отменена. Чат закрыт.';
-    if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+    if (!root.querySelector('.chat__readonly-note')) {
+      const note = document.createElement('div');
+      note.className = 'chat__readonly-note';
+      note.setAttribute('role', 'note');
+      note.textContent =
+        trip.status === RIDE_STATUS.COMPLETED ? 'Поездка завершена. Чат доступен только для просмотра.'
+        : trip.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не пришёл. Чат закрыт.'
+        : 'Поездка отменена. Чат закрыт.';
+      if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+    }
   }
+  if (isTerminal) applyTerminalLock();
 
   // ── Initial message-list state + incremental backend refresh ─────
   // `rendered` tracks message ids already in the DOM so background refreshes
@@ -1003,6 +1012,11 @@ export default function chat() {
     trip.when   = real.trip.when;
     trip.seats  = real.trip.seats;
     trip.status = real.trip.status;
+    // BD-CHAT-FALLBACK-04 — mutate the SAME counterpart object in place
+    // (not just the header DOM) so every FUTURE renderMessage()/createMsgEl()
+    // call — incoming poll messages, the user's own next send — reads the
+    // real name instead of the stale mock one (#891 Codex P2 follow-up).
+    Object.assign(counterpart, real.counterpart);
 
     const avatarEl = root.querySelector('.chat__avatar');
     if (avatarEl) {
@@ -1032,6 +1046,19 @@ export default function chat() {
     if (metaTripEl) metaTripEl.textContent = `${trip.when || ''} · ${trip.seats || ''} места`;
     if (readState === CHAT_READ_STATE.EMPTY) {
       messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
+    }
+    // BD-CHAT-FALLBACK-04 — the server ride is now the source of truth for
+    // runtime Chat state, not just the displayed status: a late-arriving
+    // terminal status (COMPLETED/CANCELED/NO_SHOW) must idempotently lock
+    // the thread exactly like a synchronously-terminal one would — stop the
+    // message poll, disable send/quick-replies, show the terminal note —
+    // without dropping history (#891 Codex P2 follow-up). Guarded on the
+    // PRIOR isTerminal so an already-terminal thread never double-locks.
+    if (!isTerminal && isTerminalRideStatus(trip.status)) {
+      isTerminal = true;
+      stopPolling();
+      applyTerminalLock();
+      syncComposerAvailability();
     }
   }
 
