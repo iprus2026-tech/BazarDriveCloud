@@ -308,6 +308,7 @@ function resolveFixtureHydration(viewerRole) {
     trip: { ...MOCK_TRIP, status: 'Принят' },
     response: null,
     counterpartRole,
+    confirmed: true,
   };
 }
 
@@ -353,30 +354,39 @@ function resolveChatHydration({ tripId, responseId, viewerRole }) {
         seats:  MOCK_TRIP.seats,
         status: ride.status || 'Принят',
       };
-      return { counterpart, trip, response: null, counterpartRole };
+      return { counterpart, trip, response: null, counterpartRole, confirmed: true };
     }
   }
   if (responseId) {
     const response = loadResponse(responseId);
     if (response) {
+      // BD-CHAT-FALLBACK-01 — a stored response is a driver OFFER, not an
+      // accepted ride: no `ride` record exists yet (the `if (tripId)` branch
+      // above only returns when findActiveRide finds one). Do not claim
+      // 'Принят' here — see confirmed:false below (#891).
       const trip = {
         from:   MOCK_TRIP.from,
         to:     MOCK_TRIP.to,
         price:  response.driverPrice ? `${response.driverPrice} ₽` : MOCK_TRIP.price,
         when:   MOCK_TRIP.when,
         seats:  MOCK_TRIP.seats,
-        status: 'Принят',
+        status: 'Не подтверждено',
       };
       // This path always renders MOCK_DRIVER (a driver) as the counterpart,
       // regardless of viewer role — so the avatar shows the driver identity colour.
-      return { counterpart: MOCK_DRIVER, trip, response, counterpartRole: 'driver' };
+      return { counterpart: MOCK_DRIVER, trip, response, counterpartRole: 'driver', confirmed: false };
     }
   }
+  // BD-CHAT-FALLBACK-01 — no real ride and no stored response back this
+  // thread (e.g. /chat?tripId=<feed-post-id> for a post that was never
+  // ordered/accepted). confirmed:false keeps the header status and the
+  // empty-thread system pill from falsely declaring the ride accepted (#891).
   return {
     counterpart: MOCK_DRIVER,
-    trip: { ...MOCK_TRIP, status: 'Принят' },
+    trip: { ...MOCK_TRIP, status: 'Не подтверждено' },
     response: null,
     counterpartRole: 'driver',
+    confirmed: false,
   };
 }
 
@@ -498,7 +508,10 @@ const CHAT_EMPTY_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 // BD-CHAT-01 (Cloud Design port) — the designed thread-empty / first-message state:
 // a «Заказ принят» system pill + a warm, role-specific prompt to start the
 // conversation. No fabricated history (the route / trip bar above stays in place).
-function renderEmptyThread(viewerRole) {
+// BD-CHAT-FALLBACK-01 — `confirmed` mirrors resolveChatHydration's flag: only a
+// genuine backing ride (or the fixture preview) may claim the order was
+// accepted; an unresolved tripId/responseId gets a neutral pill instead (#891).
+function renderEmptyThread(viewerRole, confirmed) {
   const wrap = document.createElement('div');
   wrap.className = 'chat__empty';
   wrap.setAttribute('role', 'group');
@@ -506,7 +519,7 @@ function renderEmptyThread(viewerRole) {
 
   const pill = document.createElement('div');
   pill.className = 'chat__sys-pill';
-  pill.textContent = 'Заказ принят';
+  pill.textContent = confirmed ? 'Заказ принят' : 'Не подтверждено';
 
   const ic = document.createElement('div');
   ic.className = 'chat__empty-ic';
@@ -660,6 +673,7 @@ export default function chat() {
     : resolveChatHydration({ tripId, responseId, viewerRole });
   const counterpart = hydration.counterpart;
   const trip        = hydration.trip;
+  const confirmed   = hydration.confirmed !== false;
   // BD-CHAT-01 (Cloud Design parity) — the header avatar carries the COUNTERPART's
   // identity colour (driver = green, passenger = purple), matching the
   // .cf-avatar--driver/--passenger convention. The role comes from the hydrated
@@ -833,7 +847,7 @@ export default function chat() {
       messagesEl.replaceChildren(renderChatReadError());
     } else if (nextState === CHAT_READ_STATE.EMPTY) {
       messages = [];
-      messagesEl.replaceChildren(renderEmptyThread(viewerRole));
+      messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
     } else {
       messages = [...list];
       ensureThreadShell();

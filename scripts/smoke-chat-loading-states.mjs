@@ -49,7 +49,7 @@ expect('read renderer has distinct loading, loaded, empty and error branches',
   && /CHAT_READ_STATE\.ERROR/.test(chat)
   && /renderChatLoading\(\)/.test(chat)
   && /renderChatReadError\(\)/.test(chat)
-  && /renderEmptyThread\(viewerRole\)/.test(chat));
+  && /renderEmptyThread\(viewerRole,\s*confirmed\)/.test(chat));
 expect('successful zero result is the only initial path to empty',
   /renderReadState\(list\.length \? CHAT_READ_STATE\.LOADED : CHAT_READ_STATE\.EMPTY, list\)/.test(initialLoader));
 expect('rejected or unusable initial read renders error',

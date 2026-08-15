@@ -344,11 +344,42 @@ expect("chat.js gates MOCK_MESSAGES on the demo thread (real empty threads get [
   && /isRealThread\s*\?\s*\[\]\s*:\s*MOCK_MESSAGES/.test(chat));
 expect("chat.js defines renderEmptyThread and renders it for a real empty thread",
   /function\s+renderEmptyThread\s*\(/.test(chat)
-  && /nextState === CHAT_READ_STATE\.EMPTY[\s\S]{0,120}renderEmptyThread\(viewerRole\)/.test(chat));
+  && /nextState === CHAT_READ_STATE\.EMPTY[\s\S]{0,120}renderEmptyThread\(viewerRole,\s*confirmed\)/.test(chat));
 expect("chat.js empty state carries role-specific copy (no fabricated history)",
   /Сообщений пока нет/.test(chat) && /chat__empty-title/.test(chat));
 expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
   /\.chat__empty\s*\{/.test(css) && /\.chat__empty-title\s*\{/.test(css) && /\.chat__empty-ic\s*\{/.test(css));
+
+// ── P. chat.js — BD-CHAT-FALLBACK-01 no false "Принят" without a real ride (#891) ──
+// A chat opened for a tripId/responseId that resolves to no real ride and no
+// stored response (e.g. /chat?tripId=<feed-post-id> for a post that was never
+// ordered/accepted) must not claim the order was accepted — neither in the
+// header status pill nor in the empty-thread system pill. A genuine backing
+// ride (findActiveRide found one) keeps its historical 'Принят' fallback and
+// confirmed:true unchanged — this only guards the no-real-backing paths.
+// functionBody() mis-scopes this one: its destructured parameter
+// `({ tripId, responseId, viewerRole })` opens a `{` before the real body
+// does, so the brace-matcher stops at the parameter's own closing `}`.
+// Slice to the next top-level function declaration instead.
+const resolveChatHydrationStart = chat.indexOf('function resolveChatHydration(');
+const resolveChatHydrationBody = chat.slice(
+  resolveChatHydrationStart,
+  chat.indexOf('function resolveBackHref(', resolveChatHydrationStart));
+const resolveFixtureHydrationBody = functionBody(chat, 'resolveFixtureHydration');
+expect("resolveChatHydration's real-ride branch is untouched (confirmed:true, historical 'Принят' fallback)",
+  /status:\s*ride\.status\s*\|\|\s*'Принят'/.test(resolveChatHydrationBody)
+  && /return\s*\{\s*counterpart,\s*trip,\s*response:\s*null,\s*counterpartRole,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's no-real-ride branches (responseId-only and generic fallback) no longer claim 'Принят' and mark confirmed:false",
+  !/status:\s*'Принят'/.test(resolveChatHydrationBody)
+  && (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 2
+  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 2);
+expect("resolveFixtureHydration (canonical preview) keeps its historical 'Принят' + confirmed:true unchanged",
+  /status:\s*'Принят'/.test(resolveFixtureHydrationBody)
+  && /confirmed:\s*true/.test(resolveFixtureHydrationBody));
+expect("renderEmptyThread's system pill reflects confirmed (no unconditional 'Заказ принят')",
+  /pill\.textContent\s*=\s*confirmed\s*\?\s*'Заказ принят'\s*:\s*'Не подтверждено'/.test(chat));
+expect("chat() derives confirmed from hydration and forwards it to renderEmptyThread",
+  /const\s+confirmed\s*=\s*hydration\.confirmed\s*!==\s*false/.test(chat));
 
 // ── G. chat.js — BD-CHAT-01 terminal read-only state (Cloud Design port, #2) ──
 // A completed / canceled / no-show trip must lock the composer to read-only:
