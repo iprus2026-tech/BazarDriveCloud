@@ -160,6 +160,20 @@ expect('cancel sheet shows the canceled-state title "Поездка отмене
 expect('cancel sheet canceled card returns to the feed ("Вернуться в ленту")',
   sheets.includes('Вернуться в ленту'));
 
+// #886-audit Finding 1 — the sheetShell header (eyebrow + title) is persistent
+// across every stage (form → reason_selected → validation_error → loading →
+// canceled), while only the body (.driver-cancel-sheet__form vs
+// .driver-cancel-sheet__done) is stage-toggled. The header must therefore stay
+// neutral/stage-agnostic — it can never again bake in a question like "Почему
+// отменяем заказ?" that reads as wrong once the done card already shows
+// "Поездка отменена".
+const renderCancelSheetBody = functionBody(sheets, 'renderDriverCancelSheet') || '';
+expect('renderDriverCancelSheet resolved', renderCancelSheetBody.length > 0);
+expect('cancel sheet header no longer asks "Почему отменяем заказ?" (stage-mismatch regression)',
+  !renderCancelSheetBody.includes('Почему отменяем заказ?'));
+expect('cancel sheet header stays the neutral, stage-agnostic "Отмена поездки"',
+  /sheetShell\('cancel',\s*'driver-cancel-title',\s*'Отмена заказа',\s*'Отмена поездки',/.test(renderCancelSheetBody));
+
 // ── D2. Cancel sheet redesign (BD-RIDE-D-07) — icon box + SOS + JS hooks ──
 // The reason rows gained a leading icon box and an always-on «SOS» tag on the
 // unsafe reason. The JS hooks (.driver-cancel-sheet__option / --selected /

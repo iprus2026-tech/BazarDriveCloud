@@ -73,7 +73,9 @@
 // fixes). Precached app.js changed (import/init call removed) and
 // active_ride_passenger.js changed; passenger_local_ride_sync.js dropped from PRECACHE.
 // v287 (#888): precached cloud.css changed (driver active-ride empty-state layout fix).
-const VERSION    = 'v287';
+// v288 (driver cancel-sheet audit repair): precached active_ride_driver_sheets.js changed
+// (cancel sheet's persistent header no longer asks a question after the ride is canceled).
+const VERSION    = 'v288';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

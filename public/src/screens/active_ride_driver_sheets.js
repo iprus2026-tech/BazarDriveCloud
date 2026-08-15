@@ -180,7 +180,15 @@ export function renderDriverCancelSheet(selected = '') {
       </div>
     </div>
   `;
-  return sheetShell('cancel', 'driver-cancel-title', 'Отмена заказа', 'Почему отменяем заказ?', body);
+  // #886-audit Finding 1 — the header is persistent across every stage (form →
+  // reason_selected → validation_error → loading → canceled), but only the body
+  // (.driver-cancel-sheet__form vs .driver-cancel-sheet__done) is stage-toggled.
+  // The old title phrased the header as a reason-selection prompt, which stayed
+  // on screen even once the done card already read "Поездка отменена". Kept
+  // neutral — matching the passenger-side cancel sheet's own persistent label —
+  // so it stays true for every stage instead of adding stage-tracking state
+  // just for the header text.
+  return sheetShell('cancel', 'driver-cancel-title', 'Отмена заказа', 'Отмена поездки', body);
 }
 
 // ── BD-RIDE-D-08 DriverProblemSheet ──────────────────────────
