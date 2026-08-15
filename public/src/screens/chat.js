@@ -9,6 +9,7 @@ import {
 } from '../ride_state.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
+import { getRideFromBackend } from '../mock_api.js';
 
 const CHAT_KEY          = 'bazardrive.chat.v1';
 const RESPONSES_KEY     = 'bazardrive.responses.v1';
@@ -308,6 +309,7 @@ function resolveFixtureHydration(viewerRole) {
     trip: { ...MOCK_TRIP, status: 'Принят' },
     response: null,
     counterpartRole,
+    confirmed: true,
   };
 }
 
@@ -328,6 +330,54 @@ function resolveRideContext({ responseId, viewerRole }) {
   return { isRide: false, tripId: null };
 }
 
+// BD-CHAT-FALLBACK-06 — server rides can legitimately arrive with no
+// initials: bootstrapRide (server/src/repositories/rides.js) writes
+// driver_name/driver_car/driver_rating but never driver_initials, so
+// serializeRide's `row.driver_initials ?? null` is a real, reachable gap,
+// not a hypothetical one. Derive up to two letters from the real name
+// (matching profile.js's own convention) instead of showing a blank
+// avatar; '' (never null/undefined) if there's no name either, so the
+// existing `counterpart.initials || ''` template fallback stays graceful
+// (#891 Codex P2 follow-up).
+function deriveInitials(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+// BD-CHAT-FALLBACK-02 — shared real-ride hydration shape, used by both the
+// tripId branch (findActiveRide hit) and the orderId-derived responseId
+// branch (#891 Codex P2 Finding 1) so the two real-ride paths render
+// identically instead of drifting apart. Behaviorally-unchanged contract:
+// same counterpart/trip/counterpartRole shape as before extraction.
+// BD-CHAT-FALLBACK-06 — `counterpart` is now always a FRESH object (spread,
+// never ride.driver/ride.passenger by reference): applyConfirmedRide
+// mutates its caller's counterpart via Object.assign, and mutating the raw
+// server payload in place would be a second reference-sharing hazard on
+// top of the MOCK_DRIVER/MOCK_PASSENGER one this same follow-up fixes at
+// the chat() call site.
+function hydrateFromRealRide(ride, viewerRole) {
+  const rawCounterpart = viewerRole === 'driver'
+    ? (ride.passenger || {})
+    : (ride.driver || {});
+  const counterpart = {
+    ...rawCounterpart,
+    initials: rawCounterpart.initials || deriveInitials(rawCounterpart.name),
+  };
+  // The avatar colour must match the counterpart actually rendered here:
+  // viewer=driver renders the passenger, viewer=passenger renders the driver.
+  const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
+  const trip = {
+    from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
+    to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
+    price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
+    when:   MOCK_TRIP.when,
+    seats:  MOCK_TRIP.seats,
+    status: ride.status || 'Принят',
+  };
+  return { counterpart, trip, counterpartRole };
+}
+
 // BD-CHAT-02 — Hydrate header + trip bar from the canonical ride when the
 // caller supplies tripId, fall back to the stored response payload when only
 // responseId is present, and otherwise show the demo card. The ride store
@@ -335,50 +385,123 @@ function resolveRideContext({ responseId, viewerRole }) {
 // owns `driverPrice` and the originating `requestId`. We never throw — every
 // lookup degrades gracefully so a stale/unknown id renders the demo instead
 // of a blank screen.
-function resolveChatHydration({ tripId, responseId, viewerRole }) {
+function resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole }) {
   if (tripId) {
     const ride = findActiveRide(tripId);
     if (ride) {
-      const counterpart = viewerRole === 'driver'
-        ? (ride.passenger || {})
-        : (ride.driver || {});
-      // The avatar colour must match the counterpart actually rendered here:
-      // viewer=driver renders the passenger, viewer=passenger renders the driver.
+      return { ...hydrateFromRealRide(ride, viewerRole), response: null, confirmed: true };
+    }
+    // BD-CHAT-FALLBACK-02 — a local-store miss on tripId is not proof no ride
+    // exists: active-ride/trip-confirmation chat buttons always append &role=,
+    // and on a live backend the authoritative ride can be cross-device /
+    // in-memory-only (merged from the server without a local write — see
+    // active_ride.js mergeServerRide / loadCanonicalActiveRide) (#891 Codex P2
+    // Finding 2). Require BOTH signals together: an internal-navigation
+    // provenance marker (hasExplicitRole) AND a live backend (isBackendEnabled())
+    // — role= alone can be hand-typed into a URL and proves nothing by itself;
+    // with the backend OFF every real local ride is always synchronously
+    // persisted, so a miss there is genuine absence, not a caching gap.
+    // Neither signal alone is proof the ride is REAL and ACCEPTED, only that
+    // it's worth *asking the backend*: stay confirmed:false (never render
+    // 'Принят') and let chat() await getRideFromBackend(tripId) before
+    // upgrading — pendingBackendConfirm is that request, not the answer.
+    if (hasExplicitRole && isBackendEnabled()) {
+      // BD-CHAT-FALLBACK-03 — trip_confirmation.js's passenger chat handoff
+      // (chatHref, #732/#743) threads tripId + responseId + role=passenger
+      // together on purpose: responseId hydrates the thread from the stored
+      // driver offer BEFORE the active ride is seeded, since tripId only
+      // resolves once findActiveRide(tripId) actually finds it. Don't
+      // clobber that already-known offer (e.g. the driver's price) with
+      // generic MOCK_TRIP data while a backend confirm is pending — reuse
+      // the same response-backed hydration the responseId branch below
+      // would produce, still tagged pendingBackendConfirm so a successful
+      // read still upgrades to the real ride via hydrateFromRealRide, and a
+      // 404/403/failed read leaves the response hydration in place instead
+      // of a fabricated 'Принят' (#891 Codex P2 follow-up).
+      const pendingResponse = responseId ? loadResponse(responseId) : null;
+      if (pendingResponse) {
+        const trip = {
+          from:   MOCK_TRIP.from,
+          to:     MOCK_TRIP.to,
+          price:  pendingResponse.driverPrice ? `${pendingResponse.driverPrice} ₽` : MOCK_TRIP.price,
+          when:   MOCK_TRIP.when,
+          seats:  MOCK_TRIP.seats,
+          status: 'Не подтверждено',
+        };
+        return {
+          counterpart: MOCK_DRIVER,
+          trip,
+          response: pendingResponse,
+          counterpartRole: 'driver',
+          confirmed: false,
+          pendingBackendConfirm: true,
+        };
+      }
       const counterpartRole = viewerRole === 'driver' ? 'passenger' : 'driver';
-      const trip = {
-        from:   ride.route && ride.route.pickupLabel  ? ride.route.pickupLabel  : MOCK_TRIP.from,
-        to:     ride.route && ride.route.dropoffLabel ? ride.route.dropoffLabel : MOCK_TRIP.to,
-        price:  (ride.ride && ride.ride.price) || (ride.order && ride.order.offerPrice) || MOCK_TRIP.price,
-        when:   MOCK_TRIP.when,
-        seats:  MOCK_TRIP.seats,
-        status: ride.status || 'Принят',
+      const counterpart = counterpartRole === 'passenger' ? MOCK_PASSENGER : MOCK_DRIVER;
+      return {
+        counterpart,
+        trip: { ...MOCK_TRIP, status: 'Не подтверждено' },
+        response: null,
+        counterpartRole,
+        confirmed: false,
+        pendingBackendConfirm: true,
       };
-      return { counterpart, trip, response: null, counterpartRole };
     }
   }
   if (responseId) {
+    if (orderId) {
+      // BD-CHAT-FALLBACK-02 — a passenger who already selected a driver has a
+      // real active ride at trip_${orderId} (buildPassengerActiveRide,
+      // responses.js) with ride.selectedDriver.responseId pinned to that
+      // choice. Reopening /chat?responseId=...&orderId=... for THAT driver
+      // must reflect the real ride, not the generic unconfirmed state (#891
+      // Codex P2 Finding 1). A responseId for a driver who was NOT selected
+      // (or no ride yet) still falls through unconfirmed below.
+      const existingRide = findActiveRide(`trip_${orderId}`);
+      if (existingRide && existingRide.selectedDriver
+          && existingRide.selectedDriver.responseId === responseId) {
+        return { ...hydrateFromRealRide(existingRide, viewerRole), response: null, confirmed: true };
+      }
+    }
     const response = loadResponse(responseId);
     if (response) {
+      // BD-CHAT-FALLBACK-01 — a stored response is a driver OFFER, not an
+      // accepted ride: no `ride` record exists yet (the `if (tripId)` branch
+      // above only returns when findActiveRide finds one). Do not claim
+      // 'Принят' here — see confirmed:false below (#891).
       const trip = {
         from:   MOCK_TRIP.from,
         to:     MOCK_TRIP.to,
         price:  response.driverPrice ? `${response.driverPrice} ₽` : MOCK_TRIP.price,
         when:   MOCK_TRIP.when,
         seats:  MOCK_TRIP.seats,
-        status: 'Принят',
+        status: 'Не подтверждено',
       };
       // This path always renders MOCK_DRIVER (a driver) as the counterpart,
       // regardless of viewer role — so the avatar shows the driver identity colour.
-      return { counterpart: MOCK_DRIVER, trip, response, counterpartRole: 'driver' };
+      return { counterpart: MOCK_DRIVER, trip, response, counterpartRole: 'driver', confirmed: false };
     }
   }
+  // BD-CHAT-FALLBACK-01 — no real ride and no stored response back this
+  // thread (e.g. /chat?tripId=<feed-post-id> for a post that was never
+  // ordered/accepted). confirmed:false keeps the header status and the
+  // empty-thread system pill from falsely declaring the ride accepted (#891).
   return {
     counterpart: MOCK_DRIVER,
-    trip: { ...MOCK_TRIP, status: 'Принят' },
+    trip: { ...MOCK_TRIP, status: 'Не подтверждено' },
     response: null,
     counterpartRole: 'driver',
+    confirmed: false,
   };
 }
+
+// Named exports (in addition to the default screen export below) — both
+// functions are pure (no DOM/localStorage side effects of their own), so a
+// static smoke can import and execute them directly with a constructed mock
+// ride to prove the real hydration/label pipeline behaviorally, not just
+// pattern-match the source text (#891 Codex P2 repair).
+export { resolveChatHydration, hydrateFromRealRide };
 
 // BD-CHAT-02 — Back link respects the entry point. When the user arrives
 // from /active-ride (tripId + explicit role), return there. For respond/
@@ -498,7 +621,10 @@ const CHAT_EMPTY_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 // BD-CHAT-01 (Cloud Design port) — the designed thread-empty / first-message state:
 // a «Заказ принят» system pill + a warm, role-specific prompt to start the
 // conversation. No fabricated history (the route / trip bar above stays in place).
-function renderEmptyThread(viewerRole) {
+// BD-CHAT-FALLBACK-01 — `confirmed` mirrors resolveChatHydration's flag: only a
+// genuine backing ride (or the fixture preview) may claim the order was
+// accepted; an unresolved tripId/responseId gets a neutral pill instead (#891).
+function renderEmptyThread(viewerRole, confirmed) {
   const wrap = document.createElement('div');
   wrap.className = 'chat__empty';
   wrap.setAttribute('role', 'group');
@@ -506,7 +632,7 @@ function renderEmptyThread(viewerRole) {
 
   const pill = document.createElement('div');
   pill.className = 'chat__sys-pill';
-  pill.textContent = 'Заказ принят';
+  pill.textContent = confirmed ? 'Заказ принят' : 'Не подтверждено';
 
   const ic = document.createElement('div');
   ic.className = 'chat__empty-ic';
@@ -657,9 +783,21 @@ export default function chat() {
   // passenger for driver viewers); `trip` carries route + price + status.
   const hydration = fixture
     ? resolveFixtureHydration(viewerRole)
-    : resolveChatHydration({ tripId, responseId, viewerRole });
-  const counterpart = hydration.counterpart;
+    : resolveChatHydration({ tripId, responseId, orderId, viewerRole, hasExplicitRole });
+  // BD-CHAT-FALLBACK-06 — shallow-cloned, never a direct reference to
+  // hydration.counterpart. Several no-real-ride paths in resolveChatHydration
+  // / resolveFixtureHydration return the module-level MOCK_DRIVER/
+  // MOCK_PASSENGER constants directly; applyConfirmedRide's
+  // Object.assign(counterpart, real.counterpart) would otherwise permanently
+  // overwrite that shared singleton with one real user's driver identity for
+  // the rest of the session — leaking it into every later unconfirmed/demo
+  // chat that also hydrates from the same mock (#891 Codex P2 follow-up).
+  const counterpart = { ...hydration.counterpart };
   const trip        = hydration.trip;
+  // BD-CHAT-FALLBACK-02 — `let`, not `const`: a pending server-backed ride
+  // (hydration.pendingBackendConfirm) starts confirmed:false and may flip to
+  // true once getRideFromBackend resolves (see confirmRideFromBackend below).
+  let confirmed      = hydration.confirmed !== false;
   // BD-CHAT-01 (Cloud Design parity) — the header avatar carries the COUNTERPART's
   // identity colour (driver = green, passenger = purple), matching the
   // .cf-avatar--driver/--passenger convention. The role comes from the hydrated
@@ -695,7 +833,7 @@ export default function chat() {
       <div class="chat__trip-left">
         <div class="chat__trip-route">
           <span class="chat__trip-emoji" aria-hidden="true">🚕</span>
-          <span>${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
+          <span class="chat__trip-route-text">${escapeHtml(trip.from)} → ${escapeHtml(trip.to)}</span>
           ${(() => {
             const raw   = trip.status || '';
             const tone  = resolveRideStatusTone(raw);
@@ -757,23 +895,36 @@ export default function chat() {
   // drop the quick replies, and show a "trip ended" note. The composer stays
   // in the DOM (disabled) so the message log + confirm bar are unaffected, and
   // the send/keydown listeners below are inert against a disabled input.
-  const isTerminal = isTerminalRideStatus(trip.status);
-  if (isTerminal) {
+  // BD-CHAT-FALLBACK-04 — `let`, not `const`: a late backend confirmation
+  // (applyConfirmedRide) can resolve trip.status to a terminal value AFTER
+  // this initial check already ran with the pending 'Не подтверждено'
+  // status. applyTerminalLock() is extracted so both the synchronous path
+  // below and the async late-terminal path call the exact same DOM/state
+  // transition (#891 Codex P2 follow-up).
+  let isTerminal = isTerminalRideStatus(trip.status);
+  function applyTerminalLock() {
     const composerEl = root.querySelector('.chat__composer');
     if (composerEl) composerEl.classList.add('chat__composer--locked');
     inputEl.disabled = true;
     inputEl.placeholder = 'Чат закрыт';
     sendBtn.disabled = true;
     qrEl.hidden = true;
-    const note = document.createElement('div');
-    note.className = 'chat__readonly-note';
-    note.setAttribute('role', 'note');
-    note.textContent =
-      trip.status === RIDE_STATUS.COMPLETED ? 'Поездка завершена. Чат доступен только для просмотра.'
-      : trip.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не пришёл. Чат закрыт.'
-      : 'Поездка отменена. Чат закрыт.';
-    if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+    // BD-CHAT-FALLBACK-05 — a failed-send retry button rendered before the
+    // lock must not remain visually clickable in a read-only thread; its own
+    // click handler also re-checks isTerminal live (#891 Codex P2 follow-up).
+    for (const btn of root.querySelectorAll('.chat__msg-retry')) btn.disabled = true;
+    if (!root.querySelector('.chat__readonly-note')) {
+      const note = document.createElement('div');
+      note.className = 'chat__readonly-note';
+      note.setAttribute('role', 'note');
+      note.textContent =
+        trip.status === RIDE_STATUS.COMPLETED ? 'Поездка завершена. Чат доступен только для просмотра.'
+        : trip.status === RIDE_STATUS.NO_SHOW ? 'Пассажир не пришёл. Чат закрыт.'
+        : 'Поездка отменена. Чат закрыт.';
+      if (composerEl) composerEl.parentNode.insertBefore(note, composerEl);
+    }
   }
+  if (isTerminal) applyTerminalLock();
 
   // ── Initial message-list state + incremental backend refresh ─────
   // `rendered` tracks message ids already in the DOM so background refreshes
@@ -833,7 +984,7 @@ export default function chat() {
       messagesEl.replaceChildren(renderChatReadError());
     } else if (nextState === CHAT_READ_STATE.EMPTY) {
       messages = [];
-      messagesEl.replaceChildren(renderEmptyThread(viewerRole));
+      messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
     } else {
       messages = [...list];
       ensureThreadShell();
@@ -857,6 +1008,12 @@ export default function chat() {
   let pollId = null;
   let rootWasConnected = false;
   let mountCheckPassed = false;
+  // BD-CHAT-FALLBACK-02 — one-shot backend ride confirmation (#891 Codex P2
+  // Finding 2), independent of the message readManager below: this asks
+  // getRideFromBackend(tripId) once for a tripId that missed locally but
+  // came with an explicit &role= on a live backend. No retry/poll loop —
+  // 404/403/network failure/abort all leave confirmed:false untouched.
+  let rideConfirmController = null;
   const readManager = createChatReadManager(fetchServerMessages, CHAT_READ_TIMEOUT_MS);
   setTimeout(() => { mountCheckPassed = true; }, 0);
   const isCurrentRead = (epoch) => epoch === readEpoch
@@ -872,6 +1029,109 @@ export default function chat() {
     readEpoch += 1;
     stopPolling();
     readManager.cancel('chat screen torn down');
+    if (rideConfirmController) {
+      rideConfirmController.abort();
+      rideConfirmController = null;
+    }
+  }
+
+  // BD-CHAT-FALLBACK-06 — a late backend confirm can arrive AFTER incoming
+  // messages already rendered under the stale mock name (the message GET can
+  // settle before the ride-confirm read does — independent async races).
+  // Object.assign(counterpart, ...) only fixes FUTURE renderMessage() calls;
+  // this re-labels the already-rendered bubbles' visible author + aria-label
+  // in place, without touching messagesEl's children list, so optimistic /
+  // failed-send bubble state (classes, retry buttons, the `rendered` dedupe
+  // set) is untouched — never a full re-render (#891 Codex P2 follow-up).
+  function refreshIncomingAuthors(name) {
+    const label = name || 'Собеседник';
+    for (const msgEl of messagesEl.querySelectorAll('.chat__msg--in')) {
+      msgEl.setAttribute('aria-label', label);
+      const authorEl = msgEl.querySelector('.chat__author');
+      if (authorEl) authorEl.textContent = label;
+    }
+  }
+
+  // BD-CHAT-FALLBACK-02 — apply a successfully-confirmed server ride to the
+  // already-rendered header + trip-bar (+ the empty-thread pill, if still
+  // showing) in place, via the SAME hydrateFromRealRide shape the tripId and
+  // orderId real-ride branches already use — so a late confirmation renders
+  // identically to one that was available synchronously (#891 Codex P2).
+  function applyConfirmedRide(srv) {
+    const real = hydrateFromRealRide(srv, viewerRole);
+    confirmed = true;
+    trip.from   = real.trip.from;
+    trip.to     = real.trip.to;
+    trip.price  = real.trip.price;
+    trip.when   = real.trip.when;
+    trip.seats  = real.trip.seats;
+    trip.status = real.trip.status;
+    // BD-CHAT-FALLBACK-04 — mutate the SAME counterpart object in place
+    // (not just the header DOM) so every FUTURE renderMessage()/createMsgEl()
+    // call — incoming poll messages, the user's own next send — reads the
+    // real name instead of the stale mock one (#891 Codex P2 follow-up).
+    Object.assign(counterpart, real.counterpart);
+    refreshIncomingAuthors(counterpart.name);
+
+    const avatarEl = root.querySelector('.chat__avatar');
+    if (avatarEl) {
+      avatarEl.className = `chat__avatar chat__avatar--${real.counterpartRole}`;
+      avatarEl.textContent = real.counterpart.initials || '';
+    }
+    const nameEl = root.querySelector('.chat__driver-name');
+    if (nameEl) nameEl.textContent = real.counterpart.name || '';
+    const metaEl = root.querySelector('.chat__driver-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `<span class="chat__online-dot" aria-hidden="true"></span>`
+        + `${escapeHtml(real.counterpart.onlineLabel || real.counterpart.status || 'в сети')} · ★ ${escapeHtml(real.counterpart.rating || '')}`;
+    }
+    const routeTextEl = root.querySelector('.chat__trip-route-text');
+    if (routeTextEl) routeTextEl.textContent = `${trip.from} → ${trip.to}`;
+    const statusEl = root.querySelector('.chat__trip-status');
+    if (statusEl) {
+      const tone  = resolveRideStatusTone(trip.status);
+      const label = resolveRideStatusLabel(trip.status) || 'Принят';
+      statusEl.className = `inbox-item__status inbox-item__status--${tone} chat__trip-status`;
+      statusEl.textContent = label;
+      statusEl.setAttribute('aria-label', `Статус поездки: ${label}`);
+    }
+    const priceEl = root.querySelector('.chat__trip-price');
+    if (priceEl) priceEl.textContent = String(trip.price || '');
+    const metaTripEl = root.querySelector('.chat__trip-meta');
+    if (metaTripEl) metaTripEl.textContent = `${trip.when || ''} · ${trip.seats || ''} места`;
+    if (readState === CHAT_READ_STATE.EMPTY) {
+      messagesEl.replaceChildren(renderEmptyThread(viewerRole, confirmed));
+    }
+    // BD-CHAT-FALLBACK-04 — the server ride is now the source of truth for
+    // runtime Chat state, not just the displayed status: a late-arriving
+    // terminal status (COMPLETED/CANCELED/NO_SHOW) must idempotently lock
+    // the thread exactly like a synchronously-terminal one would — stop the
+    // message poll, disable send/quick-replies, show the terminal note —
+    // without dropping history (#891 Codex P2 follow-up). Guarded on the
+    // PRIOR isTerminal so an already-terminal thread never double-locks.
+    if (!isTerminal && isTerminalRideStatus(trip.status)) {
+      isTerminal = true;
+      stopPolling();
+      applyTerminalLock();
+      syncComposerAvailability();
+    }
+  }
+
+  async function confirmRideFromBackend() {
+    const controller = new AbortController();
+    rideConfirmController = controller;
+    let srv = null;
+    try {
+      srv = await getRideFromBackend(tripId, { signal: controller.signal });
+    } catch {
+      // 404 (no such ride) / 403 (not a participant) / network failure /
+      // abort — all leave confirmed:false untouched. Never fabricate 'Принят'
+      // from a failed or incomplete read.
+      srv = null;
+    }
+    if (rideConfirmController !== controller || !root.isConnected) return;
+    rideConfirmController = null;
+    if (srv) applyConfirmedRide(srv);
   }
 
   const teardownObserver = new MutationObserver(() => {
@@ -1037,6 +1297,9 @@ export default function chat() {
   });
 
   if (backendRead) void loadInitialServerMessages();
+  // BD-CHAT-FALLBACK-02 — independent of the message read above: a one-shot
+  // attempt to confirm a server-backed ride that missed the local store.
+  if (hydration.pendingBackendConfirm) void confirmRideFromBackend();
 
   // ── Send ────────────────────────────────────────────────────────
   // BD-CHAT-01 (#18) — flag a bubble whose persist failed: a visual + AT failed state with an
@@ -1057,7 +1320,18 @@ export default function chat() {
     retry.className = 'chat__msg-retry';
     retry.textContent = 'Повторить';
     retry.setAttribute('aria-label', 'Повторить отправку');
+    // BD-CHAT-FALLBACK-05 — a failed send can land AFTER a late terminal
+    // confirm: the original POST was already in flight when
+    // applyConfirmedRide locked the thread, so this button is being created
+    // into an ALREADY-terminal chat. Disable it from creation as a visual
+    // match for the read-only state, but the click handler below is the
+    // authoritative guard — it re-checks isTerminal live, so a retry button
+    // that predates the lock (disabled separately by applyTerminalLock's
+    // sweep) is blocked the same way even if its disabled attribute were
+    // ever bypassed (#891 Codex P2 follow-up).
+    if (isTerminal) retry.disabled = true;
     retry.addEventListener('click', () => {
+      if (isTerminal) return;
       const ok = () => { clearSendFailed(msgEl); showNotice('Сообщение отправлено'); inputEl.focus(); };
       if (backendChat) {
         postServerMessage(chatId, msg).then(ok).catch(() => showNotice('Не удалось отправить сообщение — проверьте соединение.'));

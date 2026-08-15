@@ -77,7 +77,9 @@
 // (cancel sheet's persistent header no longer asks a question after the ride is canceled).
 // v289 (driver sheet layering repair): precached cloud.css changed (.active-ride-driver-sheet
 // now paints above .active-ride__notice so a lingering toast can't overlap a sheet's controls).
-const VERSION    = 'v289';
+// v290 (chat false-accepted-fallback repair #891): precached chat.js changed (no-real-ride
+// fallback branches no longer claim status 'Принят' / render the "Заказ принят" system pill).
+const VERSION    = 'v290';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

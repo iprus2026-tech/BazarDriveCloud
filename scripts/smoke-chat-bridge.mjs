@@ -344,11 +344,146 @@ expect("chat.js gates MOCK_MESSAGES on the demo thread (real empty threads get [
   && /isRealThread\s*\?\s*\[\]\s*:\s*MOCK_MESSAGES/.test(chat));
 expect("chat.js defines renderEmptyThread and renders it for a real empty thread",
   /function\s+renderEmptyThread\s*\(/.test(chat)
-  && /nextState === CHAT_READ_STATE\.EMPTY[\s\S]{0,120}renderEmptyThread\(viewerRole\)/.test(chat));
+  && /nextState === CHAT_READ_STATE\.EMPTY[\s\S]{0,120}renderEmptyThread\(viewerRole,\s*confirmed\)/.test(chat));
 expect("chat.js empty state carries role-specific copy (no fabricated history)",
   /Сообщений пока нет/.test(chat) && /chat__empty-title/.test(chat));
 expect("cloud.css defines the .chat__empty atoms (Cloud Design port)",
   /\.chat__empty\s*\{/.test(css) && /\.chat__empty-title\s*\{/.test(css) && /\.chat__empty-ic\s*\{/.test(css));
+
+// ── P. chat.js — BD-CHAT-FALLBACK-01/02 no false "Принят" without a real ride (#891, Codex P2 repair) ──
+// A chat opened for a tripId/responseId that resolves to no real ride and no
+// stored response (e.g. /chat?tripId=<feed-post-id> for a post that was never
+// ordered/accepted) must not claim the order was accepted — neither in the
+// header status pill nor in the empty-thread system pill. A genuine backing
+// ride keeps its historical 'Принят' + confirmed:true via two SYNCHRONOUS
+// routes: (a) findActiveRide(tripId) hit, (b) trip_${orderId} with a
+// matching selectedDriver.responseId (Finding 1). A third, server-backed
+// route (c) — tripId + explicit &role= + a live backend, local-store miss
+// (Finding 2) — never asserts confirmed:true synchronously: it starts
+// confirmed:false + pendingBackendConfirm:true, and chat() only upgrades to
+// confirmed:true + the real ride's own status after getRideFromBackend(tripId)
+// resolves successfully (404/403/network failure/abort all leave it
+// confirmed:false — see the behavioral block below).
+// functionBody() mis-scopes resolveChatHydration: its destructured parameter
+// `({ tripId, responseId, ... })` opens a `{` before the real body does, so
+// the brace-matcher stops at the parameter's own closing `}`. Slice to the
+// next top-level function declaration instead.
+const resolveChatHydrationStart = chat.indexOf('function resolveChatHydration(');
+const resolveChatHydrationBody = chat.slice(
+  resolveChatHydrationStart,
+  chat.indexOf('function resolveBackHref(', resolveChatHydrationStart));
+const resolveFixtureHydrationBody = functionBody(chat, 'resolveFixtureHydration');
+const hydrateFromRealRideBody = functionBody(chat, 'hydrateFromRealRide');
+expect("hydrateFromRealRide is the single shared real-ride hydration shape (status: ride.status || 'Принят')",
+  /status:\s*ride\.status\s*\|\|\s*'Принят'/.test(hydrateFromRealRideBody)
+  && /return\s*\{\s*counterpart,\s*trip,\s*counterpartRole\s*\}/.test(hydrateFromRealRideBody));
+expect("resolveChatHydration's tripId real-ride branch delegates to hydrateFromRealRide with confirmed:true (behaviorally unchanged contract)",
+  /if\s*\(ride\)\s*\{\s*return\s*\{\s*\.\.\.hydrateFromRealRide\(ride,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
+expect("resolveChatHydration's server-backed local-miss branch requires BOTH hasExplicitRole AND isBackendEnabled() — neither alone is sufficient (Finding 2)",
+  /if\s*\(hasExplicitRole\s*&&\s*isBackendEnabled\(\)\)/.test(resolveChatHydrationBody)
+  && !/hasExplicitRole\s*\|\|\s*isBackendEnabled\(\)/.test(resolveChatHydrationBody));
+// The hasExplicitRole && isBackendEnabled() sub-block now has TWO pending
+// outcomes (BD-CHAT-FALLBACK-03, #891 Codex P2 follow-up): a response-backed
+// one when trip_confirmation.js's tripId+responseId+role handoff finds a
+// stored offer, and the generic MOCK_TRIP one otherwise. Slice just that
+// sub-block (bounded by the following `if (responseId)`) for precise checks.
+const backendMissBranchStart = resolveChatHydrationBody.indexOf('if (hasExplicitRole && isBackendEnabled())');
+const backendMissBranchBody = resolveChatHydrationBody.slice(
+  backendMissBranchStart,
+  resolveChatHydrationBody.indexOf('if (responseId) {', backendMissBranchStart));
+expect("resolveChatHydration's server-backed local-miss branch does NOT assert confirmed:true synchronously — neither of its two outcomes (response-backed, generic) ever affirms before chat()'s async backend read",
+  !/confirmed:\s*true/.test(backendMissBranchBody)
+  && (backendMissBranchBody.match(/confirmed: false/g) || []).length === 2
+  && (backendMissBranchBody.match(/pendingBackendConfirm: true/g) || []).length === 2);
+expect("resolveChatHydration's server-backed local-miss branch prefers the response-backed hydration (a real stored offer's price) over generic MOCK_TRIP when trip_confirmation.js's tripId+responseId+role handoff has one (Finding 3)",
+  /const pendingResponse = responseId \? loadResponse\(responseId\) : null;/.test(backendMissBranchBody)
+  && /if \(pendingResponse\) \{/.test(backendMissBranchBody)
+  && /price:\s*pendingResponse\.driverPrice \? `\$\{pendingResponse\.driverPrice\} ₽` : MOCK_TRIP\.price/.test(backendMissBranchBody)
+  && /response:\s*pendingResponse,/.test(backendMissBranchBody));
+expect("resolveChatHydration's responseId+orderId branch looks up trip_${orderId} and confirms ONLY on an exact selectedDriver.responseId match (Finding 1)",
+  /findActiveRide\(`trip_\$\{orderId\}`\)/.test(resolveChatHydrationBody)
+  && /existingRide\.selectedDriver\s*&&\s*existingRide\.selectedDriver\.responseId\s*===\s*responseId/.test(resolveChatHydrationBody)
+  && /return\s*\{\s*\.\.\.hydrateFromRealRide\(existingRide,\s*viewerRole\),\s*response:\s*null,\s*confirmed:\s*true\s*\}/.test(resolveChatHydrationBody));
+expect("hydrateFromRealRide is reused (not duplicated) by exactly the two SYNCHRONOUS real-ride call sites in resolveChatHydration (the async server-confirm path reuses it separately, inside chat()'s applyConfirmedRide)",
+  (resolveChatHydrationBody.match(/hydrateFromRealRide\(/g) || []).length === 2);
+expect("resolveChatHydration marks confirmed:false with a neutral status in all four non-affirming paths (pending server-confirm response-backed, pending server-confirm generic, responseId-only mismatch, generic fallback)",
+  (resolveChatHydrationBody.match(/confirmed: false/g) || []).length === 4
+  && (resolveChatHydrationBody.match(/status:\s*'Не подтверждено'/g) || []).length === 4);
+expect("resolveFixtureHydration (canonical preview) keeps its historical 'Принят' + confirmed:true unchanged",
+  /status:\s*'Принят'/.test(resolveFixtureHydrationBody)
+  && /confirmed:\s*true/.test(resolveFixtureHydrationBody));
+expect("renderEmptyThread's system pill reflects confirmed (no unconditional 'Заказ принят')",
+  /pill\.textContent\s*=\s*confirmed\s*\?\s*'Заказ принят'\s*:\s*'Не подтверждено'/.test(chat));
+expect("chat() extracts orderId and hasExplicitRole and forwards both into resolveChatHydration",
+  /const\s+orderId\s*=\s*getRouteParam\('orderId'\)/.test(chat)
+  && /const\s+hasExplicitRole\s*=\s*rawRole\s*===\s*'driver'\s*\|\|\s*rawRole\s*===\s*'passenger'/.test(chat)
+  && /const hydration = fixture\s*\? resolveFixtureHydration\(viewerRole\)\s*: resolveChatHydration\(\{ tripId, responseId, orderId, viewerRole, hasExplicitRole \}\)/.test(chat));
+expect("chat() derives confirmed from hydration (let, not const — applyConfirmedRide may flip it after an async backend confirm) and forwards it to renderEmptyThread",
+  /let\s+confirmed\s*=\s*hydration\.confirmed\s*!==\s*false/.test(chat));
+
+// ── Q. chat.js — BD-CHAT-FALLBACK-02 async backend ride-confirm wiring (#891 Codex P2 Finding 2) ──
+// resolveChatHydration only DECIDES a server ride is worth asking about
+// (pendingBackendConfirm); this section pins that chat() actually performs
+// that one-shot ask via the existing, already-tested getRideFromBackend
+// (no new endpoint), never upgrades confirmed on a failed/aborted read, and
+// tears the in-flight request down on unmount.
+expect("chat.js imports the existing getRideFromBackend from mock_api.js (no new backend endpoint)",
+  /import\s*\{\s*getRideFromBackend\s*\}\s*from\s*'\.\.\/mock_api\.js'/.test(chat));
+expect("confirmRideFromBackend calls getRideFromBackend(tripId, ...) inside try/catch and sets srv=null on ANY failure (404/403/network/abort) — never fabricates a confirmed ride on error",
+  /async function confirmRideFromBackend\(\)/.test(chat)
+  && /srv = await getRideFromBackend\(tripId, \{ signal: controller\.signal \}\)/.test(chat)
+  && /\} catch \{[\s\S]{0,220}srv = null;/.test(chat));
+expect("confirmRideFromBackend only calls applyConfirmedRide when the read actually returned a server ride (if (srv) applyConfirmedRide(srv);) — no unconditional upgrade",
+  /if \(srv\) applyConfirmedRide\(srv\);/.test(chat));
+expect("applyConfirmedRide reuses hydrateFromRealRide (the same shape as the two synchronous real-ride branches) and only then sets confirmed = true",
+  /function applyConfirmedRide\(srv\) \{\s*const real = hydrateFromRealRide\(srv, viewerRole\);\s*confirmed = true;/.test(chat));
+expect("applyConfirmedRide mutates the SAME counterpart object in place (Object.assign), not just the header DOM, so future renderMessage()/createMsgEl() calls stop reading the stale mock name (#891 Codex P2 follow-up)",
+  /Object\.assign\(counterpart, real\.counterpart\);/.test(chat)
+  && (chat.match(/counterpart\.name/g) || []).length >= 2); // renderMessage() + doSend()'s createMsgEl both read it live
+expect("applyConfirmedRide updates the SAME DOM hooks the initial template renders with (avatar/name/meta/route-text/status-pill/price/meta), not a parallel markup shape",
+  /root\.querySelector\('\.chat__avatar'\)/.test(chat)
+  && /root\.querySelector\('\.chat__driver-name'\)/.test(chat)
+  && /root\.querySelector\('\.chat__driver-meta'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-route-text'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-status'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-price'\)/.test(chat)
+  && /root\.querySelector\('\.chat__trip-meta'\)/.test(chat)
+  && /<span class="chat__trip-route-text">/.test(chat));
+expect("applyConfirmedRide re-renders the empty-thread pill (via the same renderEmptyThread + confirmed contract) when the thread is still showing it",
+  /if \(readState === CHAT_READ_STATE\.EMPTY\) \{\s*messagesEl\.replaceChildren\(renderEmptyThread\(viewerRole, confirmed\)\);/.test(chat));
+expect("chat() kicks off confirmRideFromBackend exactly once, gated on hydration.pendingBackendConfirm",
+  (chat.match(/void confirmRideFromBackend\(\);/g) || []).length === 1
+  && /if \(hydration\.pendingBackendConfirm\) void confirmRideFromBackend\(\);/.test(chat));
+expect("teardownReads aborts an in-flight rideConfirmController (no orphaned fetch after the screen unmounts)",
+  /function teardownReads\(\) \{[\s\S]{0,220}if \(rideConfirmController\) \{\s*rideConfirmController\.abort\(\);\s*rideConfirmController = null;/.test(chat));
+expect("chat.js exports resolveChatHydration and hydrateFromRealRide as named exports for behavioral testing (smoke-chat-ride-confirm-behavioral.mjs)",
+  /export \{ resolveChatHydration, hydrateFromRealRide \};/.test(chat));
+
+// ── S. chat.js — BD-CHAT-FALLBACK-06 no shared-mock mutation, missing server initials, stale rendered bubbles (#891 Codex P2 follow-up) ──
+// Three findings from the fresh review on f04fcfe:
+//   1. Several resolveChatHydration/resolveFixtureHydration paths return
+//      the module-level MOCK_DRIVER/MOCK_PASSENGER constants BY REFERENCE;
+//      applyConfirmedRide's Object.assign would otherwise permanently
+//      corrupt that shared singleton for the rest of the session. Fixed by
+//      cloning once at the chat() consumption point, not at every source.
+//   2. bootstrapRide (server) never writes driver_initials, so a real
+//      server ride can legitimately hydrate with initials:null.
+//      hydrateFromRealRide now derives up to two letters from the real
+//      name when the server didn't supply initials.
+//   3. createMsgEl bakes the counterpart name into already-rendered
+//      incoming bubbles (visible .chat__author + aria-label); a message
+//      GET that settles before the ride-confirm read leaves those bubbles
+//      stuck on the stale name. refreshIncomingAuthors re-labels them in
+//      place without a full re-render (preserves optimistic/failed-send
+//      bubble state).
+expect("chat() clones hydration.counterpart (spread) instead of binding it directly — protects MOCK_DRIVER/MOCK_PASSENGER from permanent mutation by applyConfirmedRide's Object.assign",
+  /const counterpart = \{ \.\.\.hydration\.counterpart \};/.test(chat));
+expect("hydrateFromRealRide's counterpart is also a fresh spread (not ride.driver/ride.passenger by reference) with initials derived from the real name when the server didn't supply any",
+  /const counterpart = \{\s*\.\.\.rawCounterpart,\s*initials: rawCounterpart\.initials \|\| deriveInitials\(rawCounterpart\.name\),\s*\};/.test(hydrateFromRealRideBody)
+  && /function deriveInitials\(name\) \{/.test(chat));
+expect("applyConfirmedRide re-labels already-rendered incoming bubbles (visible author + aria-label) via refreshIncomingAuthors, without touching messagesEl's children list (no full re-render, no lost optimistic/failed-send state)",
+  /function refreshIncomingAuthors\(name\) \{[\s\S]{0,80}for \(const msgEl of messagesEl\.querySelectorAll\('\.chat__msg--in'\)\) \{\s*msgEl\.setAttribute\('aria-label', label\);\s*const authorEl = msgEl\.querySelector\('\.chat__author'\);\s*if \(authorEl\) authorEl\.textContent = label;/.test(chat)
+  && /Object\.assign\(counterpart, real\.counterpart\);\s*refreshIncomingAuthors\(counterpart\.name\);/.test(chat));
 
 // ── G. chat.js — BD-CHAT-01 terminal read-only state (Cloud Design port, #2) ──
 // A completed / canceled / no-show trip must lock the composer to read-only:
@@ -357,14 +492,37 @@ expect("ride_state.js exports isTerminalRideStatus (canonical terminal check)",
   /export\s+function\s+isTerminalRideStatus\s*\(/.test(rideState));
 expect("chat.js imports isTerminalRideStatus from ride_state.js",
   /import\s*\{[\s\S]*?\bisTerminalRideStatus\b[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(chat));
-expect("chat.js computes isTerminal from trip.status via isTerminalRideStatus",
-  /const\s+isTerminal\s*=\s*isTerminalRideStatus\(\s*trip\.status\s*\)/.test(chat));
-expect("chat.js locks the composer read-only on a terminal trip (disable input/send + note)",
-  /if\s*\(\s*isTerminal\s*\)[\s\S]{0,400}inputEl\.disabled\s*=\s*true[\s\S]{0,220}chat__readonly-note/.test(chat));
+expect("chat.js computes isTerminal from trip.status via isTerminalRideStatus (let, not const — a late backend confirm can flip it, #891 Codex P2 follow-up)",
+  /let\s+isTerminal\s*=\s*isTerminalRideStatus\(\s*trip\.status\s*\)/.test(chat));
+expect("chat.js extracts applyTerminalLock() (disable input/send + note) and calls it both synchronously (if (isTerminal)) and from applyConfirmedRide on a late-terminal confirm",
+  /function applyTerminalLock\(\) \{[\s\S]{0,400}inputEl\.disabled\s*=\s*true[\s\S]{0,600}chat__readonly-note[\s\S]{0,600}\}\s*\n\s*if \(isTerminal\) applyTerminalLock\(\);/.test(chat)
+  && /if \(!isTerminal && isTerminalRideStatus\(trip\.status\)\) \{\s*isTerminal = true;\s*stopPolling\(\);\s*applyTerminalLock\(\);\s*syncComposerAvailability\(\);\s*\}/.test(chat));
 expect("chat.js drops the quick replies on a terminal trip",
   /for\s*\(\s*const\s+reply\s+of\s*\(\s*isTerminal\s*\?\s*\[\]\s*:\s*QUICK_REPLIES\s*\)\s*\)/.test(chat));
 expect("cloud.css defines .chat__readonly-note + .chat__composer--locked (Cloud Design port)",
   /\.chat__readonly-note\s*\{/.test(css) && /\.chat__composer--locked\s*\{/.test(css));
+
+// ── R. chat.js — BD-CHAT-FALLBACK-05 failed-send retry respects terminal lock (#891 Codex P2 follow-up) ──
+// A retry button predating a late terminal confirm, or one created AFTER it
+// (the original POST was already in flight when applyTerminalLock ran), must
+// never be able to actually resend. Three scenarios, each pinned below:
+//   1. non-terminal failed message -> retry stays available (unconditional
+//      creation, no disabled attribute forced).
+//   2. a retry button that already existed before a late terminal confirm ->
+//      applyTerminalLock's querySelectorAll sweep disables it.
+//   3. a retry button created AFTER the lock (late-rejected POST) -> the
+//      click handler's live `if (isTerminal) return;` guard is the
+//      authoritative block, independent of the disabled attribute.
+const markSendFailedBody = functionBody(chat, 'markSendFailed');
+expect("markSendFailed creates the retry button unconditionally (non-terminal failed sends still get a working retry — Scenario 1)",
+  /const retry = document\.createElement\('button'\);/.test(markSendFailedBody)
+  && /retry\.className = 'chat__msg-retry';/.test(markSendFailedBody));
+expect("markSendFailed disables the retry button from creation ONLY when the thread is already terminal (a late-rejected POST landing after the lock — Scenario 3, defense-in-depth)",
+  /if \(isTerminal\) retry\.disabled = true;/.test(markSendFailedBody));
+expect("the retry click handler's FIRST statement re-checks isTerminal live and returns before any postServerMessage/persistMessageInOrder call — the authoritative guard for Scenario 3, independent of the disabled attribute",
+  /retry\.addEventListener\('click', \(\) => \{\s*if \(isTerminal\) return;/.test(markSendFailedBody));
+expect("applyTerminalLock disables every existing .chat__msg-retry button when the lock fires (Scenario 2 — a retry that predates a late terminal confirm)",
+  /for \(const btn of root\.querySelectorAll\('\.chat__msg-retry'\)\) btn\.disabled = true;/.test(chat));
 
 // ── H. chat.js — send returns focus to the input (#4, a11y) ──────────
 // A click-send disables the (focused) send button, which would otherwise drop

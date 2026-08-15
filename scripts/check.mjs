@@ -925,6 +925,21 @@ if (exists(chatBridgeSmoke)) {
   }
 }
 
+// BD-CHAT-FALLBACK-02 — behavioral (not source-pattern) smoke for the #891
+// Codex P2 Finding 2 repair: imports and executes the real
+// resolveChatHydration / hydrateFromRealRide from chat.js plus the real
+// ride_state.js label/tone resolvers, proving the server-backed local-miss
+// branch never asserts an accepted ride before an async backend confirm.
+const chatRideConfirmBehavioralSmoke = path.join(root, 'scripts', 'smoke-chat-ride-confirm-behavioral.mjs');
+if (exists(chatRideConfirmBehavioralSmoke)) {
+  try {
+    execFileSync(process.execPath, [chatRideConfirmBehavioralSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-chat-ride-confirm-behavioral.mjs failed\n${msg}`);
+  }
+}
+
 // BD-MAP-FOUND-03 / BD-MAP-FOUND-04 — static regression smoke for the Mapbox
 // foundation stubs (driver_markers + trip_status_layer): export contract,
 // no real Mapbox SDK / network / CDN / dynamic import, RIDE_STATUS coverage,
