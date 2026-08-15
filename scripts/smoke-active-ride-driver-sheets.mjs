@@ -17,6 +17,7 @@ import fs from 'node:fs';
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const sheets = read('../public/src/screens/active_ride_driver_sheets.js');
 const screen = read('../public/src/screens/active_ride.js');
+const css = read('../public/styles/cloud.css');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -507,6 +508,23 @@ expect('earnings sheet keeps a calm closed state for the optimistic finish',
 expect('earnings sheet module never persists CANCELED / NO_SHOW',
   !/RIDE_STATUS\.(?:CANCELED|NO_SHOW)/.test(sheets)
   && !/persistDriver/.test(sheets));
+
+// #886-audit Finding 2 — .active-ride__notice (the driver screen's toast) and
+// .active-ride-driver-sheet (cancel/problem/safety/earnings) are independent,
+// uncoordinated overlays that can legitimately be visible at the same time
+// (a toast still fading out when a sheet opens). Read BOTH z-index values
+// from source and compare them numerically — a regression pin on the
+// relationship, not a hardcoded absolute number for either side — so either
+// value can change for unrelated reasons without silently reopening the
+// layering bug as long as the sheet stays on top.
+const driverSheetZIndex = Number((css.match(/\.active-ride-driver-sheet\s*\{[^}]*z-index:\s*(\d+)/) || [])[1]);
+const activeRideNoticeZIndex = Number((css.match(/\.active-ride__notice\s*\{[^}]*z-index:\s*(\d+)/) || [])[1]);
+expect('cloud.css resolves both .active-ride-driver-sheet and .active-ride__notice z-index values',
+  Number.isFinite(driverSheetZIndex) && Number.isFinite(activeRideNoticeZIndex),
+  { driverSheetZIndex, activeRideNoticeZIndex });
+expect('driver sheet overlay paints above the active-ride toast (z-index(sheet) > z-index(notice))',
+  driverSheetZIndex > activeRideNoticeZIndex,
+  { driverSheetZIndex, activeRideNoticeZIndex });
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
