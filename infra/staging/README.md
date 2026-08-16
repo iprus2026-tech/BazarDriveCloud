@@ -16,12 +16,15 @@ The earlier Google Cloud proposal is historical and superseded by
 | Provider and data location | `DECIDED` | Yandex Cloud, `ru-central1`; backend and PostgreSQL must remain physically in the Russian Federation. |
 | GitHub-to-Yandex authentication | `PROVEN_AT_VALIDATION_SCOPE` | GitHub OIDC → Yandex WIF → short-lived IAM token was validated without a static/JSON key. |
 | Object Storage backend authentication | `PROVEN_AT_VALIDATION_SCOPE` | The WIF session issued a short-lived three-part AWS-compatible credential and OpenTofu 1.12.0 authenticated to a disposable Object Storage S3 backend. This proves authentication only. |
-| Durable remote state and locking | `EXECUTION_PROOF_REQUIRED` | No durable state backend is authorized until lock acquisition, contention, recovery, force-unlock controls and cleanup pass the approved proof contract. |
+| Durable remote-state lifecycle | `HUMAN_DECISION_REQUIRED` | Exact durable bucket/name, object versioning/retention, recovery procedure, restore-test acceptance and least-privilege IAM remain unresolved. |
+| State locking and durable bootstrap | `EXECUTION_PROOF_REQUIRED` | No durable state backend is authorized until lock acquisition, contention, stale-lock recovery, force-unlock controls and cleanup pass the approved proof contract. |
 | Runtime and PostgreSQL topology | `HUMAN_DECISION_REQUIRED` | Exact folder, availability zone where applicable, network, sizing, storage, backup, budget and billing controls remain unresolved. |
-| Secrets | `HUMAN_DECISION_REQUIRED` | Lockbox is the provider candidate; exact injection and rotation procedures are not accepted yet. |
+| Secrets | `HUMAN_DECISION_REQUIRED` | Lockbox is the provider candidate; exact bootstrap, injection, rotation and revocation procedures are not accepted yet. |
 | Registry and release mechanics | `EXECUTION_PROOF_REQUIRED` | Publish once and deploy by immutable digest; exact registry, zero-traffic candidate, promotion and rollback mechanics must be proven for Yandex Serverless Containers. |
-| Migrations | `HUMAN_DECISION_REQUIRED` | A separate one-shot migration identity and primitive must be selected. Migrations may never run in runtime startup. |
-| Staging deployment | `EXECUTION_PROOF_REQUIRED` | No staging environment, application deployment, migration run, readiness proof or rollback rehearsal exists. |
+| Migration identity and primitive | `HUMAN_DECISION_REQUIRED` | A separate one-shot migration identity and primitive must be selected. Migrations may never run in runtime startup. |
+| Ordered migration apply and intended re-apply | `EXECUTION_PROOF_REQUIRED` | No staging migration run exists; retained proof must show both the ordered first apply and intended re-apply complete cleanly. |
+| Staging deployment checks | `EXECUTION_PROOF_REQUIRED` | No staging environment, application deployment, authenticated readiness proof, previous-digest rollback rehearsal or green deployment-check evidence exists. |
+| Staging evidence retention | `HUMAN_DECISION_REQUIRED` | Exact sanitized-evidence location, retention period, read access, redaction owner and deletion/disposal procedure remain unresolved. |
 
 The authentication proof was intentionally disposable and narrow. It does not
 prove state locking, authorize a durable bucket, select production IAM bindings,
@@ -43,8 +46,9 @@ version; it is not yet a repository-wide version pin.
   OpenTofu may manage secret metadata and IAM bindings, not secret payloads.
 - Images are published once and promoted or rolled back by registry-returned
   immutable digest. Mutable tags are not deployment evidence.
-- Migrations run separately and in order before traffic promotion. Application
-  rollback does not imply database rollback; each migration needs an explicit
+- Migrations run separately and in order before traffic promotion. The first
+  apply and intended re-apply must both complete cleanly. Application rollback
+  does not imply database rollback; each migration needs an explicit
   compatibility and recovery decision.
 - `GET /api/v1/health` remains DB-free liveness. `GET /api/v1/readyz` remains the
   PostgreSQL/schema readiness gate; failing readiness means no promotion.

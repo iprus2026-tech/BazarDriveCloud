@@ -101,14 +101,17 @@ Proposed technical staging target, replacing BD-DOCS-044's Google Cloud table:
 | Registry | Yandex Container Registry candidate | `EXECUTION_PROOF_REQUIRED` |
 | API runtime | Serverless Containers candidate | `EXECUTION_PROOF_REQUIRED` — release/promotion/rollback |
 | Database | Managed Service for PostgreSQL 16 candidate | `HUMAN_DECISION_REQUIRED` — topology, sizing, storage, network, backup |
-| Secrets | Lockbox candidate | `HUMAN_DECISION_REQUIRED` — injection/bootstrap/rotation; then execution proof |
+| Secrets | Lockbox candidate | `HUMAN_DECISION_REQUIRED` — bootstrap/injection/rotation/revocation; then execution proof |
 | GitHub deployment auth | Yandex IAM Workload Identity Federation | `PROVEN_AT_VALIDATION_SCOPE` |
 | IaC | OpenTofu | `DECIDED` — durable repository version pin still required |
-| Remote state | Yandex Object Storage S3-compatible backend candidate | `EXECUTION_PROOF_REQUIRED` — locking and durable bootstrap |
+| Durable remote-state contract | Yandex Object Storage S3-compatible backend candidate; exact bucket/name, versioning/retention, recovery and IAM are unresolved | `HUMAN_DECISION_REQUIRED` |
+| Durable remote-state bootstrap | No durable bucket, IAM binding or state exists; execution waits for an approved lifecycle contract and terminal locking PASS | `EXECUTION_PROOF_REQUIRED` |
 | State locking | Conditional-write candidate, not yet execution-proven | `EXECUTION_PROOF_REQUIRED` |
 | Keyless state-backend auth | WIF → IAM token → ephemeral AWS-compatible credential → S3 backend | `PROVEN_AT_VALIDATION_SCOPE` |
 | Migration execution | Separate identity; concrete primitive undecided | `HUMAN_DECISION_REQUIRED` |
 | Monitoring/logging | Yandex Monitoring / Cloud Logging candidate | `HUMAN_DECISION_REQUIRED` |
+| Staging evidence retention | Exact retained-evidence location, duration, access, redaction owner and deletion procedure are unresolved | `HUMAN_DECISION_REQUIRED` |
+| Staging/deployment acceptance proof | Ordered apply plus intended clean re-apply, authenticated probes, secret-safe evidence, previous-digest rollback/recheck and green server/deployment checks | `EXECUTION_PROOF_REQUIRED` |
 
 No `HUMAN_DECISION_REQUIRED` or `EXECUTION_PROOF_REQUIRED` row may be silently
 upgraded. The completed authentication proof may not be generalized beyond its
@@ -175,8 +178,10 @@ remain approved; this pivot does not reopen them.
 The following provider-specific choices from BD-DOCS-044/046 are superseded by
 this record. Nothing below is silently translated into a Yandex equivalent —
 each superseded item's Yandex candidate, where one exists, is recorded above
-in "Provider decision" as its own ADAPT/RE-AUDIT/NOT_PROVEN entry, evidenced
-independently rather than assumed by naming similarity:
+in "Provider decision" with one of the current `DECIDED`,
+`PROVEN_AT_VALIDATION_SCOPE`, `HUMAN_DECISION_REQUIRED` or
+`EXECUTION_PROOF_REQUIRED` classifications, evidenced independently rather than
+assumed by naming similarity:
 
 - Google Cloud as the provider
 - GCP project as the staging resource boundary
@@ -241,7 +246,8 @@ include:
   force-unlock.
 
 Until that validation exists, treat concurrent-apply state corruption as an
-open risk, not a solved problem — this record marks it **NOT_PROVEN**.
+open risk, not a solved problem — this record classifies it
+`EXECUTION_PROOF_REQUIRED`.
 
 ### B. Authentication
 
@@ -288,9 +294,9 @@ build immutable digest
 What is **not** settled is which Yandex Serverless Containers mechanism
 implements "candidate deployment" and "explicit promotion" safely (i.e.
 without accidentally exposing an unverified candidate to traffic). This gap is
-recorded as **RE-AUDIT**, to be closed by testing against Yandex's actual API
-behavior or by authoritative documentation this audit did not surface — not by
-assumption.
+classified `EXECUTION_PROOF_REQUIRED`, to be closed by testing against Yandex's
+actual API behavior or by authoritative documentation this audit did not surface
+— not by assumption.
 
 ## Migration stop gate
 
@@ -301,7 +307,7 @@ Migration execution remains a separate operation, executed by a separate
 migration identity, exactly as BD-DOCS-044's IAM identity-separation rule
 requires — but its concrete Yandex execution primitive (a repurposed
 Serverless Containers invocation, a CI-runner-executed step reaching the
-private network, or another mechanism) is **undecided** and marked RE-AUDIT.
+private network, or another mechanism) is `HUMAN_DECISION_REQUIRED`.
 
 ## Human decisions still blocking infrastructure
 
@@ -320,27 +326,33 @@ guessed, copied from another environment, or silently chosen by a workflow:
    read-only audit identities.
 6. Durable remote-state identity, exact least-privilege bindings and credential
    lifetime while preserving the proven short-lived authentication chain.
-7. Remote-state locking validation owner and process (Remote-state stop gate,
+7. Durable remote-state lifecycle: exact object versioning/retention policy,
+   recovery owner and procedure, restore-test acceptance and retained proof.
+8. Remote-state locking validation owner and process (Remote-state stop gate,
    item A); locking still requires execution proof.
-8. PostgreSQL sizing (host class / resource preset).
-9. PostgreSQL storage type and size.
-10. PostgreSQL backup/PITR policy (beyond Managed PostgreSQL's documented
-    defaults, which must still be explicitly confirmed as sufficient for this
-    project).
-11. Network/security-group policy between the compute layer and PostgreSQL.
-12. Migration execution mechanism (Migration stop gate).
-13. Lockbox runtime-injection mechanism into the chosen compute service.
-14. Release/candidate-promotion mechanism (Serverless Containers release stop
+9. PostgreSQL sizing (host class / resource preset).
+10. PostgreSQL storage type and size.
+11. PostgreSQL backup/PITR policy (beyond Managed PostgreSQL's documented
+   defaults, which must still be explicitly confirmed as sufficient for this
+   project).
+12. Network/security-group policy between the compute layer and PostgreSQL.
+13. Migration execution mechanism (Migration stop gate).
+14. Lockbox secret bootstrap, runtime injection, rotation and revocation
+    procedures, including responsible operators and verification evidence.
+15. Release/candidate-promotion mechanism (Serverless Containers release stop
     gate).
+16. Exact staging/deployment evidence location, retention period, read access,
+    redaction owner and deletion/disposal procedure.
 
 ## Issue #823
 
 Issue #823 remains **open**. This record changes no acceptance checkbox on
 that issue. #823 requires real deployment evidence — a fresh staging deploy
 reaching `/api/v1/health` and `/api/v1/readyz`, ordered migrations applying
-cleanly, no committed/logged credential material, a rehearsed rollback, and
-green server-ci/deployment checks. BD-DOCS-047 is a provider-pivot contract
-only and satisfies none of those items by itself.
+cleanly with the intended re-apply remaining clean, no committed/logged
+credential material, a rehearsed rollback, and green server-ci/deployment
+checks. BD-DOCS-047 is a provider-pivot contract only and satisfies none of
+those items by itself.
 
 ## BD-DOCS-044 / BD-DOCS-046 status
 
@@ -362,7 +374,7 @@ and preservation of the proven short-lived authentication boundary.
 |---|---|---|---|
 | Yandex Cloud, `ru-central1` | Only evaluated provider whose regions are documented as physically located in the Russian Federation; PostgreSQL 16, IAM-authenticated container runtime, digest-addressable registry, and the complete short-lived Object Storage backend authentication chain are evidenced | Remote-state locking remains unproven; Serverless Containers' zero-traffic/gradual-promotion equivalence to Cloud Run is unproven; no confirmed Job-equivalent primitive | **Proposed**; authentication is proven only at validation scope, while locking and runtime execution gates remain open |
 | Google Cloud (BD-DOCS-044's original proposal) | Previously audited, GCS locking/IAM/WIF contract already fully specified | No region physically located in the Russian Federation — fails the hard requirement outright | **Rejected** — does not meet the hard requirement |
-| Remain undecided / re-run the audit later | Avoids committing to a provider before every Yandex question is resolved | Leaves Issue #823 with no forward path at all; the hard requirement already rules out the previously proposed provider, so continuing to plan against it would be misleading | **Rejected** — a provider direction is needed even with open sub-questions, provided they are marked NOT_PROVEN/RE-AUDIT rather than assumed solved |
+| Remain undecided / re-run the audit later | Avoids committing to a provider before every Yandex question is resolved | Leaves Issue #823 with no forward path at all; the hard requirement already rules out the previously proposed provider, so continuing to plan against it would be misleading | **Rejected** — a provider direction is needed even with open sub-questions, provided each retains its current `HUMAN_DECISION_REQUIRED` or `EXECUTION_PROOF_REQUIRED` classification rather than being assumed solved |
 
 ## Consequences
 

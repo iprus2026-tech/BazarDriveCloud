@@ -45,12 +45,15 @@ slug: /processes/backend-staging-container-runbook
 | Registry | Yandex Container Registry candidate; publish once and deploy/rollback by registry-returned immutable digest | `EXECUTION_PROOF_REQUIRED` |
 | Runtime | Yandex Serverless Containers candidate; authenticated access only | `EXECUTION_PROOF_REQUIRED` |
 | Database | Managed Service for PostgreSQL 16 candidate; private network only | `HUMAN_DECISION_REQUIRED` |
-| Secrets | Lockbox candidate; runtime injection and rotation procedure unresolved | `HUMAN_DECISION_REQUIRED` |
-| Migrations | Separate one-shot identity and execution primitive; never runtime startup | `HUMAN_DECISION_REQUIRED` |
+| Secrets | Lockbox candidate; bootstrap, runtime injection, rotation and revocation procedures unresolved | `HUMAN_DECISION_REQUIRED` |
+| Migration identity and primitive | Separate one-shot identity and execution primitive; never runtime startup | `HUMAN_DECISION_REQUIRED` |
+| Ordered migration apply and intended re-apply | No staging migration execution exists; both the first ordered apply and intended clean re-apply require retained proof | `EXECUTION_PROOF_REQUIRED` |
 | GitHub identity | OIDC → Yandex WIF → short-lived IAM token | `PROVEN_AT_VALIDATION_SCOPE` |
 | Backend credentials | IAM token → short-lived three-part AWS-compatible credential → OpenTofu 1.12.0 S3 backend authentication | `PROVEN_AT_VALIDATION_SCOPE` |
-| Remote state | Yandex Object Storage candidate; durable bucket and IAM not bootstrapped | `EXECUTION_PROOF_REQUIRED` |
+| Durable remote-state lifecycle | Yandex Object Storage candidate; exact bucket/name, versioning/retention, recovery procedure and IAM are unresolved | `HUMAN_DECISION_REQUIRED` |
+| Durable remote-state bootstrap | No durable bucket, IAM binding or state exists; execution waits for an approved lifecycle contract and terminal locking PASS | `EXECUTION_PROOF_REQUIRED` |
 | State locking | Conditional-write behavior, contention, recovery and force-unlock controls are not proven | `EXECUTION_PROOF_REQUIRED` |
+| Staging evidence retention | Exact retained-evidence location, duration, access, redaction owner and deletion procedure are unresolved | `HUMAN_DECISION_REQUIRED` |
 
 The completed authentication ladder proved only a disposable access chain. It
 did not prove state locking or durable state, establish production IAM bindings,
@@ -81,6 +84,12 @@ The validation identity used by the disposable authentication proof is evidence
 for the credential chain, not an approved substitute for any of these durable
 staging identities.
 
+Durable backend bootstrap and read-only audit require additional scoped
+identities. Neither may reuse the deployment, runtime or migration identity: the
+bootstrap identity is limited to the approved backend/IAM bootstrap operation,
+and the audit identity is read-only. Their exact principals and bindings remain
+`HUMAN_DECISION_REQUIRED`.
+
 ### Secret-value boundary
 
 Secret values are forbidden in Git/source, OpenTofu configuration, `.tfvars`,
@@ -92,7 +101,9 @@ OpenTofu may manage only Lockbox metadata, empty secret containers and IAM
 bindings. It must not create, transmit or store secret payloads or versions.
 Marking a value `sensitive` does not keep it out of state. An approved
 out-of-state bootstrap and rotation channel that leaves no value in history,
-logs, artifacts or evidence is required before runtime or migrations.
+logs, artifacts or evidence is required before runtime or migrations. Its exact
+bootstrap, injection, rotation and emergency revocation procedures, responsible
+operators and verification evidence remain `HUMAN_DECISION_REQUIRED`.
 
 ### Data-location guard
 
@@ -164,13 +175,17 @@ require `curl` and do not replace readiness with liveness.
 |---|---|---|---|
 | Reproducible container and CI smoke | `PROVEN_AT_VALIDATION_SCOPE` | Implemented on the v0.4.0 baseline | None for the local baseline; publication is not yet proven. |
 | Keyless GitHub/Yandex/Object Storage authentication | `PROVEN_AT_VALIDATION_SCOPE` | Disposable 01C-A/B/C ladder passed | Durable least-privilege staging identities and backend bootstrap are not defined. |
-| Remote-state safety | `EXECUTION_PROOF_REQUIRED` | Candidate research exists | Locking, contention, stale-lock recovery and controlled force-unlock require terminal execution proof. |
+| Durable remote-state lifecycle | `HUMAN_DECISION_REQUIRED` | Disposable authentication used an inert temporary bucket only | Exact durable bucket/name, versioning/retention, recovery procedure, restore-test acceptance and least-privilege IAM remain open. |
+| Remote-state locking and bootstrap | `EXECUTION_PROOF_REQUIRED` | Candidate research exists | Locking, contention, stale-lock recovery and controlled force-unlock require terminal proof before durable bootstrap. |
 | Yandex account topology and cost boundary | `HUMAN_DECISION_REQUIRED` | Provider/region decided | Exact cloud/folder, billing owner, budget, alerts and applicable availability zone require human decisions. |
 | Private PostgreSQL 16 | `HUMAN_DECISION_REQUIRED` | Application migrations and readiness contract exist | Network, cluster sizing/storage, backup/PITR, maintenance and recovery decisions remain open; no cluster exists. |
-| Secret delivery | `HUMAN_DECISION_REQUIRED` | Secret-exclusion rules are settled | Lockbox injection/bootstrap/rotation procedure and exact IAM remain open. |
+| Secret delivery | `HUMAN_DECISION_REQUIRED` | Secret-exclusion rules are settled | Lockbox bootstrap/injection/rotation/revocation procedures, responsible operators and exact IAM remain open. |
 | Immutable release/promotion | `EXECUTION_PROOF_REQUIRED` | Image provenance and digest policy are settled | Registry and Serverless Containers candidate/promotion/rollback mechanics require execution proof. |
-| Ordered migrations | `HUMAN_DECISION_REQUIRED` | Migration files and readiness checks exist | Separate Yandex execution primitive, identity, compatibility and recovery decision remain open; no migration has run. |
-| Live staging checks and evidence | `EXECUTION_PROOF_REQUIRED` | Probe semantics are implemented locally | No authenticated staging URL, database-backed readiness proof or rollback rehearsal exists. |
+| Migration identity and primitive | `HUMAN_DECISION_REQUIRED` | Migration files and readiness checks exist | Separate Yandex execution primitive, identity, compatibility and recovery decision remain open. |
+| Ordered migration apply and intended re-apply | `EXECUTION_PROOF_REQUIRED` | `server-ci` exercises repository migrations against PostgreSQL 16 | No staging migration has run; retained proof must show the ordered first apply and intended re-apply both complete cleanly. |
+| Credential/OTP/session/unrestricted-token exclusion | `EXECUTION_PROOF_REQUIRED` | Repository and image secret-exclusion rules exist | The fresh staging run must prove no such value entered Git, logs, summaries, artifacts or retained evidence. |
+| Staging evidence retention | `HUMAN_DECISION_REQUIRED` | Sanitization boundaries are defined | Exact evidence location, retention period, read access, redaction owner and deletion/disposal procedure remain open. |
+| Live staging checks and rollback | `EXECUTION_PROOF_REQUIRED` | Probe semantics and previous-digest rollback order are documented | No authenticated staging URL, database-backed readiness proof, promotion or rollback rehearsal exists. |
 | PWA activation | `DECIDED` | Explicitly separate | Remains outside this runbook and Issue #823. |
 
 ## Deployment order once every stop gate is closed
@@ -182,16 +197,40 @@ This order is a contract, not authorization to execute:
 2. Provision private PostgreSQL 16 and approved Lockbox metadata/injection paths.
 3. Publish the reviewed image once and record its immutable digest.
 4. Create a zero-traffic candidate using that digest and the runtime identity.
-5. Run ordered migrations once with the separate migration identity.
-6. Verify authenticated `/api/v1/health`, then `/api/v1/readyz` with required
+5. Apply ordered migrations with the separate migration identity.
+6. Run the same approved migration primitive again against the resulting schema
+   and require the intended re-apply to complete cleanly. Any error or unexpected
+   schema/data mutation blocks promotion.
+7. Verify authenticated `/api/v1/health`, then `/api/v1/readyz` with required
    schema state.
-7. Promote only after both probes and migration evidence pass.
-8. Rehearse application rollback to the previous immutable digest and repeat
+8. Promote only after both probes and migration evidence pass.
+9. Rehearse application rollback to the previous immutable digest and repeat
    both probes.
 
-Migration failure, non-200 readiness or absent evidence means **no promotion**.
-Application rollback does not roll the database back; every migration requires
-an explicit forward/backward compatibility and recovery decision first.
+Migration failure, a non-clean intended re-apply, non-200 readiness or absent
+evidence means **no promotion**. Application rollback does not roll the database
+back; every migration requires an explicit forward/backward compatibility and
+recovery decision first.
+
+### Staging/deployment checks and retained evidence
+
+The following proof set is `EXECUTION_PROOF_REQUIRED` from one fresh staging
+execution; a local or disposable authentication proof cannot substitute for it:
+
+- exact source commit and registry-returned immutable image digest;
+- exact `server-ci` and deployment workflow run IDs/URLs and conclusions;
+- ordered migration list, first-apply result and intended clean re-apply result;
+- authenticated `/api/v1/health` and `/api/v1/readyz` UTC timestamps, HTTP
+  statuses and sanitized readiness result;
+- previous digest, candidate/promotion result, rollback result, and both
+  post-rollback probe results;
+- a secret-safety verdict confirming that no credential, OTP, session token or
+  unrestricted token entered Git, logs, summaries, artifacts or evidence.
+
+Evidence must be sanitized and readable by the read-only audit identity. The
+exact durable evidence location, retention period, access policy, redaction
+owner and deletion/disposal procedure are `HUMAN_DECISION_REQUIRED`; until they
+are approved, the staging execution cannot claim Issue #823 acceptance.
 
 ## Current stop gate and next implementation slice
 

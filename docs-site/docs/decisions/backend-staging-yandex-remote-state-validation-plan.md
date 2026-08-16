@@ -42,7 +42,8 @@ slug: /decisions/backend-staging-yandex-remote-state-validation-plan
 | GitHub OIDC → Yandex WIF → IAM token | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #856](https://github.com/iprus2026-tech/BazarDriveCloud/issues/856), 01C-A FINAL PASS; no static/JSON key. |
 | IAM token → ephemeral AWS-compatible credential | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #858](https://github.com/iprus2026-tech/BazarDriveCloud/issues/858), 01C-B FINAL PASS; bounded-TTL three-part credential. |
 | Ephemeral credential → OpenTofu S3 backend → Object Storage | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #860](https://github.com/iprus2026-tech/BazarDriveCloud/issues/860), 01C-C FINAL PASS with OpenTofu 1.12.0 and a disposable bucket; cleanup completed. |
-| Object Storage state locking and recovery | `EXECUTION_PROOF_REQUIRED` | Authentication does not prove lock acquisition, contention, stale-lock recovery, controlled force-unlock or durable state safety. |
+| Durable backend naming, retention and recovery | `HUMAN_DECISION_REQUIRED` | The disposable proof did not select an exact durable bucket/name, object versioning/retention policy, recovery procedure, restore-test acceptance or durable IAM. |
+| Object Storage locking and lock recovery | `EXECUTION_PROOF_REQUIRED` | Authentication does not prove lock acquisition, contention, stale-lock recovery, controlled force-unlock or durable state safety. |
 
 The 2026-08-06 correction chronology below is retained as the audit trail that
 designed the proof. Statements in that chronology such as “future 01C,” “no
@@ -482,6 +483,12 @@ per resource.
 cookies, database credentials, application secrets, or anything else that
 would let a reader replay access.
 
+This section governs disposable authentication/locking validation evidence
+only. It does not decide the durable staging/deployment evidence location,
+retention period, read access, redaction owner or deletion procedure; BD-DOCS-043
+classifies those values `HUMAN_DECISION_REQUIRED` and blocks a #823 acceptance
+claim until they are approved.
+
 ## 8. Recommended slice architecture going forward
 
 ```
@@ -506,8 +513,9 @@ migrations, probes and traffic.
 Issue #823 remains **open** and is unaffected by this record. Remote-state
 validation — research or execution — satisfies none of its acceptance items
 (fresh staging deploy reaching `/api/v1/health`/`/api/v1/readyz`, ordered
-migrations, no committed/logged credential material, a rehearsed rollback,
-green server-ci/deployment checks). This record checks off nothing on #823.
+migrations applying with the intended re-apply remaining clean, no
+committed/logged credential material, a rehearsed rollback, green
+server-ci/deployment checks). This record checks off nothing on #823.
 
 ## Consequences
 
