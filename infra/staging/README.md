@@ -1,68 +1,73 @@
 # Staging infrastructure contract
 
-This directory is reserved for the future reviewed OpenTofu configuration for
-BD-BACKEND-DEPLOY-01B. BD-BACKEND-DEPLOY-01B-1A contains documentation only:
-there are no `.tf` files, credentials, state files, resources or apply commands
-here.
+This directory is reserved for a future, reviewed OpenTofu implementation of
+Issue #823. The current package, BD-BACKEND-DEPLOY-02A, is documentation only:
+there are no `.tf`/`.tofu` files, credentials, state files, plans, resources,
+deployment commands or migration commands here.
 
-The proposed target is a Google Cloud technical staging environment:
+The active post-v0.4.0 provider direction is **Yandex Cloud in `ru-central1`**.
+The earlier Google Cloud proposal is historical and superseded by
+[BD-DOCS-047](../../docs-site/docs/decisions/backend-staging-provider-pivot-yandex-cloud.md).
 
-- Artifact Registry for immutable container images;
-- Cloud Run with IAM-authenticated access;
-- Cloud SQL for PostgreSQL 16;
-- Secret Manager for runtime secrets;
-- a separate Cloud Run Job for ordered migrations;
-- GitHub Actions authentication through OIDC Workload Identity Federation;
-- OpenTofu for future infrastructure definitions.
+## Current contract
 
-Static service-account JSON keys, public unauthenticated staging, wildcard CORS,
-real personal/production data and automatic PWA/API activation are forbidden.
-Staging may contain only synthetic, non-personal fixtures.
+| Area | Current classification | Contract |
+|---|---|---|
+| Provider and data location | `DECIDED` | Yandex Cloud, `ru-central1`; backend and PostgreSQL must remain physically in the Russian Federation. |
+| GitHub-to-Yandex authentication | `PROVEN_AT_VALIDATION_SCOPE` | GitHub OIDC → Yandex WIF → short-lived IAM token was validated without a static/JSON key. |
+| Object Storage backend authentication | `PROVEN_AT_VALIDATION_SCOPE` | The WIF session issued a short-lived three-part AWS-compatible credential and OpenTofu 1.12.0 authenticated to a disposable Object Storage S3 backend. This proves authentication only. |
+| Durable remote state and locking | `EXECUTION_PROOF_REQUIRED` | No durable state backend is authorized until lock acquisition, contention, recovery, force-unlock controls and cleanup pass the approved proof contract. |
+| Runtime and PostgreSQL topology | `HUMAN_DECISION_REQUIRED` | Exact folder, availability zone where applicable, network, sizing, storage, backup, budget and billing controls remain unresolved. |
+| Secrets | `HUMAN_DECISION_REQUIRED` | Lockbox is the provider candidate; exact injection and rotation procedures are not accepted yet. |
+| Registry and release mechanics | `EXECUTION_PROOF_REQUIRED` | Publish once and deploy by immutable digest; exact registry, zero-traffic candidate, promotion and rollback mechanics must be proven for Yandex Serverless Containers. |
+| Migrations | `HUMAN_DECISION_REQUIRED` | A separate one-shot migration identity and primitive must be selected. Migrations may never run in runtime startup. |
+| Staging deployment | `EXECUTION_PROOF_REQUIRED` | No staging environment, application deployment, migration run, readiness proof or rollback rehearsal exists. |
 
-Deployment, runtime and migration require three separate principals/service
-accounts. Reuse across roles and mutual impersonation are forbidden. `Owner`,
-`Editor` and equivalently broad roles are forbidden; grant least privilege,
-preferably on exact resources. The deployment identity uses GitHub OIDC/WIF,
-may receive `serviceAccounts.actAs` only for the exact runtime and migration
-identities, and has no runtime DB/application-secret access. The runtime identity
-cannot publish, deploy, migrate, change IAM or impersonate. The migration identity
-cannot serve traffic, deploy, change IAM or impersonate. Exact bindings remain a
-future blocker.
+The authentication proof was intentionally disposable and narrow. It does not
+prove state locking, authorize a durable bucket, select production IAM bindings,
+or prove any staging runtime. OpenTofu 1.12.0 identifies the validation tool
+version; it is not yet a repository-wide version pin.
 
-Secret values are forbidden in Git/source, OpenTofu configuration, `.tfvars`,
-environment files, OpenTofu state/state backups, saved plans, plan/console output,
-documentation, workflow/build/deployment/runtime logs, image layers/build args,
-CI/CD outputs, artifacts/evidence and support/debug exports. OpenTofu may manage
-only Secret Manager metadata, empty secret containers and IAM bindings, never
-secret payloads or versions. `sensitive` does not keep a value out of state.
-Values require a separately approved out-of-state channel that leaves nothing in
-shell history, logs, artifacts or evidence; its bootstrap/rotation procedure is
-not implemented and remains a blocker.
+## Non-negotiable invariants
 
-The synthetic-only rule covers HTTP/API requests and bodies, database contents,
-caches, logs, traces, metrics/telemetry, object-storage artifacts,
-backups/snapshots, database restores, support/debug dumps, CI/deployment
-artifacts, operational evidence and exports. Real passenger, driver, order, ride,
-document or payment data, production exports/restores, replayed production
-requests/logs and production-derived personal fixtures are forbidden.
+- Deployment, runtime and migration use separate identities with least privilege
+  and no mutual impersonation. `Owner`, `Editor` and equivalent broad roles are
+  forbidden.
+- PostgreSQL is private. Staging invocation is authenticated. Public anonymous
+  access and wildcard CORS are forbidden; the only allowed web origin is
+  `https://iprus2026-tech.github.io`.
+- Only synthetic, non-personal data is allowed in requests, storage, databases,
+  caches, logs, telemetry, backups, artifacts, evidence and exports.
+- Secret values never enter Git, OpenTofu configuration or state, `.tfvars`,
+  plans, images, build arguments, logs, CI outputs, artifacts or evidence.
+  OpenTofu may manage secret metadata and IAM bindings, not secret payloads.
+- Images are published once and promoted or rolled back by registry-returned
+  immutable digest. Mutable tags are not deployment evidence.
+- Migrations run separately and in order before traffic promotion. Application
+  rollback does not imply database rollback; each migration needs an explicit
+  compatibility and recovery decision.
+- `GET /api/v1/health` remains DB-free liveness. `GET /api/v1/readyz` remains the
+  PostgreSQL/schema readiness gate; failing readiness means no promotion.
+- A staging traffic switch does not activate the PWA. PWA/API activation remains
+  a separate decision under Issue #828.
 
-If real or production-derived data is discovered, stop the affected
-check/environment, restrict further access, and remove it through a separately
-approved incident procedure. Record the incident without copying sensitive
-values into evidence.
+## Stop gates and next slice
 
-No future OpenTofu configuration may guess the GCP region, billing owner or
-monthly budget — those remain blocking human inputs. GCP project strategy
-(dedicated staging project) and an intended project ID are human-approved —
-see BD-DOCS-044's "Human-approved staging identity values" — but that
-project ID's real-world availability is not yet validated and continues to
-block provisioning until an authorized bootstrap slice confirms it (stopping
-for a new human decision if the ID is unavailable). Remote-state location,
-bootstrap authority, access, locking and retention must be approved and created
-in a separate slice before the first `tofu init` against a remote backend or any
-`tofu apply`.
+Do not add infrastructure definitions or run `tofu init`, `plan` or `apply`
+against durable state while locking is unresolved. Do not provision PostgreSQL,
+publish an image, create a Serverless Container revision, inject secrets, run
+migrations or switch traffic until the corresponding decisions and execution
+proofs above are closed.
 
-The governing proposed decision is
-[`BD-DOCS-044`](../../docs-site/docs/decisions/backend-staging-provider-and-iac.md);
-the operational boundary remains
-[`BD-DOCS-043`](../../docs-site/docs/processes/backend-staging-container-runbook.md).
+After this contract package is accepted **and** the independent remote-state
+locking gate has a terminal passing verdict, the next narrow implementation
+slice is limited to durable remote-state and least-privilege IAM bootstrap. It
+must not include PostgreSQL, application runtime, migrations, image publication
+or traffic changes.
+
+The detailed decision and evidence boundaries are
+[BD-DOCS-047](../../docs-site/docs/decisions/backend-staging-provider-pivot-yandex-cloud.md)
+and
+[BD-DOCS-048](../../docs-site/docs/decisions/backend-staging-yandex-remote-state-validation-plan.md).
+The operational acceptance map is
+[BD-DOCS-043](../../docs-site/docs/processes/backend-staging-container-runbook.md).
