@@ -4,9 +4,9 @@ docType: decision-record
 title: Backend staging provider pivot — Yandex Cloud / RF hosting — Decision Record
 owner: backend-ops-agent
 status: draft
-revision: 2026-08-06
+revision: 2026-08-16
 effectiveFrom: 2026-08-06
-reviewAfter: 2026-09-06
+reviewAfter: 2026-09-16
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
 related:
@@ -21,6 +21,7 @@ related:
     - infra/staging/README.md
   issues:
     - "#823"
+    - "#894"
   prs: []
 tags: [decision-record, adr, backend, staging, deployment, iac, yandex-cloud, provider-pivot]
 slug: /decisions/backend-staging-provider-pivot-yandex-cloud
@@ -28,14 +29,27 @@ slug: /decisions/backend-staging-provider-pivot-yandex-cloud
 
 # Backend staging provider pivot — Yandex Cloud / RF hosting — Decision Record
 
-> **Contract only — `status: draft`.** This record pivots the *provider* proposed
-> by [BD-DOCS-044](./backend-staging-provider-and-iac.md) from Google Cloud to
-> Yandex Cloud `ru-central1`. It creates no Yandex Cloud resource, folder, IAM
-> identity, service account, Object Storage bucket, PostgreSQL cluster, container
-> registry, secret, image, deployment, or OpenTofu state. It does not run `tofu
-> init`/`plan`/`apply`. Two remote-state questions below are recorded as
-> **NOT_PROVEN** and explicitly block OpenTofu bootstrap until a future,
-> separately authorized slice validates them.
+> **Post-v0.4.0 reconciliation; contract only — `status: draft`.** This record
+> pivots the provider proposed by
+> [BD-DOCS-044](./backend-staging-provider-and-iac.md) from Google Cloud to
+> Yandex Cloud `ru-central1`. Since the original audit, the disposable 01C-A,
+> 01C-B and 01C-C ladder passed: keyless Object Storage backend authentication
+> is now `PROVEN_AT_VALIDATION_SCOPE`. State locking remains unproven and blocks
+> durable OpenTofu bootstrap. This revision creates no cloud resource, identity,
+> bucket, PostgreSQL cluster, registry, secret, image, deployment or state and
+> runs no `tofu init`/`plan`/`apply`.
+
+### Evidence incorporated after the original decision
+
+| Validation step | Recorded outcome | Current meaning |
+|---|---|---|
+| [Issue #856](https://github.com/iprus2026-tech/BazarDriveCloud/issues/856) — 01C-A | FINAL PASS | GitHub OIDC → Yandex WIF → short-lived IAM token worked without a static/JSON key. |
+| [Issue #858](https://github.com/iprus2026-tech/BazarDriveCloud/issues/858) — 01C-B | FINAL PASS | The IAM session issued a bounded-TTL three-part AWS-compatible credential without a static access key. |
+| [Issue #860](https://github.com/iprus2026-tech/BazarDriveCloud/issues/860) — 01C-C | FINAL PASS | OpenTofu 1.12.0 authenticated its S3 backend to disposable Yandex Object Storage; cleanup completed. |
+
+These outcomes prove the authentication chain only. They do not prove state
+locking, approve a durable bucket or IAM layout, pin OpenTofu for the repository,
+or prove any staging runtime, database, migration, promotion or rollback.
 
 ## Context
 
@@ -81,25 +95,27 @@ Proposed technical staging target, replacing BD-DOCS-044's Google Cloud table:
 
 | Layer | Yandex Cloud target | Status |
 |---|---|---|
-| Cloud boundary | Yandex Cloud cloud/folder (dedicated staging folder) | ADAPT |
-| Region | `ru-central1` | DECIDED |
-| Exact AZ | `ru-central1-a`, `-b`, or `-d` | BLOCKED — human decision |
-| Registry | Yandex Container Registry | ADAPT |
-| API runtime | Serverless Containers | ADAPT — release/promotion mechanics RE-AUDIT |
-| Database | Managed Service for PostgreSQL, version 16 | ADAPT |
-| Secrets | Lockbox | ADAPT — runtime-injection wiring RE-AUDIT |
-| GitHub deployment auth | Yandex IAM Workload Identity Federation | ADAPT |
-| IaC | OpenTofu | KEEP |
-| Remote state | Yandex Object Storage (S3-compatible backend) candidate | RE-AUDIT |
-| State locking | not proven | **NOT_PROVEN** |
-| Keyless state-backend auth | not proven | **NOT_PROVEN** |
-| Migration execution | mechanism undecided | RE-AUDIT |
-| Monitoring/logging | Yandex Monitoring / Cloud Logging candidate | RE-AUDIT |
+| Cloud boundary | Yandex Cloud cloud/folder (dedicated staging folder) | `HUMAN_DECISION_REQUIRED` |
+| Region | `ru-central1` | `DECIDED` |
+| Exact AZ where a zonal resource requires one | `ru-central1-a`, `-b`, or `-d` | `HUMAN_DECISION_REQUIRED` |
+| Registry | Yandex Container Registry candidate | `EXECUTION_PROOF_REQUIRED` |
+| API runtime | Serverless Containers candidate | `EXECUTION_PROOF_REQUIRED` — release/promotion/rollback |
+| Database | Managed Service for PostgreSQL 16 candidate | `HUMAN_DECISION_REQUIRED` — topology, sizing, storage, network, backup |
+| Secrets | Lockbox candidate | `HUMAN_DECISION_REQUIRED` — bootstrap/injection/rotation/revocation; then execution proof |
+| GitHub deployment auth | Yandex IAM Workload Identity Federation | `PROVEN_AT_VALIDATION_SCOPE` |
+| IaC | OpenTofu | `DECIDED` — durable repository version pin still required |
+| Durable remote-state contract | Yandex Object Storage S3-compatible backend candidate; exact bucket/name, versioning/retention, recovery and IAM are unresolved | `HUMAN_DECISION_REQUIRED` |
+| Durable remote-state bootstrap | No durable bucket, IAM binding or state exists; execution waits for an approved lifecycle contract and terminal locking PASS | `EXECUTION_PROOF_REQUIRED` |
+| State locking | Conditional-write candidate, not yet execution-proven | `EXECUTION_PROOF_REQUIRED` |
+| Keyless state-backend auth | WIF → IAM token → ephemeral AWS-compatible credential → S3 backend | `PROVEN_AT_VALIDATION_SCOPE` |
+| Migration execution | Separate identity; concrete primitive undecided | `HUMAN_DECISION_REQUIRED` |
+| Monitoring/logging | Yandex Monitoring / Cloud Logging candidate | `HUMAN_DECISION_REQUIRED` |
+| Staging evidence retention | Exact retained-evidence location, duration, access, redaction owner and deletion procedure are unresolved | `HUMAN_DECISION_REQUIRED` |
+| Staging/deployment acceptance proof | Ordered apply plus intended clean re-apply, authenticated probes, secret-safe evidence, previous-digest rollback/recheck and green server/deployment checks | `EXECUTION_PROOF_REQUIRED` |
 
-None of the RE-AUDIT or NOT_PROVEN rows above may be silently upgraded to a
-settled contract without new evidence — either authoritative documentation
-this record's audit did not find, or an execution-time validation performed in
-a later, explicitly authorized slice.
+No `HUMAN_DECISION_REQUIRED` or `EXECUTION_PROOF_REQUIRED` row may be silently
+upgraded. The completed authentication proof may not be generalized beyond its
+disposable validation scope.
 
 ## Contracts that must survive the provider pivot
 
@@ -162,8 +178,10 @@ remain approved; this pivot does not reopen them.
 The following provider-specific choices from BD-DOCS-044/046 are superseded by
 this record. Nothing below is silently translated into a Yandex equivalent —
 each superseded item's Yandex candidate, where one exists, is recorded above
-in "Provider decision" as its own ADAPT/RE-AUDIT/NOT_PROVEN entry, evidenced
-independently rather than assumed by naming similarity:
+in "Provider decision" with one of the current `DECIDED`,
+`PROVEN_AT_VALIDATION_SCOPE`, `HUMAN_DECISION_REQUIRED` or
+`EXECUTION_PROOF_REQUIRED` classifications, evidenced independently rather than
+assumed by naming similarity:
 
 - Google Cloud as the provider
 - GCP project as the staging resource boundary
@@ -191,18 +209,16 @@ own tooling and documentation.
 
 ## Remote-state stop gate
 
-BD-DOCS-047 explicitly blocks any OpenTofu remote-state bootstrap against
-Yandex Object Storage until **both** of the following are proven. This record
-performs neither validation.
+BD-DOCS-047 blocks durable OpenTofu remote-state bootstrap against Yandex Object
+Storage until locking has a terminal passing execution verdict and the durable
+bucket/IAM contract is approved. Authentication no longer blocks at the
+validation level, but its proof boundary must be preserved exactly.
 
-> **Refined by [BD-DOCS-048](./backend-staging-yandex-remote-state-validation-plan.md).**
-> BD-DOCS-048 is the docs-only research slice (01A) that turns the two
-> `NOT_PROVEN` items below into an exact, execution-ready test/evidence/cleanup
-> contract, and splits the still-future execution work into two disposable-
-> resource-only slices (01B locking, 01C authentication). BD-DOCS-048 performs
-> no validation itself and does not change either `NOT_PROVEN` verdict below —
-> it narrows and sharpens the open questions research can resolve without
-> touching a live system.
+> **Refined and reconciled by
+> [BD-DOCS-048](./backend-staging-yandex-remote-state-validation-plan.md).** Its
+> original 01A research split locking (01B) from authentication (01C). The later
+> 01C-A/B/C executions passed and are now incorporated there. The locking
+> contract remains pending and independent.
 
 ### A. Locking
 
@@ -230,28 +246,29 @@ include:
   force-unlock.
 
 Until that validation exists, treat concurrent-apply state corruption as an
-open risk, not a solved problem — this record marks it **NOT_PROVEN**.
+open risk, not a solved problem — this record classifies it
+`EXECUTION_PROOF_REQUIRED`.
 
 ### B. Authentication
 
-The only official Yandex documentation pattern found for this backend
-authenticates with static `ACCESS_KEY`/`SECRET_KEY` environment variables —
-the same static-long-lived-key pattern BD-DOCS-044/046 forbid for every other
-staging identity. Yandex IAM Workload Identity Federation is documented for
-Yandex's own control-plane API; nothing found confirms it also covers the
-S3-compatible Object Storage data-plane surface that the state backend uses.
+**Current verdict: `PROVEN_AT_VALIDATION_SCOPE`.** Issues #856, #858 and #860
+demonstrated the complete short-lived chain:
 
-A later slice must prove either:
+1. GitHub OIDC exchanged through Yandex WIF for a short-lived IAM token.
+2. That IAM session issued a bounded-TTL three-part AWS-compatible credential.
+3. OpenTofu 1.12.0 used only that ephemeral credential to authenticate an S3
+   backend against a disposable Object Storage bucket.
 
-- a genuinely keyless / short-lived authentication path to the S3-compatible
-  Object Storage data plane for OpenTofu state operations, **or**
-- return to a human for an explicit, narrowly scoped decision to accept a
-  static-key exception limited to the state-backend credential only, with
-  rotation and least-privilege discipline comparable to BD-DOCS-046's own
-  narrowed-role analysis.
+No static access key or service-account JSON key was used, and cleanup was part
+of the validation. This closes the original authentication research question;
+it does **not** authorize reuse of the validation principal, a durable bucket,
+production IAM bindings or secret persistence. A future durable bootstrap must
+implement the same short-lived chain with exact least-privilege bindings and
+must fail closed rather than fall back to a long-lived key.
 
-No agent may make that exception autonomously. This record marks the
-question **NOT_PROVEN** and leaves the choice for a human.
+Static or long-lived credentials remain forbidden. Any exception would still
+require an explicit human architecture/security decision and is not implied by
+the successful proof.
 
 ## Serverless Containers release stop gate
 
@@ -277,9 +294,9 @@ build immutable digest
 What is **not** settled is which Yandex Serverless Containers mechanism
 implements "candidate deployment" and "explicit promotion" safely (i.e.
 without accidentally exposing an unverified candidate to traffic). This gap is
-recorded as **RE-AUDIT**, to be closed by testing against Yandex's actual API
-behavior or by authoritative documentation this audit did not surface — not by
-assumption.
+classified `EXECUTION_PROOF_REQUIRED`, to be closed by testing against Yandex's
+actual API behavior or by authoritative documentation this audit did not surface
+— not by assumption.
 
 ## Migration stop gate
 
@@ -290,7 +307,7 @@ Migration execution remains a separate operation, executed by a separate
 migration identity, exactly as BD-DOCS-044's IAM identity-separation rule
 requires — but its concrete Yandex execution primitive (a repurposed
 Serverless Containers invocation, a CI-runner-executed step reaching the
-private network, or another mechanism) is **undecided** and marked RE-AUDIT.
+private network, or another mechanism) is `HUMAN_DECISION_REQUIRED`.
 
 ## Human decisions still blocking infrastructure
 
@@ -307,28 +324,35 @@ guessed, copied from another environment, or silently chosen by a workflow:
 4. Monthly staging budget and alert thresholds.
 5. Exact IAM bindings for the bootstrap, deployment, runtime, migration, and
    read-only audit identities.
-6. Remote-state authentication model (Remote-state stop gate, item B).
-7. Remote-state locking validation owner and process (Remote-state stop gate,
-   item A).
-8. PostgreSQL sizing (host class / resource preset).
-9. PostgreSQL storage type and size.
-10. PostgreSQL backup/PITR policy (beyond Managed PostgreSQL's documented
-    defaults, which must still be explicitly confirmed as sufficient for this
-    project).
-11. Network/security-group policy between the compute layer and PostgreSQL.
-12. Migration execution mechanism (Migration stop gate).
-13. Lockbox runtime-injection mechanism into the chosen compute service.
-14. Release/candidate-promotion mechanism (Serverless Containers release stop
+6. Durable remote-state identity, exact least-privilege bindings and credential
+   lifetime while preserving the proven short-lived authentication chain.
+7. Durable remote-state lifecycle: exact object versioning/retention policy,
+   recovery owner and procedure, restore-test acceptance and retained proof.
+8. Remote-state locking validation owner and process (Remote-state stop gate,
+   item A); locking still requires execution proof.
+9. PostgreSQL sizing (host class / resource preset).
+10. PostgreSQL storage type and size.
+11. PostgreSQL backup/PITR policy (beyond Managed PostgreSQL's documented
+   defaults, which must still be explicitly confirmed as sufficient for this
+   project).
+12. Network/security-group policy between the compute layer and PostgreSQL.
+13. Migration execution mechanism (Migration stop gate).
+14. Lockbox secret bootstrap, runtime injection, rotation and revocation
+    procedures, including responsible operators and verification evidence.
+15. Release/candidate-promotion mechanism (Serverless Containers release stop
     gate).
+16. Exact staging/deployment evidence location, retention period, read access,
+    redaction owner and deletion/disposal procedure.
 
 ## Issue #823
 
 Issue #823 remains **open**. This record changes no acceptance checkbox on
 that issue. #823 requires real deployment evidence — a fresh staging deploy
 reaching `/api/v1/health` and `/api/v1/readyz`, ordered migrations applying
-cleanly, no committed/logged credential material, a rehearsed rollback, and
-green server-ci/deployment checks. BD-DOCS-047 is a provider-pivot contract
-only and satisfies none of those items by itself.
+cleanly with the intended re-apply remaining clean, no committed/logged
+credential material, a rehearsed rollback, and green server-ci/deployment
+checks. BD-DOCS-047 is a provider-pivot contract only and satisfies none of
+those items by itself.
 
 ## BD-DOCS-044 / BD-DOCS-046 status
 
@@ -340,17 +364,17 @@ useful context. They are not deleted and their historical content is not
 rewritten to pretend Yandex Cloud was always the plan.
 
 BD-DOCS-046 in particular is **deferred, not replaced**: this record does not
-invent a Yandex Object Storage bootstrap procedure. A future Yandex
-remote-state ADR is a separate, validation-backed slice, gated on closing both
-items in "Remote-state stop gate" above.
+invent a Yandex Object Storage bootstrap procedure. A future Yandex remote-state
+ADR is a separate, validation-backed slice, gated on a terminal locking verdict
+and preservation of the proven short-lived authentication boundary.
 
 ## Alternatives considered
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| Yandex Cloud, `ru-central1` | Only evaluated provider whose regions are documented as physically located in the Russian Federation; PostgreSQL 16, IAM-authenticated container runtime, digest-addressable registry, and keyless GitHub deployment auth are all evidenced | Remote-state locking and remote-state keyless auth are unproven; Serverless Containers' zero-traffic/gradual-promotion equivalence to Cloud Run is unproven; no confirmed Job-equivalent primitive | **Proposed**, with two NOT_PROVEN gates and three RE-AUDIT items |
+| Yandex Cloud, `ru-central1` | Only evaluated provider whose regions are documented as physically located in the Russian Federation; PostgreSQL 16, IAM-authenticated container runtime, digest-addressable registry, and the complete short-lived Object Storage backend authentication chain are evidenced | Remote-state locking remains unproven; Serverless Containers' zero-traffic/gradual-promotion equivalence to Cloud Run is unproven; no confirmed Job-equivalent primitive | **Proposed**; authentication is proven only at validation scope, while locking and runtime execution gates remain open |
 | Google Cloud (BD-DOCS-044's original proposal) | Previously audited, GCS locking/IAM/WIF contract already fully specified | No region physically located in the Russian Federation — fails the hard requirement outright | **Rejected** — does not meet the hard requirement |
-| Remain undecided / re-run the audit later | Avoids committing to a provider before every Yandex question is resolved | Leaves Issue #823 with no forward path at all; the hard requirement already rules out the previously proposed provider, so continuing to plan against it would be misleading | **Rejected** — a provider direction is needed even with open sub-questions, provided they are marked NOT_PROVEN/RE-AUDIT rather than assumed solved |
+| Remain undecided / re-run the audit later | Avoids committing to a provider before every Yandex question is resolved | Leaves Issue #823 with no forward path at all; the hard requirement already rules out the previously proposed provider, so continuing to plan against it would be misleading | **Rejected** — a provider direction is needed even with open sub-questions, provided each retains its current `HUMAN_DECISION_REQUIRED` or `EXECUTION_PROOF_REQUIRED` classification rather than being assumed solved |
 
 ## Consequences
 
@@ -364,15 +388,14 @@ items in "Remote-state stop gate" above.
   migration/rollout gate separation) is restated explicitly in one place,
   so this record does not depend on a reader also holding BD-DOCS-044/046
   in mind.
-- The two most security-sensitive open questions (remote-state locking,
-  remote-state keyless auth) are named as blocking NOT_PROVEN items instead
-  of being silently resolved by copying the GCS contract or the documented
-  static-key tutorial pattern.
+- The keyless authentication question now has direct, disposable execution
+  evidence and an explicit `PROVEN_AT_VALIDATION_SCOPE` boundary; remote-state
+  locking remains a separate blocking execution proof.
 
 **Negative / trade-offs**
 
-- No OpenTofu bootstrap can proceed until both remote-state stop-gate items
-  are closed by a future, separately authorized validation slice.
+- No durable OpenTofu bootstrap can proceed until the remote-state locking gate
+  has a terminal passing verdict and the durable bucket/IAM contract is approved.
 - The exact Serverless Containers release/promotion mechanism and the
   migration-execution primitive remain open engineering questions, not just
   human-approval questions — closing them may require hands-on testing
@@ -383,13 +406,16 @@ items in "Remote-state stop gate" above.
 
 **Follow-ups**
 
-- A future slice must close "Remote-state stop gate" items A and B before
-  any `tofu init` against a real Yandex Object Storage backend.
+- The independent locking slice must close remote-state stop-gate item A before
+  any durable `tofu init`; item B is complete only at disposable validation
+  scope and must be implemented without broadening its credential boundary.
 - A future slice must resolve the Serverless Containers release/promotion
   mechanism and the migration-execution primitive, ideally via a throwaway,
   non-production Yandex Cloud sandbox rather than documentation alone.
-- A future Yandex remote-state bootstrap ADR, analogous in rigor to
-  BD-DOCS-046, is a separate slice gated on the above.
+- After this contract is accepted and locking has a terminal passing verdict,
+  the next narrow implementation slice is a Yandex durable remote-state and
+  least-privilege IAM bootstrap ADR/implementation only. It excludes PostgreSQL,
+  runtime, secrets payloads, image publication, migrations and traffic.
 - Issue #823 stays open until real staging deployment and rollback evidence
   meet its existing acceptance criteria, against whichever provider
   ultimately proves out.

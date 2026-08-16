@@ -4,9 +4,9 @@ docType: decision-record
 title: Yandex Object Storage remote-state validation — research and execution contract (01A)
 owner: backend-ops-agent
 status: draft
-revision: 2026-08-06
+revision: 2026-08-16
 effectiveFrom: 2026-08-06
-reviewAfter: 2026-09-06
+reviewAfter: 2026-09-16
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
 related:
@@ -18,6 +18,7 @@ related:
     - infra/staging/README.md
   issues:
     - "#823"
+    - "#894"
   prs: []
 tags: [decision-record, adr, backend, staging, iac, opentofu, remote-state, yandex-cloud, object-storage, validation-contract]
 slug: /decisions/backend-staging-yandex-remote-state-validation-plan
@@ -25,17 +26,31 @@ slug: /decisions/backend-staging-yandex-remote-state-validation-plan
 
 # Yandex Object Storage remote-state validation — research and execution contract (01A)
 
-> **Research contract only — `status: draft`. Creates no Yandex Cloud resource.**
-> This record is **BD-STATE-VAL-01A**: the docs-only research slice that refines
-> [BD-DOCS-047](./backend-staging-provider-pivot-yandex-cloud.md)'s "Remote-state
-> stop gate" into an execution-ready contract. It creates no Yandex Cloud
-> resource, folder, IAM identity, service account, Object Storage bucket, static
-> or temporary key, OpenTofu state, or `.tf`/`.tofu` file. It runs no `tofu
-> init`/`plan`/`apply` and authenticates to nothing. It does not resolve
-> BD-DOCS-047's two `NOT_PROVEN` gates — it defines exactly what execution-backed
-> proof would resolve them, and hands that definition to two future, separately
-> authorized execution slices (**01B**, **01C**) that this record does not
-> authorize to run.
+> **Post-execution reconciliation; this revision is docs-only.** This record
+> began as the no-cloud-contact BD-STATE-VAL-01A research contract. The later,
+> separately authorized 01C-A/B/C ladder has now completed with FINAL PASS at
+> every stage. Keyless Object Storage backend authentication is therefore
+> `PROVEN_AT_VALIDATION_SCOPE`; state locking remains independent and requires a
+> terminal execution verdict. BD-BACKEND-DEPLOY-02A creates no resource,
+> credential, state or `.tf`/`.tofu` file and runs no command against Yandex
+> Cloud or OpenTofu.
+
+## Current verdict (overrides the pre-execution future tense below)
+
+| Question | Current classification | Evidence and boundary |
+|---|---|---|
+| GitHub OIDC → Yandex WIF → IAM token | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #856](https://github.com/iprus2026-tech/BazarDriveCloud/issues/856), 01C-A FINAL PASS; no static/JSON key. |
+| IAM token → ephemeral AWS-compatible credential | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #858](https://github.com/iprus2026-tech/BazarDriveCloud/issues/858), 01C-B FINAL PASS; bounded-TTL three-part credential. |
+| Ephemeral credential → OpenTofu S3 backend → Object Storage | `PROVEN_AT_VALIDATION_SCOPE` | [Issue #860](https://github.com/iprus2026-tech/BazarDriveCloud/issues/860), 01C-C FINAL PASS with OpenTofu 1.12.0 and a disposable bucket; cleanup completed. |
+| Durable backend naming, retention and recovery | `HUMAN_DECISION_REQUIRED` | The disposable proof did not select an exact durable bucket/name, object versioning/retention policy, recovery procedure, restore-test acceptance or durable IAM. |
+| Object Storage locking and lock recovery | `EXECUTION_PROOF_REQUIRED` | Authentication does not prove lock acquisition, contention, stale-lock recovery, controlled force-unlock or durable state safety. |
+
+The 2026-08-06 correction chronology below is retained as the audit trail that
+designed the proof. Statements in that chronology such as “future 01C,” “no
+execution has occurred,” and `REQUIRES_EXECUTION_VALIDATION` describe the state
+at that time; this current-verdict section supersedes them for the completed
+01C chain. The proof does not authorize a durable backend, durable IAM bindings,
+staging resources or reuse of validation identities.
 
 > **Correction pass — authentication candidate set expanded (same-day,
 > 2026-08-06).** Current official Yandex documentation, re-checked against this
@@ -77,34 +92,26 @@ slug: /decisions/backend-staging-yandex-remote-state-validation-plan
 
 ## Context
 
-BD-DOCS-047 pivoted staging to Yandex Cloud `ru-central1` and left two
-remote-state questions marked `NOT_PROVEN`: Object Storage state **locking**,
-and **keyless authentication** to the S3-compatible data plane. Its own text
-frames both as one future "separately authorized slice" — which, read plainly,
-invites a single oversized execution PR that mixes research, credential
-handling, bucket creation, lock testing, authentication testing, and cleanup.
-That shape makes failures hard to isolate and review, and is one paraphrase
-away from an agent treating "validate remote state" as license to start
-provisioning real staging infrastructure in the same session.
+BD-DOCS-047 pivoted staging to Yandex Cloud `ru-central1` and originally left
+two remote-state questions marked `NOT_PROVEN`: Object Storage state locking
+and keyless S3-compatible data-plane authentication. This record split those
+failure domains so that proof could not become license to provision staging.
+The authentication domain is now proven at disposable validation scope; the
+locking domain remains open.
 
-This record splits that single future slice into three: **01A** (this
-document — research only, no cloud contact), **01B** (Object Storage
-backend/locking validation, disposable-resource only), and **01C** (keyless
-authentication validation, disposable-resource only). Locking and
+The contract split the work into three slices: **01A** (this document's
+original research, no cloud contact), **01B** (Object Storage backend/locking
+validation, disposable-resource only), and **01C** (keyless authentication
+validation, disposable-resource only). Locking and
 authentication are split because they are different failure domains with
 different risk profiles — authentication carries an explicit
 "no autonomous long-lived-secret decision" gate (BD-DOCS-047, "Authentication")
-that locking does not. Keeping them as separate slices — with 01C's
-authentication outcome feeding into 01B rather than each slice inventing its
-own ad hoc credential model (see "Recommended slice architecture going
-forward" below) — means a stalled human call on credentials is resolved once,
-by 01C, instead of being independently re-litigated by both.
+that locking does not. Keeping them separate let 01C establish the credential
+model once for later locking work instead of permitting an ad hoc static key.
 
-`infra/staging/README.md` still describes the pre-pivot Google Cloud target
-verbatim and has not been updated for the Yandex pivot. It is noted here as
-stale context, not as a current contract; this record does not correct it —
-that is a separate, docs-only follow-up for `docs-contract-agent`, out of
-scope here.
+`infra/staging/README.md` and BD-DOCS-043 are reconciled to the active Yandex
+contract by BD-BACKEND-DEPLOY-02A. The Google Cloud narrative is historical,
+not an active staging instruction.
 
 This record does not touch, resolve, or reopen: PostgreSQL sizing, Serverless
 Containers release mechanics, Lockbox runtime injection, monitoring/logging,
@@ -117,9 +124,10 @@ No OpenTofu version is pinned anywhere in this repository today: there is no
 `.tf`/`.tofu` file, no `.terraform-version`/`.opentofu-version` file, and no CI
 workflow step that installs or invokes `tofu`. `infra/staging/` contains only
 `README.md`. This is itself a finding, not an oversight to silently fill in:
-**the exact OpenTofu version is an open input**, not something this record or
-a future execution slice may pick unilaterally. Everything below is therefore
-recorded against the *current, unversioned* OpenTofu S3 backend implementation
+**the exact durable OpenTofu version is an open input**, not something this
+record or a future implementation slice may pick unilaterally. 01C-C's use of
+OpenTofu 1.12.0 is validation evidence, not a repository pin. Everything below
+is therefore recorded against the *current, unversioned* OpenTofu S3 backend implementation
 as published upstream; a future slice must re-confirm each claim against
 whichever exact version is eventually pinned, since backend behavior can change
 between releases (see "S3 backend locking implementation" below).
@@ -244,12 +252,12 @@ not one generic "temporary key" concept:
 | Method | Documentation status | Execution validation needed | Long-lived secret | Classification |
 |---|---|---|---|---|
 | Static S3 access key/secret (`YC...`/`YC...`, no expiry) | `DOCUMENTED` — Yandex's own IAM docs: "a static key has no expiration date" | No — behavior is known | **Yes** | `SUPPORTED` (technically works), but any *use* requires an explicit human exception per BD-DOCS-047 — never an autonomous default |
-| **Ephemeral access key** (`yc iam access-key issue-ephemeral`, Yandex Cloud CLI ≥0.181.0) | `DOCUMENTED`. Yandex documents the key as a genuine **three-part** AWS-shaped credential — `access_key_id`, `secret`, `session_token` — with separate `expires_at` expiry metadata. `--duration` accepts `15m` to `12h`; if omitted, the key lifetime is limited by the current IAM-token session. The same documentation states that ephemeral keys are **issued based on the current session's IAM token**. Requires the `iam.serviceAccounts.ephemeralAccessKeyAdmin` role or higher for the folder. | BazarDriveCloud must validate its concrete WIF subject/audience/federated-credential configuration, access-policy compatibility, narrowly scoped issuance grant, actual zero-static-key issuance from the GitHub runner, observed TTL/expiry, and end-to-end OpenTofu consumption. The generic IAM-token→ephemeral-key auth model itself is already documented. | The issued credential is bounded-TTL and cannot be individually revoked; it expires automatically. No long-lived secret is required by the documented mechanism itself. | Mechanism/shape/TTL/role and IAM-token caller model: `DOCUMENTED`. BazarDriveCloud's actual WIF-backed issuance and OpenTofu chain: `REQUIRES_EXECUTION_VALIDATION` — **not** `KEYLESS_BACKEND_AUTH_PROVEN` |
-| **AWS `credential_process` integration for the ephemeral key** | `DOCUMENTED` — an official Yandex tutorial (`yandex-cloud/docs`, `en/_tutorials/security/ephemeral-key-storage.md`, mirroring `yandex.cloud/en/docs/storage/operations/buckets/manage-ephemeral-keys`) issues a key via `yc iam access-key issue-ephemeral --subject-id <sa_id> --session-name ephemeral-sa-1 --jq '{Version: 1, AccessKeyId: .access_key_id, SecretAccessKey: .secret, SessionToken: .session_token, ExpiresAt: .expires_at}'` and wires it into an AWS CLI profile via `credential_process = <file_path>`. This is an **officially documented integration candidate, not a hypothetical custom shim** — Yandex ships the exact `--jq` transform and AWS CLI profile shape | Yes — only for BazarDriveCloud's concrete WIF-backed CLI/API session and OpenTofu usage. The `credential_process` mechanism itself is documented. | No new dependency beyond the ephemeral key above | `DOCUMENTED_CANDIDATE`; BazarDriveCloud end-to-end use remains `REQUIRES_EXECUTION_VALIDATION` |
+| **Ephemeral access key** (`yc iam access-key issue-ephemeral`, Yandex Cloud CLI ≥0.181.0) | `DOCUMENTED`. Yandex documents the key as a genuine **three-part** AWS-shaped credential — `access_key_id`, `secret`, `session_token` — with separate `expires_at` expiry metadata. `--duration` accepts `15m` to `12h`; if omitted, the key lifetime is limited by the current IAM-token session. The same documentation states that ephemeral keys are **issued based on the current session's IAM token**. Requires the `iam.serviceAccounts.ephemeralAccessKeyAdmin` role or higher for the folder. | Completed for the authorized disposable BazarDriveCloud chain in 01C-B/01C-C. Durable identity, policy, TTL and secret-exclusion wiring still require review. | The issued credential is bounded-TTL and cannot be individually revoked; it expires automatically. No long-lived secret is required by the mechanism or the completed proof. | `PROVEN_AT_VALIDATION_SCOPE` for WIF-backed issuance and OpenTofu consumption; not a durable staging credential approval |
+| **AWS `credential_process` integration for the ephemeral key** | `DOCUMENTED` — an official Yandex tutorial (`yandex-cloud/docs`, `en/_tutorials/security/ephemeral-key-storage.md`, mirroring `yandex.cloud/en/docs/storage/operations/buckets/manage-ephemeral-keys`) issues a key via `yc iam access-key issue-ephemeral --subject-id <sa_id> --session-name ephemeral-sa-1 --jq '{Version: 1, AccessKeyId: .access_key_id, SecretAccessKey: .secret, SessionToken: .session_token, ExpiresAt: .expires_at}'` and wires it into an AWS CLI profile via `credential_process = <file_path>`. This is an **officially documented integration candidate, not a hypothetical custom shim** — Yandex ships the exact `--jq` transform and AWS CLI profile shape | The completed proof establishes end-to-end ephemeral-credential consumption but does not select `credential_process` as the durable integration. | No new dependency beyond the ephemeral key above | `DOCUMENTED_CANDIDATE`; exact durable integration remains `HUMAN_DECISION_REQUIRED` |
 | **STS temporary key** (`aws sts assume-role` against Yandex's STS endpoint) | `DOCUMENTED` — official tutorial: `--duration-seconds` "cannot exceed 43200" (12h); response shape is the full AWS triple (`AccessKeyId`/`SecretAccessKey`/`SessionToken`/`Expiration`), matching what OpenTofu's S3 backend expects | Yes — but the same tutorial's own documented workflow assumes the caller **already has a static access key** created in a prior step before calling `assume-role`; no path from an IAM token or WIF-derived credential to this call was found | Rooted in a static key at the point of *calling* `assume-role`, even though the *returned* credential is short-lived | `NOT_PROVEN`, leaning **not a genuine keyless bootstrap** — reduces exposure of the long-lived key (it need not be reused directly for signing), but does not eliminate the static-secret dependency at the root |
 | Yandex IAM token (Yandex account / service account) | `DOCUMENTED` for the S3 API directly — passed as `Authorization: Bearer ${IAM_TOKEN}`, a **non-SigV4** auth mode; TTL ≤ 12h, refresh hourly recommended | Yes — see backend-compatibility gap below | No | `NOT_SUPPORTED` **for OpenTofu's stock S3 backend directly**, `SUPPORTED` for the Object Storage S3 API in general and `DOCUMENTED` as the upstream session used to issue ephemeral keys |
-| GitHub → Yandex Workload Identity Federation | `DOCUMENTED`: the OIDC exchange produces an IAM token of the linked Yandex Cloud service account, and Yandex states that the external subject then uses that IAM token for the required Yandex Cloud API requests. Combined with the ephemeral-key contract above (ephemeral keys are issued based on the current session's IAM token), the generic `WIF → IAM token → issue-ephemeral` mechanism is documented. WIF does not directly emit an AWS-SigV4 credential; `issue-ephemeral` is the bridge to the AWS-shaped temporary credential. | Yes — validate BazarDriveCloud-specific issuer/audience/subject mapping, federated-credential binding, organization/folder access policies, role grant, GitHub-runner execution, and absence of any static credential in the real chain. This is configuration/execution proof, not rediscovery of whether the mechanism exists. | No | Mechanism: `DOCUMENTED`. BazarDriveCloud configuration and end-to-end proof: `REQUIRES_EXECUTION_VALIDATION` |
-| Service-account IAM token (short-lived, minted from an SA key or WIF) | `DOCUMENTED` as an upstream Yandex Cloud API credential and as the session basis for ephemeral-key issuance; it is not itself an AWS-SigV4 credential for OpenTofu's S3 backend | Yes — validate the concrete BazarDriveCloud session source, grants, and issuance path | No | Upstream mechanism `DOCUMENTED`; direct OpenTofu S3 use remains `NOT_SUPPORTED`, while ephemeral-key bridging remains `REQUIRES_EXECUTION_VALIDATION` in this project until executed |
+| GitHub → Yandex Workload Identity Federation | `DOCUMENTED`: the OIDC exchange produces an IAM token of the linked Yandex Cloud service account, and Yandex states that the external subject then uses that IAM token for the required Yandex Cloud API requests. Combined with the ephemeral-key contract above (ephemeral keys are issued based on the current session's IAM token), the generic `WIF → IAM token → issue-ephemeral` mechanism is documented. WIF does not directly emit an AWS-SigV4 credential; `issue-ephemeral` is the bridge to the AWS-shaped temporary credential. | Completed for the authorized disposable BazarDriveCloud issuer/audience/subject and validation policy in 01C-A; durable bindings remain a separate decision. | No | `PROVEN_AT_VALIDATION_SCOPE` |
+| Service-account IAM token (short-lived, minted from an SA key or WIF) | `DOCUMENTED` as an upstream Yandex Cloud API credential and as the session basis for ephemeral-key issuance; it is not itself an AWS-SigV4 credential for OpenTofu's S3 backend | The WIF-derived session and ephemeral-key bridge were exercised in 01C-A/B. | No | Direct OpenTofu S3 use remains `NOT_SUPPORTED`; the ephemeral-key bridge is `PROVEN_AT_VALIDATION_SCOPE` |
 | AWS-compatible credential-provider-chain / STS-equivalent (`assume_role_with_web_identity`) | **`DOCUMENTED` on the OpenTofu side**, re-confirmed against current OpenTofu S3 backend documentation: the backend supports `assume_role_with_web_identity { role_arn, web_identity_token / web_identity_token_file }`, calling AWS STS's `AssumeRoleWithWebIdentity` API, and its `endpoints` block can override `sts` to a non-AWS endpoint. **No documentation found that Yandex's STS endpoint implements the `AssumeRoleWithWebIdentity` action** — Yandex's own documented STS operation is plain `assume-role`, which (per the row above) itself requires a pre-existing static key to invoke. Yandex's WIF instead exchanges the OIDC token for a native Yandex IAM token via Yandex's own control-plane API — a structurally different mechanism, not an STS-compatible one. This row is now the *less* promising of the two OpenTofu-side integration paths — see the `credential_process` row above, which does not depend on Yandex implementing any AWS STS action at all | Yes — confirm absence/presence of an `AssumeRoleWithWebIdentity`-equivalent action definitively | No (if it existed) | `NOT_PROVEN`, leaning `NOT_SUPPORTED` — this correction pass found additional negative evidence (the documented `assume-role` workflow's static-key prerequisite) but no positive evidence changing the original verdict |
 | Metadata/workload-identity auto-injected credentials | Applies to code running *on* Yandex Compute/Serverless; GitHub Actions runners are external, so this surface does not apply to CI-driven `tofu` runs | Moot for this use case | No | `NOT_SUPPORTED` for the CI use case |
 
@@ -262,9 +270,9 @@ Cloud API requests. The live ephemeral-key documentation says ephemeral keys
 are issued based on the current session's IAM token, documents the three-part
 credential format and TTL, and links the supported management flow. The live
 Object Storage tutorial independently documents the `credential_process`
-bridge. These sources agree; execution is still required for this repository's
-specific federation/policy configuration and OpenTofu chain, not for the
-existence of the generic upstream auth mechanism.
+bridge. These sources agree. The later 01C-A/B/C ladder supplied the
+repository-specific execution evidence that was still missing when this
+sourcing note was written.
 
 **The precise gap, restated with the corrected candidate set:** OpenTofu's S3
 backend is built on the AWS SDK and its standard credential chain, confirmed
@@ -275,33 +283,23 @@ triple) via environment variables, shared AWS CLI configuration (including
 open question — OpenTofu's side of the compatibility gap is confirmed and
 documented, and so is the Yandex-side ephemeral-key shape, TTL, IAM-token
 issuance model, and official `credential_process` integration tutorial.**
-The remaining execution questions are repository-specific: whether the
-BazarDriveCloud GitHub OIDC issuer/audience/subject mapping and federated
-credential are accepted, whether organization/folder policies permit the
-binding and narrowly scoped `iam.serviceAccounts.ephemeralAccessKeyAdmin`
-grant, whether the real GitHub runner can issue the ephemeral credential with
-no static credential present anywhere in the run, and whether OpenTofu's S3
-backend accepts that credential against Yandex Object Storage end to end.
+The repository-specific disposable questions were answered by 01C-A/B/C:
+BazarDriveCloud's GitHub OIDC/WIF session worked, ephemeral issuance succeeded
+without a static key, and OpenTofu 1.12.0 authenticated the backend end to end.
+Durable folder/identity bindings, credential lifetime and integration shape are
+still bootstrap decisions and may not be inferred from the validation setup.
 The STS `assume-role` path remains less attractive because its documented
 workflow requires a pre-existing static key to invoke it.
 
-**This record does not classify the ephemeral-access-key candidate as
-`KEYLESS_BACKEND_AUTH_PROVEN`.** No execution has occurred. The generic
-`WIF → IAM token → ephemeral key` mechanism, credential shape, TTL, role, and
-OpenTofu-side consumption mechanisms are `DOCUMENTED`; BazarDriveCloud's
-actual federation/policy configuration, zero-static-key issuance run, and
-full OpenTofu chain remain `REQUIRES_EXECUTION_VALIDATION`. The revised 01C
-execution ladder (section 2a below) exists specifically to prove those
-repository-specific facts.
+**Current classification: `PROVEN_AT_VALIDATION_SCOPE`.** The generic mechanism
+remains `DOCUMENTED`; Issues #856, #858 and #860 add the BazarDriveCloud-specific
+zero-static-key issuance and OpenTofu authentication proof. This verdict is not
+`STATE_LOCKING_PROVEN` and is not a durable staging-backend approval.
 
-**If 01C finds no keyless route, the resulting contract returns
-`HUMAN_DECISION_REQUIRED` — it must not default to a static key.** No agent,
-in 01C or any future slice, may accept a static/long-lived-key exception
-autonomously; that decision is reserved for a human, per BD-DOCS-047. This
-correction does not change that gate and does not pre-approve any exception —
-including for the STS `assume-role` path's static-key prerequisite, which
-remains exactly the kind of long-lived-secret dependency the "no static key by
-default" rule exists to catch, not a loophole around it.
+The proof succeeded, so no static-key fallback is needed. No agent in a future
+slice may accept a static/long-lived-key exception autonomously; that remains an
+explicit human architecture/security decision. The STS `assume-role` path's
+static-key prerequisite is not a loophole around this rule.
 
 **Correction note (round 1).** Section 1's locking evidence was strengthened in
 an earlier correction pass; that pass's improvement to the locking section is
@@ -332,61 +330,49 @@ GitHub runner, and OpenTofu end-to-end authentication. No static-key exception
 is approved here, or by any future agent acting alone; that remains reserved
 for an explicit human decision per BD-DOCS-047.
 
-### 2a. Revised 01C execution ladder
+### 2a. Completed 01C execution ladder
 
-This correction replaces the implicit single-shot framing of "01C tests
-authentication" with an explicit three-stage ladder, sequenced to fail as
-cheaply as possible:
+The three-stage ladder ran as separately authorized disposable slices and
+completed without turning authentication validation into durable staging work:
 
-- **01C-A — WIF control-plane authentication.** GitHub OIDC → Yandex WIF →
-  short-lived Yandex IAM token. No Object Storage bucket needed — this is a
-  pure control-plane test. Evidence: issuer, subject/principal ID, TTL, expiry
-  timestamp, HTTP status. `PASS` proves that BazarDriveCloud's concrete
-  issuer/audience/subject/federated-credential configuration works in the
-  GitHub runner; the generic WIF exchange mechanism itself is already
-  `DOCUMENTED`.
-- **01C-B — ephemeral credential issuance.** Using only the 01C-A IAM session,
-  call the `iam.serviceAccounts.ephemeralAccessKeyAdmin`-gated
-  `issue-ephemeral` operation for the approved validation identity. The
-  upstream auth model is already `DOCUMENTED`: WIF yields a service-account
-  IAM token for Yandex Cloud API requests, and ephemeral keys are issued based
-  on the current session's IAM token. The output shape is also documented as
-  three credential parts (`access_key_id`/`secret`/`session_token`) plus
-  `expires_at`, with TTL `15m`–`12h`. 01C-B therefore validates
-  BazarDriveCloud-specific execution: that the real federation and access
-  policies allow issuance, the narrow role grant is sufficient, the call
-  succeeds with **no static key or pre-existing service-account key present
-  anywhere in the run**, and the observed TTL/expiry and HTTP/CLI exit status
-  match the contract. A failure here is evidence about project configuration,
-  policy, role scope, or runtime behavior; it must not be rewritten as
-  "Yandex does not document IAM-token-based ephemeral issuance."
-- **01C-C — OpenTofu S3 backend authentication.** Using only the ephemeral
-  AWS-compatible credential from 01C-B (never a static key) — via the
-  `DOCUMENTED` `credential_process` integration pattern (section 2) or direct
-  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN` env vars —
-  demonstrate authenticated backend access. Use only the **minimum backend
-  operation required** to prove the credential is accepted: prefer `tofu init
-  -reconfigure`, or another minimal read that exercises authentication without
-  mutating state. **Do not run `tofu plan` merely to test authentication**, and
-  do not create any provider-managed resource. State write and locking
-  behavior belong primarily to 01B, not 01C-C; 01C-C's scope is authentication
-  only.
+- **01C-A — WIF control-plane authentication: FINAL PASS
+  ([Issue #856](https://github.com/iprus2026-tech/BazarDriveCloud/issues/856)).**
+  GitHub OIDC → Yandex WIF produced a short-lived Yandex IAM token for the
+  approved validation identity. No Object Storage bucket or static/JSON key was
+  needed. This proves the concrete validation issuer/audience/subject mapping,
+  not a durable staging binding.
+- **01C-B — ephemeral credential issuance: FINAL PASS
+  ([Issue #858](https://github.com/iprus2026-tech/BazarDriveCloud/issues/858)).**
+  Using only the 01C-A IAM session, the approved validation identity issued a
+  bounded-TTL three-part credential (`access_key_id`, `secret`,
+  `session_token`) with expiry metadata. No static key or pre-existing
+  service-account key was present. This proves validation policy compatibility,
+  not the final durable role scope or TTL.
+- **01C-C — OpenTofu S3 backend authentication: FINAL PASS
+  ([Issue #860](https://github.com/iprus2026-tech/BazarDriveCloud/issues/860)).**
+  OpenTofu 1.12.0 used only the 01C-B ephemeral credential to authenticate its
+  S3 backend against disposable Object Storage; cleanup completed. The proof did
+  not test state locking, create provider-managed staging resources or establish
+  a repository-wide OpenTofu pin.
 
-The IAM Bearer-token test (the original H2) is preserved but **reclassified**:
+The IAM Bearer-token test (the original H2) remains historical context:
 it remains a useful Yandex-data-plane sanity check (confirms Object Storage
 honors Yandex's own Bearer auth mode), but it is **no longer treated as a
 prerequisite** for 01C-C if the ephemeral-credential path is what OpenTofu will
 actually consume. A Bearer-mode success or failure does not gate 01C-B/01C-C;
-it may run in parallel with, or be skipped in favor of, the ephemeral-key
-chain.
+it did not gate the completed ephemeral-key chain.
 
-## 3. Human decisions blocking 01B/01C
+## 3. Historical decision gate for 01C; reusable gate for locking validation
 
-None of the following may be guessed, copied from the staging-environment
-decisions, or silently chosen by a workflow. Items 1–2 are new — narrower and
-smaller-stakes than BD-DOCS-047's staging-environment decisions of the same
-shape — because a disposable validation footprint should not inherit the
-staging folder/budget by default.
+The authorized 01C execution resolved the decisions below for its disposable
+run only; its resources were cleaned up. Those selections do not transfer to
+durable staging or automatically authorize a locking experiment. For any new
+locking validation, unresolved inputs must be recorded by its own approved
+package and may not be guessed, copied from staging or inferred from 01C.
+
+The `Status` column below preserves the original pre-execution 01A decision
+packet. It is not a claim that 01C is still pending and it does not report the
+state of any separately governed locking package.
 
 | # | Decision | Status |
 |---|---|---|
@@ -404,22 +390,20 @@ staging folder/budget by default.
 
 ## 4. Disposable-experiment design
 
-Maximum footprint for 01B + 01C combined:
+01C completed within a disposable footprint and cleanup completed. For the
+remaining locking proof, the maximum contract footprint is:
 
-- One disposable Object Storage bucket for 01B (locking). 01C may reuse it or
-  use a second disposable bucket if isolating authentication testing from
-  locking testing proves cleaner — 01B/01C should decide based on whichever
-  keeps failure attribution clearest.
+- One disposable Object Storage bucket for locking validation.
 - One validation identity (service account or equivalent), scoped only to that
   bucket's objects — never bucket-level `setIamPolicy`, never project-wide.
 - A minimal inert OpenTofu root module whose only purpose is exercising the
   backend (a single trivial resource or none at all) — not a real
   infrastructure definition, and never a copy of any real staging module.
-- A static test key **only if** decision #8 above explicitly approves one as a
-  narrow, single-use, immediately-rotated exception for the run.
+- The short-lived WIF → IAM token → ephemeral credential chain proven by
+  01C-A/B/C. A static test key is not an implementation fallback.
 
-**Explicitly forbidden in 01B/01C, no exception:** Managed PostgreSQL,
-Serverless Containers, Container Registry, Lockbox application secrets, any
+**Explicitly forbidden in locking/authentication validation, no exception:**
+Managed PostgreSQL, Serverless Containers, Container Registry, Lockbox application secrets, any
 application deployment, any production- or staging-named resource, real
 personal data, PWA/API activation, any production/staging migration.
 
@@ -429,8 +413,8 @@ never committed under `infra/staging/` or anywhere else in the repo. Nothing
 in BD-DOCS-044/046/047 or `infra/staging/README.md` requires committing
 validation-only Terraform/OpenTofu configuration, and `infra/staging/README.md`
 itself currently states plainly that the directory holds documentation only.
-01B/01C must not commit `.tf`/`.tofu` files unless a human decision explicitly
-overrides this default.
+Validation work must not commit `.tf`/`.tofu` files unless a human decision
+explicitly overrides this default.
 
 ## 5. `STATE_LOCKING_PROVEN` — exact PASS/FAIL contract
 
@@ -499,61 +483,54 @@ per resource.
 cookies, database credentials, application secrets, or anything else that
 would let a reader replay access.
 
+This section governs disposable authentication/locking validation evidence
+only. It does not decide the durable staging/deployment evidence location,
+retention period, read access, redaction owner or deletion procedure; BD-DOCS-043
+classifies those values `HUMAN_DECISION_REQUIRED` and blocks a #823 acceptance
+claim until they are approved.
+
 ## 8. Recommended slice architecture going forward
 
 ```
-01A (this record, docs-only)
-  -> HUMAN_DECISION_REQUIRED gate (section 3)
-  -> 01C-A: WIF control-plane authentication (no bucket)
-  -> 01C-B: ephemeral credential issuance (issue-ephemeral, via 01C-A session)
-  -> 01C-C: OpenTofu S3 backend authentication (ephemeral credential only)
-  -> 01B: Object Storage backend / locking validation (disposable-resource only)
-  -> evidence + cleanup (sections 6-7, executed as part of 01B/01C themselves)
-  -> a future, separately authorized Yandex remote-state bootstrap ADR
-     (not drafted by this record)
+01A: research contract — COMPLETE
+  -> 01C-A/B/C: short-lived authentication ladder — FINAL PASS
+  -> 01C evidence and cleanup — COMPLETE
+  -> Object Storage locking validation — EXECUTION_PROOF_REQUIRED
+  -> terminal locking PASS + accepted staging contract
+  -> separately authorized durable remote-state / least-privilege IAM bootstrap
 ```
 
-Both still require 01A complete and the section-3 gate cleared, but **01C now
-precedes 01B** rather than running in either order: 01B should preferably run
-using the credential model 01C already established, instead of minting a
-static key merely to test locking. Within 01C itself, 01C-A → 01C-B → 01C-C
-(section 2a) is a strict sequence with its own stop gate at each stage — a
-failure at 01C-A means 01C-B/C do not run at all. **This correction's
-recommended default execution hypothesis is `WIF → IAM token → ephemeral
-access key (issue-ephemeral) → OpenTofu S3 backend`** (the 01C-A→B→C ladder
-above); that is a recommendation for a human to approve, not an autonomous
-selection, and it does not remove the human's authority to pick a different
-candidate row from section 2's table. If 01C cannot prove a keyless
-authentication path through *any* candidate, execution stops for
-`HUMAN_DECISION_REQUIRED` (section 2) before 01B is allowed to fall back to a
-static credential — 01B does not get to independently request its own
-static-key exception just because it runs second; the same human gate applies
-to whichever slice ends up needing a credential decision. Both still feed a
-still-future Yandex remote-state bootstrap ADR, analogous in rigor to the
-now-deferred BD-DOCS-046, which this record does not draft.
+01C established the credential model that any later locking proof should use;
+there is no reason to mint a static key for locking. Authentication success does
+not shorten section 5's locking PASS contract. After this documentation package
+is accepted and locking reaches a terminal PASS, the next narrow implementation
+slice is durable remote-state and least-privilege IAM bootstrap only. It excludes
+PostgreSQL, Serverless Containers, Lockbox payloads, image publication,
+migrations, probes and traffic.
 
 ## Issue #823
 
 Issue #823 remains **open** and is unaffected by this record. Remote-state
 validation — research or execution — satisfies none of its acceptance items
 (fresh staging deploy reaching `/api/v1/health`/`/api/v1/readyz`, ordered
-migrations, no committed/logged credential material, a rehearsed rollback,
-green server-ci/deployment checks). This record checks off nothing on #823.
+migrations applying with the intended re-apply remaining clean, no
+committed/logged credential material, a rehearsed rollback, green
+server-ci/deployment checks). This record checks off nothing on #823.
 
 ## Consequences
 
 **Positive**
 
-- BD-DOCS-047's two `NOT_PROVEN` gates now have an exact, execution-ready test
-  definition instead of a general "prove it later" instruction.
+- BD-DOCS-047's original two `NOT_PROVEN` questions were separated: keyless
+  authentication now has a passing disposable proof, while locking retains an
+  exact execution-ready PASS contract.
 - The locking finding is meaningfully upgraded from "no evidence found" to
   "positive documented evidence found, execution needed to close exact
   status-code parity" — a materially different and less pessimistic starting
   point for 01B.
-- The authentication finding is sharpened from a blanket "not proven" into a
-  precise integration proof: the generic WIF→IAM-token→ephemeral-key mechanism
-  is documented, while BazarDriveCloud still must prove its concrete
-  federation/policy wiring and OpenTofu consumption end to end.
+- The authentication finding is now a precise, bounded integration verdict:
+  `PROVEN_AT_VALIDATION_SCOPE` for WIF → IAM token → ephemeral credential →
+  OpenTofu S3 backend, without claiming locking or durable staging readiness.
 - A second, previously unevaluated locking candidate (YDB DynamoDB-compatible
   mode) is now on record rather than discovered mid-execution.
 - Splitting 01A/01B/01C keeps each slice's blast radius and review surface
@@ -574,41 +551,28 @@ green server-ci/deployment checks). This record checks off nothing on #823.
 
 **Negative / trade-offs**
 
-- Every claim in this record beyond direct primary-source quotes is bounded by
-  what public documentation states; several rows are explicitly
-  `REQUIRES_EXECUTION_VALIDATION` and could still fail differently than
-  research predicts once 01B/01C actually run.
+- Alternative candidate rows remain bounded by their cited research. The
+  successful 01C chain is bounded by its execution evidence and may not be
+  generalized to locking or durable staging configuration.
 - The OpenTofu-version gap (none pinned in-repo) means this record's OpenTofu-
   side claims must be re-confirmed against whichever version a future decision
   pins, not assumed to hold indefinitely.
-- No `STATE_LOCKING_PROVEN` or authentication verdict exists yet — bootstrap
-  remains blocked exactly as BD-DOCS-047 already states.
-- The generic WIF→IAM-token→ephemeral-key mechanism is documented, but
-  BazarDriveCloud's actual issuer/audience/subject mapping, federated
-  credential, organization/folder policies, role scope, GitHub-runner session,
-  zero-static-key execution evidence, and OpenTofu backend acceptance remain
-  unverified. 01C-B can still fail because of project policy/configuration or
-  runtime behavior; that would not make the generic documented mechanism
-  disappear.
+- No `STATE_LOCKING_PROVEN` verdict exists; durable bootstrap remains blocked.
+- The disposable validation bindings are not durable staging bindings. Exact
+  folder, principal, subject/audience policy, least-privilege roles, TTL and
+  credential delivery still require an approved bootstrap contract.
 
 **Follow-ups**
 
 - A future execution slice (01B) must run the section 5 test sequence against
   a disposable bucket once the section 3 human decisions are resolved.
-- A future execution slice (01C), now sequenced as 01C-A → 01C-B → 01C-C
-  (section 2a), must execute the documented mechanism in BazarDriveCloud's
-  real validation configuration: prove the GitHub OIDC/WIF session and policy
-  bindings, prove `issue-ephemeral` succeeds with no static key present, and
-  prove OpenTofu's stock S3 backend — via the documented `credential_process`
-  pattern or direct env vars — authenticates against Yandex Object Storage
-  with the resulting credential. The generic WIF/IAM-token caller model,
-  credential shape, TTL, and role are already `DOCUMENTED`; 01C does not need
-  to rediscover them.
-- `infra/staging/README.md`'s stale Google Cloud narrative should be
-  refreshed to match BD-DOCS-047 in a separate, docs-only follow-up — not part
-  of this record's scope.
-- A future Yandex remote-state bootstrap ADR, analogous in rigor to the
-  deferred BD-DOCS-046, remains a separate slice gated on 01B and 01C both
-  closing.
+- 01C-A/B/C is complete; retain its sanitized evidence and cleanup verdict as
+  the authentication baseline. Do not rerun it merely to compensate for an
+  unrelated locking gap.
+- `infra/staging/README.md` and BD-DOCS-043 now carry the active Yandex contract.
+- A future Yandex remote-state bootstrap ADR/implementation, analogous in rigor
+  to deferred BD-DOCS-046, remains a separate slice gated on an accepted
+  contract and terminal locking PASS. It must preserve the proven short-lived
+  authentication chain and exclude runtime, PostgreSQL and migrations.
 - Issue #823 stays open until real staging deployment and rollback evidence
   meet its existing acceptance criteria.
