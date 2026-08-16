@@ -196,11 +196,15 @@ This order is a contract, not authorization to execute:
    independent locking gate passes.
 2. Provision private PostgreSQL 16 and approved Lockbox metadata/injection paths.
 3. Publish the reviewed image once and record its immutable digest.
-4. Create a zero-traffic candidate using that digest and the runtime identity.
-5. Apply ordered migrations with the separate migration identity.
-6. Run the same approved migration primitive again against the resulting schema
+4. Apply ordered migrations with the separate migration identity.
+5. Run the same approved migration primitive again against the resulting schema
    and require the intended re-apply to complete cleanly. Any error or unexpected
    schema/data mutation blocks promotion.
+6. Only after both migration gates pass, create the candidate from that digest
+   with the runtime identity using a separately accepted Yandex mechanism that
+   keeps the unverified revision from serving traffic. If no such mechanism has
+   accepted evidence, stop here; do not assume a Cloud Run-style zero-traffic
+   primitive.
 7. Verify authenticated `/api/v1/health`, then `/api/v1/readyz` with required
    schema state.
 8. Promote only after both probes and migration evidence pass.
