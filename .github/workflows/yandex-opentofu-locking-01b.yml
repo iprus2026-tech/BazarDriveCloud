@@ -43,16 +43,16 @@ jobs:
       contents: read
       id-token: write
     env:
-      PROOF_PHASE: PENDING
+      PROOF_PHASE: LOCK_TEST
       OPEN_TOFU_VERSION: 1.12.0
       EXPECTED_ISSUER: https://token.actions.githubusercontent.com
       EXPECTED_GITHUB_AUDIENCE: https://github.com/iprus2026-tech
       EXPECTED_SUBJECT: repo:iprus2026-tech/BazarDriveCloud:ref:refs/heads/infra/backend-deploy-01b-opentofu-locking
       EXPECTED_REPOSITORY: iprus2026-tech/BazarDriveCloud
       EXPECTED_REF: refs/heads/infra/backend-deploy-01b-opentofu-locking
-      YANDEX_SERVICE_ACCOUNT_ID: PENDING
-      YANDEX_FEDERATION_ID: PENDING
-      YANDEX_BUCKET: PENDING
+      YANDEX_SERVICE_ACCOUNT_ID: aje1pmev714egr70f6g7
+      YANDEX_FEDERATION_ID: aje5461dbm6h8loqve3h
+      YANDEX_BUCKET: bd-state-val-01b-20260809-203ea0a7
       STALE_LOCK_ID: PENDING
       YANDEX_TOKEN_ENDPOINT: https://auth.yandex.cloud/oauth/token
       YANDEX_EPHEMERAL_ENDPOINT: https://iam.api.cloud.yandex.net/iam/aws-compatibility/v1/ephemeralAccessKeys
