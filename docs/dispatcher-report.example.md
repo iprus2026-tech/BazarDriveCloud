@@ -7,18 +7,19 @@ Date: (локальный отчёт подставляет дату прого�
 безопасны; сам live-отчёт регенерируется на каждом `node scripts/dispatcher.mjs`
 и редактировать его вручную не нужно.
 
-READY != auto-merge: финальный merge gate всегда за GitHub. Готовность узла
-разводится на три состояния (см. Readiness legend ниже): «узел зелёный» больше
-не путается с «нужно коммитить».
+READY != auto-merge: финальный merge gate всегда за GitHub. Готовность проекта
+разводится на три состояния (см. Readiness legend ниже): зелёные gate больше
+не путаются с «нужно коммитить». На чистом зелёном дереве диспетчер возвращает
+`NO_ACTIVE_SLICE`, а не назначает случайный UI-файл по round-robin.
 
 ## Risk legend
 
 ```text
-HIGH    public/src/** (screens, router, state, mock_api, ride_state, mapbox),
-        public/index.html (CSP), public/sw.js (precache)        → Can auto-fix: no
-MEDIUM  scripts/**, public/styles/**, .github/**,
-        README.md / ROADMAP.md / docs/screen-contracts.md       → Can auto-fix: no
-LOW     docs/*.md, генерируемый отчёт                            → Can auto-fix: yes (safe hygiene)
+NONE    NO_ACTIVE_SLICE                                         → Can auto-fix: n/a
+HIGH    public runtime, server/**, migrations, infra/**          → Can auto-fix: no
+MEDIUM  scripts/**, tests/**, docs-site/**, public/styles/**,
+        .github/**, ключевые проектные контракты                 → Can auto-fix: no
+LOW     обычные docs/*.md                                        → Can auto-fix: yes (safe hygiene)
 ```
 
 `--fix` применяет только обратимую гигиену (CRLF→LF, хвостовые пробелы, финальный
@@ -28,8 +29,8 @@ LOW     docs/*.md, генерируемый отчёт                          
 ## Readiness legend
 
 ```text
-READY_CLEAN  узел зелёный И рабочее дерево чистое → noActionNeeded=true,
-             commitNeeded=false. Делать нечего, коммитить нечего.
+READY_CLEAN  проектные gate зелёные И рабочее дерево чистое →
+             NO_ACTIVE_SLICE, noActionNeeded=true, commitNeeded=false.
 READY_DIRTY  узел зелёный И есть незакоммиченные tracked-изменения →
              commitNeeded=true. Оформить commit/PR.
 NEEDS_ROLES  узел не зелёный (падения проверок / design drift) → задачи по
@@ -38,17 +39,18 @@ NEEDS_ROLES  узел не зелёный (падения проверок / des
 
 В `--json` это поля `readiness` / `commitNeeded` / `noActionNeeded` / `dirty`.
 Легаси-поля сохранены: `ready` (= «узел зелёный») и `mergeGate` (READY / NEEDS-ROLES).
-`dirty` считается по tracked-файлам — git-ignored отчёт и курсор рутины не учитываются.
+`dirty` считается по tracked-файлам — git-ignored отчёт не учитывается.
 
 ## Карточка узла
 
 ```text
-Target           public/src/screens/feed.js
-Kind             screen — экран (render + поведение)
-Reason selected  недавно изменён в git
-Risk             HIGH
-Can auto-fix     no — delegated to roles
-Suggested owner  Claude Code
+Target           NO_ACTIVE_SLICE
+Kind             idle — активный срез отсутствует
+Layer            Repository
+Reason selected  clean tree + green gates — no active slice
+Risk             NONE
+Can auto-fix     n/a — no active slice
+Suggested owner  —
 Iterations       1
 Merge gate       READY_CLEAN
 Commit needed    no — working tree clean, nothing to commit
@@ -63,6 +65,30 @@ Commit needed    no — working tree clean, nothing to commit
 > Merge gate       NEEDS_ROLES
 > Commit needed    no — node not green (resolve role tasks first)
 > ```
+
+## Architecture inventory
+
+Каждый tracked-узел получает архитектурный слой; отсутствующая зона остаётся
+видна с нулём. Числа ниже — пример snapshot и меняются вместе с репозиторием.
+
+```text
+Total            374
+UI / PWA             72
+Driver App           6
+Passenger App        3
+Store                4
+Backend API          44
+DB                   3
+Cache                1
+Mapbox               10
+Telegram Bot         0
+Monitoring           1
+PWA / Offline        3
+Smoke                120
+Contract / Docs      101
+Infrastructure / CI  5
+Developer Tooling    1
+```
 
 ## 1. Что проверено (checks run)
 
@@ -89,7 +115,7 @@ PASS  scripts/smoke-lifecycle.mjs
 ## Применённые safe-фиксы
 
 ```text
-(пропущено — узел не LOW-риск, авто-фикс запрещён)
+(не требуется — активного среза нет)
 ```
 
 ## Design registry / Design drift
@@ -107,7 +133,7 @@ Manual-interaction notes (не расхождение — справочно):
 
 ## 4. Кто чинит (распределение по ролям)
 
-_Нет назначений — узел зелёный и чистый, действий не требуется._
+_Нет назначений — проектные gate зелёные, рабочее дерево чистое._
 
 > В состояниях READY_DIRTY и NEEDS_ROLES эта секция возвращает обычный список
 > ролевых задач (owner / assist / Cloud Design / merge gate). На READY_CLEAN
@@ -117,11 +143,11 @@ _Нет назначений — узел зелёный и чистый, дей
 ## 5. Что следующий PR должен сделать
 
 ```text
-- Узел «public/src/screens/feed.js» зелёный, изменений нет — действий не требуется (no action needed), коммитить нечего.
+- Активного среза нет: проектные gate зелёные, tracked-изменений нет. Указать --target или начать отдельную ветку задачи.
 ```
 
 ## Merge gate
 
 ```text
-READY_CLEAN — узел зелёный, изменений нет: действий не требуется, коммитить нечего. Это НЕ auto-merge: финальный gate за GitHub.
+READY_CLEAN — проектные gate зелёные, tracked-изменений нет: активного среза нет. Это НЕ auto-merge: финальный gate за GitHub.
 ```
