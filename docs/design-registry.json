@@ -160,12 +160,12 @@
       "file": "public/src/screens/active_ride.js",
       "additionalFiles": ["public/src/screens/active_ride_driver_noshow.js"],
       "renderGate": "BD-RENDER-GATES-2026-06-03",
-      "classification": "future-design",
+      "classification": "render-gate",
       "section": "Active Ride",
       "role": "driver",
       "status": "NO_SHOW",
-      "note": "Split ownership: active_ride.js owns the waiting/expired entry states + the «Не приехал» (#ar-no-show) wiring that opens openDriverNoShowFlow (pinned by scripts/smoke-active-ride-noshow.mjs + scripts/smoke-active-ride-waiting.mjs); active_ride_driver_noshow.js owns the 5 in-sheet sub-flow states (action → confirm → result → compensation → done). The registered status=NO_SHOW route renders the terminal closed-trip stub (renderCanceledStub, «Пассажир не вышел»), NOT the no-show sub-flow — the 5 sub-flow states open from the WAITING_PASSENGER «Не приехал» (#ar-no-show) action. Still future-design (5/7): the render gate has 7 states; the waiting/expired stages are intentionally out of scope for the no-show module (per active_ride_driver_noshow.js — they would redesign the live waiting UI), so they are not wired as no-show states. Compensation values 180 / 120 / 276 ₽ are mock placeholders and must be confirmed with product/finance before further wiring.",
-      "interaction": "design-render-only"
+      "note": "Cross-gate 7/7 runtime coverage: active_ride.js owns waiting/expired as the existing WAITING_PASSENGER phases via renderWaiting()/renderWaitingExpired() (including ?wait=expired) plus #ar-no-show wiring, pinned by scripts/smoke-active-ride-waiting.mjs and scripts/smoke-active-ride-noshow.mjs; active_ride_driver_noshow.js owns action → confirm → result → compensation → done. The registered status=NO_SHOW route renders the terminal closed-trip stub, not the interactive sub-flow. Remaining follow-ups are separate: compensation stays demo pending product/finance sign-off; dispute and no-show loading/error remain BD-RIDE-D-DISPUTE-01 and BD-RIDE-D-NOSHOW-ERR-01; real async backend mutation failure semantics remain BD-RIDE-D-ERROR-02.",
+      "interaction": "manual-interaction"
     },
     {
       "id": "BD-RIDE-P-01",
