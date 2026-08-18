@@ -396,11 +396,28 @@ function selectTarget(inventory, debug, forced,
   }
   if (dirty) {
     const changed = [...(touched || workingTreeTouched())]
-      .filter((id) => !GENERATED_DOC_ARTIFACTS.has(normalizeId(id)));
-    const touchedNode = inventory.find((n) => isTouched(n.id, new Set(changed)));
-    if (touchedNode) return { node: touchedNode, reason: 'изменён в текущем working tree' };
-    if (changed.length) return { node: nodeFromId(changed[0], 'tracked working-tree change'),
-                                reason: 'изменён tracked-файл вне инвентаря' };
+      .map(normalizeId)
+      .filter((id) => !GENERATED_DOC_ARTIFACTS.has(id));
+    if (changed.length) {
+      const changedSet = new Set(changed);
+      const candidates = inventory.filter((n) => isTouched(n.id, changedSet));
+      const knownIds = new Set(candidates.map((n) => normalizeId(n.id)));
+      for (const id of changed) {
+        if (!knownIds.has(id)) candidates.push(nodeFromId(id, 'tracked working-tree change'));
+      }
+      const riskRank = { HIGH: 0, MEDIUM: 1, LOW: 2, NONE: 3 };
+      candidates.sort((a, b) => {
+        const riskDelta = (riskRank[classifyRisk(a)] ?? 9) - (riskRank[classifyRisk(b)] ?? 9);
+        return riskDelta || normalizeId(a.id).localeCompare(normalizeId(b.id));
+      });
+      const selected = candidates[0];
+      return {
+        node: selected,
+        reason: knownIds.has(normalizeId(selected.id))
+          ? 'изменён в текущем working tree — выбран максимальный риск'
+          : 'изменён tracked-файл вне инвентаря — выбран максимальный риск',
+      };
+    }
     return { node: nodeFromId('WORKTREE_CHANGE_UNRESOLVED', 'git dirty, path unavailable'),
              reason: 'working tree dirty, путь изменения не определён' };
   }
@@ -1098,6 +1115,27 @@ function selfTest() {
     { dirty: true, touched: new Set([sample.id]), designRegistry: { ok: true, skipped: false } });
   if (changedTarget.node.id !== sample.id)
     fail('dirty tree должен выбирать изменённый tracked-узел');
+  const outsideInventoryTarget = selectTarget(inv, greenDebug, null,
+    { dirty: true, touched: new Set(['README.md']), designRegistry: { ok: true, skipped: false } });
+  if (outsideInventoryTarget.node.id !== 'README.md' || classifyRisk(outsideInventoryTarget.node) !== 'MEDIUM')
+    fail('dirty root-файл вне inventory должен сохраняться как MEDIUM tracked-цель');
+  const unresolvedTarget = selectTarget(inv, greenDebug, null,
+    { dirty: true, touched: new Set(), designRegistry: { ok: true, skipped: false } });
+  if (unresolvedTarget.node.id !== 'WORKTREE_CHANGE_UNRESOLVED')
+    fail('dirty tree без доступного пути должен выбирать WORKTREE_CHANGE_UNRESOLVED');
+  const lowDirtyNode = inv.find((n) => n.kind === 'doc' && classifyRisk(n) === 'LOW');
+  const highDirtyNode = inv.find((n) => n.id === 'public/src/state.js');
+  if (!lowDirtyNode || !highDirtyNode) {
+    fail('selftest fixtures для multi-dirty risk priority не найдены');
+  } else {
+    const mixedRiskTarget = selectTarget(inv, greenDebug, null, {
+      dirty: true,
+      touched: new Set([lowDirtyNode.id, highDirtyNode.id]),
+      designRegistry: { ok: true, skipped: false },
+    });
+    if (mixedRiskTarget.node.id !== highDirtyNode.id || classifyRisk(mixedRiskTarget.node) !== 'HIGH')
+      fail('multi-dirty должен выбирать HIGH-риск раньше LOW-документа');
+  }
   const driftTarget = selectTarget(inv, greenDebug, null,
     { dirty: false, touched: new Set(), designRegistry: { ok: false, skipped: false } });
   if (driftTarget.node.id !== 'docs/design-registry.json')
