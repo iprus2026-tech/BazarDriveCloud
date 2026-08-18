@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // BazarDrive Dispatcher — self-driving project routine.
 //
-// Это апнутая «рутина-диспетчер»: она сама выбирает проектный узел
-// (экран / файл / кнопку / render интерфейса), дебажит его, чинит
+// Это апнутая «рутина-диспетчер»: она выбирает активный проектный срез
+// (UI/PWA / backend / DB / cache / Mapbox / monitoring / smoke), дебажит его, чинит
 // безопасные дефекты, перепроверяет и раздаёт оставшиеся задачи по
 // ролям (Claude Code / Cloud Design / ChatGPT / Codex / GitHub) —
 // до зелёного состояния и готовности к фиксации (commit).
+// На чистом зелёном дереве случайную цель не выдумывает: возвращает
+// NO_ACTIVE_SLICE и ждёт явного --target, изменения или реального падения gate.
 //
 // Полностью локальная и автономная: только node-builtins, без сети, без
 // API-ключей, без зависимостей. Раскладка задач по ролям — это локальный
@@ -16,7 +18,7 @@
 // Границы безопасности:
 //   - default mode = inspect/report: НЕ трогает application code (public/src,
 //     router, state, mock_api, ride_state, mapbox, index.html CSP, sw.js).
-//     Пишет только отчёт docs/dispatcher-report.md и ignored-курсор.
+//     Пишет только отчёт docs/dispatcher-report.md.
 //   - --fix = safe fixes only: обратимая гигиена (CRLF→LF, хвостовые пробелы,
 //     финальный перевод строки) и ТОЛЬКО по LOW-риск узлам (docs). Любые
 //     структурные дефекты и HIGH/MEDIUM узлы делегируются ролям (NEEDS-ROLES).
@@ -38,7 +40,6 @@ import { execFileSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const STATE_FILE = path.join(__dirname, '.dispatcher-state.json');
 const REPORT_FILE = path.join(ROOT, 'docs', 'dispatcher-report.md');
 
 // Сгенерированные/служебные артефакты самой рутины — это НЕ узлы проекта.
@@ -63,15 +64,34 @@ const ROLES = {
 
 // Тип узла → владелец и вспомогательные роли по умолчанию.
 const NODE_KINDS = {
+  idle:     { owner: null,          assist: [],                    desc: 'активный срез отсутствует' },
   screen:   { owner: 'CLAUDE_CODE', assist: ['CLOUD_DESIGN'], desc: 'экран (render + поведение)' },
   module:   { owner: 'CLAUDE_CODE', assist: [],               desc: 'JS-модуль состояния/логики' },
+  mapbox:   { owner: 'CLAUDE_CODE', assist: ['CLOUD_DESIGN'],  desc: 'Mapbox / геолокация / маршрут' },
   style:    { owner: 'CLOUD_DESIGN', assist: [],              desc: 'CSS feature/design-токены' },
   shell:    { owner: 'CLOUD_DESIGN', assist: ['CLAUDE_CODE'], desc: 'оболочка index.html + кнопки/tabbar/FAB' },
+  'service-worker': { owner: 'CLAUDE_CODE', assist: ['CODEX'], desc: 'PWA/offline shell и service worker' },
+  backend:  { owner: 'CLAUDE_CODE', assist: ['CODEX'],        desc: 'Backend API / сервис / маршрут' },
+  database: { owner: 'CLAUDE_CODE', assist: ['CODEX'],        desc: 'DB schema / migration' },
+  cache:    { owner: 'CLAUDE_CODE', assist: ['CODEX'],        desc: 'cache boundary / adapter' },
+  monitoring: { owner: 'CLAUDE_CODE', assist: ['GITHUB'],     desc: 'metrics / monitoring / audit signal' },
   smoke:    { owner: 'CODEX', assist: ['CLAUDE_CODE'],        desc: 'smoke/CI-проверка' },
+  test:     { owner: 'CODEX', assist: ['CLAUDE_CODE'],        desc: 'unit/integration regression test' },
   doc:      { owner: 'CHATGPT', assist: [],                   desc: 'документ-контракт' },
+  'docs-site': { owner: 'CHATGPT', assist: ['CODEX'],          desc: 'versioned docs / governance contract' },
   'design-registry': { owner: 'CHATGPT', assist: ['CLOUD_DESIGN', 'CLAUDE_CODE'], desc: 'реестр render-gate секций и экранов (docs/design-registry.json)' },
+  infra:    { owner: 'GITHUB', assist: ['CLAUDE_CODE'],       desc: 'infrastructure / deployment config' },
+  tooling:  { owner: 'CODEX', assist: [],                     desc: 'developer tooling / dispatcher' },
   workflow: { owner: 'GITHUB', assist: [],                    desc: 'GitHub Actions workflow' },
 };
+
+// Фиксированный архитектурный словарь. Нулевые зоны тоже остаются в summary:
+// так отсутствие Telegram Bot/Monitoring видно как факт, а не теряется из отчёта.
+const ARCHITECTURE_LAYERS = [
+  'UI / PWA', 'Driver App', 'Passenger App', 'Store', 'Backend API', 'DB',
+  'Cache', 'Mapbox', 'Telegram Bot', 'Monitoring', 'PWA / Offline', 'Smoke',
+  'Contract / Docs', 'Infrastructure / CI', 'Developer Tooling',
+];
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -92,9 +112,11 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`BazarDrive Dispatcher — локальная диспетчерская башня проекта (не автопилот).
-Выбирает узел, гоняет проверки, сопоставляет падения с файлами, классифицирует
-риск, раскладывает задачи по ролям, пишет отчёт-карточку и держит merge gate
-через READY / NEEDS-ROLES. Только node-builtins: без сети, API и зависимостей.
+Выбирает активный архитектурный срез, гоняет проверки, сопоставляет падения с
+файлами, классифицирует риск, раскладывает задачи по ролям, пишет отчёт-карточку
+и держит merge gate через READY / NEEDS-ROLES. На чистом зелёном дереве выдаёт
+NO_ACTIVE_SLICE вместо случайного round-robin. Только node-builtins: без сети,
+API и зависимостей.
 Раскладка по ролям — локальный task routing, без живых вызовов ChatGPT/Codex/Claude API.
 
 Использование:
@@ -103,13 +125,13 @@ function printHelp() {
 Режимы:
   (без флагов)        inspect/report — безопасный режим, read-only по app-коду
                       (public/src, router, state, mock_api, mapbox, CSP, sw.js).
-                      Пишет только локальный отчёт и ignored-курсор.
+                      Пишет только локальный отчёт.
   --fix               safe fixes only: обратимая гигиена (CRLF→LF, хвостовые
                       пробелы, финальный перевод строки) и ТОЛЬКО по LOW-риск
                       узлам (docs). HIGH/MEDIUM узлы и структурные дефекты
                       авто-фиксу не подлежат — уходят в роли (NEEDS-ROLES).
-  --json              машиночитаемый вывод (target/risk/canAutoFix/tasks/readiness/
-                      commitNeeded/dirty/noActionNeeded/mergeGate).
+  --json              машиночитаемый вывод (target/layer/inventory/risk/tasks/
+                      readiness/commitNeeded/dirty/noActionNeeded/mergeGate).
   --target <путь>     форсировать цель вместо само-выбора.
   --max N             предел итераций фикс-цикла (по умолчанию 3).
   --selftest          самопроверка рутины и risk-границ (для check.mjs), без мутаций.
@@ -131,6 +153,45 @@ function isFile(p) { try { return fs.statSync(p).isFile(); } catch { return fals
 // Нормализация id пути: Windows backslash → POSIX slash, чтобы классификация
 // риска и дедуп проб не зависели от разделителя путей ОС.
 function normalizeId(id) { return String(id).replace(/\\/g, '/'); }
+
+function architectureLayerFor(id, kind) {
+  const p = normalizeId(id);
+  const lower = p.toLowerCase();
+  if (kind === 'idle') return 'Repository';
+  if (kind === 'doc' || kind === 'docs-site' || kind === 'design-registry') return 'Contract / Docs';
+  if (kind === 'workflow' || kind === 'infra') return 'Infrastructure / CI';
+  if (kind === 'smoke' || kind === 'test') return 'Smoke';
+  if (lower.includes('telegram')) return 'Telegram Bot';
+  if (p.startsWith('server/migrations/')) return 'DB';
+  if (lower.includes('/cache')) return 'Cache';
+  if (lower.includes('/metrics') || lower.includes('/monitoring')) return 'Monitoring';
+  if (p.startsWith('server/')) return 'Backend API';
+  if (p.startsWith('public/src/mapbox/')) return 'Mapbox';
+  if (kind === 'service-worker' || lower.includes('/sw-update')) return 'PWA / Offline';
+  if (lower.includes('driver')) return 'Driver App';
+  if (lower.includes('passenger')) return 'Passenger App';
+  if (/(^|\/)(state|data_layer)\.js$/.test(lower) || lower.includes('_store.')) return 'Store';
+  if (p.startsWith('public/')) return 'UI / PWA';
+  return 'Developer Tooling';
+}
+
+function nodeFromId(id, hint = '') {
+  const normalized = normalizeId(id);
+  const kind = classify(normalized);
+  return {
+    id: normalized,
+    file: path.resolve(ROOT, normalized),
+    kind,
+    layer: architectureLayerFor(normalized, kind),
+    hint,
+  };
+}
+
+function summarizeInventory(inventory) {
+  const layers = Object.fromEntries(ARCHITECTURE_LAYERS.map((layer) => [layer, 0]));
+  for (const node of inventory) layers[node.layer] = (layers[node.layer] || 0) + 1;
+  return { total: inventory.length, layers };
+}
 
 // Абсолютный --target → repo-relative путь, чтобы абсолютная цель попадала в
 // инвентарь и в special-case (docs/design-registry.json), а не падала в дефолт
@@ -160,20 +221,31 @@ function listFiles(dir, exts, { recursive = true } = {}) {
 
 function buildInventory() {
   const nodes = [];
-  const add = (file, kind, hint) => nodes.push({ id: normalizeId(rel(file)), file, kind, hint });
+  const add = (file, kind, hint) => {
+    const id = normalizeId(rel(file));
+    nodes.push({ id, file, kind, layer: architectureLayerFor(id, kind), hint });
+  };
 
   for (const f of listFiles(path.join(ROOT, 'public', 'src', 'screens'), ['.js']))
     add(f, 'screen', 'render + кнопки экрана');
   for (const f of listFiles(path.join(ROOT, 'public', 'src'), ['.js'])) {
     if (f.includes(`${path.sep}screens${path.sep}`)) continue;
-    add(f, 'module', 'логика/состояние');
+    const kind = classify(rel(f));
+    add(f, kind, kind === 'mapbox' ? 'карта / геолокация / маршрут' : 'логика/состояние');
   }
   for (const f of listFiles(path.join(ROOT, 'public', 'styles'), ['.css'], { recursive: false }))
     add(f, 'style', 'визуальный слой / render');
   const shell = path.join(ROOT, 'public', 'index.html');
   if (exists(shell)) add(shell, 'shell', 'tabbar / FAB / sw-update кнопки');
+  for (const pwaFile of ['sw.js', 'manifest.webmanifest']) {
+    const f = path.join(ROOT, 'public', pwaFile);
+    if (exists(f)) add(f, 'service-worker', 'PWA / offline shell');
+  }
   for (const f of listFiles(path.join(ROOT, 'scripts'), ['.mjs'], { recursive: false })) {
-    if (rel(f) === 'scripts/dispatcher.mjs') continue;
+    if (normalizeId(rel(f)) === 'scripts/dispatcher.mjs') {
+      add(f, 'tooling', 'dispatcher / developer tooling');
+      continue;
+    }
     if (path.basename(f).startsWith('smoke-') || path.basename(f) === 'check.mjs')
       add(f, 'smoke', 'регрессионный инвариант');
   }
@@ -185,14 +257,35 @@ function buildInventory() {
   // обычный обход берёт только .md, поэтому регистрируем его отдельным узлом.
   const designRegistry = path.join(ROOT, 'docs', 'design-registry.json');
   if (exists(designRegistry)) add(designRegistry, 'design-registry', 'реестр render-gate секций и экранов');
+
+  // Архитектурные зоны за пределами legacy public/docs-инвентаря.
+  for (const f of listFiles(path.join(ROOT, 'server', 'src'), ['.js', '.mjs']))
+    add(f, classify(rel(f)), 'backend runtime');
+  for (const f of listFiles(path.join(ROOT, 'server', 'migrations'), ['.sql']))
+    add(f, 'database', 'DB migration');
+  for (const f of listFiles(path.join(ROOT, 'server', 'scripts'), ['.js', '.mjs']))
+    add(f, 'backend', 'backend operation');
+  for (const f of listFiles(path.join(ROOT, 'server', 'test'), ['.js', '.mjs']))
+    add(f, 'test', 'backend regression');
+  for (const f of listFiles(path.join(ROOT, 'tests'), ['.js', '.mjs']))
+    add(f, 'test', 'project regression');
+  for (const f of listFiles(path.join(ROOT, 'infra'), ['.tf', '.hcl', '.md', '.json', '.yml', '.yaml', '.sh']))
+    add(f, 'infra', 'infrastructure / deployment');
+  for (const f of listFiles(path.join(ROOT, 'docs-site', 'docs'), ['.md', '.mdx']))
+    add(f, 'docs-site', 'versioned contract / decision');
+  for (const f of listFiles(path.join(ROOT, 'docs-site', 'scripts'), ['.js', '.mjs']))
+    add(f, 'docs-site', 'docs validation');
+  for (const f of listFiles(path.join(ROOT, 'docs-site', 'governance'), ['.json']))
+    add(f, 'docs-site', 'docs governance registry');
   for (const f of listFiles(path.join(ROOT, '.github', 'workflows'), ['.yml', '.yaml'], { recursive: false }))
     add(f, 'workflow', 'CI/деплой');
 
-  return nodes;
+  return nodes.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-// Узлы, недавно затронутые в git — даём им приоритет при само-выборе.
-function recentlyTouched() {
+// Только реальные staged/unstaged tracked-изменения текущего рабочего дерева.
+// HEAD~1 намеренно не используется: последний коммит не является активной задачей.
+function workingTreeTouched() {
   const set = new Set();
   const safe = (args) => {
     try {
@@ -200,10 +293,9 @@ function recentlyTouched() {
         .toString().split('\n').map((s) => s.trim()).filter(Boolean);
     } catch { return []; }
   };
-  // git всегда печатает POSIX-разделители; нормализуем явно, чтобы матчинг с
-  // инвентарём (тоже нормализованным) не зависел от ОС.
-  for (const f of safe(['diff', '--name-only', 'HEAD~1', 'HEAD'])) set.add(normalizeId(f));
-  for (const f of safe(['status', '--porcelain'])) set.add(normalizeId(f.replace(/^.. /, '').trim()));
+  // git всегда печатает POSIX-разделители; staged и unstaged собираем отдельно.
+  for (const f of safe(['diff', '--name-only'])) set.add(normalizeId(f));
+  for (const f of safe(['diff', '--cached', '--name-only'])) set.add(normalizeId(f));
   return set;
 }
 
@@ -228,8 +320,8 @@ function porcelainHasTrackedChanges(porcelain) {
 
 // Есть ли незакоммиченные изменения ОТСЛЕЖИВАЕМЫХ файлов (staged/unstaged).
 // --untracked-files=no: untracked-файлы НЕ учитываются — иначе READY_DIRTY шумел бы
-// от посторонних скретч-файлов в рабочем дереве. git-ignored отчёт и курсор рутины
-// тоже не в счёт (porcelain их не печатает). Пусто → дерево чистое, коммитить нечего;
+// от посторонних скретч-файлов в рабочем дереве. git-ignored отчёт рутины тоже
+// не в счёт (porcelain его не печатает). Пусто → дерево чистое, коммитить нечего;
 // иначе → есть что коммитить. Ошибка git (нет репозитория) → считаем дерево чистым.
 function workingTreeDirty() {
   try {
@@ -271,47 +363,88 @@ function runDebug(inventory) {
 }
 
 // ---------------------------------------------------------------------------
-// Само-выбор цели «на свой выбор».
-//   1) если что-то падает → берём задетый узел (дебаг-приоритет);
-//   2) иначе → round-robin по инвентарю с буустом недавно тронутых,
-//      пропуская только что отработанные (история курсора).
+// Выбор активного среза.
+//   1) явный --target;
+//   2) реальное падение check/smoke или design drift;
+//   3) staged/unstaged tracked-файл текущей ветки;
+//   4) чистое зелёное дерево → NO_ACTIVE_SLICE (никакого round-robin).
 // ---------------------------------------------------------------------------
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
-  catch { return { cursor: 0, history: [] }; }
-}
-function saveState(state) {
-  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n'); } catch { /* best effort */ }
-}
-
-function selectTarget(inventory, debug, forced, state) {
+function selectTarget(inventory, debug, forced,
+  { dirty = false, touched = null, designRegistry = null } = {}) {
   if (forced) {
     const relForced = toRepoRelative(forced);
     const f = normalizeId(relForced);
     const hit = inventory.find((n) => normalizeId(n.id) === f || normalizeId(n.id).endsWith(f));
     if (hit) return { node: hit, reason: 'forced via --target' };
-    return { node: { id: relForced, file: path.resolve(ROOT, relForced), kind: classify(relForced), hint: 'forced' },
+    return { node: nodeFromId(relForced, 'forced'),
              reason: 'forced via --target (вне инвентаря)' };
   }
   if (debug.implicated.length) {
     const hit = inventory.find((n) => n.id === debug.implicated[0]);
     if (hit) return { node: hit, reason: 'падает проверка/smoke — дебаг-приоритет' };
   }
-  const touched = recentlyTouched();
-  const touchedNode = inventory.find((n) => isTouched(n.id, touched) && !state.history.slice(-3).includes(n.id));
-  if (touchedNode) return { node: touchedNode, reason: 'недавно изменён в git' };
-
-  const idx = state.cursor % inventory.length;
-  return { node: inventory[idx], reason: 'плановый обход (round-robin)' };
+  if (debug.failures.length) {
+    const failedProbe = normalizeId(debug.failures[0].id);
+    const hit = inventory.find((n) => n.id === failedProbe);
+    return { node: hit || nodeFromId(failedProbe, 'failing gate'),
+             reason: 'падает check/smoke gate' };
+  }
+  if (designRegistry && (!designRegistry.ok || designRegistry.skipped)) {
+    const hit = inventory.find((n) => n.id === 'docs/design-registry.json');
+    return { node: hit || nodeFromId('docs/design-registry.json', 'design drift'),
+             reason: 'design registry drift' };
+  }
+  if (dirty) {
+    const changed = [...(touched || workingTreeTouched())]
+      .map(normalizeId)
+      .filter((id) => !GENERATED_DOC_ARTIFACTS.has(id));
+    if (changed.length) {
+      const changedSet = new Set(changed);
+      const candidates = inventory.filter((n) => isTouched(n.id, changedSet));
+      const knownIds = new Set(candidates.map((n) => normalizeId(n.id)));
+      for (const id of changed) {
+        if (!knownIds.has(id)) candidates.push(nodeFromId(id, 'tracked working-tree change'));
+      }
+      const riskRank = { HIGH: 0, MEDIUM: 1, LOW: 2, NONE: 3 };
+      candidates.sort((a, b) => {
+        const riskDelta = (riskRank[classifyRisk(a)] ?? 9) - (riskRank[classifyRisk(b)] ?? 9);
+        return riskDelta || normalizeId(a.id).localeCompare(normalizeId(b.id));
+      });
+      const selected = candidates[0];
+      return {
+        node: selected,
+        reason: knownIds.has(normalizeId(selected.id))
+          ? 'изменён в текущем working tree — выбран максимальный риск'
+          : 'изменён tracked-файл вне инвентаря — выбран максимальный риск',
+      };
+    }
+    return { node: nodeFromId('WORKTREE_CHANGE_UNRESOLVED', 'git dirty, path unavailable'),
+             reason: 'working tree dirty, путь изменения не определён' };
+  }
+  return {
+    node: { id: 'NO_ACTIVE_SLICE', file: null, kind: 'idle', layer: 'Repository', hint: 'clean + green' },
+    reason: 'clean tree + green gates — no active slice',
+  };
 }
 
 function classify(relPath) {
   const p = normalizeId(relPath);
+  if (p === 'NO_ACTIVE_SLICE') return 'idle';
   if (p === 'docs/design-registry.json') return 'design-registry';
+  if (p === 'scripts/dispatcher.mjs' || p === 'WORKTREE_CHANGE_UNRESOLVED') return 'tooling';
+  if (p === 'public/sw.js' || p === 'public/manifest.webmanifest') return 'service-worker';
+  if (p.startsWith('public/src/mapbox/')) return 'mapbox';
+  if (p.startsWith('server/migrations/')) return 'database';
+  if (p === 'server/src/infra/cache.js') return 'cache';
+  if (p === 'server/src/routes/metrics.js') return 'monitoring';
+  if (p.startsWith('server/test/') || p.startsWith('tests/')) return 'test';
+  if (p.startsWith('server/')) return 'backend';
+  if (p.startsWith('infra/')) return 'infra';
+  if (p.startsWith('docs-site/')) return 'docs-site';
   if (p.endsWith('.css')) return 'style';
   if (p.endsWith('index.html')) return 'shell';
   if (p.endsWith('.md')) return 'doc';
-  if (p.includes('.github/workflows')) return 'workflow';
+  if (p.startsWith('.github/workflows/')) return 'workflow';
   if (p.startsWith('scripts/')) return 'smoke';
   if (p.includes('/screens/')) return 'screen';
   return 'module';
@@ -319,24 +452,30 @@ function classify(relPath) {
 
 // ---------------------------------------------------------------------------
 // Классификация риска узла. Определяет, можно ли вообще авто-фиксить цель.
-//   HIGH   — application runtime / контракты: public/src/**, index.html, sw.js
-//   MEDIUM — оснастка и визуал: scripts, styles, workflows, README/ROADMAP/contracts
+//   HIGH   — runtime / data / deployment: public runtime, server, DB, infra
+//   MEDIUM — оснастка и контракты: scripts, tests, styles, workflows, docs-site
 //   LOW    — docs и генерируемые отчёты
+//   NONE   — NO_ACTIVE_SLICE
 // Авто-фикс разрешён ТОЛЬКО для LOW. Всё остальное уходит задачей в роли.
 // ---------------------------------------------------------------------------
 const MEDIUM_DOCS = new Set(['README.md', 'ROADMAP.md', 'docs/screen-contracts.md']);
 
 function classifyRisk(node) {
   const id = normalizeId(node.id);
+  if (node.kind === 'idle' || id === 'NO_ACTIVE_SLICE') return 'NONE';
   // HIGH — runtime приложения, маршрутизатор, state-машина, CSP, SW, Mapbox, ride/order flow.
   if (id.startsWith('public/src/')) return 'HIGH';
   if (id === 'public/index.html' || id === 'public/sw.js') return 'HIGH';
+  if (id.startsWith('server/')) return 'HIGH';
+  if (id.startsWith('infra/')) return 'HIGH';
   // MEDIUM — инструментальный и визуальный слой + ключевые проектные доки.
   // design-registry — структурный контракт: правки только осознанные, без
   // слепой авто-гигиены (поэтому MEDIUM, а не LOW как обычные docs/*).
   if (id === 'docs/design-registry.json') return 'MEDIUM';
   if (id.startsWith('public/styles/')) return 'MEDIUM';
   if (id.startsWith('scripts/')) return 'MEDIUM';
+  if (id.startsWith('tests/')) return 'MEDIUM';
+  if (id.startsWith('docs-site/')) return 'MEDIUM';
   if (id.startsWith('.github/')) return 'MEDIUM';
   if (MEDIUM_DOCS.has(id)) return 'MEDIUM';
   // LOW — генерируемый отчёт и обычные docs.
@@ -347,6 +486,7 @@ function classifyRisk(node) {
 // Авто-фикс допустим только для LOW-риска. Генерируемый отчёт переписывается
 // целиком в другом месте, поэтому как «цель фикса» исключён.
 function canAutoFix(node) {
+  if (node.kind === 'idle') return false;
   if (normalizeId(node.id) === 'docs/dispatcher-report.md') return false;
   return classifyRisk(node) === 'LOW';
 }
@@ -406,7 +546,7 @@ function routeTasks(node, debug, designRegistry = null, { idle = false } = {}) {
   // не содержит ролевых назначений: оставляем только реальные сигналы (drift /
   // падения проверок), которые сами по себе делают узел НЕ idle.
   if (!idle) {
-    push(kind.owner, `Провести узел «${node.id}» (${kind.desc}) до зелёного и зафиксировать.`);
+    if (kind.owner) push(kind.owner, `Провести узел «${node.id}» (${kind.desc}) до зелёного и зафиксировать.`);
     for (const a of kind.assist) push(a, `Поддержать «${node.id}»: ${ROLES[a].scope}.`);
 
     // Render интерфейса / кнопки — всегда привлекаем Cloud Design.
@@ -727,7 +867,7 @@ function groupByRole(tasks) {
 
 function buildReport(ctx) {
   const { target, debug, fixesApplied, tasks, iterations, green, readiness, commitNeeded,
-          noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry } = ctx;
+          noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry, inventorySummary } = ctx;
   const date = new Date().toISOString().slice(0, 10);
   const grouped = groupByRole(tasks);
   const lines = [];
@@ -746,15 +886,26 @@ function buildReport(ctx) {
   lines.push('```text');
   lines.push(`Target           ${target.node.id}`);
   lines.push(`Kind             ${target.node.kind} — ${(NODE_KINDS[target.node.kind] || {}).desc || ''}`);
+  lines.push(`Layer            ${target.node.layer}`);
   lines.push(`Reason selected  ${target.reason}`);
   lines.push(`Risk             ${risk}`);
-  lines.push(`Can auto-fix     ${autoFixable ? 'yes (safe hygiene only)' : 'no — delegated to roles'}`);
+  lines.push(`Can auto-fix     ${target.node.kind === 'idle' ? 'n/a — no active slice'
+    : autoFixable ? 'yes (safe hygiene only)' : 'no — delegated to roles'}`);
   lines.push(`Suggested owner  ${suggestedOwner}`);
   lines.push(`Iterations       ${iterations}`);
   lines.push(`Merge gate       ${readiness}`);
   lines.push(`Commit needed    ${commitNeeded ? 'yes — node green with uncommitted tracked changes'
     : green ? 'no — working tree clean, nothing to commit'
             : 'no — node not green (resolve role tasks first)'}`);
+  lines.push('```');
+  lines.push('');
+
+  lines.push('## Architecture inventory');
+  lines.push('');
+  lines.push('```text');
+  lines.push(`Total            ${inventorySummary.total}`);
+  for (const layer of ARCHITECTURE_LAYERS)
+    lines.push(`${layer.padEnd(20)} ${inventorySummary.layers[layer] || 0}`);
   lines.push('```');
   lines.push('');
 
@@ -801,6 +952,7 @@ function buildReport(ctx) {
   lines.push('```text');
   lines.push(fixesApplied.length
     ? fixesApplied.map((x) => '- ' + x).join('\n')
+    : target.node.kind === 'idle' ? '(не требуется — активного среза нет)'
     : autoFixable ? '(нет — safe-фиксов не потребовалось)'
                   : '(пропущено — узел не LOW-риск, авто-фикс запрещён)');
   lines.push('```');
@@ -840,9 +992,9 @@ function buildReport(ctx) {
   lines.push('## 4. Кто чинит (распределение по ролям)');
   lines.push('');
   if (readiness === 'READY_CLEAN') {
-    // На чистом зелёном узле «do work» задач нет; merge-gate уходит в Секцию 5/Merge gate.
+    // На чистом зелёном проекте «do work» задач нет; merge-gate уходит в Секцию 5/Merge gate.
     // Heading сохраняем для стабильности якорей/TOC, тело — однострочный idle-маркер.
-    lines.push('_Нет назначений — узел зелёный и чистый, действий не требуется._');
+    lines.push('_Нет назначений — проектные gate зелёные, рабочее дерево чистое._');
     lines.push('');
   } else {
     for (const role of Object.keys(ROLES)) {
@@ -860,7 +1012,9 @@ function buildReport(ctx) {
   lines.push('');
   const nextSteps =
     readiness === 'READY_CLEAN'
-      ? [`Узел «${target.node.id}» зелёный, изменений нет — действий не требуется (no action needed), коммитить нечего.`]
+      ? [target.node.kind === 'idle'
+          ? 'Активного среза нет: проектные gate зелёные, tracked-изменений нет. Указать --target или начать отдельную ветку задачи.'
+          : `Узел «${target.node.id}» зелёный, изменений нет — действий не требуется (no action needed), коммитить нечего.`]
     : readiness === 'READY_DIRTY'
       ? [`Узел «${target.node.id}» зелёный; есть незакоммиченные tracked-изменения — оформить commit/PR. GitHub проводит merge gate.`]
       : tasks.filter((t) => t.role !== 'GITHUB').map((t) => `(${t.roleLabel}) ${t.task}`);
@@ -878,7 +1032,7 @@ function buildReport(ctx) {
       ? 'NEEDS_ROLES — остались задачи по ролям; merge gate держать закрытым до зелёного CI.'
     : readiness === 'READY_DIRTY'
       ? 'READY_DIRTY — узел зелёный, есть незакоммиченные изменения, готовые к commit/PR. Это НЕ auto-merge: финальный gate за GitHub.'
-      : 'READY_CLEAN — узел зелёный, изменений нет: действий не требуется, коммитить нечего. Это НЕ auto-merge: финальный gate за GitHub.');
+      : 'READY_CLEAN — проектные gate зелёные, tracked-изменений нет: активного среза нет. Это НЕ auto-merge: финальный gate за GitHub.');
   lines.push('```');
   lines.push('');
   return lines.join('\n');
@@ -893,6 +1047,19 @@ function selfTest() {
   if (!inv.length) fail('инвентарь пуст');
   if (!inv.some((n) => n.kind === 'screen')) fail('не найдено ни одного экрана');
   if (!inv.some((n) => n.kind === 'smoke')) fail('не найдено ни одной smoke-проверки');
+  if (exists(path.join(ROOT, 'server')) && !inv.some((n) => n.kind === 'backend'))
+    fail('server/ существует, но Backend API отсутствует в инвентаре');
+  if (exists(path.join(ROOT, 'server', 'migrations')) && !inv.some((n) => n.kind === 'database'))
+    fail('server/migrations существует, но DB отсутствует в инвентаре');
+  if (exists(path.join(ROOT, 'tests')) && !inv.some((n) => n.kind === 'test'))
+    fail('tests/ существует, но regression tests отсутствуют в инвентаре');
+  if (exists(path.join(ROOT, 'docs-site')) && !inv.some((n) => n.kind === 'docs-site'))
+    fail('docs-site/ существует, но versioned docs отсутствуют в инвентаре');
+  if (inv.some((n) => !n.layer)) fail('у узла инвентаря отсутствует architecture layer');
+  const inventorySummary = summarizeInventory(inv);
+  if (inventorySummary.total !== inv.length) fail('architecture summary потерял узлы');
+  if (!Object.hasOwn(inventorySummary.layers, 'Telegram Bot'))
+    fail('architecture summary должен сохранять нулевые зоны (Telegram Bot)');
   // design-registry — если файл существует, он обязан быть в инвентаре своим узлом.
   const drPath = path.join(ROOT, 'docs', 'design-registry.json');
   if (exists(drPath) && !inv.some((n) => n.kind === 'design-registry'))
@@ -936,9 +1103,52 @@ function selfTest() {
     if (docIdle.length !== 0)
       fail(`READY_CLEAN doc: tasks[] должен быть пуст (получено ${docIdle.length})`);
   }
+  // Чистое зелёное дерево не должно получать случайную round-robin цель.
+  const greenDebug = { implicated: [], failures: [], green: true };
+  const cleanTarget = selectTarget(inv, greenDebug, null,
+    { dirty: false, touched: new Set(), designRegistry: { ok: true, skipped: false } });
+  if (cleanTarget.node.kind !== 'idle' || cleanTarget.node.id !== 'NO_ACTIVE_SLICE')
+    fail('green+clean должен выбирать NO_ACTIVE_SLICE, а не случайный узел');
+  if (classifyRisk(cleanTarget.node) !== 'NONE' || canAutoFix(cleanTarget.node))
+    fail('NO_ACTIVE_SLICE должен иметь risk NONE и canAutoFix=false');
+  const changedTarget = selectTarget(inv, greenDebug, null,
+    { dirty: true, touched: new Set([sample.id]), designRegistry: { ok: true, skipped: false } });
+  if (changedTarget.node.id !== sample.id)
+    fail('dirty tree должен выбирать изменённый tracked-узел');
+  const outsideInventoryTarget = selectTarget(inv, greenDebug, null,
+    { dirty: true, touched: new Set(['README.md']), designRegistry: { ok: true, skipped: false } });
+  if (outsideInventoryTarget.node.id !== 'README.md' || classifyRisk(outsideInventoryTarget.node) !== 'MEDIUM')
+    fail('dirty root-файл вне inventory должен сохраняться как MEDIUM tracked-цель');
+  const unresolvedTarget = selectTarget(inv, greenDebug, null,
+    { dirty: true, touched: new Set(), designRegistry: { ok: true, skipped: false } });
+  if (unresolvedTarget.node.id !== 'WORKTREE_CHANGE_UNRESOLVED')
+    fail('dirty tree без доступного пути должен выбирать WORKTREE_CHANGE_UNRESOLVED');
+  const lowDirtyNode = inv.find((n) => n.kind === 'doc' && classifyRisk(n) === 'LOW');
+  const highDirtyNode = inv.find((n) => n.id === 'public/src/state.js');
+  if (!lowDirtyNode || !highDirtyNode) {
+    fail('selftest fixtures для multi-dirty risk priority не найдены');
+  } else {
+    const mixedRiskTarget = selectTarget(inv, greenDebug, null, {
+      dirty: true,
+      touched: new Set([lowDirtyNode.id, highDirtyNode.id]),
+      designRegistry: { ok: true, skipped: false },
+    });
+    if (mixedRiskTarget.node.id !== highDirtyNode.id || classifyRisk(mixedRiskTarget.node) !== 'HIGH')
+      fail('multi-dirty должен выбирать HIGH-риск раньше LOW-документа');
+  }
+  const driftTarget = selectTarget(inv, greenDebug, null,
+    { dirty: false, touched: new Set(), designRegistry: { ok: false, skipped: false } });
+  if (driftTarget.node.id !== 'docs/design-registry.json')
+    fail('design drift должен выбирать docs/design-registry.json');
   // classify покрывает все типы.
   for (const [p, k] of [['public/styles/cloud.css', 'style'], ['public/index.html', 'shell'],
                         ['docs/x.md', 'doc'], ['scripts/smoke-x.mjs', 'smoke'],
+                        ['scripts/dispatcher.mjs', 'tooling'], ['public/sw.js', 'service-worker'],
+                        ['public/src/mapbox/map_shell.js', 'mapbox'],
+                        ['server/src/server.js', 'backend'], ['server/migrations/0001.sql', 'database'],
+                        ['server/src/infra/cache.js', 'cache'], ['server/src/routes/metrics.js', 'monitoring'],
+                        ['tests/ride_state.test.mjs', 'test'], ['infra/staging/main.tf', 'infra'],
+                        ['docs-site/docs/index.md', 'docs-site'],
                         ['docs/design-registry.json', 'design-registry'],
                         ['public/src/screens/feed.js', 'screen'], ['public/src/state.js', 'module']])
     if (classify(p) !== k) fail(`classify(${p}) ожидался ${k}, получено ${classify(p)}`);
@@ -952,7 +1162,8 @@ function selfTest() {
   // Risk-граница: HIGH/MEDIUM узлы НЕ должны быть авто-фиксимыми.
   for (const id of ['public/src/screens/feed.js', 'public/src/router.js', 'public/src/state.js',
                     'public/src/mock_api.js', 'public/src/ride_state.js', 'public/src/mapbox/map_shell.js',
-                    'public/index.html', 'public/sw.js']) {
+                    'public/index.html', 'public/sw.js', 'server/src/server.js',
+                    'server/migrations/0001.sql', 'infra/staging/main.tf']) {
     if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH`);
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (HIGH-риск)`);
   }
@@ -962,14 +1173,15 @@ function selfTest() {
     if (classifyRisk({ id }) !== 'HIGH') fail(`classifyRisk(${id}) должен быть HIGH (win-path)`);
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (win-path public)`);
   }
-  for (const id of ['scripts/check.mjs', 'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md', 'docs/design-registry.json'])
+  for (const id of ['scripts/check.mjs', 'tests/ride_state.test.mjs', 'docs-site/docs/index.md',
+                    'public/styles/cloud.css', 'README.md', 'docs/screen-contracts.md', 'docs/design-registry.json'])
     if (canAutoFix({ id })) fail(`canAutoFix(${id}) должен быть false (MEDIUM-риск)`);
   if (canAutoFix({ id: 'docs/dispatcher-report.md' })) fail('генерируемый отчёт не должен быть авто-фиксимым');
   if (!canAutoFix({ id: 'docs/flow-contracts.md' })) fail('обычный docs/*.md (LOW) должен быть авто-фиксимым');
 
   // Инвариант: рутина никогда не пишет внутрь public/ (runtime-дерево).
   const publicDir = path.join(ROOT, 'public') + path.sep;
-  for (const [label, p] of [['REPORT_FILE', REPORT_FILE], ['STATE_FILE', STATE_FILE]])
+  for (const [label, p] of [['REPORT_FILE', REPORT_FILE]])
     if (p.startsWith(publicDir)) fail(`${label} не должен находиться внутри public/ (${rel(p)})`);
 
   // Guard в applySafeFixes: для HIGH-узла возвращает [] и НЕ пишет файл.
@@ -1229,11 +1441,14 @@ function main() {
   if (args.selftest) return selfTest();
 
   const inventory = buildInventory();
-  const state = loadState();
+  const inventorySummary = summarizeInventory(inventory);
 
-  // Первичный дебаг до выбора цели — чтобы приоритетно взять упавший узел.
+  // Первичные сигналы до выбора цели: реальные падения, design drift и tracked diff.
   let debug = runDebug(inventory);
-  const target = selectTarget(inventory, debug, args.target, state);
+  const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
+  const selectionDirty = workingTreeDirty();
+  const target = selectTarget(inventory, debug, args.target,
+    { dirty: selectionDirty, designRegistry });
   const risk = classifyRisk(target.node);
   const autoFixable = canAutoFix(target.node);
 
@@ -1254,30 +1469,22 @@ function main() {
     debug = runDebug(inventory);
   }
 
-  // Аудит design-registry — независимо от выбранной цели: design drift это
-  // проектный сигнал, а не свойство одного узла.
-  const designRegistry = validateDesignRegistry(path.join(ROOT, 'docs', 'design-registry.json'));
-
   // «Зелёный» учитывает и design drift: зелёных проверок недостаточно, реестр обязан
   // быть валиден (ok) и прочитан (не skipped). READY-семантика затем разводит зелёный
   // на READY_CLEAN (дерево чистое, делать нечего) и READY_DIRTY (есть незакоммиченные
-  // tracked-изменения). dirty считаем по tracked-файлам — git-ignored отчёт/курсор не в счёт.
+  // tracked-изменения). dirty считаем по tracked-файлам — git-ignored отчёт не в счёт.
   const green = debug.green && designRegistry.ok && !designRegistry.skipped;
   const dirty = workingTreeDirty();
   const { readiness, commitNeeded, noActionNeeded } = computeReadiness(green, dirty);
   // idle === READY_CLEAN: на чистом зелёном узле routeTasks не эмитит owner/assist/doc
   // «do work» задачи (см. routeTasks), а отчёт в секции 4 рисует idle-маркер.
   const tasks = routeTasks(target.node, debug, designRegistry, { idle: noActionNeeded });
-  const suggestedOwner = ROLES[(NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner].label;
-
-  // Обновляем курсор/историю само-выбора.
-  state.cursor = (inventory.findIndex((n) => n.id === target.node.id) + 1) % Math.max(1, inventory.length);
-  state.history = [...(state.history || []), target.node.id].slice(-10);
-  saveState(state);
+  const owner = (NODE_KINDS[target.node.kind] || NODE_KINDS.module).owner;
+  const suggestedOwner = owner ? ROLES[owner].label : '—';
 
   // Пишем отчёт-артефакт.
   const report = buildReport({ target, debug, fixesApplied, tasks, iterations, green, readiness,
-    commitNeeded, noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry });
+    commitNeeded, noActionNeeded, risk, autoFixable, suggestedOwner, designRegistry, inventorySummary });
   try { fs.writeFileSync(REPORT_FILE, report); } catch { /* best effort */ }
 
   // Путь отчёта в выводе — тоже POSIX-форма, чтобы консоль/JSON были консистентны с id узлов.
@@ -1286,7 +1493,8 @@ function main() {
   if (args.json) {
     console.log(JSON.stringify({
       target: { id: target.node.id, kind: target.node.kind, reason: target.reason,
-                risk, canAutoFix: autoFixable, suggestedOwner },
+                layer: target.node.layer, risk, canAutoFix: autoFixable, suggestedOwner },
+      inventory: inventorySummary,
       debug: { green: debug.green, results: debug.results.map((r) => ({ id: r.id, ok: r.ok })) },
       fixesApplied, tasks, iterations,
       ready: green, dirty, commitNeeded, noActionNeeded, readiness,
@@ -1298,8 +1506,13 @@ function main() {
   } else {
     console.log(`\n=== BazarDrive Dispatcher ===`);
     console.log(`Цель:    ${target.node.id}  [${target.node.kind}]`);
+    console.log(`Слой:    ${target.node.layer}`);
     console.log(`Причина: ${target.reason}`);
-    console.log(`Риск:    ${risk}   Авто-фикс: ${autoFixable ? 'да (safe)' : 'нет → роли'}   Владелец: ${suggestedOwner}`);
+    const autoFixLabel = target.node.kind === 'idle' ? 'не требуется'
+      : autoFixable ? 'да (safe)' : 'нет → роли';
+    console.log(`Риск:    ${risk}   Авто-фикс: ${autoFixLabel}   Владелец: ${suggestedOwner}`);
+    console.log(`Охват:   ${inventorySummary.total} узлов / `
+      + `${Object.values(inventorySummary.layers).filter((n) => n > 0).length} активных слоёв`);
     console.log(`Дебаг:   ${debug.results.filter((r) => r.ok).length}/${debug.results.length} PASS`
       + (debug.green ? '  (зелёный)' : `  (падает: ${debug.failures.map((f) => f.id).join(', ')})`));
     console.log(`Drift:   ${designRegistry.skipped ? 'SKIPPED (' + (designRegistry.reason || 'реестр не прочитан') + ')'
