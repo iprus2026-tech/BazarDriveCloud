@@ -272,8 +272,9 @@ HIGH/MEDIUM узлы никогда не редактируются автома
 
 ```text
 HIGH    public/src/** (экраны, router, state, mock_api, ride_state, mapbox),
-        index.html (CSP), sw.js (precache) — auto-fix: НЕТ
-MEDIUM  scripts/**, public/styles/**, .github/**, README/ROADMAP/screen-contracts — auto-fix: НЕТ
+        index.html (CSP), sw.js (precache), server/**, infra/** — auto-fix: НЕТ
+MEDIUM  scripts/**, tests/**, docs-site/**, public/styles/**, .github/**,
+        README/ROADMAP/screen-contracts — auto-fix: НЕТ
 LOW     обычные docs/*.md — auto-fix: да (safe hygiene)
 GENERATED docs/dispatcher-report.md — регенерируется отдельно, не является auto-fix целью
 ```
