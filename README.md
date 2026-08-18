@@ -6,9 +6,13 @@ Installable PWA для объявлений, поездок и попутчик�
 
 Vanilla HTML / CSS / ES-модули. Без сборщика, без фреймворка, без зависимостей в рантайме.
 
-> **Это Cloud/PWA-репозиторий.** Здесь нет backend, API-сервера и Android/APK-сборки.
-> Mock-данные хранятся в `localStorage` / in-memory stores. Mapbox SDK не подключён -
-> вместо него используется `public/src/mapbox/map_shell.js` и локальные заглушки.
+> **Это Cloud/PWA + backend-spine репозиторий.** `public/` остаётся основным
+> Passenger/Driver PWA runtime, а `/server` содержит Phase-1 Fastify/PostgreSQL backend.
+> Backend сейчас **PILOT-BLOCKED**: наличие backend-кода не означает активированный
+> PWA cutover или production deployment. Android/APK-сборки в этом репозитории нет.
+> PWA по умолчанию продолжает использовать `localStorage` / in-memory stores.
+> Mapbox SDK не подключён - вместо него используется
+> `public/src/mapbox/map_shell.js` и локальные заглушки.
 
 ---
 
@@ -161,7 +165,9 @@ docs/
 
 ## Текущее состояние
 
-BazarDriveCloud сейчас является mock-only PWA taxi-flow:
+BazarDriveCloud сейчас сочетает mock/local-first PWA taxi-flow и существующий
+Phase-1 backend spine. Backend-код есть, но PWA cutover остаётся неактивным и
+pilot-blocked:
 
 ```text
 Feed / Composer / Profile
@@ -178,7 +184,8 @@ ActiveRide driver/passenger
 Ключевые ограничения текущей версии:
 
 ```text
-no backend API
+PWA backend cutover not active
+backend pilot gates remain
 no real Mapbox SDK
 no native geolocation dependency
 no payments
@@ -228,10 +235,10 @@ node scripts/check.mjs
 ## Диспетчер (диспетчерская башня проекта)
 
 `scripts/dispatcher.mjs` — локальная диспетчерская башня, **не автопилот
-разработки**. Она выбирает следующий проектный узел (экран / модуль / стиль /
-кнопки оболочки / smoke / docs / workflow), гоняет проверки, сопоставляет
-падения с файлами, раскладывает задачи по ролям, пишет отчёт-карточку и держит
-merge gate через `READY` / `NEEDS-ROLES`. Полностью локальная: только
+разработки**. Она выбирает активный архитектурный срез, гоняет проверки,
+сопоставляет падения с файлами, учитывает tracked-изменения и риск, раскладывает
+задачи по ролям, пишет отчёт-карточку и разводит готовность на
+`READY_CLEAN` / `READY_DIRTY` / `NEEDS_ROLES`. Полностью локальная: только
 node-builtins, **без сети, API, backend, GitHub API, ChatGPT/Codex API** —
 раскладка по ролям это *local task routing* (текстовые задачи в отчёте), а не
 живые вызовы моделей.
@@ -256,7 +263,7 @@ GitHub        CI/workflows, PR, merge gate
 ```
 
 **Default mode (`inspect/report`)** не меняет application code: пишет только
-локальный отчёт `docs/dispatcher-report.md` и ignored-курсор. **`--fix`**
+локальный отчёт `docs/dispatcher-report.md`. **`--fix`**
 ограничен обратимой гигиеной (CRLF→LF, хвостовые пробелы, финальный перевод
 строки) и срабатывает **только по LOW-риск узлам**. Структурные дефекты и любые
 HIGH/MEDIUM узлы никогда не редактируются автоматически — они делегируются ролям.
@@ -265,24 +272,28 @@ HIGH/MEDIUM узлы никогда не редактируются автома
 
 ```text
 HIGH    public/src/** (экраны, router, state, mock_api, ride_state, mapbox),
-        index.html (CSP), sw.js (precache) — auto-fix: НЕТ
-MEDIUM  scripts/**, public/styles/**, .github/**, README/ROADMAP/screen-contracts — auto-fix: НЕТ
-LOW     docs/*.md, генерируемый отчёт — auto-fix: да (safe hygiene)
+        index.html (CSP), sw.js (precache), server/**, infra/** — auto-fix: НЕТ
+MEDIUM  scripts/**, tests/**, docs-site/**, public/styles/**, .github/**,
+        README/ROADMAP/screen-contracts — auto-fix: НЕТ
+LOW     обычные docs/*.md — auto-fix: да (safe hygiene)
+GENERATED docs/dispatcher-report.md — регенерируется отдельно, не является auto-fix целью
 ```
 
-Само-выбор цели: упавшая проверка → недавно изменённый в git узел → плановый
-round-robin. Каждый прогон пишет `docs/dispatcher-report.md` — рабочую карточку,
-отвечающую на 5 вопросов (что проверено / что упало / почему / кто чинит / что
-должен сделать следующий PR) + risk и merge gate.
+Само-выбор активного среза: явный `--target` → упавший check/smoke →
+design-registry drift → staged/unstaged tracked-изменения, при нескольких
+кандидатах сначала больший риск → на clean + green `NO_ACTIVE_SLICE`.
+Round-robin и state cursor больше не используются. Каждый прогон пишет
+`docs/dispatcher-report.md` с причиной выбора, архитектурным слоем,
+risk, readiness и merge gate.
 
 Отчёт `docs/dispatcher-report.md` — **локальный артефакт, в git не коммитится**
 (он в `.gitignore` и регенерируется на каждом прогоне). Стабильный пример формата
-лежит в `docs/dispatcher-report.example.md`. Курсор само-выбора
-(`scripts/.dispatcher-state.json`) — тоже рантайм-артефакт, в git не попадает.
-Поэтому обычный прогон диспетчера **не оставляет churn в tracked-файлах**.
+лежит в `docs/dispatcher-report.example.md`. Поэтому обычный прогон
+диспетчера **не оставляет churn в tracked-файлах**.
 
-`READY` **не значит auto-merge** — только «узел зелёный, PR можно
-рассматривать». Финальный merge gate всегда остаётся за GitHub/CI.
+`READY_CLEAN` / `READY_DIRTY` **не значат auto-merge**. Они отделяют
+зелёные gate от наличия tracked-изменений; `NEEDS_ROLES` означает, что
+активный срез ещё требует работы. Финальный merge gate остаётся за GitHub/CI.
 
 Рутина под CI: `scripts/check.mjs` гоняет `dispatcher.mjs --selftest` (быстрый,
 без сети и без записи на диск), так что сам оркестратор и его risk-границы
@@ -302,4 +313,4 @@ Workflow `.github/workflows/pages.yml` деплоит `public/` как стат�
 - `docs/screen-map.md` - схема экранов (existing / planned) и Mermaid-схемы пользовательских путей и статусов поездки.
 - `docs/flow-contracts.md` - end-to-end passenger → driver flow, включая current route inventory.
 - `docs/active-ride-plan.md` - текущий контракт Active Ride, статусы и Mapbox boundary.
-- `ROADMAP.md` - фазовая карта, где real backend и real Mapbox остаются будущими фазами.
+- `ROADMAP.md` - фазовая карта, где backend pilot/production activation и real Mapbox остаются поэтапной работой.
