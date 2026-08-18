@@ -1,6 +1,6 @@
 # Roadmap
 
-> Roadmap отражает реальное состояние Cloud/PWA-репо. Backend, real Mapbox SDK, auth, payments, uploads, push и APK - отдельные фазы, в коде ещё нет. См. также [`docs/screen-contracts.md`](docs/screen-contracts.md), [`docs/flow-contracts.md`](docs/flow-contracts.md), [`docs/active-ride-plan.md`](docs/active-ride-plan.md).
+> Roadmap отражает реальное состояние Cloud/PWA-репо. PWA остаётся local-first, а Phase-1 Fastify/PostgreSQL backend spine уже существует в `/server`. Backend и auth ещё не активированы для PWA и остаются pilot-blocked до закрытия authorization, delivery, deploy и operations gates. Real Mapbox SDK, payments, uploads, push и APK остаются отдельными фазами. См. также [`docs/screen-contracts.md`](docs/screen-contracts.md), [`docs/flow-contracts.md`](docs/flow-contracts.md), [`docs/active-ride-plan.md`](docs/active-ride-plan.md).
 
 ---
 
@@ -22,9 +22,9 @@
 
 ---
 
-## Current state - taxi-flow mock spine (✓ готово, mock-only)
+## Current state - local-first PWA + Phase-1 backend spine
 
-Cloud/PWA-репо уже вышел за рамки исходной доски объявлений и собран как mock-демо taxi-flow между водителем и пассажиром. Сетевой backend по-прежнему отсутствует, всё хранится в `localStorage` или in-memory mock data.
+Cloud/PWA-репо уже вышел за рамки исходной доски объявлений и собран как local-first taxi-flow между водителем и пассажиром. Phase-1 Fastify/PostgreSQL backend spine уже существует в `/server`, но PWA backend cutover не активирован. По умолчанию PWA продолжает читать и писать через `localStorage` / in-memory stores; наличие LIVE server routes не означает production readiness или разрешение на автоматический cutover.
 
 - [x] **Feed V2** (BD-FEED-01) - категории, карточки trip/passenger/announcement/marketplace
 - [x] **Composer V2** (BD-COMPOSER-01) - 5 типов публикаций, автосохранение черновика
@@ -53,21 +53,27 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 ### Gaps that remain real
 
 - [ ] **Real Mapbox SDK** - not connected. All map screens use DOM placeholders (the `driver_markers.js` / `trip_status_layer.js` foundation stubs exist; real Mapbox GL is the gap).
-- [ ] **Driver no-show full flow** - no-show still needs a dedicated issue before becoming a complete lifecycle surface.
-- [ ] **Automated tests** - `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt.
+- [ ] **Backend pilot gates** - OTP delivery/rate limiting, session lifecycle and role policy, chat participant authorization, staging deploy/rollback and observability remain before PWA activation.
+- [ ] **Driver no-show completion** - основной flow уже реализован; оставшиеся no-show/error/dispute состояния и product gaps отслеживаются в `docs/missing-screens.md`.
+- [ ] **Client/PWA automated coverage** - `node scripts/check.mjs` and smoke scripts are the current client guards; broader client node:test/browser coverage remains technical debt. The `/server` layer already has node:test route/contract coverage and separate server CI.
 
 ---
 
-## Phase 2 - Real backend
+## Phase 2 - Backend pilot / PWA cutover
 
-- [ ] Replace mock/local stores with an API client
-- [ ] Authentication: Telegram Login or magic-link
+Phase-1 backend code already exists. This phase is about hardening, validating and activating it per resource rather than creating a backend from zero.
+
+- [x] **Phase-1 backend spine** - Fastify/PostgreSQL, ordered migrations, repository layer and guarded PWA seams
+- [x] **Thin API client** - `public/src/api_client.js` exists; backend remains OFF by default
+- [x] **Orders / matching / ride-state / polling / history foundations** - backend routes exist; module-specific pilot gates still apply
+- [ ] **Per-resource PWA cutover** - move reads/writes from local stores only after each module's exit conditions are closed
+- [ ] **Phone + OTP auth hardening** - production delivery, throttling, session lifecycle and role/readiness policy
+- [ ] **Chat participant authorization** - sender identity and order/ride participation must be session-derived before activation
+- [ ] **Staging deploy / rollback / observability** - reproducible deployment, health evidence, redacted logs, metrics and rollback
 - [ ] Image uploads for posts/orders
-- [ ] Server-side categories, tags, filters and search
-- [ ] Server-side moderation
+- [ ] Server-side categories, tags, filters, search and moderation
 - [ ] Pagination / infinite scroll
-- [ ] Real server ride state machine linked to `ride_state.js`
-- [ ] Real-time channel for chat / responses / ride status
+- [ ] WebSocket/SSE push if required; cursor polling for ride status/events already exists
 
 ---
 
@@ -76,7 +82,7 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 - [ ] Web Push notifications
 - [ ] Real geolocation sorting / pickup detection
 - [ ] Favorites and saved searches
-- [ ] Profile history and ratings backed by server data
+- [ ] Ratings and profile aggregates backed by server data
 - [ ] Trusted contacts and shared ride links
 
 ---
@@ -118,11 +124,11 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 
 ## Technical debt
 
-- `mock_api.js` should move to IndexedDB or server-backed data in Phase 2.
+- PWA mock/local stores still need a phased cutover to the guarded backend API; do not flip the backend globally before module-specific pilot gates close.
 - `ride_state.js` still carries reserved values (`CONFIRMATION_PENDING`, `CHAT_STARTED`) for bridge screens.
 - `bazardrive.chat.v1` is written from multiple modules, so legacy migration must stay centralized enough to avoid drift.
 - Hash router works for Pages; a custom domain could later use History API with 404 fallback.
-- There are no automated unit tests yet.
+- PWA client coverage still relies mainly on `scripts/check.mjs` and smoke scripts; broader client node:test/browser coverage remains technical debt. The `/server` layer already has node:test and server CI.
 - Icons are generated by `scripts/build_icons.py`; icon changes require SW precache review.
 - `public/styles/cloud.css` is large and needs sectioning to reduce merge conflicts.
 - `public/prototypes/bazardrive_prototype.html` is large; consider Git LFS if it grows.
