@@ -54,6 +54,7 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 
 - [ ] **Real Mapbox SDK** - not connected. All map screens use DOM placeholders (the `driver_markers.js` / `trip_status_layer.js` foundation stubs exist; real Mapbox GL is the gap).
 - [ ] **Backend pilot gates** - OTP delivery/rate limiting, session lifecycle and role policy, chat participant authorization, staging deploy/rollback and observability remain before PWA activation.
+- [ ] **Driver no-show completion** - основной flow уже реализован; оставшиеся no-show/error/dispute состояния и product gaps отслеживаются в `docs/missing-screens.md`.
 - [ ] **Client/PWA automated coverage** - `node scripts/check.mjs` and smoke scripts are the current client guards; broader client node:test/browser coverage remains technical debt. The `/server` layer already has node:test route/contract coverage and separate server CI.
 
 ---
