@@ -75,6 +75,18 @@ expect('renderSubmitting view has no confirm/retry control (closes the double-su
 expect('failure retry re-invokes the same submitNoShow (single call site, no parallel path)',
   /#ns-retry['"]\)\.addEventListener\('click',\s*submitNoShow\)/.test(flow));
 
+// ── C3. BD-RIDE-D-NOSHOW-ACK-01 P1 — stale-settlement guard via isFlowOwner ──
+// Ownership is a caller-owned (active_ride.js noShowFlowOpen) read-only snapshot, checked
+// AFTER the awaited confirmNoShow() settles, so a stale attempt superseded by a retry or by
+// reconciliation discovering an authoritative terminal ride can never render over whoever
+// currently owns the sheet. No extra PATCH either way — confirmNoShow() has already run.
+expect('isFlowOwner is extracted with a safe always-owner (true) fallback',
+  /const isFlowOwner = typeof opts\.isFlowOwner === 'function' \? opts\.isFlowOwner : \(\) => true;/.test(flow));
+expect('a stale resolve cannot render success: isFlowOwner() is checked AFTER await, BEFORE renderResult',
+  /await confirmNoShow\(\);\s*submitting = false;\s*if\s*\(!isFlowOwner\(\)\)\s*return;\s*renderResult\(\);/.test(flow));
+expect('a stale reject cannot render failure: isFlowOwner() is checked AFTER the catch, BEFORE renderFailure',
+  /catch\s*\(err\)\s*\{\s*submitting = false;\s*if\s*\(!isFlowOwner\(\)\)\s*return;\s*renderFailure\(err\);/.test(flow));
+
 // ── D. UI-only boundary ──
 expect('flow imports only escapeHtml (no data/backend layer)',
   /import\s+\{\s*escapeHtml\s*\}\s+from\s+'\.\.\/util\.js'/.test(flow)
@@ -91,6 +103,8 @@ expect('#ar-no-show wires onConfirmNoShow through commitDriverNoShow (not an inl
   /ar-no-show'\)[\s\S]{0,400}onConfirmNoShow:\s*\(\)\s*=>\s*commitDriverNoShow\(\)/.test(screen));
 expect('#ar-no-show no longer opens the cancel sheet with the passenger_no_show preset',
   !/ar-no-show'\)[\s\S]{0,320}openDriverCancelSheet\s*\(/.test(screen));
+expect('BOTH #ar-no-show entry points pass isFlowOwner: () => noShowFlowOpen (active_ride.js stays the owner)',
+  (screen.match(/isFlowOwner:\s*\(\)\s*=>\s*noShowFlowOpen,/g) || []).length === 2);
 
 // ── E2. commitDriverNoShow — ACK-first backend/client contract (BD-RIDE-D-NOSHOW-ACK-01) ──
 const commitNoShowBody = (screen.match(/function commitDriverNoShow\(\)[\s\S]{0,1700}/) || [''])[0];
@@ -135,10 +149,30 @@ expect('failure still triggers reconciliation (refetchRideAndRender is not skipp
   /\.catch\(\(err\)\s*=>\s*\{[\s\S]{0,300}refetchRideAndRender\(\)/.test(commitNoShowBody));
 expect('noShowFlowOpen guard exists and is set true when the sub-flow opens',
   /let noShowFlowOpen = false;/.test(screen) && /noShowFlowOpen = true;/.test(screen));
-expect('refetchRideAndRender suppresses the parent renderSheet while the sub-flow owns the sheet',
-  /if\s*\(!noShowFlowOpen\)\s*renderSheet\(true\)/.test(screen));
 expect('onBack clears noShowFlowOpen before re-rendering the parent sheet',
   /onBack:\s*\(\)\s*=>\s*\{\s*noShowFlowOpen = false;\s*renderSheet\(\);\s*\}/.test(screen));
+
+// ── E4. BD-RIDE-D-NOSHOW-ACK-01 P1 — a TERMINAL status must take sheet ownership back from
+// an open no-show sub-flow (the earlier PATCH may have actually succeeded despite a
+// client-side failure, or the ride was terminalized elsewhere); a non-terminal update still
+// defers to the open sub-flow. This must hold in BOTH places that merge a fresh server ride
+// and can render: refetchRideAndRender() (the post-failure reconciliation) AND the regular
+// pollRideOnce() interval, which keeps running independently — it is only skipped while
+// pendingStatus is set mid-PATCH, not once a failed ACK clears it — so without the same guard
+// there it could clobber an open submitting/failure view with a stale unconditional render.
+const refetchBody = (screen.match(/async function refetchRideAndRender\(\)[\s\S]{0,1600}/) || [''])[0];
+expect('refetchRideAndRender is defined', Boolean(refetchBody));
+expect('refetchRideAndRender: terminal status clears noShowFlowOpen and always renders',
+  /if\s*\(isTerminalRideStatus\(ride\.status\)\)\s*\{\s*noShowFlowOpen = false;\s*renderSheet\(true\);\s*\}/.test(refetchBody));
+expect('refetchRideAndRender: non-terminal still defers to an open sub-flow',
+  /else if\s*\(!noShowFlowOpen\)\s*\{\s*renderSheet\(true\);\s*\}/.test(refetchBody));
+
+const pollOnceBody = (screen.match(/async function pollRideOnce\(\)[\s\S]{0,1700}/) || [''])[0];
+expect('pollRideOnce is defined', Boolean(pollOnceBody));
+expect('pollRideOnce: terminal status clears noShowFlowOpen and always renders',
+  /if\s*\(isTerminalRideStatus\(ride\.status\)\)\s*\{\s*noShowFlowOpen = false;\s*renderSheet\(true\);\s*\}/.test(pollOnceBody));
+expect('pollRideOnce: non-terminal still defers to an open sub-flow (regular poll no longer clobbers it unconditionally)',
+  /else if\s*\(!noShowFlowOpen\)\s*\{\s*renderSheet\(true\);\s*\}/.test(pollOnceBody));
 
 // ── F. Service worker precache ──
 expect('sw.js precaches active_ride_driver_noshow.js',

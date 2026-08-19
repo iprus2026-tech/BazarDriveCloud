@@ -82,7 +82,11 @@
 // v291 (BD-RIDE-D-NOSHOW-ACK-01, V2-04C2): precached active_ride.js + active_ride_driver_noshow.js
 // changed (ACK-first driver NO_SHOW: exactly one patchRideStatus PATCH, submitting/failure UI states,
 // double-submit guard; local-only backendRide=false path unchanged).
-const VERSION    = 'v291';
+// v292 (BD-RIDE-D-NOSHOW-ACK-01 P1, V2-04C2): precached active_ride.js changed (a TERMINAL status
+// now takes sheet ownership back from an open no-show sub-flow in both refetchRideAndRender() and
+// the regular pollRideOnce() poll, instead of the sub-flow's failure/retry view staying stuck after
+// a failed ACK that actually succeeded server-side or was terminalized elsewhere).
+const VERSION    = 'v292';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

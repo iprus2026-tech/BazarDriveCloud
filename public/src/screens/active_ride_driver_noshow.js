@@ -39,9 +39,15 @@ const PICKUP_COMP = 120;
 const COMMISSION = 24;
 
 // BD-RIDE-D-NOSHOW-01 — render the no-show sub-flow into the driver sheet.
-// opts: { ride, orderLabel, paidWaitAmount, onConfirmNoShow, onBack, go, showNotice }
+// opts: { ride, orderLabel, paidWaitAmount, onConfirmNoShow, onBack, isFlowOwner, go, showNotice }
 // onConfirmNoShow may return a Promise: resolve -> advance to `result`; reject -> show
 // `failure` (retry re-invokes it; no local persistence happens in this module either way).
+// isFlowOwner (BD-RIDE-D-NOSHOW-ACK-01 P1) — read-only ownership snapshot owned by the
+// caller (active_ride.js's noShowFlowOpen). Checked AFTER the awaited confirmNoShow()
+// settles, so a stale attempt superseded by a retry or by reconciliation discovering an
+// authoritative terminal ride never renders over whoever currently owns the sheet. A
+// missing/non-function opts.isFlowOwner falls back to always-owner (true), matching
+// today's behavior.
 export function openDriverNoShowFlow(sheet, opts = {}) {
   if (!sheet) return;
   const ride = opts.ride || {};
@@ -51,6 +57,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
   const back = typeof opts.onBack === 'function' ? opts.onBack : () => {};
   const showNotice = typeof opts.showNotice === 'function' ? opts.showNotice : () => {};
   const confirmNoShow = typeof opts.onConfirmNoShow === 'function' ? opts.onConfirmNoShow : () => {};
+  const isFlowOwner = typeof opts.isFlowOwner === 'function' ? opts.isFlowOwner : () => true;
 
   // Compensation receipt — the «платное ожидание» line is the LIVE accrued
   // amount (Codex P2). opts.paidWaitAmount may be a number or a resolver fn; we
@@ -124,6 +131,14 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
   // immediate renderSubmitting() swap (which removes #ns-confirm/#ns-retry from the DOM)
   // together guard against a double-submit: at most one onConfirmNoShow() call per
   // confirmation, even on a rapid double-click before the re-render lands.
+  //
+  // BD-RIDE-D-NOSHOW-ACK-01 P1 — isFlowOwner() is re-checked AFTER the await settles, not
+  // before: ownership can only change WHILE this call is in flight (a retry superseding this
+  // attempt, or reconciliation discovering the ride already went terminal), so the check has
+  // to happen on the far side of the await to catch exactly that window. A stale resolve must
+  // not renderResult() and a stale reject must not renderFailure() — either would overwrite
+  // whatever the current owner has already rendered. No extra PATCH either way: confirmNoShow()
+  // has already run and settled by the time ownership is checked.
   async function submitNoShow() {
     if (submitting) return;
     submitting = true;
@@ -137,9 +152,11 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
       // compensation, "back on line") must not render until it actually resolves.
       await confirmNoShow();
       submitting = false;
+      if (!isFlowOwner()) return;
       renderResult();
     } catch (err) {
       submitting = false;
+      if (!isFlowOwner()) return;
       renderFailure(err);
     }
   }

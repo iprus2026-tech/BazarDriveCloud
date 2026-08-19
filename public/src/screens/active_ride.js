@@ -534,10 +534,19 @@ export default function activeRide() {
       const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
       if (srv && currentViewIsUsable() && rideRefetchController === controller) {
         ride = mergeServerRide(srv);
-        // While the no-show sub-flow owns the sheet, keep `ride` reconciled but don't
-        // re-render the parent sheet — that would wipe the sub-flow's submitting/failure
-        // view. onBack re-renders with the freshest `ride` once the driver leaves it.
-        if (!noShowFlowOpen) renderSheet(true);
+        // BD-RIDE-D-NOSHOW-ACK-01 P1 — a TERMINAL status takes ownership of the sheet back
+        // from the no-show sub-flow: the earlier PATCH may have actually succeeded despite a
+        // client-side failure (or the ride was terminalized elsewhere), so leaving the
+        // sub-flow's failure/retry view showing would let the driver retry an already-terminal
+        // ride. Non-terminal reconciliation still defers to an open sub-flow — keep `ride`
+        // reconciled but don't re-render the parent sheet, which would wipe the sub-flow's
+        // submitting/failure view; onBack re-renders with the freshest `ride` on normal exit.
+        if (isTerminalRideStatus(ride.status)) {
+          noShowFlowOpen = false;
+          renderSheet(true);
+        } else if (!noShowFlowOpen) {
+          renderSheet(true);
+        }
       }
     } catch {
       // Writer reconciliation remains non-destructive on transient read failure.
@@ -649,7 +658,18 @@ export default function activeRide() {
         const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
         if (srv && currentViewIsUsable() && ridePollController === controller) {
           ride = mergeServerRide(srv);
-          renderSheet(true);
+          // BD-RIDE-D-NOSHOW-ACK-01 P1 — same terminal-ownership rule as
+          // refetchRideAndRender(): the regular poll keeps running independently of the
+          // no-show sub-flow (it is only skipped while pendingStatus is set, i.e. mid-PATCH —
+          // not once a failed ACK clears it), so without this it could clobber an open
+          // submitting/failure view with a non-terminal update. Terminal always takes the
+          // sheet back; non-terminal defers to an open sub-flow.
+          if (isTerminalRideStatus(ride.status)) {
+            noShowFlowOpen = false;
+            renderSheet(true);
+          } else if (!noShowFlowOpen) {
+            renderSheet(true);
+          }
         }
       }
       if (isTerminalRideStatus(ride.status)) stopRidePoll();
@@ -1017,6 +1037,12 @@ export default function activeRide() {
         paidWaitAmount: liveAccruedPaid,
         onConfirmNoShow: () => commitDriverNoShow(),
         onBack: () => { noShowFlowOpen = false; renderSheet(); },
+        // BD-RIDE-D-NOSHOW-ACK-01 P1 — active_ride.js stays the sole owner of
+        // noShowFlowOpen; this is a read-only snapshot the sub-flow checks after its
+        // own awaited confirmNoShow() settles, so a stale attempt (superseded by a
+        // retry, or by reconciliation discovering the ride already went terminal)
+        // never renders over whatever currently owns the sheet.
+        isFlowOwner: () => noShowFlowOpen,
         go,
         showNotice,
       });
@@ -1049,6 +1075,12 @@ export default function activeRide() {
         paidWaitAmount: liveAccruedPaid,
         onConfirmNoShow: () => commitDriverNoShow(),
         onBack: () => { noShowFlowOpen = false; renderSheet(); },
+        // BD-RIDE-D-NOSHOW-ACK-01 P1 — active_ride.js stays the sole owner of
+        // noShowFlowOpen; this is a read-only snapshot the sub-flow checks after its
+        // own awaited confirmNoShow() settles, so a stale attempt (superseded by a
+        // retry, or by reconciliation discovering the ride already went terminal)
+        // never renders over whatever currently owns the sheet.
+        isFlowOwner: () => noShowFlowOpen,
         go,
         showNotice,
       });
