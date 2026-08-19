@@ -41,13 +41,17 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   const pax = `+1602${String(process.pid).padStart(7, '0')}`;
   const other = `+1603${String(process.pid).padStart(7, '0')}`;
   const tripId = `trip-r06-${process.pid}`;
+  const noShowTripId = `trip-r06-noshow-${process.pid}`;
+  const noShowWrongTripId = `trip-r06-noshow-wrong-${process.pid}`;
   const cleanup = new pg.Client({ connectionString: DATABASE_URL });
   await cleanup.connect();
   t.after(async () => {
     // append-only timeline: drop test rows with triggers/FK checks off (CI superuser), best-effort.
     await cleanup.query("SET session_replication_role = 'replica'").catch(() => {});
-    await cleanup.query('DELETE FROM ride_events WHERE trip_id = $1', [tripId]).catch(() => {});
-    await cleanup.query('DELETE FROM rides WHERE trip_id = $1', [tripId]).catch(() => {});
+    for (const id of [tripId, noShowTripId, noShowWrongTripId]) {
+      await cleanup.query('DELETE FROM ride_events WHERE trip_id = $1', [id]).catch(() => {});
+      await cleanup.query('DELETE FROM rides WHERE trip_id = $1', [id]).catch(() => {});
+    }
     await cleanup.query("SET session_replication_role = 'origin'").catch(() => {});
     for (const p of [drv, pax, other]) {
       await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
@@ -114,4 +118,75 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   // a status_change event was appended per accepted transition (EN_ROUTE, IN_PROGRESS, COMPLETED = 3).
   const n = (await cleanup.query("SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'", [tripId])).rows[0].n;
   assert.equal(n, 3, 'three status_change events appended (no event for the rejected/no-op patches)');
+
+  // V2-04C1: backend-owned NO_SHOW authority. Seed a waiting ride for the assigned driver.
+  await cleanup.query(
+    `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, driver_name, route_pickup_label, route_dropoff_label, arrived_at)
+       VALUES ($1, 'WAITING_PASSENGER', 'driver', $2, $3, 'Иван', 'Дом', 'Центр', now())`,
+    [noShowTripId, drvS.user.userId, paxS.user.userId],
+  );
+
+  // Passenger is a participant, but NO_SHOW authority is driver-only.
+  const passengerNoShow = await patch(
+    app,
+    `/api/v1/ride-state/rides/${noShowTripId}/status`,
+    { status: 'NO_SHOW' },
+    bearer(paxS),
+  );
+  assert.equal(passengerNoShow.statusCode, 403, 'passenger cannot mark no-show');
+  assert.equal(passengerNoShow.json().code, 'FORBIDDEN');
+
+  // Assigned driver may close WAITING_PASSENGER as NO_SHOW; cancel metadata is server-derived.
+  const noShow = await patch(
+    app,
+    `/api/v1/ride-state/rides/${noShowTripId}/status`,
+    { status: 'NO_SHOW' },
+    bearer(drvS),
+  );
+  assert.equal(noShow.statusCode, 200);
+  assert.equal(noShow.json().ride.status, 'NO_SHOW');
+  assert.equal(noShow.json().ride.cancel.by, 'driver');
+  assert.equal(noShow.json().ride.cancel.reason, 'passenger_no_show');
+  assert.ok(noShow.json().ride.timestamps.canceledAt, 'NO_SHOW stamps canceledAt');
+  const noShowCanceledAt = noShow.json().ride.timestamps.canceledAt;
+
+  // Driver retry is idempotent: same terminal timestamp, no duplicate status_change event.
+  const noShowRetry = await patch(
+    app,
+    `/api/v1/ride-state/rides/${noShowTripId}/status`,
+    { status: 'NO_SHOW' },
+    bearer(drvS),
+  );
+  assert.equal(noShowRetry.statusCode, 200);
+  assert.equal(noShowRetry.json().ride.timestamps.canceledAt, noShowCanceledAt);
+  const noShowEvents = (await cleanup.query(
+    "SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'",
+    [noShowTripId],
+  )).rows[0].n;
+  assert.equal(noShowEvents, 1, 'NO_SHOW retry does not append a duplicate event');
+
+  // Driver cannot jump to NO_SHOW from another non-terminal state.
+  await cleanup.query(
+    `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, driver_name)
+       VALUES ($1, 'ACCEPTED', 'driver', $2, $3, 'Иван')`,
+    [noShowWrongTripId, drvS.user.userId, paxS.user.userId],
+  );
+  const wrongFrom = await patch(
+    app,
+    `/api/v1/ride-state/rides/${noShowWrongTripId}/status`,
+    { status: 'NO_SHOW' },
+    bearer(drvS),
+  );
+  assert.equal(wrongFrom.statusCode, 409);
+  assert.equal(wrongFrom.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+
+  // A different terminal state keeps the existing terminal-freeze response.
+  const terminalNoShow = await patch(
+    app,
+    `/api/v1/ride-state/rides/${tripId}/status`,
+    { status: 'NO_SHOW' },
+    bearer(drvS),
+  );
+  assert.equal(terminalNoShow.statusCode, 409);
+  assert.equal(terminalNoShow.json().code, 'RIDE_TERMINAL');
 });

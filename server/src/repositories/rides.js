@@ -68,3 +68,20 @@ export async function patchRideStatus(db, { id, status, timestampColumn = null, 
   );
   return rows[0] ?? null;
 }
+
+// V2-04C1 — server-owned Driver No-Show write. The service calls this only after
+// locking the ride and validating driver authority + WAITING_PASSENGER source state.
+// Actor/reason are intentionally NOT request parameters: the backend derives them.
+export async function patchRideNoShow(db, { id }) {
+  const { rows } = await db.query(
+    `UPDATE rides
+        SET status = 'NO_SHOW',
+            cancel_by = 'driver',
+            cancel_reason = 'passenger_no_show',
+            canceled_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
