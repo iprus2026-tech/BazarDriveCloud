@@ -481,6 +481,10 @@ export default function activeRide() {
   let rideRefetchController = null;
   let rideRefetchTimeoutId = null;
   let pendingStatus = null;
+  // BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — true while the no-show sub-flow owns `sheet`
+  // (its own submitting/result/failure views), so a background reconciliation doesn't
+  // re-render the parent sheet out from under it. See refetchRideAndRender().
+  let noShowFlowOpen = false;
   let fixtureRetryTimer = null;
   let destroyed = false;
   let hasMounted = false;
@@ -530,7 +534,10 @@ export default function activeRide() {
       const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
       if (srv && currentViewIsUsable() && rideRefetchController === controller) {
         ride = mergeServerRide(srv);
-        renderSheet(true);
+        // While the no-show sub-flow owns the sheet, keep `ride` reconciled but don't
+        // re-render the parent sheet — that would wipe the sub-flow's submitting/failure
+        // view. onBack re-renders with the freshest `ride` once the driver leaves it.
+        if (!noShowFlowOpen) renderSheet(true);
       }
     } catch {
       // Writer reconciliation remains non-destructive on transient read failure.
@@ -567,6 +574,50 @@ export default function activeRide() {
           ? 'Поездка уже завершена'
           : 'Не удалось завершить поездку на сервере');
         refetchRideAndRender();
+      });
+  }
+
+  // BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — ACK-first NO_SHOW. Returns a Promise the caller
+  // (active_ride_driver_noshow.js, via onConfirmNoShow) awaits to gate its own UI.
+  //   backendRide=true:  exactly ONE patchRideStatus(tripId, NO_SHOW) PATCH. A RESOLVED
+  //     Promise only proves the HTTP round-trip completed — NOT that the server actually
+  //     derived NO_SHOW — so a malformed/empty 2xx body, or one reporting a different status,
+  //     is rejected (NO_SHOW_ACK_INVALID) before any local write. Only once serverRide.status
+  //     === NO_SHOW is confirmed does the local record get rebuilt from that AUTHORITATIVE
+  //     server ride — mergeServerRide() then saveActiveRide() — never a fresh local
+  //     updateActiveRideStatus/persistDriverCancel call: that would both stamp a client-side
+  //     canceledAt (the server owns timestamps.canceledAt) and, via persistDriverRideStatus's
+  //     own backendRide branch, fire a SECOND PATCH. On any failure (network/HTTP/invalid ACK),
+  //     nothing is persisted locally (ride stays WAITING_PASSENGER) and the Promise rejects so
+  //     the caller shows a failure/retry view instead of success; reconciliation
+  //     (refetchRideAndRender) still runs in the background regardless.
+  //   backendRide=false: unchanged local-only path (today's default/production behavior).
+  function commitDriverNoShow() {
+    if (!backendRide) {
+      ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show');
+      return Promise.resolve();
+    }
+    pendingStatus = RIDE_STATUS.NO_SHOW;
+    return patchRideStatus(ride.tripId, RIDE_STATUS.NO_SHOW)
+      .then((serverRide) => {
+        // A resolved Promise only means the HTTP round-trip completed — it does NOT prove the
+        // server actually derived NO_SHOW. Reject a malformed/empty body or a mismatched status
+        // before any local write, so the caller treats it as a failure, never a success.
+        if (!serverRide || serverRide.status !== RIDE_STATUS.NO_SHOW) {
+          throw new Error('NO_SHOW_ACK_INVALID');
+        }
+        pendingStatus = null;
+        ride = mergeServerRide(serverRide);
+        ride = saveActiveRide(ride);
+        syncCanonicalOrderStatus(ride, RIDE_STATUS.NO_SHOW);
+      })
+      .catch((err) => {
+        pendingStatus = null;
+        showNotice(err && err.code === 'RIDE_TERMINAL'
+          ? 'Поездка уже завершена'
+          : 'Не удалось подтвердить «не вышел» на сервере');
+        refetchRideAndRender();
+        throw err;
       });
   }
 
@@ -959,14 +1010,17 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
-    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
-      ride,
-      paidWaitAmount: liveAccruedPaid,
-      onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
-      onBack: () => renderSheet(),
-      go,
-      showNotice,
-    }));
+    sheet.querySelector('#ar-no-show').addEventListener('click', () => {
+      noShowFlowOpen = true;
+      openDriverNoShowFlow(sheet, {
+        ride,
+        paidWaitAmount: liveAccruedPaid,
+        onConfirmNoShow: () => commitDriverNoShow(),
+        onBack: () => { noShowFlowOpen = false; renderSheet(); },
+        go,
+        showNotice,
+      });
+    });
     bindPassengerActions();
     startWaitTimer();
   }
@@ -988,14 +1042,17 @@ export default function activeRide() {
     sheet.innerHTML = `<div class="ns-alert warning"><span class="ns-alert-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><div class="ns-alert-body"><div class="ns-alert-title">Бесплатное ожидание закончилось</div><div class="ns-alert-sub">Идёт платное ожидание · начислено <span id="ar-paid-accrued">${escapeHtml(accrued)}</span></div></div></div><div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Пассажир не выходит</div><div class="active-ride__sheet-sub">Платное ожидание · ${escapeHtml(paidRate)}</div></div><div class="ns-timer tone-warning"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="62.08" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(paidElapsed)}</div></div><div class="ns-timer-lbl">платно</div></div></div>${passengerRowHtml(ride.passenger || {})}<div class="ns-hint"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Позвоните пассажиру перед тем, как отметить, что он не вышел.</span></div><div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Пассажир сел — начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Пассажир не вышел</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
-    sheet.querySelector('#ar-no-show').addEventListener('click', () => openDriverNoShowFlow(sheet, {
-      ride,
-      paidWaitAmount: liveAccruedPaid,
-      onConfirmNoShow: () => { ride = persistDriverCancel(RIDE_STATUS.NO_SHOW, 'passenger_no_show'); },
-      onBack: () => renderSheet(),
-      go,
-      showNotice,
-    }));
+    sheet.querySelector('#ar-no-show').addEventListener('click', () => {
+      noShowFlowOpen = true;
+      openDriverNoShowFlow(sheet, {
+        ride,
+        paidWaitAmount: liveAccruedPaid,
+        onConfirmNoShow: () => commitDriverNoShow(),
+        onBack: () => { noShowFlowOpen = false; renderSheet(); },
+        go,
+        showNotice,
+      });
+    });
     bindPassengerActions();
     startPaidTimer();
   }

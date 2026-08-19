@@ -55,9 +55,13 @@ expect('expired variant uses the warning-tone ring + status copy',
   /ns-timer tone-warning/.test(expired) && expired.includes('Пассажир не выходит'));
 expect('expired keeps a direct start-trip path (#ar-start → IN_PROGRESS) [Codex P2]',
   /ar-start['"]\)[\s\S]{0,200}RIDE_STATUS\.IN_PROGRESS/.test(expired));
-expect('expired «Пассажир не вышел» opens the no-show flow + persists NO_SHOW',
+// BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — persistence is centralized in the shared
+// commitDriverNoShow() (ACK-first backend PATCH + local-only fallback), not inlined per
+// call site — this pin follows the wiring to that shared function, not a literal inline
+// persistDriverCancel(...) call inside renderWaitingExpired() itself.
+expect('expired «Пассажир не вышел» opens the no-show flow via onConfirmNoShow -> commitDriverNoShow',
   /ar-no-show['"]\)[\s\S]{0,400}openDriverNoShowFlow\s*\(\s*sheet/.test(expired)
-  && /persistDriverCancel\(RIDE_STATUS\.NO_SHOW,\s*'passenger_no_show'\)/.test(expired));
+  && /ar-no-show[\s\S]{0,400}onConfirmNoShow:\s*\(\)\s*=>\s*commitDriverNoShow\(\)/.test(expired));
 
 // ── D. Free state keeps its existing contract ──
 expect('free wait keeps #ar-start → IN_PROGRESS',

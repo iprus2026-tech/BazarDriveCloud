@@ -375,13 +375,16 @@ expect('DRIVER_APPROACHING_PICKUP stage opens the cancel sheet via #ar-cancel',
   /ar-cancel['"]\)[\s\S]{0,300}openDriverCancelSheet\s*\(/.test(approaching));
 const waiting = functionBody(screen, 'renderWaiting') || '';
 expect('renderWaiting() body resolved', waiting.length > 0);
-// BD-RIDE-D-NOSHOW-01 — #ar-no-show now opens the dedicated no-show sub-flow
-// (active_ride_driver_noshow.js), replacing the cancel-sheet passenger_no_show
-// preset. The NO_SHOW persist pin below still holds (fired via onConfirmNoShow).
+// BD-RIDE-D-NOSHOW-01 / BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — #ar-no-show opens the
+// dedicated no-show sub-flow (active_ride_driver_noshow.js), replacing the cancel-sheet
+// passenger_no_show preset. Persistence is centralized in the shared commitDriverNoShow()
+// (ACK-first backend PATCH + local-only fallback), not inlined per call site, so the pin
+// below follows the wiring to that shared function rather than a literal RIDE_STATUS.NO_SHOW
+// string inside renderWaiting() itself.
 expect('WAITING_PASSENGER #ar-no-show opens the no-show flow (openDriverNoShowFlow)',
   /ar-no-show['"]\)[\s\S]{0,400}openDriverNoShowFlow\s*\(\s*sheet/.test(waiting));
-expect('WAITING_PASSENGER no-show persists RIDE_STATUS.NO_SHOW',
-  /ar-no-show[\s\S]{0,800}RIDE_STATUS\.NO_SHOW/.test(waiting));
+expect('WAITING_PASSENGER no-show wires onConfirmNoShow through the shared commitDriverNoShow',
+  /ar-no-show[\s\S]{0,400}onConfirmNoShow:\s*\(\)\s*=>\s*commitDriverNoShow\(\)/.test(waiting));
 const inProgress = functionBody(screen, 'renderInProgress') || '';
 expect('renderInProgress() body resolved', inProgress.length > 0);
 expect('IN_PROGRESS stage opens the problem sheet via #ar-issue',
