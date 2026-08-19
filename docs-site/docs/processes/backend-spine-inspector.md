@@ -79,6 +79,24 @@ _Historical concept mock: labels inside this image predate the implemented serve
 - PWA calls remain guarded. A live server route is not permission to activate a client cutover before its pilot blocker is closed.
 - The service worker must continue to bypass `/api`; API responses are never an offline cache source.
 
+### Ride transition authority - NO_SHOW
+
+This is a contract-only staging-pilot rule. It does not activate the PWA backend seam and does not introduce a new ride status.
+
+- **Canonical status:** `NO_SHOW` remains the existing terminal `RIDE_STATUS`; no `NO_SHOW_PENDING` or parallel lifecycle state is introduced.
+- **Endpoint:** `PATCH /api/v1/ride-state/rides/:tripId/status` with `{ "status": "NO_SHOW" }`.
+- **Authority:** the authenticated session user must be the assigned ride driver. Client-supplied role or cancel actor fields never grant authority.
+- **Allowed transition:** `WAITING_PASSENGER -> NO_SHOW`.
+- **Server-derived fields:** `status=NO_SHOW`, `cancel_by=driver`, `cancel_reason=passenger_no_show`, `canceled_at` from server time.
+- **Transaction:** lock ride -> validate actor and from-state -> update ride -> append status-change event -> commit.
+- **Idempotent replay:** `NO_SHOW -> NO_SHOW` returns the acknowledged ride without re-stamping the terminal timestamp or duplicating the ride event.
+- **Wrong actor:** passenger attempt -> `403 FORBIDDEN`.
+- **Wrong non-terminal from-state:** driver attempt outside `WAITING_PASSENGER` -> `409 RIDE_TRANSITION_NOT_ALLOWED`.
+- **Different terminal state:** existing terminal freeze -> `409 RIDE_TERMINAL`.
+- **Ownership:** role/actor enforcement belongs to #830 `BD-AUTH-POLICY-01`; retry/conflict/idempotency belongs to #826 `BD-API-IDEMPOTENCY-01`.
+- **Migration:** none for this contract slice; existing rides schema already carries cancel actor/reason and terminal timestamp.
+- **Activation:** this docs contract does not authorize server/runtime implementation or client cutover.
+
 ## Pilot blockers and delivery slices
 
 | Slice | Depends on | Exit condition |

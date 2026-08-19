@@ -1291,3 +1291,19 @@ no replacing public/index.html with prototype HTML
 no renaming localStorage keys without migration and storage-boundary update
 no new user-scoped storage without a clear helper or explicit exemption
 ```
+
+### V2-04B - Driver No-Show backend acknowledgement contract
+
+This addendum applies only when Driver Active Ride operates against a backend-owned ride. It does not change the LOCAL_ONLY demo contract or introduce a new `RIDE_STATUS`.
+
+| Field | Contract |
+|---|---|
+| Local-only behavior | Confirm may persist local `NO_SHOW` and then render the existing result flow. |
+| Backend request state | Confirm enters `mutation_pending`. This is UI/request state, not a canonical ride status. |
+| Backend mutation | Send `PATCH /api/v1/ride-state/rides/:tripId/status` with `status=NO_SHOW`; do not persist local terminal success before server acknowledgement. |
+| Success | Only after server returns acknowledged `NO_SHOW`: mirror that ride locally, then render result -> demo compensation -> done. |
+| Reject / conflict | On `403`, `409`, or definite server failure: do not persist local `NO_SHOW`, do not render success, and do not present demo compensation as earned. Reconcile server state and return through no-show error / waiting-safe. |
+| Timeout / ambiguous failure | Re-fetch server ride. Server `NO_SHOW` means acknowledged success; server `WAITING_PASSENGER` means waiting-safe / retry. |
+| Error ownership | `BD-RIDE-D-NOSHOW-ERR-01` owns no-show loading/error/waiting-safe UI. `BD-RIDE-D-ERROR-02` remains the general async backend mutation-failure contract. |
+| Source of truth | Backend ride state is authoritative. Local storage may cache an acknowledged state but must not invent successful server transitions. |
+| Out of scope | Runtime implementation, backend code, migrations, compensation/payment rules, smoke, CSP, service worker, Mapbox and dispatcher. |
