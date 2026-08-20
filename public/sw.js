@@ -106,7 +106,8 @@
 // v297 (BD-RIDE-WAITING-01E Codex P2 repair): precached trip_confirmation_handoff.js and
 // active_ride_passenger.js changed again (non-persisting legacy waiting normalization in
 // loadCanonicalActiveRide; unknown wait progress no longer reports a false pct=100).
-const VERSION    = 'v297';
+// v298 — preserve canonical waiting normalization through passenger hydration.
+const VERSION    = 'v298';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

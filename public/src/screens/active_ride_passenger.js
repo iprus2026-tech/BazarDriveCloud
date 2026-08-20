@@ -368,9 +368,26 @@ function loadPassengerRideView(tripId, statusQuery) {
   // at this tripId, when no real response is stored for the orderId, when
   // the ride is terminal, or when the persisted ride already matches the
   // pinned response. Mirrors what /responses runs through the same path.
+  //
+  // BD-RIDE-WAITING-01E Codex P2 hydration repair — upgradeStoredActiveRideForOrder
+  // does its own raw findActiveRide() re-read (and, when a snapshot upgrade
+  // applies, its own saveActiveRide()), bypassing loadCanonicalActiveRide's
+  // legacy-waiting normalizer entirely. Using its return value directly
+  // (the old `upgraded !== ride` check) silently reintroduced the pre-v296
+  // waiting.remaining/paidStartsAt leak on this hydration path, since a
+  // fresh storage read is always a different object reference regardless
+  // of whether real upgrade content changed. Re-run loadCanonicalActiveRide
+  // after the orchestrator so the final Ride is always normalized —
+  // whatever upgradeStoredActiveRideForOrder may have persisted is picked
+  // up by this re-read (findActiveRide sees the fresh save), then passed
+  // through the normalizer again. `|| upgraded` is a defensive fallback
+  // only; loadCanonicalActiveRide should not return null here since a ride
+  // already exists at this tripId.
   if (ride && typeof tripId === 'string' && tripId.startsWith('trip_')) {
     const upgraded = upgradeStoredActiveRideForOrder(tripId.slice(5));
-    if (upgraded && upgraded !== ride) ride = upgraded;
+    if (upgraded) {
+      ride = loadCanonicalActiveRide({ tripId, role: 'passenger' }) || upgraded;
+    }
   }
   if (!ride) {
     // BD-RIDE-D-10 — Mirror the driver fallback: when no canonical

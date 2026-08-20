@@ -1,4 +1,4 @@
-// BD-RIDE-WAITING-01E Codex P2 repair — static regression guard for the two
+// BD-RIDE-WAITING-01E Codex P2 repair — static regression guard for the
 // P2 fixes on PR #908:
 //
 //   P2-1: loadCanonicalActiveRide() (trip_confirmation_handoff.js) must
@@ -14,6 +14,16 @@
 //   (the initial renderWaitingSheet markup and the live-refresh DOM patch)
 //   must not stamp aria-valuenow="100" or a full progress-bar-fill step for
 //   that case.
+//
+//   P2-1 hydration follow-up: loadPassengerRideView() (active_ride_passenger.js)
+//   must not let upgradeStoredActiveRideForOrder()'s raw storage re-read
+//   (a fresh findActiveRide() call that bypasses the normalizer above)
+//   become the final hydrated Ride directly — the old `upgraded !== ride`
+//   reference check reintroduced the legacy waiting leak on this path,
+//   since two separate storage reads are always different object
+//   references regardless of whether real upgrade content changed. The
+//   final Ride must be re-derived through loadCanonicalActiveRide() so the
+//   normalizer runs again after any upgrade/persist.
 //
 // STATIC source assertions only — no browser, no DOM, mirrors the existing
 // smoke-active-ride-waiting.mjs (driver side) pattern for the passenger/
@@ -99,6 +109,19 @@ expect('live refresh removes aria-valuenow (not sets "100") when waiting.pct is 
   /waiting\.pct == null/.test(refreshBody) && /removeAttribute\('aria-valuenow'\)/.test(refreshBody));
 expect('live refresh does not stamp a full (10) fill step when waiting.pct is null',
   /waiting\.pct == null \? 0/.test(refreshBody));
+
+// ── P2-1 hydration follow-up — passenger re-read must stay normalized ──
+const hydrationBody = functionBody(passenger, 'loadPassengerRideView');
+expect('loadPassengerRideView defined', hydrationBody.length > 0);
+expect('loadPassengerRideView still calls upgradeStoredActiveRideForOrder',
+  /upgradeStoredActiveRideForOrder\(/.test(hydrationBody));
+expect('after upgradeStoredActiveRideForOrder, the final ride is re-derived via loadCanonicalActiveRide (not the raw upgraded object directly)',
+  /const\s+upgraded\s*=\s*upgradeStoredActiveRideForOrder\([^;]*\);[\s\S]{0,80}?if\s*\(upgraded\)\s*\{[\s\S]{0,120}?ride\s*=\s*loadCanonicalActiveRide\(\{\s*tripId,\s*role:\s*'passenger'\s*\}\)\s*\|\|\s*upgraded;/
+    .test(hydrationBody));
+expect('the raw upgraded return value can no longer become `ride` without a canonical re-read (no bare `ride = upgraded;` assignment)',
+  !/\bride\s*=\s*upgraded;/.test(hydrationBody));
+expect('the old reference-identity pattern (upgraded !== ride) is no longer the final hydration path',
+  !/if\s*\(upgraded\s*&&\s*upgraded\s*!==\s*ride\)\s*ride\s*=\s*upgraded;/.test(hydrationBody));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
