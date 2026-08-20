@@ -5,12 +5,18 @@ import { acceptOrder, getOrderById, listOrderOffers, selectOfferOnBackend } from
 import { isBackendEnabled } from '../api_config.js';
 import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 import { buildPassengerRideSeed } from '../ride_seed.js';
+import { loadAllResponses } from '../response_store.js';
+import { buildRideRequestContext, buildRideDriverContext } from '../ride_context.js';
 
 // BD-RESPOND-ORDER-LINK-02 — read-side store. /respond writes a
 // passenger_response into this keyed map; this screen reads it back to surface
 // real driver responses on the board. Read-only here: never written from
 // /responses (respond.js / chat.js own writes + the user-scoped clear).
-const RESPONSES_KEY = 'bazardrive.responses.v1';
+// BD-RIDE-AUTHORITY-01D — the raw read + RESPONSES_KEY literal now live
+// solely in response_store.js (the same module trip_confirmation_handoff.js
+// uses for its exact-key lookup); this file only ever reaches the store
+// through loadAllResponses(), so RESPONSES_KEY has exactly one declaration
+// and one localStorage call site across both files.
 
 const MOCK_REQUEST = {
   id:          'post_1001',
@@ -228,23 +234,10 @@ function responsesWord(count) {
   return 'откликов';
 }
 
-function pointLabel(point, fallback) {
-  if (point && typeof point === 'object' && typeof point.label === 'string' && point.label.trim()) {
-    return point.label.trim();
-  }
-  return fallback;
-}
-
 function formatRub(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return '';
   return `${Math.round(n).toLocaleString('ru-RU')} ₽`;
-}
-
-function moneyLabelFromOrder(order) {
-  const savedLabel = typeof order?.estimatedPriceLabel === 'string' ? order.estimatedPriceLabel.trim() : '';
-  if (savedLabel) return /₽\s*$/.test(savedLabel) ? savedLabel : `${savedLabel} ₽`;
-  return formatRub(order?.estimatedPrice);
 }
 
 function resolveCanonicalOrder() {
@@ -297,19 +290,24 @@ export function requestFromOrder(order, explicitOrderId = '') {
       isFallback: true,
     };
   }
-  const price = moneyLabelFromOrder(order) || MOCK_REQUEST.price;
+  // BD-RIDE-AUTHORITY-01D — canonical pickupLabel/dropoffLabel/price/note
+  // come from the shared, screen-import-free ride_context.js core; this
+  // wrapper adds only the screen-owned fallback copy ('Комментарий не
+  // указан') and board-only fields (id/orderId/passengerId/status/time/
+  // numericPrice) on top, so the derivation itself is never duplicated.
+  const core = buildRideRequestContext(order);
+  const price = core.price || MOCK_REQUEST.price;
   const numericPrice = Number(order.estimatedPrice) || MOCK_REQUEST.numericPrice;
-  const note = String(order.comment || order.passenger?.comment || '').trim();
   return {
     id: String(order.id || MOCK_REQUEST.id),
     orderId: String(order.id || MOCK_REQUEST.orderId),
     passengerId: String(order.passenger?.authorId || MOCK_REQUEST.passengerId),
     status: 'PUBLISHED',
-    pickupLabel: pointLabel(order.pickup, 'Точка подачи'),
-    dropoffLabel: pointLabel(order.dropoff, 'Точка назначения'),
+    pickupLabel: core.pickupLabel,
+    dropoffLabel: core.dropoffLabel,
     price,
     numericPrice,
-    note: note || 'Комментарий не указан',
+    note: core.note || 'Комментарий не указан',
     time: formatOrderTime(order),
     isFallback: false,
   };
@@ -346,38 +344,11 @@ function buildDrivers(request) {
 function loadResponsesForOrder(orderId) {
   const id = String(orderId || '').trim();
   if (!id) return [];
-  try {
-    const raw = localStorage.getItem(RESPONSES_KEY);
-    if (!raw) return [];
-    const map = JSON.parse(raw);
-    if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
-    return Object.values(map).filter((r) =>
-      r && typeof r === 'object'
-      && r.kind === 'passenger_response'
-      && String(r.orderId || '') === id);
-  } catch {
-    return [];
-  }
-}
-
-// BD-RIDE-AUTHORITY-01B — Direct by-id lookup into the same keyed store
-// loadResponsesForOrder reads, for callers (trip_confirmation_handoff.js)
-// that only have a responseId (e.g. from a confirmed /trip-confirmation
-// handoff) and not yet an orderId to scope the search by. Read-only,
-// mirrors chat.js's private loadResponse().
-export function resolveResponseById(responseId) {
-  const id = typeof responseId === 'string' ? responseId.trim() : '';
-  if (!id) return null;
-  try {
-    const raw = localStorage.getItem(RESPONSES_KEY);
-    if (!raw) return null;
-    const map = JSON.parse(raw);
-    if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
-    const r = map[id];
-    return (r && typeof r === 'object' && r.kind === 'passenger_response') ? r : null;
-  } catch {
-    return null;
-  }
+  const map = loadAllResponses();
+  return Object.values(map).filter((r) =>
+    r && typeof r === 'object'
+    && r.kind === 'passenger_response'
+    && String(r.orderId || '') === id);
 }
 
 // BD-LIFE-05 — Build a flat, type-guarded driverSnapshot view of one stored
@@ -527,19 +498,11 @@ export function upgradeRideFromDriverSnapshot(ride, snapshot) {
   return { ...ride, driver, vehicle, selectedDriver };
 }
 
-// pickupTiming on the stored response is a coarse enum; map it to the short
-// "Подача" label the card already renders. Unknown / missing → em-dash.
-const PICKUP_TIMING_LABELS = {
-  at_time:   'К времени',
-  earlier:   'Можно раньше',
-  negotiate: 'Договоримся',
-};
-function timingLabel(timing) {
-  return PICKUP_TIMING_LABELS[timing] || '—';
-}
 // Fastest → slowest pickup intent, used as the «Быстрее» tiebreak for real
 // responses (which all share etaBars and carry a non-numeric label, so
-// etaMinutes cannot separate them). Lower rank = sooner.
+// etaMinutes cannot separate them). Lower rank = sooner. UI-only sort
+// signal — stays screen-owned (ride_context.js's canonical driver context
+// has no notion of board ordering).
 const PICKUP_TIMING_RANK = { earlier: 0, at_time: 1, negotiate: 2 };
 
 // Map a real passenger_response into the exact card shape renderDriverCard /
@@ -549,58 +512,39 @@ const PICKUP_TIMING_RANK = { earlier: 0, at_time: 1, negotiate: 2 };
 // neutral, CSS-valid placeholders. EVERY field is filled — escapeHtml turns
 // undefined into the literal "undefined", and each tone must map to a real
 // class (avatar mint/amber/violet, delta same/up/down, eta good/mid/low).
+//
+// BD-RIDE-AUTHORITY-01D — the canonical fields (identity, price, eta, note)
+// come from the shared, screen-import-free ride_context.js core; this
+// wrapper adds only the UI decoration (avatarTone, priceDelta, priceTone,
+// etaTone, etaBars, etaRank, isBest, trips) and the index-based responseId
+// fallback, which are board-list concerns with no meaning outside a
+// multi-card render.
 export function mapResponseToDriverCard(response, request, index) {
-  const responseId = String(response.id || `response_${index + 1}`);
-  const value = Number(response.driverPrice);
-  // BD-RIDE-AUTHORITY-01B — request.price already carries requestFromOrder's
-  // own MOCK_REQUEST.price fallback baked in (for its unrelated MOCK_DRIVERS
-  // board use), so it cannot be trusted here to distinguish a real
-  // order-derived price from a demo placeholder. A canonical real order +
-  // real response with an invalid driverPrice must show a controlled
-  // missing value, never a fabricated mock number.
-  const price = Number.isFinite(value) && value > 0
-    ? formatRub(value)
-    : (request.isFallback ? 'По договорённости' : '—');
-  const note = typeof response.message === 'string' ? response.message.trim() : '';
-  // BD-RIDE-ORDER-01 — when respond.js attached a flat driverSnapshot to the
-  // stored response, render the driver card from it. Legacy responses (and
-  // any future write paths that omit the snapshot) keep the original neutral
-  // placeholders unchanged — every key in the returned object stays defined
-  // so escapeHtml never sees `undefined` (see comment above).
-  //
-  // localStorage is treated as untrusted: stale QA data, partially malformed
-  // payloads or schema drift may leave non-string values on the snapshot.
-  // Type-check each field before .trim() so one bad record cannot abort the
-  // whole responses render path.
-  const snap = (response && typeof response.driverSnapshot === 'object' && response.driverSnapshot !== null)
-    ? response.driverSnapshot
-    : null;
-  const pickStr = (v) => (typeof v === 'string' ? v.trim() : '');
-  const snapName = pickStr(snap?.name);
-  const initials = snapName ? snapName.slice(0, 1).toUpperCase() : 'В';
+  const core = buildRideDriverContext(response, request);
+  const responseId = core.responseId || `response_${index + 1}`;
   return {
     id:         responseId,
     responseId,
-    name:       snapName || 'Водитель',
-    initials,
+    name:       core.name,
+    initials:   core.initials,
     avatarTone: 'mint',
-    rating:     (snap && typeof snap.rating === 'number') ? snap.rating.toFixed(1) : '—',
-    car:        pickStr(snap?.car),
-    carModel:   pickStr(snap?.carModel),
-    carColor:   pickStr(snap?.carColor),
-    plate:      pickStr(snap?.plate),
+    rating:     core.rating,
+    car:        core.car,
+    carModel:   core.carModel,
+    carColor:   core.carColor,
+    plate:      core.plate,
     trips:      '',
-    price,
+    price:      core.price,
     priceDelta: '',
     priceTone:  'same',
-    eta:        timingLabel(response.pickupTiming),
+    eta:        core.eta,
     etaTone:    'mid',
     etaBars:    2,
     // Sort signal for «Быстрее»: real cards share a non-numeric eta label, so
     // the pickup-timing rank is what orders them (earlier < at_time < negotiate).
     etaRank:    Number.isInteger(PICKUP_TIMING_RANK[response.pickupTiming])
                   ? PICKUP_TIMING_RANK[response.pickupTiming] : 1,
-    note,
+    note:       core.note,
     isBest:     index === 0,
   };
 }

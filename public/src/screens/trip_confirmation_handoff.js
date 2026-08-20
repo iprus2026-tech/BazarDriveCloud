@@ -8,12 +8,12 @@
 // createdAt, expiresAt, responseId). BD-RIDE-AUTHORITY-01B: a confirmed
 // handoff for a REAL order/response must seed REAL passenger/driver/
 // vehicle/route/price data. BD-RIDE-AUTHORITY-01C: construction goes
-// through the pure buildPassengerRideSeed (ride_seed.js) directly — this
-// module no longer imports the side-effecting buildPassengerActiveRide
-// from responses.js. resolveResponseById/requestFromOrder/
-// mapResponseToDriverCard are still imported from responses.js in this
-// slice — removing that remaining screen-to-screen dependency is
-// deferred follow-up work.
+// through the pure buildPassengerRideSeed (ride_seed.js) directly.
+// BD-RIDE-AUTHORITY-01D: response resolution now comes from
+// response_store.js (the exact-key responses.v1 lookup leaf) and request/
+// driver context shaping from ride_context.js (the pure, screen-import-
+// free adapter) — this module no longer imports anything from
+// ./responses.js. Zero screen-to-screen dependency remains.
 //
 // BD-RIDE-AUTHORITY-01C closure — the canonical chat-confirm chain
 // (respond.js -> chat.js -> trip_confirmation.js) never touches order
@@ -33,11 +33,8 @@
 import { RIDE_STATUS, findActiveRide, saveActiveRide } from '../ride_state.js';
 import { getOrderById, acceptOrder } from '../mock_api.js';
 import { buildPassengerRideSeed } from '../ride_seed.js';
-import {
-  resolveResponseById,
-  requestFromOrder,
-  mapResponseToDriverCard,
-} from './responses.js';
+import { resolveResponseById } from '../response_store.js';
+import { buildRideRequestContext, buildRideDriverContext } from '../ride_context.js';
 
 const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
 
@@ -250,8 +247,8 @@ function seedRealActiveRideFromHandoff({ tripId, handoff }) {
   if (!snapName) return null;
   const accepted = order.status === 'CREATED' ? acceptOrder(orderId) : order;
   const sourceOrder = accepted || order;
-  const request = requestFromOrder(sourceOrder);
-  const driver = mapResponseToDriverCard(response, request, 0);
+  const request = buildRideRequestContext(sourceOrder);
+  const driver = buildRideDriverContext(response, request);
   const ride = buildPassengerRideSeed(sourceOrder, request, driver);
   if (!ride || ride.tripId !== tripId) return null;
   return saveActiveRide(ride);

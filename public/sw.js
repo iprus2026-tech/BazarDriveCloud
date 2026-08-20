@@ -96,7 +96,12 @@
 // orchestration wrappers; the confirmation-handoff path also now accepts a still-CREATED order before
 // persisting a DRIVER_EN_ROUTE ride, mirroring responses.js's own accept-if-CREATED step). New
 // PRECACHE entry: ./src/ride_seed.js.
-const VERSION    = 'v294';
+// v295 (BD-RIDE-AUTHORITY-01D): precached responses.js and trip_confirmation_handoff.js changed
+// again (response resolution extracted into the new precached ./src/response_store.js — exact-key
+// lookup only — and request/driver context shaping into the new precached ./src/ride_context.js —
+// pure, zero imports; trip_confirmation_handoff.js no longer imports anything from responses.js).
+// New PRECACHE entries: ./src/response_store.js, ./src/ride_context.js.
+const VERSION    = 'v295';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -183,6 +188,8 @@ const PRECACHE = [
   './src/ops/connectors/mel_export_connector.js',
   './src/ride_state.js',
   './src/ride_seed.js',
+  './src/ride_context.js',
+  './src/response_store.js',
   './src/driver_offer_store.js',
   './src/ride_actions.js',
   './src/garage.js',

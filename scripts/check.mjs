@@ -759,6 +759,24 @@ if (exists(rideSeedPureBuilderSmoke)) {
   }
 }
 
+// BD-RIDE-AUTHORITY-01D — response_store.js + ride_context.js contract guard:
+// exact-key-only response lookup, ride_context.js purity (zero imports,
+// no storage/backend/UI/screen references), canonical request/driver
+// context values, a responses.js regression proving the wrapper refactor
+// left /responses' full observable output (incl. UI-only fields and the
+// !order fallback branch) unchanged, the confirmation flow's canonical
+// Ride shape, the no-MOCK-fallback broken-linkage guard, and the
+// structural zero-screen-to-screen-import proof.
+const rideContext01dSmoke = path.join(root, 'scripts', 'smoke-ride-context-01d.mjs');
+if (exists(rideContext01dSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideContext01dSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-context-01d.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).

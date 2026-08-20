@@ -173,18 +173,22 @@ expect("driver snapshot sets status: 'DRIVER_EN_ROUTE'",
 // ── D. trip_confirmation_handoff.js — load/seed/canonical contract ──
 expect('handoff imports RIDE_STATUS, findActiveRide from ../ride_state.js',
   /import\s*\{[\s\S]*?RIDE_STATUS[\s\S]*?findActiveRide[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(handoff));
-// BD-RIDE-AUTHORITY-01B — a real handoff resolves through responses.js's
-// own mapping (never re-derived here).
+// BD-RIDE-AUTHORITY-01B — a real handoff resolves through the real
+// response/order/driver mapping (never re-derived here).
 // BD-RIDE-AUTHORITY-01C — construction moved to the pure
-// buildPassengerRideSeed (ride_seed.js); this module still borrows
-// resolveResponseById/requestFromOrder/mapResponseToDriverCard from
-// responses.js (a known, deferred screen-to-screen dependency) but no
-// longer imports the side-effecting buildPassengerActiveRide.
-expect('handoff imports the real-resolution primitives from ./responses.js (no buildPassengerActiveRide)',
-  /import\s*\{[\s\S]*?resolveResponseById[\s\S]*?requestFromOrder[\s\S]*?mapResponseToDriverCard[\s\S]*?\}\s*from\s*'\.\/responses\.js'/.test(handoff)
-  && !/buildPassengerActiveRide\(/.test(handoff));
+// buildPassengerRideSeed (ride_seed.js).
+// BD-RIDE-AUTHORITY-01D — response resolution moved to response_store.js
+// and request/driver context shaping to ride_context.js; this module no
+// longer imports anything from ./responses.js — zero screen-to-screen
+// dependency remains.
+expect('handoff imports resolveResponseById from ../response_store.js',
+  /import\s*\{\s*resolveResponseById\s*\}\s*from\s*'\.\.\/response_store\.js'/.test(handoff));
+expect('handoff imports buildRideRequestContext + buildRideDriverContext from ../ride_context.js',
+  /import\s*\{\s*buildRideRequestContext\s*,\s*buildRideDriverContext\s*\}\s*from\s*'\.\.\/ride_context\.js'/.test(handoff));
 expect('handoff imports the pure buildPassengerRideSeed from ../ride_seed.js',
   /import\s*\{\s*buildPassengerRideSeed\s*\}\s*from\s*'\.\.\/ride_seed\.js'/.test(handoff));
+expect('handoff never imports anything from ./responses.js (zero screen-to-screen dependency)',
+  !/from\s*'\.\/responses\.js'/.test(handoff));
 
 const loadConfBody = functionBody(handoff, 'loadConfirmedHandoff');
 expect('handoff loadConfirmedHandoff() resolved', !!loadConfBody);
