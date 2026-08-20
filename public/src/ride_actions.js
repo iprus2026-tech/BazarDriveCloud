@@ -308,6 +308,18 @@ export function seedActiveRideFromAcceptedOrder(order, options = {}) {
     ride: {
       price: snapshot.priceLabel,
     },
+    // BD-RIDE-WAITING-01E — same explicit override as
+    // ride_seed.js::buildPassengerRideSeed: a real (driver-accepted) Ride
+    // must not inherit buildDemoRide()'s demo waiting snapshot.
+    // remaining/paidStartsAt cannot be known this early (the ride hasn't
+    // even reached WAITING_PASSENGER yet) — the real anchor is
+    // ride.timestamps.arrivedAt, stamped later at that transition.
+    waiting: {
+      freeLimit: '3:00',
+      remaining: null,
+      paidStartsAt: null,
+      paidRate: '8 ₽ за каждую минуту',
+    },
     timestamps: {
       acceptedAt: snapshot.acceptedAt,
     },

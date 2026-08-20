@@ -81,6 +81,20 @@ export function buildPassengerRideSeed(order, request, driver) {
     ride: {
       price: driver.price || request.price,
     },
+    // BD-RIDE-WAITING-01E — explicit override so a real Ride never inherits
+    // buildDemoRide()'s demo waiting snapshot. freeLimit/paidRate are kept as
+    // the current policy-like literals (every consumer's own fallback chain
+    // already assumes these same values); remaining/paidStartsAt cannot be
+    // known at seed time — the real WAITING_PASSENGER anchor is
+    // ride.timestamps.arrivedAt (stamped at the EN_ROUTE -> WAITING_PASSENGER
+    // transition), which the driver-side wait timer already prefers over
+    // this field.
+    waiting: {
+      freeLimit: '3:00',
+      remaining: null,
+      paidStartsAt: null,
+      paidRate: '8 ₽ за каждую минуту',
+    },
     timestamps: {
       acceptedAt: order?.acceptedAt || now,
     },

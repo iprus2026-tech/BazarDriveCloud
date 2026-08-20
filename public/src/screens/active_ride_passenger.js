@@ -526,11 +526,17 @@ function arrivingDropoffAmount(ride) {
     || '1 540 ₽';
 }
 
+// BD-RIDE-WAITING-01E — remaining/paidStartsAt are time-dependent values a
+// real Ride seed cannot know in advance (see ride_seed.js/ride_actions.js);
+// their fallback is an honest '—', not a demo-shaped clock/countdown
+// literal. freeLimit/paidRate stay their existing literals — every real
+// seed already sets these same values as policy, so the fallback here only
+// matters for a genuinely malformed/legacy ride record.
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
-  const remaining = w.remaining || '2:45';
+  const remaining = w.remaining || '—';
   const freeLimit = w.freeLimit || '3:00';
-  const paidStartsAt = w.paidStartsAt || '14:18';
+  const paidStartsAt = w.paidStartsAt || '—';
   const paidRate = w.paidRate || '8 ₽ за каждую минуту';
   const remSec = toSeconds(remaining);
   const totalSec = toSeconds(freeLimit);
