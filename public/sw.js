@@ -101,7 +101,9 @@
 // lookup only — and request/driver context shaping into the new precached ./src/ride_context.js —
 // pure, zero imports; trip_confirmation_handoff.js no longer imports anything from responses.js).
 // New PRECACHE entries: ./src/response_store.js, ./src/ride_context.js.
-const VERSION    = 'v295';
+// v296 (BD-RIDE-WAITING-01E): precached ride_actions.js, ride_seed.js and active_ride_passenger.js
+// changed (remove demo waiting leakage from real rides).
+const VERSION    = 'v296';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
