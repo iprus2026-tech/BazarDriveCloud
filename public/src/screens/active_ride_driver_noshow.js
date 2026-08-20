@@ -7,12 +7,17 @@
 // WAITING_PASSENGER «Не приехал» (#ar-no-show) action in active_ride.js,
 // replacing the prior cancel-sheet preset path.
 //
-// Five states: action → confirm → result → compensation → done.
-// Mock/UI only: the compensation figures are fixed demo values; the ONLY
+// Seven states: action → confirm → submitting → result → compensation → done,
+// with failure as an alternate branch off submitting (retry loops back to
+// submitting; back exits the sub-flow without any local persistence).
+// Mock/UI only: the compensation figures are fixed demo values. The ONLY
 // persistence is the existing NO_SHOW transition, fired via the screen's
-// onConfirmNoShow callback at the confirm step (no new lifecycle semantics,
-// no backend, no real money). The waiting/expired states from the gate are
-// intentionally out of scope (they would redesign the live waiting UI).
+// onConfirmNoShow callback at the confirm step — BD-RIDE-D-NOSHOW-ACK-01
+// (V2-04C2): that callback may be backend-ACK-first (returns a Promise), so
+// the confirm step AWAITS it and only advances to `result` on success; on
+// rejection it shows `failure` instead, with no local NO_SHOW write. The
+// waiting/expired states from the gate are intentionally out of scope (they
+// would redesign the live waiting UI).
 
 import { escapeHtml } from '../util.js';
 
@@ -34,7 +39,15 @@ const PICKUP_COMP = 120;
 const COMMISSION = 24;
 
 // BD-RIDE-D-NOSHOW-01 — render the no-show sub-flow into the driver sheet.
-// opts: { ride, orderLabel, paidWaitAmount, onConfirmNoShow, onBack, go, showNotice }
+// opts: { ride, orderLabel, paidWaitAmount, onConfirmNoShow, onBack, isFlowOwner, go, showNotice }
+// onConfirmNoShow may return a Promise: resolve -> advance to `result`; reject -> show
+// `failure` (retry re-invokes it; no local persistence happens in this module either way).
+// isFlowOwner (BD-RIDE-D-NOSHOW-ACK-01 P1) — read-only ownership snapshot owned by the
+// caller (active_ride.js's noShowFlowOpen). Checked AFTER the awaited confirmNoShow()
+// settles, so a stale attempt superseded by a retry or by reconciliation discovering an
+// authoritative terminal ride never renders over whoever currently owns the sheet. A
+// missing/non-function opts.isFlowOwner falls back to always-owner (true), matching
+// today's behavior.
 export function openDriverNoShowFlow(sheet, opts = {}) {
   if (!sheet) return;
   const ride = opts.ride || {};
@@ -44,6 +57,7 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
   const back = typeof opts.onBack === 'function' ? opts.onBack : () => {};
   const showNotice = typeof opts.showNotice === 'function' ? opts.showNotice : () => {};
   const confirmNoShow = typeof opts.onConfirmNoShow === 'function' ? opts.onConfirmNoShow : () => {};
+  const isFlowOwner = typeof opts.isFlowOwner === 'function' ? opts.isFlowOwner : () => true;
 
   // Compensation receipt — the «платное ожидание» line is the LIVE accrued
   // amount (Codex P2). opts.paidWaitAmount may be a number or a resolver fn; we
@@ -64,6 +78,8 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
     };
   }
   let comp = buildComp(0);
+  // BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — double-submit guard for submitNoShow().
+  let submitting = false;
 
   const $ = (id) => sheet.querySelector(id);
 
@@ -107,14 +123,72 @@ export function openDriverNoShowFlow(sheet, opts = {}) {
         </div>
       </div>`;
     $('#ns-cancel').addEventListener('click', renderAction);
-    $('#ns-confirm').addEventListener('click', () => {
-      // Freeze the live paid-wait accrual at the moment of confirmation (Codex
-      // P2 — counts any dwell time on the action/confirm screens).
-      comp = buildComp(resolvePaidWait());
+    $('#ns-confirm').addEventListener('click', submitNoShow);
+  }
+
+  // BD-RIDE-D-NOSHOW-ACK-01 (V2-04C2) — the single call site for onConfirmNoShow, shared by
+  // the initial confirm click and the failure-view retry button. `submitting` plus the
+  // immediate renderSubmitting() swap (which removes #ns-confirm/#ns-retry from the DOM)
+  // together guard against a double-submit: at most one onConfirmNoShow() call per
+  // confirmation, even on a rapid double-click before the re-render lands.
+  //
+  // BD-RIDE-D-NOSHOW-ACK-01 P1 — isFlowOwner() is re-checked AFTER the await settles, not
+  // before: ownership can only change WHILE this call is in flight (a retry superseding this
+  // attempt, or reconciliation discovering the ride already went terminal), so the check has
+  // to happen on the far side of the await to catch exactly that window. A stale resolve must
+  // not renderResult() and a stale reject must not renderFailure() — either would overwrite
+  // whatever the current owner has already rendered. No extra PATCH either way: confirmNoShow()
+  // has already run and settled by the time ownership is checked.
+  async function submitNoShow() {
+    if (submitting) return;
+    submitting = true;
+    // Freeze the live paid-wait accrual at the moment of confirmation (Codex
+    // P2 — counts any dwell time on the action/confirm/failure-retry screens).
+    comp = buildComp(resolvePaidWait());
+    renderSubmitting();
+    try {
       // The ONLY persistence in this flow — fires the existing NO_SHOW transition.
-      confirmNoShow();
+      // Awaited: onConfirmNoShow may be backend-ACK-first, so `result` (success copy,
+      // compensation, "back on line") must not render until it actually resolves.
+      await confirmNoShow();
+      submitting = false;
+      if (!isFlowOwner()) return;
       renderResult();
-    });
+    } catch (err) {
+      submitting = false;
+      if (!isFlowOwner()) return;
+      renderFailure(err);
+    }
+  }
+
+  function renderSubmitting() {
+    sheet.innerHTML = `
+      <div class="ns-flow ns-flow--pad ns-flow--center">
+        <div class="ns-confirm-icon">${svg(I_ALERT, 28)}</div>
+        <div class="ns-title ns-title--center">Отмечаем «не вышел»…</div>
+        <div class="ns-sub ns-sub--center">Подтверждаем на сервере. Не закрывайте экран.</div>
+        <div class="ns-searching" aria-hidden="true"><span class="ns-search-dot"></span><span class="ns-search-dot"></span><span class="ns-search-dot"></span></div>
+      </div>`;
+  }
+
+  // No local NO_SHOW write happens on this path — the ride stays WAITING_PASSENGER until a
+  // retry succeeds. `back` (→ onBack) exits the sub-flow without persisting anything either.
+  function renderFailure(err) {
+    const message = (err && err.code === 'RIDE_TERMINAL')
+      ? 'Поездка уже завершена на сервере.'
+      : 'Не удалось подтвердить на сервере. Попробуйте ещё раз.';
+    sheet.innerHTML = `
+      <div class="ns-flow ns-flow--pad ns-flow--center">
+        <div class="ns-confirm-icon">${svg(I_ALERT, 28)}</div>
+        <div class="ns-title ns-title--center">Не получилось отметить «не вышел»</div>
+        <div class="ns-sub ns-sub--center">${escapeHtml(message)}</div>
+        <div class="ns-actions-stack">
+          <button type="button" class="bd-btn danger" id="ns-retry">Повторить</button>
+          <button type="button" class="bd-btn" id="ns-fail-back">Назад к ожиданию</button>
+        </div>
+      </div>`;
+    $('#ns-retry').addEventListener('click', submitNoShow);
+    $('#ns-fail-back').addEventListener('click', back);
   }
 
   function renderResult() {
