@@ -103,7 +103,10 @@
 // New PRECACHE entries: ./src/response_store.js, ./src/ride_context.js.
 // v296 (BD-RIDE-WAITING-01E): precached ride_actions.js, ride_seed.js and active_ride_passenger.js
 // changed (remove demo waiting leakage from real rides).
-const VERSION    = 'v296';
+// v297 (BD-RIDE-WAITING-01E Codex P2 repair): precached trip_confirmation_handoff.js and
+// active_ride_passenger.js changed again (non-persisting legacy waiting normalization in
+// loadCanonicalActiveRide; unknown wait progress no longer reports a false pct=100).
+const VERSION    = 'v297';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

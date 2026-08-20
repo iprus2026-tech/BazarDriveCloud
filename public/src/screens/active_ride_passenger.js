@@ -532,6 +532,12 @@ function arrivingDropoffAmount(ride) {
 // literal. freeLimit/paidRate stay their existing literals — every real
 // seed already sets these same values as policy, so the fallback here only
 // matters for a genuinely malformed/legacy ride record.
+//
+// Codex P2-2 repair — when remaining is unknown ('—'), pct must not
+// default to 100: that would assert "full free wait time left" for a
+// state we actually know nothing about. pct stays null in that case;
+// both renderWaitingSheet and its live-refresh counterpart render a
+// neutral (non-100%) state instead of a false-full progress bar.
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
   const remaining = w.remaining || '—';
@@ -540,7 +546,7 @@ function waitingInfo(ride) {
   const paidRate = w.paidRate || '8 ₽ за каждую минуту';
   const remSec = toSeconds(remaining);
   const totalSec = toSeconds(freeLimit);
-  let pct = 100;
+  let pct = null;
   if (remSec != null && totalSec && totalSec > 0) {
     pct = Math.max(0, Math.min(100, Math.round((remSec / totalSec) * 100)));
   }
@@ -765,8 +771,8 @@ function renderWaitingSheet(sheet, ride) {
         <span class="active-ride-passenger__waiting-card-title">Бесплатное ожидание</span>
         <span class="active-ride-passenger__waiting-card-value">${escapeHtml(w.remaining)} / ${escapeHtml(w.freeLimit)}</span>
       </div>
-      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w.pct}">
-        <div class="active-ride-passenger__progress-bar-fill" data-step="${Math.round(w.pct / 10)}"></div>
+      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${w.pct == null ? '' : ` aria-valuenow="${w.pct}"`}>
+        <div class="active-ride-passenger__progress-bar-fill" data-step="${w.pct == null ? 0 : Math.round(w.pct / 10)}"></div>
       </div>
       <div class="active-ride-passenger__waiting-card-foot">Дальше — ${escapeHtml(w.paidRate)} · с ${escapeHtml(w.paidStartsAt)}</div>
     </div>
@@ -2443,9 +2449,12 @@ export default function activeRidePassenger(options = {}) {
       updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value', waiting.remaining + ' / ' + waiting.freeLimit);
       updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot', 'Дальше — ' + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
       const progress = sheet.querySelector('.active-ride-passenger__progress-bar');
-      if (progress) progress.setAttribute('aria-valuenow', String(waiting.pct));
+      if (progress) {
+        if (waiting.pct == null) progress.removeAttribute('aria-valuenow');
+        else progress.setAttribute('aria-valuenow', String(waiting.pct));
+      }
       const fill = sheet.querySelector('.active-ride-passenger__progress-bar-fill');
-      if (fill) fill.dataset.step = String(Math.round(waiting.pct / 10));
+      if (fill) fill.dataset.step = String(waiting.pct == null ? 0 : Math.round(waiting.pct / 10));
     } else if (ride.status === RIDE_STATUS.IN_PROGRESS
       && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
       const info = inProgressInfo(ride);
