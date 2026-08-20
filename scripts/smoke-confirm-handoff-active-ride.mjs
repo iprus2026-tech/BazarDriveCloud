@@ -430,6 +430,13 @@ expect('public/sw.js PRECACHE includes driver_handoff_snapshot.js',
 // the pure ride_seed.js builder; an offline session needs it precached too.
 expect('public/sw.js PRECACHE includes ride_seed.js',
   /['"]\.\/src\/ride_seed\.js['"]/.test(sw));
+// BD-RIDE-AUTHORITY-01D — trip_confirmation_handoff.js now statically
+// imports response_store.js and ride_context.js instead of responses.js;
+// both need to be precached for the same offline reason.
+expect('public/sw.js PRECACHE includes response_store.js',
+  /['"]\.\/src\/response_store\.js['"]/.test(sw));
+expect('public/sw.js PRECACHE includes ride_context.js',
+  /['"]\.\/src\/ride_context\.js['"]/.test(sw));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

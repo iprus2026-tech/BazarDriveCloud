@@ -31,6 +31,12 @@ import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const responses = read('../public/src/screens/responses.js');
+// BD-RIDE-AUTHORITY-01D — RESPONSES_KEY + the raw read now live in
+// response_store.js; responses.js only ever reaches the store through
+// loadAllResponses(), and mapResponseToDriverCard's real-response
+// derivation now lives in ride_context.js's buildRideDriverContext.
+const responseStore = read('../public/src/response_store.js');
+const rideContext = read('../public/src/ride_context.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -76,36 +82,51 @@ function functionBody(source, name) {
   return null;
 }
 
-// ── Invariant 1 — the keyed responses store key is read here ──
-expect('responses keeps the keyed responses store key bazardrive.responses.v1',
-  /RESPONSES_KEY\s*=\s*'bazardrive\.responses\.v1'/.test(responses));
+// ── Invariant 1 — the keyed responses store key is owned by response_store.js ──
+expect('response_store.js declares the keyed responses store key bazardrive.responses.v1',
+  /RESPONSES_KEY\s*=\s*'bazardrive\.responses\.v1'/.test(responseStore));
+expect('responses.js does not declare a second literal RESPONSES_KEY',
+  !/RESPONSES_KEY\s*=\s*'bazardrive\.responses\.v1'/.test(responses));
+expect('responses.js imports loadAllResponses from ../response_store.js',
+  /import\s*\{\s*loadAllResponses\s*\}\s*from\s*'\.\.\/response_store\.js'/.test(responses));
 
 // ── Invariant 2 — reader filters passenger_response by canonical orderId ──
 const loaderBody = functionBody(responses, 'loadResponsesForOrder') || '';
 const loaderCode = stripComments(loaderBody);
 expect('responses defines loadResponsesForOrder', loaderBody.length > 0);
-expect('loadResponsesForOrder reads RESPONSES_KEY via getItem',
-  /getItem\(\s*RESPONSES_KEY/.test(loaderBody));
+expect('loadResponsesForOrder sources the raw map via loadAllResponses()',
+  /loadAllResponses\(\)/.test(loaderBody));
 expect('loadResponsesForOrder filters kind === passenger_response',
   /kind\s*===\s*'passenger_response'/.test(loaderBody));
 expect('loadResponsesForOrder matches on the canonical orderId',
   /r\.orderId/.test(loaderBody));
-expect('loadResponsesForOrder is read-only (no setItem on the responses store)',
-  !/setItem\(\s*RESPONSES_KEY/.test(loaderCode));
+expect('loadResponsesForOrder is read-only (no setItem call anywhere in its body)',
+  !/setItem\(/.test(loaderCode));
 
 // ── Invariant 3 — map a real response into the existing card shape ──
+// BD-RIDE-AUTHORITY-01D — the canonical derivation (responseId, price from
+// driverPrice, note from message, eta from pickupTiming) now lives in
+// ride_context.js's buildRideDriverContext; mapResponseToDriverCard wraps
+// it and adds only the UI decoration. Pin both halves: the wrapper
+// delegates and threads the core fields through, and the shared core
+// still does the real derivation.
 const mapperBody = functionBody(responses, 'mapResponseToDriverCard') || '';
 const mapperCode = stripComments(mapperBody);
-expect('mapped card carries a real responseId (so /chat resolves the handoff)',
-  /responseId\s*=\s*String\(\s*response\.id/.test(mapperBody));
-expect('mapped card price derives from driverPrice',
-  /driverPrice/.test(mapperBody));
-expect('mapped card note derives from the response message',
-  /response\.message/.test(mapperBody));
-expect('mapped card pickup label derives from pickupTiming via timingLabel',
-  /eta:\s*timingLabel\(\s*response\.pickupTiming/.test(mapperBody));
-expect('mapped card fills a CSS-valid avatarTone (no undefined tone class)',
+const driverContextBody = functionBody(rideContext, 'buildRideDriverContext') || '';
+expect('mapResponseToDriverCard delegates to buildRideDriverContext(response, request)',
+  /buildRideDriverContext\(\s*response\s*,\s*request\s*\)/.test(mapperBody));
+expect('mapResponseToDriverCard threads core.responseId (with an index fallback) into id/responseId',
+  /core\.responseId\s*\|\|\s*`response_\$\{index \+ 1\}`/.test(mapperBody));
+expect('mapResponseToDriverCard fills a CSS-valid avatarTone (no undefined tone class)',
   /avatarTone:\s*'(mint|amber|violet)'/.test(mapperBody));
+expect('buildRideDriverContext resolves a real responseId from response.id',
+  /responseId\s*=\s*\(response\s*&&\s*response\.id\)\s*\?\s*String\(response\.id\)/.test(driverContextBody));
+expect('buildRideDriverContext derives price from response.driverPrice',
+  /driverPrice/.test(driverContextBody));
+expect('buildRideDriverContext derives note from the response message',
+  /response\?\.message/.test(driverContextBody));
+expect('buildRideDriverContext derives eta from pickupTiming via timingLabel',
+  /eta:\s*timingLabel\(\s*response\?\.pickupTiming/.test(driverContextBody));
 
 // ── Invariant 4 — MOCK_DRIVERS fallback preserved via buildDriversForOrder ──
 const selectorBody = functionBody(responses, 'buildDriversForOrder') || '';
