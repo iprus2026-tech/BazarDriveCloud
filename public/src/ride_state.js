@@ -261,17 +261,23 @@ function nonEmptyString(value) {
 // of those paths passes through, so the fix belongs here.
 //
 // Real-ride discriminator: deliberately conservative, existing-data only —
-// no new provenance field. A ride only counts as a real-ride candidate
-// when it already carries one of the two markers every known real-seed
-// path sets: a non-empty orderId (ride_seed.js, ride_actions.js::
-// seedActiveRideFromAcceptedOrder, order_detail.js) or a non-empty
-// acceptedSource (ride_actions.js::seedActiveRideFromAcceptedOrder,
-// acceptPassengerRequestFromPost). tripId SHAPE is deliberately not a
-// discriminator on its own — a tripId prefix is not proof of provenance
-// (an arbitrary sim/audit tripId can take any shape, including one that
-// happens to look like a real-accept id), so a feed-* tripId with neither
-// marker is left untouched, same as the canonical DEMO_ACTIVE_RIDE_ID or
-// any other unmarked sim tripId.
+// no new provenance field. The primary signal is one of the two markers
+// every real-seed path now sets: a non-empty orderId (ride_seed.js,
+// ride_actions.js::seedActiveRideFromAcceptedOrder, order_detail.js) or a
+// non-empty acceptedSource (ride_actions.js::seedActiveRideFromAcceptedOrder,
+// acceptPassengerRequestFromPost). tripId SHAPE is NOT a general-purpose
+// discriminator — a tripId prefix is not proof of provenance on its own
+// (an arbitrary sim/audit tripId can take any shape).
+//
+// legacyFeedAccept is a narrow, one-time compatibility exception, not a
+// second universal marker: acceptPassengerRequestFromPost/buildRideFromPost
+// used the reserved feed-<postId> tripId namespace for real marketplace
+// accepts before this repair series added the acceptedSource marker, so an
+// unmarked pre-existing feed-* record in a user's localStorage has no other
+// signal to recover through. New feed accepts are already covered by the
+// primary acceptedSource='feed_post_accept' marker and do not depend on
+// this exception; it exists solely so historical real records are not
+// stranded with the stale demo snapshot forever.
 //
 // Only normalizes when BOTH waiting.remaining and waiting.paidStartsAt
 // still equal the exact demo literals — nothing else in the codebase ever
@@ -281,7 +287,9 @@ function nonEmptyString(value) {
 // returns a shallow copy when normalizing.
 function normalizeLegacyWaitingLeak(ride) {
   if (!isPlainObject(ride)) return ride;
-  const isRealCandidate = nonEmptyString(ride.orderId) || nonEmptyString(ride.acceptedSource);
+  const explicitRealCandidate = nonEmptyString(ride.orderId) || nonEmptyString(ride.acceptedSource);
+  const legacyFeedAccept = typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-');
+  const isRealCandidate = explicitRealCandidate || legacyFeedAccept;
   if (!isRealCandidate) return ride;
   const waiting = ride.waiting;
   if (!isPlainObject(waiting) || waiting.remaining !== '2:30' || waiting.paidStartsAt !== '14:18') return ride;

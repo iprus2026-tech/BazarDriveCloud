@@ -960,24 +960,44 @@ export default function activeRide() {
   }
 
   // BD-RIDE-WAITING-01E final repair — waiting.paidStartsAt is never a live
-  // value (write-once at seed time, never recomputed), so the old
-  // `waiting.paidStartsAt || '14:18'` fallback showed the demo clock time
-  // for every real ride, not just legacy ones. timestamps.arrivedAt is the
-  // authoritative anchor (stamped at the EN_ROUTE -> WAITING_PASSENGER
+  // value on a REAL ride (write-once at seed time, never recomputed), so the
+  // old `waiting.paidStartsAt || '14:18'` fallback showed the demo clock
+  // time for every real ride, not just legacy ones. timestamps.arrivedAt is
+  // the authoritative anchor (stamped at the EN_ROUTE -> WAITING_PASSENGER
   // transition, mirrored server-side) and is already what waitDeadlineMs()
-  // prefers for the countdown itself; derive the same arrivedAt + freeLimit
-  // deadline here rather than falling back to a fake/unrelated clock time
-  // when it is missing. No new timer, no new persisted field — a snapshot
-  // computed at each render/refresh pass, same cadence as the rest of this
-  // screen. Formatted with the existing ru-RU HH:MM convention already used
-  // by profile.js, not a new ad-hoc format.
+  // prefers for the countdown itself.
+  //
+  // Codex follow-up — a driver simulation/audit URL opened directly at
+  // ?status=WAITING_PASSENGER (safeApplyStatusFromQuery) only overrides
+  // status; it never stamps arrivedAt. For that case waiting.paidStartsAt
+  // genuinely IS an intentional, designed fixture value (createDemoActiveRide's
+  // base, or an explicit sim override) — discarding it in favor of '—'
+  // regressed the BD-RIDE-SIM-01 audit/demo scenario. So: an arrivedAt-derived
+  // clock always wins when arrivedAt is present; otherwise a REAL ride (same
+  // discriminator as ride_state.js's shared normalizer — non-empty orderId,
+  // non-empty acceptedSource, or the narrow legacy feed- tripId exception)
+  // shows an honest '—' (a real ride's stale/absent waiting.paidStartsAt must
+  // never resurface); a non-real ride (demo/sim, no markers) may show its own
+  // waiting.paidStartsAt when one is actually set, or '—' otherwise. No new
+  // timer, no new persisted field, no arrivedAt stamped from the query
+  // simulation — a snapshot computed at each render/refresh pass. Formatted
+  // with the existing ru-RU HH:MM convention already used by profile.js.
+  function isRealWaitingCandidate() {
+    if (typeof ride.orderId === 'string' && ride.orderId.trim()) return true;
+    if (typeof ride.acceptedSource === 'string' && ride.acceptedSource.trim()) return true;
+    if (typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-')) return true;
+    return false;
+  }
   function paidStartLabel() {
     const waiting = ride.waiting || {};
     const freeLimitSec = parseWaitClock(waiting.freeLimit || '3:00') || 180;
     const arrivedMs = Date.parse((ride.timestamps && ride.timestamps.arrivedAt) || '');
-    if (!Number.isFinite(arrivedMs)) return '—';
-    return new Date(arrivedMs + freeLimitSec * 1000)
-      .toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    if (Number.isFinite(arrivedMs)) {
+      return new Date(arrivedMs + freeLimitSec * 1000)
+        .toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    }
+    if (isRealWaitingCandidate()) return '—';
+    return typeof waiting.paidStartsAt === 'string' && waiting.paidStartsAt.trim() ? waiting.paidStartsAt : '—';
   }
   function startWaitTimer() {
     clearWaitTimer();

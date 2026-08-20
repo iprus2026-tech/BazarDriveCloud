@@ -109,7 +109,8 @@
 // v298 — preserve canonical waiting normalization through passenger hydration.
 // v299 — shared Ride waiting normalization (ride_state.js) + marketplace seed +
 // driver paid-start derivation.
-const VERSION    = 'v299';
+// v300 — legacy feed waiting migration + intentional demo paid-start fallback.
+const VERSION    = 'v300';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

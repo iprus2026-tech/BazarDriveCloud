@@ -12,11 +12,16 @@
 //   removed in favor of this shared boundary.
 //
 //   Real-ride discriminator: conservative, existing-data only (no new
-//   provenance field) — a non-empty orderId OR a non-empty acceptedSource.
-//   tripId SHAPE is deliberately NOT a discriminator: a feed- prefix is not
-//   proof of provenance (an arbitrary sim/audit tripId can take any shape).
-//   DEMO_ACTIVE_RIDE_ID and any arbitrary sim/audit tripId — including a
-//   feed-* one — with neither marker are left untouched.
+//   provenance field) — primary signal is a non-empty orderId OR a
+//   non-empty acceptedSource. tripId SHAPE is NOT a general-purpose
+//   discriminator (an arbitrary non-feed sim/audit tripId with neither
+//   marker stays untouched, same as DEMO_ACTIVE_RIDE_ID). The one narrow
+//   exception is a feed- tripId prefix: acceptPassengerRequestFromPost/
+//   buildRideFromPost used that reserved namespace for REAL marketplace
+//   accepts before the acceptedSource marker existed, so a pre-existing
+//   feed-* record with neither marker is still recovered as a historical
+//   migration case — not a claim that tripId shape is proof of identity
+//   in general.
 //
 //   Marketplace real seed: ride_actions.js::buildRideFromPost (the
 //   feed-/post_detail accept path, previously missed by every earlier
@@ -25,12 +30,20 @@
 //   acceptPassengerRequestFromPost stamps acceptedSource = 'feed_post_accept'
 //   before persisting — the same existing marker
 //   seedActiveRideFromAcceptedOrder already uses — since this is the one
-//   real-seed path with no orderId to rely on.
+//   real-seed path with no orderId to rely on. New feed accepts are
+//   protected by this marker; the feed- tripId exception above exists only
+//   for records predating it.
 //
 //   Driver paidStartsAt: active_ride.js no longer falls back to the literal
-//   '14:18' — it derives a real clock time from timestamps.arrivedAt +
-//   freeLimit (the same anchor waitDeadlineMs() already trusts), or '—'
-//   when arrivedAt is missing. No new timer, no new persisted field.
+//   '14:18' unconditionally. When timestamps.arrivedAt is valid it derives
+//   a real clock time from arrivedAt + freeLimit (the same anchor
+//   waitDeadlineMs() already trusts). When arrivedAt is missing: a real
+//   ride (same discriminator as the store normalizer) shows an honest '—'
+//   — never the stale demo literal; a non-real ride (demo/sim, no markers)
+//   may still show its own intentional waiting.paidStartsAt fixture value
+//   (e.g. the canonical demo's '14:18', or a designed sim snapshot), or
+//   '—' if it has none. No new timer, no new persisted field, no arrivedAt
+//   stamped from a query simulation.
 //
 //   P2-2 (unchanged, still guarded here): waitingInfo() (active_ride_passenger.js)
 //   must not default pct to 100 when remaining is unknown ('—'). Both
@@ -101,11 +114,13 @@ function functionBody(source, name) {
 const sharedNormalizerBody = functionBody(rideState, 'normalizeLegacyWaitingLeak');
 expect('ride_state.js defines the shared normalizeLegacyWaitingLeak',
   sharedNormalizerBody.length > 0);
-expect('shared normalizer requires a non-empty orderId OR a non-empty acceptedSource',
-  /nonEmptyString\(ride\.orderId\)/.test(sharedNormalizerBody)
-    && /nonEmptyString\(ride\.acceptedSource\)/.test(sharedNormalizerBody));
-expect('shared normalizer does NOT treat a feed- tripId prefix as proof of provenance (tripId shape is not identity)',
-  !/startsWith\('feed-'\)/.test(sharedNormalizerBody));
+expect('shared normalizer\'s explicit real-candidate signal is a non-empty orderId OR a non-empty acceptedSource',
+  /explicitRealCandidate\s*=\s*nonEmptyString\(ride\.orderId\)\s*\|\|\s*nonEmptyString\(ride\.acceptedSource\)/
+    .test(sharedNormalizerBody));
+expect('shared normalizer includes the narrow feed- tripId legacy-migration exception (in addition to, not instead of, orderId/acceptedSource)',
+  /legacyFeedAccept\s*=\s*typeof\s+ride\.tripId\s*===\s*'string'\s*&&\s*ride\.tripId\.startsWith\('feed-'\)/
+    .test(sharedNormalizerBody)
+    && /isRealCandidate\s*=\s*explicitRealCandidate\s*\|\|\s*legacyFeedAccept/.test(sharedNormalizerBody));
 expect('shared normalizer matches both legacy literals (2:30 AND 14:18) before nulling',
   /waiting\.remaining\s*!==\s*'2:30'/.test(sharedNormalizerBody)
     && /waiting\.paidStartsAt\s*!==\s*'14:18'/.test(sharedNormalizerBody));
@@ -167,12 +182,22 @@ expect('acceptPassengerRequestFromPost stamps acceptedSource = \'feed_post_accep
 // ── Driver paidStartsAt — active_ride.js ─────────────────────────────────
 expect('active_ride.js no longer contains the literal waiting.paidStartsAt || \'14:18\' render fallback in code (comment-stripped scan)',
   !/waiting\.paidStartsAt\s*\|\|\s*'14:18'/.test(stripComments(driverScreen)));
+const isRealWaitingCandidateBody = functionBody(driverScreen, 'isRealWaitingCandidate');
+expect('active_ride.js defines isRealWaitingCandidate (orderId / acceptedSource / legacy feed- prefix)',
+  isRealWaitingCandidateBody.length > 0
+    && /ride\.orderId/.test(isRealWaitingCandidateBody)
+    && /ride\.acceptedSource/.test(isRealWaitingCandidateBody)
+    && /ride\.tripId\.startsWith\('feed-'\)/.test(isRealWaitingCandidateBody));
+
 const paidStartLabelBody = functionBody(driverScreen, 'paidStartLabel');
 expect('active_ride.js defines paidStartLabel', paidStartLabelBody.length > 0);
-expect('paidStartLabel derives from timestamps.arrivedAt (Date.parse) rather than a literal fallback',
-  /Date\.parse\(\(ride\.timestamps/.test(paidStartLabelBody));
-expect('paidStartLabel returns an honest \'—\' when arrivedAt is missing (no fake-time fallback)',
-  /if\s*\(!Number\.isFinite\(arrivedMs\)\)\s*return\s*'—';/.test(paidStartLabelBody));
+expect('paidStartLabel (arrivedAt path): derives a clock from timestamps.arrivedAt (Date.parse) + freeLimit when arrivedAt is valid',
+  /Date\.parse\(\(ride\.timestamps/.test(paidStartLabelBody)
+    && /if\s*\(Number\.isFinite\(arrivedMs\)\)/.test(paidStartLabelBody));
+expect('paidStartLabel (real, no-arrivedAt path): a real waiting candidate returns an honest \'—\', never the stale waiting.paidStartsAt',
+  /if\s*\(isRealWaitingCandidate\(\)\)\s*return\s*'—';/.test(paidStartLabelBody));
+expect('paidStartLabel (non-real, no-arrivedAt path): may return the intentional waiting.paidStartsAt fixture/sim snapshot, or \'—\' if none',
+  /waiting\.paidStartsAt\.trim\(\)\s*\?\s*waiting\.paidStartsAt\s*:\s*'—'/.test(paidStartLabelBody));
 expect('paidStartLabel formats via the existing ru-RU HH:MM convention (toLocaleTimeString), not a new ad-hoc format',
   /toLocaleTimeString\('ru-RU',\s*\{\s*hour:\s*'2-digit',\s*minute:\s*'2-digit'\s*\}\)/.test(paidStartLabelBody));
 expect('paidStartLabel does not introduce a new setInterval/setTimeout timer',
