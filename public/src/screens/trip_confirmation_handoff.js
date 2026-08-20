@@ -5,13 +5,23 @@
 // and the `bazardrive.active_ride.v1` snapshot read by /active-ride.
 //
 // The handoff record itself only carries metadata (tripId, role, state,
-// createdAt, expiresAt). The visual identity that /trip-confirmation
-// shows lives in the MOCK_* literals re-exported below; the seed
-// builder mirrors those literals into the active-ride contract so that
-// passenger and driver active-ride entries render the same passenger,
-// driver, vehicle, route, fare and ETA the user just confirmed.
+// createdAt, expiresAt, responseId). BD-RIDE-AUTHORITY-01B: a confirmed
+// handoff for a REAL order/response must seed REAL passenger/driver/
+// vehicle/route/price data — resolved via the same mapping responses.js
+// already uses for the /responses select flow (requestFromOrder,
+// mapResponseToDriverCard, buildPassengerActiveRide), never re-derived
+// here. The MOCK_* literals below stay reserved for the explicit demo
+// seed (buildActiveRideSeed) — a real handoff whose data cannot be
+// recovered returns null instead of silently falling back to them.
 
-import { RIDE_STATUS, findActiveRide, saveActiveRide } from '../ride_state.js';
+import { RIDE_STATUS, findActiveRide } from '../ride_state.js';
+import { getOrderById } from '../mock_api.js';
+import {
+  resolveResponseById,
+  requestFromOrder,
+  mapResponseToDriverCard,
+  buildPassengerActiveRide,
+} from './responses.js';
 
 const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
 
@@ -102,6 +112,12 @@ export function loadConfirmedHandoff(tripId, role) {
 // the /trip-confirmation render. The shape is the same one
 // `createDemoActiveRide` produces in ride_state.js, so `findActiveRide`
 // callers can consume the result without any field coercion.
+//
+// BD-RIDE-AUTHORITY-01B: this is the explicit demo/fixture seed builder.
+// seedActiveRideFromConfirmedHandoff no longer calls it automatically —
+// a real confirmed handoff always resolves through
+// seedRealActiveRideFromHandoff instead, so a real trip never renders
+// this mock identity. Kept exported for an explicit demo/preview caller.
 export function buildActiveRideSeed({ tripId, role, handoff }) {
   if (!tripId || !VALID_ROLES.has(role)) return null;
   const now = new Date().toISOString();
@@ -182,11 +198,46 @@ export function buildActiveRideSeed({ tripId, role, handoff }) {
   return seed;
 }
 
-// Read the confirmed handoff for (tripId, role), build the seed and
-// persist it to `bazardrive.active_ride.v1`. Returns the saved ride or
-// null when there is nothing to seed (missing/expired/role-mismatched
-// handoff, or malformed storage). Safe to call from any render path —
-// all storage errors are swallowed by the underlying helpers.
+// BD-RIDE-AUTHORITY-01B — Resolve a confirmed handoff's REAL order +
+// selected response into a saved active ride, reusing responses.js's own
+// mapping (never re-derived here). Returns the saved ride, or null when
+// real data cannot be safely recovered:
+//   • no responseId on the handoff, or the response no longer resolves
+//   • the response carries no canonical orderId link (e.g. a legacy
+//     marketplace response with no backing ride order)
+//   • the order no longer resolves, or the response has no driver
+//     identity snapshot
+//   • trip_<orderId> does not match the requested tripId — the active-
+//     ride store is keyed by tripId, and buildPassengerActiveRide always
+//     persists under trip_<orderId>; seeding under a different key than
+//     the one the caller will read back is worse than seeding nothing
+// A null return is a deliberate "cannot recover" signal, not an error —
+// callers must NOT fall back to the MOCK_* demo seed for it (that would
+// silently misrepresent a real trip as the canonical demo identity).
+function seedRealActiveRideFromHandoff({ tripId, handoff }) {
+  const responseId = typeof handoff?.responseId === 'string' ? handoff.responseId.trim() : '';
+  if (!responseId) return null;
+  const response = resolveResponseById(responseId);
+  if (!response) return null;
+  const orderId = typeof response.orderId === 'string' ? response.orderId.trim() : '';
+  if (!orderId || `trip_${orderId}` !== tripId) return null;
+  const order = getOrderById(orderId);
+  if (!order) return null;
+  const snapName = typeof response.driverSnapshot?.name === 'string' ? response.driverSnapshot.name.trim() : '';
+  if (!snapName) return null;
+  const request = requestFromOrder(order);
+  const driver = mapResponseToDriverCard(response, request, 0);
+  const built = buildPassengerActiveRide(order, request, driver);
+  if (!built || !built.ride || built.ride.tripId !== tripId) return null;
+  return built.ride;
+}
+
+// Read the confirmed handoff for (tripId, role) and resolve it to a
+// saved active ride. Returns the saved ride or null when there is
+// nothing to seed: missing/expired/role-mismatched handoff, malformed
+// storage, or (BD-RIDE-AUTHORITY-01B) a real handoff whose order/
+// response data cannot be recovered — never a MOCK_* fallback for that
+// last case; the caller's existing "no ride" empty state takes over.
 //
 // Idempotent: if an active ride is already persisted for `tripId`, the
 // existing record is returned unchanged. The seeder never clobbers
@@ -198,9 +249,7 @@ export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
   if (existing) return existing;
   const handoff = loadConfirmedHandoff(tripId, role);
   if (!handoff) return null;
-  const seed = buildActiveRideSeed({ tripId, role, handoff });
-  if (!seed) return null;
-  return saveActiveRide(seed);
+  return seedRealActiveRideFromHandoff({ tripId, handoff });
 }
 
 // BD-RIDE-D-10 — Cross-role canonical active-ride loader.
@@ -210,12 +259,13 @@ export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
 //   1. Persisted record under bazardrive.active_ride.v1 wins — once one
 //      role materializes the trip, the other sees the same data.
 //   2. Otherwise seed from a confirmed handoff for the requested role.
-//   3. Otherwise seed from the other role's confirmed handoff: the
-//      visible identity (passenger, driver, vehicle, route, fare) comes
-//      from the same MOCK_* literals, so a handoff written by one side
-//      still describes the same trip for the other side. The seeder
-//      persists, so subsequent reads converge on a single canonical
-//      record regardless of which role opened first.
+//   3. Otherwise seed from the other role's confirmed handoff: both
+//      resolve through the same seedActiveRideFromConfirmedHandoff (real
+//      order/response data when it recovers, otherwise null), so a
+//      handoff written by one side still describes the same trip for
+//      the other side. The seeder persists, so subsequent reads
+//      converge on a single canonical record regardless of which role
+//      opened first.
 // Returns the canonical ride or null when nothing can be derived for
 // this tripId.
 const OTHER_ROLE = { driver: 'passenger', passenger: 'driver' };

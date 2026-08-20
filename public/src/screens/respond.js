@@ -651,7 +651,6 @@ function renderPassengerRide(root, post) {
     setLoading(true);
 
     const responseId = `resp_${post.id}`;
-    const tripId     = String(post.id);
     // BD-RESPOND-ORDER-LINK-01 — when the answered post is a canonical ride
     // order (a Feed projection of bazardrive.ride_orders.v1, tagged
     // canonical:'ride_order' with an orderId), additively pin the canonical
@@ -663,15 +662,21 @@ function renderPassengerRide(root, post) {
     const canonicalLink = (post.canonical === 'ride_order' && post.orderId)
       ? { orderId: String(post.orderId), canonical: 'ride_order' }
       : {};
+    // BD-RIDE-AUTHORITY-01B — a canonical ride-order response uses the SAME
+    // tripId the rest of the real ride flow derives (trip_<orderId>), so
+    // trip_confirmation_handoff.js's real-data seeder finds the order/
+    // response pair under the key it was asked to seed instead of refusing
+    // on a mismatch. Legacy/non-canonical posts (no canonicalLink.orderId)
+    // keep the existing post.id shape — unchanged, safe fallback.
+    const tripId = canonicalLink.orderId ? `trip_${canonicalLink.orderId}` : String(post.id);
     // We persist both ids on the response because downstream screens key
     // off different things:
     //   requestId — the originating passenger publication / заявка
     //                (used to trace back to the post in the feed).
     //   tripId    — the handoff key for /trip-confirmation and
-    //                /active-ride (today equal to post.id, but kept as a
-    //                separate field so the contract can evolve without
-    //                conflating "what was published" with "which trip
-    //                this response opens").
+    //                /active-ride. Canonical ride-order responses use
+    //                trip_<orderId> (BD-RIDE-AUTHORITY-01A contract);
+    //                legacy/seed posts keep the post.id shape.
     // BD-RIDE-ORDER-01 — capture a flat driver/vehicle snapshot at response
     // time so /responses can render a populated card without a backend.
     // All fields are plain strings so the response round-trips through

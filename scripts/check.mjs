@@ -727,6 +727,23 @@ if (exists(confirmChatHandoffSmoke)) {
   }
 }
 
+// BD-RIDE-AUTHORITY-01B — real end-to-end guard: a canonical order ->
+// respond (canonical response, tripId mirrored from respond.js's own
+// expression) -> chat confirm (handoff mirrored from chat.js's own
+// resolveRideContext/#chat-confirm write) -> active-ride seed, driven
+// through the real trip_confirmation_handoff.js/mock_api.js functions
+// (no invented handoff object). Also guards the broken-linkage negative
+// case (real handoff, order gone -> null, never a MOCK ride).
+const rideAuthority01bSmoke = path.join(root, 'scripts', 'smoke-ride-authority-01b-real-flow.mjs');
+if (exists(rideAuthority01bSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideAuthority01bSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-authority-01b-real-flow.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).
