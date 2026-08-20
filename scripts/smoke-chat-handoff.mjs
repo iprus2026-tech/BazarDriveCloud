@@ -174,9 +174,17 @@ expect("driver snapshot sets status: 'DRIVER_EN_ROUTE'",
 expect('handoff imports RIDE_STATUS, findActiveRide from ../ride_state.js',
   /import\s*\{[\s\S]*?RIDE_STATUS[\s\S]*?findActiveRide[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(handoff));
 // BD-RIDE-AUTHORITY-01B — a real handoff resolves through responses.js's
-// own mapping (never re-derived here), which owns the saveActiveRide call.
-expect('handoff imports the real-resolution primitives from ./responses.js',
-  /import\s*\{[\s\S]*?resolveResponseById[\s\S]*?requestFromOrder[\s\S]*?mapResponseToDriverCard[\s\S]*?buildPassengerActiveRide[\s\S]*?\}\s*from\s*'\.\/responses\.js'/.test(handoff));
+// own mapping (never re-derived here).
+// BD-RIDE-AUTHORITY-01C — construction moved to the pure
+// buildPassengerRideSeed (ride_seed.js); this module still borrows
+// resolveResponseById/requestFromOrder/mapResponseToDriverCard from
+// responses.js (a known, deferred screen-to-screen dependency) but no
+// longer imports the side-effecting buildPassengerActiveRide.
+expect('handoff imports the real-resolution primitives from ./responses.js (no buildPassengerActiveRide)',
+  /import\s*\{[\s\S]*?resolveResponseById[\s\S]*?requestFromOrder[\s\S]*?mapResponseToDriverCard[\s\S]*?\}\s*from\s*'\.\/responses\.js'/.test(handoff)
+  && !/buildPassengerActiveRide\(/.test(handoff));
+expect('handoff imports the pure buildPassengerRideSeed from ../ride_seed.js',
+  /import\s*\{\s*buildPassengerRideSeed\s*\}\s*from\s*'\.\.\/ride_seed\.js'/.test(handoff));
 
 const loadConfBody = functionBody(handoff, 'loadConfirmedHandoff');
 expect('handoff loadConfirmedHandoff() resolved', !!loadConfBody);
@@ -196,17 +204,30 @@ const seedBody = functionBody(handoff, 'seedActiveRideFromConfirmedHandoff');
 expect('handoff seedActiveRideFromConfirmedHandoff() resolved', !!seedBody);
 expect('seedActiveRideFromConfirmedHandoff does NOT overwrite existing active ride',
   /findActiveRide\(/.test(seedBody || '') && /if\s*\(\s*existing\s*\)\s*return\s+existing/.test(seedBody || ''));
-// BD-RIDE-AUTHORITY-01B — persistence for a real handoff now happens one
-// level down, inside buildPassengerActiveRide (responses.js) via the
+// BD-RIDE-AUTHORITY-01B — a real handoff resolves via the
 // seedRealActiveRideFromHandoff delegate; no MOCK_* fallback in between.
+// BD-RIDE-AUTHORITY-01C — construction goes through the pure
+// buildPassengerRideSeed; this module persists the result itself
+// (saveActiveRide) instead of relying on buildPassengerActiveRide's
+// internal save. It DOES call acceptOrder (conditionally, if-CREATED,
+// restored by the 01C closure) — the canonical chat-confirm chain
+// (respond.js/chat.js/trip_confirmation.js) never accepts the order
+// itself, so this is the only place left that can before persisting a
+// DRIVER_EN_ROUTE ride.
 expect('seedActiveRideFromConfirmedHandoff delegates real resolution to seedRealActiveRideFromHandoff(…)',
   /seedRealActiveRideFromHandoff\(/.test(seedBody || ''));
 expect('seedActiveRideFromConfirmedHandoff never calls buildActiveRideSeed (no silent MOCK_* fallback)',
   !/buildActiveRideSeed\(/.test(seedBody || ''));
 const seedRealBody = functionBody(handoff, 'seedRealActiveRideFromHandoff');
 expect('handoff seedRealActiveRideFromHandoff() resolved', !!seedRealBody);
-expect('seedRealActiveRideFromHandoff persists real rides via buildPassengerActiveRide(…)',
-  /buildPassengerActiveRide\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff builds via the pure buildPassengerRideSeed(…)',
+  /buildPassengerRideSeed\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff persists via saveActiveRide(…) itself',
+  /saveActiveRide\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff accepts the order if still CREATED, before building the ride',
+  /order\.status\s*===\s*'CREATED'\s*\?\s*acceptOrder\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff never calls the side-effecting buildPassengerActiveRide(…)',
+  !/buildPassengerActiveRide\(/.test(seedRealBody || ''));
 
 const canonBody = functionBody(handoff, 'loadCanonicalActiveRide');
 expect('handoff loadCanonicalActiveRide() resolved', !!canonBody);

@@ -90,7 +90,13 @@
 // changed content (a confirmed /trip-confirmation handoff for a real order/response now seeds real
 // data instead of the MOCK_* demo identity, and a canonical ride-order response now records
 // trip_<orderId> so the seeder can find it) — no PRECACHE list change, cache-bust only.
-const VERSION    = 'v293';
+// v294 (BD-RIDE-AUTHORITY-01C): precached responses.js and trip_confirmation_handoff.js changed again
+// (canonical passenger Ride construction extracted into the new precached ./src/ride_seed.js — a pure,
+// screen-import-free leaf module — with responses.js and trip_confirmation_handoff.js as thin
+// orchestration wrappers; the confirmation-handoff path also now accepts a still-CREATED order before
+// persisting a DRIVER_EN_ROUTE ride, mirroring responses.js's own accept-if-CREATED step). New
+// PRECACHE entry: ./src/ride_seed.js.
+const VERSION    = 'v294';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -176,6 +182,7 @@ const PRECACHE = [
   './src/ops/connectors/port_plan_connector.js',
   './src/ops/connectors/mel_export_connector.js',
   './src/ride_state.js',
+  './src/ride_seed.js',
   './src/driver_offer_store.js',
   './src/ride_actions.js',
   './src/garage.js',
