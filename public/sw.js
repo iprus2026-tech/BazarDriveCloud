@@ -86,7 +86,11 @@
 // now takes sheet ownership back from an open no-show sub-flow in both refetchRideAndRender() and
 // the regular pollRideOnce() poll, instead of the sub-flow's failure/retry view staying stuck after
 // a failed ACK that actually succeeded server-side or was terminalized elsewhere).
-const VERSION    = 'v292';
+// v293 (BD-RIDE-AUTHORITY-01B): precached responses.js, trip_confirmation_handoff.js and respond.js
+// changed content (a confirmed /trip-confirmation handoff for a real order/response now seeds real
+// data instead of the MOCK_* demo identity, and a canonical ride-order response now records
+// trip_<orderId> so the seeder can find it) — no PRECACHE list change, cache-bust only.
+const VERSION    = 'v293';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

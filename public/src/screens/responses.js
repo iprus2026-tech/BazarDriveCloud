@@ -277,7 +277,7 @@ function requestFromLegacyPost(postId = '') {
   };
 }
 
-function requestFromOrder(order, explicitOrderId = '') {
+export function requestFromOrder(order, explicitOrderId = '') {
   if (!order) {
     const orderId = String(explicitOrderId || '').trim();
     const hasOrderId = !!orderId;
@@ -356,6 +356,26 @@ function loadResponsesForOrder(orderId) {
       && String(r.orderId || '') === id);
   } catch {
     return [];
+  }
+}
+
+// BD-RIDE-AUTHORITY-01B — Direct by-id lookup into the same keyed store
+// loadResponsesForOrder reads, for callers (trip_confirmation_handoff.js)
+// that only have a responseId (e.g. from a confirmed /trip-confirmation
+// handoff) and not yet an orderId to scope the search by. Read-only,
+// mirrors chat.js's private loadResponse().
+export function resolveResponseById(responseId) {
+  const id = typeof responseId === 'string' ? responseId.trim() : '';
+  if (!id) return null;
+  try {
+    const raw = localStorage.getItem(RESPONSES_KEY);
+    if (!raw) return null;
+    const map = JSON.parse(raw);
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+    const r = map[id];
+    return (r && typeof r === 'object' && r.kind === 'passenger_response') ? r : null;
+  } catch {
+    return null;
   }
 }
 
@@ -528,12 +548,18 @@ const PICKUP_TIMING_RANK = { earlier: 0, at_time: 1, negotiate: 2 };
 // neutral, CSS-valid placeholders. EVERY field is filled — escapeHtml turns
 // undefined into the literal "undefined", and each tone must map to a real
 // class (avatar mint/amber/violet, delta same/up/down, eta good/mid/low).
-function mapResponseToDriverCard(response, request, index) {
+export function mapResponseToDriverCard(response, request, index) {
   const responseId = String(response.id || `response_${index + 1}`);
   const value = Number(response.driverPrice);
+  // BD-RIDE-AUTHORITY-01B — request.price already carries requestFromOrder's
+  // own MOCK_REQUEST.price fallback baked in (for its unrelated MOCK_DRIVERS
+  // board use), so it cannot be trusted here to distinguish a real
+  // order-derived price from a demo placeholder. A canonical real order +
+  // real response with an invalid driverPrice must show a controlled
+  // missing value, never a fabricated mock number.
   const price = Number.isFinite(value) && value > 0
     ? formatRub(value)
-    : (request.isFallback ? 'По договорённости' : (request.price || MOCK_REQUEST.price));
+    : (request.isFallback ? 'По договорённости' : '—');
   const note = typeof response.message === 'string' ? response.message.trim() : '';
   // BD-RIDE-ORDER-01 — when respond.js attached a flat driverSnapshot to the
   // stored response, render the driver card from it. Legacy responses (and
@@ -1348,7 +1374,7 @@ function passengerSnapshot(order) {
   };
 }
 
-function buildPassengerActiveRide(order, request, driver) {
+export function buildPassengerActiveRide(order, request, driver) {
   if (!order || !order.id) return null;
   const orderId = String(order.id);
   const tripId = `trip_${orderId}`;

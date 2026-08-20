@@ -1,18 +1,26 @@
 // BD-CONFIRM-01 — confirm/chat → active-ride handoff guard.
+// BD-RIDE-AUTHORITY-01B — real order/response resolution, no silent MOCK_*
+// fallback for a real (but unresolvable) handoff.
 //
 // The /trip-confirmation screen writes a CONFIRMED handoff record keyed by
 // tripId, and /active-ride reads it back via the canonical loader to seed a
-// new active ride. The handoff carries no real backend state — both sides
-// agree on a frozen MOCK_PASSENGER / MOCK_DRIVER / MOCK_VEHICLE / MOCK_ROUTE
-// identity defined inside trip_confirmation_handoff.js — so a refactor that
-// drifts the seed shape, breaks the role gating, or reintroduces a stale
-// demo string would silently mismatch what /trip-confirmation rendered.
+// new active ride. A confirmed handoff for a REAL ride order + selected
+// response must seed REAL passenger/driver/vehicle/route/price data
+// (resolved via responses.js's own mapping) — the MOCK_PASSENGER /
+// MOCK_DRIVER / MOCK_VEHICLE / MOCK_ROUTE literals defined inside
+// trip_confirmation_handoff.js are reserved for the explicit demo seed
+// builder (buildActiveRideSeed) and must never leak into a real trip when
+// its order/response data fails to resolve — that must return null
+// instead, so a refactor that quietly reintroduces the old "always mock"
+// fallback is caught here.
 //
-// This smoke combines a small BEHAVIOURAL round-trip (write a confirmed
-// handoff, load it back, drive both role views off the same record) with a
-// STATIC contract pin (active_ride.js still gates by role, the handoff
-// module's exported surface stays intact, no inline demo strings leak
-// outside the canonical MOCK_* literals).
+// This smoke combines a BEHAVIOURAL round-trip (real order + real response
+// fixtures -> confirmed handoff -> loadCanonicalActiveRide, both the happy
+// path and every "cannot recover" path) with a STATIC contract pin
+// (active_ride.js still gates by role, the handoff module's exported
+// surface stays intact, seedActiveRideFromConfirmedHandoff no longer wires
+// to the mock builder, no inline demo strings leak outside the canonical
+// MOCK_* literals).
 
 import fs from 'node:fs';
 
@@ -42,6 +50,8 @@ function expect(label, cond, detail = '') {
 
 const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
 const ACTIVE_RIDE_KEY  = 'bazardrive.active_ride.v1';
+const RIDE_ORDERS_KEY  = 'bazardrive.ride_orders.v1';
+const RESPONSES_KEY    = 'bazardrive.responses.v1';
 
 function setConfirmedHandoff(tripId, role, overrides = {}) {
   const map = JSON.parse(localStorage.getItem(TRIP_CONFIRM_KEY) || '{}');
@@ -55,6 +65,62 @@ function setConfirmedHandoff(tripId, role, overrides = {}) {
     ...overrides,
   };
   localStorage.setItem(TRIP_CONFIRM_KEY, JSON.stringify(map));
+}
+
+// BD-RIDE-AUTHORITY-01B — deliberately UNIQUE order + response values (no
+// overlap with any MOCK_* literal) so a real->mock regression is visible
+// as the wrong string, not a coincidental match.
+const REAL_ORDER = {
+  id: 'confirm-audit-order-1',
+  status: 'ACCEPTED',
+  pickup: { label: 'ул. Реальная, 5' },
+  dropoff: { label: 'пр. Настоящий, 9' },
+  passenger: {
+    name: 'Реальный Пассажир',
+    initials: 'РП',
+    phoneMasked: '+7 ... 00-01',
+    comment: 'реальный комментарий',
+    authorId: 'user_real_1',
+    isCurrentUser: true,
+  },
+  comment: 'реальный комментарий',
+  estimatedPrice: 2222,
+  createdAt: new Date().toISOString(),
+};
+const REAL_TRIP_ID = `trip_${REAL_ORDER.id}`;
+const REAL_RESPONSE = {
+  id: 'resp_confirm_audit_1',
+  kind: 'passenger_response',
+  tripId: REAL_TRIP_ID,
+  requestId: REAL_ORDER.id,
+  orderId: REAL_ORDER.id,
+  canonical: 'ride_order',
+  driverPrice: 2400,
+  pickupTiming: 'earlier',
+  message: 'реальное сообщение водителя',
+  vehicleId: 'veh_real_1',
+  driverSnapshot: {
+    name: 'Реальный Водитель',
+    rating: 4.77,
+    car: 'Kia Rio · синий',
+    carModel: 'Kia Rio',
+    carColor: 'синий',
+    plate: 'Р 111 РР 77',
+  },
+  status: 'SENT',
+  createdAt: new Date().toISOString(),
+};
+
+function setRealOrder(order) {
+  const list = JSON.parse(localStorage.getItem(RIDE_ORDERS_KEY) || '[]');
+  list.push(order);
+  localStorage.setItem(RIDE_ORDERS_KEY, JSON.stringify(list));
+}
+
+function setRealResponse(response) {
+  const map = JSON.parse(localStorage.getItem(RESPONSES_KEY) || '{}');
+  map[response.id] = response;
+  localStorage.setItem(RESPONSES_KEY, JSON.stringify(map));
 }
 
 function resetStorage() {
@@ -140,64 +206,164 @@ expect('buildActiveRideSeed never inlines a passenger name (must come from MOCK_
 expect('buildActiveRideSeed never inlines a vehicle model (must come from MOCK_VEHICLE)',
   !/['"`]Toyota Camry['"`]/.test(seedBody));
 
-// ── C. Behavioural: confirmed handoff round-trip (same-role) ─────────
+// ── C. Behavioural: REAL order + response round-trip (BD-RIDE-AUTHORITY-01B) ──
+// A confirmed handoff whose responseId resolves to a real, canonical
+// (orderId-linked) passenger_response must seed REAL data — never the
+// MOCK_* literals, even though they're the same identity /trip-confirmation
+// itself still renders as a static preview.
 resetStorage();
-const tripA = 'trip_confirm_smoke_a';
-setConfirmedHandoff(tripA, 'passenger');
+setRealOrder(REAL_ORDER);
+setRealResponse(REAL_RESPONSE);
+setConfirmedHandoff(REAL_TRIP_ID, 'passenger', { responseId: REAL_RESPONSE.id });
 
-const ridePassenger = handoff.loadCanonicalActiveRide({ tripId: tripA, role: 'passenger' });
-expect('loadCanonicalActiveRide(role=passenger) materializes a ride from a passenger handoff',
-  !!ridePassenger && ridePassenger.tripId === tripA);
-expect('seeded ride.role mirrors the requested role',
-  ridePassenger?.role === 'passenger');
+const realRide = handoff.loadCanonicalActiveRide({ tripId: REAL_TRIP_ID, role: 'passenger' });
+expect('REAL confirmed handoff materializes a ride from real order + response data',
+  !!realRide && realRide.tripId === REAL_TRIP_ID);
 expect('seeded ride.status starts at DRIVER_EN_ROUTE',
-  ridePassenger?.status === rideState.RIDE_STATUS.DRIVER_EN_ROUTE);
-expect('seeded driver identity comes from MOCK_DRIVER',
-  ridePassenger?.driver?.name === handoff.MOCK_DRIVER.name
-  && ridePassenger?.driver?.initials === handoff.MOCK_DRIVER.initials
-  && ridePassenger?.driver?.rating === handoff.MOCK_DRIVER.rating);
-expect('seeded passenger identity comes from MOCK_PASSENGER',
-  ridePassenger?.passenger?.name === handoff.MOCK_PASSENGER.name
-  && ridePassenger?.passenger?.initials === handoff.MOCK_PASSENGER.initials);
-expect('seeded vehicle identity comes from MOCK_VEHICLE',
-  ridePassenger?.vehicle?.model === handoff.MOCK_VEHICLE.model
-  && ridePassenger?.vehicle?.plate === handoff.MOCK_VEHICLE.plate);
-expect('seeded ride records the seededFrom marker',
-  ridePassenger?.seededFrom === 'trip_confirmation_handoff');
-expect('seeded ride carries the handoff descriptor (state + role)',
-  ridePassenger?.handoff?.state === 'CONFIRMED'
-  && ridePassenger?.handoff?.role === 'passenger');
+  realRide?.status === rideState.RIDE_STATUS.DRIVER_EN_ROUTE);
+expect('real ride driver identity comes from the REAL response.driverSnapshot, not MOCK_DRIVER',
+  realRide?.driver?.name === REAL_RESPONSE.driverSnapshot.name
+  && realRide?.driver?.name !== handoff.MOCK_DRIVER.name);
+expect('real ride passenger identity comes from the REAL order.passenger, not MOCK_PASSENGER',
+  realRide?.passenger?.name === REAL_ORDER.passenger.name
+  && realRide?.passenger?.name !== handoff.MOCK_PASSENGER.name);
+expect('real ride vehicle comes from the REAL response.driverSnapshot, not MOCK_VEHICLE',
+  realRide?.vehicle?.model === REAL_RESPONSE.driverSnapshot.carModel
+  && realRide?.vehicle?.plate !== handoff.MOCK_VEHICLE.plate);
+expect('real ride route comes from the REAL order pickup/dropoff, not MOCK_ROUTE',
+  realRide?.route?.pickupLabel === REAL_ORDER.pickup.label
+  && realRide?.route?.dropoffLabel === REAL_ORDER.dropoff.label);
+expect('real ride price reflects the REAL driverPrice, not the MOCK_ROUTE price string',
+  realRide?.order?.offerPrice !== handoff.MOCK_ROUTE.priceRub);
+expect('real ride pins selectedDriver.responseId to the real response id',
+  realRide?.selectedDriver?.responseId === REAL_RESPONSE.id);
+expect('real ride records the resolved orderId',
+  realRide?.orderId === REAL_ORDER.id);
+expect('real ride does NOT carry the seededFrom=trip_confirmation_handoff mock marker',
+  realRide?.seededFrom !== 'trip_confirmation_handoff');
 
 // Second load is idempotent — the canonical record is read from
-// bazardrive.active_ride.v1 instead of being re-seeded.
-const rideAgain = handoff.loadCanonicalActiveRide({ tripId: tripA, role: 'passenger' });
-expect('second loadCanonicalActiveRide returns the existing persisted ride',
-  rideAgain?.tripId === tripA
-  && rideAgain?.timestamps?.createdAt === ridePassenger.timestamps.createdAt);
+// bazardrive.active_ride.v1 instead of being re-seeded / re-resolved.
+const realRideAgain = handoff.loadCanonicalActiveRide({ tripId: REAL_TRIP_ID, role: 'passenger' });
+expect('second loadCanonicalActiveRide returns the existing persisted real ride',
+  realRideAgain?.tripId === REAL_TRIP_ID
+  && realRideAgain?.driver?.name === REAL_RESPONSE.driverSnapshot.name);
 
-// ── D. Cross-role: a passenger handoff seeds the driver view too ──────
-// Per BD-RIDE-D-10: both /active-ride?role=driver and ?role=passenger
-// should converge on the same canonical record because the visible
-// identity comes from the same MOCK_* literals.
+// Cross-role: once the real ride is persisted, a driver-role request for
+// the same tripId converges on the same real record (no re-seed, no
+// identity flip back to MOCK_*) — same findActiveRide-first guarantee
+// BD-RIDE-D-10 relies on, just proven with real data.
+const realRideDriverView = handoff.loadCanonicalActiveRide({ tripId: REAL_TRIP_ID, role: 'driver' });
+expect('driver-role view of the same tripId converges on the same real persisted ride',
+  realRideDriverView?.tripId === REAL_TRIP_ID
+  && realRideDriverView?.driver?.name === REAL_RESPONSE.driverSnapshot.name
+  && realRideDriverView?.passenger?.name === REAL_ORDER.passenger.name);
+
+// ── D. Resolution-failure guards — the core BD-RIDE-AUTHORITY-01B regression ──
+// A confirmed handoff that LOOKS real (a well-formed CONFIRMED record) but
+// whose order/response data cannot be recovered must return null — NEVER
+// fall back to seeding a MOCK_* ride. Each sub-case breaks exactly one link
+// in the resolution chain.
 resetStorage();
-const tripB = 'trip_confirm_smoke_b';
-setConfirmedHandoff(tripB, 'passenger');
-const rideDriverFromPaxHandoff = handoff.loadCanonicalActiveRide({ tripId: tripB, role: 'driver' });
-expect('driver view materializes from a passenger-side handoff (cross-role)',
-  !!rideDriverFromPaxHandoff && rideDriverFromPaxHandoff.tripId === tripB);
-expect('cross-role seed keeps MOCK_DRIVER identity intact for the driver view',
-  rideDriverFromPaxHandoff?.driver?.name === handoff.MOCK_DRIVER.name);
-expect('cross-role seed keeps MOCK_PASSENGER identity intact for the driver view',
-  rideDriverFromPaxHandoff?.passenger?.name === handoff.MOCK_PASSENGER.name);
-// After the cross-role seed persists, the passenger view reads the same
-// canonical record — no double-seeding, no identity flip.
-const ridePaxAfterCross = handoff.loadCanonicalActiveRide({ tripId: tripB, role: 'passenger' });
-expect('passenger view converges on the cross-role seeded record',
-  ridePaxAfterCross?.tripId === tripB
-  && ridePaxAfterCross?.passenger?.name === handoff.MOCK_PASSENGER.name
-  && ridePaxAfterCross?.driver?.name === handoff.MOCK_DRIVER.name);
 
-// ── E. Reject paths: missing, expired, wrong state, role mismatch ────
+function expectNoMockFallback(label, tripId) {
+  const ride = handoff.loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  expect(`${label}: loadCanonicalActiveRide returns null (no ride at all)`, ride === null);
+  // Even if some future regression returns a truthy value here, it must
+  // never carry the MOCK_DRIVER/MOCK_PASSENGER identity — belt + suspenders
+  // against a partial/silent fallback.
+  expect(`${label}: no ride was persisted under this tripId either`,
+    rideState.findActiveRide(tripId) === null);
+}
+
+// D1. responseId does not resolve to any stored response (stale/missing).
+{
+  const tripId = 'trip_confirm-audit-order-1-d1';
+  setRealOrder({ ...REAL_ORDER, id: 'confirm-audit-order-1-d1' });
+  setConfirmedHandoff(tripId, 'passenger', { responseId: 'resp_does_not_exist' });
+  expectNoMockFallback('D1 missing response', tripId);
+}
+
+// D2. response resolves but carries no canonical orderId link (legacy
+//     marketplace response — respond.js only sets canonicalLink when the
+//     answered post is a real ride order).
+{
+  const tripId = 'trip_confirm-audit-order-1-d2';
+  const legacyResponse = { ...REAL_RESPONSE, id: 'resp_legacy_d2' };
+  delete legacyResponse.orderId;
+  setRealResponse(legacyResponse);
+  setConfirmedHandoff(tripId, 'passenger', { responseId: legacyResponse.id });
+  expectNoMockFallback('D2 no canonical orderId link', tripId);
+}
+
+// D3. response + orderId resolve, but the order itself is gone (e.g.
+//     cleared/expired) — getOrderById finds nothing.
+{
+  const ghostResponse = { ...REAL_RESPONSE, id: 'resp_ghost_d3', orderId: 'order-does-not-exist-d3' };
+  setRealResponse(ghostResponse);
+  const tripId = 'trip_order-does-not-exist-d3';
+  setConfirmedHandoff(tripId, 'passenger', { responseId: ghostResponse.id });
+  expectNoMockFallback('D3 order not found', tripId);
+}
+
+// D4. response + order resolve, but the response has no driver identity
+//     snapshot at all (malformed / pre-snapshot legacy write).
+{
+  const orderId = 'confirm-audit-order-1-d4';
+  setRealOrder({ ...REAL_ORDER, id: orderId });
+  const noSnapResponse = { ...REAL_RESPONSE, id: 'resp_no_snap_d4', orderId, driverSnapshot: null };
+  setRealResponse(noSnapResponse);
+  const tripId = `trip_${orderId}`;
+  setConfirmedHandoff(tripId, 'passenger', { responseId: noSnapResponse.id });
+  expectNoMockFallback('D4 no driver snapshot', tripId);
+}
+
+// D5. Every link resolves, but the REQUESTED tripId does not match
+//     trip_<orderId> — buildPassengerActiveRide always persists under
+//     trip_<orderId>, so seeding under a different key than the one the
+//     caller will read back must be refused rather than silently
+//     mis-keyed (or worse, mocked).
+{
+  const orderId = 'confirm-audit-order-1-d5';
+  setRealOrder({ ...REAL_ORDER, id: orderId });
+  const mismatchResponse = { ...REAL_RESPONSE, id: 'resp_mismatch_d5', orderId };
+  setRealResponse(mismatchResponse);
+  // NOT prefixed with trip_. respond.js's canonical branch always produces
+  // trip_<orderId> now (BD-RIDE-AUTHORITY-01B fix, see
+  // smoke-ride-authority-01b-real-flow.mjs), so this exact shape is no
+  // longer reachable via the real flow for a canonical response — this is
+  // now a defense-in-depth pin on the mismatch guard itself (any future
+  // caller or malformed record with a mismatched key must still refuse).
+  const bareTripId = orderId;
+  setConfirmedHandoff(bareTripId, 'passenger', { responseId: mismatchResponse.id });
+  expectNoMockFallback('D5 tripId does not match trip_<orderId>', bareTripId);
+}
+
+// ── E. Explicit demo/fixture seed builder stays intact and available ──
+// buildActiveRideSeed is no longer wired automatically into the real
+// handoff path, but it must still exist and still produce the exact
+// MOCK_* identity for an explicit demo/preview caller.
+{
+  const demoHandoff = { role: 'passenger', state: 'CONFIRMED', responseId: 'demo_resp_1', createdAt: Date.now(), expiresAt: Date.now() + 60_000 };
+  const demoSeed = handoff.buildActiveRideSeed({ tripId: 'trip_demo_preview', role: 'passenger', handoff: demoHandoff });
+  expect('buildActiveRideSeed still produces a seed for an explicit demo caller', !!demoSeed);
+  expect('explicit demo seed still carries the MOCK_DRIVER identity',
+    demoSeed?.driver?.name === handoff.MOCK_DRIVER.name);
+  expect('explicit demo seed still carries the MOCK_PASSENGER identity',
+    demoSeed?.passenger?.name === handoff.MOCK_PASSENGER.name);
+  expect('explicit demo seed still carries the MOCK_VEHICLE identity',
+    demoSeed?.vehicle?.model === handoff.MOCK_VEHICLE.model);
+}
+
+// ── F. Structural pin: the real handoff path no longer wires to the mock builder ──
+const seedFnBody = functionBody(handoffSrc, 'seedActiveRideFromConfirmedHandoff') || '';
+expect('seedActiveRideFromConfirmedHandoff() body resolved', seedFnBody.length > 0);
+expect('seedActiveRideFromConfirmedHandoff no longer calls buildActiveRideSeed (no silent MOCK_* fallback for a real handoff)',
+  !/buildActiveRideSeed\(/.test(seedFnBody));
+expect('seedActiveRideFromConfirmedHandoff delegates to the real-resolution helper',
+  /seedRealActiveRideFromHandoff\(/.test(seedFnBody));
+
+// ── G. Reject paths: missing, expired, wrong state, role mismatch ────
 resetStorage();
 const tripC = 'trip_confirm_smoke_c';
 expect('loadCanonicalActiveRide returns null when no handoff exists',
@@ -217,17 +383,25 @@ expect('loadConfirmedHandoff rejects an expired record',
 expect('loadCanonicalActiveRide returns null when the handoff has expired',
   handoff.loadCanonicalActiveRide({ tripId: tripC, role: 'passenger' }) === null);
 
+// Cross-role fallback mechanism (BD-RIDE-D-10): a role that has no handoff
+// of its own must still resolve via the OTHER role's confirmed handoff —
+// proven here with a real, resolvable order+response so the mechanism is
+// tested independently of the D-section resolution-failure guards above.
 resetStorage();
-setConfirmedHandoff(tripC, 'driver');
+setRealOrder(REAL_ORDER);
+const crossResponse = { ...REAL_RESPONSE, id: 'resp_cross_role_g' };
+setRealResponse(crossResponse);
+setConfirmedHandoff(REAL_TRIP_ID, 'driver', { responseId: crossResponse.id });
 expect('loadConfirmedHandoff rejects an explicit role mismatch',
-  handoff.loadConfirmedHandoff(tripC, 'passenger') === null);
+  handoff.loadConfirmedHandoff(REAL_TRIP_ID, 'passenger') === null);
 // loadCanonicalActiveRide must still resolve via the cross-role fallback
 // (passenger requests a tripId only known as a driver handoff).
-const crossFromDriver = handoff.loadCanonicalActiveRide({ tripId: tripC, role: 'passenger' });
-expect('loadCanonicalActiveRide cross-role seeds when the other side\'s handoff exists',
-  !!crossFromDriver && crossFromDriver.tripId === tripC);
+const crossFromDriver = handoff.loadCanonicalActiveRide({ tripId: REAL_TRIP_ID, role: 'passenger' });
+expect('loadCanonicalActiveRide cross-role seeds real data when the other side\'s handoff exists',
+  !!crossFromDriver && crossFromDriver.tripId === REAL_TRIP_ID
+  && crossFromDriver.driver?.name === REAL_RESPONSE.driverSnapshot.name);
 
-// ── F. Demo-fallback leak guard (active_ride.js / driver_handoff_snapshot.js) ─
+// ── H. Demo-fallback leak guard (active_ride.js / driver_handoff_snapshot.js) ─
 // Demo identity strings ("5ч 12м", "4,92") were stripped from active_ride.js
 // in BD-LIFE-07 so live snapshots don't surface the seed values when a
 // field is missing. Pin the cleanup: no bare `|| '<demo>'` fallback chain
@@ -244,7 +418,7 @@ expect('active_ride.js does not reintroduce the "4,92" rating fallback',
 expect('driver_handoff_snapshot.js never persists ride state via ride_state.js',
   !/from\s*'\.\.\/ride_state\.js'/.test(driverSnapshot));
 
-// ── G. Service worker precaches the handoff modules ──────────────────
+// ── I. Service worker precaches the handoff modules ──────────────────
 // /active-ride statically imports both handoff modules — if the SW
 // PRECACHE forgets either, an offline PWA session can't seed a fresh
 // active ride from a /trip-confirmation handoff.
