@@ -744,6 +744,21 @@ if (exists(rideAuthority01bSmoke)) {
   }
 }
 
+// BD-RIDE-AUTHORITY-01C — pure Ride construction guard: ride_seed.js stays a
+// leaf (no screen imports, no storage/backend/UI), buildPassengerRideSeed is
+// deterministic and side-effect-free, and responses.js's /responses select
+// path + trip_confirmation_handoff.js's confirmed-handoff path build
+// field-identical canonical Ride data for the same real order + response.
+const rideSeedPureBuilderSmoke = path.join(root, 'scripts', 'smoke-ride-seed-pure-builder.mjs');
+if (exists(rideSeedPureBuilderSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideSeedPureBuilderSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-seed-pure-builder.mjs failed\n${msg}`);
+  }
+}
+
 // BD-DRIVER-MAP-X-15 — static regression smoke for the DriverMap accept order
 // handoff (CREATED → Принять → one active trip → driver active ride → passenger
 // accepted-driver handoff, with no empty search after acceptance).

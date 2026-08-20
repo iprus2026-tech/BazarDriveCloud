@@ -3,7 +3,8 @@ import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import { acceptOrder, getOrderById, listOrderOffers, selectOfferOnBackend } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
-import { createDemoActiveRide, findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
+import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
+import { buildPassengerRideSeed } from '../ride_seed.js';
 
 // BD-RESPOND-ORDER-LINK-02 — read-side store. /respond writes a
 // passenger_response into this keyed map; this screen reads it back to surface
@@ -1356,24 +1357,11 @@ function activeRideUrl(tripId) {
   return `/active-ride?${params.toString()}`;
 }
 
-function driverInitials(driver) {
-  return driver.initials || String(driver.name || 'В').trim().charAt(0).toUpperCase() || 'В';
-}
-
-function passengerSnapshot(order) {
-  const snap = order && typeof order.passenger === 'object' && order.passenger ? order.passenger : null;
-  if (snap && typeof snap.name === 'string' && snap.name.trim()) {
-    return { ...snap, name: snap.name.trim() };
-  }
-  return {
-    name: 'Вы',
-    initials: 'В',
-    phoneMasked: '',
-    note: typeof order?.comment === 'string' ? order.comment : '',
-    isCurrentUser: true,
-  };
-}
-
+// BD-RIDE-AUTHORITY-01C — orchestration wrapper. Owns resolution state
+// (existing-ride short-circuit, the accept-if-CREATED decision) and the
+// persistence side effect; construction itself is delegated to the pure
+// buildPassengerRideSeed (ride_seed.js), which has no knowledge of
+// storage, acceptOrder, or the backend.
 export function buildPassengerActiveRide(order, request, driver) {
   if (!order || !order.id) return null;
   const orderId = String(order.id);
@@ -1393,61 +1381,8 @@ export function buildPassengerActiveRide(order, request, driver) {
 
   const accepted = order && order.status === 'CREATED' ? acceptOrder(order.id) : order;
   const sourceOrder = accepted || order;
-  const now = new Date().toISOString();
-  const ride = createDemoActiveRide({
-    tripId,
-    role: 'passenger',
-    status: RIDE_STATUS.DRIVER_EN_ROUTE,
-    driver: {
-      id: driver.id,
-      name: driver.name,
-      initials: driverInitials(driver),
-      rating: driver.rating,
-      phoneMasked: '+7 ... 45-67',
-    },
-    vehicle: {
-      model: driver.carModel || driver.car,
-      color: driver.carColor || '',
-      plate: driver.plate,
-    },
-    passenger: passengerSnapshot(sourceOrder),
-    order: {
-      offerPrice: driver.price || request.price,
-      pickupEta: driver.eta,
-      destinationEta: sourceOrder?.durationMin ? `${sourceOrder.durationMin} мин` : '28 мин',
-      destinationDistance: sourceOrder?.distanceKm ? `${sourceOrder.distanceKm} км` : '—',
-      passengerComment: request.note,
-    },
-    route: {
-      pickupLabel: request.pickupLabel,
-      dropoffLabel: request.dropoffLabel,
-      etaToPickup: driver.eta,
-      etaToDestination: sourceOrder?.durationMin ? `${sourceOrder.durationMin} мин` : '28 мин',
-      pickup: sourceOrder?.pickup || null,
-      dropoff: sourceOrder?.dropoff || null,
-    },
-    ride: {
-      price: driver.price || request.price,
-    },
-    timestamps: {
-      acceptedAt: sourceOrder?.acceptedAt || now,
-    },
-  });
-  // Replace the demo passenger entirely so the active ride preserves the
-  // order passenger snapshot without inherited seed fields.
-  ride.passenger = passengerSnapshot(sourceOrder);
-  ride.orderId = orderId;
-  ride.selectedDriver = {
-    id: driver.id,
-    responseId: driver.responseId,
-    name: driver.name,
-    rating: driver.rating,
-    car: driver.car,
-    plate: driver.plate,
-    eta: driver.eta,
-    price: driver.price,
-    note: driver.note,
-  };
+  const ride = buildPassengerRideSeed(sourceOrder, request, driver);
+  if (!ride) return null;
   saveActiveRide(ride);
   return { tripId, ride };
 }

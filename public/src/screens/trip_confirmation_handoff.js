@@ -7,20 +7,36 @@
 // The handoff record itself only carries metadata (tripId, role, state,
 // createdAt, expiresAt, responseId). BD-RIDE-AUTHORITY-01B: a confirmed
 // handoff for a REAL order/response must seed REAL passenger/driver/
-// vehicle/route/price data — resolved via the same mapping responses.js
-// already uses for the /responses select flow (requestFromOrder,
-// mapResponseToDriverCard, buildPassengerActiveRide), never re-derived
-// here. The MOCK_* literals below stay reserved for the explicit demo
-// seed (buildActiveRideSeed) — a real handoff whose data cannot be
-// recovered returns null instead of silently falling back to them.
+// vehicle/route/price data. BD-RIDE-AUTHORITY-01C: construction goes
+// through the pure buildPassengerRideSeed (ride_seed.js) directly — this
+// module no longer imports the side-effecting buildPassengerActiveRide
+// from responses.js. resolveResponseById/requestFromOrder/
+// mapResponseToDriverCard are still imported from responses.js in this
+// slice — removing that remaining screen-to-screen dependency is
+// deferred follow-up work.
+//
+// BD-RIDE-AUTHORITY-01C closure — the canonical chat-confirm chain
+// (respond.js -> chat.js -> trip_confirmation.js) never touches order
+// status: none of those three modules call acceptOrder/acceptNearbyOrder,
+// so a confirmed handoff genuinely can (and typically does, since it does
+// not route through /responses' own select action) reach here with
+// order.status still 'CREATED'. Accepting it here — same accept-if-CREATED
+// step responses.js::buildPassengerActiveRide already performs — keeps the
+// order and ride status in sync (never a persisted DRIVER_EN_ROUTE ride
+// sitting on a CREATED order). acceptOrder stays orchestration-only: it is
+// called here, in this module, never inside the pure ride_seed.js builder.
+//
+// The MOCK_* literals below stay reserved for the explicit demo seed
+// (buildActiveRideSeed) — a real handoff whose data cannot be recovered
+// returns null instead of silently falling back to them.
 
-import { RIDE_STATUS, findActiveRide } from '../ride_state.js';
-import { getOrderById } from '../mock_api.js';
+import { RIDE_STATUS, findActiveRide, saveActiveRide } from '../ride_state.js';
+import { getOrderById, acceptOrder } from '../mock_api.js';
+import { buildPassengerRideSeed } from '../ride_seed.js';
 import {
   resolveResponseById,
   requestFromOrder,
   mapResponseToDriverCard,
-  buildPassengerActiveRide,
 } from './responses.js';
 
 const TRIP_CONFIRM_KEY = 'bazardrive.trip_confirmation.v1';
@@ -198,22 +214,29 @@ export function buildActiveRideSeed({ tripId, role, handoff }) {
   return seed;
 }
 
-// BD-RIDE-AUTHORITY-01B — Resolve a confirmed handoff's REAL order +
-// selected response into a saved active ride, reusing responses.js's own
-// mapping (never re-derived here). Returns the saved ride, or null when
-// real data cannot be safely recovered:
+// BD-RIDE-AUTHORITY-01B/01C — Resolve a confirmed handoff's REAL order +
+// selected response into a saved active ride via the pure
+// buildPassengerRideSeed. Returns the saved ride, or null when real data
+// cannot be safely recovered:
 //   • no responseId on the handoff, or the response no longer resolves
 //   • the response carries no canonical orderId link (e.g. a legacy
 //     marketplace response with no backing ride order)
 //   • the order no longer resolves, or the response has no driver
 //     identity snapshot
 //   • trip_<orderId> does not match the requested tripId — the active-
-//     ride store is keyed by tripId, and buildPassengerActiveRide always
-//     persists under trip_<orderId>; seeding under a different key than
-//     the one the caller will read back is worse than seeding nothing
+//     ride store is keyed by tripId, and buildPassengerRideSeed always
+//     derives trip_<orderId>; seeding under a different key than the one
+//     the caller will read back is worse than seeding nothing
 // A null return is a deliberate "cannot recover" signal, not an error —
 // callers must NOT fall back to the MOCK_* demo seed for it (that would
 // silently misrepresent a real trip as the canonical demo identity).
+//
+// Once real data is confirmed recoverable, this accepts the order if it
+// is still CREATED — mirroring responses.js::buildPassengerActiveRide's
+// own accept-if-CREATED step — so the persisted ride's DRIVER_EN_ROUTE
+// status is never left standing on a CREATED order (see header comment).
+// acceptOrder is local-only (a ride_orders.v1 status flip, no network);
+// it runs here, in the orchestration layer, not inside the pure builder.
 function seedRealActiveRideFromHandoff({ tripId, handoff }) {
   const responseId = typeof handoff?.responseId === 'string' ? handoff.responseId.trim() : '';
   if (!responseId) return null;
@@ -225,11 +248,13 @@ function seedRealActiveRideFromHandoff({ tripId, handoff }) {
   if (!order) return null;
   const snapName = typeof response.driverSnapshot?.name === 'string' ? response.driverSnapshot.name.trim() : '';
   if (!snapName) return null;
-  const request = requestFromOrder(order);
+  const accepted = order.status === 'CREATED' ? acceptOrder(orderId) : order;
+  const sourceOrder = accepted || order;
+  const request = requestFromOrder(sourceOrder);
   const driver = mapResponseToDriverCard(response, request, 0);
-  const built = buildPassengerActiveRide(order, request, driver);
-  if (!built || !built.ride || built.ride.tripId !== tripId) return null;
-  return built.ride;
+  const ride = buildPassengerRideSeed(sourceOrder, request, driver);
+  if (!ride || ride.tripId !== tripId) return null;
+  return saveActiveRide(ride);
 }
 
 // Read the confirmed handoff for (tripId, role) and resolve it to a

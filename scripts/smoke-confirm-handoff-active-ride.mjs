@@ -319,10 +319,9 @@ function expectNoMockFallback(label, tripId) {
 }
 
 // D5. Every link resolves, but the REQUESTED tripId does not match
-//     trip_<orderId> — buildPassengerActiveRide always persists under
-//     trip_<orderId>, so seeding under a different key than the one the
-//     caller will read back must be refused rather than silently
-//     mis-keyed (or worse, mocked).
+//     trip_<orderId> — buildPassengerRideSeed always derives trip_<orderId>,
+//     so seeding under a different key than the one the caller will read
+//     back must be refused rather than silently mis-keyed (or worse, mocked).
 {
   const orderId = 'confirm-audit-order-1-d5';
   setRealOrder({ ...REAL_ORDER, id: orderId });
@@ -427,6 +426,10 @@ expect('public/sw.js PRECACHE includes trip_confirmation_handoff.js',
   /trip_confirmation_handoff\.js/.test(sw));
 expect('public/sw.js PRECACHE includes driver_handoff_snapshot.js',
   /driver_handoff_snapshot\.js/.test(sw));
+// BD-RIDE-AUTHORITY-01C — trip_confirmation_handoff.js statically imports
+// the pure ride_seed.js builder; an offline session needs it precached too.
+expect('public/sw.js PRECACHE includes ride_seed.js',
+  /['"]\.\/src\/ride_seed\.js['"]/.test(sw));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
