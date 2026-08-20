@@ -1,44 +1,76 @@
-// BD-RIDE-WAITING-01E Codex P2 repair — static regression guard for the
-// P2 fixes on PR #908:
+// BD-RIDE-WAITING-01E — static regression guard for the waiting-leak repair
+// series on PR #908, now converged on one shared store-level contract:
 //
-//   P2-1: loadCanonicalActiveRide() (trip_confirmation_handoff.js) must
-//   read-normalize a legacy persisted Ride whose waiting.remaining/
-//   paidStartsAt still carry buildDemoRide()'s pre-v296 literal snapshot
-//   ('2:30' / '14:18') to null/null, WITHOUT persisting the change (no
-//   saveActiveRide/saveActiveRideStore call in the normalizer) and WITHOUT
-//   mutating the object passed in (returns a shallow copy).
+//   Root fix: ride_state.js owns a single shared normalizer for the legacy
+//   pre-v296 demo-waiting leak (waiting.remaining/paidStartsAt frozen at
+//   buildDemoRide()'s '2:30'/'14:18' snapshot on a real Ride). Applied at
+//   the read boundary (findActiveRide, and therefore getActiveRide) and the
+//   write boundary (saveActiveRide), so every caller — updateActiveRideStatus,
+//   loadCanonicalActiveRide, upgradeStoredActiveRideForOrder, etc. — gets a
+//   normalized Ride without needing its own screen-level patch. The earlier
+//   screen-local normalizer in trip_confirmation_handoff.js (P2-1) has been
+//   removed in favor of this shared boundary.
 //
-//   P2-2: waitingInfo() (active_ride_passenger.js) must not default pct to
-//   100 when remaining is unknown ('—') — that would falsely assert a full
-//   free-wait window for a state that is actually unknown. Both consumers
-//   (the initial renderWaitingSheet markup and the live-refresh DOM patch)
-//   must not stamp aria-valuenow="100" or a full progress-bar-fill step for
-//   that case.
+//   Real-ride discriminator: conservative, existing-data only (no new
+//   provenance field) — a non-empty orderId OR a non-empty acceptedSource.
+//   tripId SHAPE is deliberately NOT a discriminator: a feed- prefix is not
+//   proof of provenance (an arbitrary sim/audit tripId can take any shape).
+//   DEMO_ACTIVE_RIDE_ID and any arbitrary sim/audit tripId — including a
+//   feed-* one — with neither marker are left untouched.
 //
-//   P2-1 hydration follow-up: loadPassengerRideView() (active_ride_passenger.js)
-//   must not let upgradeStoredActiveRideForOrder()'s raw storage re-read
-//   (a fresh findActiveRide() call that bypasses the normalizer above)
-//   become the final hydrated Ride directly — the old `upgraded !== ride`
-//   reference check reintroduced the legacy waiting leak on this path,
-//   since two separate storage reads are always different object
-//   references regardless of whether real upgrade content changed. The
-//   final Ride must be re-derived through loadCanonicalActiveRide() so the
-//   normalizer runs again after any upgrade/persist.
+//   Marketplace real seed: ride_actions.js::buildRideFromPost (the
+//   feed-/post_detail accept path, previously missed by every earlier
+//   waiting-leak fix) carries the same explicit waiting override as
+//   ride_seed.js/seedActiveRideFromAcceptedOrder, AND
+//   acceptPassengerRequestFromPost stamps acceptedSource = 'feed_post_accept'
+//   before persisting — the same existing marker
+//   seedActiveRideFromAcceptedOrder already uses — since this is the one
+//   real-seed path with no orderId to rely on.
+//
+//   Driver paidStartsAt: active_ride.js no longer falls back to the literal
+//   '14:18' — it derives a real clock time from timestamps.arrivedAt +
+//   freeLimit (the same anchor waitDeadlineMs() already trusts), or '—'
+//   when arrivedAt is missing. No new timer, no new persisted field.
+//
+//   P2-2 (unchanged, still guarded here): waitingInfo() (active_ride_passenger.js)
+//   must not default pct to 100 when remaining is unknown ('—'). Both
+//   consumers (renderWaitingSheet, the live-refresh DOM patch) must not
+//   stamp aria-valuenow="100" or a full progress-bar-fill step for that case.
+//
+//   Passenger hydration re-read (unchanged, still guarded here):
+//   loadPassengerRideView() must not let upgradeStoredActiveRideForOrder()'s
+//   return value become the final hydrated Ride without a canonical
+//   re-read — kept as defensive belt-and-suspenders even though the shared
+//   ride_state.js boundary now normalizes upgradeStoredActiveRideForOrder's
+//   own raw findActiveRide() call too.
 //
 // STATIC source assertions only — no browser, no DOM, mirrors the existing
 // smoke-active-ride-waiting.mjs (driver side) pattern for the passenger/
-// handoff side.
+// handoff/store side.
 
 import fs from 'node:fs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+const rideState = read('../public/src/ride_state.js');
 const handoff = read('../public/src/screens/trip_confirmation_handoff.js');
 const passenger = read('../public/src/screens/active_ride_passenger.js');
+const rideActions = read('../public/src/ride_actions.js');
+const driverScreen = read('../public/src/screens/active_ride.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
   console.log((cond ? 'PASS' : 'FAIL') + ' — ' + label + (detail ? ' (' + detail + ')' : ''));
   if (!cond) issues.push(label + (detail ? ' :: ' + detail : ''));
+}
+
+// Strip JS comments so an explanatory comment describing the OLD removed
+// pattern (e.g. "the old `waiting.paidStartsAt || '14:18'` fallback showed
+// ...") cannot false-fail a negative code-scan below. Preserves URL-shaped
+// `://` (e.g. import 'https://...'). Smoke-local — no parser dependency.
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 
 function functionBody(source, name) {
@@ -65,28 +97,88 @@ function functionBody(source, name) {
   return '';
 }
 
-// ── P2-1 — legacy persisted Ride normalization ─────────────────────────
-const normalizerBody = functionBody(handoff, 'normalizeLegacyWaitingLeak');
-expect('trip_confirmation_handoff.js defines normalizeLegacyWaitingLeak',
-  normalizerBody.length > 0);
-expect('normalizer matches both legacy literals (2:30 AND 14:18) before nulling',
-  /waiting\.remaining\s*!==\s*'2:30'/.test(normalizerBody)
-    && /waiting\.paidStartsAt\s*!==\s*'14:18'/.test(normalizerBody));
-expect('normalizer nulls remaining and paidStartsAt when matched',
-  /remaining:\s*null/.test(normalizerBody) && /paidStartsAt:\s*null/.test(normalizerBody));
-expect('normalizer returns a shallow copy (spreads ride), never mutates in place',
-  /\{\s*\.\.\.ride\s*,/.test(normalizerBody));
-expect('normalizer never persists (no saveActiveRide / saveActiveRideStore call)',
-  !/saveActiveRide(Store)?\(/.test(normalizerBody));
-expect('normalizer leaves freeLimit/paidRate untouched (only remaining/paidStartsAt keys nulled)',
-  !/freeLimit:\s*null/.test(normalizerBody) && !/paidRate:\s*null/.test(normalizerBody));
+// ── Shared store-level normalizer (ride_state.js) — root fix ────────────
+const sharedNormalizerBody = functionBody(rideState, 'normalizeLegacyWaitingLeak');
+expect('ride_state.js defines the shared normalizeLegacyWaitingLeak',
+  sharedNormalizerBody.length > 0);
+expect('shared normalizer requires a non-empty orderId OR a non-empty acceptedSource',
+  /nonEmptyString\(ride\.orderId\)/.test(sharedNormalizerBody)
+    && /nonEmptyString\(ride\.acceptedSource\)/.test(sharedNormalizerBody));
+expect('shared normalizer does NOT treat a feed- tripId prefix as proof of provenance (tripId shape is not identity)',
+  !/startsWith\('feed-'\)/.test(sharedNormalizerBody));
+expect('shared normalizer matches both legacy literals (2:30 AND 14:18) before nulling',
+  /waiting\.remaining\s*!==\s*'2:30'/.test(sharedNormalizerBody)
+    && /waiting\.paidStartsAt\s*!==\s*'14:18'/.test(sharedNormalizerBody));
+expect('shared normalizer nulls remaining and paidStartsAt when matched',
+  /remaining:\s*null/.test(sharedNormalizerBody) && /paidStartsAt:\s*null/.test(sharedNormalizerBody));
+expect('shared normalizer returns a shallow copy (spreads ride), never mutates in place',
+  /\{\s*\.\.\.ride\s*,/.test(sharedNormalizerBody));
+expect('shared normalizer leaves freeLimit/paidRate untouched (only remaining/paidStartsAt keys nulled)',
+  !/freeLimit:\s*null/.test(sharedNormalizerBody) && !/paidRate:\s*null/.test(sharedNormalizerBody));
+
+// ── Read boundary — findActiveRide / getActiveRide ──────────────────────
+const findActiveRideBody = functionBody(rideState, 'findActiveRide');
+expect('findActiveRide defined', findActiveRideBody.length > 0);
+expect('findActiveRide routes its return through the shared normalizer',
+  /normalizeLegacyWaitingLeak\(existing\)/.test(findActiveRideBody));
+
+const getActiveRideBody = functionBody(rideState, 'getActiveRide');
+expect('getActiveRide defined', getActiveRideBody.length > 0);
+expect('getActiveRide existing-record path reads through findActiveRide (the normalized boundary), not a raw store read',
+  /const\s+existing\s*=\s*findActiveRide\(tripId\)/.test(getActiveRideBody));
+expect('getActiveRide still auto-creates a demo ride when nothing exists',
+  /createDemoActiveRide\(\{\s*tripId\s*\}\)/.test(getActiveRideBody));
+
+// ── Write boundary — saveActiveRide ──────────────────────────────────────
+const saveActiveRideBody = functionBody(rideState, 'saveActiveRide');
+expect('saveActiveRide defined', saveActiveRideBody.length > 0);
+expect('saveActiveRide normalizes the incoming ride before persisting (write boundary)',
+  /const\s+normalized\s*=\s*normalizeLegacyWaitingLeak\(ride\)/.test(saveActiveRideBody)
+    && /store\[ride\.tripId\]\s*=\s*normalized/.test(saveActiveRideBody)
+    && /return\s+normalized;/.test(saveActiveRideBody));
+expect('saveActiveRide still returns the existing (now normalized) record on the terminal-freeze path',
+  /return\s+normalizeLegacyWaitingLeak\(existing\);/.test(saveActiveRideBody));
+expect('saveActiveRide terminal-freeze guard is unchanged (still gates on TERMINAL_RIDE_STATUSES + status mismatch)',
+  /TERMINAL_RIDE_STATUSES\.has\(existing\.status\)/.test(saveActiveRideBody)
+    && /ride\.status\s*!==\s*existing\.status/.test(saveActiveRideBody));
+
+// ── trip_confirmation_handoff.js — screen-local normalizer removed ──────
+expect('trip_confirmation_handoff.js no longer defines its own normalizeLegacyWaitingLeak (superseded by the shared ride_state.js boundary)',
+  !/function\s+normalizeLegacyWaitingLeak\(/.test(handoff));
 
 const canonicalBody = functionBody(handoff, 'loadCanonicalActiveRide');
 expect('loadCanonicalActiveRide defined', canonicalBody.length > 0);
-expect('loadCanonicalActiveRide routes every non-null return through the normalizer',
-  /return\s+normalizeLegacyWaitingLeak\(existing\)/.test(canonicalBody)
-    && /return\s+normalizeLegacyWaitingLeak\(seeded\)/.test(canonicalBody)
-    && /return\s+normalizeLegacyWaitingLeak\(crossSeeded\)/.test(canonicalBody));
+expect('loadCanonicalActiveRide relies on findActiveRide directly again (no local re-wrapping)',
+  /const\s+existing\s*=\s*findActiveRide\(tripId\);\s*\n\s*if\s*\(existing\)\s*return\s+existing;/.test(canonicalBody));
+
+// ── Marketplace real seed — ride_actions.js::buildRideFromPost /
+// acceptPassengerRequestFromPost ──────────────────────────────────────────
+const buildRideFromPostBody = functionBody(rideActions, 'buildRideFromPost');
+expect('buildRideFromPost defined', buildRideFromPostBody.length > 0);
+expect('buildRideFromPost sets the same explicit waiting override (freeLimit/null/null/paidRate) as the other real seed builders',
+  /waiting:\s*\{[\s\S]{0,160}?freeLimit:\s*'3:00'[\s\S]{0,80}?remaining:\s*null[\s\S]{0,80}?paidStartsAt:\s*null[\s\S]{0,80}?paidRate:\s*'8 ₽ за каждую минуту'/
+    .test(buildRideFromPostBody));
+
+const acceptPassengerRequestBody = functionBody(rideActions, 'acceptPassengerRequestFromPost');
+expect('acceptPassengerRequestFromPost defined', acceptPassengerRequestBody.length > 0);
+expect('acceptPassengerRequestFromPost stamps acceptedSource = \'feed_post_accept\' before saveActiveRide (its only provenance marker, since it has no orderId)',
+  /ride\.acceptedSource\s*=\s*'feed_post_accept';[\s\S]{0,80}?saveActiveRide\(ride\);/.test(acceptPassengerRequestBody));
+
+// ── Driver paidStartsAt — active_ride.js ─────────────────────────────────
+expect('active_ride.js no longer contains the literal waiting.paidStartsAt || \'14:18\' render fallback in code (comment-stripped scan)',
+  !/waiting\.paidStartsAt\s*\|\|\s*'14:18'/.test(stripComments(driverScreen)));
+const paidStartLabelBody = functionBody(driverScreen, 'paidStartLabel');
+expect('active_ride.js defines paidStartLabel', paidStartLabelBody.length > 0);
+expect('paidStartLabel derives from timestamps.arrivedAt (Date.parse) rather than a literal fallback',
+  /Date\.parse\(\(ride\.timestamps/.test(paidStartLabelBody));
+expect('paidStartLabel returns an honest \'—\' when arrivedAt is missing (no fake-time fallback)',
+  /if\s*\(!Number\.isFinite\(arrivedMs\)\)\s*return\s*'—';/.test(paidStartLabelBody));
+expect('paidStartLabel formats via the existing ru-RU HH:MM convention (toLocaleTimeString), not a new ad-hoc format',
+  /toLocaleTimeString\('ru-RU',\s*\{\s*hour:\s*'2-digit',\s*minute:\s*'2-digit'\s*\}\)/.test(paidStartLabelBody));
+expect('paidStartLabel does not introduce a new setInterval/setTimeout timer',
+  !/set(Interval|Timeout)\(/.test(paidStartLabelBody));
+expect('renderWaiting uses paidStartLabel() in place of the old literal fallback',
+  /escapeHtml\(paidStartLabel\(\)\)/.test(driverScreen));
 
 // ── P2-2 — unknown wait progress must not report pct=100 ───────────────
 const waitingInfoBody = functionBody(passenger, 'waitingInfo');

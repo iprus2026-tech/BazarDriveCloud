@@ -958,6 +958,27 @@ export default function activeRide() {
       : Date.now() + parseWaitClock(waiting.remaining || '2:30') * 1000;
     return waitDeadline;
   }
+
+  // BD-RIDE-WAITING-01E final repair — waiting.paidStartsAt is never a live
+  // value (write-once at seed time, never recomputed), so the old
+  // `waiting.paidStartsAt || '14:18'` fallback showed the demo clock time
+  // for every real ride, not just legacy ones. timestamps.arrivedAt is the
+  // authoritative anchor (stamped at the EN_ROUTE -> WAITING_PASSENGER
+  // transition, mirrored server-side) and is already what waitDeadlineMs()
+  // prefers for the countdown itself; derive the same arrivedAt + freeLimit
+  // deadline here rather than falling back to a fake/unrelated clock time
+  // when it is missing. No new timer, no new persisted field — a snapshot
+  // computed at each render/refresh pass, same cadence as the rest of this
+  // screen. Formatted with the existing ru-RU HH:MM convention already used
+  // by profile.js, not a new ad-hoc format.
+  function paidStartLabel() {
+    const waiting = ride.waiting || {};
+    const freeLimitSec = parseWaitClock(waiting.freeLimit || '3:00') || 180;
+    const arrivedMs = Date.parse((ride.timestamps && ride.timestamps.arrivedAt) || '');
+    if (!Number.isFinite(arrivedMs)) return '—';
+    return new Date(arrivedMs + freeLimitSec * 1000)
+      .toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  }
   function startWaitTimer() {
     clearWaitTimer();
     if (waitExpired) return;
@@ -1027,7 +1048,7 @@ export default function activeRide() {
     const waitPct = Math.max(0, Math.min(1, remSec / freeLimitSec));
     const waitStep = Math.round(waitPct * 10);
     setMapBanner('Пассажир уведомлён · ждёт у подъезда');
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(paidStartLabel())}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => {

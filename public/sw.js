@@ -107,7 +107,9 @@
 // active_ride_passenger.js changed again (non-persisting legacy waiting normalization in
 // loadCanonicalActiveRide; unknown wait progress no longer reports a false pct=100).
 // v298 — preserve canonical waiting normalization through passenger hydration.
-const VERSION    = 'v298';
+// v299 — shared Ride waiting normalization (ride_state.js) + marketplace seed +
+// driver paid-start derivation.
+const VERSION    = 'v299';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

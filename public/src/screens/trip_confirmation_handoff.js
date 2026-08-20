@@ -292,41 +292,28 @@ export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
 // this tripId.
 const OTHER_ROLE = { driver: 'passenger', passenger: 'driver' };
 
-// BD-RIDE-WAITING-01E Codex P2-1 repair — legacy persisted Ride records
-// created before the ride_seed.js/ride_actions.js waiting override (v296)
-// still carry buildDemoRide()'s literal waiting.remaining/paidStartsAt
-// snapshot ('2:30' / '14:18'), and nothing else in the codebase ever
-// writes a different value into those two fields after seed time (no
-// status-transition patch, no live timer, no backend field). A record
-// matching both literals simultaneously is therefore, by construction, a
-// stale pre-v296 demo-leak — never a coincidentally-real value. Every
-// non-null result of loadCanonicalActiveRide() is already a genuinely
-// real Ride (it never falls back to a MOCK/demo seed), so no separate
-// real-vs-demo check is needed here. Read-only: returns a shallow copy
-// with the two fields nulled — never mutates the passed-in object and
-// never calls saveActiveRide/saveActiveRideStore, so localStorage and the
-// original persisted record are untouched.
-function normalizeLegacyWaitingLeak(ride) {
-  const waiting = ride && ride.waiting;
-  if (!waiting || waiting.remaining !== '2:30' || waiting.paidStartsAt !== '14:18') return ride;
-  return {
-    ...ride,
-    waiting: { ...waiting, remaining: null, paidStartsAt: null },
-  };
-}
-
+// BD-RIDE-WAITING-01E final repair — the legacy demo-waiting leak
+// (waiting.remaining/paidStartsAt frozen at buildDemoRide()'s '2:30'/
+// '14:18' snapshot on a real Ride seeded before v296) is now normalized
+// at the shared store boundary in ride_state.js (findActiveRide/
+// getActiveRide on read, saveActiveRide on write) — the true common
+// ancestor every caller of loadCanonicalActiveRide, updateActiveRideStatus,
+// upgradeStoredActiveRideForOrder, etc. passes through. A screen-local
+// normalizer here only covered this one entry point and missed every
+// sibling raw-read path, so it has been removed in favor of the single
+// shared boundary; findActiveRide's return value is already normalized.
 export function loadCanonicalActiveRide({ tripId, role } = {}) {
   if (!tripId || typeof tripId !== 'string') return null;
   const existing = findActiveRide(tripId);
-  if (existing) return normalizeLegacyWaitingLeak(existing);
+  if (existing) return existing;
   if (role && VALID_ROLES.has(role)) {
     const seeded = seedActiveRideFromConfirmedHandoff({ tripId, role });
-    if (seeded) return normalizeLegacyWaitingLeak(seeded);
+    if (seeded) return seeded;
   }
   const otherRole = role && OTHER_ROLE[role];
   if (otherRole) {
     const crossSeeded = seedActiveRideFromConfirmedHandoff({ tripId, role: otherRole });
-    if (crossSeeded) return normalizeLegacyWaitingLeak(crossSeeded);
+    if (crossSeeded) return crossSeeded;
   }
   return null;
 }
