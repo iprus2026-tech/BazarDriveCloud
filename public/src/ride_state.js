@@ -279,6 +279,29 @@ function nonEmptyString(value) {
 // this exception; it exists solely so historical real records are not
 // stranded with the stale demo snapshot forever.
 //
+// Codex follow-up — legacyFeedAccept alone cannot distinguish "an unmarked
+// historical real accept" from "a transient driver/passenger simulation or
+// audit fallback (createDemoActiveRide under a caller-supplied tripId) that
+// happens to use a feed- shaped tripId and gets lazily persisted the first
+// time a status button is tapped" — both are byte-identical in storage
+// (feed- tripId, no orderId/acceptedSource, the same demo waiting
+// literals). ride.localProvenance === 'sim_audit' is a LOCAL-ONLY marker
+// (never sent to or read from the backend, never part of the DB/API
+// contract) stamped exclusively by the driver/passenger simulation
+// fallback constructors (active_ride.js / active_ride_passenger.js) when
+// they build a ride with no real driverSnapshot/handoff data backing it,
+// and cleared the moment a successful server read proves the ride real.
+// Priority is explicit and load-bearing:
+//   A. explicitRealCandidate (orderId/acceptedSource) always wins — even a
+//      ride someone stamped sim_audit on is normalized if it also carries
+//      a real marker, since acceptedSource/orderId are real-provenance
+//      facts a simulation constructor never sets.
+//   B. otherwise explicitSimulation blocks legacyFeedAccept entirely —
+//      never normalize an intentional simulation fixture.
+//   C. otherwise legacyFeedAccept — the historical-migration fallback,
+//      unchanged from the prior slice.
+//   D. otherwise untouched.
+//
 // Only normalizes when BOTH waiting.remaining and waiting.paidStartsAt
 // still equal the exact demo literals — nothing else in the codebase ever
 // writes any other value into these two fields after seed time, so this
@@ -288,7 +311,9 @@ function nonEmptyString(value) {
 function normalizeLegacyWaitingLeak(ride) {
   if (!isPlainObject(ride)) return ride;
   const explicitRealCandidate = nonEmptyString(ride.orderId) || nonEmptyString(ride.acceptedSource);
-  const legacyFeedAccept = typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-');
+  const explicitSimulation = !explicitRealCandidate && ride.localProvenance === 'sim_audit';
+  const legacyFeedAccept = !explicitRealCandidate && !explicitSimulation
+    && typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-');
   const isRealCandidate = explicitRealCandidate || legacyFeedAccept;
   if (!isRealCandidate) return ride;
   const waiting = ride.waiting;

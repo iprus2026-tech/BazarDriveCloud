@@ -111,7 +111,8 @@
 // driver paid-start derivation.
 // v300 — legacy feed waiting migration + intentional demo paid-start fallback.
 // v301 — driver transient feed-sim distinction + backend-confirmed passenger waiting cleanup.
-const VERSION    = 'v301';
+// v302 — explicit local simulation provenance for waiting migration.
+const VERSION    = 'v302';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

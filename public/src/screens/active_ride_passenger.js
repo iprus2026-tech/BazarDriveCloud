@@ -393,14 +393,21 @@ function loadPassengerRideView(tripId, statusQuery) {
     // BD-RIDE-D-10 — Mirror the driver fallback: when no canonical
     // record exists, use the same SIM_AUDIT demo + driver handoff
     // snapshot enrichment so both roles agree on passenger name,
-    // pickup/dropoff, fare and ETA. View-only: not persisted, so
-    // the audit URL cannot poison the canonical record.
+    // pickup/dropoff, fare and ETA. Not persisted by this function itself,
+    // but a subsequent passenger action (cancel, boarding confirmation)
+    // can still call saveActiveRide on it — so, symmetrically with the
+    // driver-side fallback, mark it local-only simulation provenance
+    // whenever it has no real snapshot backing it, and never infer that
+    // from tripId shape. Cleared once a successful server read confirms
+    // the ride is real (see mergeServerRide below).
     const snapshot = loadDriverHandoffSnapshot(tripId);
     const useSimOverrides = Boolean(statusQuery) || Boolean(snapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
     if (snapshot) {
       ride = applyDriverHandoffSnapshotToRide(ride, snapshot);
+    } else {
+      ride.localProvenance = 'sim_audit';
     }
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
@@ -2220,6 +2227,15 @@ export default function activeRidePassenger(options = {}) {
 
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
+  //
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read (see runInitialRead's `const srv = await ...; if (!srv) return;`
+  // gate), which is itself proof this trip is real. A transient sim-fallback
+  // ride (see the `ride.localProvenance = 'sim_audit'` stamp in
+  // loadPassengerRideView) must not keep claiming local-only simulation
+  // provenance once the server has confirmed it — delete the marker from
+  // the merged projection rather than persist `null` as meaningful
+  // provenance. No ownership-logic change, no new saveActiveRide call.
   function mergeServerRide(srv, preserveLocallyAheadStatus = false) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
@@ -2232,7 +2248,7 @@ export default function activeRidePassenger(options = {}) {
     const mergedStatus = preserveLocallyAheadStatus && localRank > serverRank
       ? ride.status
       : serverStatus;
-    return {
+    const merged = {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: mergedStatus,
@@ -2248,6 +2264,8 @@ export default function activeRidePassenger(options = {}) {
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
+    delete merged.localProvenance;
+    return merged;
   }
 
   let passengerPollId = null;

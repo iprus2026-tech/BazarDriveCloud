@@ -210,6 +210,24 @@ expect('runInitialRead only merges the server ride after a successful read (srv 
   initialRead.includes('const srv = await readManager.run(ride.tripId)')
     && initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
     && /if\s*\(!srv\)\s*\{[\s\S]*?return;[\s\S]*?\}/.test(initialRead));
+
+// ── BD-RIDE-WAITING-01E Codex follow-up — explicit local simulation
+// provenance (localProvenance = 'sim_audit') ────────────────────────────
+// loadPassengerRideView's own transient createDemoActiveRide fallback (no
+// real driver-handoff snapshot backing it) can carry localProvenance =
+// 'sim_audit', mirroring the driver-side stamp in active_ride.js. A
+// successful server read is proof the trip is real, so mergeServerRide
+// must delete that marker from its returned projection; null/404/error
+// never reach mergeServerRide at all (confirmed by the existing !srv-early-
+// return assertion above), so they can never run this cleanup.
+const loadPassengerRideView = functionBody(passenger, 'loadPassengerRideView');
+expect('loadPassengerRideView can stamp localProvenance = \'sim_audit\' on its own simulation fallback (no real snapshot backing it)',
+  loadPassengerRideView.includes("ride.localProvenance = 'sim_audit'"));
+expect('mergeServerRide deletes localProvenance from the merged server-backed projection once the server has confirmed the trip is real',
+  mergeServer.includes('delete merged.localProvenance;'));
+expect('the localProvenance cleanup lives inside mergeServerRide itself, so it is structurally unreachable from the !srv / 404 / error branches (which return before ever calling mergeServerRide)',
+  initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
+    && !initialRead.includes("delete ride.localProvenance"));
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")

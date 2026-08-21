@@ -384,6 +384,93 @@ test('H. getActiveRide: an existing real record is normalized; a missing record 
   assert.equal(created.waiting.remaining, '2:30');
 });
 
+// ── explicit local simulation provenance (localProvenance = 'sim_audit') ──
+// A transient driver/passenger simulation fallback can share the exact
+// same shape as an unmarked historical feed-* real accept (feed- tripId,
+// no orderId/acceptedSource, the same demo waiting literals), so
+// legacyFeedAccept alone cannot tell them apart. localProvenance is a
+// LOCAL-ONLY marker (never sent to/read from the backend) stamped
+// exclusively by the simulation-fallback constructors; it blocks
+// legacyFeedAccept unless an explicit real marker (orderId/acceptedSource)
+// is also present, in which case the real marker always wins.
+
+test('sim-A. unmarked historical feed real (no localProvenance): normalizes via legacyFeedAccept, unchanged behavior', () => {
+  saveActiveRideStore({
+    'feed-old-post': {
+      tripId: 'feed-old-post', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+      waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-old-post');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('sim-B. marked feed simulation (localProvenance=sim_audit, no real markers): stays untouched', () => {
+  saveActiveRideStore({
+    'feed-audit': {
+      tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.WAITING_PASSENGER,
+      localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-audit');
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-C. marked simulation through saveActiveRide: the persisted fixture remains 2:30/14:18', () => {
+  const saved = saveActiveRide({
+    tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+  });
+  assert.equal(saved.waiting.remaining, '2:30');
+  assert.equal(saved.waiting.paidStartsAt, '14:18');
+  const raw = loadActiveRideStore()['feed-audit'];
+  assert.equal(raw.waiting.remaining, '2:30');
+  assert.equal(raw.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-D. marked simulation through updateActiveRideStatus: provenance and fixture both survive the transition', () => {
+  saveActiveRideStore({
+    'feed-audit': {
+      tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+      localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const out = updateActiveRideStatus('feed-audit', RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.status, RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.localProvenance, 'sim_audit');
+  assert.equal(out.waiting.remaining, '2:30');
+  assert.equal(out.waiting.paidStartsAt, '14:18');
+  const raw = loadActiveRideStore()['feed-audit'];
+  assert.equal(raw.localProvenance, 'sim_audit');
+  assert.equal(raw.waiting.remaining, '2:30');
+  assert.equal(raw.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-E. contradictory record (real orderId + localProvenance=sim_audit): the real marker wins, normalizes to null/null', () => {
+  saveActiveRideStore({
+    't-contradictory': {
+      tripId: 't-contradictory', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-777', localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('t-contradictory');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('sim-F. canonical demo (DEMO_ACTIVE_RIDE_ID) still untouched regardless of the new priority chain', () => {
+  const demo = {
+    tripId: DEMO_ACTIVE_RIDE_ID, role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    waiting: legacyRealWaiting(),
+  };
+  saveActiveRideStore({ [DEMO_ACTIVE_RIDE_ID]: demo });
+  const found = findActiveRide(DEMO_ACTIVE_RIDE_ID);
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+});
+
 // ── terminal freeze interaction: blocked transitions must not thaw status
 // or re-surface stale demo waiting on the returned Ride ──────────────────
 test('terminal freeze + normalizer: updateActiveRideStatus on a terminal legacy real ride does not thaw status and does not re-surface stale demo waiting', () => {

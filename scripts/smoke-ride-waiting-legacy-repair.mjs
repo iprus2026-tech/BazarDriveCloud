@@ -57,6 +57,20 @@
 //   ride_state.js boundary now normalizes upgradeStoredActiveRideForOrder's
 //   own raw findActiveRide() call too.
 //
+//   Explicit local simulation provenance (localProvenance = 'sim_audit'):
+//   legacyFeedAccept alone cannot distinguish an unmarked historical real
+//   feed accept from a transient driver/passenger simulation fallback that
+//   happens to share the same feed- tripId shape — both look identical in
+//   storage. localProvenance is a LOCAL-ONLY marker (never sent to/read
+//   from the backend, never part of the DB/API contract), stamped only by
+//   the driver (active_ride.js) and passenger (active_ride_passenger.js)
+//   simulation-fallback constructors when no real driverSnapshot/handoff
+//   backs them, and cleared by both screens' mergeServerRide the moment a
+//   successful server read proves the ride real. Priority: an explicit
+//   real marker (orderId/acceptedSource) always wins over a sim marker;
+//   otherwise a sim marker blocks legacyFeedAccept entirely; otherwise
+//   legacyFeedAccept still recovers a genuinely unmarked historical record.
+//
 // STATIC source assertions only — no browser, no DOM, mirrors the existing
 // smoke-active-ride-waiting.mjs (driver side) pattern for the passenger/
 // handoff/store side.
@@ -117,10 +131,17 @@ expect('ride_state.js defines the shared normalizeLegacyWaitingLeak',
 expect('shared normalizer\'s explicit real-candidate signal is a non-empty orderId OR a non-empty acceptedSource',
   /explicitRealCandidate\s*=\s*nonEmptyString\(ride\.orderId\)\s*\|\|\s*nonEmptyString\(ride\.acceptedSource\)/
     .test(sharedNormalizerBody));
-expect('shared normalizer includes the narrow feed- tripId legacy-migration exception (in addition to, not instead of, orderId/acceptedSource)',
-  /legacyFeedAccept\s*=\s*typeof\s+ride\.tripId\s*===\s*'string'\s*&&\s*ride\.tripId\.startsWith\('feed-'\)/
+expect('shared normalizer recognizes localProvenance === \'sim_audit\' as explicit simulation, only when no explicit real marker is present',
+  /explicitSimulation\s*=\s*!explicitRealCandidate\s*&&\s*ride\.localProvenance\s*===\s*'sim_audit'/
+    .test(sharedNormalizerBody));
+expect('shared normalizer\'s explicit real-candidate signal (orderId/acceptedSource) takes priority over the simulation marker',
+  sharedNormalizerBody.indexOf('explicitRealCandidate') < sharedNormalizerBody.indexOf('explicitSimulation'));
+expect('shared normalizer\'s simulation marker blocks the legacy feed- exception (legacyFeedAccept excludes explicitSimulation)',
+  /legacyFeedAccept\s*=\s*!explicitRealCandidate\s*&&\s*!explicitSimulation[\s\S]{0,100}?ride\.tripId\.startsWith\('feed-'\)/
     .test(sharedNormalizerBody)
     && /isRealCandidate\s*=\s*explicitRealCandidate\s*\|\|\s*legacyFeedAccept/.test(sharedNormalizerBody));
+expect('shared normalizer still recovers a genuinely unmarked legacy feed- record (legacyFeedAccept not deleted)',
+  /ride\.tripId\.startsWith\('feed-'\)/.test(sharedNormalizerBody));
 expect('shared normalizer matches both legacy literals (2:30 AND 14:18) before nulling',
   /waiting\.remaining\s*!==\s*'2:30'/.test(sharedNormalizerBody)
     && /waiting\.paidStartsAt\s*!==\s*'14:18'/.test(sharedNormalizerBody));
@@ -206,6 +227,22 @@ expect('paidStartLabel does not introduce a new setInterval/setTimeout timer',
 expect('renderWaiting uses paidStartLabel() in place of the old literal fallback',
   /escapeHtml\(paidStartLabel\(\)\)/.test(driverScreen));
 
+// ── Driver transient simulation provenance — active_ride.js ─────────────
+const driverActiveRideBody = functionBody(driverScreen, 'activeRide');
+expect('active_ride() stamps ride.localProvenance = \'sim_audit\' only when no real driverSnapshot backs the fallback',
+  /ride\.localProvenance\s*=\s*'sim_audit'/.test(driverActiveRideBody));
+expect('the driver simulation stamp is NOT gated on tripId shape (no startsWith(\'feed-\') anywhere near the stamp)',
+  (() => {
+    const idx = driverActiveRideBody.indexOf("ride.localProvenance = 'sim_audit'");
+    if (idx === -1) return false;
+    const window = driverActiveRideBody.slice(Math.max(0, idx - 300), idx);
+    return !/startsWith\('feed-'\)/.test(window);
+  })());
+const driverMergeServerRideBody = functionBody(driverScreen, 'mergeServerRide');
+expect('driver mergeServerRide defined', driverMergeServerRideBody.length > 0);
+expect('driver mergeServerRide clears localProvenance from the merged server-backed projection',
+  /delete\s+merged\.localProvenance;/.test(driverMergeServerRideBody));
+
 // ── P2-2 — unknown wait progress must not report pct=100 ───────────────
 const waitingInfoBody = functionBody(passenger, 'waitingInfo');
 expect('active_ride_passenger.js defines waitingInfo', waitingInfoBody.length > 0);
@@ -240,6 +277,8 @@ expect('the raw upgraded return value can no longer become `ride` without a cano
   !/\bride\s*=\s*upgraded;/.test(hydrationBody));
 expect('the old reference-identity pattern (upgraded !== ride) is no longer the final hydration path',
   !/if\s*\(upgraded\s*&&\s*upgraded\s*!==\s*ride\)\s*ride\s*=\s*upgraded;/.test(hydrationBody));
+expect('loadPassengerRideView stamps ride.localProvenance = \'sim_audit\' only on its own fallback branch when no real snapshot backs it',
+  /ride\.localProvenance\s*=\s*'sim_audit'/.test(hydrationBody));
 
 // ── Focused guard — passenger backend reconciliation no longer uses the
 // plain keep() for waiting (see scripts/smoke-passenger-active-ride-loading-states.mjs
@@ -249,6 +288,8 @@ const mergeServerRideBody = functionBody(passenger, 'mergeServerRide');
 expect('mergeServerRide defined', mergeServerRideBody.length > 0);
 expect('mergeServerRide no longer merges waiting via the plain keep(ride.waiting, srv.waiting)',
   !/waiting:\s*keep\(ride\.waiting,\s*srv\.waiting\)/.test(mergeServerRideBody));
+expect('passenger mergeServerRide clears localProvenance from the merged server-backed projection',
+  /delete\s+merged\.localProvenance;/.test(mergeServerRideBody));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

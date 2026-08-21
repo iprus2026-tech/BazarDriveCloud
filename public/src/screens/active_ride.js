@@ -463,6 +463,18 @@ export default function activeRide() {
       if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
         effectiveStatusQuery = driverSnapshot.status;
       }
+    } else {
+      // BD-RIDE-WAITING-01E — no real driverSnapshot backs this fallback:
+      // it was constructed purely from a status-query / explicit-tripId /
+      // latest-handoff-tripId simulation path, not from any real handoff
+      // data. Mark it local-only so ride_state.js's shared normalizer never
+      // treats its intentional demo waiting fixture as stale real-ride
+      // residue once persistDriverRideStatus's lazy save persists it. The
+      // marker comes from HOW this object was built, never from tripId
+      // shape (a feed-audit URL must not be inferred as simulation from
+      // its tripId string). Cleared by mergeServerRide once a real server
+      // response proves the ride real — see below.
+      ride.localProvenance = 'sim_audit';
     }
   }
 
@@ -498,13 +510,20 @@ export default function activeRide() {
     return !hasMounted;
   }
 
+  // Codex follow-up — mergeServerRide only runs after an authoritative
+  // server Ride response, which is itself proof this trip is real. A
+  // transient sim-fallback ride (see the `ride.localProvenance = 'sim_audit'`
+  // stamp above) must not keep claiming local-only simulation provenance
+  // once the server has confirmed it — delete the marker from the merged
+  // projection rather than persist `null` as if it were meaningful
+  // provenance. No status-reconciliation change.
   function mergeServerRide(srv) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
       for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
       return out;
     };
-    return {
+    const merged = {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
@@ -514,6 +533,8 @@ export default function activeRide() {
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
+    delete merged.localProvenance;
+    return merged;
   }
 
   function clearRideRefetch() {
