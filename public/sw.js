@@ -114,7 +114,8 @@
 // v302 — explicit local simulation provenance for waiting migration.
 // v303 — driver backend-confirmed waiting reconciliation parity.
 // v304 — persist server-confirmed driver waiting repair.
-const VERSION    = 'v304';
+// v305 — passenger server-confirmed waiting persistence and boarding real-Ride seed parity.
+const VERSION    = 'v305';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

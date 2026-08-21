@@ -376,6 +376,20 @@ expect('mergeServerRide no longer merges waiting via the plain keep(ride.waiting
 expect('passenger mergeServerRide clears localProvenance from the merged server-backed projection',
   /delete\s+merged\.localProvenance;/.test(mergeServerRideBody));
 
+// ── Focused parity guard — passenger existing-storage waiting repair
+// (full contract pinned in smoke-passenger-active-ride-loading-states.mjs;
+// this is a narrow cross-check, not a duplicate) ─────────────────────────
+const passengerRepairBody = functionBody(passenger, 'persistPassengerServerConfirmedWaitingProjection');
+expect('passenger server-confirmed waiting repair helper exists',
+  passengerRepairBody.length > 0);
+expect('passenger repair bases the repaired object on storedRide (stored status/timestamps are preserved, not overwritten)',
+  /\{\s*\.\.\.storedRide\s*,/.test(passengerRepairBody));
+expect('passenger repair does not eagerly materialize a Ride when nothing is stored (findActiveRide + early return)',
+  /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(passengerRepairBody)
+    && /if\s*\(!storedRide\)\s*return;/.test(passengerRepairBody));
+expect('accepted migration boundary unchanged — ride_state.js still defines the same legacyFeedAccept exception (no new heuristic added alongside this passenger parity slice)',
+  /legacyFeedAccept\s*=\s*!explicitRealCandidate\s*&&\s*!explicitSimulation/.test(rideState));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

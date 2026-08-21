@@ -2073,6 +2073,17 @@ export default function activeRidePassenger(options = {}) {
               return;
             }
           }
+          // Codex follow-up — when no local canonical record exists yet (a
+          // real backend-confirmed ride viewed with an empty local store),
+          // updateActiveRideStatus's own existing || getActiveRide(tripId)
+          // fallback would otherwise materialize and persist a BRAND NEW
+          // demo ride (demo passenger/route/waiting) as IN_PROGRESS,
+          // discarding the real in-memory ride entirely. Seed the current
+          // real/cleaned in-memory ride first — mirrors the existing
+          // passenger cancel protection — so updateActiveRideStatus always
+          // has a real record to advance instead of falling through to a
+          // fresh demo materialization.
+          saveActiveRide(ride);
           // Persist transition to IN_PROGRESS so the driver flow sees it and re-route so the URL
           // reflects the new state.
           updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
@@ -2266,6 +2277,34 @@ export default function activeRidePassenger(options = {}) {
     };
     delete merged.localProvenance;
     return merged;
+  }
+
+  // Codex follow-up — mergeServerRide's cleanup only ever lives in the
+  // in-memory `ride` closure variable. If a record already exists in
+  // storage for this tripId (a pre-existing, unmarked, backend-derived
+  // trip_* record still carrying the raw demo waiting), nothing here ever
+  // pushed that cleanup back into storage — an offline reload, or one
+  // whose GET fails, would keep reading the stale 2:30/14:18. Mirrors
+  // active_ride.js's persistServerConfirmedWaitingProjection: repair the
+  // EXISTING stored record's waiting projection the moment the server has
+  // proven the trip real, narrowly — never a full overwrite. Base the
+  // repair on the STORED record (never on `ride` or the raw server
+  // projection) so status, timestamps, tripId, orderId, acceptedSource,
+  // passenger, driver, vehicle, route, payment, ride, chat, cancel and
+  // every other stored field survive untouched — including a terminal
+  // stored status, which this never thaws (saveActiveRide's own
+  // terminal-freeze guard still applies unchanged). No-op when nothing is
+  // stored yet — that case is covered by the first-save path (see the
+  // boarding fix below for the one path that lacked one).
+  function persistPassengerServerConfirmedWaitingProjection(cleanedWaiting) {
+    const storedRide = findActiveRide(ride.tripId);
+    if (!storedRide) return;
+    const repaired = {
+      ...storedRide,
+      waiting: { ...(cleanedWaiting || {}) },
+    };
+    delete repaired.localProvenance;
+    saveActiveRide(repaired);
   }
 
   let passengerPollId = null;
@@ -2652,6 +2691,13 @@ export default function activeRidePassenger(options = {}) {
       setPassengerMutationBlocked(false);
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
+      // Codex follow-up — a non-null srv here is already proof the trip is
+      // real, but maybeReMount below can navigate or defer (return) before
+      // `ride = mergeServerRide(...)` ever runs. Repair any existing stored
+      // record's waiting projection right here, before any such early
+      // return, so every successful server read — including one that
+      // immediately remounts on a forward status — reaches storage.
+      persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
       if (srv.status && srv.status !== ride.status) {
         const remountResult = maybeReMount(srv.status);
         if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;

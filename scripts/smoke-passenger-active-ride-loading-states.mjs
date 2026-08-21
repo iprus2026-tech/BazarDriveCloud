@@ -228,6 +228,82 @@ expect('mergeServerRide deletes localProvenance from the merged server-backed pr
 expect('the localProvenance cleanup lives inside mergeServerRide itself, so it is structurally unreachable from the !srv / 404 / error branches (which return before ever calling mergeServerRide)',
   initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
     && !initialRead.includes("delete ride.localProvenance"));
+
+// ── Codex follow-up — persist server-confirmed passenger waiting into an
+// EXISTING stored Ride, and seed the real Ride before boarding ──────────
+// Mirrors active_ride.js's persistServerConfirmedWaitingProjection. Unlike
+// the driver side, runInitialRead has early maybeReMount branches that can
+// navigate/defer BEFORE `ride = mergeServerRide(...)` ever runs, so the
+// repair must be computed and invoked right after srv is known non-null —
+// not only after the eventual mergeServerRide call.
+const passengerRepair = functionBody(passenger, 'persistPassengerServerConfirmedWaitingProjection');
+expect('persistPassengerServerConfirmedWaitingProjection helper is defined',
+  passengerRepair.length > 0);
+expect('the repair helper reads the existing stored ride via findActiveRide(ride.tripId)',
+  /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(passengerRepair));
+expect('the repair helper returns without saving when nothing is stored yet (no eager materialization)',
+  /if\s*\(!storedRide\)\s*return;/.test(passengerRepair));
+expect('the repaired object is based on storedRide — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, vehicle, route, payment, ride, chat, cancel all survive from storage untouched',
+  /\{\s*\.\.\.storedRide\s*,/.test(passengerRepair));
+expect('only the cleaned waiting projection crosses into the repaired stored copy',
+  /waiting:\s*\{\s*\.\.\.\(cleanedWaiting\s*\|\|\s*\{\}\)\s*\}/.test(passengerRepair));
+expect('the repair helper deletes localProvenance from the repaired copy',
+  /delete\s+repaired\.localProvenance;/.test(passengerRepair));
+expect('the repair helper persists through the existing saveActiveRide (so the terminal-freeze guard there still applies unchanged)',
+  /saveActiveRide\(repaired\)/.test(passengerRepair));
+expect('runInitialRead computes the cleaned waiting and invokes the repair right after srv is known non-null, BEFORE maybeReMount can navigate/defer away',
+  (() => {
+    const callIdx = initialRead.indexOf(
+      'persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));');
+    const remountIdx = initialRead.indexOf('maybeReMount(srv.status)');
+    return callIdx !== -1 && remountIdx !== -1 && callIdx < remountIdx;
+  })());
+expect('the repair call sits after the !srv early return (srv is proven non-null before it can run)',
+  initialRead.indexOf('if (!srv) {') <
+    initialRead.indexOf('persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));'));
+expect('the !srv branch does not invoke the server-confirmed repair (no server proof, no repair)',
+  (() => {
+    const notSrvBlock = initialRead.slice(initialRead.indexOf('if (!srv) {'), initialRead.indexOf('backendRide = true;'));
+    return !notSrvBlock.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+expect('the 404/RIDE_NOT_FOUND catch branch does not invoke the server-confirmed repair',
+  (() => {
+    const catchBody = initialRead.slice(initialRead.indexOf('} catch (err) {'));
+    const notFoundBlock = catchBody.slice(
+      catchBody.indexOf("err.status === 404"),
+      catchBody.indexOf('const retryable ='));
+    return !notFoundBlock.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+expect('the generic failure/auth/retryable catch tail does not invoke the server-confirmed repair',
+  (() => {
+    const catchBody = initialRead.slice(initialRead.indexOf('} catch (err) {'));
+    const tail = catchBody.slice(catchBody.indexOf('const retryable ='));
+    return !tail.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+
+const boardedHandlerOuter = functionBody(passenger, 'renderSheet');
+expect('the passenger boarded handler calls saveActiveRide(ride) before updateActiveRideStatus(...IN_PROGRESS)',
+  (() => {
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    const updateIdx = boardedHandlerOuter.indexOf('updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);');
+    return saveIdx !== -1 && updateIdx !== -1 && saveIdx < updateIdx;
+  })());
+expect('the boarded handler still PATCHes the server first (when backendWriteCandidate) before the local save/update pair',
+  (() => {
+    const patchIdx = boardedHandlerOuter.indexOf("await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)");
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    return patchIdx !== -1 && saveIdx !== -1 && patchIdx < saveIdx;
+  })());
+expect('a boarding PATCH failure returns before any local save/update (catch block returns before saveActiveRide(ride))',
+  (() => {
+    const catchIdx = boardedHandlerOuter.indexOf("catch (err) {\n              localToast");
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    const catchBlock = boardedHandlerOuter.slice(catchIdx, saveIdx);
+    return catchIdx !== -1 && saveIdx !== -1 && /return;/.test(catchBlock);
+  })());
+expect('boarding did not gain a second/extra patchRideStatus call',
+  (boardedHandlerOuter.match(/patchRideStatus\(/g) || []).length === 1);
+
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
