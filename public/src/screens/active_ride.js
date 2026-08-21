@@ -510,6 +510,26 @@ export default function activeRide() {
     return !hasMounted;
   }
 
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read, which is itself proof this trip is real. A transient sim-fallback
+  // ride (see the `ride.localProvenance = 'sim_audit'` stamp above) can
+  // still carry the raw demo waiting.remaining/paidStartsAt ('2:30'/
+  // '14:18'). serializeRide() sends no `waiting` field at all today, so a
+  // plain field-by-field keep(local, server) merge would leave those two
+  // fields completely untouched even after the server has proven the ride
+  // real. Mirrors active_ride_passenger.js's mergeServerWaiting exactly —
+  // explicitly clear remaining/paidStartsAt once the server has responded
+  // (regardless of whether it sends a waiting object), while keeping the
+  // same keep()-style precedence for freeLimit/paidRate/any field the
+  // server might add later. Pure, no persistence.
+  function mergeServerWaiting(localWaiting, serverWaiting) {
+    const out = { ...(localWaiting || {}) };
+    for (const k in (serverWaiting || {})) { if (serverWaiting[k] != null) out[k] = serverWaiting[k]; }
+    if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null;
+    if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null;
+    return out;
+  }
+
   // Codex follow-up — mergeServerRide only runs after an authoritative
   // server Ride response, which is itself proof this trip is real. A
   // transient sim-fallback ride (see the `ride.localProvenance = 'sim_audit'`
@@ -530,6 +550,7 @@ export default function activeRide() {
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
       route: keep(ride.route, srv.route),
+      waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };

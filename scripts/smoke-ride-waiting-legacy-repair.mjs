@@ -243,6 +243,32 @@ expect('driver mergeServerRide defined', driverMergeServerRideBody.length > 0);
 expect('driver mergeServerRide clears localProvenance from the merged server-backed projection',
   /delete\s+merged\.localProvenance;/.test(driverMergeServerRideBody));
 
+// ── Driver server waiting reconciliation parity — active_ride.js ────────
+// Mirrors active_ride_passenger.js's mergeServerWaiting exactly; the
+// driver-side mergeServerRide previously had no `waiting:` key at all, so
+// a transient sim-fallback's demo 2:30/14:18 survived server confirmation
+// untouched even after localProvenance was cleared (Codex P2, active_ride.js:536).
+const driverMergeServerWaitingBody = functionBody(driverScreen, 'mergeServerWaiting');
+expect('driver mergeServerWaiting helper is defined',
+  driverMergeServerWaitingBody.length > 0);
+expect('driver mergeServerWaiting starts from a shallow local waiting copy',
+  driverMergeServerWaitingBody.includes('const out = { ...(localWaiting || {}) }'));
+expect('driver mergeServerWaiting overlays every non-null server waiting field onto the local copy',
+  driverMergeServerWaitingBody.includes('for (const k in (serverWaiting || {}))')
+    && driverMergeServerWaitingBody.includes('if (serverWaiting[k] != null) out[k] = serverWaiting[k]'));
+expect('driver mergeServerWaiting explicitly nulls remaining when the server has no non-null remaining',
+  driverMergeServerWaitingBody.includes('if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null'));
+expect('driver mergeServerWaiting explicitly nulls paidStartsAt when the server has no non-null paidStartsAt',
+  driverMergeServerWaitingBody.includes('if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null'));
+expect('a non-null server remaining/paidStartsAt still wins (the overlay loop runs before the explicit-null clears)',
+  driverMergeServerWaitingBody.indexOf('for (const k in (serverWaiting || {}))')
+    < driverMergeServerWaitingBody.indexOf('if (!serverWaiting || serverWaiting.remaining == null)'));
+expect('driver mergeServerRide uses mergeServerWaiting(...) for the waiting sub-object',
+  driverMergeServerRideBody.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)'));
+expect('driver mergeServerWaiting/mergeServerRide never call saveActiveRide (pure, no persistence introduced)',
+  !driverMergeServerWaitingBody.includes('saveActiveRide(')
+    && !driverMergeServerRideBody.includes('saveActiveRide('));
+
 // ── P2-2 — unknown wait progress must not report pct=100 ───────────────
 const waitingInfoBody = functionBody(passenger, 'waitingInfo');
 expect('active_ride_passenger.js defines waitingInfo', waitingInfoBody.length > 0);
