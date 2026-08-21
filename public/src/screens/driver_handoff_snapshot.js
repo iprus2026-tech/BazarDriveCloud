@@ -72,6 +72,20 @@ function isSnapshotStale(entry) {
   return Date.now() - savedAt > DRIVER_HANDOFF_SNAPSHOT_TTL_MS;
 }
 
+// #910 Codex P2 — trip_confirmation.js's DRIVER_CONFIRMED state is reachable
+// two ways: a genuine chat→confirmation handoff (resolveState's 'CONFIRMED'
+// alias, gated on a real, role-matching TRIP_CONFIRM_KEY record), or a bare
+// `?state=DRIVER_CONFIRMED` deep link — the documented SIM_AUDIT path — with
+// no handoff behind it at all. Both reach goActiveRideDriver(), so the
+// snapshot itself must carry which one it was; only an explicit
+// 'confirmed_handoff' value may ever be treated as proof of a real accept.
+// Anything else (missing, garbled, or any other string) is conservatively
+// simulation — never inferred from the caller, never trusted as real by
+// default.
+function normalizeProvenance(value) {
+  return value === 'confirmed_handoff' ? 'confirmed_handoff' : 'sim_audit';
+}
+
 // Persist the snapshot keyed by tripId. Accepts loose input (missing
 // fields, arrivalEstimate alias for etaText, orderId fallback to
 // tripId) and coerces everything through safeText so the stored record
@@ -90,6 +104,7 @@ export function saveDriverHandoffSnapshot(input) {
     agreedPrice:   safeText(input.agreedPrice,   DRIVER_HANDOFF_SNAPSHOT_FALLBACK.agreedPrice),
     etaText:       safeText(input.etaText || input.arrivalEstimate, DRIVER_HANDOFF_SNAPSHOT_FALLBACK.etaText),
     status:        safeText(input.status,        DRIVER_HANDOFF_SNAPSHOT_FALLBACK.status),
+    provenance:    normalizeProvenance(input.provenance),
     savedAt:       Date.now(),
   };
   const store = loadStore();
@@ -117,6 +132,7 @@ export function loadDriverHandoffSnapshot(tripId) {
     agreedPrice:   safeText(entry.agreedPrice,   DRIVER_HANDOFF_SNAPSHOT_FALLBACK.agreedPrice),
     etaText:       safeText(entry.etaText,       DRIVER_HANDOFF_SNAPSHOT_FALLBACK.etaText),
     status:        safeText(entry.status,        DRIVER_HANDOFF_SNAPSHOT_FALLBACK.status),
+    provenance:    normalizeProvenance(entry.provenance),
     savedAt:       Number.isFinite(entry.savedAt) ? entry.savedAt : null,
   };
 }
@@ -135,6 +151,24 @@ export function clearDriverHandoffSnapshotStore() {
 // for the passenger row, route.pickup/dropoffLabel for the route rows,
 // order.offerPrice + ride.price for the displayed fare, and the ETA
 // fields used by the en-route / in-progress / completion sheets.
+//
+// #910 — a snapshot only proves the ride is real when it was saved from a
+// genuine driver-confirm handoff (trip_confirmation.js's DRIVER_CONFIRMED
+// state backed by a real, role-matching TRIP_CONFIRM_KEY record). The same
+// state is also reachable via a bare `?state=DRIVER_CONFIRMED` deep link
+// with no handoff at all — the documented SIM_AUDIT path (Codex P2 follow-up
+// on this fix) — which saves an identically-shaped snapshot. So the overlay
+// itself must branch on snapshot.provenance, never assume every snapshot is
+// real: a 'confirmed_handoff' snapshot stamps ride.acceptedSource so both
+// ride_state.js's shared normalizeLegacyWaitingLeak (store-level, on the
+// next save/read) and active_ride.js's own render-time
+// isRealWaitingCandidate() recognize it as real and repair the inherited
+// demo waiting literals; anything else stamps the existing
+// ride.localProvenance = 'sim_audit' local-only marker instead, which both
+// of those consumers already treat as an explicit-simulation block —
+// preserving the intentional 2:30/14:18 fixture for the audit flow. Preserve
+// whichever marker the ride already carries (defensive — the fallback ride
+// this is applied to never has either in practice).
 export function applyDriverHandoffSnapshotToRide(ride, snapshot) {
   if (!isPlainObject(ride) || !isPlainObject(snapshot)) return ride;
   const passengerName = safeText(snapshot.passengerName, DRIVER_HANDOFF_SNAPSHOT_FALLBACK.passengerName);
@@ -142,8 +176,12 @@ export function applyDriverHandoffSnapshotToRide(ride, snapshot) {
   const dropoffLabel  = safeText(snapshot.dropoffLabel,  DRIVER_HANDOFF_SNAPSHOT_FALLBACK.dropoffLabel);
   const agreedPrice   = safeText(snapshot.agreedPrice,   DRIVER_HANDOFF_SNAPSHOT_FALLBACK.agreedPrice);
   const etaText       = safeText(snapshot.etaText,       DRIVER_HANDOFF_SNAPSHOT_FALLBACK.etaText);
+  const provenanceFields = normalizeProvenance(snapshot.provenance) === 'confirmed_handoff'
+    ? { acceptedSource: safeText(ride.acceptedSource, 'driver_handoff') }
+    : { localProvenance: safeText(ride.localProvenance, 'sim_audit') };
   return {
     ...ride,
+    ...provenanceFields,
     passenger: { ...(ride.passenger || {}), name: passengerName },
     order: {
       ...(ride.order || {}),

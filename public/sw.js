@@ -115,7 +115,13 @@
 // v303 — driver backend-confirmed waiting reconciliation parity.
 // v304 — persist server-confirmed driver waiting repair.
 // v305 — passenger server-confirmed waiting persistence and boarding real-Ride seed parity.
-const VERSION    = 'v305';
+// v306 (#910) — precached driver_handoff_snapshot.js and trip_confirmation.js changed
+// (applyDriverHandoffSnapshotToRide now stamps ride.acceptedSource only for a snapshot with
+// explicit confirmed_handoff provenance — set by trip_confirmation.js's role-agnostic
+// isConfirmedHandoffRecord() check — so a genuine driver-handoff accept is recognized as real by
+// the shared waiting-leak normalizer, while the documented SIM_AUDIT deep-link path still gets
+// localProvenance='sim_audit' and keeps its intentional demo waiting literals).
+const VERSION    = 'v306';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
