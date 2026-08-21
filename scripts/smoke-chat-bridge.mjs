@@ -19,7 +19,6 @@ const respond            = read('../public/src/screens/respond.js');
 const activeRide         = read('../public/src/screens/active_ride.js');
 const activeRidePassenger= read('../public/src/screens/active_ride_passenger.js');
 const passengerSheets    = read('../public/src/screens/active_ride_passenger_sheets.js');
-const sw                 = read('../public/sw.js');
 const rideState          = read('../public/src/ride_state.js');
 const css                = read('../public/styles/cloud.css');
 
@@ -276,28 +275,6 @@ expect('the retry insert is ordered by id (a retried older message keeps thread 
   /function persistMessageInOrder[\s\S]{0,220}Number\(arr\[i - 1\]\.id\) > Number\(msg\.id\)[\s\S]{0,40}splice\(i, 0, msg\)/.test(chat));
 expect('cloud.css styles the failed bubble + the retry control',
   /\.chat__msg--failed \.chat__bubble\s*\{/.test(css) && /\.chat__msg-retry\s*\{/.test(css));
-
-// ── J. sw.js — VERSION shape + CACHE_NAME linkage ──
-// BD-SW-01 — Pin the SHAPE of the cache contract, not the literal number.
-// Every BD-LIFE-XX / BD-CHAT-XX PR that touches a precached file has to
-// bump `VERSION` so GitHub Pages picks the new runtime up, and we used to
-// pin the exact number here (v95, then v96, …). That made every bump cost
-// an extra smoke fix-up and tied a chat-domain smoke to an SW-domain
-// version string. Instead, lock the two invariants that actually matter:
-//
-//   1. VERSION literal matches /^v\d+$/   (`'v123'` shape — the only
-//      thing GitHub Pages / sw activate() needs to differ across builds).
-//   2. CACHE_NAME derives from VERSION via the `bazardrive-${VERSION}`
-//      template literal so the cache name auto-tracks any bump.
-//
-// Capture the raw VERSION value once and re-use it in the CACHE_NAME
-// assertion so the two are checked as a pair, not in isolation.
-const swVersionMatch = sw.match(/const\s+VERSION\s*=\s*'(v\d+)'/);
-const swVersionValue = swVersionMatch ? swVersionMatch[1] : '';
-expect("public/sw.js VERSION has v-number format",
-  /^v\d+$/.test(swVersionValue));
-expect("public/sw.js CACHE_NAME derives from VERSION",
-  /const\s+CACHE_NAME\s*=\s*`bazardrive-\$\{VERSION\}`/.test(sw));
 
 // ── M. ride_state.js — status tone + label exports (BD-CHAT-03) ──
 expect("ride_state.js exports RIDE_STATUS_TONE",

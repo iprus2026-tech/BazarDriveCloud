@@ -4,84 +4,95 @@
 // was NOT bumped, so a cache-first service worker keeps serving the STALE module on installed clients.
 //
 // Forcing a bump genuinely needs a git BASELINE: a lock/manifest can force "regen on change" but not
-// "bump VERSION" (regen-without-bump is a consistent escape). So this compares the working tree (HEAD)
-// against the merge-base with the PR base and fails iff a file in the sw.js PRECACHE set changed while
-// the VERSION line stayed the same. It SKIPS gracefully when no git base is resolvable (e.g. a plain
-// push, a shallow clone, or a fresh repo), so it only ever gates a real PR diff.
+// "bump VERSION" (regen-without-bump is a consistent escape). So this compares the complete working
+// tree against the merge-base with the PR base and rejects a missing/malformed VERSION, a rollback, or
+// a cached-file change without a forward bump. It SKIPS gracefully outside a PR when no git base is
+// resolvable; an explicitly supplied PR_BASE_SHA is fail-closed.
 //
 // Run by .github/workflows/ci.yml on pull_request; also runnable locally on a feature branch
 // (defaults the base to origin/main). NOT a check.mjs smoke — check.mjs stays hermetic (no git/network).
 //
-// The drift set is the UNION of the base + head PRECACHE lists, so a file edited AND removed from
-// PRECACHE in the same PR (still live in the unchanged-VERSION cache on installed clients) is still
-// caught (Codex #808). Residual edge: a pure rename with no content change to a precached URL.
+// The drift set is the UNION of the base + head PRECACHE lists. Local runs include committed, staged,
+// unstaged and relevant untracked paths. PR runs evaluate only BASE..HEAD for deterministic CI. Rename
+// detection is disabled in both modes so both sides of a rename enter the changed-path set.
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import {
+  SW_PATH,
+  evaluateSwCacheContract,
+  splitNulPaths,
+} from './lib/sw-cache-contract.mjs';
 
-const SW = 'public/sw.js';
+const prBaseSha = process.env.PR_BASE_SHA?.trim() || '';
 
-function sh(cmd) {
-  return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+function git(args) {
+  return execFileSync('git', args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 function skip(msg) {
   console.log(`precache-drift: SKIP — ${msg}`);
   process.exit(0);
 }
-
-function parseVersion(src) {
-  const m = src.match(/const\s+VERSION\s*=\s*'([^']+)'/);
-  return m ? m[1] : null;
+function fail(msg) {
+  console.error(`FAIL precache-drift: ${msg}`);
+  process.exit(1);
 }
-// PRECACHE array entries are './…' paths relative to public/. Map each to its repo path so we can
-// intersect with `git diff --name-only`. A bare './' (cache the app root) maps to public/index.html.
-function parsePrecacheRepoPaths(src) {
-  const block = src.match(/const\s+PRECACHE\s*=\s*\[([\s\S]*?)\]/);
-  if (!block) return [];
-  const out = [];
-  for (const m of block[1].matchAll(/'(\.\/[^']*)'/g)) {
-    const rel = m[1].replace(/^\.\//, '');
-    out.push('public/' + (rel === '' ? 'index.html' : rel));
+function unavailable(msg) {
+  if (prBaseSha) {
+    fail(msg);
   }
-  return out;
+  skip(msg);
 }
 
-const baseRef = process.env.PR_BASE_SHA || 'origin/main';
+const baseRef = prBaseSha || 'origin/main';
 let base;
-try { base = sh(`git merge-base ${baseRef} HEAD`); } catch { base = ''; }
-if (!base) skip(`no merge-base with ${baseRef} (not a PR context / shallow clone)`);
+try { base = git(['merge-base', baseRef, 'HEAD']).trim(); } catch { base = ''; }
+if (!base) unavailable(`no merge-base with ${baseRef} (not a PR context / shallow clone)`);
 
 let changed, baseSw;
 try {
-  changed = new Set(sh(`git diff --name-only ${base} HEAD`).split('\n').filter(Boolean));
-  baseSw = sh(`git show ${base}:${SW}`);
+  // PR mode is a committed BASE..HEAD contract. Local mode compares BASE to
+  // the complete working tree and supplements tracked changes with untracked paths.
+  const diffArgs = prBaseSha
+    ? ['diff', '--name-only', '-z', '--no-renames', base, 'HEAD', '--']
+    : ['diff', '--name-only', '-z', '--no-renames', base, '--'];
+  const tracked = splitNulPaths(git(diffArgs));
+  const untracked = prBaseSha ? [] : splitNulPaths(git([
+    'ls-files', '--others', '--exclude-standard', '-z',
+  ]));
+  changed = [...new Set([...tracked, ...untracked])];
+  baseSw = git(['show', `${base}:${SW_PATH}`]);
 } catch (e) {
-  skip(`could not read the git base state (${e.message})`);
+  unavailable(`could not read the git base/worktree state (${e.message})`);
 }
 
 let headSrc;
-try { headSrc = fs.readFileSync(SW, 'utf8'); } catch { skip(`${SW} not present in the working tree`); }
+try {
+  headSrc = prBaseSha
+    ? git(['show', `HEAD:${SW_PATH}`])
+    : fs.readFileSync(SW_PATH, 'utf8');
+} catch {
+  fail(`${SW_PATH} not present in the evaluated head`);
+}
 
-const headVersion = parseVersion(headSrc);
-const baseVersion = parseVersion(baseSw);
-// Drift set = base PRECACHE ∪ head PRECACHE. Including the BASE list catches a file that is edited AND
-// dropped from the head PRECACHE in the SAME PR without a bump (Codex #808): installed clients still
-// hold it in the unchanged-VERSION `bazardrive-vNNN` cache and `sw.js` serves caches.match before the
-// network, while activation only purges a DIFFERENT CACHE_NAME — so it still needs a bump.
-const precache = new Set([...parsePrecacheRepoPaths(headSrc), ...parsePrecacheRepoPaths(baseSw)]);
-// Runtime-cache reality (Codex #809): sw.js runtime-caches every same-origin GET under CACHE_NAME, so
-// public/vendor/** (the lazily-loaded vendored SDK) is cached after first load even though it is NOT in
-// PRECACHE — a vendor update without a bump would serve the stale lib to installed clients. So guard
-// public/vendor/ like the PRECACHE set: any change there also requires a VERSION bump.
-const precacheChanged = [...changed].filter((f) => (precache.has(f) || f.startsWith('public/vendor/')) && f !== SW);
+const result = evaluateSwCacheContract({
+  baseSource: baseSw,
+  headSource: headSrc,
+  changedPaths: changed,
+});
 
-if (precacheChanged.length && headVersion && headVersion === baseVersion) {
-  console.error(`FAIL precache-drift: ${precacheChanged.length} cached file(s) (PRECACHE or public/vendor/) changed but ${SW} VERSION did not bump (still '${headVersion}').`);
-  console.error('A cache-first service worker would keep serving the stale module(s) on installed clients:');
-  for (const f of precacheChanged) console.error(`  - ${f}`);
-  console.error(`Fix: bump VERSION in ${SW} (and add a one-line header note recording what precached files changed).`);
+if (!result.ok) {
+  console.error(`FAIL precache-drift: Service Worker cache contract rejected VERSION ${result.baseVersion || '?'} -> ${result.headVersion || '?'}.`);
+  for (const error of result.errors) console.error(`  - ${error}`);
+  if (result.cachedPaths.length) {
+    console.error('Cached file(s) changed:');
+    for (const file of result.cachedPaths) console.error(`  - ${file}`);
+  }
   process.exit(1);
 }
 
-console.log(`precache-drift: OK — ${precacheChanged.length} precached file(s) changed; VERSION ${baseVersion} -> ${headVersion}.`);
+console.log(`precache-drift: OK — ${result.cachedPaths.length} cached file(s) changed; VERSION ${result.baseVersion} -> ${result.headVersion}.`);
 process.exit(0);
