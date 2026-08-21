@@ -135,6 +135,17 @@ export function clearDriverHandoffSnapshotStore() {
 // for the passenger row, route.pickup/dropoffLabel for the route rows,
 // order.offerPrice + ride.price for the displayed fare, and the ETA
 // fields used by the en-route / in-progress / completion sheets.
+//
+// #910 — a snapshot only ever exists because saveDriverHandoffSnapshot
+// was called from trip_confirmation.js's real driver-confirm handoff
+// (never from a simulation/audit path), so applying one here is itself
+// proof the ride is real. Stamp ride.acceptedSource so both
+// ride_state.js's shared normalizeLegacyWaitingLeak (store-level, on the
+// next save/read) and active_ride.js's own render-time
+// isRealWaitingCandidate() recognize it as real and repair the inherited
+// demo waiting literals instead of leaving them stuck. Preserve any
+// acceptedSource the ride already carries (defensive — the fallback ride
+// this is applied to never has one in practice).
 export function applyDriverHandoffSnapshotToRide(ride, snapshot) {
   if (!isPlainObject(ride) || !isPlainObject(snapshot)) return ride;
   const passengerName = safeText(snapshot.passengerName, DRIVER_HANDOFF_SNAPSHOT_FALLBACK.passengerName);
@@ -144,6 +155,7 @@ export function applyDriverHandoffSnapshotToRide(ride, snapshot) {
   const etaText       = safeText(snapshot.etaText,       DRIVER_HANDOFF_SNAPSHOT_FALLBACK.etaText);
   return {
     ...ride,
+    acceptedSource: safeText(ride.acceptedSource, 'driver_handoff'),
     passenger: { ...(ride.passenger || {}), name: passengerName },
     order: {
       ...(ride.order || {}),

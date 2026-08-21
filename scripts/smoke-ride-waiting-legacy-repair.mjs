@@ -83,6 +83,7 @@ const handoff = read('../public/src/screens/trip_confirmation_handoff.js');
 const passenger = read('../public/src/screens/active_ride_passenger.js');
 const rideActions = read('../public/src/ride_actions.js');
 const driverScreen = read('../public/src/screens/active_ride.js');
+const driverHandoffSnapshot = read('../public/src/screens/driver_handoff_snapshot.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -389,6 +390,20 @@ expect('passenger repair does not eagerly materialize a Ride when nothing is sto
     && /if\s*\(!storedRide\)\s*return;/.test(passengerRepairBody));
 expect('accepted migration boundary unchanged — ride_state.js still defines the same legacyFeedAccept exception (no new heuristic added alongside this passenger parity slice)',
   /legacyFeedAccept\s*=\s*!explicitRealCandidate\s*&&\s*!explicitSimulation/.test(rideState));
+
+// ── #910 — driver handoff snapshot must count as a real-ride marker ─────
+// applyDriverHandoffSnapshotToRide (driver_handoff_snapshot.js) is the only
+// enrichment a genuine driver accept (trip_confirmation.js's
+// goActiveRideDriver, via saveDriverHandoffSnapshot) leaves on the demo
+// fallback ride — it never touched orderId/acceptedSource, so the shared
+// normalizer above could never recognize such a ride as real and its
+// inherited 2:30/14:18 waiting leak was permanent. Fix: stamp
+// acceptedSource on the overlay so it flows through the existing
+// explicitRealCandidate signal.
+const applySnapshotBody = functionBody(driverHandoffSnapshot, 'applyDriverHandoffSnapshotToRide');
+expect('applyDriverHandoffSnapshotToRide defined', applySnapshotBody.length > 0);
+expect('applyDriverHandoffSnapshotToRide stamps ride.acceptedSource (defaulting to \'driver_handoff\', preserving any existing value)',
+  /acceptedSource:\s*safeText\(ride\.acceptedSource,\s*'driver_handoff'\)/.test(applySnapshotBody));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

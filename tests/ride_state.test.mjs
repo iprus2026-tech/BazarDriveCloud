@@ -29,6 +29,7 @@ import {
   saveActiveRideStore,
   DEMO_ACTIVE_RIDE_ID,
 } from '../public/src/ride_state.js';
+import { applyDriverHandoffSnapshotToRide } from '../public/src/screens/driver_handoff_snapshot.js';
 
 // ── in-memory localStorage mock ───────────────────────────────────────────────
 function makeLocalStorage() {
@@ -502,4 +503,57 @@ test('terminal freeze + normalizer: saveActiveRide refuses a forbidden transitio
   assert.equal(raw.status, RIDE_STATUS.COMPLETED);
   assert.equal(raw.waiting.remaining, '2:30',
     'the frozen path is non-persisting — storage stays raw until a legitimate write happens');
+});
+
+// ── #910 — driver handoff snapshot must count as a real-ride marker ────────
+// A driver-side genuine accept (trip_confirmation.js's goActiveRideDriver)
+// only ever seeds driver_handoff_snapshot.js's per-trip record, never
+// ride.orderId/acceptedSource directly. Before this fix,
+// applyDriverHandoffSnapshotToRide() overlaid passenger/route/price fields
+// onto the demo fallback ride but left it with neither marker, so the
+// shared normalizer above could never tell it apart from an untouched demo
+// ride — its inherited '2:30'/'14:18' waiting leak was permanent. The fix
+// stamps ride.acceptedSource = 'driver_handoff' inside that overlay so it
+// flows through the exact same explicitRealCandidate path already covered
+// by test F above.
+
+function demoFallbackRide(tripId) {
+  return {
+    tripId, role: 'driver', status: RIDE_STATUS.WAITING_PASSENGER,
+    waiting: legacyRealWaiting(),
+  };
+}
+
+test('#910: applyDriverHandoffSnapshotToRide stamps acceptedSource on a marker-less ride', () => {
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_o1'), {
+    tripId: 'trip_o1', orderId: 'o1', passengerName: 'Иван',
+  });
+  assert.equal(enriched.acceptedSource, 'driver_handoff');
+});
+
+test('#910: applyDriverHandoffSnapshotToRide preserves an acceptedSource the ride already carries', () => {
+  const ride = { ...demoFallbackRide('trip_o1'), acceptedSource: 'canonical_accept' };
+  const enriched = applyDriverHandoffSnapshotToRide(ride, { tripId: 'trip_o1', orderId: 'o1' });
+  assert.equal(enriched.acceptedSource, 'canonical_accept');
+});
+
+test('#910: a driver-handoff-enriched fallback ride now normalizes through the shared store boundary (read + write)', () => {
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_o2'), {
+    tripId: 'trip_o2', orderId: 'o2', passengerName: 'Мария',
+  });
+  // sanity: neither pre-existing marker this scenario used to rely on is present
+  assert.equal(enriched.orderId, undefined);
+  assert.ok(enriched.acceptedSource);
+
+  saveActiveRideStore({ trip_o2: enriched });
+  const found = findActiveRide('trip_o2');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+
+  const saved = saveActiveRide({ ...enriched });
+  assert.equal(saved.waiting.remaining, null);
+  assert.equal(saved.waiting.paidStartsAt, null);
+  const raw = loadActiveRideStore()['trip_o2'];
+  assert.equal(raw.waiting.remaining, null);
+  assert.equal(raw.waiting.paidStartsAt, null);
 });

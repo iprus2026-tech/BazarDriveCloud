@@ -115,7 +115,10 @@
 // v303 — driver backend-confirmed waiting reconciliation parity.
 // v304 — persist server-confirmed driver waiting repair.
 // v305 — passenger server-confirmed waiting persistence and boarding real-Ride seed parity.
-const VERSION    = 'v305';
+// v306 (#910) — precached driver_handoff_snapshot.js changed (applyDriverHandoffSnapshotToRide
+// now stamps ride.acceptedSource so a genuine driver-handoff accept is recognized as real by the
+// shared waiting-leak normalizer instead of staying stuck on the inherited demo waiting literals).
+const VERSION    = 'v306';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
