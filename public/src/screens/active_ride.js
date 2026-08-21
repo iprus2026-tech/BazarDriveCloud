@@ -973,19 +973,31 @@ export default function activeRide() {
   // genuinely IS an intentional, designed fixture value (createDemoActiveRide's
   // base, or an explicit sim override) — discarding it in favor of '—'
   // regressed the BD-RIDE-SIM-01 audit/demo scenario. So: an arrivedAt-derived
-  // clock always wins when arrivedAt is present; otherwise a REAL ride (same
-  // discriminator as ride_state.js's shared normalizer — non-empty orderId,
-  // non-empty acceptedSource, or the narrow legacy feed- tripId exception)
-  // shows an honest '—' (a real ride's stale/absent waiting.paidStartsAt must
-  // never resurface); a non-real ride (demo/sim, no markers) may show its own
+  // clock always wins when arrivedAt is present; otherwise a REAL ride shows
+  // an honest '—' (a real ride's stale/absent waiting.paidStartsAt must never
+  // resurface); a non-real ride (demo/sim, no markers) may show its own
   // waiting.paidStartsAt when one is actually set, or '—' otherwise. No new
   // timer, no new persisted field, no arrivedAt stamped from the query
   // simulation — a snapshot computed at each render/refresh pass. Formatted
   // with the existing ru-RU HH:MM convention already used by profile.js.
+  //
+  // Codex follow-up #2 — this is a RENDER-time check on whatever `ride`
+  // object is currently in memory, which can be a transient
+  // createDemoActiveRide({ tripId, ...overrides }) fallback (line ~460)
+  // constructed under an ARBITRARY caller-supplied tripId (e.g. a
+  // ?tripId=feed-audit simulation URL) that was never persisted and never
+  // ran through ride_state.js's normalizer. Unlike ride_state.js's shared
+  // store-level normalizer — which only ever inspects something already
+  // sitting in bazardrive.active_ride.v1, where a feed- key is proof of a
+  // real (if unmarked) historical accept — a feed- tripId here proves
+  // nothing about provenance, since a demo/sim ride can carry any tripId
+  // shape. Only orderId/acceptedSource are safe render-time real signals:
+  // a genuinely real, persisted ride reaching this screen already has
+  // waiting.paidStartsAt normalized to null by ride_state.js before it's
+  // even loaded, so this check never needs the feed- signal to protect it.
   function isRealWaitingCandidate() {
     if (typeof ride.orderId === 'string' && ride.orderId.trim()) return true;
     if (typeof ride.acceptedSource === 'string' && ride.acceptedSource.trim()) return true;
-    if (typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-')) return true;
     return false;
   }
   function paidStartLabel() {

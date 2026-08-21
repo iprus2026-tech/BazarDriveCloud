@@ -183,11 +183,12 @@ expect('acceptPassengerRequestFromPost stamps acceptedSource = \'feed_post_accep
 expect('active_ride.js no longer contains the literal waiting.paidStartsAt || \'14:18\' render fallback in code (comment-stripped scan)',
   !/waiting\.paidStartsAt\s*\|\|\s*'14:18'/.test(stripComments(driverScreen)));
 const isRealWaitingCandidateBody = functionBody(driverScreen, 'isRealWaitingCandidate');
-expect('active_ride.js defines isRealWaitingCandidate (orderId / acceptedSource / legacy feed- prefix)',
-  isRealWaitingCandidateBody.length > 0
-    && /ride\.orderId/.test(isRealWaitingCandidateBody)
-    && /ride\.acceptedSource/.test(isRealWaitingCandidateBody)
-    && /ride\.tripId\.startsWith\('feed-'\)/.test(isRealWaitingCandidateBody));
+expect('active_ride.js defines isRealWaitingCandidate with orderId as a render-time real signal',
+  isRealWaitingCandidateBody.length > 0 && /ride\.orderId/.test(isRealWaitingCandidateBody));
+expect('active_ride.js isRealWaitingCandidate includes acceptedSource as a render-time real signal',
+  /ride\.acceptedSource/.test(isRealWaitingCandidateBody));
+expect('active_ride.js isRealWaitingCandidate does NOT treat a feed- tripId prefix as a render-time real signal (only ride_state.js\'s persisted-store normalizer may — a transient in-memory demo can carry an arbitrary caller-supplied tripId)',
+  !/startsWith\('feed-'\)/.test(isRealWaitingCandidateBody));
 
 const paidStartLabelBody = functionBody(driverScreen, 'paidStartLabel');
 expect('active_ride.js defines paidStartLabel', paidStartLabelBody.length > 0);
@@ -239,6 +240,15 @@ expect('the raw upgraded return value can no longer become `ride` without a cano
   !/\bride\s*=\s*upgraded;/.test(hydrationBody));
 expect('the old reference-identity pattern (upgraded !== ride) is no longer the final hydration path',
   !/if\s*\(upgraded\s*&&\s*upgraded\s*!==\s*ride\)\s*ride\s*=\s*upgraded;/.test(hydrationBody));
+
+// ── Focused guard — passenger backend reconciliation no longer uses the
+// plain keep() for waiting (see scripts/smoke-passenger-active-ride-loading-states.mjs
+// for the full mergeServerWaiting contract; this is a narrow negative scan
+// only, not a duplicate of that smoke) ──────────────────────────────────
+const mergeServerRideBody = functionBody(passenger, 'mergeServerRide');
+expect('mergeServerRide defined', mergeServerRideBody.length > 0);
+expect('mergeServerRide no longer merges waiting via the plain keep(ride.waiting, srv.waiting)',
+  !/waiting:\s*keep\(ride\.waiting,\s*srv\.waiting\)/.test(mergeServerRideBody));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

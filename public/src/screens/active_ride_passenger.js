@@ -2194,6 +2194,30 @@ export default function activeRidePassenger(options = {}) {
     return status === 401 || status === 403;
   }
 
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read (see runInitialRead's `const srv = await ...; if (!srv) return;`
+  // gate below), which is itself proof this trip is real. Until that point,
+  // loadPassengerRideView() may have fallen back to a transient
+  // createDemoActiveRide() placeholder (no local canonical record yet)
+  // still carrying the raw demo waiting.remaining/paidStartsAt ('2:30'/
+  // '14:18'). serializeRide() sends no `waiting` field at all today, so the
+  // plain keep(local, server) merge below — which only overlays a NON-NULL
+  // server key — leaves those two fields completely untouched even though
+  // the server has now established this is a real trip. Explicitly clear
+  // them once the server has responded (regardless of whether it sends a
+  // waiting object), while keeping the same keep() precedence for
+  // freeLimit/paidRate/any field the server might add later — a future
+  // non-null server remaining/paidStartsAt still wins. Pure, no
+  // saveActiveRide, no persistence — only mergeServerRide's transient
+  // in-memory projection changes.
+  function mergeServerWaiting(localWaiting, serverWaiting) {
+    const out = { ...(localWaiting || {}) };
+    for (const k in (serverWaiting || {})) { if (serverWaiting[k] != null) out[k] = serverWaiting[k]; }
+    if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null;
+    if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null;
+    return out;
+  }
+
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
   function mergeServerRide(srv, preserveLocallyAheadStatus = false) {
@@ -2218,7 +2242,7 @@ export default function activeRidePassenger(options = {}) {
       order: keep(ride.order, srv.order),
       route: keep(ride.route, srv.route),
       payment: keep(ride.payment, srv.payment),
-      waiting: keep(ride.waiting, srv.waiting),
+      waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       ride: keep(ride.ride, srv.ride),
       chat: keep(ride.chat, srv.chat),
       timestamps: keep(ride.timestamps, srv.timestamps),

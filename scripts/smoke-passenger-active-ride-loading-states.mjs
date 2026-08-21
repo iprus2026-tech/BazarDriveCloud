@@ -172,9 +172,44 @@ expect('server merge accepts all display sub-objects without clobbering local fa
   mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
     && mergeServer.includes('order: keep(ride.order, srv.order)')
     && mergeServer.includes('payment: keep(ride.payment, srv.payment)')
-    && mergeServer.includes('waiting: keep(ride.waiting, srv.waiting)')
+    && mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)')
     && mergeServer.includes('ride: keep(ride.ride, srv.ride)')
     && mergeServer.includes('chat: keep(ride.chat, srv.chat)'));
+
+// ── BD-RIDE-WAITING-01E Codex follow-up — backend-confirmed waiting cleanup ──
+// A transient createDemoActiveRide() placeholder (no local canonical record
+// yet) can still carry the raw demo waiting.remaining/paidStartsAt when
+// mergeServerRide first runs. serializeRide() sends no `waiting` field at
+// all today, so the plain keep(local, server) merge used for every other
+// sub-object would leave those two fields completely untouched even after
+// the server has proven this trip is real. mergeServerWaiting explicitly
+// clears them once the server has responded, while keeping the same
+// keep()-style precedence (a future non-null server value still wins) for
+// freeLimit/paidRate/anything else.
+const mergeServerWaiting = functionBody(passenger, 'mergeServerWaiting');
+expect('mergeServerWaiting helper is defined',
+  mergeServerWaiting.length > 0);
+expect('mergeServerWaiting starts from the same keep(local, server) merge behavior (local base, non-null server keys overlay)',
+  mergeServerWaiting.includes('const out = { ...(localWaiting || {}) }')
+    && mergeServerWaiting.includes('for (const k in (serverWaiting || {}))')
+    && mergeServerWaiting.includes('if (serverWaiting[k] != null) out[k] = serverWaiting[k]'));
+expect('mergeServerWaiting explicitly clears remaining to null when the server has no non-null remaining',
+  mergeServerWaiting.includes('if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null'));
+expect('mergeServerWaiting explicitly clears paidStartsAt to null when the server has no non-null paidStartsAt',
+  mergeServerWaiting.includes('if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null'));
+expect('mergeServerWaiting lets a non-null server remaining/paidStartsAt win (the overlay loop runs before the explicit-null clears, and only nulls when the server key itself is null)',
+  mergeServerWaiting.indexOf('for (const k in (serverWaiting || {}))') < mergeServerWaiting.indexOf('if (!serverWaiting || serverWaiting.remaining == null)'));
+expect('mergeServerRide uses mergeServerWaiting(...) for the waiting sub-object',
+  mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)'));
+expect('mergeServerWaiting/mergeServerRide never call saveActiveRide, updateActiveRideStatus, or persist the transient projection',
+  !mergeServerWaiting.includes('saveActiveRide(')
+    && !mergeServerWaiting.includes('updateActiveRideStatus(')
+    && !mergeServer.includes('saveActiveRide(')
+    && !mergeServer.includes('updateActiveRideStatus('));
+expect('runInitialRead only merges the server ride after a successful read (srv truthy) — the !srv branch returns before mergeServerRide ever runs',
+  initialRead.includes('const srv = await readManager.run(ride.tripId)')
+    && initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
+    && /if\s*\(!srv\)\s*\{[\s\S]*?return;[\s\S]*?\}/.test(initialRead));
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
