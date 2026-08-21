@@ -84,6 +84,7 @@ const passenger = read('../public/src/screens/active_ride_passenger.js');
 const rideActions = read('../public/src/ride_actions.js');
 const driverScreen = read('../public/src/screens/active_ride.js');
 const driverHandoffSnapshot = read('../public/src/screens/driver_handoff_snapshot.js');
+const tripConfirmation = read('../public/src/screens/trip_confirmation.js');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -391,7 +392,8 @@ expect('passenger repair does not eagerly materialize a Ride when nothing is sto
 expect('accepted migration boundary unchanged — ride_state.js still defines the same legacyFeedAccept exception (no new heuristic added alongside this passenger parity slice)',
   /legacyFeedAccept\s*=\s*!explicitRealCandidate\s*&&\s*!explicitSimulation/.test(rideState));
 
-// ── #910 — driver handoff snapshot must count as a real-ride marker ─────
+// ── #910 — driver handoff snapshot must count as a real-ride marker,
+// but ONLY when it actually is one (Codex P2 follow-up) ─────────────────
 // applyDriverHandoffSnapshotToRide (driver_handoff_snapshot.js) is the only
 // enrichment a genuine driver accept (trip_confirmation.js's
 // goActiveRideDriver, via saveDriverHandoffSnapshot) leaves on the demo
@@ -399,11 +401,56 @@ expect('accepted migration boundary unchanged — ride_state.js still defines th
 // normalizer above could never recognize such a ride as real and its
 // inherited 2:30/14:18 waiting leak was permanent. Fix: stamp
 // acceptedSource on the overlay so it flows through the existing
-// explicitRealCandidate signal.
+// explicitRealCandidate signal — but DRIVER_CONFIRMED is also reachable via
+// a bare ?state=DRIVER_CONFIRMED deep link (documented SIM_AUDIT path) with
+// no real handoff behind it, so the snapshot now carries an explicit
+// provenance and the overlay only trusts an exact 'confirmed_handoff' value;
+// anything else stamps the existing localProvenance = 'sim_audit' marker
+// instead, preserving the intentional demo fixture for the audit flow.
+const normalizeProvenanceBody = functionBody(driverHandoffSnapshot, 'normalizeProvenance');
+expect('driver_handoff_snapshot.js defines normalizeProvenance', normalizeProvenanceBody.length > 0);
+expect('normalizeProvenance only ever returns \'confirmed_handoff\' for an exact match, \'sim_audit\' otherwise (fail-closed, not inferred)',
+  /value\s*===\s*'confirmed_handoff'\s*\?\s*'confirmed_handoff'\s*:\s*'sim_audit'/.test(normalizeProvenanceBody));
+
+const saveSnapshotBody = functionBody(driverHandoffSnapshot, 'saveDriverHandoffSnapshot');
+expect('saveDriverHandoffSnapshot defined', saveSnapshotBody.length > 0);
+expect('saveDriverHandoffSnapshot persists provenance through normalizeProvenance(input.provenance)',
+  /provenance:\s*normalizeProvenance\(input\.provenance\)/.test(saveSnapshotBody));
+
+const loadSnapshotBody = functionBody(driverHandoffSnapshot, 'loadDriverHandoffSnapshot');
+expect('loadDriverHandoffSnapshot defined', loadSnapshotBody.length > 0);
+expect('loadDriverHandoffSnapshot re-normalizes provenance on read through normalizeProvenance(entry.provenance) (never trusts raw storage)',
+  /provenance:\s*normalizeProvenance\(entry\.provenance\)/.test(loadSnapshotBody));
+
 const applySnapshotBody = functionBody(driverHandoffSnapshot, 'applyDriverHandoffSnapshotToRide');
 expect('applyDriverHandoffSnapshotToRide defined', applySnapshotBody.length > 0);
-expect('applyDriverHandoffSnapshotToRide stamps ride.acceptedSource (defaulting to \'driver_handoff\', preserving any existing value)',
+expect('applyDriverHandoffSnapshotToRide branches on normalizeProvenance(snapshot.provenance) === \'confirmed_handoff\' before choosing acceptedSource vs. localProvenance',
+  /normalizeProvenance\(snapshot\.provenance\)\s*===\s*'confirmed_handoff'/.test(applySnapshotBody));
+expect('the confirmed-handoff branch stamps ride.acceptedSource (defaulting to \'driver_handoff\', preserving any existing value)',
   /acceptedSource:\s*safeText\(ride\.acceptedSource,\s*'driver_handoff'\)/.test(applySnapshotBody));
+expect('the non-confirmed branch stamps the existing localProvenance = \'sim_audit\' marker instead (defaulting, preserving any existing value) — never acceptedSource',
+  /localProvenance:\s*safeText\(ride\.localProvenance,\s*'sim_audit'\)/.test(applySnapshotBody));
+
+// ── trip_confirmation.js — the writer must record which path it took ────
+// Codex P2 round 2: handoff.role is who WROTE the record (chat→confirmation
+// is always stored role='passenger' — that's exactly why goActiveRideDriver
+// falls back to a driver snapshot at all), never who is viewing it. A
+// role-equality gate here would reject every genuine driver confirm.
+const goActiveRideDriverBody = functionBody(tripConfirmation, 'goActiveRideDriver');
+expect('trip_confirmation.js defines goActiveRideDriver', goActiveRideDriverBody.length > 0);
+expect('goActiveRideDriver threads an explicit provenance into saveDriverHandoffSnapshot (never omitted, never left for the callee to guess)',
+  /provenance:\s*isConfirmedHandoff\s*\?\s*'confirmed_handoff'\s*:\s*'sim_audit'/.test(goActiveRideDriverBody));
+
+const isConfirmedHandoffRecordBody = functionBody(tripConfirmation, 'isConfirmedHandoffRecord');
+expect('trip_confirmation.js exports isConfirmedHandoffRecord', isConfirmedHandoffRecordBody.length > 0);
+expect('isConfirmedHandoffRecord is exported (not just a local helper) so tests can exercise it directly',
+  /export\s+function\s+isConfirmedHandoffRecord\(/.test(tripConfirmation));
+expect('isConfirmedHandoffRecord checks state === \'CONFIRMED\' and freshness only',
+  /Boolean\(handoff\s*&&\s*handoff\.state\s*===\s*'CONFIRMED'\s*&&\s*!isHandoffExpired\(handoff\)\)/.test(isConfirmedHandoffRecordBody));
+expect('isConfirmedHandoffRecord does NOT compare handoff.role against the viewer role (the round-1 regression) — no role-equality anywhere in its body',
+  !/handoff\.role\s*===\s*role/.test(isConfirmedHandoffRecordBody) && !/role\s*===\s*handoff\.role/.test(isConfirmedHandoffRecordBody));
+expect('the driver-facing isConfirmedHandoff variable is derived from isConfirmedHandoffRecord(handoff), not re-implemented inline',
+  /isConfirmedHandoff\s*=\s*isConfirmedHandoffRecord\(handoff\)/.test(tripConfirmation));
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

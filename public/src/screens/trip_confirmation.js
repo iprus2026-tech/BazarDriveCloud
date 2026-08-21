@@ -51,6 +51,21 @@ function isHandoffExpired(handoff) {
   return Date.now() > exp;
 }
 
+// #910 Codex P2 (round 2) — handoff.role records WHO wrote the record, not
+// who is viewing it: the chat→confirmation handoff is always stored
+// role='passenger' (see driver_handoff_snapshot.js's own header comment) —
+// that is precisely why goActiveRideDriver() cannot build a canonical driver
+// ride from it and falls back to a driver snapshot in the first place. A
+// role-equality check here would therefore reject every genuine driver
+// confirm and always classify it as sim_audit, leaving #910 unfixed for the
+// real path. Only state === 'CONFIRMED' plus freshness proves a real
+// confirmation happened, regardless of viewer role or which query path
+// (the 'CONFIRMED' alias or a literal ?state=DRIVER_CONFIRMED) reached this
+// state. Exported so tests can exercise the exact gate directly.
+export function isConfirmedHandoffRecord(handoff) {
+  return Boolean(handoff && handoff.state === 'CONFIRMED' && !isHandoffExpired(handoff));
+}
+
 // Stale handoff entries are useless and, worse, can mislead a later
 // resolveState() if the clock or TTL ever changes — drop them on read
 // so the EXPIRED variant is rendered exactly once.
@@ -512,6 +527,16 @@ export default function tripConfirmation() {
   // ── Wire actions ────────────────────────────────────────────
   const controller = { aborted: false, timers: [] };
 
+  // #910 Codex P2 — DRIVER_CONFIRMED is reachable both via a genuine
+  // chat→confirmation handoff and via a bare ?state=DRIVER_CONFIRMED deep
+  // link with no handoff at all (the documented SIM_AUDIT path). Deliberately
+  // NOT the same predicate resolveState's 'CONFIRMED' alias uses above (that
+  // one also requires handoff.role === role, which a genuine driver confirm
+  // never satisfies — see isConfirmedHandoffRecord's own comment) — this is
+  // the provenance signal for the snapshot write below, not a state-resolution
+  // gate.
+  const isConfirmedHandoff = isConfirmedHandoffRecord(handoff);
+
   // BD-HANDOFF-04 — Seed bazardrive.active_ride.v1 before crossing the
   // route boundary so /active-ride finds a matching record via
   // findActiveRide(tripId) instead of falling back to SIM_AUDIT_*.
@@ -538,6 +563,7 @@ export default function tripConfirmation() {
       agreedPrice:   MOCK_ROUTE.priceRub,
       etaText:       `${MOCK_ROUTE.etaMin} мин`,
       status:        'DRIVER_EN_ROUTE',
+      provenance:    isConfirmedHandoff ? 'confirmed_handoff' : 'sim_audit',
     });
     go(`/active-ride?role=driver&tripId=${encodeURIComponent(tripId)}&status=DRIVER_EN_ROUTE`);
   }

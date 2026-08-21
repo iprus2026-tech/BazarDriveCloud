@@ -30,6 +30,7 @@ import {
   DEMO_ACTIVE_RIDE_ID,
 } from '../public/src/ride_state.js';
 import { applyDriverHandoffSnapshotToRide } from '../public/src/screens/driver_handoff_snapshot.js';
+import { isConfirmedHandoffRecord } from '../public/src/screens/trip_confirmation.js';
 
 // ── in-memory localStorage mock ───────────────────────────────────────────────
 function makeLocalStorage() {
@@ -505,17 +506,26 @@ test('terminal freeze + normalizer: saveActiveRide refuses a forbidden transitio
     'the frozen path is non-persisting — storage stays raw until a legitimate write happens');
 });
 
-// ── #910 — driver handoff snapshot must count as a real-ride marker ────────
+// ── #910 — driver handoff snapshot must count as a real-ride marker,
+// but ONLY when it actually is one ─────────────────────────────────────────
 // A driver-side genuine accept (trip_confirmation.js's goActiveRideDriver)
 // only ever seeds driver_handoff_snapshot.js's per-trip record, never
 // ride.orderId/acceptedSource directly. Before this fix,
 // applyDriverHandoffSnapshotToRide() overlaid passenger/route/price fields
 // onto the demo fallback ride but left it with neither marker, so the
 // shared normalizer above could never tell it apart from an untouched demo
-// ride — its inherited '2:30'/'14:18' waiting leak was permanent. The fix
-// stamps ride.acceptedSource = 'driver_handoff' inside that overlay so it
-// flows through the exact same explicitRealCandidate path already covered
-// by test F above.
+// ride — its inherited '2:30'/'14:18' waiting leak was permanent.
+//
+// Codex P2 follow-up: DRIVER_CONFIRMED is also reachable via a bare
+// ?state=DRIVER_CONFIRMED deep link with no real handoff behind it (the
+// documented SIM_AUDIT path) — goActiveRideDriver() saves an identically-
+// shaped snapshot either way. So the snapshot itself now carries an explicit
+// provenance: 'confirmed_handoff' stamps ride.acceptedSource (real, flows
+// through the same explicitRealCandidate path covered by test F above);
+// anything else (missing, or any other value) stamps the existing
+// ride.localProvenance = 'sim_audit' marker instead, which the shared
+// normalizer's explicitSimulation check already blocks — preserving the
+// intentional demo fixture for the audit flow.
 
 function demoFallbackRide(tripId) {
   return {
@@ -524,22 +534,23 @@ function demoFallbackRide(tripId) {
   };
 }
 
-test('#910: applyDriverHandoffSnapshotToRide stamps acceptedSource on a marker-less ride', () => {
+test('#910: applyDriverHandoffSnapshotToRide stamps acceptedSource on a marker-less ride when the snapshot is a confirmed handoff', () => {
   const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_o1'), {
-    tripId: 'trip_o1', orderId: 'o1', passengerName: 'Иван',
+    tripId: 'trip_o1', orderId: 'o1', passengerName: 'Иван', provenance: 'confirmed_handoff',
   });
   assert.equal(enriched.acceptedSource, 'driver_handoff');
+  assert.equal(enriched.localProvenance, undefined);
 });
 
 test('#910: applyDriverHandoffSnapshotToRide preserves an acceptedSource the ride already carries', () => {
   const ride = { ...demoFallbackRide('trip_o1'), acceptedSource: 'canonical_accept' };
-  const enriched = applyDriverHandoffSnapshotToRide(ride, { tripId: 'trip_o1', orderId: 'o1' });
+  const enriched = applyDriverHandoffSnapshotToRide(ride, { tripId: 'trip_o1', orderId: 'o1', provenance: 'confirmed_handoff' });
   assert.equal(enriched.acceptedSource, 'canonical_accept');
 });
 
-test('#910: a driver-handoff-enriched fallback ride now normalizes through the shared store boundary (read + write)', () => {
+test('#910: a confirmed-handoff-enriched fallback ride now normalizes through the shared store boundary (read + write)', () => {
   const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_o2'), {
-    tripId: 'trip_o2', orderId: 'o2', passengerName: 'Мария',
+    tripId: 'trip_o2', orderId: 'o2', passengerName: 'Мария', provenance: 'confirmed_handoff',
   });
   // sanity: neither pre-existing marker this scenario used to rely on is present
   assert.equal(enriched.orderId, undefined);
@@ -556,4 +567,82 @@ test('#910: a driver-handoff-enriched fallback ride now normalizes through the s
   const raw = loadActiveRideStore()['trip_o2'];
   assert.equal(raw.waiting.remaining, null);
   assert.equal(raw.waiting.paidStartsAt, null);
+});
+
+test('#910 Codex P2: a snapshot with no provenance (the SIM_AUDIT deep-link path) stamps localProvenance = \'sim_audit\', NOT acceptedSource', () => {
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_sim1'), {
+    tripId: 'trip_sim1', orderId: 'o-sim', passengerName: 'Тест',
+  });
+  assert.equal(enriched.acceptedSource, undefined);
+  assert.equal(enriched.localProvenance, 'sim_audit');
+});
+
+test('#910 Codex P2: an unrecognized provenance value is treated as simulation, not trusted as real', () => {
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_sim2'), {
+    tripId: 'trip_sim2', orderId: 'o-sim2', provenance: 'literally-anything-else',
+  });
+  assert.equal(enriched.acceptedSource, undefined);
+  assert.equal(enriched.localProvenance, 'sim_audit');
+});
+
+test('#910 Codex P2: a SIM_AUDIT-provenance snapshot through the shared store boundary keeps the intentional demo waiting fixture (2:30/14:18), does not normalize it away', () => {
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_sim3'), {
+    tripId: 'trip_sim3', orderId: 'o-sim3', passengerName: 'Тест',
+  });
+  assert.equal(enriched.localProvenance, 'sim_audit');
+
+  saveActiveRideStore({ trip_sim3: enriched });
+  const found = findActiveRide('trip_sim3');
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+
+  const saved = saveActiveRide({ ...enriched });
+  assert.equal(saved.waiting.remaining, '2:30');
+  assert.equal(saved.waiting.paidStartsAt, '14:18');
+});
+
+// ── #910 Codex P2 (round 2) — isConfirmedHandoffRecord must be role-agnostic
+// (trip_confirmation.js) ────────────────────────────────────────────────────
+// The first P2 fix mirrored resolveState's handoff.role === role check, but
+// the chat→confirmation handoff is ALWAYS stored role='passenger' — that is
+// precisely why goActiveRideDriver() cannot build a canonical driver ride
+// from it and falls back to a driver snapshot at all (see the BD-HANDOFF-05
+// comment on goActiveRideDriver). A role-equality gate would therefore
+// reject every genuine driver confirm and always classify it sim_audit,
+// leaving the original #910 bug unfixed for the real path. The corrected
+// gate only checks state === 'CONFIRMED' and freshness.
+
+test('#910 Codex P2 round 2: a fresh handoff stored role=\'passenger\' (the real chat→confirmation shape) still counts as confirmed on the driver CTA', () => {
+  const handoff = { state: 'CONFIRMED', role: 'passenger', expiresAt: Date.now() + 5 * 60 * 1000 };
+  assert.equal(isConfirmedHandoffRecord(handoff), true);
+});
+
+test('#910 Codex P2 round 2: a missing handoff is not confirmed (sim_audit)', () => {
+  assert.equal(isConfirmedHandoffRecord(null), false);
+  assert.equal(isConfirmedHandoffRecord(undefined), false);
+});
+
+test('#910 Codex P2 round 2: an expired handoff is not confirmed (sim_audit), even with state CONFIRMED', () => {
+  const handoff = { state: 'CONFIRMED', role: 'passenger', expiresAt: Date.now() - 1000 };
+  assert.equal(isConfirmedHandoffRecord(handoff), false);
+});
+
+test('#910 Codex P2 round 2: a handoff with any non-CONFIRMED state is not confirmed', () => {
+  const handoff = { state: 'PENDING', role: 'passenger', expiresAt: Date.now() + 60000 };
+  assert.equal(isConfirmedHandoffRecord(handoff), false);
+});
+
+test('#910 Codex P2 round 2: end-to-end — a genuine passenger-authored confirmed handoff drives a real driver-handoff snapshot overlay to acceptedSource, not localProvenance', () => {
+  const handoff = { state: 'CONFIRMED', role: 'passenger', expiresAt: Date.now() + 5 * 60 * 1000 };
+  const provenance = isConfirmedHandoffRecord(handoff) ? 'confirmed_handoff' : 'sim_audit';
+  const enriched = applyDriverHandoffSnapshotToRide(demoFallbackRide('trip_real1'), {
+    tripId: 'trip_real1', orderId: 'o-real1', passengerName: 'Настоящий пассажир', provenance,
+  });
+  assert.equal(enriched.acceptedSource, 'driver_handoff');
+  assert.equal(enriched.localProvenance, undefined);
+
+  saveActiveRideStore({ trip_real1: enriched });
+  const found = findActiveRide('trip_real1');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
 });
