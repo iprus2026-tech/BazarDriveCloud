@@ -269,6 +269,65 @@ expect('driver mergeServerWaiting/mergeServerRide never call saveActiveRide (pur
   !driverMergeServerWaitingBody.includes('saveActiveRide(')
     && !driverMergeServerRideBody.includes('saveActiveRide('));
 
+// ── Persist server-confirmed driver waiting into an EXISTING stored Ride ──
+// mergeServerRide's cleanup only ever lived in the in-memory `ride` closure
+// variable; a pre-existing unmarked stored trip_* record never got the
+// benefit of it, and the next status transition's independent
+// findActiveRide() re-read in updateActiveRideStatus silently re-persisted
+// the stale 2:30/14:18 pair (Codex follow-up, active_ride.js:553). This
+// narrow repair helper fixes exactly that gap.
+const persistRepairBody = functionBody(driverScreen, 'persistServerConfirmedWaitingProjection');
+expect('persistServerConfirmedWaitingProjection helper is defined',
+  persistRepairBody.length > 0);
+expect('the repair helper reads the existing stored ride via findActiveRide(ride.tripId)',
+  /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(persistRepairBody));
+expect('the repair helper returns without saving when nothing is stored yet (no eager materialization)',
+  /if\s*\(!storedRide\)\s*return;/.test(persistRepairBody));
+expect('the repaired object is based on storedRide (not on ride / the server projection) — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, route, cancel all survive from storage untouched',
+  /\{\s*\.\.\.storedRide\s*,/.test(persistRepairBody));
+expect('only waiting crosses from the cleaned in-memory ride into the repaired stored copy',
+  /waiting:\s*\{\s*\.\.\.\(ride\.waiting\s*\|\|\s*\{\}\)\s*\}/.test(persistRepairBody));
+expect('the repair helper deletes localProvenance from the repaired copy (server success proves the ride real)',
+  /delete\s+repaired\.localProvenance;/.test(persistRepairBody));
+expect('the repair helper does not fabricate orderId/acceptedSource/any other provenance field',
+  !/repaired\.orderId\s*=/.test(persistRepairBody) && !/repaired\.acceptedSource\s*=/.test(persistRepairBody));
+expect('the repair helper persists through the existing saveActiveRide (so the terminal-freeze guard there still applies unchanged)',
+  /saveActiveRide\(repaired\)/.test(persistRepairBody));
+
+const runInitialDriverReadBody = functionBody(driverScreen, 'runInitialDriverRead');
+expect('runInitialDriverRead invokes the repair immediately after a successful mergeServerRide',
+  /ride\s*=\s*mergeServerRide\(result\.value\);\s*\n\s*persistServerConfirmedWaitingProjection\(\);/
+    .test(runInitialDriverReadBody));
+expect('runInitialDriverRead does NOT invoke the repair on the local-miss / error branches',
+  (() => {
+    const mergeIdx = runInitialDriverReadBody.indexOf('mergeServerRide(result.value)');
+    const afterMerge = runInitialDriverReadBody.slice(mergeIdx, mergeIdx + 200);
+    const repairCallsAfterMerge = (afterMerge.match(/persistServerConfirmedWaitingProjection\(\)/g) || []).length;
+    const tailAfterReturn = runInitialDriverReadBody.slice(runInitialDriverReadBody.indexOf('const err = result.error;'));
+    return repairCallsAfterMerge === 1 && !tailAfterReturn.includes('persistServerConfirmedWaitingProjection(');
+  })());
+
+const refetchBody = functionBody(driverScreen, 'refetchRideAndRender');
+expect('refetchRideAndRender invokes the repair immediately after a successful mergeServerRide',
+  /ride\s*=\s*mergeServerRide\(srv\);\s*\n\s*persistServerConfirmedWaitingProjection\(\);/.test(refetchBody));
+
+const pollOnceBody = functionBody(driverScreen, 'pollRideOnce');
+expect('pollRideOnce invokes the repair immediately after a successful mergeServerRide',
+  /ride\s*=\s*mergeServerRide\(srv\);\s*\n\s*persistServerConfirmedWaitingProjection\(\);/.test(pollOnceBody));
+
+const noShowBody = functionBody(driverScreen, 'commitDriverNoShow');
+expect('commitDriverNoShow does NOT gain a redundant repair call (it already persists the full authoritative merged ride via saveActiveRide)',
+  !noShowBody.includes('persistServerConfirmedWaitingProjection('));
+
+const persistDriverRideStatusBody = functionBody(driverScreen, 'persistDriverRideStatus');
+expect('persistDriverRideStatus keeps its existing lazy-save-only-when-missing lifecycle sequence (no broadened "always save" overwrite)',
+  /if\s*\(!findActiveRide\(ride\.tripId\)\)\s*saveActiveRide\(ride\);/.test(persistDriverRideStatusBody)
+    && !persistDriverRideStatusBody.includes('persistServerConfirmedWaitingProjection('));
+
+expect('ride_state.js remains untouched by this repair (no normalizeLegacyWaitingLeak / legacyFeedAccept edits alongside the driver reconciliation fix)',
+  /function normalizeLegacyWaitingLeak\(ride\)\s*\{/.test(rideState)
+    && /legacyFeedAccept/.test(rideState));
+
 // ── P2-2 — unknown wait progress must not report pct=100 ───────────────
 const waitingInfoBody = functionBody(passenger, 'waitingInfo');
 expect('active_ride_passenger.js defines waitingInfo', waitingInfoBody.length > 0);

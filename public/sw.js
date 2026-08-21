@@ -113,7 +113,8 @@
 // v301 — driver transient feed-sim distinction + backend-confirmed passenger waiting cleanup.
 // v302 — explicit local simulation provenance for waiting migration.
 // v303 — driver backend-confirmed waiting reconciliation parity.
-const VERSION    = 'v303';
+// v304 — persist server-confirmed driver waiting repair.
+const VERSION    = 'v304';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

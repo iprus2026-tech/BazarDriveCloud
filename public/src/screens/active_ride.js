@@ -558,6 +558,36 @@ export default function activeRide() {
     return merged;
   }
 
+  // Codex follow-up — mergeServerRide's cleanup (mergeServerWaiting +
+  // deleted localProvenance) only ever lives in the in-memory `ride`
+  // closure variable. If a record already exists in storage for this
+  // tripId (a pre-existing, unmarked, backend-derived trip_* record still
+  // carrying the raw demo waiting), persistDriverRideStatus's lazy save
+  // (`if (!findActiveRide(...)) saveActiveRide(ride)`) never fires — that
+  // guard only covers the true first-save case — and the very next status
+  // transition's updateActiveRideStatus does its own independent
+  // findActiveRide(tripId) read straight from storage, silently
+  // re-persisting the stale 2:30/14:18 pair. A successful server read is
+  // authoritative proof the trip is real, so once mergeServerRide has run,
+  // repair the EXISTING stored record's waiting projection immediately —
+  // narrowly, not a full overwrite. Base the repair on the STORED record
+  // (never on the in-memory `ride`/server projection) so status,
+  // timestamps, tripId, orderId, acceptedSource, passenger, driver, route,
+  // cancel and every other stored field survive untouched — including a
+  // terminal stored status, which this never thaws (saveActiveRide's own
+  // terminal-freeze guard still applies unchanged). No-op when nothing is
+  // stored yet — that case is already covered by the first-save path.
+  function persistServerConfirmedWaitingProjection() {
+    const storedRide = findActiveRide(ride.tripId);
+    if (!storedRide) return;
+    const repaired = {
+      ...storedRide,
+      waiting: { ...(ride.waiting || {}) },
+    };
+    delete repaired.localProvenance;
+    saveActiveRide(repaired);
+  }
+
   function clearRideRefetch() {
     if (rideRefetchTimeoutId) clearTimeout(rideRefetchTimeoutId);
     rideRefetchTimeoutId = null;
@@ -576,6 +606,7 @@ export default function activeRide() {
       const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
       if (srv && currentViewIsUsable() && rideRefetchController === controller) {
         ride = mergeServerRide(srv);
+        persistServerConfirmedWaitingProjection();
         // BD-RIDE-D-NOSHOW-ACK-01 P1 — a TERMINAL status takes ownership of the sheet back
         // from the no-show sub-flow: the earlier PATCH may have actually succeeded despite a
         // client-side failure (or the ride was terminalized elsewhere), so leaving the
@@ -700,6 +731,7 @@ export default function activeRide() {
         const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
         if (srv && currentViewIsUsable() && ridePollController === controller) {
           ride = mergeServerRide(srv);
+          persistServerConfirmedWaitingProjection();
           // BD-RIDE-D-NOSHOW-ACK-01 P1 — same terminal-ownership rule as
           // refetchRideAndRender(): the regular poll keeps running independently of the
           // no-show sub-flow (it is only skipped while pendingStatus is set, i.e. mid-PATCH —
@@ -1300,6 +1332,7 @@ export default function activeRide() {
     if (result.value) {
       backendRide = true;
       ride = mergeServerRide(result.value);
+      persistServerConfirmedWaitingProjection();
       setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
       if (!isTerminalRideStatus(ride.status)) startRidePoll();
       return;
