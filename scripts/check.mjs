@@ -301,6 +301,18 @@ if (exists(waitingSmoke)) {
   }
 }
 
+// BD-RIDE-WAITING-01E Codex P2 repair — legacy persisted waiting normalization
+// (loadCanonicalActiveRide) and unknown wait progress (waitingInfo pct) guard.
+const rideWaitingLegacyRepairSmoke = path.join(root, 'scripts', 'smoke-ride-waiting-legacy-repair.mjs');
+if (exists(rideWaitingLegacyRepairSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideWaitingLegacyRepairSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-waiting-legacy-repair.mjs failed\n${msg}`);
+  }
+}
+
 // BD-CONFIRM-01 — static a11y smoke for the /trip-confirmation auto-cancel progressbar.
 const confirmProgressbarSmoke = path.join(root, 'scripts', 'smoke-confirm-progressbar-a11y.mjs');
 if (exists(confirmProgressbarSmoke)) {

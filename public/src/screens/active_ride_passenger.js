@@ -368,22 +368,46 @@ function loadPassengerRideView(tripId, statusQuery) {
   // at this tripId, when no real response is stored for the orderId, when
   // the ride is terminal, or when the persisted ride already matches the
   // pinned response. Mirrors what /responses runs through the same path.
+  //
+  // BD-RIDE-WAITING-01E Codex P2 hydration repair — upgradeStoredActiveRideForOrder
+  // does its own raw findActiveRide() re-read (and, when a snapshot upgrade
+  // applies, its own saveActiveRide()), bypassing loadCanonicalActiveRide's
+  // legacy-waiting normalizer entirely. Using its return value directly
+  // (the old `upgraded !== ride` check) silently reintroduced the pre-v296
+  // waiting.remaining/paidStartsAt leak on this hydration path, since a
+  // fresh storage read is always a different object reference regardless
+  // of whether real upgrade content changed. Re-run loadCanonicalActiveRide
+  // after the orchestrator so the final Ride is always normalized —
+  // whatever upgradeStoredActiveRideForOrder may have persisted is picked
+  // up by this re-read (findActiveRide sees the fresh save), then passed
+  // through the normalizer again. `|| upgraded` is a defensive fallback
+  // only; loadCanonicalActiveRide should not return null here since a ride
+  // already exists at this tripId.
   if (ride && typeof tripId === 'string' && tripId.startsWith('trip_')) {
     const upgraded = upgradeStoredActiveRideForOrder(tripId.slice(5));
-    if (upgraded && upgraded !== ride) ride = upgraded;
+    if (upgraded) {
+      ride = loadCanonicalActiveRide({ tripId, role: 'passenger' }) || upgraded;
+    }
   }
   if (!ride) {
     // BD-RIDE-D-10 — Mirror the driver fallback: when no canonical
     // record exists, use the same SIM_AUDIT demo + driver handoff
     // snapshot enrichment so both roles agree on passenger name,
-    // pickup/dropoff, fare and ETA. View-only: not persisted, so
-    // the audit URL cannot poison the canonical record.
+    // pickup/dropoff, fare and ETA. Not persisted by this function itself,
+    // but a subsequent passenger action (cancel, boarding confirmation)
+    // can still call saveActiveRide on it — so, symmetrically with the
+    // driver-side fallback, mark it local-only simulation provenance
+    // whenever it has no real snapshot backing it, and never infer that
+    // from tripId shape. Cleared once a successful server read confirms
+    // the ride is real (see mergeServerRide below).
     const snapshot = loadDriverHandoffSnapshot(tripId);
     const useSimOverrides = Boolean(statusQuery) || Boolean(snapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
     ride = createDemoActiveRide({ tripId, ...overrides });
     if (snapshot) {
       ride = applyDriverHandoffSnapshotToRide(ride, snapshot);
+    } else {
+      ride.localProvenance = 'sim_audit';
     }
   }
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
@@ -526,15 +550,27 @@ function arrivingDropoffAmount(ride) {
     || '1 540 ₽';
 }
 
+// BD-RIDE-WAITING-01E — remaining/paidStartsAt are time-dependent values a
+// real Ride seed cannot know in advance (see ride_seed.js/ride_actions.js);
+// their fallback is an honest '—', not a demo-shaped clock/countdown
+// literal. freeLimit/paidRate stay their existing literals — every real
+// seed already sets these same values as policy, so the fallback here only
+// matters for a genuinely malformed/legacy ride record.
+//
+// Codex P2-2 repair — when remaining is unknown ('—'), pct must not
+// default to 100: that would assert "full free wait time left" for a
+// state we actually know nothing about. pct stays null in that case;
+// both renderWaitingSheet and its live-refresh counterpart render a
+// neutral (non-100%) state instead of a false-full progress bar.
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
-  const remaining = w.remaining || '2:45';
+  const remaining = w.remaining || '—';
   const freeLimit = w.freeLimit || '3:00';
-  const paidStartsAt = w.paidStartsAt || '14:18';
+  const paidStartsAt = w.paidStartsAt || '—';
   const paidRate = w.paidRate || '8 ₽ за каждую минуту';
   const remSec = toSeconds(remaining);
   const totalSec = toSeconds(freeLimit);
-  let pct = 100;
+  let pct = null;
   if (remSec != null && totalSec && totalSec > 0) {
     pct = Math.max(0, Math.min(100, Math.round((remSec / totalSec) * 100)));
   }
@@ -759,8 +795,8 @@ function renderWaitingSheet(sheet, ride) {
         <span class="active-ride-passenger__waiting-card-title">Бесплатное ожидание</span>
         <span class="active-ride-passenger__waiting-card-value">${escapeHtml(w.remaining)} / ${escapeHtml(w.freeLimit)}</span>
       </div>
-      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w.pct}">
-        <div class="active-ride-passenger__progress-bar-fill" data-step="${Math.round(w.pct / 10)}"></div>
+      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${w.pct == null ? '' : ` aria-valuenow="${w.pct}"`}>
+        <div class="active-ride-passenger__progress-bar-fill" data-step="${w.pct == null ? 0 : Math.round(w.pct / 10)}"></div>
       </div>
       <div class="active-ride-passenger__waiting-card-foot">Дальше — ${escapeHtml(w.paidRate)} · с ${escapeHtml(w.paidStartsAt)}</div>
     </div>
@@ -2037,6 +2073,17 @@ export default function activeRidePassenger(options = {}) {
               return;
             }
           }
+          // Codex follow-up — when no local canonical record exists yet (a
+          // real backend-confirmed ride viewed with an empty local store),
+          // updateActiveRideStatus's own existing || getActiveRide(tripId)
+          // fallback would otherwise materialize and persist a BRAND NEW
+          // demo ride (demo passenger/route/waiting) as IN_PROGRESS,
+          // discarding the real in-memory ride entirely. Seed the current
+          // real/cleaned in-memory ride first — mirrors the existing
+          // passenger cancel protection — so updateActiveRideStatus always
+          // has a real record to advance instead of falling through to a
+          // fresh demo materialization.
+          saveActiveRide(ride);
           // Persist transition to IN_PROGRESS so the driver flow sees it and re-route so the URL
           // reflects the new state.
           updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);
@@ -2165,8 +2212,41 @@ export default function activeRidePassenger(options = {}) {
     return status === 401 || status === 403;
   }
 
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read (see runInitialRead's `const srv = await ...; if (!srv) return;`
+  // gate below), which is itself proof this trip is real. Until that point,
+  // loadPassengerRideView() may have fallen back to a transient
+  // createDemoActiveRide() placeholder (no local canonical record yet)
+  // still carrying the raw demo waiting.remaining/paidStartsAt ('2:30'/
+  // '14:18'). serializeRide() sends no `waiting` field at all today, so the
+  // plain keep(local, server) merge below — which only overlays a NON-NULL
+  // server key — leaves those two fields completely untouched even though
+  // the server has now established this is a real trip. Explicitly clear
+  // them once the server has responded (regardless of whether it sends a
+  // waiting object), while keeping the same keep() precedence for
+  // freeLimit/paidRate/any field the server might add later — a future
+  // non-null server remaining/paidStartsAt still wins. Pure, no
+  // saveActiveRide, no persistence — only mergeServerRide's transient
+  // in-memory projection changes.
+  function mergeServerWaiting(localWaiting, serverWaiting) {
+    const out = { ...(localWaiting || {}) };
+    for (const k in (serverWaiting || {})) { if (serverWaiting[k] != null) out[k] = serverWaiting[k]; }
+    if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null;
+    if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null;
+    return out;
+  }
+
   // #784 CUT-5 — merge the authoritative server snapshot onto the in-memory ride, preserving the local
   // display fields the focused serializeRide doesn't carry; a server null never clobbers a local value.
+  //
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read (see runInitialRead's `const srv = await ...; if (!srv) return;`
+  // gate), which is itself proof this trip is real. A transient sim-fallback
+  // ride (see the `ride.localProvenance = 'sim_audit'` stamp in
+  // loadPassengerRideView) must not keep claiming local-only simulation
+  // provenance once the server has confirmed it — delete the marker from
+  // the merged projection rather than persist `null` as meaningful
+  // provenance. No ownership-logic change, no new saveActiveRide call.
   function mergeServerRide(srv, preserveLocallyAheadStatus = false) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
@@ -2179,7 +2259,7 @@ export default function activeRidePassenger(options = {}) {
     const mergedStatus = preserveLocallyAheadStatus && localRank > serverRank
       ? ride.status
       : serverStatus;
-    return {
+    const merged = {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: mergedStatus,
@@ -2189,12 +2269,42 @@ export default function activeRidePassenger(options = {}) {
       order: keep(ride.order, srv.order),
       route: keep(ride.route, srv.route),
       payment: keep(ride.payment, srv.payment),
-      waiting: keep(ride.waiting, srv.waiting),
+      waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       ride: keep(ride.ride, srv.ride),
       chat: keep(ride.chat, srv.chat),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
+    delete merged.localProvenance;
+    return merged;
+  }
+
+  // Codex follow-up — mergeServerRide's cleanup only ever lives in the
+  // in-memory `ride` closure variable. If a record already exists in
+  // storage for this tripId (a pre-existing, unmarked, backend-derived
+  // trip_* record still carrying the raw demo waiting), nothing here ever
+  // pushed that cleanup back into storage — an offline reload, or one
+  // whose GET fails, would keep reading the stale 2:30/14:18. Mirrors
+  // active_ride.js's persistServerConfirmedWaitingProjection: repair the
+  // EXISTING stored record's waiting projection the moment the server has
+  // proven the trip real, narrowly — never a full overwrite. Base the
+  // repair on the STORED record (never on `ride` or the raw server
+  // projection) so status, timestamps, tripId, orderId, acceptedSource,
+  // passenger, driver, vehicle, route, payment, ride, chat, cancel and
+  // every other stored field survive untouched — including a terminal
+  // stored status, which this never thaws (saveActiveRide's own
+  // terminal-freeze guard still applies unchanged). No-op when nothing is
+  // stored yet — that case is covered by the first-save path (see the
+  // boarding fix below for the one path that lacked one).
+  function persistPassengerServerConfirmedWaitingProjection(cleanedWaiting) {
+    const storedRide = findActiveRide(ride.tripId);
+    if (!storedRide) return;
+    const repaired = {
+      ...storedRide,
+      waiting: { ...(cleanedWaiting || {}) },
+    };
+    delete repaired.localProvenance;
+    saveActiveRide(repaired);
   }
 
   let passengerPollId = null;
@@ -2437,9 +2547,12 @@ export default function activeRidePassenger(options = {}) {
       updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value', waiting.remaining + ' / ' + waiting.freeLimit);
       updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot', 'Дальше — ' + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
       const progress = sheet.querySelector('.active-ride-passenger__progress-bar');
-      if (progress) progress.setAttribute('aria-valuenow', String(waiting.pct));
+      if (progress) {
+        if (waiting.pct == null) progress.removeAttribute('aria-valuenow');
+        else progress.setAttribute('aria-valuenow', String(waiting.pct));
+      }
       const fill = sheet.querySelector('.active-ride-passenger__progress-bar-fill');
-      if (fill) fill.dataset.step = String(Math.round(waiting.pct / 10));
+      if (fill) fill.dataset.step = String(waiting.pct == null ? 0 : Math.round(waiting.pct / 10));
     } else if (ride.status === RIDE_STATUS.IN_PROGRESS
       && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
       const info = inProgressInfo(ride);
@@ -2578,6 +2691,13 @@ export default function activeRidePassenger(options = {}) {
       setPassengerMutationBlocked(false);
       stopPassengerRideRecovery();
       delete root.dataset.refreshState;
+      // Codex follow-up — a non-null srv here is already proof the trip is
+      // real, but maybeReMount below can navigate or defer (return) before
+      // `ride = mergeServerRide(...)` ever runs. Repair any existing stored
+      // record's waiting projection right here, before any such early
+      // return, so every successful server read — including one that
+      // immediately remounts on a forward status — reaches storage.
+      persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
       if (srv.status && srv.status !== ride.status) {
         const remountResult = maybeReMount(srv.status);
         if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;

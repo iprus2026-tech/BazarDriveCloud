@@ -292,6 +292,16 @@ export function seedActiveRideFromConfirmedHandoff({ tripId, role }) {
 // this tripId.
 const OTHER_ROLE = { driver: 'passenger', passenger: 'driver' };
 
+// BD-RIDE-WAITING-01E final repair — the legacy demo-waiting leak
+// (waiting.remaining/paidStartsAt frozen at buildDemoRide()'s '2:30'/
+// '14:18' snapshot on a real Ride seeded before v296) is now normalized
+// at the shared store boundary in ride_state.js (findActiveRide/
+// getActiveRide on read, saveActiveRide on write) — the true common
+// ancestor every caller of loadCanonicalActiveRide, updateActiveRideStatus,
+// upgradeStoredActiveRideForOrder, etc. passes through. A screen-local
+// normalizer here only covered this one entry point and missed every
+// sibling raw-read path, so it has been removed in favor of the single
+// shared boundary; findActiveRide's return value is already normalized.
 export function loadCanonicalActiveRide({ tripId, role } = {}) {
   if (!tripId || typeof tripId !== 'string') return null;
   const existing = findActiveRide(tripId);

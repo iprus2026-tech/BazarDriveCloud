@@ -25,6 +25,9 @@ import {
   getActiveRide,
   updateActiveRideStatus,
   cancelActiveRide,
+  loadActiveRideStore,
+  saveActiveRideStore,
+  DEMO_ACTIVE_RIDE_ID,
 } from '../public/src/ride_state.js';
 
 // ── in-memory localStorage mock ───────────────────────────────────────────────
@@ -182,4 +185,321 @@ test('cancelActiveRide: missing / non-string tripId returns null', () => {
   for (const bad of [undefined, '', null, 123, {}]) {
     assert.equal(cancelActiveRide({ tripId: bad, canceledBy: 'driver' }), null);
   }
+});
+
+// ── BD-RIDE-WAITING-01E final repair — shared legacy waiting-leak normalizer ──
+// waiting.remaining/waiting.paidStartsAt are write-once at seed time: nothing
+// else in the app ever writes a different value into them. A real Ride
+// (non-empty orderId OR non-empty acceptedSource) still carrying the exact
+// demo literals '2:30' / '14:18' is therefore, by construction, a stale
+// pre-v296 leak. findActiveRide/getActiveRide (read) and saveActiveRide
+// (write) share one normalizer in ride_state.js. tripId SHAPE is NOT a
+// general-purpose discriminator — an arbitrary non-feed sim tripId with
+// neither marker is left untouched, same as the canonical demo. The one
+// narrow exception is a feed-* tripId: acceptPassengerRequestFromPost/
+// buildRideFromPost used that reserved namespace for REAL marketplace
+// accepts before the acceptedSource marker existed, so a pre-existing
+// feed-* record with neither marker is still treated as a real-candidate
+// (a historical-migration exception, not a general provenance rule).
+
+function legacyRealWaiting() {
+  return { freeLimit: '3:00', remaining: '2:30', paidStartsAt: '14:18', paidRate: '8 ₽ за каждую минуту' };
+}
+
+test('shared normalizer (read): findActiveRide nulls remaining/paidStartsAt for a legacy real (orderId-marked) ride', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('t-legacy');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+  assert.equal(found.waiting.freeLimit, '3:00');
+  assert.equal(found.waiting.paidRate, '8 ₽ за каждую минуту');
+});
+
+test('shared normalizer (read): a read alone does not rewrite storage — the raw record stays 2:30/14:18 until something writes', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  findActiveRide('t-legacy'); // read-only
+  const raw = loadActiveRideStore()['t-legacy'];
+  assert.equal(raw.waiting.remaining, '2:30');
+  assert.equal(raw.waiting.paidStartsAt, '14:18');
+});
+
+test('shared normalizer (write): saveActiveRide persists null/null for a real legacy ride, and returns the normalized copy', () => {
+  const out = saveActiveRide({
+    tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+    orderId: 'order-123', waiting: legacyRealWaiting(),
+  });
+  assert.equal(out.waiting.remaining, null);
+  assert.equal(out.waiting.paidStartsAt, null);
+  const raw = loadActiveRideStore()['t-legacy'];
+  assert.equal(raw.waiting.remaining, null);
+  assert.equal(raw.waiting.paidStartsAt, null);
+});
+
+test('shared normalizer (write via transition): updateActiveRideStatus on a legacy real ride leaves storage null/null after the status change', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'driver', status: RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  const out = updateActiveRideStatus('t-legacy', RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.status, RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.waiting.remaining, null);
+  assert.equal(out.waiting.paidStartsAt, null);
+  const raw = loadActiveRideStore()['t-legacy'];
+  assert.equal(raw.waiting.remaining, null);
+  assert.equal(raw.waiting.paidStartsAt, null);
+});
+
+test('C. shared normalizer: DEMO_ACTIVE_RIDE_ID keeps its intentional 2:30/14:18 fixture on read and write', () => {
+  const demo = {
+    tripId: DEMO_ACTIVE_RIDE_ID, role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    waiting: legacyRealWaiting(),
+  };
+  saveActiveRideStore({ [DEMO_ACTIVE_RIDE_ID]: demo });
+  const found = findActiveRide(DEMO_ACTIVE_RIDE_ID);
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+  const saved = saveActiveRide({ ...demo });
+  assert.equal(saved.waiting.remaining, '2:30');
+  assert.equal(saved.waiting.paidStartsAt, '14:18');
+});
+
+test('D. shared normalizer: an arbitrary NON-feed sim tripId with no orderId/acceptedSource marker keeps 2:30/14:18 untouched', () => {
+  const sim = {
+    tripId: 'sim-audit-123', role: 'driver', status: RIDE_STATUS.WAITING_PASSENGER,
+    waiting: legacyRealWaiting(),
+  };
+  saveActiveRideStore({ 'sim-audit-123': sim });
+  const found = findActiveRide('sim-audit-123');
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+  const saved = saveActiveRide({ ...sim });
+  assert.equal(saved.waiting.remaining, '2:30');
+  assert.equal(saved.waiting.paidStartsAt, '14:18');
+});
+
+// A/B — legacy feed migration: a pre-existing feed-* real ride from before
+// acceptedSource existed has no other recoverable signal, so the narrow
+// feed- tripId exception normalizes it (not an artificial "stays untouched"
+// assumption — that encoded a conservative guess, not an established
+// product contract, and left real historical marketplace rides stranded).
+test('A. legacy feed migration (read): a pre-existing feed-* real ride with no orderId/acceptedSource normalizes via the narrow migration exception', () => {
+  saveActiveRideStore({
+    'feed-old-post-123': {
+      tripId: 'feed-old-post-123', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+      waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-old-post-123');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('B. legacy feed migration (write/transition): the same legacy feed-* record stays null/null through the save and update boundary', () => {
+  saveActiveRideStore({
+    'feed-old-post-123': {
+      tripId: 'feed-old-post-123', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+      waiting: legacyRealWaiting(),
+    },
+  });
+  const saved = saveActiveRide({
+    tripId: 'feed-old-post-123', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    waiting: legacyRealWaiting(),
+  });
+  assert.equal(saved.waiting.remaining, null);
+  assert.equal(saved.waiting.paidStartsAt, null);
+  const raw = loadActiveRideStore()['feed-old-post-123'];
+  assert.equal(raw.waiting.remaining, null);
+  assert.equal(raw.waiting.paidStartsAt, null);
+
+  const advanced = updateActiveRideStatus('feed-old-post-123', RIDE_STATUS.ACCEPTED);
+  assert.equal(advanced.status, RIDE_STATUS.ACCEPTED);
+  assert.equal(advanced.waiting.remaining, null);
+  assert.equal(advanced.waiting.paidStartsAt, null);
+});
+
+test('E. shared normalizer: an explicit real orderId normalizes (unchanged behavior)', () => {
+  saveActiveRideStore({
+    't-orderid': {
+      tripId: 't-orderid', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-999', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('t-orderid');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('F. shared normalizer: a real driver ride marked only by acceptedSource (no orderId) normalizes', () => {
+  saveActiveRideStore({
+    't-driver': {
+      tripId: 't-driver', role: 'driver', status: RIDE_STATUS.ACCEPTED,
+      acceptedSource: 'canonical_accept', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('t-driver');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('shared normalizer: the feed/marketplace accept ride normalizes via acceptedSource === \'feed_post_accept\' (not tripId shape)', () => {
+  saveActiveRideStore({
+    'feed-99': {
+      tripId: 'feed-99', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+      acceptedSource: 'feed_post_accept', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-99');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('H. getActiveRide: an existing real record is normalized; a missing record still auto-creates a demo untouched', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  const existing = getActiveRide('t-legacy');
+  assert.equal(existing.waiting.remaining, null);
+  assert.equal(existing.waiting.paidStartsAt, null);
+
+  const created = getActiveRide('brand-new-trip');
+  assert.equal(created.tripId, 'brand-new-trip');
+  assert.equal(created.status, RIDE_STATUS.NEW_ORDER);
+  // fresh auto-create carries no orderId/acceptedSource marker, so it is
+  // not a real-ride candidate — the demo base's own literal is untouched.
+  assert.equal(created.waiting.remaining, '2:30');
+});
+
+// ── explicit local simulation provenance (localProvenance = 'sim_audit') ──
+// A transient driver/passenger simulation fallback can share the exact
+// same shape as an unmarked historical feed-* real accept (feed- tripId,
+// no orderId/acceptedSource, the same demo waiting literals), so
+// legacyFeedAccept alone cannot tell them apart. localProvenance is a
+// LOCAL-ONLY marker (never sent to/read from the backend) stamped
+// exclusively by the simulation-fallback constructors; it blocks
+// legacyFeedAccept unless an explicit real marker (orderId/acceptedSource)
+// is also present, in which case the real marker always wins.
+
+test('sim-A. unmarked historical feed real (no localProvenance): normalizes via legacyFeedAccept, unchanged behavior', () => {
+  saveActiveRideStore({
+    'feed-old-post': {
+      tripId: 'feed-old-post', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+      waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-old-post');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('sim-B. marked feed simulation (localProvenance=sim_audit, no real markers): stays untouched', () => {
+  saveActiveRideStore({
+    'feed-audit': {
+      tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.WAITING_PASSENGER,
+      localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('feed-audit');
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-C. marked simulation through saveActiveRide: the persisted fixture remains 2:30/14:18', () => {
+  const saved = saveActiveRide({
+    tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+  });
+  assert.equal(saved.waiting.remaining, '2:30');
+  assert.equal(saved.waiting.paidStartsAt, '14:18');
+  const raw = loadActiveRideStore()['feed-audit'];
+  assert.equal(raw.waiting.remaining, '2:30');
+  assert.equal(raw.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-D. marked simulation through updateActiveRideStatus: provenance and fixture both survive the transition', () => {
+  saveActiveRideStore({
+    'feed-audit': {
+      tripId: 'feed-audit', role: 'driver', status: RIDE_STATUS.DRIVER_APPROACHING_PICKUP,
+      localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const out = updateActiveRideStatus('feed-audit', RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.status, RIDE_STATUS.WAITING_PASSENGER);
+  assert.equal(out.localProvenance, 'sim_audit');
+  assert.equal(out.waiting.remaining, '2:30');
+  assert.equal(out.waiting.paidStartsAt, '14:18');
+  const raw = loadActiveRideStore()['feed-audit'];
+  assert.equal(raw.localProvenance, 'sim_audit');
+  assert.equal(raw.waiting.remaining, '2:30');
+  assert.equal(raw.waiting.paidStartsAt, '14:18');
+});
+
+test('sim-E. contradictory record (real orderId + localProvenance=sim_audit): the real marker wins, normalizes to null/null', () => {
+  saveActiveRideStore({
+    't-contradictory': {
+      tripId: 't-contradictory', role: 'passenger', status: RIDE_STATUS.WAITING_PASSENGER,
+      orderId: 'order-777', localProvenance: 'sim_audit', waiting: legacyRealWaiting(),
+    },
+  });
+  const found = findActiveRide('t-contradictory');
+  assert.equal(found.waiting.remaining, null);
+  assert.equal(found.waiting.paidStartsAt, null);
+});
+
+test('sim-F. canonical demo (DEMO_ACTIVE_RIDE_ID) still untouched regardless of the new priority chain', () => {
+  const demo = {
+    tripId: DEMO_ACTIVE_RIDE_ID, role: 'driver', status: RIDE_STATUS.NEW_ORDER,
+    waiting: legacyRealWaiting(),
+  };
+  saveActiveRideStore({ [DEMO_ACTIVE_RIDE_ID]: demo });
+  const found = findActiveRide(DEMO_ACTIVE_RIDE_ID);
+  assert.equal(found.waiting.remaining, '2:30');
+  assert.equal(found.waiting.paidStartsAt, '14:18');
+});
+
+// ── terminal freeze interaction: blocked transitions must not thaw status
+// or re-surface stale demo waiting on the returned Ride ──────────────────
+test('terminal freeze + normalizer: updateActiveRideStatus on a terminal legacy real ride does not thaw status and does not re-surface stale demo waiting', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.COMPLETED,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  const out = updateActiveRideStatus('t-legacy', RIDE_STATUS.IN_PROGRESS, { patched: true });
+  assert.equal(out.status, RIDE_STATUS.COMPLETED, 'terminal status must not thaw');
+  assert.equal(out.waiting.remaining, null);
+  assert.equal(out.waiting.paidStartsAt, null);
+  assert.equal(out.patched, undefined, 'no patch merge onto a terminal ride');
+});
+
+test('terminal freeze + normalizer: saveActiveRide refuses a forbidden transition on a terminal legacy real ride, returns it normalized, and does not persist the normalization on the frozen path', () => {
+  saveActiveRideStore({
+    't-legacy': {
+      tripId: 't-legacy', role: 'passenger', status: RIDE_STATUS.COMPLETED,
+      orderId: 'order-123', waiting: legacyRealWaiting(),
+    },
+  });
+  const out = saveActiveRide({ tripId: 't-legacy', status: RIDE_STATUS.IN_PROGRESS, orderId: 'order-123' });
+  assert.equal(out.status, RIDE_STATUS.COMPLETED, 'terminal status must not thaw');
+  assert.equal(out.waiting.remaining, null);
+  assert.equal(out.waiting.paidStartsAt, null);
+  const raw = loadActiveRideStore()['t-legacy'];
+  assert.equal(raw.status, RIDE_STATUS.COMPLETED);
+  assert.equal(raw.waiting.remaining, '2:30',
+    'the frozen path is non-persisting — storage stays raw until a legitimate write happens');
 });

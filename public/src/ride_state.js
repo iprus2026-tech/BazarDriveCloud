@@ -244,16 +244,96 @@ export function createDemoActiveRide(overrides = {}) {
   return merged;
 }
 
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+// BD-RIDE-WAITING-01E final repair — shared store-level boundary for the
+// legacy pre-v296 demo-waiting leak (waiting.remaining/paidStartsAt frozen
+// at buildDemoRide()'s literal '2:30'/'14:18' snapshot on any real Ride
+// seeded before the ride_seed.js/ride_actions.js waiting override shipped).
+// Screen-level patches (a normalizer in trip_confirmation_handoff.js, a
+// hydration re-read in active_ride_passenger.js) kept missing sibling read
+// paths — updateActiveRideStatus's own raw findActiveRide, responses.js's
+// upgradeStoredActiveRideForOrder, order_detail.js's idempotency check —
+// because none of them shared one boundary. findActiveRide/getActiveRide
+// (read) and saveActiveRide (write) are the true common ancestor every one
+// of those paths passes through, so the fix belongs here.
+//
+// Real-ride discriminator: deliberately conservative, existing-data only —
+// no new provenance field. The primary signal is one of the two markers
+// every real-seed path now sets: a non-empty orderId (ride_seed.js,
+// ride_actions.js::seedActiveRideFromAcceptedOrder, order_detail.js) or a
+// non-empty acceptedSource (ride_actions.js::seedActiveRideFromAcceptedOrder,
+// acceptPassengerRequestFromPost). tripId SHAPE is NOT a general-purpose
+// discriminator — a tripId prefix is not proof of provenance on its own
+// (an arbitrary sim/audit tripId can take any shape).
+//
+// legacyFeedAccept is a narrow, one-time compatibility exception, not a
+// second universal marker: acceptPassengerRequestFromPost/buildRideFromPost
+// used the reserved feed-<postId> tripId namespace for real marketplace
+// accepts before this repair series added the acceptedSource marker, so an
+// unmarked pre-existing feed-* record in a user's localStorage has no other
+// signal to recover through. New feed accepts are already covered by the
+// primary acceptedSource='feed_post_accept' marker and do not depend on
+// this exception; it exists solely so historical real records are not
+// stranded with the stale demo snapshot forever.
+//
+// Codex follow-up — legacyFeedAccept alone cannot distinguish "an unmarked
+// historical real accept" from "a transient driver/passenger simulation or
+// audit fallback (createDemoActiveRide under a caller-supplied tripId) that
+// happens to use a feed- shaped tripId and gets lazily persisted the first
+// time a status button is tapped" — both are byte-identical in storage
+// (feed- tripId, no orderId/acceptedSource, the same demo waiting
+// literals). ride.localProvenance === 'sim_audit' is a LOCAL-ONLY marker
+// (never sent to or read from the backend, never part of the DB/API
+// contract) stamped exclusively by the driver/passenger simulation
+// fallback constructors (active_ride.js / active_ride_passenger.js) when
+// they build a ride with no real driverSnapshot/handoff data backing it,
+// and cleared the moment a successful server read proves the ride real.
+// Priority is explicit and load-bearing:
+//   A. explicitRealCandidate (orderId/acceptedSource) always wins — even a
+//      ride someone stamped sim_audit on is normalized if it also carries
+//      a real marker, since acceptedSource/orderId are real-provenance
+//      facts a simulation constructor never sets.
+//   B. otherwise explicitSimulation blocks legacyFeedAccept entirely —
+//      never normalize an intentional simulation fixture.
+//   C. otherwise legacyFeedAccept — the historical-migration fallback,
+//      unchanged from the prior slice.
+//   D. otherwise untouched.
+//
+// Only normalizes when BOTH waiting.remaining and waiting.paidStartsAt
+// still equal the exact demo literals — nothing else in the codebase ever
+// writes any other value into these two fields after seed time, so this
+// match can only ever be stale demo residue on a real-candidate ride,
+// never a coincidentally-real value. Pure: never mutates the input,
+// returns a shallow copy when normalizing.
+function normalizeLegacyWaitingLeak(ride) {
+  if (!isPlainObject(ride)) return ride;
+  const explicitRealCandidate = nonEmptyString(ride.orderId) || nonEmptyString(ride.acceptedSource);
+  const explicitSimulation = !explicitRealCandidate && ride.localProvenance === 'sim_audit';
+  const legacyFeedAccept = !explicitRealCandidate && !explicitSimulation
+    && typeof ride.tripId === 'string' && ride.tripId.startsWith('feed-');
+  const isRealCandidate = explicitRealCandidate || legacyFeedAccept;
+  if (!isRealCandidate) return ride;
+  const waiting = ride.waiting;
+  if (!isPlainObject(waiting) || waiting.remaining !== '2:30' || waiting.paidStartsAt !== '14:18') return ride;
+  return {
+    ...ride,
+    waiting: { ...waiting, remaining: null, paidStartsAt: null },
+  };
+}
+
 export function findActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
   const store = loadActiveRideStore();
   const existing = store[tripId];
-  return existing && isPlainObject(existing) ? existing : null;
+  return existing && isPlainObject(existing) ? normalizeLegacyWaitingLeak(existing) : null;
 }
 
 export function getActiveRide(tripId = DEMO_ACTIVE_RIDE_ID) {
+  const existing = findActiveRide(tripId);
+  if (existing) return existing;
   const store = loadActiveRideStore();
-  const existing = store[tripId];
-  if (existing && isPlainObject(existing)) return existing;
   const demo = createDemoActiveRide({ tripId });
   store[tripId] = demo;
   saveActiveRideStore(store);
@@ -300,11 +380,21 @@ export function saveActiveRide(ride) {
   if (existing && isPlainObject(existing)
       && TERMINAL_RIDE_STATUSES.has(existing.status)
       && ride.status !== existing.status) {
-    return existing;
+    return normalizeLegacyWaitingLeak(existing);
   }
-  store[ride.tripId] = ride;
+  // BD-RIDE-WAITING-01E final repair — write-boundary half of the shared
+  // normalizer (see normalizeLegacyWaitingLeak above). Whatever is about
+  // to be persisted is normalized first, so the stored record — and the
+  // returned value, which must reflect what was actually saved — never
+  // carry a real-candidate ride's stale demo waiting snapshot forward.
+  // This is what makes updateActiveRideStatus's own raw findActiveRide ->
+  // deepMerge -> saveActiveRide chain self-healing: once findActiveRide
+  // starts returning a normalized ride, deepMerge has nothing stale left
+  // to carry into the next save, and this second pass is a no-op.
+  const normalized = normalizeLegacyWaitingLeak(ride);
+  store[ride.tripId] = normalized;
   saveActiveRideStore(store);
-  return ride;
+  return normalized;
 }
 
 export function isValidRideStatus(status) {

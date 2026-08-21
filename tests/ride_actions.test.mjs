@@ -15,6 +15,8 @@ import {
   canManageOwnOrder,
   canAcceptOrder,
   buildRouteSnapshotFromOrder,
+  buildRideFromPost,
+  acceptPassengerRequestFromPost,
   seedActiveRideFromAcceptedOrder,
   acceptCanonicalRideOrder,
 } from '../public/src/ride_actions.js';
@@ -118,6 +120,32 @@ test('seedActiveRideFromAcceptedOrder: persists an ACCEPTED ride at trip_<id>', 
   assert.equal(stored.route.pickupLabel, 'P');
   // null for an order with no id (no orphan record lands in the store)
   assert.equal(seedActiveRideFromAcceptedOrder({}), null);
+});
+
+// ── acceptPassengerRequestFromPost (marketplace/plain-post accept) ───────────
+// BD-RIDE-WAITING-01E provenance hardening — this is the one real-seed path
+// with no orderId to rely on (a plain feed post has no canonical order), so
+// the shared ride_state.js waiting-leak normalizer's real-ride discriminator
+// depends on it setting acceptedSource explicitly rather than on its
+// feed-<id> tripId shape (tripId shape alone is not proof of provenance).
+
+test('buildRideFromPost: seeds a clean waiting override (remaining/paidStartsAt null) so a real feed accept never inherits the demo snapshot', () => {
+  const ride = buildRideFromPost({ id: 'p1', author: 'Иван', price: '500 ₽', from: 'A', to: 'B' });
+  assert.equal(ride.waiting.remaining, null);
+  assert.equal(ride.waiting.paidStartsAt, null);
+  assert.equal(ride.waiting.freeLimit, '3:00');
+});
+
+test('acceptPassengerRequestFromPost: stamps acceptedSource === \'feed_post_accept\' before persisting, and the persisted ride carries clean null/null waiting', () => {
+  const ride = acceptPassengerRequestFromPost({ id: 'p2', author: 'Мария', price: '600 ₽', from: 'C', to: 'D' });
+  assert.equal(ride.acceptedSource, 'feed_post_accept');
+  assert.equal(ride.waiting.remaining, null);
+  assert.equal(ride.waiting.paidStartsAt, null);
+  // persisted into the active-ride store under the feed-<id> tripId
+  const stored = findActiveRide(ride.tripId);
+  assert.equal(stored.acceptedSource, 'feed_post_accept');
+  assert.equal(stored.waiting.remaining, null);
+  assert.equal(stored.waiting.paidStartsAt, null);
 });
 
 // ── acceptCanonicalRideOrder (full handoff) ───────────────────────────────────

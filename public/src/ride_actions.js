@@ -79,6 +79,19 @@ export function buildRideFromPost(post) {
       pickupLabel: p.from || '',
       dropoffLabel: p.to || '',
     },
+    // BD-RIDE-WAITING-01E final repair — this is the marketplace/plain-post
+    // accept path (post.canonical !== 'ride_order'), a real Ride construction
+    // site that predates and was missed by the earlier ride_seed.js/
+    // seedActiveRideFromAcceptedOrder waiting overrides. Same explicit
+    // override so it never inherits buildDemoRide()'s demo waiting snapshot.
+    // freeLimit/paidRate kept as the current policy-like literals;
+    // remaining/paidStartsAt cannot be known at seed time.
+    waiting: {
+      freeLimit: '3:00',
+      remaining: null,
+      paidStartsAt: null,
+      paidRate: '8 ₽ за каждую минуту',
+    },
   });
 }
 
@@ -88,6 +101,14 @@ export function canAcceptPassengerRequest(u, post) {
 
 export function acceptPassengerRequestFromPost(post) {
   const ride = buildRideFromPost(post);
+  // BD-RIDE-WAITING-01E provenance hardening — the shared ride_state.js
+  // waiting-leak normalizer's real-ride discriminator no longer treats a
+  // feed- tripId prefix as proof of provenance (a tripId shape is not
+  // identity). This is the one real-seed path with no orderId to rely on
+  // (a plain feed post/marketplace request has no canonical order), so it
+  // sets the same acceptedSource marker seedActiveRideFromAcceptedOrder
+  // already uses — an existing field, not a new schema addition.
+  ride.acceptedSource = 'feed_post_accept';
   saveActiveRide(ride);
   return ride;
 }
@@ -307,6 +328,18 @@ export function seedActiveRideFromAcceptedOrder(order, options = {}) {
     },
     ride: {
       price: snapshot.priceLabel,
+    },
+    // BD-RIDE-WAITING-01E — same explicit override as
+    // ride_seed.js::buildPassengerRideSeed: a real (driver-accepted) Ride
+    // must not inherit buildDemoRide()'s demo waiting snapshot.
+    // remaining/paidStartsAt cannot be known this early (the ride hasn't
+    // even reached WAITING_PASSENGER yet) — the real anchor is
+    // ride.timestamps.arrivedAt, stamped later at that transition.
+    waiting: {
+      freeLimit: '3:00',
+      remaining: null,
+      paidStartsAt: null,
+      paidRate: '8 ₽ за каждую минуту',
     },
     timestamps: {
       acceptedAt: snapshot.acceptedAt,

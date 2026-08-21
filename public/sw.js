@@ -101,7 +101,21 @@
 // lookup only — and request/driver context shaping into the new precached ./src/ride_context.js —
 // pure, zero imports; trip_confirmation_handoff.js no longer imports anything from responses.js).
 // New PRECACHE entries: ./src/response_store.js, ./src/ride_context.js.
-const VERSION    = 'v295';
+// v296 (BD-RIDE-WAITING-01E): precached ride_actions.js, ride_seed.js and active_ride_passenger.js
+// changed (remove demo waiting leakage from real rides).
+// v297 (BD-RIDE-WAITING-01E Codex P2 repair): precached trip_confirmation_handoff.js and
+// active_ride_passenger.js changed again (non-persisting legacy waiting normalization in
+// loadCanonicalActiveRide; unknown wait progress no longer reports a false pct=100).
+// v298 — preserve canonical waiting normalization through passenger hydration.
+// v299 — shared Ride waiting normalization (ride_state.js) + marketplace seed +
+// driver paid-start derivation.
+// v300 — legacy feed waiting migration + intentional demo paid-start fallback.
+// v301 — driver transient feed-sim distinction + backend-confirmed passenger waiting cleanup.
+// v302 — explicit local simulation provenance for waiting migration.
+// v303 — driver backend-confirmed waiting reconciliation parity.
+// v304 — persist server-confirmed driver waiting repair.
+// v305 — passenger server-confirmed waiting persistence and boarding real-Ride seed parity.
+const VERSION    = 'v305';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

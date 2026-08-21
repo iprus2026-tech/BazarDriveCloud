@@ -463,6 +463,18 @@ export default function activeRide() {
       if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
         effectiveStatusQuery = driverSnapshot.status;
       }
+    } else {
+      // BD-RIDE-WAITING-01E — no real driverSnapshot backs this fallback:
+      // it was constructed purely from a status-query / explicit-tripId /
+      // latest-handoff-tripId simulation path, not from any real handoff
+      // data. Mark it local-only so ride_state.js's shared normalizer never
+      // treats its intentional demo waiting fixture as stale real-ride
+      // residue once persistDriverRideStatus's lazy save persists it. The
+      // marker comes from HOW this object was built, never from tripId
+      // shape (a feed-audit URL must not be inferred as simulation from
+      // its tripId string). Cleared by mergeServerRide once a real server
+      // response proves the ride real — see below.
+      ride.localProvenance = 'sim_audit';
     }
   }
 
@@ -498,22 +510,82 @@ export default function activeRide() {
     return !hasMounted;
   }
 
+  // Codex follow-up — mergeServerRide only runs after a successful backend
+  // read, which is itself proof this trip is real. A transient sim-fallback
+  // ride (see the `ride.localProvenance = 'sim_audit'` stamp above) can
+  // still carry the raw demo waiting.remaining/paidStartsAt ('2:30'/
+  // '14:18'). serializeRide() sends no `waiting` field at all today, so a
+  // plain field-by-field keep(local, server) merge would leave those two
+  // fields completely untouched even after the server has proven the ride
+  // real. Mirrors active_ride_passenger.js's mergeServerWaiting exactly —
+  // explicitly clear remaining/paidStartsAt once the server has responded
+  // (regardless of whether it sends a waiting object), while keeping the
+  // same keep()-style precedence for freeLimit/paidRate/any field the
+  // server might add later. Pure, no persistence.
+  function mergeServerWaiting(localWaiting, serverWaiting) {
+    const out = { ...(localWaiting || {}) };
+    for (const k in (serverWaiting || {})) { if (serverWaiting[k] != null) out[k] = serverWaiting[k]; }
+    if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null;
+    if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null;
+    return out;
+  }
+
+  // Codex follow-up — mergeServerRide only runs after an authoritative
+  // server Ride response, which is itself proof this trip is real. A
+  // transient sim-fallback ride (see the `ride.localProvenance = 'sim_audit'`
+  // stamp above) must not keep claiming local-only simulation provenance
+  // once the server has confirmed it — delete the marker from the merged
+  // projection rather than persist `null` as if it were meaningful
+  // provenance. No status-reconciliation change.
   function mergeServerRide(srv) {
     const keep = (a, b) => {
       const out = { ...(a || {}) };
       for (const k in (b || {})) { if (b[k] != null) out[k] = b[k]; }
       return out;
     };
-    return {
+    const merged = {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
       route: keep(ride.route, srv.route),
+      waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
+    delete merged.localProvenance;
+    return merged;
+  }
+
+  // Codex follow-up — mergeServerRide's cleanup (mergeServerWaiting +
+  // deleted localProvenance) only ever lives in the in-memory `ride`
+  // closure variable. If a record already exists in storage for this
+  // tripId (a pre-existing, unmarked, backend-derived trip_* record still
+  // carrying the raw demo waiting), persistDriverRideStatus's lazy save
+  // (`if (!findActiveRide(...)) saveActiveRide(ride)`) never fires — that
+  // guard only covers the true first-save case — and the very next status
+  // transition's updateActiveRideStatus does its own independent
+  // findActiveRide(tripId) read straight from storage, silently
+  // re-persisting the stale 2:30/14:18 pair. A successful server read is
+  // authoritative proof the trip is real, so once mergeServerRide has run,
+  // repair the EXISTING stored record's waiting projection immediately —
+  // narrowly, not a full overwrite. Base the repair on the STORED record
+  // (never on the in-memory `ride`/server projection) so status,
+  // timestamps, tripId, orderId, acceptedSource, passenger, driver, route,
+  // cancel and every other stored field survive untouched — including a
+  // terminal stored status, which this never thaws (saveActiveRide's own
+  // terminal-freeze guard still applies unchanged). No-op when nothing is
+  // stored yet — that case is already covered by the first-save path.
+  function persistServerConfirmedWaitingProjection() {
+    const storedRide = findActiveRide(ride.tripId);
+    if (!storedRide) return;
+    const repaired = {
+      ...storedRide,
+      waiting: { ...(ride.waiting || {}) },
+    };
+    delete repaired.localProvenance;
+    saveActiveRide(repaired);
   }
 
   function clearRideRefetch() {
@@ -534,6 +606,7 @@ export default function activeRide() {
       const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
       if (srv && currentViewIsUsable() && rideRefetchController === controller) {
         ride = mergeServerRide(srv);
+        persistServerConfirmedWaitingProjection();
         // BD-RIDE-D-NOSHOW-ACK-01 P1 — a TERMINAL status takes ownership of the sheet back
         // from the no-show sub-flow: the earlier PATCH may have actually succeeded despite a
         // client-side failure (or the ride was terminalized elsewhere), so leaving the
@@ -658,6 +731,7 @@ export default function activeRide() {
         const srv = await getRideFromBackend(ride.tripId, { signal: controller.signal });
         if (srv && currentViewIsUsable() && ridePollController === controller) {
           ride = mergeServerRide(srv);
+          persistServerConfirmedWaitingProjection();
           // BD-RIDE-D-NOSHOW-ACK-01 P1 — same terminal-ownership rule as
           // refetchRideAndRender(): the regular poll keeps running independently of the
           // no-show sub-flow (it is only skipped while pendingStatus is set, i.e. mid-PATCH —
@@ -958,6 +1032,59 @@ export default function activeRide() {
       : Date.now() + parseWaitClock(waiting.remaining || '2:30') * 1000;
     return waitDeadline;
   }
+
+  // BD-RIDE-WAITING-01E final repair — waiting.paidStartsAt is never a live
+  // value on a REAL ride (write-once at seed time, never recomputed), so the
+  // old `waiting.paidStartsAt || '14:18'` fallback showed the demo clock
+  // time for every real ride, not just legacy ones. timestamps.arrivedAt is
+  // the authoritative anchor (stamped at the EN_ROUTE -> WAITING_PASSENGER
+  // transition, mirrored server-side) and is already what waitDeadlineMs()
+  // prefers for the countdown itself.
+  //
+  // Codex follow-up — a driver simulation/audit URL opened directly at
+  // ?status=WAITING_PASSENGER (safeApplyStatusFromQuery) only overrides
+  // status; it never stamps arrivedAt. For that case waiting.paidStartsAt
+  // genuinely IS an intentional, designed fixture value (createDemoActiveRide's
+  // base, or an explicit sim override) — discarding it in favor of '—'
+  // regressed the BD-RIDE-SIM-01 audit/demo scenario. So: an arrivedAt-derived
+  // clock always wins when arrivedAt is present; otherwise a REAL ride shows
+  // an honest '—' (a real ride's stale/absent waiting.paidStartsAt must never
+  // resurface); a non-real ride (demo/sim, no markers) may show its own
+  // waiting.paidStartsAt when one is actually set, or '—' otherwise. No new
+  // timer, no new persisted field, no arrivedAt stamped from the query
+  // simulation — a snapshot computed at each render/refresh pass. Formatted
+  // with the existing ru-RU HH:MM convention already used by profile.js.
+  //
+  // Codex follow-up #2 — this is a RENDER-time check on whatever `ride`
+  // object is currently in memory, which can be a transient
+  // createDemoActiveRide({ tripId, ...overrides }) fallback (line ~460)
+  // constructed under an ARBITRARY caller-supplied tripId (e.g. a
+  // ?tripId=feed-audit simulation URL) that was never persisted and never
+  // ran through ride_state.js's normalizer. Unlike ride_state.js's shared
+  // store-level normalizer — which only ever inspects something already
+  // sitting in bazardrive.active_ride.v1, where a feed- key is proof of a
+  // real (if unmarked) historical accept — a feed- tripId here proves
+  // nothing about provenance, since a demo/sim ride can carry any tripId
+  // shape. Only orderId/acceptedSource are safe render-time real signals:
+  // a genuinely real, persisted ride reaching this screen already has
+  // waiting.paidStartsAt normalized to null by ride_state.js before it's
+  // even loaded, so this check never needs the feed- signal to protect it.
+  function isRealWaitingCandidate() {
+    if (typeof ride.orderId === 'string' && ride.orderId.trim()) return true;
+    if (typeof ride.acceptedSource === 'string' && ride.acceptedSource.trim()) return true;
+    return false;
+  }
+  function paidStartLabel() {
+    const waiting = ride.waiting || {};
+    const freeLimitSec = parseWaitClock(waiting.freeLimit || '3:00') || 180;
+    const arrivedMs = Date.parse((ride.timestamps && ride.timestamps.arrivedAt) || '');
+    if (Number.isFinite(arrivedMs)) {
+      return new Date(arrivedMs + freeLimitSec * 1000)
+        .toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    }
+    if (isRealWaitingCandidate()) return '—';
+    return typeof waiting.paidStartsAt === 'string' && waiting.paidStartsAt.trim() ? waiting.paidStartsAt : '—';
+  }
   function startWaitTimer() {
     clearWaitTimer();
     if (waitExpired) return;
@@ -1027,7 +1154,7 @@ export default function activeRide() {
     const waitPct = Math.max(0, Math.min(1, remSec / freeLimitSec));
     const waitStep = Math.round(waitPct * 10);
     setMapBanner('Пассажир уведомлён · ждёт у подъезда');
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(waiting.paidStartsAt || '14:18')}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Ожидание пассажира</div><div class="active-ride__sheet-sub">Платное ожидание начнётся в ${escapeHtml(paidStartLabel())}</div></div><div class="ns-timer tone-success"><svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-3)" stroke-width="5"/><circle class="ns-timer-arc" cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="${(163.36 * (1 - waitPct)).toFixed(2)}" transform="rotate(-90 32 32)"/></svg><div class="ns-timer-center"><div class="ns-timer-val">${escapeHtml(remaining)}</div></div><div class="ns-timer-lbl">бесплатно</div></div></div><div class="active-ride__waiting-card"><div class="active-ride__waiting-card-head"><span class="active-ride__waiting-card-title">Бесплатное ожидание</span><span class="active-ride__waiting-card-value">${escapeHtml(remaining)} / ${escapeHtml(freeLimit)}</span></div><div class="active-ride__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${waitStep * 10}"><div class="active-ride__progress-bar-fill" data-step="${waitStep}"></div></div><div class="active-ride__waiting-card-foot">Дальше — ${escapeHtml(waiting.paidRate || '8 ₽ за каждую минуту')}</div></div>${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start">Начать поездку</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-call-passenger">Позвонить пассажиру</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-no-show">Не приехал</button></div></div>`;
     sheet.querySelector('#ar-start').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.IN_PROGRESS); renderSheet(); });
     sheet.querySelector('#ar-call-passenger').addEventListener('click', () => showNotice('Звонок пассажиру пока заглушка'));
     sheet.querySelector('#ar-no-show').addEventListener('click', () => {
@@ -1205,6 +1332,7 @@ export default function activeRide() {
     if (result.value) {
       backendRide = true;
       ride = mergeServerRide(result.value);
+      persistServerConfirmedWaitingProjection();
       setDriverReadState(DRIVER_RIDE_READ_STATE.LOADED);
       if (!isTerminalRideStatus(ride.status)) startRidePoll();
       return;

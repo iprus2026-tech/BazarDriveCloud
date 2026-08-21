@@ -172,9 +172,138 @@ expect('server merge accepts all display sub-objects without clobbering local fa
   mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
     && mergeServer.includes('order: keep(ride.order, srv.order)')
     && mergeServer.includes('payment: keep(ride.payment, srv.payment)')
-    && mergeServer.includes('waiting: keep(ride.waiting, srv.waiting)')
+    && mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)')
     && mergeServer.includes('ride: keep(ride.ride, srv.ride)')
     && mergeServer.includes('chat: keep(ride.chat, srv.chat)'));
+
+// ── BD-RIDE-WAITING-01E Codex follow-up — backend-confirmed waiting cleanup ──
+// A transient createDemoActiveRide() placeholder (no local canonical record
+// yet) can still carry the raw demo waiting.remaining/paidStartsAt when
+// mergeServerRide first runs. serializeRide() sends no `waiting` field at
+// all today, so the plain keep(local, server) merge used for every other
+// sub-object would leave those two fields completely untouched even after
+// the server has proven this trip is real. mergeServerWaiting explicitly
+// clears them once the server has responded, while keeping the same
+// keep()-style precedence (a future non-null server value still wins) for
+// freeLimit/paidRate/anything else.
+const mergeServerWaiting = functionBody(passenger, 'mergeServerWaiting');
+expect('mergeServerWaiting helper is defined',
+  mergeServerWaiting.length > 0);
+expect('mergeServerWaiting starts from the same keep(local, server) merge behavior (local base, non-null server keys overlay)',
+  mergeServerWaiting.includes('const out = { ...(localWaiting || {}) }')
+    && mergeServerWaiting.includes('for (const k in (serverWaiting || {}))')
+    && mergeServerWaiting.includes('if (serverWaiting[k] != null) out[k] = serverWaiting[k]'));
+expect('mergeServerWaiting explicitly clears remaining to null when the server has no non-null remaining',
+  mergeServerWaiting.includes('if (!serverWaiting || serverWaiting.remaining == null) out.remaining = null'));
+expect('mergeServerWaiting explicitly clears paidStartsAt to null when the server has no non-null paidStartsAt',
+  mergeServerWaiting.includes('if (!serverWaiting || serverWaiting.paidStartsAt == null) out.paidStartsAt = null'));
+expect('mergeServerWaiting lets a non-null server remaining/paidStartsAt win (the overlay loop runs before the explicit-null clears, and only nulls when the server key itself is null)',
+  mergeServerWaiting.indexOf('for (const k in (serverWaiting || {}))') < mergeServerWaiting.indexOf('if (!serverWaiting || serverWaiting.remaining == null)'));
+expect('mergeServerRide uses mergeServerWaiting(...) for the waiting sub-object',
+  mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)'));
+expect('mergeServerWaiting/mergeServerRide never call saveActiveRide, updateActiveRideStatus, or persist the transient projection',
+  !mergeServerWaiting.includes('saveActiveRide(')
+    && !mergeServerWaiting.includes('updateActiveRideStatus(')
+    && !mergeServer.includes('saveActiveRide(')
+    && !mergeServer.includes('updateActiveRideStatus('));
+expect('runInitialRead only merges the server ride after a successful read (srv truthy) — the !srv branch returns before mergeServerRide ever runs',
+  initialRead.includes('const srv = await readManager.run(ride.tripId)')
+    && initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
+    && /if\s*\(!srv\)\s*\{[\s\S]*?return;[\s\S]*?\}/.test(initialRead));
+
+// ── BD-RIDE-WAITING-01E Codex follow-up — explicit local simulation
+// provenance (localProvenance = 'sim_audit') ────────────────────────────
+// loadPassengerRideView's own transient createDemoActiveRide fallback (no
+// real driver-handoff snapshot backing it) can carry localProvenance =
+// 'sim_audit', mirroring the driver-side stamp in active_ride.js. A
+// successful server read is proof the trip is real, so mergeServerRide
+// must delete that marker from its returned projection; null/404/error
+// never reach mergeServerRide at all (confirmed by the existing !srv-early-
+// return assertion above), so they can never run this cleanup.
+const loadPassengerRideView = functionBody(passenger, 'loadPassengerRideView');
+expect('loadPassengerRideView can stamp localProvenance = \'sim_audit\' on its own simulation fallback (no real snapshot backing it)',
+  loadPassengerRideView.includes("ride.localProvenance = 'sim_audit'"));
+expect('mergeServerRide deletes localProvenance from the merged server-backed projection once the server has confirmed the trip is real',
+  mergeServer.includes('delete merged.localProvenance;'));
+expect('the localProvenance cleanup lives inside mergeServerRide itself, so it is structurally unreachable from the !srv / 404 / error branches (which return before ever calling mergeServerRide)',
+  initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
+    && !initialRead.includes("delete ride.localProvenance"));
+
+// ── Codex follow-up — persist server-confirmed passenger waiting into an
+// EXISTING stored Ride, and seed the real Ride before boarding ──────────
+// Mirrors active_ride.js's persistServerConfirmedWaitingProjection. Unlike
+// the driver side, runInitialRead has early maybeReMount branches that can
+// navigate/defer BEFORE `ride = mergeServerRide(...)` ever runs, so the
+// repair must be computed and invoked right after srv is known non-null —
+// not only after the eventual mergeServerRide call.
+const passengerRepair = functionBody(passenger, 'persistPassengerServerConfirmedWaitingProjection');
+expect('persistPassengerServerConfirmedWaitingProjection helper is defined',
+  passengerRepair.length > 0);
+expect('the repair helper reads the existing stored ride via findActiveRide(ride.tripId)',
+  /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(passengerRepair));
+expect('the repair helper returns without saving when nothing is stored yet (no eager materialization)',
+  /if\s*\(!storedRide\)\s*return;/.test(passengerRepair));
+expect('the repaired object is based on storedRide — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, vehicle, route, payment, ride, chat, cancel all survive from storage untouched',
+  /\{\s*\.\.\.storedRide\s*,/.test(passengerRepair));
+expect('only the cleaned waiting projection crosses into the repaired stored copy',
+  /waiting:\s*\{\s*\.\.\.\(cleanedWaiting\s*\|\|\s*\{\}\)\s*\}/.test(passengerRepair));
+expect('the repair helper deletes localProvenance from the repaired copy',
+  /delete\s+repaired\.localProvenance;/.test(passengerRepair));
+expect('the repair helper persists through the existing saveActiveRide (so the terminal-freeze guard there still applies unchanged)',
+  /saveActiveRide\(repaired\)/.test(passengerRepair));
+expect('runInitialRead computes the cleaned waiting and invokes the repair right after srv is known non-null, BEFORE maybeReMount can navigate/defer away',
+  (() => {
+    const callIdx = initialRead.indexOf(
+      'persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));');
+    const remountIdx = initialRead.indexOf('maybeReMount(srv.status)');
+    return callIdx !== -1 && remountIdx !== -1 && callIdx < remountIdx;
+  })());
+expect('the repair call sits after the !srv early return (srv is proven non-null before it can run)',
+  initialRead.indexOf('if (!srv) {') <
+    initialRead.indexOf('persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));'));
+expect('the !srv branch does not invoke the server-confirmed repair (no server proof, no repair)',
+  (() => {
+    const notSrvBlock = initialRead.slice(initialRead.indexOf('if (!srv) {'), initialRead.indexOf('backendRide = true;'));
+    return !notSrvBlock.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+expect('the 404/RIDE_NOT_FOUND catch branch does not invoke the server-confirmed repair',
+  (() => {
+    const catchBody = initialRead.slice(initialRead.indexOf('} catch (err) {'));
+    const notFoundBlock = catchBody.slice(
+      catchBody.indexOf("err.status === 404"),
+      catchBody.indexOf('const retryable ='));
+    return !notFoundBlock.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+expect('the generic failure/auth/retryable catch tail does not invoke the server-confirmed repair',
+  (() => {
+    const catchBody = initialRead.slice(initialRead.indexOf('} catch (err) {'));
+    const tail = catchBody.slice(catchBody.indexOf('const retryable ='));
+    return !tail.includes('persistPassengerServerConfirmedWaitingProjection(');
+  })());
+
+const boardedHandlerOuter = functionBody(passenger, 'renderSheet');
+expect('the passenger boarded handler calls saveActiveRide(ride) before updateActiveRideStatus(...IN_PROGRESS)',
+  (() => {
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    const updateIdx = boardedHandlerOuter.indexOf('updateActiveRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS);');
+    return saveIdx !== -1 && updateIdx !== -1 && saveIdx < updateIdx;
+  })());
+expect('the boarded handler still PATCHes the server first (when backendWriteCandidate) before the local save/update pair',
+  (() => {
+    const patchIdx = boardedHandlerOuter.indexOf("await patchRideStatus(ride.tripId, RIDE_STATUS.IN_PROGRESS)");
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    return patchIdx !== -1 && saveIdx !== -1 && patchIdx < saveIdx;
+  })());
+expect('a boarding PATCH failure returns before any local save/update (catch block returns before saveActiveRide(ride))',
+  (() => {
+    const catchIdx = boardedHandlerOuter.indexOf("catch (err) {\n              localToast");
+    const saveIdx = boardedHandlerOuter.indexOf('saveActiveRide(ride);');
+    const catchBlock = boardedHandlerOuter.slice(catchIdx, saveIdx);
+    return catchIdx !== -1 && saveIdx !== -1 && /return;/.test(catchBlock);
+  })());
+expect('boarding did not gain a second/extra patchRideStatus call',
+  (boardedHandlerOuter.match(/patchRideStatus\(/g) || []).length === 1);
+
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
