@@ -1448,6 +1448,20 @@ if (exists(apiClientSmoke)) {
   }
 }
 
+// BD-ROUTER-LIFECYCLE-01A (#917) — LATEST_ROUTE_RENDER_WINS: a real runtime
+// smoke that imports router.js against a minimal DOM shim and drives it with
+// hand-resolved deferred loaders to prove a stale, slower navigation can
+// never mount over (or alongside) a newer one that has already settled.
+const routerLatestRenderSmoke = path.join(root, 'scripts', 'smoke-router-latest-render-wins.mjs');
+if (exists(routerLatestRenderSmoke)) {
+  try {
+    execFileSync(process.execPath, [routerLatestRenderSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-router-latest-render-wins.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

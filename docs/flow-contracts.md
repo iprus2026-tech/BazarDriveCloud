@@ -75,6 +75,7 @@ Unknown routes still fall back through the router to `/feed`.
 | Create dispatch | FAB calls `requireOnboarding()` and then `/driver-map` for driver mode or `/new` otherwise. |
 | Driver guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
 | Active ride role | One route, `/active-ride`; `?role=driver` uses driver UI, `?role=passenger` delegates to `active_ride_passenger.js`. |
+| Latest-render ownership (BD-ROUTER-LIFECYCLE-01A, #917) | `render()` is async (a screen loader may await its own data — e.g. `post_detail.js`). Every call stamps a monotonically increasing generation before awaiting its loader; if a newer render has started by the time the loader settles, the result is discarded — no mount, no tab-active/chrome sync. Guarantees `LATEST_ROUTE_RENDER_WINS`: an overlapping slow navigation can never land its view after a faster, later one already owns `#app`. Guarded by `scripts/smoke-router-latest-render-wins.mjs`. |
 
 ---
 

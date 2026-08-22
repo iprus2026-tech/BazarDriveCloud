@@ -122,7 +122,11 @@
 // the shared waiting-leak normalizer, while the documented SIM_AUDIT deep-link path still gets
 // localProvenance='sim_audit' and keeps its intentional demo waiting literals).
 // v307 — preserve lifecycle timestamps on repeated ride-status updates.
-const VERSION    = 'v307';
+// v308 (#917, BD-ROUTER-LIFECYCLE-01A) — precached router.js changed: render() now stamps a
+// monotonically increasing generation per navigation and discards a stale loader result (no
+// mount, no tab-active/chrome sync) once a newer render has started, so an overlapping slow
+// route can no longer land its view after a faster route already owns #app.
+const VERSION    = 'v308';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
