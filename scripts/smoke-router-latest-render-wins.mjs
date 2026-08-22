@@ -67,12 +67,15 @@ const elements = {
   fab: makeElement('fab'),
   shell: makeElement('shell'),
 };
-// Fake tabbar buttons for /a and /b so syncTabActive's active-class toggling
-// is genuinely exercised (BD-ROUTER-LIFECYCLE-01A acceptance: "a stale
-// render never overwrites the newer tab-active/chrome result").
+// Fake tabbar buttons for /a, /b and /map so syncTabActive's active-class
+// toggling is genuinely exercised (BD-ROUTER-LIFECYCLE-01A acceptance: "a
+// stale render never overwrites the newer tab-active/chrome result"). /map
+// is syncTabActive's special-cased tab for the /driver-map redirect target
+// (driver-map counts as the "Карта" tab).
 const tabButtons = [
   { dataset: { route: '/a' }, classList: makeClassList() },
   { dataset: { route: '/b' }, classList: makeClassList() },
+  { dataset: { route: '/map' }, classList: makeClassList() },
 ];
 globalThis.document = {
   getElementById: (id) => elements[id] || null,
@@ -192,7 +195,8 @@ async function flush(times = 4) {
     elements.app.children.length === 1 && elements.app.children[0] === viewC2);
 }
 
-// ── 3. Redirect guards cannot let a discarded render mount later ───────────
+// ── 3a. Redirect guards cannot let a discarded render mount later
+// (settled-state case: no in-flight loader racing the redirect) ────────────
 // (acceptance: "Redirects from welcome/driver guards cannot allow the
 // discarded render to mount later")
 {
@@ -214,6 +218,89 @@ async function flush(times = 4) {
     elements.app.children.length === 1 && elements.app.children[0] === viewWelcome);
 
   user.set({ welcomeSeen: true }); // restore for the remaining cases
+}
+
+// ── 3b. Redirect RACE — welcome guard: a genuinely in-flight, unrelated
+// slow loader must not mount after a mid-flight welcome-guard redirect has
+// already taken ownership of #app ───────────────────────────────────────────
+// (Codex P2 follow-up on the 01A smoke — 3a only proved the redirect target
+// mounts correctly from a settled, idle router; it never raced the guard
+// against an already-suspended loader, so it could not tell the generation
+// guard apart from a hypothetical unguarded implementation. This section
+// closes that gap: the #app/tab-active assertions below are guard
+// discriminators (verified by the negative sweep in scripts/dispatcher.mjs-
+// adjacent tooling — see the repo's own guardless-variant check performed
+// before this file was committed); the chrome-visibility assertions are
+// included because the acceptance text names chrome, but they hold
+// regardless of the guard — tabbar/fab/shell mutations are synchronous and
+// run once per render() call, before any await, so a stale post-await
+// continuation can never reach them either way.)
+{
+  const viewWelcome2 = { id: 'view-welcome-race' };
+  register('/welcome', () => viewWelcome2); // re-register: same path, still a synchronous loader
+
+  const deferredSlowW = makeDeferred();
+  register('/slow-before-welcome-guard', () => deferredSlowW.promise);
+
+  user.set({ welcomeSeen: true });
+  go('/init');
+  await flush();
+  go('/slow-before-welcome-guard'); // generation P — suspends in flight, chrome set for this (non-hidden) path
+  await flush();
+
+  user.set({ welcomeSeen: false });
+  go('/anywhere-else'); // generation P+1 — guard fires immediately, redirects to /welcome (generation P+2), returns before touching chrome/loader
+
+  await flush();
+  const viewSlowW = { id: 'view-slow-welcome-race' };
+  deferredSlowW.resolve(viewSlowW); // the in-flight loader settles only AFTER the redirect already won ownership
+  await flush();
+
+  expect('welcome-guard RACE: the stale in-flight loader never mounts once the redirect owns #app',
+    elements.app.children.length === 1 && elements.app.children[0] === viewWelcome2,
+    'GUARD DISCRIMINATOR — fails if the generation guard is removed: the stale loader would additionally append');
+  expect('welcome-guard RACE: chrome reflects /welcome (tabbar+fab hidden, shell has no-chrome)',
+    elements.tabbar.hidden === true && elements.fab.hidden === true && elements.shell.classList.has('no-chrome'),
+    'holds regardless of the guard — chrome mutations are synchronous/pre-await, never reached by a stale continuation');
+
+  user.set({ welcomeSeen: true }); // restore
+}
+
+// ── 3c. Redirect RACE — driver/passenger-order guard: same shape as 3b,
+// covering redirectDriverPassengerOrderFlow (3a/3b only ever exercised the
+// welcome guard) ────────────────────────────────────────────────────────────
+{
+  const viewDriverMap = { id: 'view-driver-map' };
+  register('/driver-map', () => viewDriverMap);
+
+  const deferredSlowD = makeDeferred();
+  register('/slow-before-driver-guard', () => deferredSlowD.promise);
+
+  user.set({ welcomeSeen: true, role: 'passenger' });
+  go('/init');
+  await flush();
+  go('/slow-before-driver-guard'); // generation Q — suspends in flight, chrome set for this (non-hidden) path
+  await flush();
+
+  user.set({ role: 'driver' });
+  go('/route-picker'); // generation Q+1 — a PASSENGER_ORDER_ROUTES path in driver mode: guard fires, redirects to /driver-map (generation Q+2)
+
+  await flush();
+  const viewSlowD = { id: 'view-slow-driver-race' };
+  deferredSlowD.resolve(viewSlowD); // the in-flight loader settles only AFTER the redirect already won ownership
+  await flush();
+
+  expect('driver-guard RACE: the stale in-flight loader never mounts once the redirect owns #app',
+    elements.app.children.length === 1 && elements.app.children[0] === viewDriverMap,
+    'GUARD DISCRIMINATOR — fails if the generation guard is removed: the stale loader would additionally append');
+  expect('driver-guard RACE: the /map tab (driver-map\'s special-cased tab) is active, not the stale route\'s',
+    tabButtons[2].classList.has('active'),
+    'GUARD DISCRIMINATOR — an unguarded stale syncTabActive(\'/slow-before-driver-guard\') would deactivate every known tab');
+  expect('driver-guard RACE: chrome reflects /driver-map (tabbar visible, shell has no no-chrome class)',
+    elements.tabbar.hidden === false && !elements.shell.classList.has('no-chrome'),
+    'holds regardless of the guard — chrome mutations are synchronous/pre-await, never reached by a stale continuation');
+
+  user.set({ role: 'passenger' }); // restore
 }
 
 // ── 4. Existing synchronous screen loaders remain compatible ───────────────
