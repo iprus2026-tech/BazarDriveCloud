@@ -416,6 +416,9 @@ export function updateActiveRideStatus(tripId, status, patch = {}) {
   // it verbatim — no status overwrite, no timestamp rewrite, no patch
   // merge.
   const existing = findActiveRide(tripId);
+  // Keep same-status retries as true no-ops, matching the server chokepoint.
+  // A stale tab must not re-stamp lifecycle clocks or merge a second patch.
+  if (existing && existing.status === status) return existing;
   if (existing && TERMINAL_RIDE_STATUSES.has(existing.status)) {
     return existing;
   }
