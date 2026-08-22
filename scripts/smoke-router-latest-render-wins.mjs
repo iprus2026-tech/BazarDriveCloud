@@ -259,8 +259,11 @@ async function flush(times = 4) {
   expect('welcome-guard RACE: the stale in-flight loader never mounts once the redirect owns #app',
     elements.app.children.length === 1 && elements.app.children[0] === viewWelcome2,
     'GUARD DISCRIMINATOR — fails if the generation guard is removed: the stale loader would additionally append');
-  expect('welcome-guard RACE: chrome reflects /welcome (tabbar+fab hidden, shell has no-chrome)',
-    elements.tabbar.hidden === true && elements.fab.hidden === true && elements.shell.classList.has('no-chrome'),
+  expect('welcome-guard RACE: chrome reflects /welcome (tabbar+fab hidden; shell has no-chrome, not has-tabbar/has-fab)',
+    elements.tabbar.hidden === true && elements.fab.hidden === true
+      && elements.shell.classList.has('no-chrome')
+      && !elements.shell.classList.has('has-tabbar')
+      && !elements.shell.classList.has('has-fab'),
     'holds regardless of the guard — chrome mutations are synchronous/pre-await, never reached by a stale continuation');
 
   user.set({ welcomeSeen: true }); // restore
@@ -296,8 +299,11 @@ async function flush(times = 4) {
   expect('driver-guard RACE: the /map tab (driver-map\'s special-cased tab) is active, not the stale route\'s',
     tabButtons[2].classList.has('active'),
     'GUARD DISCRIMINATOR — an unguarded stale syncTabActive(\'/slow-before-driver-guard\') would deactivate every known tab');
-  expect('driver-guard RACE: chrome reflects /driver-map (tabbar visible, shell has no no-chrome class)',
-    elements.tabbar.hidden === false && !elements.shell.classList.has('no-chrome'),
+  expect('driver-guard RACE: chrome reflects /driver-map (tabbar visible, FAB hidden; shell has has-tabbar, not no-chrome/has-fab)',
+    elements.tabbar.hidden === false && elements.fab.hidden === true
+      && elements.shell.classList.has('has-tabbar')
+      && !elements.shell.classList.has('no-chrome')
+      && !elements.shell.classList.has('has-fab'),
     'holds regardless of the guard — chrome mutations are synchronous/pre-await, never reached by a stale continuation');
 
   user.set({ role: 'passenger' }); // restore
