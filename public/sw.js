@@ -121,7 +121,8 @@
 // isConfirmedHandoffRecord() check — so a genuine driver-handoff accept is recognized as real by
 // the shared waiting-leak normalizer, while the documented SIM_AUDIT deep-link path still gets
 // localProvenance='sim_audit' and keeps its intentional demo waiting literals).
-const VERSION    = 'v306';
+// v307 — preserve lifecycle timestamps on repeated ride-status updates.
+const VERSION    = 'v307';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

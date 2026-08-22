@@ -167,6 +167,33 @@ test('updateActiveRideStatus: advances a live non-terminal ride and stamps a tim
   assert.equal(typeof out.timestamps.startedAt, 'string');
 });
 
+test('updateActiveRideStatus: same non-terminal status is an idempotent no-op', () => {
+  for (const [status, timestampField] of [
+    [RIDE_STATUS.WAITING_PASSENGER, 'arrivedAt'],
+    [RIDE_STATUS.IN_PROGRESS, 'startedAt'],
+  ]) {
+    globalThis.localStorage.clear();
+    const originalTimestamp = '2026-01-01T00:00:00.000Z';
+    saveActiveRide({
+      tripId: 't1',
+      status,
+      marker: 'preserved',
+      timestamps: { [timestampField]: originalTimestamp },
+    });
+    const rawBefore = globalThis.localStorage.getItem('bazardrive.active_ride.v1');
+
+    const out = updateActiveRideStatus('t1', status, { patched: true });
+
+    assert.equal(out.status, status);
+    assert.equal(out.timestamps[timestampField], originalTimestamp,
+      `${timestampField} must remain first-stamp-wins on a same-status retry`);
+    assert.equal(out.marker, 'preserved');
+    assert.equal(out.patched, undefined, 'a same-status retry must not merge a patch');
+    assert.equal(globalThis.localStorage.getItem('bazardrive.active_ride.v1'), rawBefore,
+      'a same-status retry must not rewrite localStorage');
+  }
+});
+
 test('cancelActiveRide: stamps CANCELED with the actor, is null on unknown, idempotent on terminal', () => {
   // unknown trip → null, never auto-creates.
   assert.equal(cancelActiveRide({ tripId: 'ghost', canceledBy: 'driver' }), null);
