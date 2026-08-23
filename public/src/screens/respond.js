@@ -815,6 +815,24 @@ export default async function respond() {
   root.className = 'screen screen--respond';
 
   const postId = getRouteParam('postId');
+  // BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review) — router.js's generation
+  // guard only gates whether THIS loader's eventual returned view gets
+  // mounted; it has no visibility into side effects a loader fires before
+  // returning. A stale, still-in-flight renderRespond (initial load or a
+  // retry) that resumes after the user has navigated elsewhere must not:
+  //   (a) fire go('/chat?...') — the router would happily treat that as a
+  //       brand new, fully legitimate navigation and yank the user away
+  //       from wherever they actually are;
+  //   (b) raise the global server_error/retrying overlay via loadResource's
+  //       own reportAppShellError — that fires INSIDE loadResource, before
+  //       it returns, so a post-await check alone is too late to stop it.
+  // isCurrent() covers both: passed as loadResource's isActive (gates the
+  // overlay at the point it would be raised) and re-checked once the load
+  // settles (gates the go() call and everything after it). Same idiom
+  // already used by driver_map.js's epoch check and trip_receipt.js's
+  // content.isConnected check.
+  const startHash = window.location.hash;
+  const isCurrent = () => window.location.hash === startHash;
 
   if (!postId) {
     renderMissing(root);
@@ -826,7 +844,8 @@ export default async function respond() {
   // safe — the arrow only runs when the user taps «Повторить».
   const onRespondRetry = () => { renderRespond(true); };
   async function renderRespond(isRetry) {
-    const posts = await loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry });
+    const posts = await loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry, isActive: isCurrent });
+    if (!isCurrent()) return; // stale — a newer navigation has since taken over
     const post = posts.find((p) => String(p.id) === String(postId));
 
     if (!post) {

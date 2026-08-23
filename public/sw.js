@@ -126,7 +126,12 @@
 // monotonically increasing generation per navigation and discards a stale loader result (no
 // mount, no tab-active/chrome sync) once a newer render has started, so an overlapping slow
 // route can no longer land its view after a faster route already owns #app.
-const VERSION    = 'v308';
+// v309 (BD-ROUTER-LIFECYCLE-01A P2, PR #918 review) — precached respond.js changed: a stale,
+// still-in-flight renderRespond (initial load or retry) that resumes after the user has
+// navigated elsewhere no longer fires go('/chat?...') — the router's own generation guard has
+// no visibility into a loader's side effects, so respond.js now captures the hash it started
+// under and bails out once the load resolves if it no longer matches.
+const VERSION    = 'v309';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

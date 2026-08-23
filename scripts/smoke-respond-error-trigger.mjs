@@ -54,8 +54,13 @@ expect('respond.js no longer imports the overlay adapter directly (it goes throu
 // ── B. the load goes through loadResource(listFeedPosts, …) ──
 expect('initial render runs via renderRespond(false)',
   /await\s+renderRespond\(\s*false\s*\)/.test(respond));
-expect('renderRespond(isRetry) loads via loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry })',
-  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onRespondRetry\s*,\s*isRetry\s*\}\s*\)/.test(respond));
+expect('renderRespond(isRetry) loads via loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry, isActive: isCurrent })',
+  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onRespondRetry\s*,\s*isRetry\s*,\s*isActive:\s*isCurrent\s*\}\s*\)/.test(respond));
+// BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review) — isActive must be wired to a
+// staleness check, not omitted or hard-coded true, so a resumed stale load
+// cannot raise the overlay via loadResource's own reportAppShellError.
+expect('respond.js defines isCurrent() as a hash-based staleness check, threaded into loadResource as isActive',
+  /const\s+startHash\s*=\s*window\.location\.hash;[\s\S]{0,80}const\s+isCurrent\s*=\s*\(\)\s*=>\s*window\.location\.hash\s*===\s*startHash;/.test(respond));
 expect('respond.js reads only through the adapter (no direct listFeedPosts() call)',
   (respond.match(/await\s+listFeedPosts\(\)/g) || []).length === 0,
   'listFeedPosts is passed by reference to loadResource, never called directly in respond.js');

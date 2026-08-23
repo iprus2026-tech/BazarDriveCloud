@@ -1462,6 +1462,20 @@ if (exists(routerLatestRenderSmoke)) {
   }
 }
 
+// BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review) — router.js's generation guard
+// cannot see a loader's own side effects. This real runtime smoke proves
+// respond.js's go('/chat?...') call never fires once a stale, still-in-flight
+// renderRespond resumes after the user has navigated elsewhere.
+const respondStaleNavGuardSmoke = path.join(root, 'scripts', 'smoke-respond-stale-navigation-guard.mjs');
+if (exists(respondStaleNavGuardSmoke)) {
+  try {
+    execFileSync(process.execPath, [respondStaleNavGuardSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-respond-stale-navigation-guard.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');
