@@ -131,7 +131,14 @@
 // navigated elsewhere no longer fires go('/chat?...') — the router's own generation guard has
 // no visibility into a loader's side effects, so respond.js now captures the hash it started
 // under and bails out once the load resolves if it no longer matches.
-const VERSION    = 'v309';
+// v310 (BD-ROUTER-LIFECYCLE-01A P2 ABA fix, PR #918 review) — precached router.js + respond.js
+// changed: the v309 hash-equality staleness check broke on an A→B→A navigation (the hash matches
+// again once the user returns, even though a whole new render/generation happened in between).
+// router.js now hands every loader a frozen renderContext ({ isCurrent }) bound to the exact
+// generation it was minted for, and its own post-await mount check reuses the same isCurrent()
+// instead of comparing the generation counter directly; respond.js takes that renderContext as an
+// optional argument and derives isCurrent from it instead of from window.location.hash.
+const VERSION    = 'v310';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

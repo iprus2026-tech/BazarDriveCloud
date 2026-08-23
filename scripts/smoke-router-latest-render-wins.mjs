@@ -20,6 +20,13 @@
 // BEFORE router.js is imported, since render()/start() reference them as
 // bare identifiers resolved at call time against the global scope — matches
 // how a real page provides them.
+//
+// BD-ROUTER-LIFECYCLE-01A P2 follow-up (ABA fix, PR #918 review): render()
+// now also hands every loader a frozen renderContext ({ isCurrent }) bound
+// to the generation it was minted for, so a loader can guard its own
+// pre-return side effects against staleness. Section 3d below proves this
+// is immune to an A→B→A round trip back to the same hash — the scenario a
+// naive hash-equality staleness check gets wrong.
 
 import fs from 'node:fs';
 
@@ -309,6 +316,54 @@ async function flush(times = 4) {
   user.set({ role: 'passenger' }); // restore
 }
 
+// ── 3d. renderContext generation binding — A→B→A: a stale render's
+// isCurrent must stay false even after the hash cycles back to its own
+// path (guards against a hash-equality staleness check, which a loader
+// could wrongly treat as "still current" once the hash matches again)
+// (BD-ROUTER-LIFECYCLE-01A P2 follow-up, ABA fix) ───────────────────────────
+{
+  const deferredAba1 = makeDeferred();
+  let abaCallCount = 0;
+  const capturedContexts = [];
+  register('/aba', (ctx) => {
+    abaCallCount += 1;
+    capturedContexts.push(ctx);
+    // First /aba visit: slow, stays in flight while the user navigates
+    // away and back. Second visit: synchronous, mounts immediately.
+    return abaCallCount === 1 ? deferredAba1.promise : { id: `view-aba-${abaCallCount}` };
+  });
+  register('/other-aba', () => ({ id: 'view-other-aba' }));
+
+  go('/init');
+  await flush();
+  go('/aba');       // generation S — first /aba visit, suspends on deferredAba1
+  await flush();
+  go('/other-aba'); // generation S+1 — supersedes /aba while it is still in flight
+  await flush();
+  go('/aba');       // generation S+2 — second /aba visit: same hash as the stale one, fresh generation
+  await flush();
+
+  expect('setup: /aba was visited twice, each call received its own renderContext',
+    capturedContexts.length === 2 && capturedContexts[0] !== capturedContexts[1]);
+  expect('ABA: the second (latest) /aba visit already mounted before the first one\'s deferred settles',
+    elements.app.children.length === 1 && elements.app.children[0].id === 'view-aba-2');
+
+  const viewAba1Late = { id: 'view-aba-1-late' };
+  deferredAba1.resolve(viewAba1Late); // the FIRST /aba visit's loader finally settles — long after the second visit already mounted, and after the hash has cycled back to #/aba
+  await flush();
+
+  expect('ABA RACE: the FIRST (stale, superseded) /aba render never mounts, even after the hash has cycled back to /aba',
+    elements.app.children.length === 1 && elements.app.children[0].id === 'view-aba-2',
+    'GUARD DISCRIMINATOR — fails if the generation guard is removed: the stale loader would additionally append');
+  expect('ABA: the FIRST renderContext\'s isCurrent() reads false once resolved late — even though location.hash is back to #/aba',
+    capturedContexts[0].isCurrent() === false,
+    'GUARD DISCRIMINATOR — a hash-equality isCurrent (location.hash === startHash) would wrongly read true here, since the hash matches again');
+  expect('ABA: the SECOND (latest) renderContext\'s isCurrent() reads true',
+    capturedContexts[1].isCurrent() === true);
+  expect('renderContext is frozen (a loader cannot mutate router-owned staleness state)',
+    Object.isFrozen(capturedContexts[0]) && Object.isFrozen(capturedContexts[1]));
+}
+
 // ── 4. Existing synchronous screen loaders remain compatible ───────────────
 // (acceptance: "Existing synchronous screen loaders remain compatible")
 {
@@ -324,8 +379,8 @@ async function flush(times = 4) {
 
 // ── 5. SW cache-revision parity — router.js is precached ───────────────────
 const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
-expect('public/sw.js VERSION bumped to v308+ (router.js is precached)',
-  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 308);
+expect('public/sw.js VERSION bumped to v310+ (router.js is precached)',
+  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 310);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

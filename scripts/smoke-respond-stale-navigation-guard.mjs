@@ -12,11 +12,22 @@
 //      data_layer.loadResource's own catch block via reportAppShellError —
 //      BEFORE loadResource returns, so a check placed only after the
 //      `await loadResource(...)` line is too late to stop it.
-// The fix captures the hash respond() started under (isCurrent()), threads
-// it into loadResource's isActive option (gates the overlay at the point it
-// would be raised) and re-checks it once the load settles (gates go() and
-// everything after it) — the same idiom already used by driver_map.js's
-// epoch check and trip_receipt.js's content.isConnected check.
+//
+// BD-ROUTER-LIFECYCLE-01A P2 follow-up (ABA fix, PR #918 review): the first
+// fix captured `window.location.hash` at render start and compared it after
+// the load settled. That is wrong for an A→B→A navigation — the hash
+// matches again once the user returns to /respond, even though a whole new
+// render (a new router generation, a brand new renderRespond closure) has
+// run in between; a stale continuation from the FIRST /respond visit would
+// wrongly read itself as still current. router.js now hands every loader a
+// frozen renderContext ({ isCurrent }) bound to the generation it was
+// minted for; respond.js takes that as an optional argument and derives
+// isCurrent from it instead of from the hash (falling back to an
+// always-current stub for a direct/test caller that passes none). The
+// "ABA" sections below drive this directly: they supersede a fake
+// renderContext WITHOUT ever touching location.hash, which is exactly the
+// case a hash-equality check gets wrong and a renderContext-bound check
+// gets right.
 //
 // This is a REAL RUNTIME smoke: it imports the actual public/src/screens/
 // respond.js (and, transitively, the real router.js go() and data_layer.js
@@ -109,32 +120,62 @@ async function flush(times = 6) {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
-// ── 1. Stale render: the user navigates away before the load resolves —
-// go('/chat?...') must never fire ──────────────────────────────────────────
-{
-  location.hash = '#/respond?postId=trip-1';
-  const pending = respond(); // synchronously runs up to its first await, capturing startHash
-  location.hash = '#/feed';  // the user navigates away while the load is still in flight
-  await pending;
-  await flush();
-
-  expect('stale respond() render: go(\'/chat?...\') never fires once the user has navigated away',
-    location.hash === '#/feed',
-    'GUARD DISCRIMINATOR — fails if the stale-navigation guard is removed: hash would be overwritten to #/chat?tripId=trip-1');
+// A controllable stand-in for the renderContext router.js hands every
+// loader. supersede() flips isCurrent() to false — the same effect a newer
+// render() call has in the real router — without ever touching location.hash.
+function makeRenderContext() {
+  let current = true;
+  return {
+    context: { isCurrent: () => current },
+    supersede() { current = false; },
+  };
 }
 
-// ── 2. Non-stale render: unchanged compatibility — go('/chat?...') still
-// fires normally when nothing raced it ──────────────────────────────────────
+// ── 1. Non-stale (renderContext supplied, never superseded): go('/chat?...')
+// still fires for a driver-trip post — baseline compatibility ─────────────
 {
+  const { context } = makeRenderContext();
   location.hash = '#/respond?postId=trip-1';
-  await respond();
+  await respond(context);
   await flush();
 
-  expect('non-stale respond() render: go(\'/chat?...\') still fires for a driver-trip post',
+  expect('non-stale respond(renderContext) render: go(\'/chat?...\') still fires for a driver-trip post',
     location.hash === '#/chat?tripId=trip-1');
 }
 
-// ── 3 & 4. A rejected load must not raise the global overlay once stale,
+// ── 2. Non-stale, NO renderContext at all (undefined) — the optional-
+// argument fallback for a direct/test caller must still behave normally ───
+{
+  location.hash = '#/respond?postId=trip-1';
+  await respond(); // no argument — respond.js must fall back to an always-current stub
+  await flush();
+
+  expect('non-stale respond() render with no renderContext argument: go(\'/chat?...\') still fires (optional-argument fallback)',
+    location.hash === '#/chat?tripId=trip-1');
+}
+
+// ── 3. ABA: renderContext superseded WITHOUT any hash change — the exact
+// case a hash-equality staleness check gets wrong (hash still matches, so
+// it would wrongly read "current") but a renderContext-bound check gets
+// right ────────────────────────────────────────────────────────────────────
+{
+  const { context, supersede } = makeRenderContext();
+  location.hash = '#/respond?postId=trip-1';
+  const pending = respond(context); // synchronously captures isCurrent from context, starts the load
+  // Do NOT touch location.hash — simulate an A→B→A round trip that has
+  // landed back on the exact same URL as far as respond.js can tell from
+  // the outside; only the router's renderContext reflects that a newer
+  // generation has since taken over.
+  supersede();
+  await pending;
+  await flush();
+
+  expect('ABA: go(\'/chat?...\') never fires once renderContext is superseded, even though location.hash never changed',
+    location.hash === '#/respond?postId=trip-1',
+    'GUARD DISCRIMINATOR — a hash-equality isCurrent (location.hash === startHash) would wrongly read true here and fire go()');
+}
+
+// ── 4 & 5. A rejected load must not raise the global overlay once stale,
 // but must still raise it normally when not stale ──────────────────────────
 // Flips the backend on (api_config.js's own test-only escape hatch) and
 // stubs fetch to reject synchronously, so listFeedPosts() -> apiFetch()
@@ -144,25 +185,29 @@ globalThis.fetch = () => Promise.reject(new Error('network down (test stub)'));
 
 {
   overlayCalls.length = 0;
+  const { context } = makeRenderContext();
   location.hash = '#/respond?postId=trip-1';
-  const pending = respond();       // synchronously captures startHash, starts the (rejecting) load
-  location.hash = '#/feed';        // the user navigates away while the load is still in flight
+  await respond(context);
+  await flush();
+
+  expect('non-stale respond(renderContext) render: a rejected load still raises the global error overlay normally',
+    overlayCalls.length === 1 && overlayCalls[0][0] === 'server_error');
+}
+
+// ── ABA: renderContext superseded WITHOUT any hash change — a rejected
+// load must not raise the overlay ──────────────────────────────────────────
+{
+  overlayCalls.length = 0;
+  const { context, supersede } = makeRenderContext();
+  location.hash = '#/respond?postId=trip-1';
+  const pending = respond(context);
+  supersede(); // no hash change — same ABA shape as section 3
   await pending;
   await flush();
 
-  expect('stale respond() render: a rejected load never raises the global error overlay',
+  expect('ABA: a rejected load never raises the global error overlay once renderContext is superseded, even though location.hash never changed',
     overlayCalls.length === 0,
-    'GUARD DISCRIMINATOR — fails if isActive is not wired into loadResource: reportAppShellError(\'server_error\', ...) would fire despite the user having navigated away');
-}
-
-{
-  overlayCalls.length = 0;
-  location.hash = '#/respond?postId=trip-1';
-  await respond();
-  await flush();
-
-  expect('non-stale respond() render: a rejected load still raises the global error overlay normally',
-    overlayCalls.length === 1 && overlayCalls[0][0] === 'server_error');
+    'GUARD DISCRIMINATOR — a hash-equality isActive would wrongly stay true here (hash unchanged) and let reportAppShellError(\'server_error\', ...) fire');
 }
 
 globalThis.__BD_API_BASE__ = '';

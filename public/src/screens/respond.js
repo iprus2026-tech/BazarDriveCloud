@@ -810,7 +810,7 @@ function renderPassengerRide(root, post) {
 // genuine not-found (load OK, postId absent) reports no error. Defensive/dormant
 // — mock listFeedPosts() does not reject today.
 
-export default async function respond() {
+export default async function respond(renderContext) {
   const root = document.createElement('section');
   root.className = 'screen screen--respond';
 
@@ -826,13 +826,25 @@ export default async function respond() {
   //   (b) raise the global server_error/retrying overlay via loadResource's
   //       own reportAppShellError — that fires INSIDE loadResource, before
   //       it returns, so a post-await check alone is too late to stop it.
-  // isCurrent() covers both: passed as loadResource's isActive (gates the
-  // overlay at the point it would be raised) and re-checked once the load
-  // settles (gates the go() call and everything after it). Same idiom
-  // already used by driver_map.js's epoch check and trip_receipt.js's
+  // BD-ROUTER-LIFECYCLE-01A P2 follow-up (ABA fix) — the original guard
+  // compared window.location.hash against the hash captured at render
+  // start, which breaks on an A→B→A navigation: the hash matches again
+  // once the user returns to /respond, even though a fresh render (a new
+  // router generation, a brand new renderRespond closure) is now running
+  // too — a stale continuation from the FIRST /respond visit would wrongly
+  // read itself as still current. router.js now hands every loader a
+  // frozen renderContext bound to the generation it was minted for;
+  // respond() uses THAT as isCurrent instead of comparing hashes, falling
+  // back to an always-current stub only for a direct/test caller that
+  // doesn't pass one.
+  // isCurrent() covers both (a) and (b): passed as loadResource's isActive
+  // (gates the overlay at the point it would be raised) and re-checked once
+  // the load settles (gates the go() call and everything after it). Same
+  // idiom already used by driver_map.js's epoch check and trip_receipt.js's
   // content.isConnected check.
-  const startHash = window.location.hash;
-  const isCurrent = () => window.location.hash === startHash;
+  const isCurrent = renderContext && typeof renderContext.isCurrent === 'function'
+    ? renderContext.isCurrent
+    : () => true;
 
   if (!postId) {
     renderMissing(root);

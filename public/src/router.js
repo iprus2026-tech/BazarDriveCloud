@@ -15,6 +15,20 @@ let pendingAction = null;
 // the time the loader settles, the stale result is discarded — no mount,
 // no tab-active/chrome sync. Existing hash routing, guards and the
 // loader contract (return a DOM view; sync or async) are unchanged.
+//
+// BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review, ABA fix) — the loader is also
+// handed a frozen renderContext ({ isCurrent }) bound to the generation this
+// render() call stamped itself with, so a loader can detect its OWN
+// staleness for side effects it fires before returning (router.js has no
+// visibility into those). A hash-equality staleness check inside a loader
+// (respond.js's earlier `location.hash === startHash`) is wrong for an
+// A→B→A navigation: the hash matches again once the user returns to A,
+// even though a whole new render()/generation has happened in between — a
+// stale continuation from the FIRST A visit would wrongly read itself as
+// still current. isCurrent() derived from the generation counter instead
+// is immune to this: it is only ever true for the exact render() call it
+// was minted for. Loaders that ignore the extra argument (every existing
+// loader except respond.js) are unaffected.
 let renderGeneration = 0;
 
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
@@ -50,6 +64,7 @@ export function consumePendingAction() {
 
 async function render() {
   const generation = ++renderGeneration;
+  const renderContext = Object.freeze({ isCurrent: () => generation === renderGeneration });
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
   // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,
@@ -100,10 +115,10 @@ async function render() {
   shell.classList.toggle('has-fab',    hasFab);
 
   root.replaceChildren();
-  const view = await loader();
+  const view = await loader(renderContext);
   // A newer navigation started while this loader was in flight — this
   // render is stale and must not mount or touch tab-active state.
-  if (generation !== renderGeneration) return;
+  if (!renderContext.isCurrent()) return;
   root.appendChild(view);
 
   syncTabActive(path);
