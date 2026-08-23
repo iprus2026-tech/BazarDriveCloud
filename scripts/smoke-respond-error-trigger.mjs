@@ -54,8 +54,20 @@ expect('respond.js no longer imports the overlay adapter directly (it goes throu
 // ── B. the load goes through loadResource(listFeedPosts, …) ──
 expect('initial render runs via renderRespond(false)',
   /await\s+renderRespond\(\s*false\s*\)/.test(respond));
-expect('renderRespond(isRetry) loads via loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry })',
-  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onRespondRetry\s*,\s*isRetry\s*\}\s*\)/.test(respond));
+expect('renderRespond(isRetry) loads via loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry, isActive: isCurrent })',
+  /async\s+function\s+renderRespond\(\s*isRetry\s*\)[\s\S]{0,160}await\s+loadResource\(\s*listFeedPosts\s*,\s*\{\s*onRetry:\s*onRespondRetry\s*,\s*isRetry\s*,\s*isActive:\s*isCurrent\s*\}\s*\)/.test(respond));
+// BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review) — isActive must be wired to a
+// staleness check, not omitted or hard-coded true, so a resumed stale load
+// cannot raise the overlay via loadResource's own reportAppShellError.
+// BD-ROUTER-LIFECYCLE-01A P2 follow-up (ABA fix) — a hash-equality check is
+// wrong for an A→B→A navigation (the hash matches again once the user
+// returns, even though a whole new render/generation has since run), so
+// respond.js now derives isCurrent from the router's own renderContext
+// (isCurrent bound to its generation) instead of comparing hashes.
+expect('respond.js accepts an optional renderContext and defines isCurrent from renderContext.isCurrent, falling back to an always-current stub',
+  /export\s+default\s+async\s+function\s+respond\(\s*renderContext\s*\)[\s\S]*?const\s+isCurrent\s*=\s*renderContext\s*&&\s*typeof\s+renderContext\.isCurrent\s*===\s*'function'\s*\?\s*renderContext\.isCurrent\s*:\s*\(\)\s*=>\s*true;/.test(respond));
+expect('respond.js no longer derives staleness from window.location.hash (removed in the ABA fix)',
+  !/const\s+startHash\s*=\s*window\.location\.hash/.test(respond));
 expect('respond.js reads only through the adapter (no direct listFeedPosts() call)',
   (respond.match(/await\s+listFeedPosts\(\)/g) || []).length === 0,
   'listFeedPosts is passed by reference to loadResource, never called directly in respond.js');

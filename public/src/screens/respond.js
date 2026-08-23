@@ -810,11 +810,41 @@ function renderPassengerRide(root, post) {
 // genuine not-found (load OK, postId absent) reports no error. Defensive/dormant
 // — mock listFeedPosts() does not reject today.
 
-export default async function respond() {
+export default async function respond(renderContext) {
   const root = document.createElement('section');
   root.className = 'screen screen--respond';
 
   const postId = getRouteParam('postId');
+  // BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review) — router.js's generation
+  // guard only gates whether THIS loader's eventual returned view gets
+  // mounted; it has no visibility into side effects a loader fires before
+  // returning. A stale, still-in-flight renderRespond (initial load or a
+  // retry) that resumes after the user has navigated elsewhere must not:
+  //   (a) fire go('/chat?...') — the router would happily treat that as a
+  //       brand new, fully legitimate navigation and yank the user away
+  //       from wherever they actually are;
+  //   (b) raise the global server_error/retrying overlay via loadResource's
+  //       own reportAppShellError — that fires INSIDE loadResource, before
+  //       it returns, so a post-await check alone is too late to stop it.
+  // BD-ROUTER-LIFECYCLE-01A P2 follow-up (ABA fix) — the original guard
+  // compared window.location.hash against the hash captured at render
+  // start, which breaks on an A→B→A navigation: the hash matches again
+  // once the user returns to /respond, even though a fresh render (a new
+  // router generation, a brand new renderRespond closure) is now running
+  // too — a stale continuation from the FIRST /respond visit would wrongly
+  // read itself as still current. router.js now hands every loader a
+  // frozen renderContext bound to the generation it was minted for;
+  // respond() uses THAT as isCurrent instead of comparing hashes, falling
+  // back to an always-current stub only for a direct/test caller that
+  // doesn't pass one.
+  // isCurrent() covers both (a) and (b): passed as loadResource's isActive
+  // (gates the overlay at the point it would be raised) and re-checked once
+  // the load settles (gates the go() call and everything after it). Same
+  // idiom already used by driver_map.js's epoch check and trip_receipt.js's
+  // content.isConnected check.
+  const isCurrent = renderContext && typeof renderContext.isCurrent === 'function'
+    ? renderContext.isCurrent
+    : () => true;
 
   if (!postId) {
     renderMissing(root);
@@ -826,7 +856,8 @@ export default async function respond() {
   // safe — the arrow only runs when the user taps «Повторить».
   const onRespondRetry = () => { renderRespond(true); };
   async function renderRespond(isRetry) {
-    const posts = await loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry });
+    const posts = await loadResource(listFeedPosts, { onRetry: onRespondRetry, isRetry, isActive: isCurrent });
+    if (!isCurrent()) return; // stale — a newer navigation has since taken over
     const post = posts.find((p) => String(p.id) === String(postId));
 
     if (!post) {

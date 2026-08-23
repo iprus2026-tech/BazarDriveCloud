@@ -122,7 +122,28 @@
 // the shared waiting-leak normalizer, while the documented SIM_AUDIT deep-link path still gets
 // localProvenance='sim_audit' and keeps its intentional demo waiting literals).
 // v307 — preserve lifecycle timestamps on repeated ride-status updates.
-const VERSION    = 'v307';
+// v308 (#917, BD-ROUTER-LIFECYCLE-01A) — precached router.js changed: render() now stamps a
+// monotonically increasing generation per navigation and discards a stale loader result (no
+// mount, no tab-active/chrome sync) once a newer render has started, so an overlapping slow
+// route can no longer land its view after a faster route already owns #app.
+// v309 (BD-ROUTER-LIFECYCLE-01A P2, PR #918 review) — precached respond.js changed: a stale,
+// still-in-flight renderRespond (initial load or retry) that resumes after the user has
+// navigated elsewhere no longer fires go('/chat?...') — the router's own generation guard has
+// no visibility into a loader's side effects, so respond.js now captures the hash it started
+// under and bails out once the load resolves if it no longer matches.
+// v310 (BD-ROUTER-LIFECYCLE-01A P2 ABA fix, PR #918 review) — precached router.js + respond.js
+// changed: the v309 hash-equality staleness check broke on an A→B→A navigation (the hash matches
+// again once the user returns, even though a whole new render/generation happened in between).
+// router.js now hands every loader a frozen renderContext ({ isCurrent }) bound to the exact
+// generation it was minted for, and its own post-await mount check reuses the same isCurrent()
+// instead of comparing the generation counter directly; respond.js takes that renderContext as an
+// optional argument and derives isCurrent from it instead of from window.location.hash.
+// v311 (BD-ROUTER-LIFECYCLE-01A P2 hashchange fix, PR #918 review) — precached
+// router.js changed: different-hash go() now invalidates the active render generation before
+// assigning location.hash, closing the real-browser task gap before the asynchronous hashchange
+// event starts the destination render. A loader settling in that gap can no longer mount under
+// the destination URL or fire generation-gated side effects as the previous owner.
+const VERSION    = 'v311';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

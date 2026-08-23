@@ -5,6 +5,38 @@ import { applySmokeRole, bootstrapSmokeRoleFromQuery } from './smoke_role.js';
 const routes = new Map();
 let pendingAction = null;
 
+// BD-ROUTER-LIFECYCLE-01A (#917) — LATEST_ROUTE_RENDER_WINS. render() is
+// async (screen loaders may await their own data — post_detail.js does),
+// so two overlapping navigations can resolve out of order: a slow route A
+// started first can still settle AFTER a faster route B has already
+// mounted, and A's stale view would otherwise land in #app alongside (or
+// instead of) B's. Every render() call stamps itself with the current
+// generation before awaiting its loader; if a newer render has started by
+// the time the loader settles, the stale result is discarded — no mount,
+// no tab-active/chrome sync. Existing hash routing, guards and the
+// loader contract (return a DOM view; sync or async) are unchanged.
+//
+// BD-ROUTER-LIFECYCLE-01A P2 (PR #918 review, ABA fix) — the loader is also
+// handed a frozen renderContext ({ isCurrent }) bound to the generation this
+// render() call stamped itself with, so a loader can detect its OWN
+// staleness for side effects it fires before returning (router.js has no
+// visibility into those). A hash-equality staleness check inside a loader
+// (respond.js's earlier `location.hash === startHash`) is wrong for an
+// A→B→A navigation: the hash matches again once the user returns to A,
+// even though a whole new render()/generation has happened in between — a
+// stale continuation from the FIRST A visit would wrongly read itself as
+// still current. isCurrent() derived from the generation counter instead
+// is immune to this: it is only ever true for the exact render() call it
+// was minted for. Loaders that ignore the extra argument (every existing
+// loader except respond.js) are unaffected.
+//
+// A different-hash go() also advances the generation BEFORE assigning the
+// hash. Browsers deliver hashchange asynchronously, so waiting for render()
+// to advance it would leave a window where an old loader can settle under
+// the new URL while still reading isCurrent() === true. The following
+// hashchange render advances it again and mints the new route's context.
+let renderGeneration = 0;
+
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
 const SHOW_FAB    = new Set(['/feed']);
 const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft']);
@@ -23,7 +55,10 @@ export function register(path, loader) {
 export function go(path) {
   const target = `#${path}`;
   if (location.hash === target) render();
-  else location.hash = path;
+  else {
+    ++renderGeneration; // invalidate the current owner before async hashchange delivery
+    location.hash = path;
+  }
 }
 
 export function setPendingAction(fn) {
@@ -37,6 +72,8 @@ export function consumePendingAction() {
 }
 
 async function render() {
+  const generation = ++renderGeneration;
+  const renderContext = Object.freeze({ isCurrent: () => generation === renderGeneration });
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
   // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,
@@ -87,7 +124,10 @@ async function render() {
   shell.classList.toggle('has-fab',    hasFab);
 
   root.replaceChildren();
-  const view = await loader();
+  const view = await loader(renderContext);
+  // A newer navigation started while this loader was in flight — this
+  // render is stale and must not mount or touch tab-active state.
+  if (!renderContext.isCurrent()) return;
   root.appendChild(view);
 
   syncTabActive(path);
