@@ -61,9 +61,13 @@ const location = {
   set hash(value) { currentHash = value.startsWith('#') ? value : `#${value}`; },
 };
 globalThis.location = location;
-// Node's global `navigator` is a getter-only binding — set the property
-// directly rather than replacing the object.
-navigator.onLine = true;
+// Node >=21 exposes a global `navigator` (a getter-only binding — replacing
+// the object outright throws, hence setting the property instead), but CI's
+// pinned Node 20 (see .github/workflows/ci.yml) has no global navigator at
+// all, so a bare `navigator.onLine = …` throws ReferenceError there. Create
+// the object only if missing, so this works on both.
+if (!globalThis.navigator) globalThis.navigator = {};
+globalThis.navigator.onLine = true;
 // window.BD.GlobalError — the lazily-resolved overlay API app_error_triggers.js
 // looks for. Recording every show()/hide() call is the only signal we need to
 // prove whether reportAppShellError actually raised (or correctly suppressed)
