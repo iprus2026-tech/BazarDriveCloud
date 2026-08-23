@@ -91,6 +91,8 @@ globalThis.document = {
 
 let currentHash = '#/init';
 let hashChangeHandler = null;
+let queueHashChange = false;
+const queuedHashChanges = [];
 globalThis.window = {
   addEventListener(type, handler) {
     if (type === 'hashchange') hashChangeHandler = handler;
@@ -98,17 +100,24 @@ globalThis.window = {
 };
 globalThis.location = {
   get hash() { return currentHash; },
-  // Real browsers fire hashchange asynchronously; this shim dispatches
-  // synchronously (matching how `window.addEventListener('hashchange', render)`
-  // is fire-and-forget either way — nothing here awaits the handler's
-  // returned Promise, exactly like a real event dispatch wouldn't).
+  // Most scenarios keep synchronous dispatch for compact deterministic
+  // setup. Section 1b switches to an explicit queue to model the real
+  // browser gap between changing location.hash and the later hashchange
+  // task; dispatch remains fire-and-forget in both modes.
   set hash(value) {
     const next = value.startsWith('#') ? value : `#${value}`;
     if (next === currentHash) return;
     currentHash = next;
-    if (hashChangeHandler) hashChangeHandler();
+    if (!hashChangeHandler) return;
+    if (queueHashChange) queuedHashChanges.push(hashChangeHandler);
+    else hashChangeHandler();
   },
 };
+
+function dispatchNextHashChange() {
+  const handler = queuedHashChanges.shift();
+  if (handler) handler();
+}
 
 const { register, go, start } = await import('../public/src/router.js');
 const { user } = await import('../public/src/state.js');
@@ -167,6 +176,53 @@ async function flush(times = 4) {
     'this assertion fails if the generation guard is removed — A would additionally append');
   expect('stale route A does not resurrect its own tab-active state over B\'s',
     tabButtons[1].classList.has('active') && !tabButtons[0].classList.has('active'));
+}
+
+// ── 1b. Different-hash go() invalidates ownership synchronously ────────────
+// Browsers assign location.hash immediately but queue hashchange as a later
+// task. A pending loader that settles in that gap must already be stale; it
+// cannot wait for the next render() call to advance renderGeneration.
+{
+  const deferredQueuedA = makeDeferred();
+  const viewQueuedA = { id: 'view-queued-a' };
+  const viewQueuedB = { id: 'view-queued-b' };
+  let queuedAContext = null;
+
+  register('/queued-a', (ctx) => {
+    queuedAContext = ctx;
+    return deferredQueuedA.promise;
+  });
+  register('/queued-b', () => viewQueuedB);
+
+  go('/init');
+  await flush();
+  go('/queued-a'); // pending loader A owns the current generation
+  await flush();
+  expect('setup: queued-hashchange race captured loader A\'s current renderContext',
+    queuedAContext?.isCurrent() === true);
+
+  queueHashChange = true;
+  go('/queued-b'); // URL changes now; B's hashchange render is deliberately held back
+
+  expect('queued hashchange setup: URL changed to B while its render event is still pending',
+    location.hash === '#/queued-b' && queuedHashChanges.length === 1);
+  expect('different-hash go(): loader A is invalidated before hashchange dispatch',
+    queuedAContext.isCurrent() === false,
+    'GUARD DISCRIMINATOR — fails if go() waits for hashchange/render() to advance the generation');
+
+  deferredQueuedA.resolve(viewQueuedA); // A settles before B's queued hashchange fires
+  await flush();
+  expect('queued hashchange gap: stale loader A cannot mount under B\'s already-updated URL',
+    elements.app.children.length === 0,
+    'GUARD DISCRIMINATOR — without synchronous invalidation, A mounts before B renders');
+
+  dispatchNextHashChange();
+  await flush();
+  expect('queued hashchange delivery: route B mounts normally after its event is dispatched',
+    queuedHashChanges.length === 0
+      && elements.app.children.length === 1
+      && elements.app.children[0] === viewQueuedB);
+  queueHashChange = false;
 }
 
 // ── 2. Same-hash go(path) re-render follows the same latest-generation rule ─
@@ -379,8 +435,8 @@ async function flush(times = 4) {
 
 // ── 5. SW cache-revision parity — router.js is precached ───────────────────
 const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
-expect('public/sw.js VERSION bumped to v310+ (router.js is precached)',
-  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 310);
+expect('public/sw.js VERSION bumped to v311+ (router.js is precached)',
+  Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 311);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

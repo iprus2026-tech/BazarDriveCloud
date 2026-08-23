@@ -138,7 +138,12 @@
 // generation it was minted for, and its own post-await mount check reuses the same isCurrent()
 // instead of comparing the generation counter directly; respond.js takes that renderContext as an
 // optional argument and derives isCurrent from it instead of from window.location.hash.
-const VERSION    = 'v310';
+// v311 (BD-ROUTER-LIFECYCLE-01A P2 hashchange fix, PR #918 review) — precached
+// router.js changed: different-hash go() now invalidates the active render generation before
+// assigning location.hash, closing the real-browser task gap before the asynchronous hashchange
+// event starts the destination render. A loader settling in that gap can no longer mount under
+// the destination URL or fire generation-gated side effects as the previous owner.
+const VERSION    = 'v311';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

@@ -29,6 +29,12 @@ let pendingAction = null;
 // is immune to this: it is only ever true for the exact render() call it
 // was minted for. Loaders that ignore the extra argument (every existing
 // loader except respond.js) are unaffected.
+//
+// A different-hash go() also advances the generation BEFORE assigning the
+// hash. Browsers deliver hashchange asynchronously, so waiting for render()
+// to advance it would leave a window where an old loader can settle under
+// the new URL while still reading isCurrent() === true. The following
+// hashchange render advances it again and mints the new route's context.
 let renderGeneration = 0;
 
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
@@ -49,7 +55,10 @@ export function register(path, loader) {
 export function go(path) {
   const target = `#${path}`;
   if (location.hash === target) render();
-  else location.hash = path;
+  else {
+    ++renderGeneration; // invalidate the current owner before async hashchange delivery
+    location.hash = path;
+  }
 }
 
 export function setPendingAction(fn) {
