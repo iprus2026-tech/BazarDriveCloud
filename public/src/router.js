@@ -138,6 +138,16 @@ async function render() {
   // this call is a safe no-op for that path — it remains the only drain
   // point for a direct render() call, a same-hash re-render, and start().
   drainCurrentDisposer();
+  // BD-SCREEN-LIFECYCLE-01A P2-3 (independent review, Issue #919 — P2-2 is
+  // the separate Mapbox late-hydration coverage fix, see the smoke file) —
+  // the disposer just drained above may itself have re-entrantly called
+  // go()/render() (e.g. navigating away from inside its own cleanup). If it
+  // did, a newer generation already claimed ownership during that drain, so
+  // this outer call is stale and must back off here — before it reads
+  // location.hash — instead of continuing on to run guards/chrome mutations
+  // and invoke the wrong route's loader ahead of the real hashchange.
+  // Mirrors go()'s own post-drain recheck (P2-1) for this call's own drain.
+  if (!renderContext.isCurrent()) return;
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
   // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,

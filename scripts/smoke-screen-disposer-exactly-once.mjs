@@ -19,15 +19,20 @@
 // timers anywhere in this file — ordering is deterministic via explicit
 // microtask-queue flushes only.
 //
-// Scope note: sections 1-15 exercise the router-owned disposer contract in
-// isolation with plain fake loaders. Section 16 (independent review fix,
-// P2-2) additionally imports the REAL public/src/screens/map.js and drives
-// it through the REAL router, with a deterministic Mapbox SDK shim (a fake
-// window.mapboxgl.Map, a captured <script>.onload, a deterministic
-// requestAnimationFrame/setInterval queue) — no network, no real timers, no
-// real Mapbox SDK execution. mapbox_config.js and mapbox_loader.js are
-// exercised for real (not reimplemented or copied), via mapbox_config.js's
-// own documented globalThis.__BD_MAPBOX_TOKEN__ test/dev override.
+// Scope note: sections 1-15, 15b and 17 exercise the router-owned disposer
+// contract in isolation with plain fake loaders. Section 16 (independent
+// review fix, P2-2) additionally imports the REAL public/src/screens/map.js
+// and drives it through the REAL router, with a deterministic Mapbox SDK
+// shim (a fake window.mapboxgl.Map, a captured <script>.onload, a
+// deterministic requestAnimationFrame/setInterval queue) — no network, no
+// real timers, no real Mapbox SDK execution. mapbox_config.js and
+// mapbox_loader.js are exercised for real (not reimplemented or copied), via
+// mapbox_config.js's own documented globalThis.__BD_MAPBOX_TOKEN__ test/dev
+// override. Section 15b (independent review fix, P2-3) covers render()'s
+// own top-of-function drain reentrancy — distinct from section 14/15's
+// go()-level (P2-1) reentrancy — and runs BEFORE section 16 deliberately,
+// since section 16 permanently swaps globalThis.document/window and never
+// restores them.
 
 import fs from 'node:fs';
 
@@ -466,6 +471,68 @@ await flush();
   expect('P2-1: B mounts once its hashchange event is delivered', elements.app.children[0].id === 'view-sync-drain-b');
   expect('P2-1: A.dispose is NOT invoked a second time when B\'s later render() runs its own (now-redundant) drain',
     disposeACount === 1);
+  queueHashChange = false;
+}
+
+// ── 15b. P2-3 (independent review fix, Issue #919) — render()'s OWN
+// top-of-function drain reentrancy. Distinct from scenario 14 (go()-level
+// P2-1 reentrancy: a disposer re-entrantly calling go() from inside go()'s
+// own synchronous drain) and scenario 15 above (P2-1's synchronous-drain
+// timing): this drives reentrancy from inside render()'s OWN
+// drainCurrentDisposer() call instead — reached via a SAME-hash go(), which
+// calls render() directly (go() itself is never involved in this path at
+// all). Before this fix, render() had no post-drain generation recheck
+// (unlike go()'s P2-1 guard), so a disposer that re-entrantly triggers a
+// DIFFERENT-hash navigation from inside render()'s drain would leave the
+// outer, now-stale render() free to keep running: it would read the
+// already-mutated location.hash, pass every guard, and invoke the NEW
+// route's loader before the real (queued) hashchange for that route ever
+// fired. Placed here, before section 16, deliberately: section 16
+// permanently swaps globalThis.document/window for its own richer DOM shim
+// and never restores them, so this scenario (which needs the plain
+// elements/hashChangeHandler shim from the top of this file) must run
+// before that swap happens. ─────────────────────────────────────────────
+{
+  let renderReentrantDisposeACount = 0;
+  let renderReentrantCLoaderCalls = 0;
+  register('/lc-render-reentrant-a', () => ({
+    view: { id: 'view-render-reentrant-a' },
+    dispose: () => {
+      renderReentrantDisposeACount += 1;
+      go('/lc-render-reentrant-c'); // re-entrant, DIFFERENT hash, triggered from render()'s OWN drain (not go()'s)
+    },
+  }));
+  register('/lc-render-reentrant-c', () => {
+    renderReentrantCLoaderCalls += 1;
+    return { id: 'view-render-reentrant-c' };
+  });
+
+  go('/init');
+  await flush();
+  go('/lc-render-reentrant-a');
+  await flush();
+  expect('render()-drain reentrancy setup: A mounted', elements.app.children[0].id === 'view-render-reentrant-a');
+  expect('render()-drain reentrancy setup: disposeACount is 0 before any re-render', renderReentrantDisposeACount === 0);
+
+  queueHashChange = true;
+  go('/lc-render-reentrant-a'); // SAME hash: go() calls render() directly, not the P2-1 go()-level path at all
+
+  expect('render()-drain reentrancy: A.dispose() was invoked exactly once by render()\'s own top-of-function drain',
+    renderReentrantDisposeACount === 1);
+  expect('render()-drain reentrancy: CRITICAL — C\'s loader has NOT been invoked yet (correct ownership stops the stale outer render() immediately after losing generation ownership during its own drain)',
+    renderReentrantCLoaderCalls === 0,
+    'GUARD DISCRIMINATOR — fails if render() lacks a post-drain generation recheck: the stale outer render() would proceed to invoke C\'s loader before the real hashchange for C is ever dispatched');
+  expect('render()-drain reentrancy: C not mounted yet (still queued)',
+    elements.app.children[0]?.id !== 'view-render-reentrant-c');
+  expect('render()-drain reentrancy: exactly one hashchange is queued (for C)', queuedHashChanges.length === 1);
+
+  dispatchNextHashChange();
+  await flush();
+
+  expect('render()-drain reentrancy: C\'s loader is called exactly once total, by the real hashchange-triggered render()',
+    renderReentrantCLoaderCalls === 1);
+  expect('render()-drain reentrancy: C is mounted exactly once',
+    elements.app.children.length === 1 && elements.app.children[0].id === 'view-render-reentrant-c');
   queueHashChange = false;
 }
 
