@@ -37,6 +37,50 @@ let pendingAction = null;
 // hashchange render advances it again and mints the new route's context.
 let renderGeneration = 0;
 
+// BD-SCREEN-LIFECYCLE-01A (#919) — SCREEN_DISPOSER_EXACTLY_ONCE. A loader may
+// optionally return { view, dispose } instead of a bare DOM node. `dispose`
+// is router-owned: it runs exactly once, for whichever screen is actually
+// mounted-and-current, at the very start of the NEXT render() call — before
+// any guard check, because the welcome/driver guards below can redirect and
+// `return` before ever reaching root.replaceChildren() (a guard-redirected
+// screen would otherwise never get disposed). The slot is cleared BEFORE its
+// disposer runs, so a disposer that re-entrantly triggers navigation can
+// never cause itself to be invoked a second time. A STALE loader result
+// (superseded before or as it resolves) is never mounted (#918) and never
+// becomes the current disposer — but if it carries its own `dispose`, that
+// is invoked immediately, exactly once, at the point staleness is detected,
+// so its resources don't leak; it is discarded afterward, never stored, and
+// never touches the (possibly newer) current disposer. A disposer that
+// throws is contained locally (logged, never rethrown) and never blocks the
+// render() call it runs inside from continuing to mount its own screen.
+let currentDisposer = null;
+
+function disposeSafely(dispose) {
+  if (typeof dispose !== 'function') return;
+  try {
+    dispose();
+  } catch (err) {
+    console.error('[router] screen disposer threw', err);
+  }
+}
+
+// Detach + invoke whatever disposer is currently owned. Clearing the slot
+// BEFORE invoking it (rather than after) is what keeps this exactly-once
+// even against a disposer that re-enters navigation from inside itself.
+function drainCurrentDisposer() {
+  const dispose = currentDisposer;
+  currentDisposer = null;
+  disposeSafely(dispose);
+}
+
+// A loader's result is a lifecycle object (not a bare DOM node) iff it
+// carries a `view` property — a real DOM element never has one, in either a
+// real browser or this app's minimal test shims, so this needs no reference
+// to a global `Node` constructor (which the shims don't define).
+function isLifecycleResult(result) {
+  return Boolean(result) && typeof result === 'object' && 'view' in result;
+}
+
 const HIDE_CHROME = new Set(['/welcome', '/onboarding', '/active-ride', '/trip-confirmation']);
 const SHOW_FAB    = new Set(['/feed']);
 const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/order-map-draft']);
@@ -74,6 +118,9 @@ export function consumePendingAction() {
 async function render() {
   const generation = ++renderGeneration;
   const renderContext = Object.freeze({ isCurrent: () => generation === renderGeneration });
+  // BD-SCREEN-LIFECYCLE-01A — dispose the previously mounted screen as early
+  // as possible, before any guard check (see the comment on currentDisposer).
+  drainCurrentDisposer();
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
   // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,
@@ -124,10 +171,21 @@ async function render() {
   shell.classList.toggle('has-fab',    hasFab);
 
   root.replaceChildren();
-  const view = await loader(renderContext);
+  const result = await loader(renderContext);
+  const lifecycle = isLifecycleResult(result);
+  const view = lifecycle ? result.view : result;
+  const dispose = lifecycle && typeof result.dispose === 'function' ? result.dispose : null;
   // A newer navigation started while this loader was in flight — this
-  // render is stale and must not mount or touch tab-active state.
-  if (!renderContext.isCurrent()) return;
+  // render is stale and must not mount, must not touch tab-active state,
+  // and must not become the current disposer. Its own resources (if any)
+  // are disposed right now instead, exactly once (BD-SCREEN-LIFECYCLE-01A
+  // STALE LIFECYCLE RESULT POLICY, #919) — never stored, never touching
+  // whatever the (possibly newer) current disposer is.
+  if (!renderContext.isCurrent()) {
+    disposeSafely(dispose);
+    return;
+  }
+  currentDisposer = dispose;
   root.appendChild(view);
 
   syncTabActive(path);

@@ -143,7 +143,16 @@
 // assigning location.hash, closing the real-browser task gap before the asynchronous hashchange
 // event starts the destination render. A loader settling in that gap can no longer mount under
 // the destination URL or fire generation-gated side effects as the previous owner.
-const VERSION    = 'v311';
+// v312 (BD-SCREEN-LIFECYCLE-01A, Issue #919) — precached router.js + map.js changed: router.js
+// adds an optional loader result { view, dispose } (bare-node loaders unchanged) — the router owns
+// invoking the previously mounted screen's disposer exactly once, at the start of the next
+// render(), before any guard check; a stale loader result's own disposer (if any) is invoked
+// immediately, exactly once, without ever becoming the current disposer. map.js's mapScreen() pilot
+// adopts this: dispose() frees the mapboxgl.Map instance and the defensive 2s poll immediately on
+// navigation instead of waiting up to 2s for the poll to notice; the poll itself stays as an
+// idempotent backstop, and a disposed-guard stops late Mapbox-SDK hydration from creating a new GL
+// resource for an already-disposed screen.
+const VERSION    = 'v312';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
