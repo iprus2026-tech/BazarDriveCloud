@@ -193,8 +193,12 @@ expect('loadCanonicalActiveRide relies on findActiveRide directly again (no loca
 // acceptPassengerRequestFromPost ──────────────────────────────────────────
 const buildRideFromPostBody = functionBody(rideActions, 'buildRideFromPost');
 expect('buildRideFromPost defined', buildRideFromPostBody.length > 0);
+// BD-RIDE-WAITING-POLICY-01A (#912) — freeLimit/paidRate now come from the
+// shared ride_waiting_policy.js constants, not re-typed literals. \b after
+// each identifier so a similarly-prefixed wrong name (e.g.
+// DEFAULT_FREE_WAIT_LIMIT_OVERRIDE) cannot satisfy this guard.
 expect('buildRideFromPost sets the same explicit waiting override (freeLimit/null/null/paidRate) as the other real seed builders',
-  /waiting:\s*\{[\s\S]{0,160}?freeLimit:\s*'3:00'[\s\S]{0,80}?remaining:\s*null[\s\S]{0,80}?paidStartsAt:\s*null[\s\S]{0,80}?paidRate:\s*'8 ₽ за каждую минуту'/
+  /waiting:\s*\{[\s\S]{0,160}?freeLimit:\s*DEFAULT_FREE_WAIT_LIMIT\b[\s\S]{0,80}?remaining:\s*null[\s\S]{0,80}?paidStartsAt:\s*null[\s\S]{0,80}?paidRate:\s*DEFAULT_PAID_RATE_LABEL\b/
     .test(buildRideFromPostBody));
 
 const acceptPassengerRequestBody = functionBody(rideActions, 'acceptPassengerRequestFromPost');
@@ -337,6 +341,50 @@ expect('waitingInfo no longer defaults pct to 100',
   !/let\s+pct\s*=\s*100/.test(waitingInfoBody));
 expect('waitingInfo defaults pct to null when remaining/freeLimit cannot be parsed',
   /let\s+pct\s*=\s*null/.test(waitingInfoBody));
+
+// ── BD-RIDE-WAITING-POLICY-01A (#912) — screen fallback consumers use the
+// shared policy source, not independent literals. A narrow structural guard
+// (this file already reads both screen sources in full): proves the import
+// exists and that the canonical fallback sites reference the imported
+// names, not a re-typed '3:00'/'8 ₽ за каждую минуту'. The short-form
+// '8 ₽/мин' presentation label in active_ride.js's renderWaitingExpired()
+// is a deliberately separate, out-of-scope UI copy string — asserted still
+// present unchanged, not migrated. The numeric `|| 8` accrual fallbacks are
+// a different type (not the string constant) and are asserted untouched too. ──
+expect('active_ride_passenger.js imports the shared waiting-policy constants',
+  /import\s*\{\s*DEFAULT_FREE_WAIT_LIMIT,\s*DEFAULT_PAID_RATE_LABEL\s*\}\s*from\s*'\.\.\/ride_waiting_policy\.js';/.test(passenger));
+expect('waitingInfo derives its freeLimit/paidRate fallbacks from the shared constants, not local literals',
+  /w\.freeLimit \|\| DEFAULT_FREE_WAIT_LIMIT\b/.test(waitingInfoBody)
+  && /w\.paidRate \|\| DEFAULT_PAID_RATE_LABEL\b/.test(waitingInfoBody));
+expect('active_ride.js imports the shared waiting-policy constants',
+  /import\s*\{\s*DEFAULT_FREE_WAIT_LIMIT,\s*DEFAULT_PAID_RATE_LABEL\s*\}\s*from\s*'\.\.\/ride_waiting_policy\.js';/.test(driverScreen));
+expect('active_ride.js\'s canonical freeLimit fallback sites no longer hard-code \'3:00\' anywhere',
+  !/freeLimit\s*\|\|\s*'3:00'/.test(stripComments(driverScreen)));
+expect('active_ride.js\'s canonical long-form paidRate fallback no longer hard-codes the literal, while the short-form presentation label in renderWaitingExpired stays untouched (out of #912 scope)',
+  !/waiting\.paidRate \|\| '8 ₽ за каждую минуту'/.test(stripComments(driverScreen))
+  && /waiting\.paidRate \|\| '8 ₽\/мин'/.test(driverScreen));
+// Narrow, per-function invariant guards — NOT a whole-file `|| 8` occurrence
+// count. A global count would fail on any unrelated future `|| 8` added
+// anywhere else in this large file, misreporting it as a waiting-policy
+// regression. Each of the three known accrual functions is checked in
+// isolation via the same functionBody() helper already used throughout
+// this file: an unrelated `|| 8` elsewhere in active_ride.js cannot affect
+// this invariant, and losing/changing any one of the three intended
+// fallbacks fails its own specific assertion below.
+const liveAccruedPaidBody = functionBody(driverScreen, 'liveAccruedPaid');
+expect('active_ride.js defines liveAccruedPaid', liveAccruedPaidBody.length > 0);
+expect('liveAccruedPaid keeps its numeric paidRate-per-minute fallback (parsePaidRatePerMin(...) || 8) — untouched, out of #912 scope',
+  /parsePaidRatePerMin\(/.test(liveAccruedPaidBody) && /\|\|\s*8\b/.test(liveAccruedPaidBody));
+
+const startPaidTimerBody = functionBody(driverScreen, 'startPaidTimer');
+expect('active_ride.js defines startPaidTimer', startPaidTimerBody.length > 0);
+expect('startPaidTimer keeps its numeric paidRate-per-minute fallback (parsePaidRatePerMin(...) || 8) — untouched, out of #912 scope',
+  /parsePaidRatePerMin\(/.test(startPaidTimerBody) && /\|\|\s*8\b/.test(startPaidTimerBody));
+
+const renderWaitingExpiredBody = functionBody(driverScreen, 'renderWaitingExpired');
+expect('active_ride.js defines renderWaitingExpired', renderWaitingExpiredBody.length > 0);
+expect('renderWaitingExpired keeps its numeric paidRate-per-minute fallback (parsePaidRatePerMin(...) || 8) — untouched, out of #912 scope',
+  /parsePaidRatePerMin\(/.test(renderWaitingExpiredBody) && /\|\|\s*8\b/.test(renderWaitingExpiredBody));
 
 const sheetBody = functionBody(passenger, 'renderWaitingSheet');
 expect('renderWaitingSheet defined', sheetBody.length > 0);

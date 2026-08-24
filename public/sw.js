@@ -152,7 +152,12 @@
 // navigation instead of waiting up to 2s for the poll to notice; the poll itself stays as an
 // idempotent backstop, and a disposed-guard stops late Mapbox-SDK hydration from creating a new GL
 // resource for an already-disposed screen.
-const VERSION    = 'v312';
+// v313 (BD-RIDE-WAITING-POLICY-01A, Issue #912) — new precached ./src/ride_waiting_policy.js (pure
+// leaf module: DEFAULT_FREE_WAIT_LIMIT/DEFAULT_PAID_RATE_LABEL); precached ride_state.js, ride_seed.js,
+// ride_actions.js, active_ride.js and active_ride_passenger.js changed to import these shared
+// constants instead of each independently hard-coding the same '3:00'/'8 ₽ за каждую минуту'
+// literals. Purely mechanical — no behavior change.
+const VERSION    = 'v313';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -239,6 +244,7 @@ const PRECACHE = [
   './src/ops/connectors/mel_export_connector.js',
   './src/ride_state.js',
   './src/ride_seed.js',
+  './src/ride_waiting_policy.js',
   './src/ride_context.js',
   './src/response_store.js',
   './src/driver_offer_store.js',

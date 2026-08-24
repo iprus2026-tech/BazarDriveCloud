@@ -11,6 +11,7 @@ import {
 import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
 import { isDriverLineReady, user } from './state.js';
 import { resolveActiveGarageVehicle } from './garage.js';
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from './ride_waiting_policy.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -87,10 +88,10 @@ export function buildRideFromPost(post) {
     // freeLimit/paidRate kept as the current policy-like literals;
     // remaining/paidStartsAt cannot be known at seed time.
     waiting: {
-      freeLimit: '3:00',
+      freeLimit: DEFAULT_FREE_WAIT_LIMIT,
       remaining: null,
       paidStartsAt: null,
-      paidRate: '8 ₽ за каждую минуту',
+      paidRate: DEFAULT_PAID_RATE_LABEL,
     },
   });
 }
@@ -336,10 +337,10 @@ export function seedActiveRideFromAcceptedOrder(order, options = {}) {
     // even reached WAITING_PASSENGER yet) — the real anchor is
     // ride.timestamps.arrivedAt, stamped later at that transition.
     waiting: {
-      freeLimit: '3:00',
+      freeLimit: DEFAULT_FREE_WAIT_LIMIT,
       remaining: null,
       paidStartsAt: null,
-      paidRate: '8 ₽ за каждую минуту',
+      paidRate: DEFAULT_PAID_RATE_LABEL,
     },
     timestamps: {
       acceptedAt: snapshot.acceptedAt,

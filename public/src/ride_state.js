@@ -1,6 +1,8 @@
 // BD-RIDE-F-01 — Active ride contracts and storage.
 // Foundation layer only. No UI, no route, no Mapbox, no backend.
 
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from './ride_waiting_policy.js';
+
 const STORAGE_KEY = 'bazardrive.active_ride.v1';
 
 export const RIDE_STATUS = {
@@ -193,10 +195,10 @@ function buildDemoRide() {
       rating: '4,92',
     },
     waiting: {
-      freeLimit: '3:00',
+      freeLimit: DEFAULT_FREE_WAIT_LIMIT,
       remaining: '2:30',
       paidStartsAt: '14:18',
-      paidRate: '8 ₽ за каждую минуту',
+      paidRate: DEFAULT_PAID_RATE_LABEL,
     },
     timestamps: {
       createdAt: new Date().toISOString(),

@@ -22,6 +22,7 @@ import {
 } from '../public/src/ride_actions.js';
 import { RIDE_STATUS, findActiveRide } from '../public/src/ride_state.js';
 import { createRideOrder, listNearbyOrders, LOCAL_USER_ID } from '../public/src/mock_api.js';
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../public/src/ride_waiting_policy.js';
 
 function makeLocalStorage() {
   const m = new Map();
@@ -42,6 +43,24 @@ const READY_DRIVER = {
   vehicleMake: 'Kia', vehicleModel: 'Rio', vehiclePlate: 'A123BC',
   documentsReady: true, waybillOpen: true, medicalCheckPassed: true,
 };
+
+// ── BD-RIDE-WAITING-POLICY-01A (#912) — direct policy-contract pin ───────────
+// Independent of every consumer-vs-shared-constant assertion elsewhere in this
+// file (and in tests/ride_state.test.mjs / scripts/smoke-ride-seed-pure-builder.mjs):
+// those prove a consumer derives its waiting.freeLimit/paidRate FROM the
+// imported constants, but say nothing about whether the constants themselves
+// still hold the approved current policy values — a typo or an unreviewed
+// edit to ride_waiting_policy.js itself would satisfy every consumer check
+// while silently changing the real-world policy. This test pins the shared
+// source directly against the literal ground truth, closing that other half
+// of the drift surface. Together the two kinds of checks cover both
+// directions: (A) this test — the shared source matches policy; (B) every
+// other waiting-policy test in this file/repo — consumers derive from the
+// shared source, not their own re-typed literal.
+test('BD-RIDE-WAITING-POLICY-01A: shared policy constants equal the approved current policy values', () => {
+  assert.equal(DEFAULT_FREE_WAIT_LIMIT, '3:00');
+  assert.equal(DEFAULT_PAID_RATE_LABEL, '8 ₽ за каждую минуту');
+});
 
 // ── role predicates ───────────────────────────────────────────────────────────
 
@@ -114,10 +133,17 @@ test('seedActiveRideFromAcceptedOrder: persists an ACCEPTED ride at trip_<id>', 
   assert.equal(out.tripId, 'trip_o1');
   assert.equal(out.ride.status, RIDE_STATUS.ACCEPTED);
   assert.equal(out.ride.orderId, 'o1');
+  // BD-RIDE-WAITING-POLICY-01A (#912) — waiting policy fields come from the
+  // shared source, not a locally re-typed literal, so a future policy value
+  // change or a consumer regressing to its own literal both surface here.
+  assert.equal(out.ride.waiting.freeLimit, DEFAULT_FREE_WAIT_LIMIT);
+  assert.equal(out.ride.waiting.paidRate, DEFAULT_PAID_RATE_LABEL);
   // persisted into the active-ride store
   const stored = findActiveRide('trip_o1');
   assert.equal(stored.status, RIDE_STATUS.ACCEPTED);
   assert.equal(stored.route.pickupLabel, 'P');
+  assert.equal(stored.waiting.freeLimit, DEFAULT_FREE_WAIT_LIMIT);
+  assert.equal(stored.waiting.paidRate, DEFAULT_PAID_RATE_LABEL);
   // null for an order with no id (no orphan record lands in the store)
   assert.equal(seedActiveRideFromAcceptedOrder({}), null);
 });
@@ -133,7 +159,10 @@ test('buildRideFromPost: seeds a clean waiting override (remaining/paidStartsAt 
   const ride = buildRideFromPost({ id: 'p1', author: 'Иван', price: '500 ₽', from: 'A', to: 'B' });
   assert.equal(ride.waiting.remaining, null);
   assert.equal(ride.waiting.paidStartsAt, null);
-  assert.equal(ride.waiting.freeLimit, '3:00');
+  // BD-RIDE-WAITING-POLICY-01A (#912) — compare against the shared source,
+  // not a re-typed literal (see seedActiveRideFromAcceptedOrder's test above).
+  assert.equal(ride.waiting.freeLimit, DEFAULT_FREE_WAIT_LIMIT);
+  assert.equal(ride.waiting.paidRate, DEFAULT_PAID_RATE_LABEL);
 });
 
 test('acceptPassengerRequestFromPost: stamps acceptedSource === \'feed_post_accept\' before persisting, and the persisted ride carries clean null/null waiting', () => {

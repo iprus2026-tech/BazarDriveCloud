@@ -24,12 +24,14 @@ globalThis.localStorage = {
 const root = new URL('../public/src/', import.meta.url);
 const rideSeed  = await import(new URL('ride_seed.js', root).href);
 const rideState = await import(new URL('ride_state.js', root).href);
+const rideWaitingPolicy = await import(new URL('ride_waiting_policy.js', root).href);
 const mockApi   = await import(new URL('mock_api.js', root).href);
 const responses = await import(new URL('screens/responses.js', root).href);
 const handoffMod = await import(new URL('screens/trip_confirmation_handoff.js', root).href);
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const rideSeedSrc = read('../public/src/ride_seed.js');
+const rideWaitingPolicySrc = read('../public/src/ride_waiting_policy.js');
 // Strip comments before scanning for forbidden tokens so the module's own
 // doc comment (which names the forbidden operations for a human reader)
 // cannot false-fail this guard. Preserves URL-shaped `://`.
@@ -55,9 +57,20 @@ function resetStorage() {
 }
 
 // ── A. Structural: ride_seed.js is a true leaf module ─────────────────
-expect('ride_seed.js imports only from ./ride_state.js (no screen imports)',
+// BD-RIDE-WAITING-POLICY-01A (#912) — ride_seed.js now also imports the
+// shared waiting-policy constants module. The forbidden-token scan below
+// still only inspects ride_seed.js's own source (rideSeedCode) — it says
+// nothing about ride_waiting_policy.js's purity on its own. That module's
+// only independently-verified property here is the "zero imports" check
+// immediately below (real, not just asserted in this comment); its other
+// purity properties (no storage/backend/UI/timers) are not scanned by this
+// file and are covered by direct code review instead, not this smoke.
+expect('ride_seed.js imports only from ./ride_state.js and ./ride_waiting_policy.js (no screen imports)',
   /^import\s*\{[^}]*\}\s*from\s*'\.\/ride_state\.js';\s*$/m.test(rideSeedSrc)
-  && (rideSeedSrc.match(/^import\s/gm) || []).length === 1);
+  && /^import\s*\{[^}]*\}\s*from\s*'\.\/ride_waiting_policy\.js';\s*$/m.test(rideSeedSrc)
+  && (rideSeedSrc.match(/^import\s/gm) || []).length === 2);
+expect('ride_waiting_policy.js itself has zero imports (a true leaf, not just claimed to be one)',
+  !/^import\s/m.test(rideWaitingPolicySrc));
 for (const forbidden of [
   'localStorage', 'getOrderById', 'resolveResponseById', 'acceptOrder',
   'saveActiveRide', 'findActiveRide', 'apiFetch', 'fetch(', 'document.',
@@ -113,6 +126,14 @@ resetStorage();
 expect('storage starts empty (no active_ride key)', localStorage.getItem(ACTIVE_RIDE_KEY) === null);
 const seedOnce = rideSeed.buildPassengerRideSeed(FIXED_ORDER, FIXED_REQUEST, FIXED_DRIVER);
 expect('buildPassengerRideSeed returns a Ride for valid input', !!seedOnce && seedOnce.tripId === 'trip_pure-builder-order-1');
+// BD-RIDE-WAITING-POLICY-01A (#912) — compare against the shared module's
+// own exports, not a re-typed literal, so a consumer regressing to its own
+// local literal (or a drift between the constant and this call site) is
+// caught even though the two currently hold the same value.
+expect('buildPassengerRideSeed sets waiting.freeLimit from the shared DEFAULT_FREE_WAIT_LIMIT constant',
+  seedOnce.waiting.freeLimit === rideWaitingPolicy.DEFAULT_FREE_WAIT_LIMIT);
+expect('buildPassengerRideSeed sets waiting.paidRate from the shared DEFAULT_PAID_RATE_LABEL constant',
+  seedOnce.waiting.paidRate === rideWaitingPolicy.DEFAULT_PAID_RATE_LABEL);
 expect('buildPassengerRideSeed writes NOTHING to storage (no active_ride key materialized)',
   localStorage.getItem(ACTIVE_RIDE_KEY) === null);
 expect('buildPassengerRideSeed writes NOTHING to any other known key either',

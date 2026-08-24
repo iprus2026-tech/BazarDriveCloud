@@ -19,6 +19,7 @@
 // `driver` is the shape mapResponseToDriverCard() produces.
 
 import { createDemoActiveRide, RIDE_STATUS } from './ride_state.js';
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from './ride_waiting_policy.js';
 
 function driverInitials(driver) {
   return driver.initials || String(driver.name || 'В').trim().charAt(0).toUpperCase() || 'В';
@@ -90,10 +91,10 @@ export function buildPassengerRideSeed(order, request, driver) {
     // transition), which the driver-side wait timer already prefers over
     // this field.
     waiting: {
-      freeLimit: '3:00',
+      freeLimit: DEFAULT_FREE_WAIT_LIMIT,
       remaining: null,
       paidStartsAt: null,
-      paidRate: '8 ₽ за каждую минуту',
+      paidRate: DEFAULT_PAID_RATE_LABEL,
     },
     timestamps: {
       acceptedAt: order?.acceptedAt || now,
