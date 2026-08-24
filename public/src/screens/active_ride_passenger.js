@@ -32,6 +32,7 @@ import {
   buildPassengerHistoryEntry,
   loadRideHistory,
 } from '../ride_history.js';
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../ride_waiting_policy.js';
 
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18">
   <polyline points="6 15 12 9 18 15"/>
@@ -565,9 +566,9 @@ function arrivingDropoffAmount(ride) {
 function waitingInfo(ride) {
   const w = (ride && ride.waiting) || {};
   const remaining = w.remaining || '—';
-  const freeLimit = w.freeLimit || '3:00';
+  const freeLimit = w.freeLimit || DEFAULT_FREE_WAIT_LIMIT;
   const paidStartsAt = w.paidStartsAt || '—';
-  const paidRate = w.paidRate || '8 ₽ за каждую минуту';
+  const paidRate = w.paidRate || DEFAULT_PAID_RATE_LABEL;
   const remSec = toSeconds(remaining);
   const totalSec = toSeconds(freeLimit);
   let pct = null;

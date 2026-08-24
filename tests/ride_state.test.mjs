@@ -27,10 +27,12 @@ import {
   cancelActiveRide,
   loadActiveRideStore,
   saveActiveRideStore,
+  createDemoActiveRide,
   DEMO_ACTIVE_RIDE_ID,
 } from '../public/src/ride_state.js';
 import { applyDriverHandoffSnapshotToRide } from '../public/src/screens/driver_handoff_snapshot.js';
 import { isConfirmedHandoffRecord } from '../public/src/screens/trip_confirmation.js';
+import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../public/src/ride_waiting_policy.js';
 
 // ── in-memory localStorage mock ───────────────────────────────────────────────
 function makeLocalStorage() {
@@ -49,6 +51,17 @@ const ALL_STATUSES = Object.keys(RIDE_STATUS);
 const TERMINAL = ['COMPLETED', 'CANCELED', 'NO_SHOW'];
 
 // ── pure status contract (no storage) ─────────────────────────────────────────
+
+// BD-RIDE-WAITING-POLICY-01A (#912) — buildDemoRide() is not itself exported,
+// but createDemoActiveRide({}) with no overrides is exactly its projection
+// (deepMerge(buildDemoRide(), {})). Assert against the shared module's own
+// exports, not a re-typed literal, so this real Ride builder can't silently
+// drift from the shared source.
+test('createDemoActiveRide({}) (the buildDemoRide() projection) sets waiting.freeLimit/paidRate from the shared policy constants', () => {
+  const demo = createDemoActiveRide({});
+  assert.equal(demo.waiting.freeLimit, DEFAULT_FREE_WAIT_LIMIT);
+  assert.equal(demo.waiting.paidRate, DEFAULT_PAID_RATE_LABEL);
+});
 
 test('RIDE_STATUS enum: each key maps to its own name string', () => {
   for (const key of ALL_STATUSES) {
