@@ -19,13 +19,15 @@
 // timers anywhere in this file — ordering is deterministic via explicit
 // microtask-queue flushes only.
 //
-// Scope note: this file exercises the router-owned disposer contract in
-// isolation. It does NOT import public/src/screens/map.js — doing so would
-// pull in the real Mapbox SDK loader / geolocation / config module graph,
-// which is out of the authorized file scope for this smoke and would not be
-// dependency-free. The map.js pilot's own late-hydration disposed-guard is
-// covered by direct code review instead (see the implementation report),
-// not by a runtime assertion in this file. LIMITATION, recorded as required.
+// Scope note: sections 1-15 exercise the router-owned disposer contract in
+// isolation with plain fake loaders. Section 16 (independent review fix,
+// P2-2) additionally imports the REAL public/src/screens/map.js and drives
+// it through the REAL router, with a deterministic Mapbox SDK shim (a fake
+// window.mapboxgl.Map, a captured <script>.onload, a deterministic
+// requestAnimationFrame/setInterval queue) — no network, no real timers, no
+// real Mapbox SDK execution. mapbox_config.js and mapbox_loader.js are
+// exercised for real (not reimplemented or copied), via mapbox_config.js's
+// own documented globalThis.__BD_MAPBOX_TOKEN__ test/dev override.
 
 import fs from 'node:fs';
 
@@ -397,7 +399,10 @@ await flush();
 
 // ── 14. competing/re-entrant disposal: the cleared slot prevents a disposer
 // from being invoked a second time even when it re-entrantly triggers
-// navigation from inside itself ─────────────────────────────────────────────
+// navigation from inside itself. Since P2-1 (below), different-hash go()
+// drains synchronously, so this now exercises reentrancy AT THE go() LEVEL
+// (a disposer calling go() from inside go()'s own synchronous drain step) —
+// previously this only ever happened inside render(). ──────────────────────
 {
   let reentrantDisposeCount = 0;
   register('/lc-reentrant-a', () => ({
@@ -422,9 +427,248 @@ await flush();
   expect('competing/re-entrant disposal: A\'s disposer is invoked exactly once despite a re-entrant navigation triggered from inside it',
     reentrantDisposeCount === 1,
     'GUARD DISCRIMINATOR — fails if the slot is cleared AFTER invoking the disposer instead of before: the re-entrant render() would still see the old disposer in the slot and invoke it again');
+  expect('competing/re-entrant disposal: the re-entrant navigation (B) is not lost — it is chronologically the latest claim on location.hash, so it wins and mounts; the original outer call (C) correctly backs off instead of clobbering it',
+    elements.app.children.length === 1 && elements.app.children[0].id === 'view-reentrant-b',
+    'proves go()\'s post-drain generation re-check (P2-1) does not just avoid a crash — it correctly defers ownership to whichever navigation actually ends up latest');
 }
 
-// ── 15. SW cache-revision parity — router.js and map.js are both precached ─
+// ── 15. P2-1 (independent review fix, Issue #919) — a different-hash go()
+// drains the current disposer SYNCHRONOUSLY, right there in go() itself —
+// not merely by the time the eventual hashchange-triggered render() call
+// happens. This is the discriminating case scenario 13 (above) did not
+// cover: that scenario's stale disposer belonged to a loader that was
+// still IN FLIGHT when superseded; this one belongs to a screen that was
+// already fully MOUNTED AND IDLE before the different-hash go() call. ─────
+{
+  let disposeACount = 0;
+  register('/lc-sync-drain-a', () => ({ view: { id: 'view-sync-drain-a' }, dispose: () => { disposeACount += 1; } }));
+  register('/lc-sync-drain-b', () => ({ id: 'view-sync-drain-b' }));
+
+  go('/init');
+  await flush();
+  go('/lc-sync-drain-a');
+  await flush();
+  expect('setup: A mounted with a lifecycle disposer', elements.app.children[0].id === 'view-sync-drain-a');
+  expect('setup: A.dispose not called while A is still current', disposeACount === 0);
+
+  queueHashChange = true;
+  go('/lc-sync-drain-b'); // different-hash — must drain A's disposer synchronously, right here, before B's hashchange ever dispatches
+
+  expect('P2-1: A.dispose is called exactly once SYNCHRONOUSLY inside go(), before B\'s hashchange event has been delivered',
+    disposeACount === 1,
+    'GUARD DISCRIMINATOR — fails if go() does not synchronously drain the current disposer: this would still read 0 here, only becoming 1 once the queued hashchange is later dispatched');
+  expect('P2-1: B has not mounted yet — only A\'s disposer fired early, A\'s view stays mounted until B\'s queued render actually runs',
+    elements.app.children.length === 1 && elements.app.children[0].id === 'view-sync-drain-a');
+
+  dispatchNextHashChange();
+  await flush();
+
+  expect('P2-1: B mounts once its hashchange event is delivered', elements.app.children[0].id === 'view-sync-drain-b');
+  expect('P2-1: A.dispose is NOT invoked a second time when B\'s later render() runs its own (now-redundant) drain',
+    disposeACount === 1);
+  queueHashChange = false;
+}
+
+// ── 16. P2-2 (independent review fix, Issue #919) — map.js pilot late-
+// hydration behavioral coverage, against the REAL map.js through the REAL
+// router. Closes MAP_LATE_HYDRATION_TEST_GAP. ───────────────────────────────
+{
+  // A richer, generic fake DOM element. Sections 1-15 above use a flat,
+  // minimal shim (plain {id} objects as "views") that is enough for a
+  // generic lifecycle loader, but map.js's actual render path (via
+  // map_shell.js) touches innerHTML, insertAdjacentHTML, dataset,
+  // setAttribute/getAttribute/removeAttribute, and a real recursive
+  // document.body.contains() containment check — none of which the
+  // simpler shim models. This element factory is scoped to this section
+  // only (installed via a temporary globalThis.document/window swap).
+  function makeRichElement(tag) {
+    const kids = [];
+    const attrs = {};
+    return {
+      tagName: tag,
+      className: '',
+      textContent: '',
+      innerHTML: '',
+      dataset: {},
+      style: {},
+      src: '', href: '', rel: '', async: false,
+      onload: null, onerror: null,
+      children: kids,
+      setAttribute(name, value) { attrs[name] = String(value); },
+      getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
+      removeAttribute(name) { delete attrs[name]; },
+      appendChild(child) { kids.push(child); return child; },
+      insertAdjacentHTML() { /* content not queried by these scenarios */ },
+      replaceChildren(...nodes) { kids.length = 0; kids.push(...nodes); },
+      addEventListener() {},
+      removeEventListener() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      classList: { toggle() {}, add() {}, remove() {}, has() { return false; } },
+    };
+  }
+  function richContains(root, target) {
+    if (root === target) return true;
+    for (const child of root.children || []) {
+      if (richContains(child, target)) return true;
+    }
+    return false;
+  }
+
+  const richApp    = makeRichElement('div');
+  const richTabbar = { hidden: false, classList: { toggle() {}, has() { return false; } } };
+  const richFab    = { hidden: false, classList: { toggle() {}, has() { return false; } } };
+  const richShell  = { classList: { toggle() {}, has() { return false; } } };
+  const richHead   = makeRichElement('head');
+  const richBody   = { children: [richApp], contains(node) { return richContains(richBody, node); } };
+
+  globalThis.document = {
+    createElement: (tag) => makeRichElement(tag),
+    getElementById: (id) => ({ app: richApp, tabbar: richTabbar, fab: richFab, shell: richShell }[id] || null),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    body: richBody,
+    head: richHead,
+  };
+  globalThis.window = { addEventListener() {}, location };
+
+  // Deterministic requestAnimationFrame: queued, never auto-flushed.
+  const rafQueue = [];
+  globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
+  function flushRaf() { const queued = rafQueue.splice(0); for (const cb of queued) cb(); }
+
+  // Deterministic setInterval/clearInterval: captures the backstop's
+  // callback instead of scheduling a real 2s timer; the test invokes it
+  // explicitly (MAP-D) rather than waiting.
+  let capturedIntervalCallback = null;
+  let intervalWasCleared = false;
+  globalThis.setInterval = (cb) => { capturedIntervalCallback = cb; intervalWasCleared = false; return 1; };
+  globalThis.clearInterval = () => { intervalWasCleared = true; };
+
+  // Deterministic Mapbox SDK: the REAL loadMapboxSdk() (unmodified) injects
+  // a <link> and a <script> via document.head.appendChild — capture the
+  // script's onload so the test controls exactly when the "SDK finished
+  // loading" moment happens, instead of a real network fetch.
+  let capturedScriptOnload = null;
+  const realHeadAppendChild = richHead.appendChild.bind(richHead);
+  richHead.appendChild = (node) => {
+    if (node && node.tagName === 'script') capturedScriptOnload = node.onload;
+    return realHeadAppendChild(node);
+  };
+
+  let fakeMapCtorCalls = 0;
+  const fakeMapInstances = [];
+  class FakeMapboxMap {
+    constructor(opts) {
+      fakeMapCtorCalls += 1;
+      this.opts = opts;
+      this.removeCallCount = 0;
+      fakeMapInstances.push(this);
+    }
+    remove() { this.removeCallCount += 1; }
+  }
+  function resolveFakeSdkLoad() {
+    // Mirrors what the real vendored UMD script does as a side effect of
+    // executing, before the browser fires the <script>'s load event.
+    globalThis.window.mapboxgl = { Map: FakeMapboxMap, accessToken: null };
+    if (capturedScriptOnload) capturedScriptOnload();
+  }
+
+  globalThis.__BD_MAPBOX_TOKEN__ = 'test-token-bd-screen-lifecycle-01a'; // mapbox_config.js's own documented test/dev override
+
+  const { default: mapScreen } = await import('../public/src/screens/map.js');
+  const { unloadMapboxSdk } = await import('../public/src/mapbox/mapbox_loader.js');
+  unloadMapboxSdk(); // start this section with a clean (unmemoized) SDK-load state
+
+  register('/lc-map-a', mapScreen);
+  register('/lc-map-b', mapScreen);
+  register('/lc-map-c', mapScreen);
+  register('/lc-map-away-1', () => ({ id: 'view-map-away-1' }));
+  register('/lc-map-away-2', () => ({ id: 'view-map-away-2' }));
+  register('/lc-map-away-3', () => ({ id: 'view-map-away-3' }));
+
+  go('/init');
+  await flush();
+
+  // MAP-A — dispose before the SDK Promise resolves. The "away" navigation
+  // uses queued hashchange delivery so the DOM stays attached THROUGHOUT
+  // this scenario — document.body.contains(container) would otherwise
+  // independently ALSO catch a de-mounted screen, which would make this
+  // scenario fail to actually isolate lifecycle.disposed as the guard
+  // under test. Queuing (and never dispatching until afterward) keeps
+  // document.body.contains(container) reading true the whole time, so
+  // lifecycle.disposed is the ONLY thing that can prevent late hydration.
+  go('/lc-map-a?state=default'); // ?state=default forces MAP_STATE.DEFAULT deterministically (bypasses prefs/geo-permission resolution)
+  await flush();
+  expect('MAP-A setup: /map mounted in the live DEFAULT state (hydrateRealMap was invoked; the SDK promise is still pending)',
+    richApp.children.length === 1 && fakeMapCtorCalls === 0);
+
+  queueHashChange = true;
+  go('/lc-map-away-1'); // P2-1 disposes A synchronously; the away route's own render (and DOM replaceChildren) stays queued/undelivered
+  expect('MAP-A setup: the DOM is still attached at this point (replaceChildren has not run yet) — document.body.contains(container) would still read true',
+    richApp.children.length === 1);
+  queueHashChange = false; // only the queued away-1 hashchange itself stays pending in queuedHashChanges[]
+
+  resolveFakeSdkLoad(); // the SDK "finishes loading" only now, after the screen was already disposed (but while still DOM-attached)
+  await flush();
+  flushRaf();
+  await flush();
+
+  expect('MAP-A: a disposed screen does not resurrect a Mapbox GL resource once its pending SDK load finally resolves, even though it is still DOM-attached',
+    fakeMapCtorCalls === 0,
+    'GUARD DISCRIMINATOR — fails if hydrateRealMap does not check lifecycle.disposed before constructing the map (document.body.contains alone would NOT catch this — the DOM is still attached)');
+
+  dispatchNextHashChange(); // deliver the queued away-1 hashchange now, cleanly settling this scenario before MAP-B begins
+  await flush();
+
+  // MAP-B — dispose after the SDK resolves but before the queued RAF runs.
+  // Same queued-hashchange isolation as MAP-A, for the same reason.
+  go('/lc-map-b?state=default');
+  await flush(); // the (already-resolved, memoized) SDK promise settles -> requestAnimationFrame(cb) is queued, NOT yet run
+  expect('MAP-B setup: the hydration RAF callback is queued but not yet executed', rafQueue.length === 1);
+
+  queueHashChange = true;
+  go('/lc-map-away-2'); // dispose in the gap between SDK-resolve and RAF execution; DOM detach stays queued/undelivered too
+  expect('MAP-B setup: the DOM is still attached at this point', richApp.children.length === 1);
+  queueHashChange = false;
+
+  flushRaf(); // now let the queued RAF callback run, against the already-disposed (but still DOM-attached) screen
+  await flush();
+
+  expect('MAP-B: a disposed screen does not construct a Mapbox GL resource when its queued RAF callback finally runs, even though it is still DOM-attached',
+    fakeMapCtorCalls === 0,
+    'GUARD DISCRIMINATOR — fails if the RAF callback does not check lifecycle.disposed before constructing the map (document.body.contains alone would NOT catch this either)');
+
+  dispatchNextHashChange();
+  await flush();
+
+  // MAP-C — the map is actually constructed, then router-owned disposal
+  // must free it IMMEDIATELY (not wait for the 2s backstop poll).
+  go('/lc-map-c?state=default');
+  await flush();  // SDK resolves -> RAF queued
+  flushRaf();     // RAF runs -> mapboxgl.Map constructed this time
+  await flush();
+  expect('MAP-C setup: the Mapbox GL map is actually constructed exactly once', fakeMapCtorCalls === 1 && fakeMapInstances.length === 1);
+  const mapInstance = fakeMapInstances[0];
+  expect('MAP-C setup: the constructed instance has not been removed yet', mapInstance.removeCallCount === 0);
+
+  go('/lc-map-away-3'); // P2-1 makes this drain (and dispose the map) SYNCHRONOUSLY, inside go() itself — no flush needed
+  expect('MAP-C: router-owned disposal frees the Mapbox GL resource IMMEDIATELY on navigation, synchronously, not after waiting up to 2s for the defensive poll',
+    mapInstance.removeCallCount === 1,
+    'GUARD DISCRIMINATOR — fails if dispose() does not call mapInstance.remove(), or if disposal is not synchronous with go()');
+  expect('MAP-C: navigating away did not itself construct a new map', fakeMapCtorCalls === 1);
+
+  // MAP-D — the defensive 2s backstop poll firing AFTER router-owned
+  // disposal already ran must be a safe no-op (no double teardown).
+  expect('MAP-D setup: the backstop interval callback was captured during MAP-C\'s hydration', typeof capturedIntervalCallback === 'function');
+  capturedIntervalCallback(); // simulate the backstop's poll tick firing late, after disposal already happened
+  expect('MAP-D: the backstop firing after router-owned disposal is a safe no-op — its own disposed-guard returns before touching map.remove() again',
+    mapInstance.removeCallCount === 1,
+    'GUARD DISCRIMINATOR — fails (removeCallCount would become 2) if the backstop does not check lifecycle.disposed before calling map.remove() again');
+  expect('MAP-D: the backstop clears its own interval when it observes disposal', intervalWasCleared === true);
+}
+
+// ── 17. SW cache-revision parity — router.js and map.js are both precached ─
 const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 expect('public/sw.js VERSION bumped to v312+ (router.js and map.js are both precached)',
   Number((sw.match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 312);

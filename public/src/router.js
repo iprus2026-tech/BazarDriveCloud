@@ -100,7 +100,21 @@ export function go(path) {
   const target = `#${path}`;
   if (location.hash === target) render();
   else {
-    ++renderGeneration; // invalidate the current owner before async hashchange delivery
+    // BD-SCREEN-LIFECYCLE-01A P2-1 (independent review, Issue #919) — a
+    // different-hash navigation invalidates render ownership synchronously
+    // (below), but hashchange delivery is asynchronous; without this, the
+    // previously mounted screen's disposer would sit undrained in the slot
+    // for that whole gap, even though it has already lost ownership. Drain
+    // it right here instead of waiting for the later render() call to do
+    // it. myGeneration + the post-drain check below guard against a
+    // disposer that re-entrantly calls go()/render() from inside itself:
+    // if that happened, a newer generation already claimed location.hash
+    // during our own drain, so we back off instead of clobbering it —
+    // the same isCurrent()-style pattern render() already uses for its
+    // own (async) gap, applied here to this synchronous one.
+    const myGeneration = ++renderGeneration; // invalidate the current owner before async hashchange delivery
+    drainCurrentDisposer();
+    if (renderGeneration !== myGeneration) return;
     location.hash = path;
   }
 }
@@ -120,6 +134,9 @@ async function render() {
   const renderContext = Object.freeze({ isCurrent: () => generation === renderGeneration });
   // BD-SCREEN-LIFECYCLE-01A — dispose the previously mounted screen as early
   // as possible, before any guard check (see the comment on currentDisposer).
+  // A different-hash go() (P2-1 above) already drains synchronously, so
+  // this call is a safe no-op for that path — it remains the only drain
+  // point for a direct render() call, a same-hash re-render, and start().
   drainCurrentDisposer();
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
@@ -185,6 +202,10 @@ async function render() {
     disposeSafely(dispose);
     return;
   }
+  // Deliberately BEFORE appendChild: the loader already ran and may have
+  // created resources independent of DOM mount, so registering the
+  // disposer first ensures they're still freed on the next navigation
+  // even if appendChild throws (e.g. a malformed `view`) — do not reorder.
   currentDisposer = dispose;
   root.appendChild(view);
 
