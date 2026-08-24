@@ -1476,6 +1476,23 @@ if (exists(respondStaleNavGuardSmoke)) {
   }
 }
 
+// BD-SCREEN-LIFECYCLE-01A (#919) — SCREEN_DISPOSER_EXACTLY_ONCE: router.js's
+// generation guard only ever decided whether a loader's view gets mounted;
+// this real runtime smoke proves the router-owned disposer contract — the
+// previously mounted screen's optional { view, dispose } disposer runs
+// exactly once per replacement, a stale loader's own disposer runs exactly
+// once immediately without ever becoming current, and a disposer throw is
+// contained without blocking the next route's mount.
+const screenDisposerSmoke = path.join(root, 'scripts', 'smoke-screen-disposer-exactly-once.mjs');
+if (exists(screenDisposerSmoke)) {
+  try {
+    execFileSync(process.execPath, [screenDisposerSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-screen-disposer-exactly-once.mjs failed\n${msg}`);
+  }
+}
+
 // Dispatcher routine — self-test the orchestrator so the routine itself
 // stays in a working state under CI (no project mutation in --selftest mode).
 const dispatcherSelftest = path.join(root, 'scripts', 'dispatcher.mjs');

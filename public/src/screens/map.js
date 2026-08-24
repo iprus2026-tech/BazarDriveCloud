@@ -157,16 +157,30 @@ function buildMapPlaceholder(state) {
 // BD-MAP-RENDER-MAP (#805) — render-then-hydrate. The placeholder `container` is already painted; once
 // the vendored SDK loads (only when a token is configured), take over the container with a real map.
 // loadMapboxSdk() resolves null when DARK (no token) or on failure → the placeholder simply stays, so
-// this is inert without a token. router.render() does replaceChildren() with NO teardown, so a
-// mapboxgl.Map's WebGL context would leak; a self-clearing watcher removes it once the container leaves
-// the DOM (mirrors the chat.js / active_ride.js poll-teardown pattern).
-function hydrateRealMap(container) {
+// this is inert without a token.
+//
+// BD-SCREEN-LIFECYCLE-01A (#919) pilot — hydration is fire-and-forget and asynchronous (an SDK load, a
+// requestAnimationFrame deferral), so the mapboxgl.Map instance does not exist yet at the moment
+// mapScreen() returns its lifecycle result to the router. `lifecycle` is a small mutable handle shared
+// between mapScreen()'s returned dispose() and this function's async continuation, so dispose() can
+// close over whatever this function has (or hasn't) created by the time it actually runs:
+//   - lifecycle.disposed: set true exactly once by dispose(); checked here in ADDITION to the existing
+//     document.body.contains(container) check, immediately before `new mapboxgl.Map(...)`, so a late
+//     hydration continuation for an already-disposed screen never creates a new GL resource.
+//   - lifecycle.mapInstance: becomes known the moment the map is actually constructed.
+//   - lifecycle.teardownId: the existing 2s defensive self-poll, kept unchanged as a backstop for any
+//     detachment the router-owned disposer didn't observe. It is idempotent against a disposer that
+//     already ran (checks lifecycle.disposed first) and dispose() is idempotent against a poll that
+//     already ran (checks lifecycle.mapInstance/teardownId before touching them) — whichever fires
+//     first does the real work, the other is a safe no-op.
+function hydrateRealMap(container, lifecycle) {
   loadMapboxSdk().then((mapboxgl) => {
     if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
     // On a memoized-SDK REVISIT this .then runs as a microtask BEFORE router.js appends the screen
     // (Codex #812), so the container isn't mounted yet — bailing here would leave /map on the
     // placeholder forever. Defer to the next frame (after the append) instead of bailing permanently.
     requestAnimationFrame(() => {
+      if (lifecycle.disposed) return;                    // BD-SCREEN-LIFECYCLE-01A — already disposed
       if (!document.body.contains(container)) return;   // navigated away before it mounted
       const c = getDefaultCenter();
       container.replaceChildren();                       // drop the placeholder shell/watermark
@@ -185,11 +199,17 @@ function hydrateRealMap(container) {
         restoreMapPlaceholder(container);
         return;
       }
-      // Free the GL context once the container is detached (no router teardown hook).
-      const teardown = setInterval(() => {
+      lifecycle.mapInstance = map;
+      // Defensive backstop only (BD-SCREEN-LIFECYCLE-01A): the router-owned disposer is now the
+      // primary cleanup path and frees the GL context immediately on navigation. This poll only
+      // still matters for a detachment the disposer somehow didn't observe.
+      lifecycle.teardownId = setInterval(() => {
+        if (lifecycle.disposed) { clearInterval(lifecycle.teardownId); lifecycle.teardownId = null; return; }
         if (!document.body.contains(container)) {
           try { map.remove(); } catch { /* already torn down */ }
-          clearInterval(teardown);
+          lifecycle.mapInstance = null;
+          clearInterval(lifecycle.teardownId);
+          lifecycle.teardownId = null;
         }
       }, 2000);
     });
@@ -392,10 +412,13 @@ export default function mapScreen() {
   stage.className = 'map-home__stage';
   const mapWrap = buildMapPlaceholder(state);
   stage.appendChild(mapWrap);
+  // BD-SCREEN-LIFECYCLE-01A (#919) pilot — shared mutable handle between this closure's returned
+  // dispose() and hydrateRealMap()'s async continuation (see the comment on hydrateRealMap).
+  const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null };
   // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
   // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
   // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
-  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap);
+  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap, mapLifecycle);
   const banner = buildBanner(state);
   if (banner) stage.appendChild(banner);
   root.appendChild(stage);
@@ -427,5 +450,18 @@ export default function mapScreen() {
     // browser-settings deep link in this PWA shell.
   });
 
-  return root;
+  return {
+    view: root,
+    // BD-SCREEN-LIFECYCLE-01A (#919) pilot — router-owned, exactly-once. Idempotent: a second call
+    // (e.g. the 2s defensive poll having already fired) is a safe no-op.
+    dispose() {
+      if (mapLifecycle.disposed) return;
+      mapLifecycle.disposed = true;
+      if (mapLifecycle.teardownId) { clearInterval(mapLifecycle.teardownId); mapLifecycle.teardownId = null; }
+      if (mapLifecycle.mapInstance) {
+        try { mapLifecycle.mapInstance.remove(); } catch { /* already torn down */ }
+        mapLifecycle.mapInstance = null;
+      }
+    },
+  };
 }
