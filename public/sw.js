@@ -157,7 +157,15 @@
 // ride_actions.js, active_ride.js and active_ride_passenger.js changed to import these shared
 // constants instead of each independently hard-coding the same '3:00'/'8 ₽ за каждую минуту'
 // literals. Purely mechanical — no behavior change.
-const VERSION    = 'v313';
+// v314 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911) — precached active_ride_passenger.js
+// changed: waitingInfo() now derives a live free-wait countdown/paid-start clock from
+// timestamps.arrivedAt + freeLimit + the local clock (mirroring active_ride.js's
+// waitDeadlineMs()/paidStartLabel(), no shared module); the existing passenger poll interval
+// (still the only setInterval on this screen) now also ticks for LOCAL_ONLY WAITING_PASSENGER
+// rides to refresh that countdown in place, issuing zero extra network calls when there is no
+// backend. Presentation-only — no new persisted field, no backend/API change, no state-machine
+// change, no cache-strategy change.
+const VERSION    = 'v314';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
