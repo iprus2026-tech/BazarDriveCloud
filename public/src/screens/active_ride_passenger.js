@@ -540,8 +540,16 @@ export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
   const remainingSec = Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
   const remaining = formatWaitClock(remainingSec);
   const paidStartsAt = new Date(deadlineMs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — pct stays
+  // the exact bounded percentage (not pre-rounded to a whole number) so the
+  // progress-bar step derived from it (Math.round(pct / 10), at the two
+  // render sites) matches active_ride.js's driver-side single-pass
+  // Math.round((remainingSec / freeLimitSec) * 10) exactly. Rounding pct to
+  // an integer here first double-rounds and can pick a different step for
+  // the same ride (e.g. freeLimitSec=300, remainingSec=14: driver step 0,
+  // old passenger step 1).
   const pct = freeLimitSec > 0
-    ? Math.max(0, Math.min(100, Math.round((remainingSec / freeLimitSec) * 100)))
+    ? Math.max(0, Math.min(100, (remainingSec / freeLimitSec) * 100))
     : 0;
   return { remaining, paidStartsAt, pct };
 }

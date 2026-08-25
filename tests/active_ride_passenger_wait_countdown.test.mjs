@@ -63,6 +63,22 @@ test('deriveWaitCountdown: after deadline -> stays 0:00, pct 0 (never negative)'
   assert.equal(out.pct, 0);
 });
 
+test('deriveWaitCountdown: pct is the exact bounded percentage, not pre-rounded — progress-bar step matches active_ride.js\'s single-pass driver formula (code-review fix)', () => {
+  // Regression case from the confirmed P2: freeLimitSec=300, remainingSec=14.
+  // Driver (active_ride.js): step = Math.round((remainingSec / freeLimitSec) * 10) = 0.
+  // Old passenger bug: pct pre-rounded to Math.round(14/300*100) = 5, then
+  // Math.round(5 / 10) = 1 — a different, wrong step for the same ride.
+  const freeLimitSec = 300;
+  const remainingSec = 14;
+  const nowMs = ARRIVED_MS + (freeLimitSec - remainingSec) * 1000;
+  const out = deriveWaitCountdown(ARRIVED_MS, freeLimitSec, nowMs);
+  const driverStep = Math.round((remainingSec / freeLimitSec) * 10);
+  const passengerStep = Math.round(out.pct / 10);
+  assert.equal(driverStep, 0);
+  assert.equal(passengerStep, 0);
+  assert.equal(passengerStep, driverStep);
+});
+
 test('deriveWaitCountdown: paidStartsAt is the deadline clock, not "now" — stays fixed after deadline', () => {
   const atDeadline = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 180_000);
   const wellAfter = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 999_000);

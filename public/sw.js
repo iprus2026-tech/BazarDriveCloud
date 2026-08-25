@@ -171,7 +171,13 @@
 // the success and DEFERRED branches, so a WAITING_PASSENGER countdown rendered on that path keeps
 // ticking instead of freezing after one snapshot. No new persisted field, no backend/API change,
 // no state-machine change, no cache-strategy change.
-const VERSION    = 'v315';
+// v316 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911, final code-review fix) — precached
+// active_ride_passenger.js changed again: deriveWaitCountdown()'s pct is now the exact bounded
+// percentage (not pre-rounded) so the progress-bar step, still Math.round(pct / 10) at both render
+// sites, matches active_ride.js's single-pass driver formula exactly, fixing a double-rounding
+// mismatch; the two aria-valuenow sites are unchanged and continue to expose that raw pct as-is.
+// No new persisted field, no backend/API change, no state-machine change, no cache-strategy change.
+const VERSION    = 'v316';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
