@@ -518,6 +518,42 @@ function toSeconds(mmss) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+function formatWaitClock(sec) {
+  const t = Math.max(0, sec | 0);
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  return `${m}:${s < 10 ? '0' + s : s}`;
+}
+
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) — pure, injectable-nowMs
+// derivation of the free-wait countdown from timestamps.arrivedAt, mirroring
+// active_ride.js's waitDeadlineMs()/paidStartLabel() math without importing
+// from it (screen-local closures on both sides; a shared helper was
+// evaluated in the #911 audit and rejected — the driver's functions are
+// unexported closures inside a different factory, and this screen already
+// has its own independent toSeconds() parser). Exported only so tests can
+// exercise this deterministic math directly with a controlled nowMs instead
+// of monkey-patching Date. Pure: no ride/DOM/storage/backend access, no
+// mutation, never called with anything but plain numbers.
+export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
+  const deadlineMs = arrivedAtMs + freeLimitSec * 1000;
+  const remainingSec = Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
+  const remaining = formatWaitClock(remainingSec);
+  const paidStartsAt = new Date(deadlineMs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — pct stays
+  // the exact bounded percentage (not pre-rounded to a whole number) so the
+  // progress-bar step derived from it (Math.round(pct / 10), at the two
+  // render sites) matches active_ride.js's driver-side single-pass
+  // Math.round((remainingSec / freeLimitSec) * 10) exactly. Rounding pct to
+  // an integer here first double-rounds and can pick a different step for
+  // the same ride (e.g. freeLimitSec=300, remainingSec=14: driver step 0,
+  // old passenger step 1).
+  const pct = freeLimitSec > 0
+    ? Math.max(0, Math.min(100, (remainingSec / freeLimitSec) * 100))
+    : 0;
+  return { remaining, paidStartsAt, pct };
+}
+
 function inProgressInfo(ride) {
   const r = (ride && ride.ride) || {};
   const route = (ride && ride.route) || {};
@@ -563,12 +599,36 @@ function arrivingDropoffAmount(ride) {
 // state we actually know nothing about. pct stays null in that case;
 // both renderWaitingSheet and its live-refresh counterpart render a
 // neutral (non-100%) state instead of a false-full progress bar.
-function waitingInfo(ride) {
+//
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) — a valid timestamps.arrivedAt
+// is the authoritative anchor (mirrors active_ride.js's waitDeadlineMs()):
+// remaining/paidStartsAt/pct are derived live from arrivedAt + freeLimit +
+// nowMs instead of the ride's own static waiting.remaining/paidStartsAt,
+// which real seeds always leave null (#908/#912) anyway. nowMs defaults to
+// Date.now() so every existing call site (renderWaitingSheet,
+// topDriverCardEta, refreshPassengerRideFieldsInPlace) is unaffected and
+// automatically gets a live value; tests can pass nowMs explicitly. When
+// arrivedAt is missing/invalid, the ENTIRE original fallback below runs
+// unchanged — this preserves today's real-ride '—' fallback and today's
+// demo/fixture/simulation cards (e.g. buildDemoRide()'s own remaining/
+// paidStartsAt literals, or an explicit sim override) byte-for-byte, with
+// no new real/simulation discriminator and no tripId-shape inference.
+// Exported (alongside deriveWaitCountdown above) so tests can exercise the
+// full ride -> presentation derivation directly, including the missing/
+// invalid-arrivedAt fallback branch, with a controlled nowMs — mirrors the
+// existing isConfirmedHandoffRecord export precedent (trip_confirmation.js).
+export function waitingInfo(ride, nowMs = Date.now()) {
   const w = (ride && ride.waiting) || {};
-  const remaining = w.remaining || '—';
   const freeLimit = w.freeLimit || DEFAULT_FREE_WAIT_LIMIT;
-  const paidStartsAt = w.paidStartsAt || '—';
   const paidRate = w.paidRate || DEFAULT_PAID_RATE_LABEL;
+  const arrivedAtMs = Date.parse((ride && ride.timestamps && ride.timestamps.arrivedAt) || '');
+  if (Number.isFinite(arrivedAtMs)) {
+    const freeLimitSec = toSeconds(freeLimit) || 180;
+    const live = deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs);
+    return { remaining: live.remaining, freeLimit, paidStartsAt: live.paidStartsAt, paidRate, pct: live.pct };
+  }
+  const remaining = w.remaining || '—';
+  const paidStartsAt = w.paidStartsAt || '—';
   const remSec = toSeconds(remaining);
   const totalSec = toSeconds(freeLimit);
   let pct = null;
@@ -2629,13 +2689,32 @@ export default function activeRidePassenger(options = {}) {
     window.removeEventListener('storage', onActiveRideStorage);
   }
 
+  // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) — the free-wait countdown is
+  // derived purely from already-in-memory ride.timestamps.arrivedAt + the
+  // local clock, never from fresh server data, so it must keep ticking even
+  // when there is no backend to poll. Start this interval whenever a
+  // WAITING_PASSENGER ride is mounted, not only when backendRide is true —
+  // still exactly one setInterval call site, still zero new network calls
+  // for a LOCAL_ONLY ride (the pollRide branch below is gated behind
+  // backendRide, checked fresh on every tick so a later ownership change
+  // seamlessly switches this same interval into/out of network polling).
   function startPassengerRidePoll() {
-    if (passengerPollId || fixture || !backendRide) return;
+    if (passengerPollId || fixture) return;
+    if (!backendRide && ride.status !== RIDE_STATUS.WAITING_PASSENGER) return;
     passengerPollId = setInterval(async () => {
       if (!document.body.contains(root)) {
         teardownPassengerReads();
         return;
       }
+      // Presentation-only local refresh, every tick, regardless of backend
+      // connectivity or this tick's own poll outcome (see the comment
+      // above). Reuses the existing in-place refresh path — no DOM
+      // rebuild, no navigation, no store/localStorage write, safe next to
+      // an open safety/cancel overlay (it never touches overlay DOM).
+      if (!destroyed && ride.status === RIDE_STATUS.WAITING_PASSENGER) {
+        refreshPassengerRideFieldsInPlace();
+      }
+      if (!backendRide) return;
       if (passengerPollBusy) return;
       passengerPollBusy = true;
       const controller = new AbortController();
@@ -2685,6 +2764,14 @@ export default function activeRidePassenger(options = {}) {
         // cannot strand the passenger on an older lifecycle stage.
         if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
         renderLoadedRide(true);
+        // Codex review-fix (#911) — this branch settles readState to LOADED
+        // itself (see renderLoadedRide's non-preserveDom path), after the
+        // factory-tail gate already ran with readState still LOADING, so it
+        // must start the poll here too, exactly like the success and
+        // DEFERRED branches below. Idempotent via passengerPollId; a no-op
+        // for a non-WAITING_PASSENGER LOCAL_ONLY ride via the existing
+        // status guard.
+        startPassengerRidePoll();
         return;
       }
       backendRide = true;
@@ -2795,6 +2882,18 @@ export default function activeRidePassenger(options = {}) {
 
   setReadState(readState);
   if (!fixture && backendRead) runInitialRead();
+  // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) review-fix — only start here
+  // when readState has already settled to LOADED at this exact synchronous
+  // point (true for LOCAL_ONLY with no read in flight, and for a local ride
+  // shown optimistically while a backend read is pending — see
+  // runInitialRead's hasUsableLocalRide branch, which keeps readState
+  // LOADED). When no usable local ride exists and a backend read is still
+  // in flight, readState is LOADING here; runInitialRead()'s own resolved
+  // continuation is then the sole starter — on success it calls
+  // startPassengerRidePoll() itself (idempotent, guarded by passengerPollId
+  // above), and on EMPTY/404/generic error it correctly never does, so no
+  // orphan interval survives a read that never confirms a usable ride.
+  if (readState === PASSENGER_RIDE_READ_STATE.LOADED) startPassengerRidePoll();
 
   return root;
 }

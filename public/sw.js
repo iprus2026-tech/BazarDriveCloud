@@ -157,7 +157,27 @@
 // ride_actions.js, active_ride.js and active_ride_passenger.js changed to import these shared
 // constants instead of each independently hard-coding the same '3:00'/'8 ₽ за каждую минуту'
 // literals. Purely mechanical — no behavior change.
-const VERSION    = 'v313';
+// v314 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911) — precached active_ride_passenger.js
+// changed: waitingInfo() now derives a live free-wait countdown/paid-start clock from
+// timestamps.arrivedAt + freeLimit + the local clock (mirroring active_ride.js's
+// waitDeadlineMs()/paidStartLabel(), no shared module); the existing passenger poll interval
+// (still the only setInterval on this screen) now also ticks for LOCAL_ONLY WAITING_PASSENGER
+// rides to refresh that countdown in place, issuing zero extra network calls when there is no
+// backend. Presentation-only — no new persisted field, no backend/API change, no state-machine
+// change, no cache-strategy change.
+// v315 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911, code-review fix) — precached
+// active_ride_passenger.js changed again: runInitialRead()'s `!srv` fallback branch (local-only
+// settlement after a server read comes back empty) now also starts the passenger poll, matching
+// the success and DEFERRED branches, so a WAITING_PASSENGER countdown rendered on that path keeps
+// ticking instead of freezing after one snapshot. No new persisted field, no backend/API change,
+// no state-machine change, no cache-strategy change.
+// v316 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911, final code-review fix) — precached
+// active_ride_passenger.js changed again: deriveWaitCountdown()'s pct is now the exact bounded
+// percentage (not pre-rounded) so the progress-bar step, still Math.round(pct / 10) at both render
+// sites, matches active_ride.js's single-pass driver formula exactly, fixing a double-rounding
+// mismatch; the two aria-valuenow sites are unchanged and continue to expose that raw pct as-is.
+// No new persisted field, no backend/API change, no state-machine change, no cache-strategy change.
+const VERSION    = 'v316';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

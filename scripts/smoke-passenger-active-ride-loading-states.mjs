@@ -399,8 +399,24 @@ expect('local fallback recovery retries only persisted participant-gated rides w
     && recovery.includes('setTimeout')
     && recovery.includes('runInitialRead(true)')
     && recovery.includes('PASSENGER_RIDE_POLL_MS'));
-expect('poll starts only after a successful server ride is identified',
-  initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) final code-review fix — the
+// previous version of this pin searched for the first startPassengerRidePoll()
+// at or after backendRide = true, which actually matches the earlier
+// DEFERRED-branch call (line ~2785, reached before `ride = mergeServerRide`
+// ever runs), not the normal success-path call after the merge/render. That
+// let the pin stay green even if the real normal-success poll-start call
+// were deleted, as long as the DEFERRED call survived. Pin the exact normal
+// sequence by name instead: mergeServerRide -> renderLoadedRide(recovery) ->
+// startPassengerRidePoll(), each searched strictly after the previous one.
+const successMergeIndex = initialRead.indexOf('ride = mergeServerRide(srv, recovery);');
+const successRenderIndex = initialRead.indexOf('renderLoadedRide(recovery);', successMergeIndex);
+const successStartPollIndex = initialRead.indexOf('startPassengerRidePoll();', successRenderIndex);
+expect('the normal server-success sequence starts the poll: ride = mergeServerRide(...) -> renderLoadedRide(recovery) -> startPassengerRidePoll()',
+  successMergeIndex !== -1 && successRenderIndex !== -1 && successStartPollIndex !== -1
+    && successMergeIndex < successRenderIndex && successRenderIndex < successStartPollIndex);
+expect('the normal server-success startPassengerRidePoll() call still comes after backendRide = true is set',
+  initialRead.indexOf('backendRide = true') !== -1
+    && initialRead.indexOf('backendRide = true') < successStartPollIndex);
 expect('read-confirmed backendRide remains poll-only and distinct from ownership/write intent',
   passenger.includes('let backendRide = false;')
     && passenger.includes('let backendWriteCandidate = false;')

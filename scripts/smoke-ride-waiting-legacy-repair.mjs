@@ -400,6 +400,80 @@ expect('live refresh removes aria-valuenow (not sets "100") when waiting.pct is 
 expect('live refresh does not stamp a full (10) fill step when waiting.pct is null',
   /waiting\.pct == null \? 0/.test(refreshBody));
 
+// ── BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) — passenger free-wait
+// countdown ticks for LOCAL_ONLY rides too, reusing the one existing
+// passenger setInterval (no second timer, no countdown-specific setTimeout
+// loop) and issuing zero extra network calls when there is no backend. ────
+expect('deriveWaitCountdown is exported for direct deterministic testing',
+  /export function deriveWaitCountdown\(/.test(passenger));
+expect('waitingInfo is exported for direct deterministic testing',
+  /export function waitingInfo\(/.test(passenger));
+expect('active_ride_passenger.js still contains exactly one setInterval call site',
+  (passenger.match(/\bsetInterval\(/g) || []).length === 1);
+
+const startPollBody = functionBody(passenger, 'startPassengerRidePoll');
+expect('startPassengerRidePoll defined', startPollBody.length > 0);
+expect('startPassengerRidePoll no longer gates its start on backendRide alone (the pre-#911 combined guard is gone)',
+  !/if\s*\(passengerPollId\s*\|\|\s*fixture\s*\|\|\s*!backendRide\)\s*return;/.test(startPollBody));
+expect('startPassengerRidePoll still refuses to start a second interval or run for a fixture',
+  /if\s*\(passengerPollId\s*\|\|\s*fixture\)\s*return;/.test(startPollBody));
+expect('startPassengerRidePoll starts for a LOCAL_ONLY ride specifically when it is WAITING_PASSENGER (not for every LOCAL_ONLY status)',
+  /if\s*\(!backendRide\s*&&\s*ride\.status\s*!==\s*RIDE_STATUS\.WAITING_PASSENGER\)\s*return;/.test(startPollBody));
+expect('the detached-root teardown check still runs before anything else in the tick (countdown refresh cannot outlive teardown)',
+  /if\s*\(!document\.body\.contains\(root\)\)\s*\{\s*teardownPassengerReads\(\);\s*return;\s*\}/.test(startPollBody));
+const tickAfterTeardownGuard = startPollBody.split(/teardownPassengerReads\(\);\s*return;\s*\}/)[1] || '';
+const refreshCallIndex = tickAfterTeardownGuard.indexOf('refreshPassengerRideFieldsInPlace()');
+const backendGateIndex = tickAfterTeardownGuard.indexOf('if (!backendRide) return;');
+const pollRideIndex = tickAfterTeardownGuard.indexOf('pollRide(');
+expect('the tick calls refreshPassengerRideFieldsInPlace() gated on WAITING_PASSENGER status',
+  /if\s*\(!destroyed\s*&&\s*ride\.status\s*===\s*RIDE_STATUS\.WAITING_PASSENGER\)\s*\{\s*refreshPassengerRideFieldsInPlace\(\);\s*\}/.test(tickAfterTeardownGuard));
+expect('the countdown refresh runs BEFORE the backendRide network gate (a LOCAL_ONLY tick still refreshes the countdown)',
+  refreshCallIndex !== -1 && backendGateIndex !== -1 && refreshCallIndex < backendGateIndex);
+expect('a LOCAL_ONLY tick returns before ever reaching pollRide(...) — zero network calls',
+  backendGateIndex !== -1 && pollRideIndex !== -1 && backendGateIndex < pollRideIndex);
+expect('the pollRide(...) network call and its cursor handling are still present, unchanged shape (SERVER_BACKED polling preserved)',
+  /res\s*=\s*await\s*pollRide\(ride\.tripId,\s*passengerCursor,\s*\{\s*signal:\s*controller\.signal\s*\}\)/.test(startPollBody)
+  && /if\s*\(res\.cursor\)\s*passengerCursor\s*=\s*res\.cursor;/.test(startPollBody));
+expect('forward server-status remount handling (maybeReMount / NAVIGATED) is still present, unchanged',
+  /maybeReMount\(res\.status\)/.test(startPollBody) && /PASSENGER_REMOUNT_RESULT\.NAVIGATED/.test(startPollBody));
+expect('refreshPassengerRideFieldsInPlace never calls saveActiveRide or localStorage — presentation-only, no persistence',
+  !/saveActiveRide\(/.test(refreshBody) && !/localStorage\./.test(refreshBody));
+const mountTailBody = passenger.slice(passenger.indexOf('setReadState(readState);'), passenger.lastIndexOf('return root;'));
+expect('the factory mount tail calls startPassengerRidePoll() (idempotent — covers the LOCAL_ONLY case where runInitialRead() never runs at all, since backendRead is false)',
+  /startPassengerRidePoll\(\);/.test(mountTailBody));
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) review-fix — the mount-tail
+// call must be gated on readState already being LOADED at that exact
+// synchronous point, not unconditional: an unconditional call could start
+// the interval while a backend read is still in flight (readState LOADING)
+// for a WAITING_PASSENGER ride with no usable local source, and neither the
+// EMPTY(404) nor generic-error branch of runInitialRead ever stops it —
+// an orphan no-op interval surviving until navigation/unmount.
+expect('the mount-tail startPassengerRidePoll() call is gated on readState === PASSENGER_RIDE_READ_STATE.LOADED (not unconditional)',
+  /if\s*\(readState\s*===\s*PASSENGER_RIDE_READ_STATE\.LOADED\)\s*startPassengerRidePoll\(\);/.test(mountTailBody));
+
+const runInitialReadBody = functionBody(passenger, 'runInitialRead');
+expect('runInitialRead defined', runInitialReadBody.length > 0);
+const srvFallbackBody = runInitialReadBody.slice(
+  runInitialReadBody.indexOf('if (!srv) {'),
+  runInitialReadBody.indexOf('backendRide = true;'));
+expect('the !srv fallback branch is present', srvFallbackBody.length > 0);
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — the !srv
+// fallback (a server read resolving with no ride, settling the screen back
+// to LOCAL_ONLY) renders a LOADED ride via renderLoadedRide(true) at a point
+// where the factory-tail mount gate already ran with readState still
+// LOADING, so this branch is the only remaining place that can start the
+// poll for it — without this call a WAITING_PASSENGER countdown here paints
+// one live waitingInfo() snapshot and then freezes, never ticking again.
+expect('the !srv fallback branch calls startPassengerRidePoll() after rendering the loaded ride',
+  /renderLoadedRide\(true\);[\s\S]{0,600}?startPassengerRidePoll\(\);/.test(srvFallbackBody));
+const srvReconcileIndex = srvFallbackBody.indexOf('reconcileLocalOnlyRide()');
+const srvRenderIndex = srvFallbackBody.indexOf('renderLoadedRide(true);');
+const srvStartPollIndex = srvFallbackBody.indexOf('startPassengerRidePoll();');
+const srvReturnIndex = srvFallbackBody.lastIndexOf('return;');
+expect('the !srv fallback keeps the required order: reconcile -> render loaded ride -> start poll -> return',
+  srvReconcileIndex !== -1 && srvRenderIndex !== -1 && srvStartPollIndex !== -1 && srvReturnIndex !== -1
+  && srvReconcileIndex < srvRenderIndex && srvRenderIndex < srvStartPollIndex && srvStartPollIndex < srvReturnIndex);
+
 // ── P2-1 hydration follow-up — passenger re-read must stay normalized ──
 const hydrationBody = functionBody(passenger, 'loadPassengerRideView');
 expect('loadPassengerRideView defined', hydrationBody.length > 0);
