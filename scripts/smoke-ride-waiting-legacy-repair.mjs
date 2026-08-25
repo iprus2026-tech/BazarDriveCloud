@@ -451,6 +451,29 @@ expect('the factory mount tail calls startPassengerRidePoll() (idempotent — co
 expect('the mount-tail startPassengerRidePoll() call is gated on readState === PASSENGER_RIDE_READ_STATE.LOADED (not unconditional)',
   /if\s*\(readState\s*===\s*PASSENGER_RIDE_READ_STATE\.LOADED\)\s*startPassengerRidePoll\(\);/.test(mountTailBody));
 
+const runInitialReadBody = functionBody(passenger, 'runInitialRead');
+expect('runInitialRead defined', runInitialReadBody.length > 0);
+const srvFallbackBody = runInitialReadBody.slice(
+  runInitialReadBody.indexOf('if (!srv) {'),
+  runInitialReadBody.indexOf('backendRide = true;'));
+expect('the !srv fallback branch is present', srvFallbackBody.length > 0);
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — the !srv
+// fallback (a server read resolving with no ride, settling the screen back
+// to LOCAL_ONLY) renders a LOADED ride via renderLoadedRide(true) at a point
+// where the factory-tail mount gate already ran with readState still
+// LOADING, so this branch is the only remaining place that can start the
+// poll for it — without this call a WAITING_PASSENGER countdown here paints
+// one live waitingInfo() snapshot and then freezes, never ticking again.
+expect('the !srv fallback branch calls startPassengerRidePoll() after rendering the loaded ride',
+  /renderLoadedRide\(true\);[\s\S]{0,600}?startPassengerRidePoll\(\);/.test(srvFallbackBody));
+const srvReconcileIndex = srvFallbackBody.indexOf('reconcileLocalOnlyRide()');
+const srvRenderIndex = srvFallbackBody.indexOf('renderLoadedRide(true);');
+const srvStartPollIndex = srvFallbackBody.indexOf('startPassengerRidePoll();');
+const srvReturnIndex = srvFallbackBody.lastIndexOf('return;');
+expect('the !srv fallback keeps the required order: reconcile -> render loaded ride -> start poll -> return',
+  srvReconcileIndex !== -1 && srvRenderIndex !== -1 && srvStartPollIndex !== -1 && srvReturnIndex !== -1
+  && srvReconcileIndex < srvRenderIndex && srvRenderIndex < srvStartPollIndex && srvStartPollIndex < srvReturnIndex);
+
 // ── P2-1 hydration follow-up — passenger re-read must stay normalized ──
 const hydrationBody = functionBody(passenger, 'loadPassengerRideView');
 expect('loadPassengerRideView defined', hydrationBody.length > 0);

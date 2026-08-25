@@ -2756,6 +2756,14 @@ export default function activeRidePassenger(options = {}) {
         // cannot strand the passenger on an older lifecycle stage.
         if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
         renderLoadedRide(true);
+        // Codex review-fix (#911) — this branch settles readState to LOADED
+        // itself (see renderLoadedRide's non-preserveDom path), after the
+        // factory-tail gate already ran with readState still LOADING, so it
+        // must start the poll here too, exactly like the success and
+        // DEFERRED branches below. Idempotent via passengerPollId; a no-op
+        // for a non-WAITING_PASSENGER LOCAL_ONLY ride via the existing
+        // status guard.
+        startPassengerRidePoll();
         return;
       }
       backendRide = true;

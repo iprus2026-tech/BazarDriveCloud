@@ -399,8 +399,17 @@ expect('local fallback recovery retries only persisted participant-gated rides w
     && recovery.includes('setTimeout')
     && recovery.includes('runInitialRead(true)')
     && recovery.includes('PASSENGER_RIDE_POLL_MS'));
-expect('poll starts only after a successful server ride is identified',
-  initialRead.indexOf('backendRide = true') < initialRead.indexOf('startPassengerRidePoll()'));
+// BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — the !srv
+// fallback (server read resolved with no ride) now also starts the poll for
+// its LOCAL_ONLY WAITING_PASSENGER countdown, so a startPassengerRidePoll()
+// call now legitimately exists BEFORE backendRide = true in source order
+// too. This pin narrows to the success-path call specifically (searched
+// from backendRide = true onward) rather than the first occurrence in the
+// whole function, so it still proves that call's ordering without
+// contradicting the intentional earlier LOCAL_ONLY start.
+expect('the server-confirmed success path still starts its poll only after backendRide = true is set',
+  initialRead.indexOf('backendRide = true')
+    < initialRead.indexOf('startPassengerRidePoll()', initialRead.indexOf('backendRide = true')));
 expect('read-confirmed backendRide remains poll-only and distinct from ownership/write intent',
   passenger.includes('let backendRide = false;')
     && passenger.includes('let backendWriteCandidate = false;')

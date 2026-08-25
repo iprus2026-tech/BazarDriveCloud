@@ -165,7 +165,13 @@
 // rides to refresh that countdown in place, issuing zero extra network calls when there is no
 // backend. Presentation-only — no new persisted field, no backend/API change, no state-machine
 // change, no cache-strategy change.
-const VERSION    = 'v314';
+// v315 (BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A, Issue #911, code-review fix) — precached
+// active_ride_passenger.js changed again: runInitialRead()'s `!srv` fallback branch (local-only
+// settlement after a server read comes back empty) now also starts the passenger poll, matching
+// the success and DEFERRED branches, so a WAITING_PASSENGER countdown rendered on that path keeps
+// ticking instead of freezing after one snapshot. No new persisted field, no backend/API change,
+// no state-machine change, no cache-strategy change.
+const VERSION    = 'v315';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
