@@ -97,10 +97,11 @@ route or authorize the runtime follow-up.
   not be expired. Missing, malformed, foreign, terminal, or expired candidates
   return a non-success response and produce no selection writes.
 - **Authority and transaction:** only the authenticated order owner may select.
-  One transaction locks the open order, accepts the target offer, rejects live
-  peers, creates the `ACCEPTED` assignment, moves the order
-  `CREATED -> ACCEPTED`, and bootstraps `trip_<orderId>` at
-  `DRIVER_EN_ROUTE`.
+  One transaction locks the open order, accepts the target offer, rejects
+  every other peer offer still in `status='sent'` (including one that is
+  expired but not yet processed by the separate future TTL sweep), creates
+  the `ACCEPTED` assignment, moves the order `CREATED -> ACCEPTED`, and
+  bootstraps `trip_<orderId>` at `DRIVER_EN_ROUTE`.
 - **Success linkage:** the response returns `{ order, offer, assignment, ride }`.
   `offer.driverId` and `assignment.selectedDriverId` identify the same selected
   driver; `ride.tripId` is `trip_<orderId>`. A client-side response/chat id may
