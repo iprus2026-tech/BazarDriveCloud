@@ -46,21 +46,46 @@ test('deriveWaitCountdown: midpoint -> correct M:SS and pct', () => {
   assert.equal(out.pct, 50);
 });
 
-test('deriveWaitCountdown: one second before deadline -> 0:01', () => {
+test('deriveWaitCountdown: one second before deadline -> FREE_WAIT / 0:01', () => {
   const out = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 179_000);
+  assert.equal(out.phase, 'FREE_WAIT');
   assert.equal(out.remaining, '0:01');
+  assert.equal(out.paidElapsed, '0:00');
 });
 
-test('deriveWaitCountdown: exact deadline -> 0:00, pct 0', () => {
+test('deriveWaitCountdown: exact deadline -> PAID_WAIT / 0:00', () => {
   const out = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 180_000);
+  assert.equal(out.phase, 'PAID_WAIT');
   assert.equal(out.remaining, '0:00');
+  assert.equal(out.paidElapsed, '0:00');
+  assert.equal(out.paidElapsedSec, 0);
   assert.equal(out.pct, 0);
 });
 
-test('deriveWaitCountdown: after deadline -> stays 0:00, pct 0 (never negative)', () => {
+test('deriveWaitCountdown: one second after deadline -> PAID_WAIT / paid 0:01', () => {
+  const out = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 181_000);
+  assert.equal(out.phase, 'PAID_WAIT');
+  assert.equal(out.remaining, '0:00');
+  assert.equal(out.paidElapsed, '0:01');
+  assert.equal(out.paidElapsedSec, 1);
+  assert.equal(out.pct, 0);
+});
+
+test('deriveWaitCountdown: sixty seconds after deadline -> paid 1:00', () => {
+  const out = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 240_000);
+  assert.equal(out.phase, 'PAID_WAIT');
+  assert.equal(out.paidElapsed, '1:00');
+  assert.equal(out.paidElapsedSec, 60);
+});
+
+test('deriveWaitCountdown: well after deadline stays bounded and carries no monetary accrual', () => {
   const out = deriveWaitCountdown(ARRIVED_MS, FREE_LIMIT_SEC, ARRIVED_MS + 999_000);
+  assert.equal(out.phase, 'PAID_WAIT');
   assert.equal(out.remaining, '0:00');
   assert.equal(out.pct, 0);
+  assert.equal(Object.hasOwn(out, 'accrued'), false);
+  assert.equal(Object.hasOwn(out, 'amount'), false);
+  assert.equal(Object.hasOwn(out, 'cost'), false);
 });
 
 test('deriveWaitCountdown: pct is the exact bounded percentage, not pre-rounded — progress-bar step matches active_ride.js\'s single-pass driver formula (code-review fix)', () => {
@@ -94,18 +119,24 @@ test('waitingInfo: valid arrivedAt derives live remaining/pct from nowMs', () =>
   assert.equal(w.pct, 50);
 });
 
-test('waitingInfo: missing arrivedAt -> honest "-" / pct null (no invented clock)', () => {
+test('waitingInfo: missing arrivedAt -> honest "-" / pct null and no invented paid phase', () => {
   const ride = realRide({ timestamps: { arrivedAt: null } });
   const w = waitingInfo(ride, ARRIVED_MS);
+  assert.equal(w.phase, null);
   assert.equal(w.remaining, '—');
+  assert.equal(w.paidElapsed, '—');
+  assert.equal(w.paidElapsedSec, null);
   assert.equal(w.paidStartsAt, '—');
   assert.equal(w.pct, null);
 });
 
-test('waitingInfo: invalid arrivedAt -> same truthful fallback as missing', () => {
+test('waitingInfo: invalid arrivedAt -> same truthful fallback as missing, no PAID_WAIT', () => {
   const ride = realRide({ timestamps: { arrivedAt: 'not-a-real-timestamp' } });
   const w = waitingInfo(ride, ARRIVED_MS);
+  assert.equal(w.phase, null);
   assert.equal(w.remaining, '—');
+  assert.equal(w.paidElapsed, '—');
+  assert.equal(w.paidElapsedSec, null);
   assert.equal(w.paidStartsAt, '—');
   assert.equal(w.pct, null);
 });
@@ -141,11 +172,25 @@ test('waitingInfo: paidRate still resolves to DEFAULT_PAID_RATE_LABEL when absen
   assert.equal(w.paidRate, DEFAULT_PAID_RATE_LABEL);
 });
 
-test('waitingInfo: paidStartsAt derives from the deadline, not from nowMs advancing', () => {
+test('waitingInfo: paidStartsAt derives from the deadline and stays fixed across FREE_WAIT -> PAID_WAIT', () => {
   const ride = realRide();
   const early = waitingInfo(ride, ARRIVED_MS + 10_000);
-  const late = waitingInfo(ride, ARRIVED_MS + 170_000);
+  const late = waitingInfo(ride, ARRIVED_MS + 240_000);
+  assert.equal(early.phase, 'FREE_WAIT');
+  assert.equal(late.phase, 'PAID_WAIT');
   assert.equal(early.paidStartsAt, late.paidStartsAt);
+});
+
+test('waitingInfo: pure paid-wait derivation does not mutate ride/status and produces no money amount', () => {
+  const ride = realRide();
+  const before = JSON.stringify(ride);
+  const w = waitingInfo(ride, ARRIVED_MS + 240_000);
+  assert.equal(w.phase, 'PAID_WAIT');
+  assert.equal(ride.status, 'WAITING_PASSENGER');
+  assert.equal(JSON.stringify(ride), before);
+  assert.equal(Object.hasOwn(w, 'accrued'), false);
+  assert.equal(Object.hasOwn(w, 'amount'), false);
+  assert.equal(Object.hasOwn(w, 'cost'), false);
 });
 
 test('waitingInfo: default nowMs (no third… second argument) still returns a live derivation', () => {

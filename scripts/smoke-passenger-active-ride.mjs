@@ -566,6 +566,24 @@ expect('cloud.css gates the report stages + styles the submitted confirmation',
 expect('sw.js VERSION bumped to v175+ (precached active_ride_passenger.js + cloud.css changed)',
   Number((read('../public/sw.js').match(/VERSION\s*=\s*'v(\d+)'/) || [])[1] || 0) >= 175);
 
+// ── H. BD-RIDE-WAITING-PAID-01A — passenger paid-wait presentation ──
+const waitSheetBody = functionBody(passenger, 'renderWaitingSheet') || '';
+const waitTopEtaBody = functionBody(passenger, 'topDriverCardEta') || '';
+const waitRefreshBody = functionBody(passenger, 'refreshPassengerRideFieldsInPlace') || '';
+expect('passenger waiting sheet exposes FREE_WAIT → PAID_WAIT truthful copy',
+  waitSheetBody.includes('Бесплатное ожидание закончилось')
+  && waitSheetBody.includes('Платное ожидание'));
+expect('passenger top card leaves "0:00 осталось" in paid phase',
+  /PAID_WAIT[\s\S]{0,180}?paidElapsed[\s\S]{0,120}?label:\s*'платно'/.test(waitTopEtaBody));
+expect('passenger paid-wait render shows policy rate only, never a calculated accrued amount',
+  /paidRate/.test(waitSheetBody)
+  && !/Начислено|начислено|parsePaidRatePerMin|ratePerMin/.test(waitSheetBody));
+expect('passenger in-place refresh updates paid phase and hides free-wait progress',
+  waitRefreshBody.includes('Платное ожидание')
+  && /progress\.hidden\s*=\s*isPaidWait/.test(waitRefreshBody));
+expect('passenger waiting presentation does not introduce a PAID_WAIT Ride status',
+  !/PAID_WAIT/.test(rideState));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
