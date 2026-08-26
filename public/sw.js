@@ -177,7 +177,11 @@
 // sites, matches active_ride.js's single-pass driver formula exactly, fixing a double-rounding
 // mismatch; the two aria-valuenow sites are unchanged and continue to expose that raw pct as-is.
 // No new persisted field, no backend/API change, no state-machine change, no cache-strategy change.
-const VERSION    = 'v316';
+// v317 (BD-RIDE-WAITING-PAID-01A) — precached active_ride_passenger.js changed: passenger
+// WAITING_PASSENGER now derives a presentation-only FREE_WAIT / PAID_WAIT boundary and paid elapsed
+// time from timestamps.arrivedAt + freeLimit + the local clock. No persisted field, backend/API or
+// Ride state-machine change; no payment accrual implementation and no cache-strategy change.
+const VERSION    = 'v317';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

@@ -535,10 +535,22 @@ function formatWaitClock(sec) {
 // exercise this deterministic math directly with a controlled nowMs instead
 // of monkey-patching Date. Pure: no ride/DOM/storage/backend access, no
 // mutation, never called with anything but plain numbers.
+const PASSENGER_WAIT_PHASE = Object.freeze({
+  FREE_WAIT: 'FREE_WAIT',
+  PAID_WAIT: 'PAID_WAIT',
+});
+
 export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
   const deadlineMs = arrivedAtMs + freeLimitSec * 1000;
+  const phase = nowMs < deadlineMs
+    ? PASSENGER_WAIT_PHASE.FREE_WAIT
+    : PASSENGER_WAIT_PHASE.PAID_WAIT;
   const remainingSec = Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
+  const paidElapsedSec = phase === PASSENGER_WAIT_PHASE.PAID_WAIT
+    ? Math.max(0, Math.floor((nowMs - deadlineMs) / 1000))
+    : 0;
   const remaining = formatWaitClock(remainingSec);
+  const paidElapsed = formatWaitClock(paidElapsedSec);
   const paidStartsAt = new Date(deadlineMs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) code-review fix — pct stays
   // the exact bounded percentage (not pre-rounded to a whole number) so the
@@ -551,7 +563,10 @@ export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
   const pct = freeLimitSec > 0
     ? Math.max(0, Math.min(100, (remainingSec / freeLimitSec) * 100))
     : 0;
-  return { remaining, paidStartsAt, pct };
+  // BD-RIDE-WAITING-PAID-01A — phase/elapsed are presentation-only and
+  // reconstructible from arrivedAt + freeLimit + nowMs. No persistence,
+  // Ride status transition or monetary accrual is implied by this object.
+  return { phase, remaining, remainingSec, paidElapsed, paidElapsedSec, paidStartsAt, pct };
 }
 
 function inProgressInfo(ride) {
@@ -625,7 +640,17 @@ export function waitingInfo(ride, nowMs = Date.now()) {
   if (Number.isFinite(arrivedAtMs)) {
     const freeLimitSec = toSeconds(freeLimit) || 180;
     const live = deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs);
-    return { remaining: live.remaining, freeLimit, paidStartsAt: live.paidStartsAt, paidRate, pct: live.pct };
+    return {
+      phase: live.phase,
+      remaining: live.remaining,
+      remainingSec: live.remainingSec,
+      paidElapsed: live.paidElapsed,
+      paidElapsedSec: live.paidElapsedSec,
+      freeLimit,
+      paidStartsAt: live.paidStartsAt,
+      paidRate,
+      pct: live.pct,
+    };
   }
   const remaining = w.remaining || '—';
   const paidStartsAt = w.paidStartsAt || '—';
@@ -635,7 +660,20 @@ export function waitingInfo(ride, nowMs = Date.now()) {
   if (remSec != null && totalSec && totalSec > 0) {
     pct = Math.max(0, Math.min(100, Math.round((remSec / totalSec) * 100)));
   }
-  return { remaining, freeLimit, paidStartsAt, paidRate, pct };
+  // Missing/invalid arrivedAt cannot truthfully establish the free→paid
+  // boundary. Keep the legacy/demo fallback data, but do not invent phase
+  // or paid elapsed time from a tripId, fixture shape or local clock.
+  return {
+    phase: null,
+    remaining,
+    remainingSec: remSec,
+    paidElapsed: '—',
+    paidElapsedSec: null,
+    freeLimit,
+    paidStartsAt,
+    paidRate,
+    pct,
+  };
 }
 
 // BD-RIDE-P-02 covers DRIVER_EN_ROUTE; BD-RIDE-P-03 covers WAITING_PASSENGER;
@@ -685,9 +723,19 @@ function chatLabelFor(ride) {
 // IN_PROGRESS incl. ARRIVING_DROPOFF). Contains driver identity, car,
 // rating, status-specific ETA and the two prominent call/message
 // actions. The bottom sheet keeps the status-specific slot below.
-function topDriverCardEta(ride, phase) {
+// BD-RIDE-WAITING-PAID-01A review-fix — waitingSnapshot lets every caller in
+// the same render/refresh pass share ONE waitingInfo(ride) result instead of
+// each re-deriving it from Date.now() independently, which could otherwise
+// straddle the exact FREE_WAIT/PAID_WAIT deadline between the top card and
+// the waiting sheet within a single pass. Falls back to a fresh call only
+// when no snapshot is supplied (e.g. a caller outside this screen's own
+// render/refresh passes).
+function topDriverCardEta(ride, phase, waitingSnapshot = null) {
   if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
-    const w = waitingInfo(ride);
+    const w = waitingSnapshot || waitingInfo(ride);
+    if (w.phase === PASSENGER_WAIT_PHASE.PAID_WAIT) {
+      return { value: w.paidElapsed, label: 'платно', tone: 'wait' };
+    }
     return { value: w.remaining, label: 'осталось', tone: 'wait' };
   }
   if (ride.status === RIDE_STATUS.IN_PROGRESS) {
@@ -711,7 +759,7 @@ function topDriverCardHtml(ride, options = {}) {
   // recorded value. Render whatever the data layer carries (or empty).
   const driverRating = (ride.driver && ride.driver.rating) || '';
   const { unreadCount, label } = chatLabelFor(ride);
-  const eta = topDriverCardEta(ride, options.phase);
+  const eta = topDriverCardEta(ride, options.phase, options.waitingSnapshot);
   return `
     <div class="active-ride-passenger__top-card" data-tone="${escapeHtml(eta.tone)}">
       <div class="active-ride-passenger__top-card-row">
@@ -835,31 +883,39 @@ function renderEnRouteSheet(sheet, ride) {
   `;
 }
 
-function renderWaitingSheet(sheet, ride) {
-  const w = waitingInfo(ride);
+function renderWaitingSheet(sheet, ride, waitingSnapshot = null) {
+  const w = waitingSnapshot || waitingInfo(ride);
+  const isPaidWait = w.phase === PASSENGER_WAIT_PHASE.PAID_WAIT;
+  const badgeValue = isPaidWait ? w.paidElapsed : w.remaining;
+  const badgeLabel = isPaidWait ? 'платно' : 'осталось';
+  const cardValue = isPaidWait ? w.paidElapsed : `${w.remaining} / ${w.freeLimit}`;
+  const footer = isPaidWait
+    ? `${w.paidRate} · с ${w.paidStartsAt}`
+    : `Дальше — ${w.paidRate} · с ${w.paidStartsAt}`;
+  sheet.dataset.waitPhase = w.phase || '';
   sheet.innerHTML = `
     <div class="active-ride-passenger__handle" aria-hidden="true"></div>
 
     <div class="active-ride-passenger__header">
       <div class="active-ride-passenger__header-main">
         <div class="active-ride-passenger__title">Водитель ждёт вас</div>
-        <div class="active-ride-passenger__sub">Бесплатное ожидание заканчивается через</div>
+        <div class="active-ride-passenger__sub">${isPaidWait ? 'Бесплатное ожидание закончилось' : 'Бесплатное ожидание заканчивается через'}</div>
       </div>
-      <div class="active-ride-passenger__waiting-badge" aria-label="Осталось бесплатного ожидания">
-        <div class="active-ride-passenger__waiting-badge-value">${escapeHtml(w.remaining)}</div>
-        <div class="active-ride-passenger__waiting-badge-label">осталось</div>
+      <div class="active-ride-passenger__waiting-badge" aria-label="${isPaidWait ? 'Платное ожидание' : 'Осталось бесплатного ожидания'}">
+        <div class="active-ride-passenger__waiting-badge-value">${escapeHtml(badgeValue)}</div>
+        <div class="active-ride-passenger__waiting-badge-label">${escapeHtml(badgeLabel)}</div>
       </div>
     </div>
 
     <div class="active-ride-passenger__waiting-card">
       <div class="active-ride-passenger__waiting-card-head">
-        <span class="active-ride-passenger__waiting-card-title">Бесплатное ожидание</span>
-        <span class="active-ride-passenger__waiting-card-value">${escapeHtml(w.remaining)} / ${escapeHtml(w.freeLimit)}</span>
+        <span class="active-ride-passenger__waiting-card-title">${isPaidWait ? 'Платное ожидание' : 'Бесплатное ожидание'}</span>
+        <span class="active-ride-passenger__waiting-card-value">${escapeHtml(cardValue)}</span>
       </div>
-      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${w.pct == null ? '' : ` aria-valuenow="${w.pct}"`}>
-        <div class="active-ride-passenger__progress-bar-fill" data-step="${w.pct == null ? 0 : Math.round(w.pct / 10)}"></div>
+      <div class="active-ride-passenger__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"${isPaidWait ? ' hidden' : ''}${isPaidWait || w.pct == null ? '' : ` aria-valuenow="${w.pct}"`}>
+        <div class="active-ride-passenger__progress-bar-fill" data-step="${isPaidWait || w.pct == null ? 0 : Math.round(w.pct / 10)}"></div>
       </div>
-      <div class="active-ride-passenger__waiting-card-foot">Дальше — ${escapeHtml(w.paidRate)} · с ${escapeHtml(w.paidStartsAt)}</div>
+      <div class="active-ride-passenger__waiting-card-foot">${escapeHtml(footer)}</div>
     </div>
 
     ${routeBlockHtml(ride)}
@@ -1969,10 +2025,10 @@ export default function activeRidePassenger(options = {}) {
     }
   }
 
-  function renderTopCard() {
+  function renderTopCard(waitingSnapshot = null) {
     topCard.hidden = false;
     topCard.dataset.status = ride.status;
-    topCard.innerHTML = topDriverCardHtml(ride, { phase: phaseQuery });
+    topCard.innerHTML = topDriverCardHtml(ride, { phase: phaseQuery, waitingSnapshot });
     bindTopCardHandlers();
   }
 
@@ -2100,13 +2156,13 @@ export default function activeRidePassenger(options = {}) {
     });
   }
 
-  function renderSheet() {
+  function renderSheet(waitingSnapshot = null) {
     sheet.dataset.status = ride.status;
     // Drop any stale phase from a previous render — only branches that
     // need it (e.g. ARRIVING_DROPOFF) will re-set sheet.dataset.phase.
     delete sheet.dataset.phase;
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
-      renderWaitingSheet(sheet, ride);
+      renderWaitingSheet(sheet, ride, waitingSnapshot);
       bindCommonSheetHandlers();
       bindCancelAffordance();
       const boardedBtn = sheet.querySelector('#arp-boarded');
@@ -2534,8 +2590,13 @@ export default function activeRidePassenger(options = {}) {
       return;
     }
 
-    renderTopCard();
-    renderSheet();
+    // BD-RIDE-WAITING-PAID-01A review-fix — one waitingInfo(ride) snapshot
+    // shared by both surfaces in this render pass, so the top card and the
+    // waiting sheet can never observe opposite sides of the exact
+    // FREE_WAIT/PAID_WAIT deadline within the same synchronous render.
+    const waitingSnapshot = ride.status === RIDE_STATUS.WAITING_PASSENGER ? waitingInfo(ride) : null;
+    renderTopCard(waitingSnapshot);
+    renderSheet(waitingSnapshot);
     syncPassengerMutationGate();
   }
 
@@ -2562,7 +2623,13 @@ export default function activeRidePassenger(options = {}) {
     updatePassengerText(topCard, '.active-ride-passenger__driver-rating', '★ ' + driverRating);
     updatePassengerText(topCard, '.active-ride-passenger__driver-sub', carLine(ride));
 
-    const eta = topDriverCardEta(ride, phaseQuery);
+    // BD-RIDE-WAITING-PAID-01A review-fix — one waitingInfo(ride) snapshot
+    // for this entire refresh pass, shared by the top-card ETA below and the
+    // WAITING_PASSENGER block further down, so both surfaces can never
+    // observe opposite sides of the exact FREE_WAIT/PAID_WAIT deadline
+    // within the same tick.
+    const waitingSnapshot = ride.status === RIDE_STATUS.WAITING_PASSENGER ? waitingInfo(ride) : null;
+    const eta = topDriverCardEta(ride, phaseQuery, waitingSnapshot);
     const etaBox = topCard.querySelector('.active-ride-passenger__top-card-eta');
     if (etaBox) etaBox.setAttribute('aria-label', eta.value + ' ' + eta.label);
     const topCardBody = topCard.querySelector('.active-ride-passenger__top-card');
@@ -2603,17 +2670,29 @@ export default function activeRidePassenger(options = {}) {
     updatePassengerText(sheet, '.active-ride-passenger__payment-amount', amount);
 
     if (ride.status === RIDE_STATUS.WAITING_PASSENGER) {
-      const waiting = waitingInfo(ride);
-      updatePassengerText(sheet, '.active-ride-passenger__waiting-badge-value', waiting.remaining);
-      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value', waiting.remaining + ' / ' + waiting.freeLimit);
-      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot', 'Дальше — ' + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
+      const waiting = waitingSnapshot;
+      const isPaidWait = waiting.phase === PASSENGER_WAIT_PHASE.PAID_WAIT;
+      const waitValue = isPaidWait ? waiting.paidElapsed : waiting.remaining;
+      sheet.dataset.waitPhase = waiting.phase || '';
+      updatePassengerText(sheet, '.active-ride-passenger__sub',
+        isPaidWait ? 'Бесплатное ожидание закончилось' : 'Бесплатное ожидание заканчивается через');
+      const badge = sheet.querySelector('.active-ride-passenger__waiting-badge');
+      if (badge) badge.setAttribute('aria-label', isPaidWait ? 'Платное ожидание' : 'Осталось бесплатного ожидания');
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-badge-value', waitValue);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-badge-label', isPaidWait ? 'платно' : 'осталось');
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-title', isPaidWait ? 'Платное ожидание' : 'Бесплатное ожидание');
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-value',
+        isPaidWait ? waiting.paidElapsed : waiting.remaining + ' / ' + waiting.freeLimit);
+      updatePassengerText(sheet, '.active-ride-passenger__waiting-card-foot',
+        (isPaidWait ? '' : 'Дальше — ') + waiting.paidRate + ' · с ' + waiting.paidStartsAt);
       const progress = sheet.querySelector('.active-ride-passenger__progress-bar');
       if (progress) {
-        if (waiting.pct == null) progress.removeAttribute('aria-valuenow');
+        progress.hidden = isPaidWait;
+        if (isPaidWait || waiting.pct == null) progress.removeAttribute('aria-valuenow');
         else progress.setAttribute('aria-valuenow', String(waiting.pct));
       }
       const fill = sheet.querySelector('.active-ride-passenger__progress-bar-fill');
-      if (fill) fill.dataset.step = String(waiting.pct == null ? 0 : Math.round(waiting.pct / 10));
+      if (fill) fill.dataset.step = String(isPaidWait || waiting.pct == null ? 0 : Math.round(waiting.pct / 10));
     } else if (ride.status === RIDE_STATUS.IN_PROGRESS
       && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
       const info = inProgressInfo(ride);

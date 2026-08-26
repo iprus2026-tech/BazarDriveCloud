@@ -574,6 +574,54 @@ expect('isConfirmedHandoffRecord does NOT compare handoff.role against the viewe
 expect('the driver-facing isConfirmedHandoff variable is derived from isConfirmedHandoffRecord(handoff), not re-implemented inline',
   /isConfirmedHandoff\s*=\s*isConfirmedHandoffRecord\(handoff\)/.test(tripConfirmation));
 
+// ── BD-RIDE-WAITING-PAID-01A — passenger free→paid presentation boundary ──
+const passengerDeriveWaitBody = functionBody(passenger, 'deriveWaitCountdown');
+expect('passenger wait derivation exposes FREE_WAIT / PAID_WAIT from one arrivedAt+freeLimit deadline',
+  /PASSENGER_WAIT_PHASE\.FREE_WAIT/.test(passengerDeriveWaitBody)
+  && /PASSENGER_WAIT_PHASE\.PAID_WAIT/.test(passengerDeriveWaitBody)
+  && /nowMs\s*<\s*deadlineMs/.test(passengerDeriveWaitBody));
+expect('passenger paid elapsed derives from nowMs - deadlineMs, not from callback count',
+  /paidElapsedSec[\s\S]{0,180}?nowMs\s*-\s*deadlineMs/.test(passengerDeriveWaitBody));
+expect('passenger derivation contains no monetary accrual calculation',
+  !/parsePaidRatePerMin|ratePerMin|accrued|amount\s*:|cost\s*:/.test(stripComments(passengerDeriveWaitBody)));
+expect('Ride State Machine still has no PAID_WAIT status', !/PAID_WAIT/.test(rideState));
+expect('waitingInfo unknown-arrival fallback keeps phase null instead of inventing paid wait',
+  /phase:\s*null/.test(waitingInfoBody) && /paidElapsedSec:\s*null/.test(waitingInfoBody));
+expect('renderWaitingSheet has truthful passenger paid-wait copy without an accrued-money claim',
+  sheetBody.includes('Бесплатное ожидание закончилось')
+  && sheetBody.includes('Платное ожидание')
+  && !/Начислено|начислено/.test(sheetBody));
+expect('refreshPassengerRideFieldsInPlace switches paid copy in place and hides the free progressbar',
+  /isPaidWait[\s\S]{0,1200}?progress\.hidden\s*=\s*isPaidWait/.test(refreshBody)
+  && refreshBody.includes('Бесплатное ожидание закончилось')
+  && refreshBody.includes('Платное ожидание'));
+expect('paid-boundary refresh remains presentation-only: no status/storage/backend writer calls',
+  !/updateActiveRideStatus\(|patchRideStatus\(|updateTripStatus\(|saveActiveRide\(|localStorage\.setItem/.test(refreshBody));
+
+// ── BD-RIDE-WAITING-PAID-01A review-fix — one waitingInfo() snapshot shared
+// by the top card and the waiting sheet within each render/refresh pass, so
+// the two surfaces can never observe opposite sides of the exact
+// FREE_WAIT/PAID_WAIT deadline. Structural coverage only — proves the single
+// call site and the shared variable, not a DOM-level runtime race. ─────────
+expect('topDriverCardEta accepts an optional precomputed waitingSnapshot instead of always deriving its own',
+  /function\s+topDriverCardEta\(ride,\s*phase,\s*waitingSnapshot\s*=\s*null\)/.test(passenger)
+  && /waitingSnapshot\s*\|\|\s*waitingInfo\(ride\)/.test(functionBody(passenger, 'topDriverCardEta')));
+expect('renderWaitingSheet accepts the same optional precomputed waitingSnapshot',
+  /function\s+renderWaitingSheet\(sheet,\s*ride,\s*waitingSnapshot\s*=\s*null\)/.test(passenger)
+  && /waitingSnapshot\s*\|\|\s*waitingInfo\(ride\)/.test(sheetBody));
+expect('refreshPassengerRideFieldsInPlace calls waitingInfo(ride) exactly once per pass (not independently for top-card and sheet)',
+  (stripComments(refreshBody).match(/waitingInfo\(ride\)/g) || []).length === 1);
+expect('refreshPassengerRideFieldsInPlace threads that one snapshot into topDriverCardEta(...)',
+  /topDriverCardEta\(ride,\s*phaseQuery,\s*waitingSnapshot\)/.test(refreshBody));
+expect('refreshPassengerRideFieldsInPlace reuses the same snapshot for the WAITING_PASSENGER block instead of a second waitingInfo(ride) call',
+  /const\s+waiting\s*=\s*waitingSnapshot;/.test(refreshBody));
+const setReadStateBody = functionBody(passenger, 'setReadState');
+expect('setReadState defined', setReadStateBody.length > 0);
+expect('the initial LOADED render pass computes one waitingInfo(ride) snapshot and passes the SAME object to both renderTopCard(...) and renderSheet(...)',
+  /const\s+waitingSnapshot\s*=\s*ride\.status\s*===\s*RIDE_STATUS\.WAITING_PASSENGER\s*\?\s*waitingInfo\(ride\)\s*:\s*null;/.test(setReadStateBody)
+  && /renderTopCard\(waitingSnapshot\)/.test(setReadStateBody)
+  && /renderSheet\(waitingSnapshot\)/.test(setReadStateBody));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));
