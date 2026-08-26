@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-07-24
+revision: 2026-08-25
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -55,7 +55,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `POST /api/v1/orders` | LIVE / PILOT-BLOCKED | Requires a live authenticated session; `phone_verified` and passenger-role enforcement remain pilot gates | Writes `orders` | guarded order-create seam; local fallback remains active while API base is off | orders route/validation tests |
 | `POST /api/v1/matching/offers` | LIVE / PILOT-BLOCKED | Requires a live authenticated session and blocks self-offers; `phone_verified`, granted driver role and readiness are not enforced yet | Locks `orders`; upserts `offers` transactionally | guarded driver-offer seam | matching transaction/concurrency tests |
 | `GET /api/v1/matching/offers?orderId=…` | LIVE | Authenticated order owner only | Reads `orders`, `offers` | guarded passenger responses seam | matching ownership tests |
-| `POST /api/v1/matching/select` | LIVE / PILOT-BLOCKED | Authenticated order owner only; rejects self-selection | Locks/writes `orders`, `offers`, `assignment`, `rides` in one transaction | guarded select/handoff seam | matching race + ride-bootstrap tests |
+| `POST /api/v1/matching/select` | LIVE / PILOT-BLOCKED | Authenticated order owner only; rejects self-selection; body identity is `{orderId, driverId}` where `driverId` is the server driver UUID returned by the selected offer | Locks/writes `orders`, `offers`, `assignment`, `rides` in one transaction | guarded select/handoff seam; `responseId` / `offer.id` are not select inputs | matching race + ride-bootstrap tests |
 | `GET /api/v1/ride-state/rides/:tripId` | LIVE | Authenticated ride participant only | Reads `rides` | guarded active-ride read seam | ride participant tests + enum parity |
 | `PATCH /api/v1/ride-state/rides/:tripId/status` | LIVE | Authenticated ride participant only | Locks/updates `rides`; appends `ride_events` in one transaction | guarded active-ride write seam | terminal-freeze/idempotency + enum parity tests |
 | `GET /api/v1/realtime/poll?tripId=…&since=…` | LIVE (polling) | Authenticated ride participant only | Reads `rides`, cursor-ordered `ride_events` | guarded self-clearing poll seam; WebSocket/SSE push remains dark | realtime cursor/participant tests + client smoke |
@@ -78,6 +78,46 @@ _Historical concept mock: labels inside this image predate the implemented serve
 - Driver receipts are created only for completed rides and are write-once.
 - PWA calls remain guarded. A live server route is not permission to activate a client cutover before its pilot blocker is closed.
 - The service worker must continue to bypass `/api`; API responses are never an offline cache source.
+
+### Matching selection identity
+
+**Status: Current server contract + contract-only PWA alignment
+(BD-RIDE-SELECTED-RESPONSE-IDENTITY-01A).** This section does not change the live
+route or authorize the runtime follow-up.
+
+- **Request identity:** `POST /api/v1/matching/select` accepts exactly
+  `{ orderId, driverId }`. `orderId` is the client-facing order business id and
+  resolves the locked `orders.legacy_id` row. `driverId` is the driver's server
+  user UUID exposed by `GET /api/v1/matching/offers` as `offer.driverId`.
+- **Identifiers that are not inputs:** the server offer projection's `offer.id`
+  and the PWA's browser-local/synthetic `responseId` are not accepted as
+  substitutes for `driverId`. The server resolves the target live offer by the
+  locked order plus the exact driver UUID.
+- **Selectability:** the offer must belong to that order, still be `sent`, and
+  not be expired. Missing, malformed, foreign, terminal, or expired candidates
+  return a non-success response and produce no selection writes.
+- **Authority and transaction:** only the authenticated order owner may select.
+  One transaction locks the open order, accepts the target offer, rejects
+  every other peer offer still in `status='sent'` (including one that is
+  expired but not yet processed by the separate future TTL sweep), creates
+  the `ACCEPTED` assignment, moves the order `CREATED -> ACCEPTED`, and
+  bootstraps `trip_<orderId>` at `DRIVER_EN_ROUTE`.
+- **Success linkage:** the response returns `{ order, offer, assignment, ride }`.
+  `offer.driverId` and `assignment.selectedDriverId` identify the same selected
+  driver; `ride.tripId` is `trip_<orderId>`. A client-side response/chat id may
+  be retained as local handoff metadata, but it cannot override these server
+  identities.
+- **Conflict semantics:** concurrent selects have exactly one winner. A replay
+  after the order is accepted currently returns `409 ORDER_NOT_OPEN`, including
+  a replay for the same driver; idempotent success acknowledgement remains a
+  future `BD-API-IDEMPOTENCY-01` (#826) concern.
+- **PWA alignment target:** a click-time DOM/card id is intent only. The PWA
+  must re-resolve the exact current offer/card, require its canonical
+  `offer.driverId`, and fail closed without an API call, local selection write,
+  ride write, or navigation when the identity is stale, missing, foreign, or
+  ambiguous. It must never substitute a selected/first/latest driver. The 01A
+  slice documents this target only; runtime enforcement and behavioral negative
+  tests belong to 01B.
 
 ### Ride transition authority - NO_SHOW
 
