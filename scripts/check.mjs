@@ -771,6 +771,22 @@ if (exists(rideSeedPureBuilderSmoke)) {
   }
 }
 
+// BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — /responses select-click identity
+// gate: exact one-candidate driverId+responseId match (no stale/ambiguous
+// fallback), local real-response resolveResponseById+orderId validation,
+// existing-ride reuse only on an exact selectedDriver.responseId pin match,
+// and the canonical Inbox demo-order vs. an ordinary canonical order with
+// zero real responses (MOCK_DRIVERS must never stand in for the latter).
+const rideSelectedResponseIdentitySmoke = path.join(root, 'scripts', 'smoke-ride-selected-response-identity.mjs');
+if (exists(rideSelectedResponseIdentitySmoke)) {
+  try {
+    execFileSync(process.execPath, [rideSelectedResponseIdentitySmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-selected-response-identity.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-AUTHORITY-01D — response_store.js + ride_context.js contract guard:
 // exact-key-only response lookup, ride_context.js purity (zero imports,
 // no storage/backend/UI/screen references), canonical request/driver

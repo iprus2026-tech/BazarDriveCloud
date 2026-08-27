@@ -187,7 +187,15 @@
 // seedRealActiveRideFromHandoff is now a single shared acceptDriverResponse command in
 // ride_actions.js; ride_seed.js changed only its header comment to describe the new caller. No
 // storage schema, backend/API, response-store mutation, or cache-strategy change.
-const VERSION    = 'v318';
+// v319 (BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B) — precached screens/responses.js changed: the
+// select-click identity gate now requires exactly one board candidate matching both DOM driverId
+// and responseId (no more selected/first-driver fallback), local real-response mode additionally
+// requires resolveResponseById + an exact orderId match, an ordinary canonical order with zero
+// real responses returns an empty board instead of MOCK_DRIVERS (the canonical Inbox demo-order
+// still gets MOCK_DRIVERS), and buildPassengerActiveRide's existing-ride reuse now requires an
+// exact selectedDriver.responseId pin match. No storage schema, backend/API, or cache-strategy
+// change.
+const VERSION    = 'v319';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

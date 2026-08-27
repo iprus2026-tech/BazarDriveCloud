@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-08-25
+revision: 2026-08-27
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -81,9 +81,10 @@ _Historical concept mock: labels inside this image predate the implemented serve
 
 ### Matching selection identity
 
-**Status: Current server contract + contract-only PWA alignment
-(BD-RIDE-SELECTED-RESPONSE-IDENTITY-01A).** This section does not change the live
-route or authorize the runtime follow-up.
+**Status: Current server contract; PWA runtime alignment implemented in
+source, not yet merged (BD-RIDE-SELECTED-RESPONSE-IDENTITY-01A defined the
+contract, 01B implements the PWA-side enforcement below).** This section does
+not change the live route.
 
 - **Request identity:** `POST /api/v1/matching/select` accepts exactly
   `{ orderId, driverId }`. `orderId` is the client-facing order business id and
@@ -111,13 +112,17 @@ route or authorize the runtime follow-up.
   after the order is accepted currently returns `409 ORDER_NOT_OPEN`, including
   a replay for the same driver; idempotent success acknowledgement remains a
   future `BD-API-IDEMPOTENCY-01` (#826) concern.
-- **PWA alignment target:** a click-time DOM/card id is intent only. The PWA
-  must re-resolve the exact current offer/card, require its canonical
-  `offer.driverId`, and fail closed without an API call, local selection write,
-  ride write, or navigation when the identity is stale, missing, foreign, or
-  ambiguous. It must never substitute a selected/first/latest driver. The 01A
-  slice documents this target only; runtime enforcement and behavioral negative
-  tests belong to 01B.
+- **PWA alignment (implemented in source, 01B, not yet merged):** a
+  click-time DOM/card id is intent only. `responses.js` re-resolves the exact
+  current offer/card by requiring exactly one board candidate matching both
+  DOM `driverId` and `responseId` simultaneously, then requires its canonical
+  `offer.driverId` before any backend call, failing closed without an API
+  call, local selection write, ride write, or navigation when the identity is
+  stale, missing, foreign, or ambiguous (2+ matching candidates). The
+  canonical Inbox demo-order is excluded from backend authority even when the
+  backend is enabled, so it never reaches the backend call at all. It never
+  substitutes a selected/first/latest driver. Behavioral negative-test coverage lives in
+  `scripts/smoke-ride-selected-response-identity.mjs`.
 
 ### Ride transition authority - NO_SHOW
 
