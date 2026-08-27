@@ -181,7 +181,13 @@
 // WAITING_PASSENGER now derives a presentation-only FREE_WAIT / PAID_WAIT boundary and paid elapsed
 // time from timestamps.arrivedAt + freeLimit + the local clock. No persisted field, backend/API or
 // Ride state-machine change; no payment accrual implementation and no cache-strategy change.
-const VERSION    = 'v317';
+// v318 (BD-RIDE-ACCEPT-RESPONSE-01) — precached ride_actions.js, screens/responses.js and
+// screens/trip_confirmation_handoff.js changed: the duplicated accept-if-CREATED + build + persist
+// tail from responses.js::buildPassengerActiveRide and trip_confirmation_handoff.js::
+// seedRealActiveRideFromHandoff is now a single shared acceptDriverResponse command in
+// ride_actions.js; ride_seed.js changed only its header comment to describe the new caller. No
+// storage schema, backend/API, response-store mutation, or cache-strategy change.
+const VERSION    = 'v318';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

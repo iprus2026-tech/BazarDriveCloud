@@ -8,10 +8,11 @@ import {
   saveActiveRide,
   RIDE_STATUS,
 } from './ride_state.js';
-import { acceptNearbyOrder, LOCAL_USER_ID } from './mock_api.js';
+import { acceptNearbyOrder, acceptOrder, LOCAL_USER_ID } from './mock_api.js';
 import { isDriverLineReady, user } from './state.js';
 import { resolveActiveGarageVehicle } from './garage.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from './ride_waiting_policy.js';
+import { buildPassengerRideSeed } from './ride_seed.js';
 
 function initial(name) {
   return name ? String(name).trim().charAt(0).toUpperCase() : '?';
@@ -390,4 +391,28 @@ export function acceptCanonicalRideOrder(orderId, options = {}) {
   const seeded = seedActiveRideFromAcceptedOrder(accepted, options);
   if (!seeded) return null;
   return { tripId: seeded.tripId, order: accepted, ride: seeded.ride };
+}
+
+// BD-RIDE-ACCEPT-RESPONSE-01 — Shared passenger accept/build/save command.
+// Extracted from responses.js::buildPassengerActiveRide and
+// trip_confirmation_handoff.js::seedRealActiveRideFromHandoff, which each
+// independently duplicated the same tail: accept the order if it is still
+// CREATED, construct the Ride via the pure buildPassengerRideSeed
+// (ride_seed.js), and persist it via saveActiveRide. Both call sites keep
+// owning identity resolution (order/response lookup), the existing-ride
+// idempotency short-circuit, and navigation themselves — this command owns
+// only the local accept-if-CREATED + build + verify + persist tail that
+// follows a caller's own resolution. No response lookup, no backend calls,
+// no navigation, no DOM, and no caller-supplied tripId: the trip id is
+// always the canonical trip_<order.id>, verified against the constructed
+// Ride's own tripId before anything is persisted.
+export function acceptDriverResponse(order, request, driver) {
+  if (!order || !order.id) return null;
+  const orderId = String(order.id);
+  const tripId = `trip_${orderId}`;
+  const accepted = order.status === 'CREATED' ? acceptOrder(orderId) : order;
+  const sourceOrder = accepted || order;
+  const ride = buildPassengerRideSeed(sourceOrder, request, driver);
+  if (!ride || ride.tripId !== tripId) return null;
+  return saveActiveRide(ride);
 }

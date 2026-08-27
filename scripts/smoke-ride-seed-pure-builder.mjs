@@ -10,6 +10,14 @@
 // confirmed-chat-handoff flow) build field-identical canonical Ride data
 // for the same underlying real order + response — the acceptance
 // criterion this whole 01B/01C effort was chartered around.
+//
+// BD-RIDE-ACCEPT-RESPONSE-01 — both real entry points now delegate their
+// accept-if-CREATED + build + persist tail to one shared command,
+// acceptDriverResponse (ride_actions.js), instead of each duplicating it.
+// Section G below pins: both call sites delegate to it; the command
+// itself performs the local accept/build/verify/save; it never mutates
+// the response store; and responses.js's backend-authoritative branch
+// calls the backend select before building the local active-ride bridge.
 
 import fs from 'node:fs';
 
@@ -25,6 +33,7 @@ const root = new URL('../public/src/', import.meta.url);
 const rideSeed  = await import(new URL('ride_seed.js', root).href);
 const rideState = await import(new URL('ride_state.js', root).href);
 const rideWaitingPolicy = await import(new URL('ride_waiting_policy.js', root).href);
+const rideActions = await import(new URL('ride_actions.js', root).href);
 const mockApi   = await import(new URL('mock_api.js', root).href);
 const responses = await import(new URL('screens/responses.js', root).href);
 const handoffMod = await import(new URL('screens/trip_confirmation_handoff.js', root).href);
@@ -32,6 +41,9 @@ const handoffMod = await import(new URL('screens/trip_confirmation_handoff.js', 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const rideSeedSrc = read('../public/src/ride_seed.js');
 const rideWaitingPolicySrc = read('../public/src/ride_waiting_policy.js');
+const rideActionsSrc = read('../public/src/ride_actions.js');
+const responsesSrc = read('../public/src/screens/responses.js');
+const handoffSrc = read('../public/src/screens/trip_confirmation_handoff.js');
 // Strip comments before scanning for forbidden tokens so the module's own
 // doc comment (which names the forbidden operations for a human reader)
 // cannot false-fail this guard. Preserves URL-shaped `://`.
@@ -392,6 +404,139 @@ const brokenRide = handoffMod.loadCanonicalActiveRide({ tripId: brokenTripId, ro
 expect('broken linkage (unresolvable responseId) returns null, not a ride', brokenRide === null);
 expect('broken linkage persists nothing under this tripId',
   rideState.findActiveRide(brokenTripId) === null);
+
+// ── G. BD-RIDE-ACCEPT-RESPONSE-01 — shared acceptDriverResponse command ──
+// Extract a function body by name via brace matching (same pattern used in
+// smoke-chat-handoff.mjs), so an assertion scoped to one function does not
+// accidentally inspect a sibling with a similar name.
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start === -1) return null;
+  const paren = source.indexOf('(', start);
+  if (paren === -1) return null;
+  let pdepth = 0;
+  let afterParams = -1;
+  for (let i = paren; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '(') pdepth++;
+    else if (ch === ')') {
+      pdepth--;
+      if (pdepth === 0) { afterParams = i + 1; break; }
+    }
+  }
+  if (afterParams === -1) return null;
+  const open = source.indexOf('{', afterParams);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
+expect('ride_actions.js exports acceptDriverResponse',
+  typeof rideActions.acceptDriverResponse === 'function');
+const acceptDriverResponseBody = functionBody(rideActionsSrc, 'acceptDriverResponse') || '';
+expect('acceptDriverResponse() body resolved', acceptDriverResponseBody.length > 0);
+expect('acceptDriverResponse computes only the canonical trip_<orderId> (no caller-supplied tripId parameter)',
+  !/function\s+acceptDriverResponse\s*\([^)]*tripId/.test(rideActionsSrc)
+  && /const\s+tripId\s*=\s*`trip_\$\{orderId\}`/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse accepts the order only if still CREATED',
+  /order\.status\s*===\s*'CREATED'\s*\?\s*acceptOrder\(/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse builds via the pure buildPassengerRideSeed(…)',
+  /buildPassengerRideSeed\(/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse verifies the built Ride against the canonical tripId before persisting',
+  /ride\.tripId\s*!==\s*tripId/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse persists via saveActiveRide(…) and returns its result',
+  /return\s+saveActiveRide\(\s*ride\s*\)/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse never looks up a response (no response-store read)',
+  !/resolveResponseById\(|loadAllResponses\(/.test(acceptDriverResponseBody));
+expect('acceptDriverResponse never calls the backend, navigates, or touches the DOM',
+  !/selectOfferOnBackend\(|apiFetch\(|fetch\(|\bgo\(|document\.|window\./.test(acceptDriverResponseBody));
+
+expect('responses.js imports acceptDriverResponse from ../ride_actions.js',
+  /import\s*\{\s*acceptDriverResponse\s*\}\s*from\s*'\.\.\/ride_actions\.js'/.test(responsesSrc));
+const buildPassengerActiveRideBody = functionBody(responsesSrc, 'buildPassengerActiveRide') || '';
+expect('buildPassengerActiveRide() body resolved', buildPassengerActiveRideBody.length > 0);
+expect('responses.js call site 1: buildPassengerActiveRide delegates the accept/build/save tail to acceptDriverResponse(order, request, driver)',
+  /acceptDriverResponse\(\s*order\s*,\s*request\s*,\s*driver\s*\)/.test(buildPassengerActiveRideBody));
+expect('buildPassengerActiveRide keeps its own existing-ride idempotency short-circuit (identity/idempotency stay with the caller)',
+  /findActiveRide\(/.test(buildPassengerActiveRideBody) && /reused:\s*true/.test(buildPassengerActiveRideBody));
+
+expect('trip_confirmation_handoff.js imports acceptDriverResponse from ../ride_actions.js',
+  /import\s*\{\s*acceptDriverResponse\s*\}\s*from\s*'\.\.\/ride_actions\.js'/.test(handoffSrc));
+const seedRealActiveRideFromHandoffBody = functionBody(handoffSrc, 'seedRealActiveRideFromHandoff') || '';
+expect('seedRealActiveRideFromHandoff() body resolved', seedRealActiveRideFromHandoffBody.length > 0);
+expect('responses.js call site 2: seedRealActiveRideFromHandoff delegates the accept/build/save tail to acceptDriverResponse(order, request, driver)',
+  /acceptDriverResponse\(\s*order\s*,\s*request\s*,\s*driver\s*\)/.test(seedRealActiveRideFromHandoffBody));
+expect('seedRealActiveRideFromHandoff keeps its own responseId/order/tripId/driver-snapshot identity resolution (identity stays with the caller)',
+  /resolveResponseById\(/.test(seedRealActiveRideFromHandoffBody)
+  && /getOrderById\(/.test(seedRealActiveRideFromHandoffBody)
+  && /`trip_\$\{orderId\}`\s*!==\s*tripId/.test(seedRealActiveRideFromHandoffBody));
+
+// Backend-select-before-local-bridge ordering: find the unique
+// `await selectOfferOnBackend(` call site and walk back to its enclosing
+// `if (backendAuthoritative) {` block (the file has an unrelated
+// `if (backendAuthoritative)` branch in buildDriversForOrder() earlier in
+// the file, so anchoring off the unique backend-select call site — not a
+// bare first-match on the branch text — is what keeps this pin scoped to
+// the actual select handler).
+{
+  const selectCallMatches = responsesSrc.match(/await\s+selectOfferOnBackend\s*\(/g) || [];
+  expect('responses.js calls await selectOfferOnBackend(…) exactly once',
+    selectCallMatches.length === 1,
+    `count=${selectCallMatches.length}`);
+  const selectIdx = responsesSrc.indexOf('await selectOfferOnBackend(');
+  const branchStart = responsesSrc.lastIndexOf('if (backendAuthoritative) {', selectIdx);
+  expect('backend-select call site sits inside an if (backendAuthoritative) branch', branchStart !== -1);
+  const open = responsesSrc.indexOf('{', branchStart);
+  let depth = 0;
+  let branchEnd = -1;
+  for (let i = open; i < responsesSrc.length; i++) {
+    const ch = responsesSrc[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) { branchEnd = i + 1; break; }
+    }
+  }
+  const branchBody = branchEnd !== -1 ? responsesSrc.slice(open, branchEnd) : '';
+  expect('backendAuthoritative select branch resolved', branchBody.length > 0);
+  const iSelect = branchBody.indexOf('await selectOfferOnBackend(');
+  const iBridge = branchBody.indexOf('buildPassengerActiveRide(');
+  expect('responses.js: backend select (await selectOfferOnBackend) happens before the local active-ride bridge (buildPassengerActiveRide)',
+    iSelect !== -1 && iBridge !== -1 && iSelect < iBridge,
+    `iSelect=${iSelect} iBridge=${iBridge}`);
+}
+
+// Behavioural: acceptDriverResponse itself performs local accept/build/save
+// and never mutates the response store.
+resetStorage();
+const gOrder = await mockApi.createRideOrder({
+  pickup: { label: 'ул. Командная, 1' },
+  dropoff: { label: 'ул. Общая, 2' },
+  estimatedPrice: 1600,
+  passenger: { name: 'Командный Пассажир', authorId: 'user_cmd_1', isCurrentUser: true },
+});
+expect('behavioural fixture order starts CREATED', mockApi.getOrderById(gOrder.id)?.status === 'CREATED');
+const gRequest = responses.requestFromOrder(mockApi.getOrderById(gOrder.id));
+const gDriver = { id: 'drv_cmd_1', responseId: 'resp_cmd_1', name: 'Командный Водитель', rating: '4,90', car: 'Kia Rio · синий', carModel: 'Kia Rio', carColor: 'синий', plate: 'К 001 КК 01', eta: '4 мин', price: '1 650 ₽', note: 'принято' };
+expect('response store starts empty', localStorage.getItem(RESPONSES_KEY) === null);
+const gRide = rideActions.acceptDriverResponse(gOrder, gRequest, gDriver);
+expect('acceptDriverResponse returns a saved Ride', !!gRide && gRide.tripId === `trip_${gOrder.id}`);
+expect('acceptDriverResponse persisted the Ride under the canonical tripId',
+  !!rideState.findActiveRide(`trip_${gOrder.id}`));
+expect('acceptDriverResponse accepted the CREATED order as a side effect',
+  mockApi.getOrderById(gOrder.id)?.status === 'ACCEPTED');
+expect('acceptDriverResponse never mutated the response store (still empty)',
+  localStorage.getItem(RESPONSES_KEY) === null);
+expect('acceptDriverResponse returns null for an order with no id', rideActions.acceptDriverResponse({}, gRequest, gDriver) === null);
+expect('acceptDriverResponse returns null for a missing order', rideActions.acceptDriverResponse(null, gRequest, gDriver) === null);
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
