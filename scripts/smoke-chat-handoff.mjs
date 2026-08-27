@@ -175,18 +175,20 @@ expect('handoff imports RIDE_STATUS, findActiveRide from ../ride_state.js',
   /import\s*\{[\s\S]*?RIDE_STATUS[\s\S]*?findActiveRide[\s\S]*?\}\s*from\s*'\.\.\/ride_state\.js'/.test(handoff));
 // BD-RIDE-AUTHORITY-01B — a real handoff resolves through the real
 // response/order/driver mapping (never re-derived here).
-// BD-RIDE-AUTHORITY-01C — construction moved to the pure
-// buildPassengerRideSeed (ride_seed.js).
 // BD-RIDE-AUTHORITY-01D — response resolution moved to response_store.js
 // and request/driver context shaping to ride_context.js; this module no
 // longer imports anything from ./responses.js — zero screen-to-screen
 // dependency remains.
+// BD-RIDE-ACCEPT-RESPONSE-01 — construction, the accept-if-CREATED
+// decision, and persistence all moved out of this module into the shared
+// acceptDriverResponse command (ride_actions.js), so this module no
+// longer imports buildPassengerRideSeed (ride_seed.js) directly.
 expect('handoff imports resolveResponseById from ../response_store.js',
   /import\s*\{\s*resolveResponseById\s*\}\s*from\s*'\.\.\/response_store\.js'/.test(handoff));
 expect('handoff imports buildRideRequestContext + buildRideDriverContext from ../ride_context.js',
   /import\s*\{\s*buildRideRequestContext\s*,\s*buildRideDriverContext\s*\}\s*from\s*'\.\.\/ride_context\.js'/.test(handoff));
-expect('handoff imports the pure buildPassengerRideSeed from ../ride_seed.js',
-  /import\s*\{\s*buildPassengerRideSeed\s*\}\s*from\s*'\.\.\/ride_seed\.js'/.test(handoff));
+expect('handoff imports the shared acceptDriverResponse command from ../ride_actions.js',
+  /import\s*\{\s*acceptDriverResponse\s*\}\s*from\s*'\.\.\/ride_actions\.js'/.test(handoff));
 expect('handoff never imports anything from ./responses.js (zero screen-to-screen dependency)',
   !/from\s*'\.\/responses\.js'/.test(handoff));
 
@@ -210,26 +212,28 @@ expect('seedActiveRideFromConfirmedHandoff does NOT overwrite existing active ri
   /findActiveRide\(/.test(seedBody || '') && /if\s*\(\s*existing\s*\)\s*return\s+existing/.test(seedBody || ''));
 // BD-RIDE-AUTHORITY-01B — a real handoff resolves via the
 // seedRealActiveRideFromHandoff delegate; no MOCK_* fallback in between.
-// BD-RIDE-AUTHORITY-01C — construction goes through the pure
-// buildPassengerRideSeed; this module persists the result itself
-// (saveActiveRide) instead of relying on buildPassengerActiveRide's
-// internal save. It DOES call acceptOrder (conditionally, if-CREATED,
-// restored by the 01C closure) — the canonical chat-confirm chain
-// (respond.js/chat.js/trip_confirmation.js) never accepts the order
-// itself, so this is the only place left that can before persisting a
-// DRIVER_EN_ROUTE ride.
+// BD-RIDE-ACCEPT-RESPONSE-01 — this module still owns identity resolution
+// (responseId -> response -> orderId/tripId match -> order -> driver
+// snapshot presence) itself, but the accept-if-CREATED decision,
+// construction (buildPassengerRideSeed), tripId verification, and
+// persistence (saveActiveRide) are all delegated to the shared
+// acceptDriverResponse command (ride_actions.js) — the same tail
+// responses.js's buildPassengerActiveRide delegates to — instead of each
+// call site duplicating it.
 expect('seedActiveRideFromConfirmedHandoff delegates real resolution to seedRealActiveRideFromHandoff(…)',
   /seedRealActiveRideFromHandoff\(/.test(seedBody || ''));
 expect('seedActiveRideFromConfirmedHandoff never calls buildActiveRideSeed (no silent MOCK_* fallback)',
   !/buildActiveRideSeed\(/.test(seedBody || ''));
 const seedRealBody = functionBody(handoff, 'seedRealActiveRideFromHandoff');
 expect('handoff seedRealActiveRideFromHandoff() resolved', !!seedRealBody);
-expect('seedRealActiveRideFromHandoff builds via the pure buildPassengerRideSeed(…)',
-  /buildPassengerRideSeed\(/.test(seedRealBody || ''));
-expect('seedRealActiveRideFromHandoff persists via saveActiveRide(…) itself',
-  /saveActiveRide\(/.test(seedRealBody || ''));
-expect('seedRealActiveRideFromHandoff accepts the order if still CREATED, before building the ride',
-  /order\.status\s*===\s*'CREATED'\s*\?\s*acceptOrder\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff delegates the accept/build/save tail to acceptDriverResponse(order, request, driver)',
+  /acceptDriverResponse\(\s*order\s*,\s*request\s*,\s*driver\s*\)/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff never calls buildPassengerRideSeed directly (delegated into ride_actions.js)',
+  !/buildPassengerRideSeed\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff never calls saveActiveRide directly (delegated into ride_actions.js)',
+  !/saveActiveRide\(/.test(seedRealBody || ''));
+expect('seedRealActiveRideFromHandoff never calls acceptOrder directly (the accept-if-CREATED decision moved into ride_actions.js)',
+  !/acceptOrder\(/.test(seedRealBody || ''));
 expect('seedRealActiveRideFromHandoff never calls the side-effecting buildPassengerActiveRide(…)',
   !/buildPassengerActiveRide\(/.test(seedRealBody || ''));
 

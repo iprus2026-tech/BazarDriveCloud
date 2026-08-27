@@ -426,8 +426,11 @@ expect('public/sw.js PRECACHE includes trip_confirmation_handoff.js',
   /trip_confirmation_handoff\.js/.test(sw));
 expect('public/sw.js PRECACHE includes driver_handoff_snapshot.js',
   /driver_handoff_snapshot\.js/.test(sw));
-// BD-RIDE-AUTHORITY-01C — trip_confirmation_handoff.js statically imports
-// the pure ride_seed.js builder; an offline session needs it precached too.
+// BD-RIDE-ACCEPT-RESPONSE-01 — trip_confirmation_handoff.js statically
+// imports ride_actions.js, whose shared command imports the pure ride_seed.js
+// builder; an offline session needs both modules precached.
+expect('public/sw.js PRECACHE includes ride_actions.js',
+  /['"]\.\/src\/ride_actions\.js['"]/.test(sw));
 expect('public/sw.js PRECACHE includes ride_seed.js',
   /['"]\.\/src\/ride_seed\.js['"]/.test(sw));
 // BD-RIDE-AUTHORITY-01D — trip_confirmation_handoff.js now statically

@@ -1,10 +1,10 @@
 import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { acceptOrder, getOrderById, listOrderOffers, selectOfferOnBackend } from '../mock_api.js';
+import { getOrderById, listOrderOffers, selectOfferOnBackend } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
 import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
-import { buildPassengerRideSeed } from '../ride_seed.js';
+import { acceptDriverResponse } from '../ride_actions.js';
 import { loadAllResponses } from '../response_store.js';
 import { buildRideRequestContext, buildRideDriverContext } from '../ride_context.js';
 
@@ -1302,10 +1302,12 @@ function activeRideUrl(tripId) {
 }
 
 // BD-RIDE-AUTHORITY-01C — orchestration wrapper. Owns resolution state
-// (existing-ride short-circuit, the accept-if-CREATED decision) and the
-// persistence side effect; construction itself is delegated to the pure
-// buildPassengerRideSeed (ride_seed.js), which has no knowledge of
-// storage, acceptOrder, or the backend.
+// (existing-ride short-circuit) only; the accept-if-CREATED decision,
+// construction, verification, and persistence are all delegated to the
+// shared acceptDriverResponse command (BD-RIDE-ACCEPT-RESPONSE-01,
+// ride_actions.js), which trip_confirmation_handoff.js's own real-handoff
+// resolution path also delegates to, so both real entry points run through
+// one accept/build/save tail.
 export function buildPassengerActiveRide(order, request, driver) {
   if (!order || !order.id) return null;
   const orderId = String(order.id);
@@ -1323,11 +1325,8 @@ export function buildPassengerActiveRide(order, request, driver) {
     return { tripId, ride: upgraded, reused: true };
   }
 
-  const accepted = order && order.status === 'CREATED' ? acceptOrder(order.id) : order;
-  const sourceOrder = accepted || order;
-  const ride = buildPassengerRideSeed(sourceOrder, request, driver);
+  const ride = acceptDriverResponse(order, request, driver);
   if (!ride) return null;
-  saveActiveRide(ride);
   return { tripId, ride };
 }
 

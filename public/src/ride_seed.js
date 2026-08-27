@@ -6,10 +6,13 @@
 // Extracted from responses.js::buildPassengerActiveRide (BD-RIDE-AUTHORITY-01B),
 // which fused resolve + accept-order + construct + persist into one function.
 // This module owns ONLY the construct step: given an already-resolved order,
-// request and driver, it returns a Ride object. Callers (responses.js's
-// buildPassengerActiveRide, trip_confirmation_handoff.js's
-// seedRealActiveRideFromHandoff) own resolution, any accept-order decision,
-// and persistence themselves.
+// request and driver, it returns a Ride object. BD-RIDE-ACCEPT-RESPONSE-01 —
+// its sole caller is now the shared acceptDriverResponse command
+// (ride_actions.js), which owns the accept-order decision and persistence;
+// responses.js's buildPassengerActiveRide and trip_confirmation_handoff.js's
+// seedRealActiveRideFromHandoff each own their own identity resolution and
+// idempotency, then delegate to acceptDriverResponse rather than calling
+// this builder directly.
 //
 // `order` here is whatever source order the caller decides to construct
 // from (already-accepted or not — this module does not care and does not
