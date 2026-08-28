@@ -1,11 +1,12 @@
 import { go } from '../router.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
-import { getOrderById, listOrderOffers, selectOfferOnBackend } from '../mock_api.js';
+import { getOrderById, listOrderOffers, selectOfferOnBackend, DEMO_RESPONSE_KIND } from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
 import { findActiveRide, saveActiveRide, RIDE_STATUS } from '../ride_state.js';
 import { acceptDriverResponse } from '../ride_actions.js';
 import { loadAllResponses } from '../response_store.js';
+import { resolveResponseById } from '../response_store.js';
 import { buildRideRequestContext, buildRideDriverContext } from '../ride_context.js';
 
 // BD-RESPOND-ORDER-LINK-02 — read-side store. /respond writes a
@@ -288,6 +289,7 @@ export function requestFromOrder(order, explicitOrderId = '') {
         : 'Когда заказ будет опубликован, здесь появятся маршрут, бюджет, время и комментарий.',
       time: '—',
       isFallback: true,
+      isDemoOrder: false,
     };
   }
   // BD-RIDE-AUTHORITY-01D — canonical pickupLabel/dropoffLabel/price/note
@@ -310,6 +312,11 @@ export function requestFromOrder(order, explicitOrderId = '') {
     note: core.note || 'Комментарий не указан',
     time: formatOrderTime(order),
     isFallback: false,
+    // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — carries the canonical Inbox
+    // demo-order marker through to buildDriversForOrder so it can allow the
+    // MOCK_DRIVERS fallback for that one legitimate case without a separate
+    // parameter at every call site.
+    isDemoOrder: isCanonicalDemoOrder(order),
   };
 }
 
@@ -549,11 +556,84 @@ export function mapResponseToDriverCard(response, request, index) {
   };
 }
 
+// BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — pure identity-gate helpers,
+// exported so behavioral smokes can exercise the exact click/board logic
+// without a DOM (this codebase's established smoke convention).
+
+// The canonical Inbox demo-order (ensureDemoResponseOrder, mock_api.js) is
+// the one resolved canonical order legitimately allowed to fall back to
+// MOCK_DRIVERS. Pure: reads only the two marker fields.
+export function isCanonicalDemoOrder(order) {
+  return !!(order && order.demo === true && order.demoKind === DEMO_RESPONSE_KIND);
+}
+
+// The single source of truth for whether /responses treats the current
+// request as backend-authoritative. A fixture preview never is. The
+// canonical Inbox demo-order (request.isDemoOrder, set by requestFromOrder)
+// never is either, regardless of isBackendEnabled — it has no real
+// server-side order/offers behind it, so being "authoritative" would only
+// mean calling listOrderOffers or selectOfferOnBackend against a synthetic
+// id. Any other request with a resolved orderId keeps the exact prior rule.
+export function isRequestBackendAuthoritative(request, fixture) {
+  const backendAuthoritative = !fixture && isBackendEnabled()
+    && !!(request && request.orderId) && !(request && request.isDemoOrder);
+  return backendAuthoritative;
+}
+
+// Resolve the clicked card by requiring EXACTLY one candidate in the given
+// board that matches BOTH driverId and responseId simultaneously. Zero
+// matches (stale/foreign card) or 2+ matches (duplicate/ambiguous, e.g. two
+// live offers from the same driver) both return null — never a first/latest/
+// selected-driver substitute.
+export function resolveClickedDriver(drivers, driverId, responseId) {
+  const list = Array.isArray(drivers) ? drivers : [];
+  const candidates = list.filter((d) => d && d.id === driverId && d.responseId === responseId);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+// Local real-response mode's additional identity check: the exact local
+// response record must independently resolve for the current order — board
+// membership (resolveClickedDriver) is necessary but not sufficient, since a
+// stale localStorage response and its board card could otherwise agree by
+// coincidence.
+export function isValidLocalResponseForOrder(responseId, orderId) {
+  const response = resolveResponseById(responseId);
+  return !!(response && response.orderId === orderId);
+}
+
+// BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B (P1 follow-up) — read-only existing-
+// ride identity PREFLIGHT. Callers must run this BEFORE any side effect
+// (selectOfferOnBackend, acceptOrder, saveActiveRide, buildPassengerActiveRide,
+// navigation) for the selection, not only inside buildPassengerActiveRide's
+// own post-hoc reuse check (which stays as defense-in-depth): a backend-mode
+// select would otherwise reach the real server API call before the identical
+// pin check inside buildPassengerActiveRide ever runs.
+//   • no existing trip_<orderId> ride -> allowed (nothing to conflict with).
+//   • existing ride pinned to this exact responseId -> allowed (idempotent
+//     re-select of the same driver).
+//   • existing ride with a different or missing selectedDriver.responseId ->
+//     fails closed.
+// Pure read: calls only findActiveRide, never writes.
+export function isExistingRideCompatibleWithSelection(orderId, responseId) {
+  const id = String(orderId || '').trim();
+  if (!id) return true;
+  const existingRide = findActiveRide(`trip_${id}`);
+  if (!existingRide) return true;
+  const pinnedResponseId = typeof existingRide.selectedDriver?.responseId === 'string'
+    ? existingRide.selectedDriver.responseId.trim() : '';
+  const selectedResponseId = typeof responseId === 'string' ? responseId.trim() : '';
+  return !!pinnedResponseId && pinnedResponseId === selectedResponseId;
+}
+
 // Driver board source of truth. Real canonical responses win when the resolved
 // order has any; otherwise the MOCK_DRIVERS board is preserved unchanged for
-// every fallback path: no orderId, no real response, legacy postId flow, and
-// the fallback/QA request (request.isFallback).
-function buildDriversForOrder(request, serverOffers, backendAuthoritative) {
+// every fallback path (no orderId, no real order resolved, legacy postId flow,
+// the fallback/QA request) and for the canonical Inbox demo-order — but NOT
+// for an ordinary canonical (non-demo) order that simply has zero real
+// responses yet (BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B): that board must be
+// genuinely empty, never a MOCK_DRIVERS stand-in a passenger could select
+// into a real order with a fake driver.
+export function buildDriversForOrder(request, serverOffers, backendAuthoritative) {
   // #784 CUT-4: when the backend is AUTHORITATIVE (on + a real, non-fallback order), the owner's
   // board IS the SERVER offers — an EMPTY array is authoritative too (an honest empty board, NEVER
   // the local MOCK_DRIVERS, which carry no driverId and would mint a phantom server-less ride on
@@ -568,12 +648,14 @@ function buildDriversForOrder(request, serverOffers, backendAuthoritative) {
           .map((offer, index) => mapServerOfferToDriverCard(offer, request, index))
       : [];
   }
-  const real = (request && request.orderId && !request.isFallback)
-    ? loadResponsesForOrder(request.orderId)
-    : [];
+  const isCanonicalRealOrder = !!(request && request.orderId && !request.isFallback);
+  const real = isCanonicalRealOrder ? loadResponsesForOrder(request.orderId) : [];
   if (real.length) {
     return real.map((response, index) => mapResponseToDriverCard(response, request, index));
   }
+  // A resolved, non-fallback canonical order that is not the Inbox demo-order
+  // and has zero real responses is a genuine "no drivers yet" board.
+  if (isCanonicalRealOrder && request.isDemoOrder !== true) return [];
   return buildDrivers(request);
 }
 
@@ -1308,19 +1390,28 @@ function activeRideUrl(tripId) {
 // ride_actions.js), which trip_confirmation_handoff.js's own real-handoff
 // resolution path also delegates to, so both real entry points run through
 // one accept/build/save tail.
+//
+// BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — an existing ride is only ever
+// reused when it is already pinned (ride.selectedDriver.responseId) to the
+// EXACT responseId being selected right now. A different pin (the
+// passenger already selected a different driver) or a missing pin (a ride
+// seeded by a non-/responses path, e.g. DriverMap accept) both fail closed:
+// no upgrade call, no write, no navigation via this reuse path — the
+// caller (runSelectDriverOrchestration below) owns the null-handling.
 export function buildPassengerActiveRide(order, request, driver) {
   if (!order || !order.id) return null;
   const orderId = String(order.id);
   const tripId = `trip_${orderId}`;
   const existingRide = findActiveRide(tripId);
   if (existingRide) {
-    // BD-LIFE-05 — when a stale ride exists, apply the matching real
-    // driverSnapshot before reusing it so a previously-seeded "Рустам К."
-    // demo handoff cannot mask the actual driver. The orchestrator picks
-    // the pinned response when ride.selectedDriver.responseId is set
-    // (e.g. passenger already chose driver A) and only falls back to the
-    // latest response for truly unlinked handoffs. Terminal rides are
-    // preserved as-is by upgradeRideFromDriverSnapshot itself.
+    const pinnedResponseId = typeof existingRide.selectedDriver?.responseId === 'string'
+      ? existingRide.selectedDriver.responseId.trim() : '';
+    const selectedResponseId = typeof driver?.responseId === 'string' ? driver.responseId.trim() : '';
+    if (!pinnedResponseId || pinnedResponseId !== selectedResponseId) return null;
+    // BD-LIFE-05 — apply the matching real driverSnapshot before reusing the
+    // ride so a previously-seeded "Рустам К." demo handoff cannot mask the
+    // actual driver. Only refreshes cosmetic fields for the already-pinned
+    // driver above — it never changes which driver is pinned.
     const upgraded = upgradeStoredActiveRideForOrder(orderId) || existingRide;
     return { tripId, ride: upgraded, reused: true };
   }
@@ -1328,6 +1419,119 @@ export function buildPassengerActiveRide(order, request, driver) {
   const ride = acceptDriverResponse(order, request, driver);
   if (!ride) return null;
   return { tripId, ride };
+}
+
+// Aliases so runSelectDriverOrchestration's own dependency-injection
+// parameters can be named identically to the real functions they default to
+// (readable at call sites, and keeps the literal call text
+// `buildPassengerActiveRide(canonicalOrder` / `selectOfferOnBackend(`
+// present in source for static scanners) without a self-referential
+// temporal-dead-zone default (`{ x = x }` throws).
+const defaultSelectOfferOnBackend = selectOfferOnBackend;
+const defaultBuildPassengerActiveRide = buildPassengerActiveRide;
+
+// BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — the exact select/continue
+// orchestration used by the real click handler below, extracted into one
+// exported function so behavioral smokes can drive the SAME code path with
+// spy-able side effects instead of a parallel test-only reimplementation.
+// Every side-effecting dependency defaults to the real implementation; the
+// click handler calls this with only `showToast` overridden (the screen's
+// own `toast` is a closure-local render function, not importable at module
+// scope). Returns `{ ok: true, tripId }` on success (navigation already
+// performed) or `{ ok: false, reason }` on any fail-closed path (zero
+// further side effects performed).
+//
+// TOCTOU note: local state (another tab, a concurrent write) can change
+// while `await selectOfferOnBackend` is in flight, so the existing-ride
+// identity is re-checked immediately after it settles, before the local
+// bridge or any navigation — not just once, before the API call. A
+// conflicting/missing pin discovered post-API fails closed even though the
+// server-side select already succeeded: zero local order/ride writes, zero
+// navigation. When `canonicalOrder` is truthy, a null handoff from
+// buildPassengerActiveRide also fails closed here — it never falls through
+// to the deterministic trip_<orderId> navigation, which is reserved for the
+// genuine cross-device case (canonicalOrder itself absent).
+export async function runSelectDriverOrchestration(
+  { drivers, driverId, responseId, request, canonicalOrder, backendAuthoritative, isDemoOrder },
+  {
+    resolveClickedDriverFn = resolveClickedDriver,
+    isValidLocalResponseForOrderFn = isValidLocalResponseForOrder,
+    isExistingRideCompatibleWithSelectionFn = isExistingRideCompatibleWithSelection,
+    selectOfferOnBackend = defaultSelectOfferOnBackend,
+    buildPassengerActiveRide = defaultBuildPassengerActiveRide,
+    navigate = (tripId) => go(activeRideUrl(tripId)),
+    showToast = () => {},
+  } = {},
+) {
+  const driver = resolveClickedDriverFn(drivers, driverId, responseId);
+  if (!driver) {
+    showToast('Некорректное предложение, обновите список');
+    return { ok: false, reason: 'unresolved-driver' };
+  }
+
+  if (!backendAuthoritative && canonicalOrder && !isDemoOrder
+      && !isValidLocalResponseForOrderFn(responseId, request.orderId)) {
+    showToast('Некорректное предложение, обновите список');
+    return { ok: false, reason: 'invalid-local-response' };
+  }
+
+  if (request.orderId && !isExistingRideCompatibleWithSelectionFn(request.orderId, driver.responseId)) {
+    showToast('Некорректное предложение, обновите список');
+    return { ok: false, reason: 'existing-ride-conflict-pre-api' };
+  }
+
+  if (backendAuthoritative) {
+    // A malformed offer (missing driverId, e.g. a serializer regression) must never fall
+    // through to a local ride — keep it non-selectable.
+    if (!driver.driverId) {
+      showToast('Некорректное предложение, обновите список');
+      return { ok: false, reason: 'missing-driver-id' };
+    }
+    try {
+      await selectOfferOnBackend({ orderId: request.orderId, driverId: driver.driverId });
+    } catch (err) {
+      showToast(err && err.status === 409
+        ? 'Этот заказ уже принят другим водителем'
+        : 'Не удалось выбрать водителя. Попробуйте ещё раз.');
+      return { ok: false, reason: 'backend-select-failed' };
+    }
+    // Re-check post-API: local state may have changed during the await.
+    if (request.orderId && !isExistingRideCompatibleWithSelectionFn(request.orderId, driver.responseId)) {
+      showToast('Некорректное предложение, обновите список');
+      return { ok: false, reason: 'existing-ride-conflict-post-api' };
+    }
+    // Server accepted. Same-device creator: build the LOCAL active-ride bridge, which pins
+    // selectedDriver.responseId (SAFETY>RECOVERY — driver never left unpinned). A null handoff
+    // here fails closed — it never falls through to the cross-device fallback below, which is
+    // reserved for canonicalOrder itself being absent, not for a local build failure.
+    if (canonicalOrder) {
+      const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
+      if (!handoff) {
+        showToast('Некорректное предложение, обновите список');
+        return { ok: false, reason: 'local-bridge-failed' };
+      }
+      navigate(handoff.tripId);
+      return { ok: true, tripId: handoff.tripId };
+    }
+    // Cross-device / server-fed (no local order to bridge): go straight to the real server ride;
+    // tripId = trip_<orderId> from the /select tx, and active-ride's own read cuts over in CUT-5.
+    // Reached only after the post-API compatibility check above already passed.
+    navigate(`trip_${request.orderId}`);
+    return { ok: true, tripId: `trip_${request.orderId}` };
+  }
+
+  // OFF / not-authoritative: prior local behaviour, byte-identical.
+  if (!canonicalOrder) {
+    showToast('Сначала откройте опубликованный заказ');
+    return { ok: false, reason: 'no-canonical-order' };
+  }
+  const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
+  if (!handoff) {
+    showToast('Сначала откройте опубликованный заказ');
+    return { ok: false, reason: 'local-bridge-failed' };
+  }
+  navigate(handoff.tripId);
+  return { ok: true, tripId: handoff.tripId };
 }
 
 function responseUrl(request, state, driverId = '') {
@@ -1357,7 +1561,13 @@ export default function responses() {
   // is AUTHORITATIVE for the board (empty => honest empty state, NEVER the local/mock drivers). A
   // fetch error now settles the persistent board region to an explicit retryable
   // `error` state. OFF remains byte-identical to the prior local/mock path.
-  const backendAuthoritative = !fixture && isBackendEnabled() && !!request.orderId;
+  // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B (review-fix) — the canonical Inbox
+  // demo-order must never become backend-authoritative even when the backend
+  // is globally enabled: it has no real server-side order/offers behind it,
+  // so treating it as authoritative would reach the backend against a
+  // synthetic id. A real local/cross-device order (isDemoOrder: false) keeps
+  // the exact prior behavior unchanged.
+  const backendAuthoritative = isRequestBackendAuthoritative(request, fixture);
 
   // BD-DRIVER-MAP-X-15 — handoff detection. The URL `state` is only a UI hint;
   // once the linked order is actually accepted (a driver took it on DriverMap,
@@ -1415,6 +1625,11 @@ export default function responses() {
   refreshHandoffState({ upgradeSnapshot: true });
   let effectiveState = isAccepted ? 'accepted' : requestedState;
 
+  // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — the canonical Inbox demo-order
+  // is the one resolved canonical order legitimately allowed to fall back to
+  // MOCK_DRIVERS; every other resolved canonical order must not.
+  const isDemoOrder = isCanonicalDemoOrder(canonicalOrder);
+
   // Local/mock data still resolves synchronously. A live backend starts with no
   // fabricated drivers and hydrates after mount; fixtures use the synthetic card
   // seed only and never touch localStorage/backend data.
@@ -1458,8 +1673,22 @@ export default function responses() {
     }
   }
 
-  if (readState === 'loaded') {
-    if (fixture === 'loaded') effectiveState = loadedDomainState();
+  // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B (P2 follow-up) — the P1 fix made
+  // buildDriversForOrder return a genuinely empty board for a resolved,
+  // non-demo canonical order with zero real local responses. Reconcile the
+  // initial LOCAL (non-fixture, non-backend) readState/effectiveState from
+  // drivers.length here too, exactly as the async offers loader already
+  // does for the backend-authoritative path — otherwise the header still
+  // claims responses exist while the board renders empty, and a stray
+  // ?state=selected deep-link fires the missing-selection announcement
+  // over a board that was never going to have that driver.
+  if (readState === 'loaded' && !isAccepted && !fixture && !backendAuthoritative) {
+    readState = drivers.length ? 'loaded' : 'empty';
+    effectiveState = readState === 'loaded' ? loadedDomainState() : 'empty';
+  } else if (readState === 'loaded' && fixture === 'loaded') {
+    effectiveState = loadedDomainState();
+  }
+  if (readState === 'loaded' || readState === 'empty') {
     reconcileDriverState();
   }
 
@@ -1859,53 +2088,21 @@ export default function responses() {
 
       if (action === 'select' || action === 'continue') {
         if (selecting) return; // #784 CUT-4: ignore a second click while a select is in flight
-        const driver = drivers.find((d) => d.id === driverId) || selectedDriver || drivers[0];
-
-        // #784 CUT-4 (offer→select): on a live backend the server is AUTHORITATIVE — the owner accepts
-        // the chosen offer server-side (POST /matching/select bootstraps the ride in one tx) and we
-        // NEVER mint a local-only ride the server didn't accept.
-        if (backendAuthoritative) {
-          // A malformed offer (missing driverId, e.g. a serializer regression) must never fall
-          // through to a local ride — keep it non-selectable.
-          if (!driver || !driver.driverId) {
-            toast('Некорректное предложение, обновите список');
-            return;
-          }
-          selecting = true;
-          try {
-            await selectOfferOnBackend({ orderId: request.orderId, driverId: driver.driverId });
-          } catch (err) {
-            selecting = false;
-            toast(err && err.status === 409
-              ? 'Этот заказ уже принят другим водителем'
-              : 'Не удалось выбрать водителя. Попробуйте ещё раз.');
-            return;
-          }
-          // Server accepted. Same-device creator: build the LOCAL active-ride bridge, which pins
-          // selectedDriver.responseId (SAFETY>RECOVERY — driver never left unpinned). Cross-device /
-          // server-fed (no local order to bridge): go straight to the real server ride; tripId =
-          // trip_<orderId> from the /select tx, and active-ride's own read cuts over in CUT-5.
-          if (canonicalOrder) {
-            const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
-            if (handoff) { go(activeRideUrl(handoff.tripId)); return; }
-          }
-          go(activeRideUrl(`trip_${request.orderId}`));
-          return;
-        }
-
-        // OFF / not-authoritative: prior local behaviour, byte-identical.
-        if (!canonicalOrder) {
-          toast('Сначала откройте опубликованный заказ');
-          return;
-        }
+        // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — the full identity-gate +
+        // accept/build/navigate orchestration lives in the single exported
+        // runSelectDriverOrchestration (defined above buildPassengerActiveRide),
+        // so this handler and behavioral smokes exercise the exact same code.
+        // Only `showToast` is overridden here — `toast` is this closure's own
+        // render function, not importable at module scope. `selecting` is the
+        // UI-only double-submit latch and stays owned by this handler: reset
+        // on any fail-closed outcome; left true on success (the screen is
+        // about to navigate away / unmount).
         selecting = true;
-        const handoff = buildPassengerActiveRide(canonicalOrder, request, driver);
-        if (!handoff) {
-          selecting = false;
-          toast('Сначала откройте опубликованный заказ');
-          return;
-        }
-        go(activeRideUrl(handoff.tripId));
+        const outcome = await runSelectDriverOrchestration(
+          { drivers, driverId, responseId, request, canonicalOrder, backendAuthoritative, isDemoOrder },
+          { showToast: toast },
+        );
+        if (!outcome.ok) selecting = false;
         return;
       }
       if (action === 'cancel') {
