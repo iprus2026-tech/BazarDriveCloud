@@ -73,7 +73,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 ## Authority and invariants
 
 - PostgreSQL and the server domain layer own order, offer, assignment and ride status after a feature is activated.
-- Matching selection is one transaction: lock the open order, accept one offer, reject competing offers, create the assignment, accept the order and bootstrap the ride.
+- Matching selection is one transaction: lock the open order, accept one offer, reject competing offers, create the assignment, accept the order and attempt to bootstrap the ride. A pre-existing `trip_id` is reread; the persisted-linkage gate below must land before that ACK path is activated in the PWA.
 - Terminal ride states `CANCELED`, `NO_SHOW` and `COMPLETED` cannot transition to a different state; saving the same terminal state is idempotent.
 - `ride_events` is append-only. Polling advances by cursor and must not mutate history.
 - Driver receipts are created only for completed rides and are write-once.
@@ -103,12 +103,16 @@ change the live route.
   every other peer offer still in `status='sent'` (including one that is
   expired but not yet processed by the separate future TTL sweep), creates
   the `ACCEPTED` assignment, moves the order `CREATED -> ACCEPTED`, and
-  bootstraps `trip_<orderId>` at `DRIVER_EN_ROUTE`.
+  attempts to bootstrap `trip_<orderId>` at `DRIVER_EN_ROUTE`. On a
+  pre-existing `trip_id`, the current service rereads that row; the ACK section
+  below freezes the additional linkage validation required before PWA cutover.
 - **Success linkage:** the response returns `{ order, offer, assignment, ride }`.
   `offer.driverId` and `assignment.selectedDriverId` identify the same selected
   driver; `ride.tripId` is `trip_<orderId>`. A client-side response/chat id may
   be retained as local handoff metadata, but it cannot override these server
-  identities.
+  identities. These public relations do not expose or prove the Ride row's
+  hidden order/driver/passenger foreign-key equality; that remains a pilot gate
+  defined below.
 - **Conflict semantics:** concurrent selects have exactly one winner. A replay
   after the order is accepted currently returns `409 ORDER_NOT_OPEN`, including
   a replay for the same driver; idempotent success acknowledgement remains a
@@ -152,16 +156,37 @@ live select acknowledgement instead of reconstructing a second local Ride.
   `assignment.status === 'ACCEPTED'`,
   `ride.tripId === 'trip_' + orderId`, and
   `ride.status === 'DRIVER_EN_ROUTE'`.
-- **Exposed vs. server-owned linkage:** the focused `serializeRide()` projection
-  exposes `tripId`, status and participant/display snapshots, but no `orderId`
-  or server driver UUID. The PWA must not invent or require those Ride fields.
-  Hidden Ride-to-order/driver integrity remains owned by the atomic server
-  transaction and database foreign keys.
+- **Public vs. persisted linkage:** the focused `serializeRide()` projection
+  exposes `tripId`, status and participant/display snapshots, but no `orderId`,
+  `driverUserId`, or `passengerUserId`. The PWA must not invent or require those
+  public Ride fields, but the public ACK matrix is necessary rather than
+  sufficient. Before returning the ACK, the server must verify that the
+  persisted Ride has `order_id === order.id`, `driver_user_id ===
+  accepted.driver_id === assignment.selected_driver_id`, `passenger_user_id ===
+  order.passenger_id === the authenticated owner`, and the canonical `trip_id`.
+  The transaction and independent foreign keys prove atomicity and referenced
+  row existence, not those equalities for an existing `trip_id`; the current
+  conflict reread has no such validation. ACK consumption therefore remains
+  blocked until this server-side linkage gate is separately implemented.
 - **ACK authority:** after a coherent ACK, it owns both the selected identity
-  and the initial handoff. The PWA must navigate from `ack.ride.tripId`; it must
-  not run `acceptOrder`, `acceptDriverResponse`, `buildPassengerRideSeed`, or a
-  replacement `saveActiveRide` as success authority. Active Ride hydrates via
-  the existing participant-gated Ride read.
+  and the initial handoff once the linkage gate above is live. The PWA must
+  navigate from `ack.ride.tripId`; it must not run `acceptOrder`,
+  `acceptDriverResponse`, `buildPassengerRideSeed`, or a replacement
+  `saveActiveRide` as success authority. The acknowledged Ride or the existing
+  participant-gated Ride read is the hydration source.
+- **Hydration before render:** the acknowledged or reconciled server Ride must
+  reach Active Ride before the screen chooses a visible branch. A reconciled
+  `COMPLETED`, `CANCELED`, or `NO_SHOW` Ride must be fetched or carried into the
+  terminal renderer before its early return; `tripId` plus status navigation is
+  not sufficient hydration.
+- **Truthful projection:** backend-authoritative rendering must never preserve a
+  demo or stale local Ride participant, route, fare, vehicle, payment, or chat
+  value when that field is absent from the ACK/read and every other explicitly
+  named authoritative source. The follow-up must consume authoritative data or
+  omit/render the missing section neutrally. The focused serializer currently
+  exposes `driver.car` but no `vehicle`, `payment`, or `chat`; those gaps require
+  explicit mapping, another separately authorized authoritative read/projection,
+  or neutral UI — never merge-on-demo fallback.
 - **Local metadata boundary:** browser-local/synthetic `responseId` may remain
   transient UI linkage only. It cannot replace `offer.driverId`,
   `assignment.selectedDriverId`, `ride.tripId`, Ride status, or a server-owned
@@ -177,7 +202,8 @@ live select acknowledgement instead of reconstructing a second local Ride.
   `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
   accepted offer plus the exact Ride in a valid post-selection lifecycle state.
   The offers read proves canonical driver identity; the Ride read alone cannot,
-  because its public serializer exposes no driver UUID.
+  because its public serializer exposes no driver UUID. Recovery is eligible
+  only after the same server-side persisted-linkage validation is live.
 - **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
   open. It does not prove that another driver won and also occurs on a
   same-driver replay. Use the same read-side reconciliation before describing
@@ -191,10 +217,15 @@ live select acknowledgement instead of reconstructing a second local Ride.
   contract does not make those stores server authority or remove the fallback.
 - **Runtime status:** `public/src/screens/responses.js` currently discards the
   successful envelope, reconstructs a same-device local Ride, and lets a
-  post-API local pin mismatch block navigation. That is the explicitly recorded
-  gap for the separately authorized
+  post-API local pin mismatch block navigation. In addition,
+  `active_ride_passenger.js` chooses terminal renderers before starting the
+  participant read, and its merge path preserves demo vehicle/payment/chat
+  sections that the focused Ride serializer omits. These are explicitly
+  recorded gates for the separately authorized
   `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
-  it is not implemented or activated by this documentation change.
+  01B must also wait for separately authorized server-side persisted-linkage
+  validation. None of these runtime/backend changes is implemented or activated
+  by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 
