@@ -426,6 +426,96 @@ implemented.
 | Runtime follow-up (01B) — shipped (PR #928) | `responses.js`'s click handler resolves the clicked card via `resolveClickedDriver(drivers, driverId, responseId)`, which requires exactly one candidate in the current board matching both DOM `driverId` and `responseId` simultaneously; zero matches (stale/foreign card) or 2+ matches (duplicate/ambiguous) both fail closed — no `selectedDriver`, `drivers[0]`, latest-response, or demo-driver substitution. Local real-response mode additionally requires `isValidLocalResponseForOrder(responseId, orderId)`. An existing-ride pin-compatibility check (`isExistingRideCompatibleWithSelection`) runs both BEFORE the backend select-offer call and again AFTER it settles, closing a TOCTOU window where local state could change during the await. A pre-API pin mismatch fails closed with zero backend API calls, local order/ride writes, and navigation. A post-API pin mismatch fails closed after the fact — the server selection may already have succeeded — and prevents all subsequent local order/ride writes and navigation. `isRequestBackendAuthoritative` excludes the canonical Inbox demo order from backend authority even when the backend is globally enabled, so the demo order never calls `listOrderOffers`/`selectOfferOnBackend`; a real local/cross-device order keeps the prior rule. An ordinary (non-demo) canonical order with zero real local responses reconciles the initial read/domain state to the actual empty state — for both `state=list` and `state=selected` — instead of rendering a stale non-empty board under a mismatched header. Implemented in `public/src/screens/responses.js`, with the routine `public/sw.js` VERSION bump and behavioral/structural regression coverage in `scripts/smoke-ride-selected-response-identity.mjs` (129 assertions). |
 | Out of scope | Backend route/schema changes, a new response-status model, the separate Order Detail Model-B selection flow, repair of local two-write atomicity, extraction of a shared `acceptOrderAndSeedRide` command, UI redesign, Mapbox, notifications, payment, history, and CSP. (Runtime JavaScript and the routine service-worker VERSION bump are in scope — see the `Runtime follow-up (01B)` row.) |
 
+### BD-RIDE-SELECT-ACK-AUTHORITY-01A - Authoritative select ACK handoff
+
+**Status: Contract frozen; runtime follow-up not shipped.** Issue #931 defines
+the next backend-authoritative handoff boundary without changing the live route,
+PWA runtime, backend-off prototype, schema, or Ride State Machine. The shipped
+post-API local-pin veto recorded in the preceding identity section remains the
+current runtime until a separately authorized 01B implements this newer contract.
+
+#### Coherent success ACK
+
+`POST /api/v1/matching/select` still accepts exactly `{ orderId, driverId }` and
+returns `{ order, offer, assignment, ride }`. A 2xx response is a coherent
+selection acknowledgement only when all four members are non-array objects and
+every check below succeeds with the exact shipped serializer field names and
+case-sensitive status literals:
+
+| ACK field | Required relation |
+|---|---|
+| `order.id` | `=== requested orderId` |
+| `order.status` | `=== 'ACCEPTED'` |
+| `offer.id` | non-empty server offer/audit id |
+| `offer.orderId` | `=== requested orderId` |
+| `offer.driverId` | `=== requested driverId` |
+| `offer.status` | `=== 'accepted'` |
+| `assignment.orderId` | `=== requested orderId` |
+| `assignment.selectedDriverId` | `=== requested driverId` |
+| `assignment.status` | `=== 'ACCEPTED'` |
+| `ride.tripId` | `=== 'trip_' + requested orderId` |
+| `ride.status` | `=== 'DRIVER_EN_ROUTE'` |
+
+`serializeRide()` intentionally does not expose `orderId` or a server driver
+UUID. The client must not invent or require those Ride fields. Their relational
+integrity is owned by the server transaction and database foreign keys; the
+client validates only the relations present in the public ACK.
+
+#### Authority and handoff
+
+| Boundary | Contract |
+|---|---|
+| Successful backend selection | A coherent ACK is the sole authority for the selection result and initial active-ride handoff. Navigation derives from `ack.ride.tripId` (and its acknowledged status), never from an independently reconstructed Ride or a card/query id. |
+| Local order/Ride writes | The backend-authoritative select seam performs no `acceptOrder`, `acceptDriverResponse`, `buildPassengerRideSeed`, or replacement `saveActiveRide` success write. The participant-gated `GET /api/v1/ride-state/rides/:tripId` hydrates the Active Ride. |
+| `responseId` | Browser-local/synthetic UI linkage only. It may remain in transient same-device UI context, but it cannot authorize selection, be sent as `driverId`, or override any server offer, assignment, Ride, participant, trip, or status identity. This slice does not persist a new backend-mode `responseId` Ride projection. |
+| Existing local Ride | A pre-existing local `trip_<orderId>` record is never post-ACK authority. A compatible record is replaceable cache only; an incompatible or missing pin must be ignored, evicted, or quarantined so it cannot veto navigation or render as the acknowledged selection. Such cleanup is not a local success reconstruction. |
+| Backend-off prototype | Unchanged: exact local response -> `acceptDriverResponse` -> local order accept -> pure Ride seed -> local Ride persistence. Local pin compatibility remains a fail-closed rule on this path. |
+
+#### Failure and uncertain-outcome matrix
+
+| Outcome | Required behavior |
+|---|---|
+| Pre-request identity rejection | Missing/stale/foreign/ambiguous card identity, invalid local response linkage, missing canonical server `driverId`, or an already-known pre-request conflict causes zero backend mutation calls, local success writes, and navigation. No selected/first/latest/demo fallback is allowed. |
+| Coherent 2xx ACK | Treat as committed success, prevent a stale local mirror from overruling it, and navigate from `ack.ride.tripId`. |
+| Malformed or internally inconsistent 2xx | Do not call the local accept/build/save chain and do not claim success. Mark the mutation outcome uncertain and run the read-side reconciliation below. |
+| Transport ambiguity | `NETWORK`, abort/timeout after possible dispatch, or another loss before the ACK is observed must not trigger blind local success or an automatic repeated select mutation. Run read-side reconciliation. `BACKEND_DISABLED` before dispatch remains a pre-request failure, not an ambiguous commit. |
+| `409 ORDER_NOT_OPEN` | This code proves only that the order is no longer open. It can represent a concurrent winner, a same-driver replay, or another non-open state; it is not proof that “another driver” won. Run read-side reconciliation before describing the winner. Mutation replay/idempotent-success semantics remain owned by #826. |
+| Other confirmed 4xx precondition/auth failures | No success claim, local reconstruction, or navigation. The current server contract produces no selection writes for these route-defined failures. |
+| Post-ACK local pin conflict | Cannot reverse or invalidate a coherent server ACK. Quarantine/ignore the local record and continue the authoritative handoff. |
+
+#### Read-side reconciliation
+
+Recovery uses both existing owner/participant reads; neither read alone proves
+the complete outcome:
+
+1. `GET /api/v1/matching/offers?orderId=<orderId>` must return exactly one
+   `status === 'accepted'` offer and expose its canonical `driverId`.
+2. `GET /api/v1/ride-state/rides/trip_<orderId>` must return that exact `tripId`
+   in a valid post-selection lifecycle state: `DRIVER_EN_ROUTE`,
+   `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`,
+   `CANCELED`, or `NO_SHOW`.
+
+If the accepted offer identifies the requested driver and the Ride read agrees,
+the client may recover the committed success and open the read Ride. If another
+driver is the accepted offer, the current request is a confirmed conflict: the
+client must not claim that the clicked driver was selected, but may open the
+already-authoritative Ride using the read `tripId` and status. If no accepted
+offer exists and the Ride is `404`, no commit is confirmed. Any multiple-winner,
+missing-read, authorization, malformed-envelope, or offer/Ride disagreement
+remains uncertain: stay off the success path and do not repeat the mutation
+automatically. The assignment/order result is inferred only from the server's
+atomic select invariant because no separate assignment read is exposed.
+
+#### Follow-up boundary
+
+The separately authorized runtime slice is named
+`BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`.
+Expected scope is the select API adapter/orchestration, focused behavioral smoke
+coverage, check registration, and the routine service-worker VERSION bump for
+changed precached runtime files. This 01A does not authorize that implementation,
+backend/serializer changes, mutation replay, a new status/schema/endpoint,
+Order Detail Model-B selection, UI redesign, or activation/deployment work.
+
 ### BD-CHAT-01 - Chat
 
 | Field | Contract |

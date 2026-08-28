@@ -21,6 +21,7 @@ related:
   issues:
     - 820
     - 821
+    - 931
   prs: []
 tags: [process, mini-yonder, backend, database, docs-site]
 slug: /processes/mini-yonder-backend-spine
@@ -132,6 +133,68 @@ change the live route.
   stale non-empty board. It never substitutes a selected/first/latest driver.
   Behavioral negative-test coverage lives in
   `scripts/smoke-ride-selected-response-identity.mjs`.
+
+### Matching select ACK handoff authority
+
+**Status: Contract-only target (BD-RIDE-SELECT-ACK-AUTHORITY-01A, #931);
+current PWA runtime gap; no route, server, schema, activation, or deployment
+change.** The preceding identity gate remains shipped. This newer contract
+defines how a later, separately authorized PWA slice must consume the already
+live select acknowledgement instead of reconstructing a second local Ride.
+
+- **Exact success envelope:** `POST /api/v1/matching/select` returns
+  `{ order, offer, assignment, ride }`. A coherent 2xx ACK requires non-array
+  objects and all of these exact relations:
+  `order.id === orderId`, `order.status === 'ACCEPTED'`, a non-empty `offer.id`,
+  `offer.orderId === orderId`, `offer.driverId === driverId`,
+  `offer.status === 'accepted'`, `assignment.orderId === orderId`,
+  `assignment.selectedDriverId === driverId`,
+  `assignment.status === 'ACCEPTED'`,
+  `ride.tripId === 'trip_' + orderId`, and
+  `ride.status === 'DRIVER_EN_ROUTE'`.
+- **Exposed vs. server-owned linkage:** the focused `serializeRide()` projection
+  exposes `tripId`, status and participant/display snapshots, but no `orderId`
+  or server driver UUID. The PWA must not invent or require those Ride fields.
+  Hidden Ride-to-order/driver integrity remains owned by the atomic server
+  transaction and database foreign keys.
+- **ACK authority:** after a coherent ACK, it owns both the selected identity
+  and the initial handoff. The PWA must navigate from `ack.ride.tripId`; it must
+  not run `acceptOrder`, `acceptDriverResponse`, `buildPassengerRideSeed`, or a
+  replacement `saveActiveRide` as success authority. Active Ride hydrates via
+  the existing participant-gated Ride read.
+- **Local metadata boundary:** browser-local/synthetic `responseId` may remain
+  transient UI linkage only. It cannot replace `offer.driverId`,
+  `assignment.selectedDriverId`, `ride.tripId`, Ride status, or a server-owned
+  participant identity. No new backend-mode local Ride projection is required
+  at the select seam.
+- **Local conflict after commit:** a stale or incompatible local
+  `trip_<orderId>` mirror cannot veto a coherent ACK. A later runtime slice must
+  ignore, evict, or quarantine it before the authoritative handoff; cleanup is
+  not a second local success write.
+- **Malformed 2xx / transport ambiguity:** never reconstruct local success and
+  never blindly repeat the select mutation. Reconcile with both owner
+  `GET /api/v1/matching/offers?orderId=...` and participant
+  `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
+  accepted offer plus the exact Ride in a valid post-selection lifecycle state.
+  The offers read proves canonical driver identity; the Ride read alone cannot,
+  because its public serializer exposes no driver UUID.
+- **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
+  open. It does not prove that another driver won and also occurs on a
+  same-driver replay. Use the same read-side reconciliation before describing
+  the winner. If the requested driver is the accepted offer and the Ride agrees,
+  recover the committed success; if another driver is accepted, do not claim
+  the requested selection succeeded, but the read Ride is the authoritative
+  existing handoff. Inconclusive or disagreeing reads stay uncertain with no
+  automatic mutation replay. Broad idempotent-success semantics remain #826.
+- **Backend-off preservation:** the local prototype keeps its exact-response ->
+  local order accept -> pure Ride seed -> local Ride persistence chain. This
+  contract does not make those stores server authority or remove the fallback.
+- **Runtime status:** `public/src/screens/responses.js` currently discards the
+  successful envelope, reconstructs a same-device local Ride, and lets a
+  post-API local pin mismatch block navigation. That is the explicitly recorded
+  gap for the separately authorized
+  `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
+  it is not implemented or activated by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 
