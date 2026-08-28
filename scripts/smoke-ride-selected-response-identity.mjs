@@ -242,6 +242,95 @@ expect('the orchestration calls isExistingRideCompatibleWithSelectionFn at least
     returnCount >= 2, `returnCount=${returnCount}`);
 }
 
+// ── B2b. Behavioral: initial LOCAL readState/effectiveState reconciliation
+//        (P2 review follow-up). The P1 fix made buildDriversForOrder return a
+//        genuinely empty board for a resolved, non-demo real order with zero
+//        local responses — but the FIRST synchronous render used to leave
+//        readState='loaded' and effectiveState=requestedState untouched, so
+//        state=list rendered an empty board under a header that still said
+//        "Есть отклики," and state=selected fired the unrelated
+//        missing-selection announcement. Extracted and EXECUTED as real code
+//        (new Function), not asserted only via regex, so a regression that
+//        drops or reorders this reconciliation is actually caught, not just
+//        pattern-matched. ──
+function sliceRange(source, startMarker, endMarker) {
+  const from = source.indexOf(startMarker);
+  if (from === -1) return '';
+  const to = source.indexOf(endMarker, from);
+  return to > from ? source.slice(from, to) : '';
+}
+const initialReconcileSrc = sliceRange(
+  responsesSrc,
+  "if (readState === 'loaded' && !isAccepted && !fixture && !backendAuthoritative) {",
+  'function headerStatus()',
+);
+expect('initial LOCAL readState/effectiveState reconciliation block resolved', initialReconcileSrc.length > 0);
+
+function makeInitialStateHarness() {
+  const loadedDomainStateBody = functionBody(responsesSrc, 'loadedDomainState') || '';
+  const reconcileDriverStateBody = functionBody(responsesSrc, 'reconcileDriverState') || '';
+  return new Function('isAccepted', 'fixture', 'backendAuthoritative', 'requestedState', 'drivers', 'isAllDeclined', 'getRouteParam', `
+    let readState = isAccepted ? 'loaded' : (fixture || (backendAuthoritative ? 'loading' : 'loaded'));
+    let effectiveState = isAccepted ? 'accepted' : requestedState;
+    let selectedDriver = null;
+    let selectedDriverId = null;
+    const declined = new Set();
+    let declinedSeeded = false;
+    function loadedDomainState() ${loadedDomainStateBody}
+    function reconcileDriverState() ${reconcileDriverStateBody}
+    ${initialReconcileSrc}
+    return { readState, effectiveState, selectedDriver, selectedDriverId };
+  `);
+}
+
+{
+  const runInitialState = makeInitialStateHarness();
+  const noRouteParam = () => null;
+
+  // state=list, zero drivers — the exact route Codex flagged:
+  // /responses?orderId=…&state=list
+  const listEmpty = runInitialState(false, '', false, 'list', [], false, noRouteParam);
+  expect('P2 fix: state=list with zero local drivers reconciles readState to empty',
+    listEmpty.readState === 'empty', `readState=${listEmpty.readState}`);
+  expect('P2 fix: state=list with zero local drivers reconciles effectiveState to empty (header/board agree)',
+    listEmpty.effectiveState === 'empty', `effectiveState=${listEmpty.effectiveState}`);
+
+  // state=selected, zero drivers — must NOT stay 'loaded', which would fire
+  // the missing-selection announcement over a board that can never resolve it
+  const selectedEmpty = runInitialState(false, '', false, 'selected', [], false, noRouteParam);
+  expect('P2 fix: state=selected with zero local drivers reconciles readState to empty',
+    selectedEmpty.readState === 'empty', `readState=${selectedEmpty.readState}`);
+  expect('P2 fix: state=selected with zero local drivers reconciles effectiveState to empty',
+    selectedEmpty.effectiveState === 'empty', `effectiveState=${selectedEmpty.effectiveState}`);
+  expect('P2 fix: readState=empty means the missing-selection announcement guard (readState === "loaded") cannot fire',
+    selectedEmpty.readState !== 'loaded');
+
+  // Regression safety: the SAME two states with a real driver present are
+  // completely unaffected — readState stays loaded, effectiveState mirrors
+  // the requested state exactly as before this fix.
+  const oneDriver = [{ id: 'resp_a', responseId: 'resp_a' }];
+  const listNonEmpty = runInitialState(false, '', false, 'list', oneDriver, false, noRouteParam);
+  expect('regression safety: state=list with a real driver still resolves readState=loaded',
+    listNonEmpty.readState === 'loaded', `readState=${listNonEmpty.readState}`);
+  expect('regression safety: state=list with a real driver keeps effectiveState=list unchanged',
+    listNonEmpty.effectiveState === 'list', `effectiveState=${listNonEmpty.effectiveState}`);
+
+  const selectedNonEmpty = runInitialState(false, '', false, 'selected', oneDriver, false, noRouteParam);
+  expect('regression safety: state=selected with a real driver still resolves readState=loaded',
+    selectedNonEmpty.readState === 'loaded', `readState=${selectedNonEmpty.readState}`);
+  expect('regression safety: state=selected with a real driver keeps effectiveState=selected unchanged',
+    selectedNonEmpty.effectiveState === 'selected', `effectiveState=${selectedNonEmpty.effectiveState}`);
+
+  // Regression safety: the fixture and backend-authoritative-loading paths
+  // are untouched by this reconciliation.
+  const fixtureLoaded = runInitialState(false, 'loaded', false, 'list', [], false, noRouteParam);
+  expect('regression safety: fixture="loaded" path is untouched by the local-mode reconciliation',
+    fixtureLoaded.readState === 'loaded', `readState=${fixtureLoaded.readState}`);
+  const backendLoading = runInitialState(false, '', true, 'list', [], false, noRouteParam);
+  expect('regression safety: backend-authoritative path still starts at loading (async loader owns its own reconciliation)',
+    backendLoading.readState === 'loading', `readState=${backendLoading.readState}`);
+}
+
 // ── B3. Behavioral: canonical Inbox demo-order is never backend-authoritative,
 //        even when the backend is globally enabled (P1 fix) ────────────────
 function withBackend(base, fn) {

@@ -82,9 +82,9 @@ _Historical concept mock: labels inside this image predate the implemented serve
 ### Matching selection identity
 
 **Status: Current server contract; PWA runtime alignment implemented in
-source, not yet merged (BD-RIDE-SELECTED-RESPONSE-IDENTITY-01A defined the
-contract, 01B implements the PWA-side enforcement below).** This section does
-not change the live route.
+source (BD-RIDE-SELECTED-RESPONSE-IDENTITY-01A defined the contract, 01B
+implements the PWA-side enforcement below — see PR #928 for merge status).**
+This section does not change the live route.
 
 - **Request identity:** `POST /api/v1/matching/select` accepts exactly
   `{ orderId, driverId }`. `orderId` is the client-facing order business id and
@@ -112,8 +112,9 @@ not change the live route.
   after the order is accepted currently returns `409 ORDER_NOT_OPEN`, including
   a replay for the same driver; idempotent success acknowledgement remains a
   future `BD-API-IDEMPOTENCY-01` (#826) concern.
-- **PWA alignment (implemented in source, 01B, not yet merged):** a
-  click-time DOM/card id is intent only. `responses.js` re-resolves the exact
+- **PWA alignment (implemented in source, 01B — see PR #928 for merge
+  status):** a click-time DOM/card id is intent only. `responses.js`
+  re-resolves the exact
   current offer/card by requiring exactly one board candidate matching both
   DOM `driverId` and `responseId` simultaneously, then requires its canonical
   `offer.driverId` before any backend call, failing closed without an API

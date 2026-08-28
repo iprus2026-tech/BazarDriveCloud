@@ -1673,8 +1673,22 @@ export default function responses() {
     }
   }
 
-  if (readState === 'loaded') {
-    if (fixture === 'loaded') effectiveState = loadedDomainState();
+  // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B (P2 follow-up) — the P1 fix made
+  // buildDriversForOrder return a genuinely empty board for a resolved,
+  // non-demo canonical order with zero real local responses. Reconcile the
+  // initial LOCAL (non-fixture, non-backend) readState/effectiveState from
+  // drivers.length here too, exactly as the async offers loader already
+  // does for the backend-authoritative path — otherwise the header still
+  // claims responses exist while the board renders empty, and a stray
+  // ?state=selected deep-link fires the missing-selection announcement
+  // over a board that was never going to have that driver.
+  if (readState === 'loaded' && !isAccepted && !fixture && !backendAuthoritative) {
+    readState = drivers.length ? 'loaded' : 'empty';
+    effectiveState = readState === 'loaded' ? loadedDomainState() : 'empty';
+  } else if (readState === 'loaded' && fixture === 'loaded') {
+    effectiveState = loadedDomainState();
+  }
+  if (readState === 'loaded' || readState === 'empty') {
     reconcileDriverState();
   }
 
