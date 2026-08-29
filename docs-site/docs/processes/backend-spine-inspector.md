@@ -155,7 +155,11 @@ live select acknowledgement instead of reconstructing a second local Ride.
   `assignment.selectedDriverId === driverId`,
   `assignment.status === 'ACCEPTED'`,
   `ride.tripId === 'trip_' + orderId`, and
-  `ride.status === 'DRIVER_EN_ROUTE'`.
+  `ride.status === 'DRIVER_EN_ROUTE'`. The two `driverId` relations
+  (`offer.driverId`, `assignment.selectedDriverId`) canonicalize both sides to
+  lowercase before `===`: PostgreSQL's UUID type and this route's validation
+  are case-insensitive, but the serializers always emit normalized lowercase.
+  Every other relation above stays a raw case-sensitive `===`.
 - **Public vs. persisted linkage:** the focused `serializeRide()` projection
   exposes `tripId`, status and participant/display snapshots, but no `orderId`,
   `driverUserId`, or `passengerUserId`. The PWA must not invent or require those
@@ -163,17 +167,25 @@ live select acknowledgement instead of reconstructing a second local Ride.
   sufficient. Before returning the ACK, the server must verify that the
   persisted Ride has `order_id === order.id`, `driver_user_id ===
   accepted.driver_id === assignment.selected_driver_id`, `passenger_user_id ===
-  order.passenger_id === the authenticated owner`, and the canonical `trip_id`.
-  The transaction and independent foreign keys prove atomicity and referenced
-  row existence, not those equalities for an existing `trip_id`; the current
-  conflict reread has no such validation. ACK consumption therefore remains
-  blocked until this server-side linkage gate is separately implemented.
+  order.passenger_id === the authenticated owner`, the canonical `trip_id`, and
+  `status === 'DRIVER_EN_ROUTE'`. The transaction and independent foreign keys
+  prove atomicity and referenced row existence, not those equalities or that
+  status for an existing `trip_id`; the current conflict reread has no such
+  validation. ACK consumption therefore remains blocked until this server-side
+  linkage gate is separately implemented.
 - **Rollback on linkage failure:** the persisted-linkage check must execute
-  inside the select transaction before `COMMIT`. A missing or mismatched conflict
-  Ride must throw or otherwise force `ROLLBACK`, not return via the ordinary
-  `{ err: ... }` result path that commits. DB-gated transaction coverage must
-  prove zero durable target-offer acceptance, peer rejection, assignment,
-  order-status, or Ride writes after that failure.
+  inside the select transaction before `COMMIT`. A conflict Ride that is
+  missing, has any linkage mismatch, or is in any status other than
+  `DRIVER_EN_ROUTE` must throw or otherwise force `ROLLBACK`, not return via
+  the ordinary `{ err: ... }` result path that commits. DB-gated transaction
+  coverage must prove zero durable target-offer acceptance, peer rejection,
+  assignment, order-status, or Ride writes after that failure. This
+  in-transaction gate governs only the current selection attempt's conflict
+  reread; it must never recognize a terminal (`COMPLETED`, `CANCELED`,
+  `NO_SHOW`) or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a coherent
+  ACK. Terminal recovery is authorized exclusively through the read-side
+  reconciliation below, gated on that path's own independent proof that the
+  order was already accepted before this request.
 - **ACK authority:** after a coherent ACK, it owns both the selected identity
   and the initial handoff once the linkage gate above is live. The PWA must
   navigate from `ack.ride.tripId`; it must not run `acceptOrder`,

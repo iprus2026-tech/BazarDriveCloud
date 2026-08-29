@@ -439,8 +439,12 @@ current runtime until a separately authorized 01B implements this newer contract
 `POST /api/v1/matching/select` still accepts exactly `{ orderId, driverId }` and
 returns `{ order, offer, assignment, ride }`. A 2xx response is a coherent
 selection acknowledgement only when all four members are non-array objects and
-every check below succeeds with the exact shipped serializer field names and
-case-sensitive status literals:
+every check below succeeds with the exact shipped serializer field names,
+case-sensitive status literals, and canonical-lowercase `driverId` comparison
+(PostgreSQL's UUID type and this route's validation are case-insensitive, but
+the serializers always emit normalized lowercase, so `offer.driverId` and
+`assignment.selectedDriverId` compare against the requested `driverId` only
+after both sides are lowercased):
 
 | ACK field | Required relation |
 |---|---|
@@ -448,10 +452,10 @@ case-sensitive status literals:
 | `order.status` | `=== 'ACCEPTED'` |
 | `offer.id` | non-empty server offer/audit id |
 | `offer.orderId` | `=== requested orderId` |
-| `offer.driverId` | `=== requested driverId` |
+| `offer.driverId` | `=== requested driverId`, both lowercased before comparison |
 | `offer.status` | `=== 'accepted'` |
 | `assignment.orderId` | `=== requested orderId` |
-| `assignment.selectedDriverId` | `=== requested driverId` |
+| `assignment.selectedDriverId` | `=== requested driverId`, both lowercased before comparison |
 | `assignment.status` | `=== 'ACCEPTED'` |
 | `ride.tripId` | `=== 'trip_' + requested orderId` |
 | `ride.status` | `=== 'DRIVER_EN_ROUTE'` |
@@ -462,19 +466,28 @@ fields, but the public matrix above is necessary rather than sufficient. Before
 the select service returns the Ride, it must verify that the persisted row has
 `order_id === order.id`, `driver_user_id === accepted.driver_id ===
 assignment.selected_driver_id`, `passenger_user_id === order.passenger_id ===
-the authenticated owner`, and the canonical `trip_id === 'trip_' +
-order.legacy_id`. The transaction and independent foreign keys prove atomicity
-and referenced-row existence; they do not prove those equalities for a
-pre-existing `trip_id`. The current `ON CONFLICT (trip_id) DO NOTHING` reread
-path does not perform this validation, so backend-authoritative ACK consumption
-remains blocked until the server-side linkage check is separately implemented
-and covered. That check runs inside the same select transaction before
-`COMMIT`. A missing or mismatched conflict Ride is a transactional invariant
-failure: it must throw or otherwise force `ROLLBACK`, never return through the
-ordinary `{ err: ... }` result path that commits. The rollback covers the
-accepted target offer, rejected peer offers, assignment insert, order status
-change, and any Ride insert; DB-gated transaction coverage must prove that a
-linkage failure leaves every one of those writes uncommitted.
+the authenticated owner`, the canonical `trip_id === 'trip_' +
+order.legacy_id`, and `status === 'DRIVER_EN_ROUTE'`. The transaction and
+independent foreign keys prove atomicity and referenced-row existence; they do
+not prove those equalities — nor that status — for a pre-existing `trip_id`.
+The current `ON CONFLICT (trip_id) DO NOTHING` reread path does not perform
+this validation, so backend-authoritative ACK consumption remains blocked
+until the server-side linkage check is separately implemented and covered.
+That check runs inside the same select transaction before `COMMIT`. A conflict
+Ride that is missing, has any linkage mismatch, or is in any status other than
+`DRIVER_EN_ROUTE` is a transactional invariant failure: it must throw or
+otherwise force `ROLLBACK`, never return through the ordinary `{ err: ... }`
+result path that commits. The rollback covers the accepted target offer,
+rejected peer offers, assignment insert, order status change, and any Ride
+insert; DB-gated transaction coverage must prove that a linkage or status
+failure leaves every one of those writes uncommitted. This in-transaction gate
+governs only the conflict Ride reread inside the current selection attempt; it
+must never recognize or return a terminal (`COMPLETED`, `CANCELED`, `NO_SHOW`)
+or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a coherent ACK. Terminal
+recovery is authorized exclusively through the read-side reconciliation below,
+and only after that path's own independent proof that the order was already
+accepted before this request — never as a substitute result from this
+transaction.
 
 #### Authority and handoff
 
