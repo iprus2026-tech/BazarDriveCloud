@@ -506,7 +506,7 @@ product of the very ambiguous request being reconciled.
 
 | Boundary | Contract |
 |---|---|
-| Successful backend selection | Once the server-side linkage gate above is live, a coherent ACK is the sole authority for the selection result and initial active-ride handoff. Navigation derives from `ack.ride.tripId` (and its acknowledged status), never from an independently reconstructed Ride or a card/query id. |
+| Successful backend selection | Once the conflict-Ride linkage, status, and snapshot invariant defined above is enforced, a coherent ACK is the sole authority for the selection result and initial active-ride handoff. Navigation derives from `ack.ride.tripId` (and its acknowledged status), never from an independently reconstructed Ride or a card/query id. |
 | Local order/Ride writes | The backend-authoritative select seam performs no `acceptOrder`, `acceptDriverResponse`, `buildPassengerRideSeed`, or replacement `saveActiveRide` success write. The acknowledged Ride or participant-gated `GET /api/v1/ride-state/rides/:tripId` result is the hydration source. |
 | Reopening `/responses` | A later visit for the same backend order must reconcile authoritative accepted or terminal state before rendering an empty/selectable board. The exact `ack.order` may replace, or the client may evict, the transitional cached `CREATED` order solely as replaceable UI cache; it must not synthesize an `acceptOrder` transition or a local Ride. The accepted offer plus a linkage-validated Ride read determine the handoff. Pending, failed, malformed, or inconclusive reconciliation renders loading/error/uncertain state, never an empty board or demo fallback that hides a committed trip. |
 | Hydration before render | The acknowledged or reconciled server Ride must reach the Active Ride renderer before it chooses the visible branch. In particular, a reconciled `COMPLETED`, `CANCELED`, or `NO_SHOW` Ride must be fetched/carried into the terminal renderer before its early return; navigating with only `tripId` and status is not hydration. |
@@ -586,11 +586,20 @@ smoke must cover a stale local `CREATED` cache with no local Ride and prove that
 an accepted server result reaches the authoritative handoff instead of an empty
 or demo board.
 
-01B must not activate ACK consumption until a separately authorized server
-prerequisite (1) validates the persisted Ride's order/driver/passenger linkage
-on insert, `trip_id` conflict reread, and every recovery path including legacy
-accepted orders, and (2) forces the entire select transaction to roll back on a
-missing or mismatched Ride. DB-gated coverage must pin both requirements.
+01B must not activate ACK consumption until two separately authorized server
+prerequisites land. First, the direct conflict-Ride invariant defined above —
+persisted order/driver/passenger/trip linkage, exact `status ===
+'DRIVER_EN_ROUTE'`, and equality of every selection-owned persisted snapshot
+field against the canonical `buildRideSeed(order, acceptedOffer)` seed — must
+be enforced on the `trip_id` conflict reread inside the select transaction,
+with the entire transaction (accepted offer, rejected peers, assignment, order
+status, Ride insert) rolled back on any missing, mismatched, non-
+`DRIVER_EN_ROUTE`, or snapshot-mismatched conflict Ride. Second, the separate
+recovery linkage invariant — independent proof of order/driver/passenger/trip
+linkage plus an allowed lifecycle status, without snapshot equality to the
+current seed — must be enforced on every read-side recovery path, including
+legacy accepted orders. DB-gated coverage must pin both requirements
+independently.
 Choosing a fuller public projection may additionally require a separately
 authorized serializer change; neutral rendering does not. This 01A authorizes
 none of those runtime/backend changes, mutation replay, a new

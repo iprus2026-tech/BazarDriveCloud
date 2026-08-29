@@ -73,7 +73,7 @@ _Historical concept mock: labels inside this image predate the implemented serve
 ## Authority and invariants
 
 - PostgreSQL and the server domain layer own order, offer, assignment and ride status after a feature is activated.
-- Matching selection is one transaction: lock the open order, accept one offer, reject competing offers, create the assignment, accept the order and attempt to bootstrap the ride. A pre-existing `trip_id` is reread; the persisted-linkage gate below must land before that ACK path is activated in the PWA.
+- Matching selection is one transaction: lock the open order, accept one offer, reject competing offers, create the assignment, accept the order and attempt to bootstrap the ride. A pre-existing `trip_id` is reread; the conflict-Ride linkage, status, and snapshot invariant below must land before that ACK path is activated in the PWA.
 - Terminal ride states `CANCELED`, `NO_SHOW` and `COMPLETED` cannot transition to a different state; saving the same terminal state is idempotent.
 - `ride_events` is append-only. Polling advances by cursor and must not mutate history.
 - Driver receipts are created only for completed rides and are write-once.
@@ -105,7 +105,8 @@ change the live route.
   the `ACCEPTED` assignment, moves the order `CREATED -> ACCEPTED`, and
   attempts to bootstrap `trip_<orderId>` at `DRIVER_EN_ROUTE`. On a
   pre-existing `trip_id`, the current service rereads that row; the ACK section
-  below freezes the additional linkage validation required before PWA cutover.
+  below freezes the additional linkage, status, and snapshot validation
+  required before PWA cutover.
 - **Success linkage:** the response returns `{ order, offer, assignment, ride }`.
   `offer.driverId` and `assignment.selectedDriverId` identify the same selected
   driver; `ride.tripId` is `trip_<orderId>`. A client-side response/chat id may
@@ -182,8 +183,9 @@ live select acknowledgement instead of reconstructing a second local Ride.
   `trip_id`; the current conflict reread has no such validation. ACK
   consumption therefore remains blocked until this server-side linkage and
   snapshot gate is separately implemented.
-- **Rollback on linkage failure:** the persisted-linkage check must execute
-  inside the select transaction before `COMMIT`. A conflict Ride that is
+- **Rollback on conflict-Ride invariant failure:** the linkage, status, and
+  snapshot check together must execute inside the select transaction before
+  `COMMIT`. A conflict Ride that is
   missing, has any listed linkage or snapshot field mismatch, or is in any
   status other than `DRIVER_EN_ROUTE` must throw or otherwise force
   `ROLLBACK`, not return via the ordinary `{ err: ... }` result path that
@@ -202,7 +204,8 @@ live select acknowledgement instead of reconstructing a second local Ride.
   Ride may equally be the product of the very ambiguous request being
   reconciled.
 - **ACK authority:** after a coherent ACK, it owns both the selected identity
-  and the initial handoff once the linkage gate above is live. The PWA must
+  and the initial handoff once the conflict-Ride linkage, status, and snapshot
+  invariant above is enforced. The PWA must
   navigate from `ack.ride.tripId`; it must not run `acceptOrder`,
   `acceptDriverResponse`, `buildPassengerRideSeed`, or a replacement
   `saveActiveRide` as success authority. The acknowledged Ride or the existing
@@ -282,10 +285,15 @@ live select acknowledgement instead of reconstructing a second local Ride.
   sections that the focused Ride serializer omits. These are explicitly
   recorded gates for the separately authorized
   `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
-  01B must also wait for separately authorized server-side persisted-linkage
-  validation on direct ACK and recovery (including legacy accepted rows), plus
-  full transaction rollback on a linkage failure. Focused coverage must pin the
-  `/responses` revisit and both server gates. None of these runtime/backend
+  01B must also wait for two separately authorized server-side gates: the
+  direct conflict-Ride invariant (persisted order/driver/passenger/trip
+  linkage, exact `DRIVER_EN_ROUTE` status, and selection-owned snapshot
+  equality against the canonical seed, with full transaction rollback on any
+  failure of any of those three) on the `trip_id` conflict reread, and the
+  separate recovery linkage invariant (independent linkage proof plus an
+  allowed lifecycle status, no snapshot equality) on every recovery path,
+  including legacy accepted rows. Focused coverage must pin the `/responses`
+  revisit and both server gates independently. None of these runtime/backend
   changes is implemented or activated by this documentation change.
 
 ### Ride transition authority - NO_SHOW
