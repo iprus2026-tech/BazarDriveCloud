@@ -468,7 +468,13 @@ and referenced-row existence; they do not prove those equalities for a
 pre-existing `trip_id`. The current `ON CONFLICT (trip_id) DO NOTHING` reread
 path does not perform this validation, so backend-authoritative ACK consumption
 remains blocked until the server-side linkage check is separately implemented
-and covered.
+and covered. That check runs inside the same select transaction before
+`COMMIT`. A missing or mismatched conflict Ride is a transactional invariant
+failure: it must throw or otherwise force `ROLLBACK`, never return through the
+ordinary `{ err: ... }` result path that commits. The rollback covers the
+accepted target offer, rejected peer offers, assignment insert, order status
+change, and any Ride insert; DB-gated transaction coverage must prove that a
+linkage failure leaves every one of those writes uncommitted.
 
 #### Authority and handoff
 
@@ -476,6 +482,7 @@ and covered.
 |---|---|
 | Successful backend selection | Once the server-side linkage gate above is live, a coherent ACK is the sole authority for the selection result and initial active-ride handoff. Navigation derives from `ack.ride.tripId` (and its acknowledged status), never from an independently reconstructed Ride or a card/query id. |
 | Local order/Ride writes | The backend-authoritative select seam performs no `acceptOrder`, `acceptDriverResponse`, `buildPassengerRideSeed`, or replacement `saveActiveRide` success write. The acknowledged Ride or participant-gated `GET /api/v1/ride-state/rides/:tripId` result is the hydration source. |
+| Reopening `/responses` | A later visit for the same backend order must reconcile authoritative accepted or terminal state before rendering an empty/selectable board. The exact `ack.order` may replace, or the client may evict, the transitional cached `CREATED` order solely as replaceable UI cache; it must not synthesize an `acceptOrder` transition or a local Ride. The accepted offer plus a linkage-validated Ride read determine the handoff. Pending, failed, malformed, or inconclusive reconciliation renders loading/error/uncertain state, never an empty board or demo fallback that hides a committed trip. |
 | Hydration before render | The acknowledged or reconciled server Ride must reach the Active Ride renderer before it chooses the visible branch. In particular, a reconciled `COMPLETED`, `CANCELED`, or `NO_SHOW` Ride must be fetched/carried into the terminal renderer before its early return; navigating with only `tripId` and status is not hydration. |
 | Truthful display projection | In backend-authoritative mode, a field absent from the ACK/read or another explicitly named authoritative source must never fall through to a demo or stale local Ride participant, route, fare, vehicle, payment, or chat value. The runtime follow-up must either consume authoritative data for every rendered field or omit/render unavailable fields neutrally. The focused current Ride serializer's `driver.car` and absence of `vehicle`, `payment`, and `chat` require explicit mapping, another separately authorized authoritative read/projection, or neutral presentation — never a merge onto demo seeds. |
 | `responseId` | Browser-local/synthetic UI linkage only. It may remain in transient same-device UI context, but it cannot authorize selection, be sent as `driverId`, or override any server offer, assignment, Ride, participant, trip, or status identity. This slice does not persist a new backend-mode `responseId` Ride projection. |
@@ -506,22 +513,34 @@ the complete outcome:
    `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`,
    `CANCELED`, or `NO_SHOW`.
 
-This recovery path is eligible only after the same server-side persisted-linkage
-validation required for a direct ACK is live; the focused Ride response cannot
-prove its hidden participant IDs to the client. If the accepted offer identifies
-the requested driver and the Ride read agrees, the client may recover the
-committed success and hand that fetched Ride to Active Ride. If the recovered
-status is `COMPLETED`, `CANCELED`, or `NO_SHOW`, the fetched snapshot must reach
-the terminal renderer before branch selection; the current route's early return
+Recovery does not inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN`
+returns before that gate, and an already-accepted legacy/imported order may
+predate its deployment. Before any recovered Ride becomes authority, a
+server-owned recovery check must independently prove that its persisted
+`order_id`, `driver_user_id`, `passenger_user_id`, and canonical `trip_id` agree
+with the owner order, the one accepted offer, the `ACCEPTED` assignment, and the
+authenticated order owner. This includes every accepted order that existed
+before activation. The server may satisfy the gate in the existing recovery
+read/coordinator, or a separately authorized validated backfill/migration may
+establish the invariant for all existing rows before cutover; the client cannot
+infer it from participant access, `tripId`, or the fact that the direct-ACK gate
+is now deployed. Missing proof or any mismatch remains uncertain and cannot
+navigate.
+
+After that independent server proof, if the accepted offer identifies the
+requested driver and the Ride read agrees, the client may recover the committed
+success and hand that fetched Ride to Active Ride. If the recovered status is
+`COMPLETED`, `CANCELED`, or `NO_SHOW`, the fetched snapshot must reach the
+terminal renderer before branch selection; the current route's early return
 must not bypass the read. If another driver is the accepted offer, the current
 request is a confirmed conflict: the client must not claim that the clicked
 driver was selected, but may open the already-authoritative fetched Ride under
 the same hydration/projection rules. If no accepted offer exists and the Ride is
 `404`, no commit is confirmed. Any multiple-winner, missing-read, authorization,
 malformed-envelope, or offer/Ride disagreement remains uncertain: stay off the
-success path and do not repeat the mutation automatically. The assignment/order
-result is inferred only from the server's atomic select invariant because no
-separate assignment read is exposed.
+success path and do not repeat the mutation automatically. The public client
+still consumes only the offer and Ride projections; hidden order/assignment and
+participant linkage proof remains server-owned.
 
 #### Follow-up boundary
 
@@ -529,13 +548,21 @@ The separately authorized runtime slice is named
 `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`.
 Expected PWA scope is the select API adapter/orchestration, authoritative
 hydration before all render branches, truthful complete-or-neutral projection,
+authoritative accepted-state reconciliation when `/responses` is revisited,
 focused behavioral smoke coverage, check registration, and the routine
-service-worker VERSION bump for changed precached runtime files. 01B must not
-activate ACK consumption until a separately authorized server prerequisite
-validates the persisted Ride's order/driver/passenger linkage on both insert and
-`trip_id` conflict reread. Choosing a fuller public projection may additionally
-require a separately authorized serializer change; neutral rendering does not.
-This 01A authorizes none of those runtime/backend changes, mutation replay, a new
+service-worker VERSION bump for changed precached runtime files. The revisit
+smoke must cover a stale local `CREATED` cache with no local Ride and prove that
+an accepted server result reaches the authoritative handoff instead of an empty
+or demo board.
+
+01B must not activate ACK consumption until a separately authorized server
+prerequisite (1) validates the persisted Ride's order/driver/passenger linkage
+on insert, `trip_id` conflict reread, and every recovery path including legacy
+accepted orders, and (2) forces the entire select transaction to roll back on a
+missing or mismatched Ride. DB-gated coverage must pin both requirements.
+Choosing a fuller public projection may additionally require a separately
+authorized serializer change; neutral rendering does not. This 01A authorizes
+none of those runtime/backend changes, mutation replay, a new
 status/schema/endpoint, Order Detail Model-B selection, UI redesign, or
 activation/deployment work.
 

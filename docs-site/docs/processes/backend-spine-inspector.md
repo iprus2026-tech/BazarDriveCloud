@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-08-28
+revision: 2026-08-29
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -168,6 +168,12 @@ live select acknowledgement instead of reconstructing a second local Ride.
   row existence, not those equalities for an existing `trip_id`; the current
   conflict reread has no such validation. ACK consumption therefore remains
   blocked until this server-side linkage gate is separately implemented.
+- **Rollback on linkage failure:** the persisted-linkage check must execute
+  inside the select transaction before `COMMIT`. A missing or mismatched conflict
+  Ride must throw or otherwise force `ROLLBACK`, not return via the ordinary
+  `{ err: ... }` result path that commits. DB-gated transaction coverage must
+  prove zero durable target-offer acceptance, peer rejection, assignment,
+  order-status, or Ride writes after that failure.
 - **ACK authority:** after a coherent ACK, it owns both the selected identity
   and the initial handoff once the linkage gate above is live. The PWA must
   navigate from `ack.ride.tripId`; it must not run `acceptOrder`,
@@ -196,14 +202,31 @@ live select acknowledgement instead of reconstructing a second local Ride.
   `trip_<orderId>` mirror cannot veto a coherent ACK. A later runtime slice must
   ignore, evict, or quarantine it before the authoritative handoff; cleanup is
   not a second local success write.
+- **Responses revisit:** reopening `/responses` for the same backend order must
+  reconcile authoritative accepted or terminal state before showing an
+  empty/selectable board. The exact `ack.order` may replace, or the client may
+  evict, the transitional cached `CREATED` order as replaceable UI cache only;
+  no synthesized `acceptOrder` transition or local Ride is permitted. The
+  accepted offer plus a linkage-validated Ride read drive the handoff. Pending,
+  failed, malformed, or inconclusive reads render loading/error/uncertain state,
+  never an empty board or demo fallback that hides a committed trip.
 - **Malformed 2xx / transport ambiguity:** never reconstruct local success and
   never blindly repeat the select mutation. Reconcile with both owner
   `GET /api/v1/matching/offers?orderId=...` and participant
   `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
   accepted offer plus the exact Ride in a valid post-selection lifecycle state.
   The offers read proves canonical driver identity; the Ride read alone cannot,
-  because its public serializer exposes no driver UUID. Recovery is eligible
-  only after the same server-side persisted-linkage validation is live.
+  because its public serializer exposes no driver UUID. Recovery does not
+  inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN` returns before
+  that gate, and legacy/imported accepted orders may predate it. Before recovery
+  may navigate, a server-owned check must independently validate the persisted
+  Ride's order/driver/passenger/canonical-trip linkage against the owner order,
+  one accepted offer, `ACCEPTED` assignment, and authenticated owner. This gate
+  applies to every pre-existing accepted order. An existing recovery
+  read/coordinator may enforce it, or a separately authorized validated
+  backfill/migration may establish the invariant before cutover; participant
+  access and deterministic `tripId` are not proof. Missing proof or mismatch
+  stays uncertain with no navigation.
 - **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
   open. It does not prove that another driver won and also occurs on a
   same-driver replay. Use the same read-side reconciliation before describing
@@ -217,15 +240,20 @@ live select acknowledgement instead of reconstructing a second local Ride.
   contract does not make those stores server authority or remove the fallback.
 - **Runtime status:** `public/src/screens/responses.js` currently discards the
   successful envelope, reconstructs a same-device local Ride, and lets a
-  post-API local pin mismatch block navigation. In addition,
+  post-API local pin mismatch block navigation. Without that local success
+  chain, a later `/responses` visit currently rereads a stale local `CREATED`
+  order, filters the accepted server offer out of the selectable board, and has
+  no local Ride handoff, so it can render a false empty state. In addition,
   `active_ride_passenger.js` chooses terminal renderers before starting the
   participant read, and its merge path preserves demo vehicle/payment/chat
   sections that the focused Ride serializer omits. These are explicitly
   recorded gates for the separately authorized
   `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
   01B must also wait for separately authorized server-side persisted-linkage
-  validation. None of these runtime/backend changes is implemented or activated
-  by this documentation change.
+  validation on direct ACK and recovery (including legacy accepted rows), plus
+  full transaction rollback on a linkage failure. Focused coverage must pin the
+  `/responses` revisit and both server gates. None of these runtime/backend
+  changes is implemented or activated by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 
