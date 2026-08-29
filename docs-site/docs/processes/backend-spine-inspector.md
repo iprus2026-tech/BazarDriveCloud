@@ -255,14 +255,18 @@ live select acknowledgement instead of reconstructing a second local Ride.
   because its public serializer exposes no driver UUID. Recovery does not
   inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN` returns before
   that gate, and legacy/imported accepted orders may predate it. Before recovery
-  may navigate, a server-owned check must independently validate the persisted
-  Ride's order/driver/passenger/canonical-trip linkage against the owner order,
-  one accepted offer, `ACCEPTED` assignment, and authenticated owner. This gate
-  applies to every pre-existing accepted order. An existing recovery
+  may navigate, a server-owned check must independently validate that the
+  authoritative owner order has `status === 'ACCEPTED'` and that the persisted
+  Ride's order/driver/passenger/canonical-trip linkage agrees with that order,
+  one accepted offer, the `ACCEPTED` assignment, and the authenticated owner.
+  This gate applies to every pre-existing accepted order. An existing recovery
   read/coordinator may enforce it, or a separately authorized validated
   backfill/migration may establish the invariant before cutover; participant
-  access and deterministic `tripId` are not proof. Missing proof or mismatch
-  stays uncertain with no navigation.
+  access and deterministic `tripId` are not proof. Missing proof, any mismatch,
+  or any authoritative owner-order status other than `ACCEPTED` stays uncertain
+  with no navigation. Focused recovery coverage must reject a partial/imported
+  state where the offer and assignment are accepted and the Ride linkage
+  otherwise agrees, but the authoritative owner order remains `CREATED`.
 - **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
   open. It does not prove that another driver won and also occurs on a
   same-driver replay. Use the same read-side reconciliation before describing
@@ -290,11 +294,14 @@ live select acknowledgement instead of reconstructing a second local Ride.
   linkage, exact `DRIVER_EN_ROUTE` status, and selection-owned snapshot
   equality against the canonical seed, with full transaction rollback on any
   failure of any of those three) on the `trip_id` conflict reread, and the
-  separate recovery linkage invariant (independent linkage proof plus an
-  allowed lifecycle status, no snapshot equality) on every recovery path,
-  including legacy accepted rows. Focused coverage must pin the `/responses`
-  revisit and both server gates independently. None of these runtime/backend
-  changes is implemented or activated by this documentation change.
+  separate recovery acceptance/linkage invariant (authoritative owner-order
+  `status === 'ACCEPTED'`, independent linkage proof, and an allowed Ride
+  lifecycle status, no snapshot equality) on every recovery path, including
+  legacy accepted rows. Focused coverage must pin the `/responses` revisit and
+  both server gates independently, including a negative recovery case with
+  otherwise coherent persisted selection records but an authoritative owner
+  order still in `CREATED`. None of these runtime/backend changes is implemented
+  or activated by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 

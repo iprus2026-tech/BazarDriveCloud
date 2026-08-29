@@ -544,16 +544,20 @@ the complete outcome:
 Recovery does not inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN`
 returns before that gate, and an already-accepted legacy/imported order may
 predate its deployment. Before any recovered Ride becomes authority, a
-server-owned recovery check must independently prove that its persisted
-`order_id`, `driver_user_id`, `passenger_user_id`, and canonical `trip_id` agree
-with the owner order, the one accepted offer, the `ACCEPTED` assignment, and the
-authenticated order owner. This includes every accepted order that existed
-before activation. The server may satisfy the gate in the existing recovery
-read/coordinator, or a separately authorized validated backfill/migration may
-establish the invariant for all existing rows before cutover; the client cannot
-infer it from participant access, `tripId`, or the fact that the direct-ACK gate
-is now deployed. Missing proof or any mismatch remains uncertain and cannot
-navigate.
+server-owned recovery check must independently prove that the authoritative
+owner order has `status === 'ACCEPTED'` and that the Ride's persisted `order_id`,
+`driver_user_id`, `passenger_user_id`, and canonical `trip_id` agree with that
+order, the one accepted offer, the `ACCEPTED` assignment, and the authenticated
+order owner. This includes every accepted order that existed before activation.
+The server may satisfy the gate in the existing recovery read/coordinator, or a
+separately authorized validated backfill/migration may establish the invariant
+for all existing rows before cutover; the client cannot infer it from participant
+access, `tripId`, or the fact that the direct-ACK gate is now deployed. Missing
+proof, any mismatch, or any authoritative owner-order status other than
+`ACCEPTED` keeps the result uncertain and forbids navigation. Focused recovery
+coverage must reject a partial/imported state where the offer and assignment are
+accepted and the Ride linkage otherwise agrees, but the authoritative owner
+order remains `CREATED`.
 
 After that independent server proof, if the accepted offer identifies the
 requested driver and the Ride read agrees, the client may recover the committed
@@ -595,11 +599,13 @@ be enforced on the `trip_id` conflict reread inside the select transaction,
 with the entire transaction (accepted offer, rejected peers, assignment, order
 status, Ride insert) rolled back on any missing, mismatched, non-
 `DRIVER_EN_ROUTE`, or snapshot-mismatched conflict Ride. Second, the separate
-recovery linkage invariant — independent proof of order/driver/passenger/trip
-linkage plus an allowed lifecycle status, without snapshot equality to the
-current seed — must be enforced on every read-side recovery path, including
-legacy accepted orders. DB-gated coverage must pin both requirements
-independently.
+recovery acceptance/linkage invariant — authoritative owner-order `status ===
+'ACCEPTED'`, independent proof of order/driver/passenger/trip linkage, and an
+allowed Ride lifecycle status, without snapshot equality to the current seed —
+must be enforced on every read-side recovery path, including legacy accepted
+orders. DB-gated coverage must pin both requirements independently, including a
+negative recovery case with otherwise coherent persisted selection records but
+an authoritative owner order still in `CREATED`.
 Choosing a fuller public projection may additionally require a separately
 authorized serializer change; neutral rendering does not. This 01A authorizes
 none of those runtime/backend changes, mutation replay, a new
