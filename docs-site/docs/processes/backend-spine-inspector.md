@@ -242,8 +242,11 @@ live select acknowledgement instead of reconstructing a second local Ride.
   accepted offer plus a linkage-validated Ride read drive the handoff. Pending,
   failed, malformed, or inconclusive reads render loading/error/uncertain state,
   never an empty board or demo fallback that hides a committed trip.
-- **Malformed 2xx / transport ambiguity:** never reconstruct local success and
-  never blindly repeat the select mutation. Reconcile with both owner
+- **Malformed 2xx / HTTP 5xx / transport ambiguity:** never reconstruct local
+  success and never blindly repeat the select mutation. Every HTTP 5xx observed
+  after dispatch, including a proxy-generated `502` or `504`, is uncertain; it
+  does not prove that the selection transaction failed or rolled back. Reconcile
+  all of these outcomes with both owner
   `GET /api/v1/matching/offers?orderId=...` and participant
   `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
   accepted offer plus the exact Ride in a valid post-selection lifecycle state
@@ -267,6 +270,23 @@ live select acknowledgement instead of reconstructing a second local Ride.
   with no navigation. Focused recovery coverage must reject a partial/imported
   state where the offer and assignment are accepted and the Ride linkage
   otherwise agrees, but the authoritative owner order remains `CREATED`.
+  Linkage, order status, and Ride lifecycle proof alone do not authenticate the
+  serialized display snapshot. Server-owned recovery validation or a validated
+  backfill must prove that persisted passenger, driver, route, and fare values
+  agree with the applicable authoritative acceptance-time source. A field that
+  cannot be validated must be omitted/null or explicitly projected unavailable
+  and rendered neutrally, never used as display authority. Focused recovery
+  coverage must include a correctly linked legacy/imported Ride with an allowed
+  lifecycle but stale or unrelated passenger/driver/route/fare snapshots and
+  prove that none of those unverified values is rendered.
+- **Stable-negative proof:** one observation with no accepted offer and a `404`
+  Ride is not proof that no commit occurred; both reads can race a select
+  transaction that is still able to commit. Only server-coordinated
+  stable-negative proof or a separately specified bounded-recheck protocol that
+  observes both reads stably negative after the original mutation can no longer
+  commit may close the uncertain outcome. Until then, and when bounded rechecks
+  are exhausted or inconclusive, there is no success claim, navigation, local
+  reconstruction, or repeated select mutation.
 - **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
   open. It does not prove that another driver won and also occurs on a
   same-driver replay. Use the same read-side reconciliation before describing
@@ -296,12 +316,16 @@ live select acknowledgement instead of reconstructing a second local Ride.
   failure of any of those three) on the `trip_id` conflict reread, and the
   separate recovery acceptance/linkage invariant (authoritative owner-order
   `status === 'ACCEPTED'`, independent linkage proof, and an allowed Ride
-  lifecycle status, no snapshot equality) on every recovery path, including
-  legacy accepted rows. Focused coverage must pin the `/responses` revisit and
-  both server gates independently, including a negative recovery case with
-  otherwise coherent persisted selection records but an authoritative owner
-  order still in `CREATED`. None of these runtime/backend changes is implemented
-  or activated by this documentation change.
+  lifecycle status) on every recovery path, including legacy accepted rows.
+  Every serialized recovery snapshot must also be validated/backfilled or
+  projected complete-or-neutral for unverified fields; this does not impose the
+  direct gate's blanket current-seed equality on historical rows. Focused
+  coverage must pin the `/responses` revisit, HTTP 5xx reconciliation, the
+  pre-commit negative-read race, and both server gates independently, including
+  negative recovery cases with an authoritative owner order still in `CREATED`
+  and with coherent linkage/lifecycle but stale passenger/driver/route/fare
+  snapshots. None of these runtime/backend changes is implemented or activated
+  by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 

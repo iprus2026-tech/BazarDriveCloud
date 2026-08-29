@@ -523,6 +523,7 @@ product of the very ambiguous request being reconciled.
 | Coherent 2xx ACK | Only after the server-side linkage guarantee is live, treat as committed success, prevent a stale local mirror from overruling it, and hand the acknowledged Ride to Active Ride using `ack.ride.tripId`; hydration and projection truth still gate rendering. |
 | Malformed or internally inconsistent 2xx | Do not call the local accept/build/save chain and do not claim success. Mark the mutation outcome uncertain and run the read-side reconciliation below. |
 | Transport ambiguity | `NETWORK`, abort/timeout after possible dispatch, or another loss before the ACK is observed must not trigger blind local success or an automatic repeated select mutation. Run read-side reconciliation. `BACKEND_DISABLED` before dispatch remains a pre-request failure, not an ambiguous commit. |
+| HTTP 5xx after dispatch | Every HTTP 5xx observed after the select request was dispatched, including a proxy-generated `502` or `504`, leaves the mutation outcome uncertain; it does not prove that the server transaction failed or rolled back. Do not claim success, reconstruct it locally, navigate, or repeat the select mutation. Run the same read-side reconciliation. |
 | `409 ORDER_NOT_OPEN` | This code proves only that the order is no longer open. It can represent a concurrent winner, a same-driver replay, or another non-open state; it is not proof that “another driver” won. Run read-side reconciliation before describing the winner. Mutation replay/idempotent-success semantics remain owned by #826. |
 | Other confirmed 4xx precondition/auth failures | No success claim, local reconstruction, or navigation. The current server contract produces no selection writes for these route-defined failures. |
 | Post-ACK local pin conflict | Cannot reverse or invalidate a coherent server ACK. Quarantine/ignore the local record and continue the authoritative handoff. |
@@ -559,6 +560,18 @@ coverage must reject a partial/imported state where the offer and assignment are
 accepted and the Ride linkage otherwise agrees, but the authoritative owner
 order remains `CREATED`.
 
+Linkage, order status, and Ride lifecycle proof do not by themselves authenticate
+the persisted display snapshot. Before handoff, server-owned recovery validation
+or a validated backfill must prove that every serialized passenger, driver,
+route, and fare value belongs to the coherent accepted selection and agrees with
+the applicable authoritative acceptance-time source. Recovery does not require
+blanket equality to the current `buildRideSeed` for historical rows, but any
+field that cannot be validated must be omitted/null or explicitly projected as
+unavailable and rendered neutrally; its stored value cannot become display
+authority. Focused recovery coverage must include a legacy/imported Ride with
+correct linkage and lifecycle but stale or unrelated passenger, driver, route,
+or fare snapshots, and prove that none of those unverified values is rendered.
+
 After that independent server proof, if the accepted offer identifies the
 requested driver and the Ride read agrees, the client may recover the committed
 success and hand that fetched Ride to Active Ride. If the recovered status is
@@ -570,12 +583,19 @@ handoff; the runtime follow-up must consume that recovered state from
 authoritative data, never a demo or locally fabricated Ride. If another
 driver is the accepted offer, the current request is a confirmed conflict: the client must not claim that the clicked
 driver was selected, but may open the already-authoritative fetched Ride under
-the same hydration/projection rules. If no accepted offer exists and the Ride is
-`404`, no commit is confirmed. Any multiple-winner, missing-read, authorization,
-malformed-envelope, or offer/Ride disagreement remains uncertain: stay off the
-success path and do not repeat the mutation automatically. The public client
-still consumes only the offer and Ride projections; hidden order/assignment and
-participant linkage proof remains server-owned.
+the same hydration/projection rules. One observation with no accepted offer and
+a `404` Ride does not prove that no commit occurred: both reads may have raced a
+select request whose transaction was still able to commit. A negative outcome
+becomes authoritative only through server-coordinated stable-negative proof or a
+separately specified bounded-recheck protocol that observes both reads stably
+negative after the original mutation can no longer commit. Until that proof,
+and whenever the bounded protocol is exhausted or inconclusive, the outcome
+remains uncertain: no success claim, navigation, local reconstruction, or
+repeated select mutation. Any multiple-winner, missing-read, authorization,
+malformed-envelope, or offer/Ride disagreement remains uncertain under the same
+rule. The public client still consumes only the offer and Ride projections;
+hidden order/assignment, participant linkage, stable-negative, and snapshot
+integrity proof remains server-owned.
 
 #### Follow-up boundary
 
@@ -588,7 +608,10 @@ focused behavioral smoke coverage, check registration, and the routine
 service-worker VERSION bump for changed precached runtime files. The revisit
 smoke must cover a stale local `CREATED` cache with no local Ride and prove that
 an accepted server result reaches the authoritative handoff instead of an empty
-or demo board.
+or demo board. Uncertain-outcome coverage must independently pin HTTP 5xx after
+dispatch and a negative reconciliation read that races the still-committable
+select request; neither case may authorize navigation or mutation replay without
+the stable-negative proof defined above.
 
 01B must not activate ACK consumption until two separately authorized server
 prerequisites land. First, the direct conflict-Ride invariant defined above —
@@ -601,11 +624,14 @@ status, Ride insert) rolled back on any missing, mismatched, non-
 `DRIVER_EN_ROUTE`, or snapshot-mismatched conflict Ride. Second, the separate
 recovery acceptance/linkage invariant — authoritative owner-order `status ===
 'ACCEPTED'`, independent proof of order/driver/passenger/trip linkage, and an
-allowed Ride lifecycle status, without snapshot equality to the current seed —
-must be enforced on every read-side recovery path, including legacy accepted
-orders. DB-gated coverage must pin both requirements independently, including a
-negative recovery case with otherwise coherent persisted selection records but
-an authoritative owner order still in `CREATED`.
+allowed Ride lifecycle status — must be enforced on every read-side recovery
+path, including legacy accepted orders. Every serialized recovery snapshot must
+also be validated/backfilled against its authoritative source or projected
+complete-or-neutral for unverified fields; this does not impose the direct
+gate's blanket equality to the current seed on historical rows. DB-gated
+coverage must pin both requirements independently, including negative recovery
+cases with an authoritative owner order still in `CREATED` and with coherent
+linkage/lifecycle but stale passenger/driver/route/fare snapshots.
 Choosing a fuller public projection may additionally require a separately
 authorized serializer change; neutral rendering does not. This 01A authorizes
 none of those runtime/backend changes, mutation replay, a new
