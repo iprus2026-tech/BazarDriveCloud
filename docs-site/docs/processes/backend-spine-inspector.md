@@ -164,28 +164,43 @@ live select acknowledgement instead of reconstructing a second local Ride.
   exposes `tripId`, status and participant/display snapshots, but no `orderId`,
   `driverUserId`, or `passengerUserId`. The PWA must not invent or require those
   public Ride fields, but the public ACK matrix is necessary rather than
-  sufficient. Before returning the ACK, the server must verify that the
-  persisted Ride has `order_id === order.id`, `driver_user_id ===
-  accepted.driver_id === assignment.selected_driver_id`, `passenger_user_id ===
-  order.passenger_id === the authenticated owner`, the canonical `trip_id`, and
-  `status === 'DRIVER_EN_ROUTE'`. The transaction and independent foreign keys
-  prove atomicity and referenced row existence, not those equalities or that
-  status for an existing `trip_id`; the current conflict reread has no such
-  validation. ACK consumption therefore remains blocked until this server-side
-  linkage gate is separately implemented.
+  sufficient. Before returning the ACK, the server must re-derive the expected
+  seed via the same `buildRideSeed(order, acceptedOffer)` the insert path uses,
+  and verify the persisted conflict row agrees with that seed on every
+  selection-owned field: `trip_id`, `order_id`, `status === 'DRIVER_EN_ROUTE'`,
+  `role`, `driver_user_id`, `passenger_user_id`, `passenger_name`,
+  `passenger_initials`, `passenger_phone_masked`, `passenger_note`,
+  `driver_name`, `driver_car`, `driver_rating`, `route_pickup_label`,
+  `route_dropoff_label`, `order_offer_price`, and `ride_price`. UUID
+  identities (`driver_user_id`, `passenger_user_id`) compare lowercased, same
+  as the ACK's `driverId` relations above; every other nullable/string/numeric
+  field compares by the server's canonical representation, matching exactly
+  what `bootstrapRide()` actually persists. `accepted_at` is excluded — it is a
+  database-generated timestamp, never required to equal a specific seed value.
+  The transaction and independent foreign keys prove atomicity and referenced
+  row existence, not those equalities or that status for an existing
+  `trip_id`; the current conflict reread has no such validation. ACK
+  consumption therefore remains blocked until this server-side linkage and
+  snapshot gate is separately implemented.
 - **Rollback on linkage failure:** the persisted-linkage check must execute
   inside the select transaction before `COMMIT`. A conflict Ride that is
-  missing, has any linkage mismatch, or is in any status other than
-  `DRIVER_EN_ROUTE` must throw or otherwise force `ROLLBACK`, not return via
-  the ordinary `{ err: ... }` result path that commits. DB-gated transaction
+  missing, has any listed linkage or snapshot field mismatch, or is in any
+  status other than `DRIVER_EN_ROUTE` must throw or otherwise force
+  `ROLLBACK`, not return via the ordinary `{ err: ... }` result path that
+  commits; this contract does not authorize an automatic refresh or overwrite
+  of the conflicting row as an alternative to rollback. DB-gated transaction
   coverage must prove zero durable target-offer acceptance, peer rejection,
   assignment, order-status, or Ride writes after that failure. This
   in-transaction gate governs only the current selection attempt's conflict
   reread; it must never recognize a terminal (`COMPLETED`, `CANCELED`,
   `NO_SHOW`) or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a coherent
   ACK. Terminal recovery is authorized exclusively through the read-side
-  reconciliation below, gated on that path's own independent proof that the
-  order was already accepted before this request.
+  reconciliation below, gated on that path's own independent proof of the
+  exact committed selection via authoritative order/offer/assignment/Ride
+  linkage and an allowed lifecycle status — never gated on proving the
+  acceptance predates the current request, since a correctly linked terminal
+  Ride may equally be the product of the very ambiguous request being
+  reconciled.
 - **ACK authority:** after a coherent ACK, it owns both the selected identity
   and the initial handoff once the linkage gate above is live. The PWA must
   navigate from `ack.ride.tripId`; it must not run `acceptOrder`,
@@ -196,7 +211,9 @@ live select acknowledgement instead of reconstructing a second local Ride.
   reach Active Ride before the screen chooses a visible branch. A reconciled
   `COMPLETED`, `CANCELED`, or `NO_SHOW` Ride must be fetched or carried into the
   terminal renderer before its early return; `tripId` plus status navigation is
-  not sufficient hydration.
+  not sufficient hydration. A reconciled `ACCEPTED` Ride is held to the same
+  hydration and projection-truth rule — the PWA must render or hand it off from
+  authoritative data, never a demo or locally fabricated Ride.
 - **Truthful projection:** backend-authoritative rendering must never preserve a
   demo or stale local Ride participant, route, fare, vehicle, payment, or chat
   value when that field is absent from the ACK/read and every other explicitly
@@ -226,8 +243,12 @@ live select acknowledgement instead of reconstructing a second local Ride.
   never blindly repeat the select mutation. Reconcile with both owner
   `GET /api/v1/matching/offers?orderId=...` and participant
   `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
-  accepted offer plus the exact Ride in a valid post-selection lifecycle state.
-  The offers read proves canonical driver identity; the Ride read alone cannot,
+  accepted offer plus the exact Ride in a valid post-selection lifecycle state
+  (`ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`,
+  `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`, `CANCELED`, or `NO_SHOW`).
+  `ACCEPTED` is recoverable only through this read-side path; the direct
+  in-transaction ACK gate above still requires the conflict/inserted Ride to
+  be exactly `DRIVER_EN_ROUTE`. The offers read proves canonical driver identity; the Ride read alone cannot,
   because its public serializer exposes no driver UUID. Recovery does not
   inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN` returns before
   that gate, and legacy/imported accepted orders may predate it. Before recovery

@@ -463,31 +463,44 @@ after both sides are lowercased):
 `serializeRide()` intentionally does not expose `orderId`, `driverUserId`, or
 `passengerUserId`. The client must not invent or require those public Ride
 fields, but the public matrix above is necessary rather than sufficient. Before
-the select service returns the Ride, it must verify that the persisted row has
-`order_id === order.id`, `driver_user_id === accepted.driver_id ===
-assignment.selected_driver_id`, `passenger_user_id === order.passenger_id ===
-the authenticated owner`, the canonical `trip_id === 'trip_' +
-order.legacy_id`, and `status === 'DRIVER_EN_ROUTE'`. The transaction and
+the select service returns the Ride, it must re-derive the expected seed via
+the same `buildRideSeed(order, acceptedOffer)` the insert path uses, and verify
+that the persisted conflict row agrees with that seed on every selection-owned
+field: `trip_id`, `order_id`, `status === 'DRIVER_EN_ROUTE'`, `role`,
+`driver_user_id`, `passenger_user_id`, `passenger_name`, `passenger_initials`,
+`passenger_phone_masked`, `passenger_note`, `driver_name`, `driver_car`,
+`driver_rating`, `route_pickup_label`, `route_dropoff_label`,
+`order_offer_price`, and `ride_price`. UUID identities (`driver_user_id`,
+`passenger_user_id`) compare in the same canonical lowercase form established
+above; every other nullable/string/numeric field compares by the server's
+canonical representation, matching exactly what `bootstrapRide()` actually
+persists. `accepted_at` is excluded: it is a database-generated timestamp and
+is never required to equal a specific seed value. The transaction and
 independent foreign keys prove atomicity and referenced-row existence; they do
-not prove those equalities — nor that status — for a pre-existing `trip_id`.
-The current `ON CONFLICT (trip_id) DO NOTHING` reread path does not perform
-this validation, so backend-authoritative ACK consumption remains blocked
-until the server-side linkage check is separately implemented and covered.
+not prove any of those equalities for a pre-existing `trip_id`. The current
+`ON CONFLICT (trip_id) DO NOTHING` reread path does not perform this
+validation, so backend-authoritative ACK consumption remains blocked until the
+server-side linkage and snapshot check is separately implemented and covered.
 That check runs inside the same select transaction before `COMMIT`. A conflict
-Ride that is missing, has any linkage mismatch, or is in any status other than
-`DRIVER_EN_ROUTE` is a transactional invariant failure: it must throw or
-otherwise force `ROLLBACK`, never return through the ordinary `{ err: ... }`
-result path that commits. The rollback covers the accepted target offer,
+Ride that is missing, has any listed linkage or snapshot field mismatch, or is
+in any status other than `DRIVER_EN_ROUTE` is a transactional invariant
+failure: it must throw or otherwise force `ROLLBACK`, never return through the
+ordinary `{ err: ... }` result path that commits, and this contract does not
+authorize an automatic refresh or overwrite of the conflicting row as an
+alternative to rollback. The rollback covers the accepted target offer,
 rejected peer offers, assignment insert, order status change, and any Ride
-insert; DB-gated transaction coverage must prove that a linkage or status
-failure leaves every one of those writes uncommitted. This in-transaction gate
-governs only the conflict Ride reread inside the current selection attempt; it
-must never recognize or return a terminal (`COMPLETED`, `CANCELED`, `NO_SHOW`)
-or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a coherent ACK. Terminal
-recovery is authorized exclusively through the read-side reconciliation below,
-and only after that path's own independent proof that the order was already
-accepted before this request — never as a substitute result from this
-transaction.
+insert; DB-gated transaction coverage must prove that a linkage, snapshot, or
+status failure leaves every one of those writes uncommitted. This
+in-transaction gate governs only the conflict Ride reread inside the current
+selection attempt; it must never recognize or return a terminal (`COMPLETED`,
+`CANCELED`, `NO_SHOW`) or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a
+coherent ACK. Terminal recovery is authorized exclusively through the
+read-side reconciliation below, gated on that path's own independent proof of
+the exact committed selection via authoritative order/offer/assignment/Ride
+linkage and an allowed lifecycle status — never as a substitute result from
+this transaction, and never gated on proving the acceptance predates the
+current request, since a correctly linked terminal Ride may equally be the
+product of the very ambiguous request being reconciled.
 
 #### Authority and handoff
 
@@ -522,9 +535,11 @@ the complete outcome:
 1. `GET /api/v1/matching/offers?orderId=<orderId>` must return exactly one
    `status === 'accepted'` offer and expose its canonical `driverId`.
 2. `GET /api/v1/ride-state/rides/trip_<orderId>` must return that exact `tripId`
-   in a valid post-selection lifecycle state: `DRIVER_EN_ROUTE`,
+   in a valid post-selection lifecycle state: `ACCEPTED`, `DRIVER_EN_ROUTE`,
    `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`,
-   `CANCELED`, or `NO_SHOW`.
+   `CANCELED`, or `NO_SHOW`. `ACCEPTED` is recoverable only through this
+   read-side path; the direct in-transaction ACK gate above still requires the
+   conflict/inserted Ride to be exactly `DRIVER_EN_ROUTE`.
 
 Recovery does not inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN`
 returns before that gate, and an already-accepted legacy/imported order may
@@ -545,8 +560,11 @@ requested driver and the Ride read agrees, the client may recover the committed
 success and hand that fetched Ride to Active Ride. If the recovered status is
 `COMPLETED`, `CANCELED`, or `NO_SHOW`, the fetched snapshot must reach the
 terminal renderer before branch selection; the current route's early return
-must not bypass the read. If another driver is the accepted offer, the current
-request is a confirmed conflict: the client must not claim that the clicked
+must not bypass the read. If the recovered status is `ACCEPTED`, the same
+hydration and projection-truth requirements apply before any render or
+handoff; the runtime follow-up must consume that recovered state from
+authoritative data, never a demo or locally fabricated Ride. If another
+driver is the accepted offer, the current request is a confirmed conflict: the client must not claim that the clicked
 driver was selected, but may open the already-authoritative fetched Ride under
 the same hydration/projection rules. If no accepted offer exists and the Ride is
 `404`, no commit is confirmed. Any multiple-winner, missing-read, authorization,
