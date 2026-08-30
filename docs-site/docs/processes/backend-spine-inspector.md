@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-08-28
+revision: 2026-08-29
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -21,6 +21,7 @@ related:
   issues:
     - 820
     - 821
+    - 931
   prs: []
 tags: [process, mini-yonder, backend, database, docs-site]
 slug: /processes/mini-yonder-backend-spine
@@ -72,7 +73,13 @@ _Historical concept mock: labels inside this image predate the implemented serve
 ## Authority and invariants
 
 - PostgreSQL and the server domain layer own order, offer, assignment and ride status after a feature is activated.
-- Matching selection is one transaction: lock the open order, accept one offer, reject competing offers, create the assignment, accept the order and bootstrap the ride.
+- Matching selection is one transaction: lock the open order, accept one offer,
+  reject competing offers, create the assignment, accept the order and attempt
+  to bootstrap the ride. A pre-existing `trip_id` is reread; the complete direct
+  conflict-Ride invariant below — locked reread through commit, linkage, exact
+  status/seed equality, current-acceptance timestamp binding, lifecycle
+  consistency, and read-stable accounting for every `serializeRide()` field —
+  must land before that ACK path is activated in the PWA.
 - Terminal ride states `CANCELED`, `NO_SHOW` and `COMPLETED` cannot transition to a different state; saving the same terminal state is idempotent.
 - `ride_events` is append-only. Polling advances by cursor and must not mutate history.
 - Driver receipts are created only for completed rides and are write-once.
@@ -102,12 +109,17 @@ change the live route.
   every other peer offer still in `status='sent'` (including one that is
   expired but not yet processed by the separate future TTL sweep), creates
   the `ACCEPTED` assignment, moves the order `CREATED -> ACCEPTED`, and
-  bootstraps `trip_<orderId>` at `DRIVER_EN_ROUTE`.
+  attempts to bootstrap `trip_<orderId>` at `DRIVER_EN_ROUTE`. On a
+  pre-existing `trip_id`, the current service rereads that row; the ACK section
+  below freezes the complete direct conflict-Ride gate required before PWA
+  cutover.
 - **Success linkage:** the response returns `{ order, offer, assignment, ride }`.
   `offer.driverId` and `assignment.selectedDriverId` identify the same selected
   driver; `ride.tripId` is `trip_<orderId>`. A client-side response/chat id may
   be retained as local handoff metadata, but it cannot override these server
-  identities.
+  identities. These public relations do not expose or prove the Ride row's
+  hidden order/driver/passenger foreign-key equality; that remains a pilot gate
+  defined below.
 - **Conflict semantics:** concurrent selects have exactly one winner. A replay
   after the order is accepted currently returns `409 ORDER_NOT_OPEN`, including
   a replay for the same driver; idempotent success acknowledgement remains a
@@ -132,6 +144,260 @@ change the live route.
   stale non-empty board. It never substitutes a selected/first/latest driver.
   Behavioral negative-test coverage lives in
   `scripts/smoke-ride-selected-response-identity.mjs`.
+
+### Matching select ACK handoff authority
+
+**Status: Contract-only target (BD-RIDE-SELECT-ACK-AUTHORITY-01A, #931);
+current PWA runtime gap; no route, server, schema, activation, or deployment
+change.** The preceding identity gate remains shipped. This newer contract
+defines how a later, separately authorized PWA slice must consume the already
+live select acknowledgement instead of reconstructing a second local Ride.
+
+- **Exact success envelope:** `POST /api/v1/matching/select` returns
+  `{ order, offer, assignment, ride }`. A coherent 2xx ACK requires non-array
+  objects and all of these exact relations:
+  `order.id === orderId`, `order.status === 'ACCEPTED'`, a non-empty `offer.id`,
+  `offer.orderId === orderId`, `offer.driverId === driverId`,
+  `offer.status === 'accepted'`, `assignment.orderId === orderId`,
+  `assignment.selectedDriverId === driverId`,
+  `assignment.status === 'ACCEPTED'`,
+  `ride.tripId === 'trip_' + orderId`, and
+  `ride.status === 'DRIVER_EN_ROUTE'`. The two `driverId` relations
+  (`offer.driverId`, `assignment.selectedDriverId`) canonicalize both sides to
+  lowercase before `===`: PostgreSQL's UUID type and this route's validation
+  are case-insensitive, but the serializers always emit normalized lowercase.
+  Every other relation above stays a raw case-sensitive `===`.
+- **Complete direct conflict-Ride gate:** the focused `serializeRide()`
+  projection exposes `tripId`, status and participant/display snapshots, but no
+  `orderId`, `driverUserId`, or `passengerUserId`. The PWA must not invent or
+  require those public Ride fields, but the public ACK matrix is necessary
+  rather than sufficient. Before returning the ACK, the server must account for
+  both the persisted selection seed and every field `serializeRide()` would
+  expose. It must first re-derive the expected seed via the same
+  `buildRideSeed(order, acceptedOffer)` the insert path uses and verify the
+  persisted conflict row agrees on every selection-owned field: `trip_id`,
+  `order_id`, `status === 'DRIVER_EN_ROUTE'`, `role`, `driver_user_id`,
+  `passenger_user_id`, `passenger_name`, `passenger_initials`,
+  `passenger_phone_masked`, `passenger_note`, `driver_name`, `driver_car`,
+  `driver_rating`, `route_pickup_label`, `route_dropoff_label`,
+  `order_offer_price`, and `ride_price`. UUID identities (`driver_user_id`,
+  `passenger_user_id`) compare lowercased, same as the ACK's `driverId`
+  relations above; every other nullable/string/numeric seed field compares by
+  the server's canonical representation, matching exactly what
+  `bootstrapRide()` persists.
+- **Serializer closure:** exact seed equality does not exhaust the public
+  projection. The direct gate must also account for `passenger_rating`,
+  `driver_initials`, `route_eta_to_pickup`, `route_eta_to_destination`,
+  `cancel_by`, `cancel_reason`, and every serialized timestamp. On a fresh
+  `DRIVER_EN_ROUTE` insert those six columns are `NULL`. A non-default
+  passenger/driver/route value may reach the ACK only when a named server-owned
+  source validates it for this exact selection. Otherwise the direct path must
+  reject the row, durably remediate it while holding the conflict-row lock and
+  revalidate the persisted result, or neutralize it to `NULL`/unavailable
+  through one server-owned projection policy shared by the select ACK and every
+  later participant Ride read/hydration. An ACK-only neutralized copy is not
+  sufficient: `GET /api/v1/ride-state/rides/:tripId` must never serialize the
+  unvalidated raw value hidden by the ACK. Cancellation metadata must remain
+  `NULL` for this non-canceled status. The post-accept lifecycle columns
+  `approaching_at`, `arrived_at`, `started_at`, `completed_at`, and `canceled_at`
+  must also remain `NULL`; a populated value contradicts the initial lifecycle
+  and cannot become authoritative by being hidden after serialization.
+- **Database timestamps:** `created_at`, `accepted_at`, and `updated_at` remain
+  excluded from exact equality to `buildRideSeed()` or a client/current-request
+  clock. That exclusion does not detach a conflict Ride from the selection being
+  acknowledged. Comparing server timestamp instants, the direct gate must
+  require `ride.accepted_at === updatedOrder.accepted_at`, where `updatedOrder`
+  is returned by `markOrderAccepted()` in this exact select transaction. All
+  three Ride timestamps must also be present, parse as server timestamps, and
+  satisfy `created_at <= accepted_at <= updated_at`. An internally chronological
+  Ride whose `accepted_at` belongs to an earlier acceptance therefore fails.
+  Every `serializeRide()` field is seed-proven, bound to the current acceptance,
+  lifecycle-consistent, validated by a named server-owned source, or neutralized
+  by the read-stable policy above. The transaction and foreign keys do not
+  establish these facts for an existing `trip_id`; the current conflict reread
+  performs none of this validation. ACK consumption remains blocked until the
+  complete gate is separately implemented.
+- **Rollback on direct conflict-Ride invariant failure:** after `ON CONFLICT`
+  reports an existing `trip_id`, the service must reread that Ride inside the
+  select transaction using `SELECT ... FOR UPDATE` or an equivalent exclusive
+  row lock and retain the lock through validation, ACK snapshot construction,
+  and `COMMIT`. The plain current `findRideByTripId()` read is insufficient: a
+  participant status write must serialize after the selection instead of
+  advancing the Ride between gate and commit. A conflict Ride that is missing,
+  was not read under that lock, has any linkage or seed mismatch, is in any
+  status other than `DRIVER_EN_ROUTE`, has an `accepted_at` unequal to the
+  current `updatedOrder.accepted_at`, contains a serializer-only value that is
+  neither validated nor handled by the read-stable neutralization/remediation
+  policy, violates the fresh lifecycle defaults, or lacks chronologically
+  coherent database timestamps must throw or otherwise force `ROLLBACK`, not
+  return via the ordinary `{ err: ... }` result path that commits. This contract
+  does not authorize an unvalidated automatic refresh or overwrite of the
+  conflicting row as an alternative to rollback. A future durable remediation
+  option must be separately authorized, performed under the held lock,
+  revalidated against the complete invariant, and observed by every later
+  participant read. DB-gated transaction coverage must prove zero
+  durable target-offer acceptance, peer rejection, assignment, order-status, or
+  Ride writes after that failure and no authoritative Ride serialization or
+  rendering. Focused negative coverage must exercise legacy/imported conflict
+  rows whose linkage, seed fields, and `DRIVER_EN_ROUTE` status otherwise match
+  but each serializer-only column is stale, each post-accept lifecycle timestamp
+  is populated, the core timestamps are missing/non-chronological, or
+  `accepted_at` is internally chronological but differs from the current
+  `updatedOrder.accepted_at`. Concurrency coverage must hold a participant status
+  transition behind the conflict-row lock until the selection transaction ends
+  and prove that the transition cannot commit between ACK validation and the
+  selection commit. Read-path coverage must
+  perform a later participant GET after any permitted neutralized ACK and prove
+  the raw stale value cannot reappear. Every stale case left neither validated
+  nor safely remediated/neutralized must produce full rollback and no
+  authoritative rendering. This in-transaction gate governs
+  only the current selection attempt's conflict reread; it must never recognize
+  a terminal (`COMPLETED`, `CANCELED`,
+  `NO_SHOW`) or otherwise non-`DRIVER_EN_ROUTE` conflict Ride as a coherent
+  ACK. Terminal recovery is authorized exclusively through the read-side
+  reconciliation below, gated on that path's own independent proof of the
+  exact committed selection via authoritative order/offer/assignment/Ride
+  linkage and an allowed lifecycle status — never gated on proving the
+  acceptance predates the current request, since a correctly linked terminal
+  Ride may equally be the product of the very ambiguous request being
+  reconciled.
+- **ACK authority:** after a coherent ACK, it owns both the selected identity
+  and the initial handoff once the complete direct conflict-Ride invariant above
+  is enforced. The PWA must
+  navigate from `ack.ride.tripId`; it must not run `acceptOrder`,
+  `acceptDriverResponse`, `buildPassengerRideSeed`, or a replacement
+  `saveActiveRide` as success authority. The acknowledged Ride or the existing
+  participant-gated Ride read is the hydration source, but that read is
+  authoritative only when it observes a durably remediated/revalidated row or
+  applies the same server-owned validated-or-neutral projection as the ACK.
+- **Hydration before render:** the acknowledged or reconciled server Ride must
+  reach Active Ride before the screen chooses a visible branch. A reconciled
+  `COMPLETED`, `CANCELED`, or `NO_SHOW` Ride must be fetched or carried into the
+  terminal renderer before its early return; `tripId` plus status navigation is
+  not sufficient hydration. A reconciled `ACCEPTED` Ride is held to the same
+  hydration and projection-truth rule — the PWA must render or hand it off from
+  authoritative data, never a demo or locally fabricated Ride.
+- **Truthful projection:** backend-authoritative rendering must never preserve a
+  demo or stale local Ride participant, route, fare, vehicle, payment, or chat
+  value when that field is absent from the ACK/read and every other explicitly
+  named authoritative source. The follow-up must consume authoritative data or
+  omit/render the missing section neutrally. A value neutralized in a conflict
+  ACK must remain neutralized on every later participant Ride read; a raw
+  serializer result cannot restore it. The focused serializer currently
+  exposes `driver.car` but no `vehicle`, `payment`, or `chat`; those gaps require
+  explicit mapping, another separately authorized authoritative read/projection,
+  or neutral UI — never merge-on-demo fallback.
+- **Local metadata boundary:** browser-local/synthetic `responseId` may remain
+  transient UI linkage only. It cannot replace `offer.driverId`,
+  `assignment.selectedDriverId`, `ride.tripId`, Ride status, or a server-owned
+  participant identity. No new backend-mode local Ride projection is required
+  at the select seam.
+- **Local conflict after commit:** a stale or incompatible local
+  `trip_<orderId>` mirror cannot veto a coherent ACK. A later runtime slice must
+  ignore, evict, or quarantine it before the authoritative handoff; cleanup is
+  not a second local success write.
+- **Responses revisit:** reopening `/responses` for the same backend order must
+  reconcile authoritative accepted or terminal state before showing an
+  empty/selectable board. The exact `ack.order` may replace, or the client may
+  evict, the transitional cached `CREATED` order as replaceable UI cache only;
+  no synthesized `acceptOrder` transition or local Ride is permitted. The
+  accepted offer plus a linkage-validated Ride read drive the handoff. Pending,
+  failed, malformed, or inconclusive reads render loading/error/uncertain state,
+  never an empty board or demo fallback that hides a committed trip.
+- **Malformed 2xx / HTTP 5xx / transport ambiguity:** never reconstruct local
+  success and never blindly repeat the select mutation. Every HTTP 5xx observed
+  after dispatch, including a proxy-generated `502` or `504`, is uncertain; it
+  does not prove that the selection transaction failed or rolled back. Reconcile
+  all of these outcomes with both owner
+  `GET /api/v1/matching/offers?orderId=...` and participant
+  `GET /api/v1/ride-state/rides/trip_<orderId>`. Recovery requires exactly one
+  accepted offer plus the exact Ride in a valid post-selection lifecycle state
+  (`ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`,
+  `WAITING_PASSENGER`, `IN_PROGRESS`, `COMPLETED`, `CANCELED`, or `NO_SHOW`).
+  `ACCEPTED` is recoverable only through this read-side path; the direct
+  in-transaction ACK gate above still requires the conflict/inserted Ride to
+  be exactly `DRIVER_EN_ROUTE`. The offers read proves canonical driver identity; the Ride read alone cannot,
+  because its public serializer exposes no driver UUID. Recovery does not
+  inherit proof from the direct-ACK gate: `409 ORDER_NOT_OPEN` returns before
+  that gate, and legacy/imported accepted orders may predate it. Before recovery
+  may navigate, a server-owned check must independently validate that the
+  authoritative owner order has `status === 'ACCEPTED'` and that the persisted
+  Ride's order/driver/passenger/canonical-trip linkage agrees with that order,
+  one accepted offer, the `ACCEPTED` assignment, and the authenticated owner.
+  This gate applies to every pre-existing accepted order. An existing recovery
+  read/coordinator may enforce it, or a separately authorized validated
+  backfill/migration may establish the invariant before cutover; participant
+  access and deterministic `tripId` are not proof. Missing proof, any mismatch,
+  or any authoritative owner-order status other than `ACCEPTED` stays uncertain
+  with no navigation. Focused recovery coverage must reject a partial/imported
+  state where the offer and assignment are accepted and the Ride linkage
+  otherwise agrees, but the authoritative owner order remains `CREATED`.
+  Linkage, order status, and Ride lifecycle proof alone do not authenticate the
+  serialized display snapshot. Server-owned recovery validation or a validated
+  backfill must prove that persisted passenger, driver, route, and fare values
+  agree with the applicable authoritative acceptance-time source. A field that
+  cannot be validated must be omitted/null or explicitly projected unavailable
+  and rendered neutrally, never used as display authority. Focused recovery
+  coverage must include a correctly linked legacy/imported Ride with an allowed
+  lifecycle but stale or unrelated passenger/driver/route/fare snapshots and
+  prove that none of those unverified values is rendered.
+- **Stable-negative proof:** one observation with no accepted offer and a `404`
+  Ride is not proof that no commit occurred; both reads can race a select
+  transaction that is still able to commit. Only server-coordinated
+  stable-negative proof or a separately specified bounded-recheck protocol that
+  observes both reads stably negative after the original mutation can no longer
+  commit may close the uncertain outcome. Until then, and when bounded rechecks
+  are exhausted or inconclusive, there is no success claim, navigation, local
+  reconstruction, or repeated select mutation.
+- **Conflict semantics:** `409 ORDER_NOT_OPEN` says only that the order is not
+  open. It does not prove that another driver won and also occurs on a
+  same-driver replay. Use the same read-side reconciliation before describing
+  the winner. If the requested driver is the accepted offer and the Ride agrees,
+  recover the committed success; if another driver is accepted, do not claim
+  the requested selection succeeded, but the read Ride is the authoritative
+  existing handoff. Inconclusive or disagreeing reads stay uncertain with no
+  automatic mutation replay. Broad idempotent-success semantics remain #826.
+- **Backend-off preservation:** the local prototype keeps its exact-response ->
+  local order accept -> pure Ride seed -> local Ride persistence chain. This
+  contract does not make those stores server authority or remove the fallback.
+- **Runtime status:** `public/src/screens/responses.js` currently discards the
+  successful envelope, reconstructs a same-device local Ride, and lets a
+  post-API local pin mismatch block navigation. Without that local success
+  chain, a later `/responses` visit currently rereads a stale local `CREATED`
+  order, filters the accepted server offer out of the selectable board, and has
+  no local Ride handoff, so it can render a false empty state. In addition,
+  `active_ride_passenger.js` chooses terminal renderers before starting the
+  participant read, and its merge path preserves demo vehicle/payment/chat
+  sections that the focused Ride serializer omits. These are explicitly
+  recorded gates for the separately authorized
+  `BD-RIDE-SELECT-ACK-AUTHORITY-01B — Consume authoritative select ACK in Passenger PWA`;
+  01B must also wait for two separately authorized server-side gates: the
+  complete direct conflict-Ride invariant (persisted
+  order/driver/passenger/trip linkage, exact `DRIVER_EN_ROUTE` status,
+  selection-owned equality against the canonical seed, equality of
+  `ride.accepted_at` to the current authoritative `updatedOrder.accepted_at`,
+  lifecycle-consistent timestamps, and read-stable validated-or-neutral
+  accounting for every additional `serializeRide()` field, with a blocking
+  conflict-row lock held through selection commit, full transaction rollback,
+  and no authoritative rendering on any failure) on the `trip_id` conflict
+  reread, and the
+  separate recovery acceptance/linkage invariant (authoritative owner-order
+  `status === 'ACCEPTED'`, independent linkage proof, and an allowed Ride
+  lifecycle status) on every recovery path, including legacy accepted rows.
+  Every serialized recovery snapshot must also be validated/backfilled or
+  projected complete-or-neutral for unverified fields; this does not impose the
+  direct gate's blanket current-seed equality on historical rows. Focused
+  coverage must pin the `/responses` revisit, HTTP 5xx reconciliation, the
+  pre-commit negative-read race, and both server gates independently. Direct
+  negative cases must include legacy/imported conflict rows with matching
+  linkage/seed/status but stale non-seed serialized values, invalid timestamp
+  presence/order, or an old internally coherent `accepted_at`; concurrency must
+  prove a participant transition cannot overtake validation/commit, and a later
+  participant GET cannot resurrect a neutralized ACK value. Recovery cases must
+  include an authoritative owner order
+  still in `CREATED` and coherent linkage/lifecycle with stale
+  passenger/driver/route/fare snapshots. None of these runtime/backend changes
+  is implemented or activated by this documentation change.
 
 ### Ride transition authority - NO_SHOW
 
