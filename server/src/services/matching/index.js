@@ -14,7 +14,7 @@ import { serializeOffer, serializeOrder, serializeAssignment, serializeRide } fr
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
-import { bootstrapRide, lockRideByTripId } from '../../repositories/rides.js';
+import { bootstrapRide, lockConflictRideForSelection } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
@@ -205,21 +205,23 @@ export default async function matchingService(app) {
       if (!ride) {
         // BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A — a pre-existing trip_id means
         // ON CONFLICT DO NOTHING fired: some other process already wrote this row. Re-read
-        // it under an exclusive row lock (held until this transaction's COMMIT/ROLLBACK,
-        // serializing against any concurrent participant status transition on the same
-        // row) and require the full direct conflict-Ride invariant before ever treating it
-        // as this selection's coherent ACK. A missing/mismatched/non-DRIVER_EN_ROUTE
-        // conflict Ride is a transactional invariant failure: throw (never return
-        // { err: ... }, which would COMMIT) so app.db.tx()'s catch forces ROLLBACK of the
-        // accepted offer, rejected peers, assignment, and order ACCEPTED transition. This
-        // slice does not overwrite, clean up, or neutralize the conflicting row — rejection
-        // + full rollback is the whole policy.
-        const conflictRide = await lockRideByTripId(client, seed.tripId);
-        const verdict = validateConflictRideInvariant({
-          ride: conflictRide,
-          seed,
-          expectedAcceptedAt: updatedOrder.accepted_at,
-        });
+        // it under an exclusive row lock (rides.lockConflictRideForSelection — a
+        // selection-specific seam, distinct from the Ride State PATCH chokepoint's
+        // lockRideByTripId, held until this transaction's COMMIT/ROLLBACK and serializing
+        // against any concurrent participant status transition on the same row) and
+        // require the full direct conflict-Ride invariant before ever treating it as this
+        // selection's coherent ACK. That seam also derives the accepted_at
+        // equality/chronology facts inside PostgreSQL itself, joined against THIS
+        // transaction's just-updated `orders` row, at full native timestamp precision
+        // (BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B) — no separate expected-instant
+        // parameter is needed here. A missing/mismatched/non-DRIVER_EN_ROUTE conflict Ride
+        // is a transactional invariant failure: throw (never return { err: ... }, which
+        // would COMMIT) so app.db.tx()'s catch forces ROLLBACK of the accepted offer,
+        // rejected peers, assignment, and order ACCEPTED transition. This slice does not
+        // overwrite, clean up, or neutralize the conflicting row — rejection + full
+        // rollback is the whole policy.
+        const conflictRide = await lockConflictRideForSelection(client, { tripId: seed.tripId, orderId: order.id });
+        const verdict = validateConflictRideInvariant({ ride: conflictRide, seed });
         if (!verdict.ok) throw new SelectConflictRideInvariantError(seed.tripId, verdict.reason);
         ride = conflictRide;
       }

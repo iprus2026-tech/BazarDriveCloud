@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
+import { lockConflictRideForSelection, lockRideByTripId } from '../src/repositories/rides.js';
+import { validateConflictRideInvariant } from '../src/domain/select-conflict-ride.js';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -263,16 +265,132 @@ test('select rejects a mismatched conflict Ride (500, full rollback, conflict Ri
   assert.equal(retryBody.order.status, 'ACCEPTED');
 });
 
-// Concurrency guarantee: the conflict-Ride reread's SELECT ... FOR UPDATE (rides.
-// lockRideByTripId, the SAME primitive PATCH /ride-state/rides/:tripId/status also takes)
-// must genuinely serialize against a concurrent participant status transition on the same
-// row — the transition cannot commit while the holder still has the lock. Exercised
-// directly at the row-lock primitive (two raw pg connections) rather than through the full
-// HTTP /select round trip, so the barrier is deterministic: a bounded poll of
-// pg_stat_activity observes the second connection's backend genuinely blocked
-// (wait_event_type = 'Lock') before the first releases — never a fixed sleep.
-test('conflict-Ride row lock serializes against a concurrent participant status transition (deterministic barrier, no sleep)', { skip: SKIP }, async (t) => {
-  const tripId = `trip_conflict-lock-${process.pid}-${Date.now()}`;
+// BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B — lockConflictRideForSelection derives its
+// four timestamp facts entirely inside PostgreSQL, at full native `timestamptz` precision.
+// Exercised directly against the repository function + the pure validator (not through the
+// full HTTP /select round trip) so every scenario is fully deterministic: each order/ride
+// pair's timestamps are literal, hand-chosen values under complete control, never derived
+// from the wall clock at test-execution time — two SEPARATE round-trip queries cannot be
+// relied on to land inside the same millisecond of real time, so a live-clock version of
+// this test would be inherently flaky. node-postgres still parses every returned
+// `timestamptz` into a millisecond-resolution JS Date (asserted below too) — exactly the
+// precision loss the PostgreSQL-native facts below must not inherit.
+test('lockConflictRideForSelection: PostgreSQL-native facts hold at true microsecond precision (exact match / same-millisecond distinct microseconds / both chronology violations / missing accepted_at)', { skip: SKIP }, async (t) => {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  const tripIds = [];
+  t.after(async () => {
+    if (tripIds.length) await client.query('DELETE FROM rides WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+    await client.query("DELETE FROM orders WHERE legacy_id LIKE $1", [`order-pg-precision-%-${process.pid}`]).catch(() => {});
+    await client.end();
+  });
+
+  const baseSeed = {
+    status: 'DRIVER_EN_ROUTE', role: 'passenger',
+    driverUserId: null, passengerUserId: null, passengerName: null, passengerInitials: null,
+    passengerPhoneMasked: null, passengerNote: null, driverName: null, driverCar: null,
+    driverRating: null, routePickupLabel: null, routeDropoffLabel: null,
+    orderOfferPrice: null, ridePrice: null,
+  };
+
+  // One order + one conflicting ride per scenario, with fully-controlled literal timestamps
+  // and every OTHER field matching, so only the timestamp facts can move the verdict.
+  async function scenario(name, { orderAcceptedAt, rideCreatedAt, rideAcceptedAt, rideUpdatedAt }) {
+    const legacyId = `order-pg-precision-${name}-${process.pid}`;
+    const tripId = `trip_${legacyId}`;
+    tripIds.push(tripId);
+    const orderRow = (await client.query(
+      `INSERT INTO orders (legacy_id, accepted_at) VALUES ($1, $2) RETURNING id`,
+      [legacyId, orderAcceptedAt],
+    )).rows[0];
+    await client.query(
+      `INSERT INTO rides (trip_id, order_id, status, role, created_at, accepted_at, updated_at)
+       VALUES ($1, $2, 'DRIVER_EN_ROUTE', 'passenger', $3, $4, $5)`,
+      [tripId, orderRow.id, rideCreatedAt, rideAcceptedAt, rideUpdatedAt],
+    );
+    return { tripId, orderId: orderRow.id, seed: { ...baseSeed, tripId, orderId: orderRow.id } };
+  }
+
+  // 1) exact same timestamp — PASS.
+  {
+    const t0 = '2026-08-30 10:00:00.123456+00';
+    const { tripId, orderId, seed } = await scenario('exact', {
+      orderAcceptedAt: t0, rideCreatedAt: t0, rideAcceptedAt: t0, rideUpdatedAt: t0,
+    });
+    const row = await lockConflictRideForSelection(client, { tripId, orderId });
+    assert.equal(row.pg_has_core_timestamps, true, 'exact match: all core timestamps present');
+    assert.equal(row.pg_accepted_at_matches_order, true, 'exact match: accepted_at equals orders.accepted_at');
+    assert.equal(row.pg_created_le_accepted, true, 'exact match: created_at <= accepted_at');
+    assert.equal(row.pg_accepted_le_updated, true, 'exact match: accepted_at <= updated_at');
+    assert.deepEqual(validateConflictRideInvariant({ ride: row, seed }), { ok: true, reason: null });
+  }
+
+  // 2) distinct microseconds within the SAME millisecond — equality flag false, validator FAIL.
+  {
+    const orderT = '2026-08-30 10:00:00.123400+00';
+    const rideT = '2026-08-30 10:00:00.123900+00'; // same millisecond (123), different microsecond
+    const { tripId, orderId, seed } = await scenario('same-ms', {
+      orderAcceptedAt: orderT, rideCreatedAt: rideT, rideAcceptedAt: rideT, rideUpdatedAt: rideT,
+    });
+    const row = await lockConflictRideForSelection(client, { tripId, orderId });
+    assert.equal(row.accepted_at.getTime(), row.created_at.getTime(), 'node-pg Date truncates both literals to the identical millisecond');
+    assert.equal(row.pg_accepted_at_matches_order, false, 'PostgreSQL itself still distinguishes the two microsecond-different instants');
+    assert.deepEqual(validateConflictRideInvariant({ ride: row, seed }), { ok: false, reason: 'accepted_at_matches_order' });
+  }
+
+  // 3) created_at > accepted_at by ONLY microseconds (same millisecond) — chronology FAIL.
+  {
+    const early = '2026-08-30 10:00:00.500000+00';
+    const late = '2026-08-30 10:00:00.500001+00'; // 1 microsecond later, same millisecond
+    const { tripId, orderId, seed } = await scenario('created-after-accepted', {
+      orderAcceptedAt: early, rideCreatedAt: late, rideAcceptedAt: early, rideUpdatedAt: late,
+    });
+    const row = await lockConflictRideForSelection(client, { tripId, orderId });
+    assert.equal(row.created_at.getTime(), row.accepted_at.getTime(), 'both truncate to the identical millisecond in JS');
+    assert.equal(row.pg_created_le_accepted, false, 'PostgreSQL sees created_at as genuinely LATER than accepted_at');
+    assert.deepEqual(validateConflictRideInvariant({ ride: row, seed }), { ok: false, reason: 'created_at<=accepted_at' });
+  }
+
+  // 4) accepted_at > updated_at by ONLY microseconds (same millisecond) — chronology FAIL.
+  {
+    const early = '2026-08-30 10:00:00.700000+00';
+    const late = '2026-08-30 10:00:00.700001+00';
+    const { tripId, orderId, seed } = await scenario('accepted-after-updated', {
+      orderAcceptedAt: late, rideCreatedAt: early, rideAcceptedAt: late, rideUpdatedAt: early,
+    });
+    const row = await lockConflictRideForSelection(client, { tripId, orderId });
+    assert.equal(row.accepted_at.getTime(), row.updated_at.getTime(), 'both truncate to the identical millisecond in JS');
+    assert.equal(row.pg_accepted_le_updated, false, 'PostgreSQL sees accepted_at as genuinely LATER than updated_at');
+    assert.deepEqual(validateConflictRideInvariant({ ride: row, seed }), { ok: false, reason: 'accepted_at<=updated_at' });
+  }
+
+  // 5) missing accepted_at — presence flag FAIL (a NULL comparison is SQL NULL, not false, and
+  // still fails closed with no special-casing needed).
+  {
+    const t0 = '2026-08-30 10:00:00.000000+00';
+    const { tripId, orderId, seed } = await scenario('missing-accepted', {
+      orderAcceptedAt: t0, rideCreatedAt: t0, rideAcceptedAt: null, rideUpdatedAt: t0,
+    });
+    const row = await lockConflictRideForSelection(client, { tripId, orderId });
+    assert.equal(row.pg_has_core_timestamps, false, 'a NULL accepted_at fails the presence fact');
+    assert.equal(row.pg_created_le_accepted, null, 'the chronology comparison against a NULL accepted_at is SQL NULL, not false');
+    assert.deepEqual(validateConflictRideInvariant({ ride: row, seed }), { ok: false, reason: 'missing_core_timestamps' });
+  }
+});
+
+// Concurrency guarantee: the conflict-Ride reread's SELECT ... FOR UPDATE — now
+// rides.lockConflictRideForSelection, the selection-specific seam
+// (BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B) — must genuinely serialize against a
+// concurrent participant status transition on the same row via rides.lockRideByTripId (the
+// SAME primitive PATCH /ride-state/rides/:tripId/status takes; both lock the identical
+// physical `rides` row, so the join/extra columns in the selection-specific query do not
+// change what is being locked). The transition cannot commit while the holder still has the
+// lock. Exercised directly at the two real repository functions (two raw pg connections)
+// rather than through the full HTTP /select round trip, so the barrier is deterministic: a
+// bounded poll of pg_stat_activity observes the second connection's backend genuinely
+// blocked (wait_event_type = 'Lock') before the first releases — never a fixed sleep.
+test('conflict-Ride row lock (new selection-specific seam) serializes against a concurrent participant status transition (deterministic barrier, no sleep)', { skip: SKIP }, async (t) => {
+  const tripId = `trip_conflict-lock-pg-precision-${process.pid}-${Date.now()}`;
   const setup = new pg.Client({ connectionString: DATABASE_URL });
   const holder = new pg.Client({ connectionString: DATABASE_URL }); // simulates the select tx's conflict reread
   const waiter = new pg.Client({ connectionString: DATABASE_URL }); // simulates a concurrent PATCH status transition
@@ -285,21 +403,29 @@ test('conflict-Ride row lock serializes against a concurrent participant status 
     await waiter.end().catch(() => {});
     await monitor.end().catch(() => {});
     await setup.query('DELETE FROM rides WHERE trip_id = $1', [tripId]).catch(() => {});
+    await setup.query("DELETE FROM orders WHERE legacy_id = $1", [`order-conflict-lock-pg-precision-${process.pid}`]).catch(() => {});
     await setup.end().catch(() => {});
   });
 
   await setup.connect();
-  await setup.query(`INSERT INTO rides (trip_id, status, role) VALUES ($1, 'DRIVER_EN_ROUTE', 'passenger')`, [tripId]);
+  const orderRow = (await setup.query(
+    `INSERT INTO orders (legacy_id) VALUES ($1) RETURNING id`,
+    [`order-conflict-lock-pg-precision-${process.pid}`],
+  )).rows[0];
+  await setup.query(
+    `INSERT INTO rides (trip_id, order_id, status, role) VALUES ($1, $2, 'DRIVER_EN_ROUTE', 'passenger')`,
+    [tripId, orderRow.id],
+  );
   await holder.connect();
   await waiter.connect();
   await monitor.connect();
 
   await holder.query('BEGIN');
-  const holderRow = (await holder.query('SELECT * FROM rides WHERE trip_id = $1 FOR UPDATE', [tripId])).rows[0];
-  assert.equal(holderRow.trip_id, tripId, 'the holder (select-tx conflict reread) acquires the row lock');
+  const holderRow = await lockConflictRideForSelection(holder, { tripId, orderId: orderRow.id });
+  assert.equal(holderRow.trip_id, tripId, 'the holder (the new selection-specific locked seam) acquires the row lock');
 
   await waiter.query('BEGIN');
-  const waiterPromise = waiter.query('SELECT * FROM rides WHERE trip_id = $1 FOR UPDATE', [tripId]);
+  const waiterPromise = lockRideByTripId(waiter, tripId); // the SAME primitive PATCH /ride-state takes
 
   // Deterministic barrier: poll pg_stat_activity for the waiter's own backend PID until it
   // reports genuinely waiting on a lock. Bounded, but never a fixed-duration sleep-and-hope.
@@ -324,7 +450,7 @@ test('conflict-Ride row lock serializes against a concurrent participant status 
   // the waiter must then proceed against the ORIGINAL, unmodified row.
   await holder.query('ROLLBACK');
   const waiterResult = await waiterPromise;
-  assert.equal(waiterResult.rows[0].trip_id, tripId, 'after the holder releases, the blocked transaction proceeds against the original Ride');
-  assert.equal(waiterResult.rows[0].status, 'DRIVER_EN_ROUTE', 'the original Ride was not changed while the lock was held');
+  assert.equal(waiterResult.trip_id, tripId, 'after the holder releases, the blocked transaction proceeds against the original Ride');
+  assert.equal(waiterResult.status, 'DRIVER_EN_ROUTE', 'the original Ride was not changed while the lock was held');
   await waiter.query('ROLLBACK');
 });

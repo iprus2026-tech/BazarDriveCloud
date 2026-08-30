@@ -1,13 +1,15 @@
-// /server/src/domain/select-conflict-ride.js — BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A.
+// /server/src/domain/select-conflict-ride.js — BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A,
+// timestamp precision hardened by BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B.
 //
 // Pure validator for the ON CONFLICT (trip_id) DO NOTHING path in POST
 // /api/v1/matching/select (services/matching/index.js). When bootstrapRide() finds a
 // pre-existing `trip_id`, the caller re-reads that row under `SELECT ... FOR UPDATE`
-// (rides.lockRideByTripId, held until the select transaction's COMMIT/ROLLBACK) and must
-// prove the row is byte-for-byte the SAME logical Ride the current selection would have
-// minted — a coherent ACK requires exact identity, not merely "a Ride exists at this
-// tripId". No I/O here: this module only compares an already-locked row against the
-// already-computed seed, so it is unit-testable without a database.
+// (rides.lockConflictRideForSelection, held until the select transaction's
+// COMMIT/ROLLBACK) and must prove the row is byte-for-byte the SAME logical Ride the
+// current selection would have minted — a coherent ACK requires exact identity, not
+// merely "a Ride exists at this tripId". No I/O here: this module only compares an
+// already-locked row against the already-computed seed, so it is unit-testable without a
+// database.
 //
 // Field taxonomy (every listed column is checked; nothing is inferred from silence):
 //   - linkage/seed fields — must equal what buildRideSeed(order, acceptedOffer) would have
@@ -20,15 +22,22 @@
 //     knows nothing about, so the row cannot be blindly reused as this ACK's Ride.
 //   - fresh-lifecycle columns — a DRIVER_EN_ROUTE ride must not yet have advanced; any of
 //     these being stamped means the row is not a freshly-bootstrapped match.
-//   - core timestamps — must exist, parse as valid instants, and be internally
-//     chronological (created_at <= accepted_at <= updated_at). `accepted_at` must further
-//     equal the EXACT instant this same select transaction's markOrderAccepted() produced
+//   - core timestamp facts — presence, `created_at <= accepted_at`, `accepted_at <=
+//     updated_at`, and `accepted_at` matching the EXACT instant this same select
+//     transaction's markOrderAccepted() produced are each computed by PostgreSQL itself,
+//     inside the SAME locked, joined query (rides.lockConflictRideForSelection), at full
+//     native `timestamptz` precision. This validator only requires each of those four
+//     facts to be the strict boolean `true` — it never re-derives equality or chronology
+//     from a JS `Date`. node-postgres's default `timestamptz` type parser truncates to
+//     millisecond resolution, so re-deriving these facts in JS could silently equate two
+//     genuinely distinct PostgreSQL instants within the same millisecond, or miss a
+//     microsecond-only chronology violation; deriving them in SQL instead closes that gap.
 //     (Postgres now() is constant per-transaction, so a genuine conflict — necessarily
-//     committed by an earlier, different transaction — practically never satisfies this).
-//     That practical near-certainty is not a reason to skip the other checks: a conflict
-//     row could theoretically carry correct linkage/status/snapshot values from a
-//     previous, legitimate bootstrap of the exact same order, so every field is still
-//     verified independently.
+//     committed by an earlier, different transaction — practically never satisfies the
+//     equality fact. That practical near-certainty is not a reason to skip the other
+//     checks: a conflict row could theoretically carry correct linkage/status/snapshot
+//     values from a previous, legitimate bootstrap of the exact same order, so every field
+//     is still verified independently.)
 //
 // Any single failure is reported by the FIRST reason encountered (table-driven tests pin
 // one mismatch at a time to a distinct reason string) so the caller can throw a specific,
@@ -101,25 +110,30 @@ function fieldsEqual(column, rideValue, seedValue) {
   return normalizeCanonical(rideValue) === normalizeCanonical(seedValue);
 }
 
-// Parse to an epoch-millis instant, or null if missing/unparsable. Accepts both a pg
-// Date object and an ISO string (the shape depends on the driver's type parsing), so the
-// same validator works against a live `pg` row and a synthetic plain-object test fixture.
-function toInstant(value) {
-  if (value == null) return null;
-  const d = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d.getTime();
-}
-
 function fail(reason) {
   return { ok: false, reason };
 }
 
-// validateConflictRideInvariant({ ride, seed, expectedAcceptedAt }) — pure, synchronous.
-//   ride               — the locked conflict row (`rides.lockRideByTripId` result), or null.
-//   seed               — buildRideSeed(order, acceptedOffer)'s return value for THIS select.
-//   expectedAcceptedAt — updatedOrder.accepted_at from THIS transaction's markOrderAccepted().
+// The four PostgreSQL-derived boolean facts rides.lockConflictRideForSelection computes
+// inside its locked, joined query, each mapped to the reason reported on failure. Every
+// value is required to be the strict boolean `true`: `false`, `null` (a missing timestamp
+// makes the underlying SQL comparison NULL, not false — see the header note), `undefined`
+// (an absent/malformed field), or any other non-boolean value all fail closed identically.
+// This is intentionally the ONLY place these four facts are consulted — no raw
+// created_at/accepted_at/updated_at value on `ride` is ever read for equality or
+// chronology here, so a JS Date can never override what PostgreSQL already decided.
+const PG_TIMESTAMP_FACTS = Object.freeze([
+  ['pg_has_core_timestamps', 'missing_core_timestamps'],
+  ['pg_created_le_accepted', 'created_at<=accepted_at'],
+  ['pg_accepted_le_updated', 'accepted_at<=updated_at'],
+  ['pg_accepted_at_matches_order', 'accepted_at_matches_order'],
+]);
+
+// validateConflictRideInvariant({ ride, seed }) — pure, synchronous.
+//   ride — the locked conflict row (`rides.lockConflictRideForSelection` result), or null.
+//   seed — buildRideSeed(order, acceptedOffer)'s return value for THIS select.
 // Returns { ok: true, reason: null } or { ok: false, reason: '<first failing field>' }.
-export function validateConflictRideInvariant({ ride, seed, expectedAcceptedAt }) {
+export function validateConflictRideInvariant({ ride, seed }) {
   if (!ride) return fail('missing');
 
   for (const [column, seedKey] of Object.entries(SEED_FIELD_MAP)) {
@@ -134,18 +148,9 @@ export function validateConflictRideInvariant({ ride, seed, expectedAcceptedAt }
     if (ride[column] !== null && ride[column] !== undefined) return fail(column);
   }
 
-  const createdAt = toInstant(ride.created_at);
-  if (createdAt === null) return fail('created_at');
-  const acceptedAt = toInstant(ride.accepted_at);
-  if (acceptedAt === null) return fail('accepted_at');
-  const updatedAt = toInstant(ride.updated_at);
-  if (updatedAt === null) return fail('updated_at');
-
-  if (!(createdAt <= acceptedAt)) return fail('created_at<=accepted_at');
-  if (!(acceptedAt <= updatedAt)) return fail('accepted_at<=updated_at');
-
-  const expected = toInstant(expectedAcceptedAt);
-  if (expected === null || acceptedAt !== expected) return fail('accepted_at_matches_order');
+  for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+    if (ride[field] !== true) return fail(reason);
+  }
 
   return { ok: true, reason: null };
 }
