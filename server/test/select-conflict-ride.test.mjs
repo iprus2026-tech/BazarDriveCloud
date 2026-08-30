@@ -1,8 +1,13 @@
-// /server/test/select-conflict-ride.test.mjs — BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A.
+// /server/test/select-conflict-ride.test.mjs — BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A,
+// timestamp precision hardened by BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B.
 // Pure, table-driven unit coverage for domain/select-conflict-ride.js. No database: every
 // case is a synthetic plain-object "locked row" against a synthetic seed, so this runs
-// everywhere (no DATABASE_URL gate). The DB/concurrency coverage that actually exercises
-// bootstrapRide()'s ON CONFLICT path lives in select-flow.test.mjs.
+// everywhere (no DATABASE_URL gate). The four pg_* fields mirror what
+// rides.lockConflictRideForSelection computes inside PostgreSQL (see that function's header
+// comment) — this file never re-derives equality/chronology from a JS Date; it only proves
+// the validator obeys those pre-computed flags, strictly. The DB/concurrency coverage that
+// actually exercises bootstrapRide()'s ON CONFLICT path (and the real Postgres precision
+// behavior of the four flags themselves) lives in select-flow.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -34,9 +39,10 @@ function makeSeed(overrides = {}) {
 }
 
 // A row matching `seed` exactly, plus every serializer-only/lifecycle column at its fresh
-// (null) value and internally-chronological core timestamps all pinned to BASE_NOW —
-// mirroring what a single bootstrapRide() INSERT statement would have persisted (Postgres
-// now() is constant within one statement/transaction).
+// (null) value, internally-chronological raw core timestamps all pinned to BASE_NOW (present
+// on a real `SELECT r.*` row, but no longer authoritative for equality/chronology — see
+// below), and all four PostgreSQL-derived timestamp facts pinned `true` — mirroring what
+// rides.lockConflictRideForSelection would return for a genuinely fresh, matching bootstrap.
 function makeCoherentRow(seed, overrides = {}) {
   return {
     trip_id: seed.tripId,
@@ -69,17 +75,31 @@ function makeCoherentRow(seed, overrides = {}) {
     started_at: null,
     completed_at: null,
     canceled_at: null,
-    // core timestamps.
+    // raw core timestamps — present on the row, but NOT read by the validator for
+    // equality/chronology (see PG_TIMESTAMP_FACTS below); kept here only for fixture realism.
     created_at: BASE_NOW,
     accepted_at: BASE_NOW,
     updated_at: BASE_NOW,
+    // PostgreSQL-derived authoritative boolean facts (lockConflictRideForSelection).
+    pg_has_core_timestamps: true,
+    pg_created_le_accepted: true,
+    pg_accepted_le_updated: true,
+    pg_accepted_at_matches_order: true,
     ...overrides,
   };
 }
 
-function check(ride, seed, expectedAcceptedAt = BASE_NOW) {
-  return validateConflictRideInvariant({ ride, seed, expectedAcceptedAt });
+function check(ride, seed) {
+  return validateConflictRideInvariant({ ride, seed });
 }
+
+// field -> failure reason, mirroring domain/select-conflict-ride.js's own mapping exactly.
+const PG_TIMESTAMP_FACTS = [
+  ['pg_has_core_timestamps', 'missing_core_timestamps'],
+  ['pg_created_le_accepted', 'created_at<=accepted_at'],
+  ['pg_accepted_le_updated', 'accepted_at<=updated_at'],
+  ['pg_accepted_at_matches_order', 'accepted_at_matches_order'],
+];
 
 // ── coherent synthetic row — PASS ───────────────────────────────────────────
 test('coherent synthetic conflict row passes', () => {
@@ -174,41 +194,77 @@ for (const column of LIFECYCLE_COLUMNS) {
   });
 }
 
-// ── missing/invalid core timestamps — FAIL ─────────────────────────────────
-for (const column of ['created_at', 'accepted_at', 'updated_at']) {
-  test(`missing core timestamp fails: ${column}`, () => {
+// ── each PostgreSQL-derived timestamp fact, individually `false` — FAIL ────────────────────
+for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+  test(`PostgreSQL-derived timestamp fact false fails: ${field}`, () => {
     const seed = makeSeed();
-    const ride = makeCoherentRow(seed, { [column]: null });
-    assert.deepEqual(check(ride, seed), { ok: false, reason: column });
-  });
-  test(`invalid (unparsable) core timestamp fails: ${column}`, () => {
-    const seed = makeSeed();
-    const ride = makeCoherentRow(seed, { [column]: 'not-a-date' });
-    assert.deepEqual(check(ride, seed), { ok: false, reason: column });
+    const ride = makeCoherentRow(seed, { [field]: false });
+    assert.deepEqual(check(ride, seed), { ok: false, reason });
   });
 }
 
-// ── both non-chronological boundaries — FAIL ───────────────────────────────
-test('non-chronological: created_at after accepted_at fails', () => {
-  const seed = makeSeed();
-  const later = new Date(BASE_NOW.getTime() + 1000);
-  const ride = makeCoherentRow(seed, { created_at: later, accepted_at: BASE_NOW, updated_at: later });
-  assert.deepEqual(check(ride, seed, BASE_NOW), { ok: false, reason: 'created_at<=accepted_at' });
-});
+// ── each PostgreSQL-derived timestamp fact, individually `null` — FAIL ─────────────────────
+// A SQL `=`/`<=` comparison against a NULL timestamp yields NULL, not false — node-postgres
+// surfaces that as JS `null`. The validator must fail this exactly like an explicit `false`.
+for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+  test(`PostgreSQL-derived timestamp fact null fails: ${field}`, () => {
+    const seed = makeSeed();
+    const ride = makeCoherentRow(seed, { [field]: null });
+    assert.deepEqual(check(ride, seed), { ok: false, reason });
+  });
+}
 
-test('non-chronological: accepted_at after updated_at fails', () => {
-  const seed = makeSeed();
-  const later = new Date(BASE_NOW.getTime() + 1000);
-  const ride = makeCoherentRow(seed, { accepted_at: later, updated_at: BASE_NOW });
-  assert.deepEqual(check(ride, seed, later), { ok: false, reason: 'accepted_at<=updated_at' });
-});
+// ── each PostgreSQL-derived timestamp fact, entirely missing from the row — FAIL ───────────
+for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+  test(`PostgreSQL-derived timestamp fact missing fails: ${field}`, () => {
+    const seed = makeSeed();
+    const ride = makeCoherentRow(seed);
+    delete ride[field];
+    assert.deepEqual(check(ride, seed), { ok: false, reason });
+  });
+}
 
-// ── internally chronological, but accepted_at != current updatedOrder.accepted_at — FAIL ──
-test('internally chronological but stale accepted_at (does not match the current select) fails', () => {
+// ── each PostgreSQL-derived timestamp fact, malformed (truthy but not exactly `true`) — FAIL
+// Proves the check is strict `=== true`, not loose truthiness — a stringly-typed or numeric
+// "true" from a malformed/legacy row must not slip through.
+for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+  test(`PostgreSQL-derived timestamp fact malformed (non-boolean truthy) fails: ${field}`, () => {
+    const seed = makeSeed();
+    const ride = makeCoherentRow(seed, { [field]: 'true' });
+    assert.deepEqual(check(ride, seed), { ok: false, reason });
+  });
+}
+
+// ── identical millisecond-level JS Date values cannot override a PostgreSQL flag `false` ──
+// The raw created_at/accepted_at/updated_at below are all pinned to the SAME BASE_NOW Date
+// instance — by the OLD (pre-01B) JS Date.getTime()-based logic this would read as perfectly
+// coherent and matching. The validator must still FAIL here, because it never looks at those
+// raw fields for equality/chronology any more — only the PostgreSQL-derived flag governs.
+for (const [field, reason] of PG_TIMESTAMP_FACTS) {
+  test(`identical millisecond-level JS Date values cannot override a PostgreSQL flag false: ${field}`, () => {
+    const seed = makeSeed();
+    const ride = makeCoherentRow(seed, {
+      created_at: BASE_NOW,
+      accepted_at: BASE_NOW,
+      updated_at: BASE_NOW,
+      [field]: false,
+    });
+    assert.deepEqual(check(ride, seed), { ok: false, reason });
+  });
+}
+
+// ── raw timestamp representation is irrelevant now — only the pg_* flags decide — PASS ─────
+// A live pg row's raw created_at/accepted_at/updated_at could be a Date or (depending on
+// type-parsing config) a string; since the validator no longer reads them for equality or
+// chronology, either representation must PASS identically as long as the flags are true.
+test('raw core timestamp representation (Date vs ISO string) does not affect the verdict', () => {
   const seed = makeSeed();
-  const ride = makeCoherentRow(seed); // fully chronological: created_at = accepted_at = updated_at = BASE_NOW
-  const currentTxInstant = new Date(BASE_NOW.getTime() + 5000); // a later, DIFFERENT transaction's now()
-  assert.deepEqual(check(ride, seed, currentTxInstant), { ok: false, reason: 'accepted_at_matches_order' });
+  const ride = makeCoherentRow(seed, {
+    created_at: BASE_NOW.toISOString(),
+    accepted_at: BASE_NOW.toISOString(),
+    updated_at: BASE_NOW.toISOString(),
+  });
+  assert.deepEqual(check(ride, seed), { ok: true, reason: null });
 });
 
 // ── every non-DRIVER_EN_ROUTE status, including terminal — FAIL ────────────
@@ -224,15 +280,3 @@ for (const status of NON_DRIVER_EN_ROUTE_STATUSES) {
     assert.deepEqual(check(ride, seed), { ok: false, reason: 'status' });
   });
 }
-
-// ── ISO-string timestamps (a live pg row can return either a Date or, depending on
-// type-parsing config, a string) must be accepted identically to Date objects. ──
-test('ISO-string core timestamps are accepted the same as Date instances', () => {
-  const seed = makeSeed();
-  const ride = makeCoherentRow(seed, {
-    created_at: BASE_NOW.toISOString(),
-    accepted_at: BASE_NOW.toISOString(),
-    updated_at: BASE_NOW.toISOString(),
-  });
-  assert.deepEqual(check(ride, seed, BASE_NOW.toISOString()), { ok: true, reason: null });
-});

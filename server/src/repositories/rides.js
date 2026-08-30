@@ -44,6 +44,40 @@ export async function lockRideByTripId(db, tripId) {
   return rows[0] ?? null;
 }
 
+// BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B — selection-specific locked conflict-Ride
+// reread. Deliberately SEPARATE from lockRideByTripId above (which stays the Ride State PATCH
+// chokepoint's own primitive, unmodified): the /select conflict path additionally needs the
+// current Order's `accepted_at` in the SAME statement, so the equality/chronology facts below
+// are derived by PostgreSQL itself, at full native `timestamptz` precision (microseconds),
+// never round-tripped through a JS `Date` first (node-postgres's default type parser truncates
+// `timestamptz` -> `Date` to millisecond resolution, which is the exact precision loss this
+// slice closes). `orders` is read via a plain JOIN, not re-locked: the caller has already
+// locked that row earlier in the SAME transaction (orders.lockOrderByLegacyId), and a
+// transaction always sees its own uncommitted writes, so no second lock is needed here.
+// `=`/`<=` against a NULL timestamp evaluate to SQL NULL (not `false`) — a missing timestamp on
+// either side therefore fails every derived flag below closed, exactly like an explicit
+// mismatch, with no special-casing required by the caller.
+// FOR UPDATE OF r locks only the `rides` row (matches lockRideByTripId's lock target exactly,
+// so the two seams still serialize against each other on the same physical row). The extra
+// pg_* boolean columns are internal-only: they are not columns serializeRide() reads, so they
+// never reach the API response.
+export async function lockConflictRideForSelection(db, { tripId, orderId }) {
+  const { rows } = await db.query(
+    `SELECT r.*,
+            (r.created_at IS NOT NULL AND r.accepted_at IS NOT NULL AND r.updated_at IS NOT NULL)
+              AS pg_has_core_timestamps,
+            (r.accepted_at = o.accepted_at) AS pg_accepted_at_matches_order,
+            (r.created_at <= r.accepted_at) AS pg_created_le_accepted,
+            (r.accepted_at <= r.updated_at) AS pg_accepted_le_updated
+       FROM rides r
+       JOIN orders o ON o.id = $2
+      WHERE r.trip_id = $1
+      FOR UPDATE OF r`,
+    [tripId, orderId],
+  );
+  return rows[0] ?? null;
+}
+
 // The status-keyed timestamp columns the chokepoint may stamp. A server-controlled allowlist
 // (the column never comes from client input — it is derived from domain STATUS_TIMESTAMP_FIELD),
 // guarded here too so the dynamic SET clause can never interpolate anything else.
