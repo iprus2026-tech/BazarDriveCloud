@@ -200,34 +200,58 @@ for (const [fact, reason] of PG_FACT_REASONS) {
   }
 }
 
-// ── lifecycle timestamp SHAPE — gaps, wrong prefix length, incompatible terminals — FAIL ──
-test('lifecycle: a gap (arrived_at set while approaching_at is null) fails', () => {
+// ── current-status timestamp missing — FAIL, for every recovery-eligible status ─────────────
+// (finding #1 fix) the PATCH chokepoint permits ANY non-terminal status to move directly to
+// any other valid status, stamping ONLY that target's own STATUS_TIMESTAMP_FIELD column — so
+// the ONLY shape fact this validator still requires is presence of the CURRENT status's own
+// timestamp. Missing it must still fail closed.
+const CURRENT_STATUS_COLUMN = {
+  ACCEPTED: 'accepted_at', DRIVER_EN_ROUTE: 'accepted_at',
+  DRIVER_APPROACHING_PICKUP: 'approaching_at', WAITING_PASSENGER: 'arrived_at',
+  IN_PROGRESS: 'started_at', COMPLETED: 'completed_at',
+  CANCELED: 'canceled_at', NO_SHOW: 'canceled_at',
+};
+for (const [status, column] of Object.entries(CURRENT_STATUS_COLUMN)) {
+  test(`current-status timestamp missing fails: ${status} needs ${column}`, () => {
+    const ride = status === 'CANCELED' || status === 'NO_SHOW'
+      ? makeRide({ status, cancel_by: status === 'NO_SHOW' ? 'driver' : null, cancel_reason: status === 'NO_SHOW' ? 'passenger_no_show' : null, [column]: null })
+      : rideForStatus(status, { [column]: null });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'current_status_timestamp_missing' });
+  });
+}
+
+// ── skip-forward and backward non-terminal transitions — PASS (finding #1 fix) ─────────────
+// Direct transitions FROM DRIVER_EN_ROUTE into every reachable target (sparse — every
+// intermediate stage timestamp left null, exactly as the real PATCH would leave them), plus a
+// genuine backward non-terminal transition (later-stage timestamps STILL populated after the
+// status regresses) — none of this is corruption; the PATCH chokepoint produces it routinely.
+test('sparse DRIVER_EN_ROUTE -> DRIVER_APPROACHING_PICKUP passes (no intermediate skipped yet)', () => {
+  const ride = makeRide({ status: 'DRIVER_APPROACHING_PICKUP', approaching_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+test('sparse DRIVER_EN_ROUTE -> WAITING_PASSENGER passes (approaching_at skipped)', () => {
   const ride = makeRide({ status: 'WAITING_PASSENGER', approaching_at: null, arrived_at: T });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+  assert.equal(check({ ride }).ok, true);
 });
-test('lifecycle: ACCEPTED with an extra approaching_at (prefix too long) fails', () => {
-  const ride = makeRide({ status: 'ACCEPTED', approaching_at: T });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+test('sparse DRIVER_EN_ROUTE -> IN_PROGRESS passes (approaching_at/arrived_at both skipped)', () => {
+  const ride = makeRide({ status: 'IN_PROGRESS', approaching_at: null, arrived_at: null, started_at: T });
+  assert.equal(check({ ride }).ok, true);
 });
-test('lifecycle: IN_PROGRESS missing started_at (prefix too short) fails', () => {
-  const ride = rideForStatus('IN_PROGRESS', { started_at: null });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+test('sparse DRIVER_EN_ROUTE -> COMPLETED passes (every intermediate stage skipped)', () => {
+  const ride = makeRide({ status: 'COMPLETED', approaching_at: null, arrived_at: null, started_at: null, completed_at: T });
+  assert.equal(check({ ride }).ok, true);
 });
-test('lifecycle: COMPLETED with canceled_at also set fails', () => {
-  const ride = rideForStatus('COMPLETED', { canceled_at: T });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+test('sparse DRIVER_EN_ROUTE -> CANCELED passes (API-driven, no actor, every intermediate stage skipped)', () => {
+  const ride = makeRide({ status: 'CANCELED', approaching_at: null, arrived_at: null, canceled_at: T, cancel_by: null, cancel_reason: null });
+  assert.equal(check({ ride }).ok, true);
 });
-test('lifecycle: NO_SHOW with wrong prefix (only accepted_at, never reached arrived) fails', () => {
-  const ride = makeRide({ status: 'NO_SHOW', cancel_by: 'driver', cancel_reason: 'passenger_no_show', canceled_at: T });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+test('backward non-terminal transition WAITING_PASSENGER -> DRIVER_EN_ROUTE passes (later-stage timestamps stay populated)', () => {
+  const ride = makeRide({ status: 'DRIVER_EN_ROUTE', approaching_at: T, arrived_at: T });
+  assert.equal(check({ ride }).ok, true);
 });
-test('lifecycle: CANCELED with the full prefix through completed_at fails (a completed ride cannot be canceled)', () => {
+test('CANCELED with the full prefix through completed_at still passes (shape is no longer restricted)', () => {
   const ride = makeRide({ status: 'CANCELED', approaching_at: T, arrived_at: T, started_at: T, completed_at: T, canceled_at: T });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
-});
-test('lifecycle: CANCELED without canceled_at fails', () => {
-  const ride = makeRide({ status: 'CANCELED', canceled_at: null });
-  assert.deepEqual(check({ ride }), { ok: false, reason: 'lifecycle_timestamp_incoherent' });
+  assert.equal(check({ ride }).ok, true);
 });
 
 // ── cancel field coherence — FAIL ────────────────────────────────────────────
@@ -235,8 +259,33 @@ test('NO_SHOW with wrong cancel_by/reason fails', () => {
   const ride = rideForStatus('NO_SHOW', { cancel_by: 'passenger', cancel_reason: 'other' });
   assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
 });
-test('a non-NO_SHOW status with cancel_by populated fails', () => {
+test('a non-NO_SHOW, non-CANCELED status with cancel_by populated fails', () => {
   const ride = rideForStatus('IN_PROGRESS', { cancel_by: 'driver' });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
+});
+
+// ── CANCELED cancel-field matrix (finding #3 fix) — every schema-allowed actor + nullable
+// reason PASS; an actor outside the schema's CHECK constraint FAILS ─────────────────────────
+for (const actor of ['driver', 'passenger', 'system']) {
+  test(`CANCELED with schema-valid actor '${actor}' and a reason passes`, () => {
+    const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: actor, cancel_reason: 'some reason' });
+    assert.equal(check({ ride }).ok, true);
+  });
+  test(`CANCELED with schema-valid actor '${actor}' and null reason passes (no actor<->reason linkage)`, () => {
+    const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: actor, cancel_reason: null });
+    assert.equal(check({ ride }).ok, true);
+  });
+}
+test('CANCELED with null actor but a populated reason passes (no linkage either direction)', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: null, cancel_reason: 'some reason' });
+  assert.equal(check({ ride }).ok, true);
+});
+test('CANCELED with both cancel fields null passes (the plain API-driven shape)', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: null, cancel_reason: null });
+  assert.equal(check({ ride }).ok, true);
+});
+test('CANCELED with an actor outside the schema CHECK constraint fails', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: 'bogus-actor', cancel_reason: null });
   assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
 });
 

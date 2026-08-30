@@ -26,12 +26,32 @@
 //     This validator only requires each fact to be the strict boolean `true` — it never
 //     re-derives equality or chronology via JS `Date.getTime()` (BD-RIDE-SELECT-CONFLICT-
 //     RIDE-PG-PRECISION-01B's exact precision-loss defect would otherwise repeat here).
-//   - lifecycle timestamp SHAPE — which of the 5 stage timestamps must be non-null given the
-//     current status is a presence/prefix check, not a magnitude comparison, so it is done
-//     here in JS without any precision concern.
+//   - current-status timestamp presence — the PATCH /ride-state/rides/:tripId/status
+//     chokepoint permits ANY non-terminal status to move directly to any other valid status
+//     in one step (no sequential-progression gate exists server- or DB-side — see
+//     services/ride-state/index.js), stamping ONLY that target status's own
+//     STATUS_TIMESTAMP_FIELD column. A ride can therefore legitimately skip stages forward
+//     (DRIVER_EN_ROUTE -> IN_PROGRESS, leaving approaching_at/arrived_at null) or move
+//     backward (WAITING_PASSENGER -> DRIVER_EN_ROUTE, leaving arrived_at/approaching_at still
+//     populated from the earlier forward progression) while remaining a perfectly valid,
+//     API-committed state (confirmed live against #938's Codex finding #1). A prefix/shape
+//     requirement therefore cannot distinguish a legitimate skip/backward transition from
+//     corruption by row content alone — the only shape fact that holds for every reachable
+//     status is that its OWN status-keyed timestamp is stamped. Every OTHER stage timestamp
+//     is deliberately left unconstrained here (neither required nor forbidden).
+//   - cancel field coherence — NO_SHOW is exclusively server-derived (patchRideNoShow always
+//     writes the same two literals) and keeps its exact contract. CANCELED is reachable both
+//     via the generic PATCH (which never touches cancel_by/reason, leaving them null) and via
+//     legacy/imported rows that may carry any schema-valid actor: rides.cancel_by CHECK
+//     (migrations/0001) permits 'driver' | 'passenger' | 'system' UNCONDITIONALLY, not scoped
+//     to NO_SHOW, and cancel_reason has no CHECK constraint and no actor<->reason linkage in
+//     the schema at all — confirmed live against #938's Codex finding #3. Every other status
+//     keeps requiring both fields null.
 //   - always-null columns — verified empirically: no write path (bootstrapRide,
 //     patchRideStatus, patchRideNoShow) ever populates passenger_rating, driver_initials, or
 //     either route ETA column, on ANY Ride, ever. A non-null value here is corruption.
+
+import { STATUS_TIMESTAMP_FIELD } from './ride-status.js';
 
 // Recovery-eligible Ride statuses — deliberately NARROWER than isValidRideStatus(): the four
 // pre-acceptance statuses (NEW_ORDER, CONFIRMATION_PENDING, CONFIRMED, CHAT_STARTED) cannot
@@ -41,23 +61,21 @@ const RECOVERY_ALLOWED_STATUSES = Object.freeze(new Set([
   'IN_PROGRESS', 'COMPLETED', 'CANCELED', 'NO_SHOW',
 ]));
 
-// The 5-stage lifecycle-timestamp sequence (mirrors STATUS_TIMESTAMP_FIELD's own progression).
-const TS_SEQUENCE = ['accepted_at', 'approaching_at', 'arrived_at', 'started_at', 'completed_at'];
-
-// Exact required non-null prefix length per status. CANCELED is handled separately (any
-// length 1-4, never 5 — an already-COMPLETED ride cannot become CANCELED). ACCEPTED and
-// DRIVER_EN_ROUTE both map to the same acceptedAt stamp (STATUS_TIMESTAMP_FIELD), so both
-// require exactly stage 1. NO_SHOW is only reachable from WAITING_PASSENGER (ride-state/
-// index.js's own guard), so its prefix is FIXED at 3 — never "at least 3".
-const EXACT_PREFIX_LENGTH = Object.freeze({
-  ACCEPTED: 1,
-  DRIVER_EN_ROUTE: 1,
-  DRIVER_APPROACHING_PICKUP: 2,
-  WAITING_PASSENGER: 3,
-  IN_PROGRESS: 4,
-  COMPLETED: 5,
-  NO_SHOW: 3,
+// camelCase STATUS_TIMESTAMP_FIELD value -> rides DB column. Mirrors services/ride-state/
+// index.js's own (unexported) TS_KEY_TO_COLUMN exactly — duplicated rather than imported to
+// avoid a domain->service dependency inversion.
+const TS_KEY_TO_COLUMN = Object.freeze({
+  acceptedAt: 'accepted_at',
+  approachingAt: 'approaching_at',
+  arrivedAt: 'arrived_at',
+  startedAt: 'started_at',
+  completedAt: 'completed_at',
+  canceledAt: 'canceled_at',
 });
+
+// Actors the schema itself permits for CANCELED (rides.cancel_by CHECK). NO_SHOW is handled
+// separately below with its own exact, server-derived contract.
+const CANCELED_ALLOWED_ACTORS = Object.freeze(new Set(['driver', 'passenger', 'system']));
 
 // Columns no write path (bootstrapRide / patchRideStatus / patchRideNoShow) ever populates —
 // verified against repositories/rides.js directly, not assumed.
@@ -75,31 +93,15 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
-// Length of the leading non-null run in TS_SEQUENCE, or -1 if there is a gap (a later stage
-// populated while an earlier one is null — never a valid shape for any status).
-function prefixLength(ride) {
-  let n = 0;
-  for (const col of TS_SEQUENCE) {
-    if (ride[col] != null) n += 1; else break;
-  }
-  for (let i = n; i < TS_SEQUENCE.length; i += 1) {
-    if (ride[TS_SEQUENCE[i]] != null) return -1;
-  }
-  return n;
-}
-
-function lifecycleShapeOk(ride) {
-  const len = prefixLength(ride);
-  if (len === -1) return false;
-  if (ride.status === 'CANCELED') return len >= 1 && len <= 4 && ride.canceled_at != null;
-  if (ride.status === 'NO_SHOW') return len === EXACT_PREFIX_LENGTH.NO_SHOW && ride.canceled_at != null;
-  const expected = EXACT_PREFIX_LENGTH[ride.status];
-  if (expected === undefined) return false;
-  return len === expected && ride.canceled_at == null;
+function currentStatusTimestampOk(ride) {
+  const tsKey = STATUS_TIMESTAMP_FIELD[ride.status];
+  const column = tsKey ? TS_KEY_TO_COLUMN[tsKey] : null;
+  return column != null && ride[column] != null;
 }
 
 function cancelFieldsOk(ride) {
   if (ride.status === 'NO_SHOW') return ride.cancel_by === 'driver' && ride.cancel_reason === 'passenger_no_show';
+  if (ride.status === 'CANCELED') return ride.cancel_by == null || CANCELED_ALLOWED_ACTORS.has(ride.cancel_by);
   return ride.cancel_by == null && ride.cancel_reason == null;
 }
 
@@ -140,7 +142,7 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (facts?.pg_accepted_at_matches_order !== true) return fail('accepted_at_matches_order');
   if (facts?.pg_chronology_ok !== true) return fail('lifecycle_chronology_violation');
 
-  if (!lifecycleShapeOk(ride)) return fail('lifecycle_timestamp_incoherent');
+  if (!currentStatusTimestampOk(ride)) return fail('current_status_timestamp_missing');
   if (!cancelFieldsOk(ride)) return fail('cancel_fields_incoherent');
 
   for (const col of ALWAYS_NULL_COLUMNS) {

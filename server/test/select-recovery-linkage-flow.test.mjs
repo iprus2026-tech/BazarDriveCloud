@@ -25,7 +25,20 @@ const config = {
 
 const post = (app, url, payload, headers) => app.inject({ method: 'POST', url, payload, headers });
 const get = (app, url, headers) => app.inject({ method: 'GET', url, headers });
+const patch = (app, url, payload, headers) => app.inject({ method: 'PATCH', url, payload, headers });
 const bearer = (s) => ({ authorization: `Bearer ${s.token}` });
+
+// ride_events is append-only (trg_ride_events_no_mutation rejects DELETE; rides<-ride_events is
+// ON DELETE RESTRICT), so a ride whose PATCH chokepoint has actually run (appending a
+// status_change event) can't be dropped normally — mirrors ride-state-flow.test.mjs's own
+// cleanup exactly: briefly disable triggers (CI/local superuser) to drop the test's rows.
+async function deleteRidesWithEvents(cleanup, tripIds) {
+  if (!tripIds.length) return;
+  await cleanup.query("SET session_replication_role = 'replica'").catch(() => {});
+  await cleanup.query('DELETE FROM ride_events WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+  await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+  await cleanup.query("SET session_replication_role = 'origin'").catch(() => {});
+}
 
 async function mintSession(app, phone) {
   const code = (await post(app, '/api/v1/auth/otp/request', { phone })).json().devCode;
@@ -484,5 +497,161 @@ test('recovery gate: a physically-populated source-less serializer column fails 
     assert.equal(offersRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
     assert.equal(offersRes.json().retryable, false);
     assert.equal(offersRes.json().items, undefined, 'no authoritative items body on failure');
+  }
+});
+
+// ── 12) real direct/sparse transitions from DRIVER_EN_ROUTE via the actual PATCH chokepoint —
+// both recovery GETs still pass (Codex finding #1) ──────────────────────────────────────────
+test('recovery gate: real DRIVER_EN_ROUTE PATCH transitions (including sparse IN_PROGRESS/COMPLETED) still pass both GETs', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  const tripIds = [];
+  t.after(async () => {
+    await deleteRidesWithEvents(cleanup, tripIds);
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  const targets = ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED', 'CANCELED'];
+  for (const [i, target] of targets.entries()) {
+    const ns = `${process.pid}12${i}`;
+    const { paxS, drvS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    tripIds.push(tripId);
+
+    const patchRes = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: target }, bearer(drvS));
+    assert.equal(patchRes.statusCode, 200, `PATCH DRIVER_EN_ROUTE -> ${target} is permitted by the API today (no sequential-progression gate)`);
+
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 200, `recovery ride-state GET passes for the real, API-committed sparse ${target} shape`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 200, `recovery offers GET passes for the real, API-committed sparse ${target} shape`);
+  }
+});
+
+// ── 13) real backward non-terminal transition via the actual PATCH chokepoint — still passes ──
+test('recovery gate: a real backward non-terminal PATCH transition (WAITING_PASSENGER -> DRIVER_EN_ROUTE) still passes both GETs', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  const tripIds = [];
+  t.after(async () => {
+    await deleteRidesWithEvents(cleanup, tripIds);
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}13`;
+  const { paxS, drvS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+  orderIds.push(order.id);
+  tripIds.push(tripId);
+
+  const forward = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'WAITING_PASSENGER' }, bearer(drvS));
+  assert.equal(forward.statusCode, 200);
+  const backward = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status: 'DRIVER_EN_ROUTE' }, bearer(drvS));
+  assert.equal(backward.statusCode, 200, 'the PATCH chokepoint permits a backward non-terminal transition too');
+
+  const row = (await cleanup.query('SELECT status, approaching_at, arrived_at FROM rides WHERE trip_id=$1', [tripId])).rows[0];
+  assert.equal(row.status, 'DRIVER_EN_ROUTE');
+  // Only arrived_at is stamped — DRIVER_EN_ROUTE -> WAITING_PASSENGER was a direct skip, so
+  // approaching_at (DRIVER_APPROACHING_PICKUP's own column) was never touched, exactly the
+  // sparse behavior this whole fix is about.
+  assert.ok(row.arrived_at, 'the later-stage timestamp actually stamped stays populated after the status regresses');
+
+  const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+  assert.equal(rideRes.statusCode, 200, 'recovery ride-state GET passes for the real backward-transition shape');
+  const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+  assert.equal(offersRes.statusCode, 200, 'recovery offers GET passes for the real backward-transition shape');
+});
+
+// ── 14) missing current-status timestamp and a broken PostgreSQL chronology still 409 ──────
+test('recovery gate: missing current-status timestamp and broken PostgreSQL chronology still fail closed (409)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  // Missing current-status timestamp: a fresh DRIVER_EN_ROUTE accept with accepted_at nulled.
+  {
+    const ns = `${process.pid}14a`;
+    const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    await cleanup.query('UPDATE rides SET accepted_at = NULL WHERE trip_id = $1', [tripId]);
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 409, 'missing accepted_at (the current status DRIVER_EN_ROUTE\'s own timestamp) still fails closed');
+    assert.equal(rideRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+  }
+
+  // Broken chronology: accepted_at forced BEFORE created_at (pg_chronology_ok must catch it) —
+  // orders.accepted_at is moved to the SAME instant so pg_accepted_at_matches_order stays
+  // true and the failure is isolated to chronology specifically. NOTE: rides.updated_at
+  // cannot be used for this — trg_rides_updated_at (a BEFORE UPDATE trigger) unconditionally
+  // reassigns NEW.updated_at := now() on every UPDATE, silently overriding any explicit value.
+  {
+    const ns = `${process.pid}14b`;
+    const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    const orderUuid = await internalOrderId(cleanup, order.id);
+    await cleanup.query(`UPDATE rides SET accepted_at = created_at - interval '1 second' WHERE trip_id = $1`, [tripId]);
+    await cleanup.query(`UPDATE orders SET accepted_at = (SELECT accepted_at FROM rides WHERE trip_id = $1) WHERE id = $2`, [tripId, orderUuid]);
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 409, 'accepted_at earlier than created_at violates pg_chronology_ok and still fails closed');
+    assert.equal(rideRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+  }
+});
+
+// ── 15) real CANCELED cancel-actor matrix — every schema-valid actor passes both GETs ───────
+// An invalid actor cannot be tested via real Postgres at all: rides.cancel_by's CHECK
+// constraint (migrations/0001) rejects any value outside driver/passenger/system/NULL at
+// INSERT/UPDATE time — the DB itself is the enforcement layer for that case, already proven
+// unreachable-by-corruption; the "invalid actor" negative case is covered purely at
+// select-recovery-linkage.test.mjs's validator level (a defense-in-depth check the DB also
+// happens to back).
+test('recovery gate: every schema-valid CANCELED cancel_by actor passes both GETs (legacy-import shape)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const cases = [
+    ['driver', 'passenger changed plans'],
+    ['passenger', 'changed plans'],
+    ['system', null],
+    [null, null],
+  ];
+  for (const [i, [actor, reason]] of cases.entries()) {
+    const ns = `${process.pid}15${i}`;
+    const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    await cleanup.query(
+      `UPDATE rides SET status='CANCELED', canceled_at=now(), cancel_by=$1, cancel_reason=$2 WHERE trip_id=$3`,
+      [actor, reason, tripId],
+    );
+
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 200, `CANCELED with cancel_by=${actor} passes ride-state-GET`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 200, `CANCELED with cancel_by=${actor} passes offers-GET`);
   }
 });
