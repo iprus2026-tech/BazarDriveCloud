@@ -185,3 +185,146 @@ test('select refuses an offer past its TTL (expired-but-unswept), even though st
   const o = (await get(app, '/api/v1/orders')).json().items.find((x) => x.id === order.id);
   assert.equal(o.status, 'CREATED', 'order stays open after a failed (expired) select');
 });
+
+// BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A — the ON CONFLICT (trip_id) DO NOTHING path.
+// A pre-existing rides row at the select's tripId must satisfy the FULL direct
+// conflict-Ride invariant (domain/select-conflict-ride.js) before it can become this
+// selection's ACK; any mismatch throws inside app.db.tx() and rolls back the WHOLE
+// selection (accepted offer, rejected peer, assignment, order ACCEPTED) — the conflicting
+// Ride itself is never overwritten, cleaned up, or neutralized (rejection + full rollback
+// is the whole policy for this slice).
+test('select rejects a mismatched conflict Ride (500, full rollback, conflict Ride untouched), then a clean retry succeeds once the stale Ride is removed', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const pax = `+1599${String(process.pid).padStart(7, '0')}`;
+  const drvA = `+1600${String(process.pid).padStart(7, '0')}`;
+  const drvB = `+1601${String(process.pid).padStart(7, '0')}`;
+  const cleanup = new pg.Client({ connectionString: DATABASE_URL });
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    for (const p of [pax, drvA, drvB]) {
+      await cleanup.query('DELETE FROM users WHERE phone = $1', [p]).catch(() => {});
+      await cleanup.query('DELETE FROM auth_otp WHERE phone = $1', [p]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const paxS = await mintSession(app, pax);
+  const order = (await post(app, '/api/v1/orders', { pickup: { label: 'Дом' }, dropoff: { label: 'Центр' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+  const drvAS = await mintSession(app, drvA);
+  const drvBS = await mintSession(app, drvB);
+  const offA = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'A', price: 800 }, bearer(drvAS))).json().offer;
+  const offB = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'B', price: 900 }, bearer(drvBS))).json().offer;
+
+  const tripId = `trip_${order.id}`;
+  const orderRow = (await cleanup.query('SELECT id FROM orders WHERE legacy_id = $1', [order.id])).rows[0];
+  // Fabricate a conflicting rides row BEFORE select ever runs, so bootstrapRide()'s
+  // ON CONFLICT DO NOTHING fires and forces the conflict-reread path. A mismatched
+  // passenger_name and a null driver_user_id are enough to fail the invariant.
+  await cleanup.query(
+    `INSERT INTO rides (trip_id, order_id, status, role, driver_user_id, passenger_user_id,
+                          passenger_name, accepted_at)
+     VALUES ($1, $2, 'DRIVER_EN_ROUTE', 'passenger', NULL, NULL, 'MISMATCHED', now())`,
+    [tripId, orderRow.id],
+  );
+
+  const sel = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offA.driverId }, bearer(paxS));
+  assert.equal(sel.statusCode, 500, 'a mismatched conflict Ride is a non-2xx internal invariant failure, never a silent 200');
+  assert.equal(sel.json().code, 'INTERNAL');
+  assert.equal(sel.json().retryable, true, 'the generic 5xx problem shape marks it retryable');
+
+  // Full rollback: neither offer changed, no assignment row, order still CREATED.
+  const offerRows = (await cleanup.query('SELECT legacy_id, status FROM offers WHERE order_id = $1', [orderRow.id])).rows;
+  assert.equal(offerRows.find((o) => o.legacy_id === offA.id).status, 'sent', 'target offer was NOT accepted (rolled back)');
+  assert.equal(offerRows.find((o) => o.legacy_id === offB.id).status, 'sent', 'peer offer was NOT rejected (rolled back)');
+  const assignmentRows = (await cleanup.query('SELECT * FROM assignment WHERE order_id = $1', [orderRow.id])).rows;
+  assert.equal(assignmentRows.length, 0, 'no assignment row was created');
+  const orderStatusRow = (await cleanup.query('SELECT status FROM orders WHERE id = $1', [orderRow.id])).rows[0];
+  assert.equal(orderStatusRow.status, 'CREATED', 'order was NOT flipped to ACCEPTED');
+
+  // The conflicting Ride itself is untouched — not overwritten, repaired, or neutralized.
+  const conflictRow = (await cleanup.query('SELECT passenger_name, driver_user_id FROM rides WHERE trip_id = $1', [tripId])).rows[0];
+  assert.equal(conflictRow.passenger_name, 'MISMATCHED', 'the conflicting Ride was not overwritten');
+  assert.equal(conflictRow.driver_user_id, null, 'the conflicting Ride was not silently patched');
+
+  // Remove ONLY the fabricated conflict Ride, then retry — a clean select must now succeed.
+  await cleanup.query('DELETE FROM rides WHERE trip_id = $1', [tripId]);
+  const retry = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offA.driverId }, bearer(paxS));
+  assert.equal(retry.statusCode, 200, 'after removing the stale conflict Ride, a fresh selection succeeds');
+  const retryBody = retry.json();
+  assert.equal(retryBody.ride.tripId, tripId);
+  assert.equal(retryBody.ride.status, 'DRIVER_EN_ROUTE');
+  assert.equal(retryBody.order.status, 'ACCEPTED');
+});
+
+// Concurrency guarantee: the conflict-Ride reread's SELECT ... FOR UPDATE (rides.
+// lockRideByTripId, the SAME primitive PATCH /ride-state/rides/:tripId/status also takes)
+// must genuinely serialize against a concurrent participant status transition on the same
+// row — the transition cannot commit while the holder still has the lock. Exercised
+// directly at the row-lock primitive (two raw pg connections) rather than through the full
+// HTTP /select round trip, so the barrier is deterministic: a bounded poll of
+// pg_stat_activity observes the second connection's backend genuinely blocked
+// (wait_event_type = 'Lock') before the first releases — never a fixed sleep.
+test('conflict-Ride row lock serializes against a concurrent participant status transition (deterministic barrier, no sleep)', { skip: SKIP }, async (t) => {
+  const tripId = `trip_conflict-lock-${process.pid}-${Date.now()}`;
+  const setup = new pg.Client({ connectionString: DATABASE_URL });
+  const holder = new pg.Client({ connectionString: DATABASE_URL }); // simulates the select tx's conflict reread
+  const waiter = new pg.Client({ connectionString: DATABASE_URL }); // simulates a concurrent PATCH status transition
+  const monitor = new pg.Client({ connectionString: DATABASE_URL }); // observes pg_stat_activity — never asserts by sleeping
+
+  t.after(async () => {
+    await holder.query('ROLLBACK').catch(() => {});
+    await waiter.query('ROLLBACK').catch(() => {});
+    await holder.end().catch(() => {});
+    await waiter.end().catch(() => {});
+    await monitor.end().catch(() => {});
+    await setup.query('DELETE FROM rides WHERE trip_id = $1', [tripId]).catch(() => {});
+    await setup.end().catch(() => {});
+  });
+
+  await setup.connect();
+  await setup.query(`INSERT INTO rides (trip_id, status, role) VALUES ($1, 'DRIVER_EN_ROUTE', 'passenger')`, [tripId]);
+  await holder.connect();
+  await waiter.connect();
+  await monitor.connect();
+
+  await holder.query('BEGIN');
+  const holderRow = (await holder.query('SELECT * FROM rides WHERE trip_id = $1 FOR UPDATE', [tripId])).rows[0];
+  assert.equal(holderRow.trip_id, tripId, 'the holder (select-tx conflict reread) acquires the row lock');
+
+  await waiter.query('BEGIN');
+  const waiterPromise = waiter.query('SELECT * FROM rides WHERE trip_id = $1 FOR UPDATE', [tripId]);
+
+  // Deterministic barrier: poll pg_stat_activity for the waiter's own backend PID until it
+  // reports genuinely waiting on a lock. Bounded, but never a fixed-duration sleep-and-hope.
+  const deadline = Date.now() + 5000;
+  let observedBlocked = false;
+  while (Date.now() < deadline) {
+    const { rows } = await monitor.query(
+      'SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1',
+      [waiter.processID],
+    );
+    if (rows[0]?.wait_event_type === 'Lock') { observedBlocked = true; break; }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(observedBlocked, 'the concurrent status-transition query is genuinely blocked on the conflict-Ride row lock');
+
+  let waiterSettled = false;
+  waiterPromise.then(() => { waiterSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waiterSettled, false, 'the blocked participant transition has not proceeded while the holder still has the lock');
+
+  // Release the holder (mirrors the select transaction's ROLLBACK on an invariant failure) —
+  // the waiter must then proceed against the ORIGINAL, unmodified row.
+  await holder.query('ROLLBACK');
+  const waiterResult = await waiterPromise;
+  assert.equal(waiterResult.rows[0].trip_id, tripId, 'after the holder releases, the blocked transaction proceeds against the original Ride');
+  assert.equal(waiterResult.rows[0].status, 'DRIVER_EN_ROUTE', 'the original Ride was not changed while the lock was held');
+  await waiter.query('ROLLBACK');
+});
