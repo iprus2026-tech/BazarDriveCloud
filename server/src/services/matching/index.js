@@ -14,7 +14,8 @@ import { serializeOffer, serializeOrder, serializeAssignment, serializeRide } fr
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
-import { bootstrapRide, findRideByTripId } from '../../repositories/rides.js';
+import { bootstrapRide, lockRideByTripId } from '../../repositories/rides.js';
+import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -199,8 +200,29 @@ export default async function matchingService(app) {
       // R10 — assignment->ride bootstrap: mint the rides row in the SAME tx so accept and ride
       // creation are atomic (no order is ACCEPTED without its ride). The ride is what /ride-state
       // (R06), chat-by-trip (R07) and history (R08) key off.
-      let ride = await bootstrapRide(client, buildRideSeed(order, accepted));
-      if (!ride) ride = await findRideByTripId(client, `trip_${order.legacy_id}`);
+      const seed = buildRideSeed(order, accepted);
+      let ride = await bootstrapRide(client, seed);
+      if (!ride) {
+        // BD-RIDE-SELECT-CONFLICT-RIDE-INVARIANT-01A — a pre-existing trip_id means
+        // ON CONFLICT DO NOTHING fired: some other process already wrote this row. Re-read
+        // it under an exclusive row lock (held until this transaction's COMMIT/ROLLBACK,
+        // serializing against any concurrent participant status transition on the same
+        // row) and require the full direct conflict-Ride invariant before ever treating it
+        // as this selection's coherent ACK. A missing/mismatched/non-DRIVER_EN_ROUTE
+        // conflict Ride is a transactional invariant failure: throw (never return
+        // { err: ... }, which would COMMIT) so app.db.tx()'s catch forces ROLLBACK of the
+        // accepted offer, rejected peers, assignment, and order ACCEPTED transition. This
+        // slice does not overwrite, clean up, or neutralize the conflicting row — rejection
+        // + full rollback is the whole policy.
+        const conflictRide = await lockRideByTripId(client, seed.tripId);
+        const verdict = validateConflictRideInvariant({
+          ride: conflictRide,
+          seed,
+          expectedAcceptedAt: updatedOrder.accepted_at,
+        });
+        if (!verdict.ok) throw new SelectConflictRideInvariantError(seed.tripId, verdict.reason);
+        ride = conflictRide;
+      }
       return { ok: { order: updatedOrder, accepted, assignment, ride } };
     });
 
