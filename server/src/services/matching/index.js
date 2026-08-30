@@ -14,8 +14,9 @@ import { serializeOffer, serializeOrder, serializeAssignment, serializeRide } fr
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
-import { bootstrapRide, lockConflictRideForSelection } from '../../repositories/rides.js';
+import { bootstrapRide, lockConflictRideForSelection, findRecoveryBundleByOrderId } from '../../repositories/rides.js';
 import { validateConflictRideInvariant, SelectConflictRideInvariantError } from '../../domain/select-conflict-ride.js';
+import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
 
 // Format a NUMERIC rub amount as the client's display label ('800 ₽', '1 480 ₽'), matching the
 // client's `${n.toLocaleString('ru-RU')} ₽`. Returns null for a non-finite value.
@@ -129,7 +130,14 @@ export default async function matchingService(app) {
     return reply.code(201).send({ offer: serializeOffer(result.ok, { orderLegacyId: result.orderLegacyId }) });
   });
 
-  // GET /api/v1/matching/offers?orderId=… — OWNER-ONLY list (the passenger choosing a driver).
+  // GET /api/v1/matching/offers?orderId=… — OWNER-ONLY list (the passenger choosing a
+  // driver), reinforced by the BD-RIDE-SELECT-RECOVERY-LINKAGE-INVARIANT-01A recovery gate.
+  // The existing owner-only check is unchanged and runs FIRST — it is exactly the
+  // authenticated-owner proof the ride-state GET composes with (see ride-state/index.js).
+  // Bypassed only in the genuinely "nothing to recover" case: the order is still CREATED AND
+  // no accepted-offer/assignment/Ride footprint exists yet. Any footprint at all, or any
+  // other order status, forces the gate — an ambiguous or unresolved recovery state can
+  // never be read back as a plain offers list.
   app.get('/offers', {
     schema: {
       querystring: {
@@ -148,6 +156,33 @@ export default async function matchingService(app) {
     if (String(order.passenger_id) !== String(viewer.userId)) {
       return problem(reply, 403, 'FORBIDDEN', 'only the order owner can list its offers');
     }
+
+    const bundle = await findRecoveryBundleByOrderId(app.db, order.id);
+    const hasFootprint = bundle.candidate_ride_count >= 1
+      || bundle.assignment != null
+      || (bundle.offers ?? []).some((o) => o.status === 'accepted');
+    if (order.status === 'CREATED' && !hasFootprint) {
+      const rows = await listOffersByOrder(app.db, order.id);
+      return { items: rows.map((r) => serializeOffer(r, { orderLegacyId: order.legacy_id })) };
+    }
+    if (bundle.candidate_ride_count >= 2) {
+      return problem(reply, 409, 'RIDE_RECOVERY_UNVERIFIED', 'ride acceptance is unverified', false);
+    }
+    const verdict = validateRecoveryLinkage({
+      ride: bundle.ride,
+      order: bundle.order,
+      assignment: bundle.assignment,
+      offers: bundle.offers ?? [],
+      facts: {
+        pg_has_core_timestamps: bundle.pg_has_core_timestamps,
+        pg_accepted_at_matches_order: bundle.pg_accepted_at_matches_order,
+        pg_chronology_ok: bundle.pg_chronology_ok,
+      },
+    });
+    if (!verdict.ok) return problem(reply, 409, 'RIDE_RECOVERY_UNVERIFIED', 'ride acceptance is unverified', false);
+    // serializeOffer() has no derived/fallback fields (unlike the Ride snapshot) — the raw
+    // columns ARE already authoritative, so the response is served from a fresh, plain read
+    // (proper Date objects), never from the JSON-nested bundle used only for the gate above.
     const rows = await listOffersByOrder(app.db, order.id);
     return { items: rows.map((r) => serializeOffer(r, { orderLegacyId: order.legacy_id })) };
   });
