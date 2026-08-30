@@ -655,3 +655,264 @@ test('recovery gate: every schema-valid CANCELED cancel_by actor passes both GET
     assert.equal(offersRes.statusCode, 200, `CANCELED with cancel_by=${actor} passes offers-GET`);
   }
 });
+
+// ── 16) finding #4 regression proof — chain A (revisit a stage already stamped once) and
+// chain B (revisit a stage stamped for the FIRST time only AFTER a LATER stage) both pass both
+// GETs. Chain B is the exact reproduction that showed the old positional-chain chronology check
+// was wrong: DRIVER_EN_ROUTE -> WAITING_PASSENGER stamps arrived_at (skipping approaching_at),
+// then EN_ROUTE -> APPROACHING_PICKUP stamps approaching_at for the first time, LATER than the
+// still-populated arrived_at — a legitimate, API-committed sequence the old design rejected.
+test('recovery gate: chain A and chain B (backward-revisit sequences) both pass both GETs (Codex finding #4)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  const tripIds = [];
+  t.after(async () => {
+    await deleteRidesWithEvents(cleanup, tripIds);
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  async function runChain(label, ns, statuses) {
+    const { paxS, drvS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    tripIds.push(tripId);
+    for (const status of statuses) {
+      const res = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
+      assert.equal(res.statusCode, 200, `chain ${label}: PATCH -> ${status} succeeds`);
+    }
+    const bundle = await findRecoveryBundleByTripId(cleanup, tripId);
+    assert.equal(bundle.pg_chronology_ok, true, `chain ${label}: pg_chronology_ok holds under the per-column bound design`);
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 200, `chain ${label}: recovery ride-state GET passes`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 200, `chain ${label}: recovery offers GET passes`);
+  }
+
+  // A: approaching_at already stamped once, later revisited after a backward hop.
+  await runChain('A', `${process.pid}16a`, [
+    'DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
+  ]);
+
+  // B: approaching_at is stamped for the FIRST time only after arrived_at was already set.
+  await runChain('B', `${process.pid}16b`, [
+    'WAITING_PASSENGER', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP',
+  ]);
+});
+
+// ── 17) finding #4: an optional lifecycle timestamp BEFORE created_at fails closed (409) ────
+// Reachable via a normal UPDATE — trg_rides_updated_at only forces updated_at, never the
+// target column, so pushing a column earlier than created_at is directly constructible.
+test('recovery gate: an optional lifecycle timestamp before created_at fails closed (409) via pg_chronology_ok', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const OPTIONAL_COLUMNS = ['approaching_at', 'arrived_at', 'started_at', 'completed_at', 'canceled_at'];
+  for (const [i, col] of OPTIONAL_COLUMNS.entries()) {
+    const ns = `${process.pid}17${i}`;
+    const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    await cleanup.query(`UPDATE rides SET ${col} = created_at - interval '1 second' WHERE trip_id = $1`, [tripId]);
+
+    const bundle = await findRecoveryBundleByTripId(cleanup, tripId);
+    assert.equal(bundle.pg_chronology_ok, false, `${col} before created_at trips pg_chronology_ok`);
+
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 409, `${col} before created_at fails ride-state-GET`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 409, `${col} before created_at fails offers-GET`);
+  }
+});
+
+// ── 18) finding #4: an optional lifecycle timestamp AFTER updated_at fails closed (409) ─────
+// NOT reachable via UPDATE (trg_rides_updated_at unconditionally reassigns NEW.updated_at :=
+// now() on every UPDATE, defeating any attempt to push a column past it that way) — constructed
+// via a raw INSERT instead, mirroring the microsecond-precision scenario helper above.
+test('recovery gate: an optional lifecycle timestamp after updated_at fails closed via pg_chronology_ok', { skip: SKIP }, async (t) => {
+  const client = makeCleanupClient();
+  await client.connect();
+  const tripIds = [];
+  t.after(async () => {
+    if (tripIds.length) await client.query('DELETE FROM rides WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+    await client.query('DELETE FROM orders WHERE legacy_id LIKE $1', [`order-recovery-afterbound-%-${process.pid}`]).catch(() => {});
+    await client.end();
+  });
+
+  const OPTIONAL_COLUMNS = ['approaching_at', 'arrived_at', 'started_at', 'completed_at', 'canceled_at'];
+  for (const [i, col] of OPTIONAL_COLUMNS.entries()) {
+    const legacyId = `order-recovery-afterbound-${col}-${process.pid}`;
+    const tripId = `trip_${legacyId}`;
+    tripIds.push(tripId);
+    const passenger = (await client.query(`INSERT INTO users (phone) VALUES ($1) RETURNING id`, [`+178${i}${String(process.pid).padStart(7, '0')}0`])).rows[0];
+    const driver = (await client.query(`INSERT INTO users (phone) VALUES ($1) RETURNING id`, [`+178${i}${String(process.pid).padStart(7, '0')}1`])).rows[0];
+    t.after(async () => {
+      await client.query('DELETE FROM users WHERE id = ANY($1)', [[passenger.id, driver.id]]).catch(() => {});
+    });
+    const t0 = '2026-08-30 10:00:00+00';
+    const tAfter = '2026-08-30 12:00:00+00'; // strictly after updated_at (=t0)
+    const orderRow = (await client.query(
+      `INSERT INTO orders (legacy_id, passenger_id, status, accepted_at) VALUES ($1, $2, 'ACCEPTED', $3) RETURNING id`,
+      [legacyId, passenger.id, t0],
+    )).rows[0];
+    const cols = { approaching_at: null, arrived_at: null, started_at: null, completed_at: null, canceled_at: null };
+    cols[col] = tAfter;
+    await client.query(
+      `INSERT INTO rides (trip_id, order_id, status, role, driver_user_id, passenger_user_id,
+                           created_at, accepted_at, updated_at,
+                           approaching_at, arrived_at, started_at, completed_at, canceled_at)
+       VALUES ($1,$2,'ACCEPTED','passenger',$3,$4,$5,$5,$5,$6,$7,$8,$9,$10)`,
+      [tripId, orderRow.id, driver.id, passenger.id, t0,
+        cols.approaching_at, cols.arrived_at, cols.started_at, cols.completed_at, cols.canceled_at],
+    );
+
+    const bundle = await findRecoveryBundleByTripId(client, tripId);
+    assert.equal(bundle.pg_chronology_ok, false, `${col} after updated_at trips pg_chronology_ok`);
+  }
+});
+
+// ── 19) finding #5 fix-proof: a noncanonical trip_id whose stripped remainder coincidentally
+// equals an UNRELATED order's legacy_id must NOT be treated as linked — regexp_replace on a
+// string with no 'trip_' prefix returns it UNCHANGED (no match, no substitution), so without the
+// `r.trip_id ~ '^trip_'` guard the join would falsely report candidate_order_count=1 for a
+// genuinely standalone Ride, turning the intended zero-candidate bypass into an incorrect 409.
+test('recovery gate: a noncanonical trip_id coincidentally colliding with an unrelated legacy_id stays standalone (finding #5 fix)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const legacyIds = [];
+  const tripIds = [];
+  t.after(async () => {
+    if (tripIds.length) await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+    if (legacyIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [legacyIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}19`;
+  const collisionId = `collision-${ns}`;
+  legacyIds.push(collisionId);
+
+  const drvS = await mintSession(app, `+1707${ns}`);
+  const paxS = await mintSession(app, `+1708${ns}`);
+
+  // An UNRELATED order whose legacy_id happens to equal the noncanonical Ride's trip_id verbatim.
+  await cleanup.query(
+    `INSERT INTO orders (legacy_id, passenger_id, status) VALUES ($1, $2, 'CREATED')`,
+    [collisionId, paxS.user.userId],
+  );
+
+  // A genuinely standalone Ride (no order_id FK at all) whose noncanonical trip_id IS that
+  // exact collision string.
+  tripIds.push(collisionId);
+  await cleanup.query(
+    `INSERT INTO rides (trip_id, status, role, driver_user_id, passenger_user_id, driver_name)
+       VALUES ($1, 'ACCEPTED', 'driver', $2, $3, 'Standalone')`,
+    [collisionId, drvS.user.userId, paxS.user.userId],
+  );
+
+  const bundle = await findRecoveryBundleByTripId(cleanup, collisionId);
+  assert.equal(bundle.candidate_order_count, 0, 'the collision is not a real trip_ prefix match — candidate_order_count stays 0');
+
+  const res = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(collisionId)}`, bearer(drvS));
+  assert.equal(res.statusCode, 200, 'the genuinely standalone Ride is bypassed, unaffected by the coincidental legacy_id collision');
+});
+
+// ── 20) finding #7 fix-proof: a self-selected bundle (driver_user_id === passenger_user_id)
+// fails closed (409) on both GETs — mirrors the live write-path guards (CANNOT_OFFER_OWN_ORDER,
+// CANNOT_SELECT_SELF), extended to recovery for legacy/imported rows.
+test('recovery gate: a self-selected bundle (driver === passenger) fails closed (409) on both GETs (Codex finding #7)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}20`;
+  const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+  orderIds.push(order.id);
+
+  // Corrupt the bundle so the accepted driver IS the order's own passenger — same identity,
+  // consistent across offer/assignment/ride, exactly what a legacy/imported self-offer could
+  // produce.
+  const orderUuid = await internalOrderId(cleanup, order.id);
+  const passengerUserId = (await cleanup.query('SELECT passenger_id FROM orders WHERE id = $1', [orderUuid])).rows[0].passenger_id;
+  await cleanup.query(`UPDATE offers SET driver_id = $1 WHERE order_id = $2 AND status = 'accepted'`, [passengerUserId, orderUuid]);
+  await cleanup.query('UPDATE assignment SET selected_driver_id = $1 WHERE order_id = $2', [passengerUserId, orderUuid]);
+  await cleanup.query('UPDATE rides SET driver_user_id = $1 WHERE trip_id = $2', [passengerUserId, tripId]);
+
+  const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+  assert.equal(rideRes.statusCode, 409, 'a self-selected driver===passenger bundle fails ride-state-GET');
+  assert.equal(rideRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+  const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+  assert.equal(offersRes.statusCode, 409, 'a self-selected driver===passenger bundle fails offers-GET');
+});
+
+// ── 21) finding #8 fix-proof: every terminal-timestamp contradiction fails closed (409) on
+// both GETs — completed_at/canceled_at are permanent, one-way locks (the terminal-freeze
+// trigger), so unlike the 5 revisitable intermediate stage columns, these two specifically can
+// never legitimately coexist with a mismatched current status.
+test('recovery gate: every terminal-timestamp contradiction fails closed (409) on both GETs (Codex finding #8)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  const tripIds = [];
+  t.after(async () => {
+    await deleteRidesWithEvents(cleanup, tripIds);
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  const cases = [
+    ['COMPLETED', 'canceled_at'],
+    ['CANCELED', 'completed_at'],
+    ['NO_SHOW', 'completed_at'],
+    ['IN_PROGRESS', 'completed_at'],
+  ];
+  for (const [i, [status, extraCol]] of cases.entries()) {
+    const ns = `${process.pid}21${i}`;
+    const { paxS, drvS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+    tripIds.push(tripId);
+
+    if (status === 'NO_SHOW') {
+      // NO_SHOW's own contract requires cancel_by/cancel_reason too — set the exact
+      // server-derived shape so the ONLY incoherence introduced is the extra completed_at.
+      await cleanup.query(
+        `UPDATE rides SET status='NO_SHOW', canceled_at=now(), cancel_by='driver', cancel_reason='passenger_no_show', completed_at=now() WHERE trip_id=$1`,
+        [tripId],
+      );
+    } else {
+      // COMPLETED / CANCELED / IN_PROGRESS via the real PATCH chokepoint, then corrupt with
+      // the extra terminal column directly (the PATCH itself only ever stamps its own column).
+      const res = await patch(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}/status`, { status }, bearer(drvS));
+      assert.equal(res.statusCode, 200, `PATCH -> ${status} succeeds`);
+      await cleanup.query(`UPDATE rides SET ${extraCol} = now() WHERE trip_id = $1`, [tripId]);
+    }
+
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 409, `${status} with ${extraCol} also populated fails ride-state-GET`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 409, `${status} with ${extraCol} also populated fails offers-GET`);
+  }
+});

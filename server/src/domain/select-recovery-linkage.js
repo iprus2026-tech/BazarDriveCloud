@@ -47,6 +47,18 @@
 //     to NO_SHOW, and cancel_reason has no CHECK constraint and no actor<->reason linkage in
 //     the schema at all — confirmed live against #938's Codex finding #3. Every other status
 //     keeps requiring both fields null.
+//   - terminal timestamp exclusivity (#938 Codex finding #8) — completed_at and canceled_at
+//     are NOT revisitable the way the 5 intermediate stage columns are: the terminal-freeze
+//     trigger makes reaching COMPLETED/CANCELED/NO_SHOW a permanent, one-way lock, so (unlike
+//     the intermediate stages) these two columns can never legitimately coexist with a
+//     different current status, nor with each other. This is narrower than — and does not
+//     reintroduce — the fixed-prefix shape check finding #1 rejected: it only constrains these
+//     two specific columns, never the 5 revisitable intermediate ones.
+//   - self-selection (#938 Codex finding #7) — both live write paths (CANNOT_OFFER_OWN_ORDER,
+//     CANNOT_SELECT_SELF) already forbid a passenger selecting themselves as their own driver,
+//     including a guard explicitly hardened against a legacy/imported self-offer. Recovery,
+//     which must tolerate legacy/imported data by design, enforces the same identity
+//     invariant: the accepted driver and the order's passenger must never be the same person.
 //   - always-null columns — verified empirically: no write path (bootstrapRide,
 //     patchRideStatus, patchRideNoShow) ever populates passenger_rating, driver_initials, or
 //     either route ETA column, on ANY Ride, ever. A non-null value here is corruption.
@@ -105,6 +117,16 @@ function cancelFieldsOk(ride) {
   return ride.cancel_by == null && ride.cancel_reason == null;
 }
 
+// #938 Codex finding #8 — exact terminal-timestamp matrix. completed_at and canceled_at are
+// mutually exclusive AND tied to their own terminal status specifically (not merely "some
+// terminal status", and not merely "present when current" — also absent everywhere else,
+// including on the OTHER terminal status and on any non-terminal status).
+function terminalTimestampsOk(ride) {
+  if (ride.status === 'COMPLETED') return ride.completed_at != null && ride.canceled_at == null;
+  if (ride.status === 'CANCELED' || ride.status === 'NO_SHOW') return ride.canceled_at != null && ride.completed_at == null;
+  return ride.completed_at == null && ride.canceled_at == null;
+}
+
 // validateRecoveryLinkage({ ride, order, assignment, offers, facts }) — pure, synchronous.
 //   ride       — the resolved Ride row, or null.
 //   order      — the resolved Order row, or null.
@@ -135,6 +157,7 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (!uuidEq(ride.driver_user_id, acceptedOffer.driver_id)) return fail('ride_driver_mismatch');
   if (ride.passenger_user_id == null) return fail('ride_passenger_missing');
   if (!uuidEq(ride.passenger_user_id, order.passenger_id)) return fail('ride_passenger_mismatch');
+  if (uuidEq(ride.driver_user_id, ride.passenger_user_id)) return fail('self_selected_driver');
 
   if (!RECOVERY_ALLOWED_STATUSES.has(ride.status)) return fail('ride_status_not_recovery_eligible');
 
@@ -143,6 +166,7 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (facts?.pg_chronology_ok !== true) return fail('lifecycle_chronology_violation');
 
   if (!currentStatusTimestampOk(ride)) return fail('current_status_timestamp_missing');
+  if (!terminalTimestampsOk(ride)) return fail('terminal_timestamp_incoherent');
   if (!cancelFieldsOk(ride)) return fail('cancel_fields_incoherent');
 
   for (const col of ALWAYS_NULL_COLUMNS) {

@@ -107,18 +107,35 @@ export async function lockConflictRideForSelection(db, { tripId, orderId }) {
 // entirely in SQL, at full native `timestamptz` precision — mirroring
 // BD-RIDE-SELECT-CONFLICT-RIDE-PG-PRECISION-01B's lockConflictRideForSelection exactly, so
 // the same microsecond-truncation defect that fix closed cannot reappear here via a JS
-// Date.getTime() comparison. pg_chronology_ok chains COALESCE across every OPTIONAL lifecycle
-// timestamp so only the timestamps that are actually populated are compared, in sequence,
-// against their nearest populated predecessor — never against a hardcoded neighbor that
-// might itself be null.
+// Date.getTime() comparison.
+//
+// pg_chronology_ok (BD-RIDE-SELECT-RECOVERY-LINKAGE-INVARIANT-01A, #938 Codex finding #4):
+// bounds EACH populated lifecycle timestamp independently to [created_at, updated_at] — it
+// does NOT compare stage timestamps against each other in positional order. An earlier design
+// chained each stage against its nearest populated predecessor (approaching_at <= arrived_at
+// <= started_at <= ...), assuming column POSITION corresponds to chronological order. That
+// assumption is false under the authoritative write-path contract (services/ride-state/
+// index.js, itself a verbatim mirror of public/src/ride_state.js's updateActiveRideStatus):
+// only accepted_at is write-once; every other stage column is unconditionally overwritten on
+// every re-entry into that status, and NEITHER the client NOR the server restricts backward
+// transitions or forward skips (only the terminal-freeze rule applies) — confirmed live via a
+// temporary-mutation reproduction (a legitimate DRIVER_EN_ROUTE -> WAITING_PASSENGER ->
+// DRIVER_EN_ROUTE -> DRIVER_APPROACHING_PICKUP sequence re-stamps approaching_at LATER than
+// the still-populated arrived_at, which the old positional chain wrongly rejected). The bound
+// below is what the write path DOES structurally guarantee regardless of transition order:
+// every timestamp it ever stamps is `now()` at write time, which by definition falls between
+// the row's created_at and its own updated_at (refreshed to `now()` by trg_rides_updated_at on
+// that SAME statement) — so this still rejects genuine corruption (a timestamp predating the
+// row, or exceeding its own last-write instant) without asserting an inter-stage ordering
+// nothing in the contract promises.
 const CHRONOLOGY_SQL = (r) => `(
     ${r}.created_at <= ${r}.accepted_at
-    AND (${r}.approaching_at IS NULL OR ${r}.accepted_at <= ${r}.approaching_at)
-    AND (${r}.arrived_at     IS NULL OR COALESCE(${r}.approaching_at, ${r}.accepted_at) <= ${r}.arrived_at)
-    AND (${r}.started_at     IS NULL OR COALESCE(${r}.arrived_at, ${r}.approaching_at, ${r}.accepted_at) <= ${r}.started_at)
-    AND (${r}.completed_at   IS NULL OR COALESCE(${r}.started_at, ${r}.arrived_at, ${r}.approaching_at, ${r}.accepted_at) <= ${r}.completed_at)
-    AND (${r}.canceled_at    IS NULL OR COALESCE(${r}.started_at, ${r}.arrived_at, ${r}.approaching_at, ${r}.accepted_at) <= ${r}.canceled_at)
-    AND ${r}.updated_at >= COALESCE(${r}.canceled_at, ${r}.completed_at, ${r}.started_at, ${r}.arrived_at, ${r}.approaching_at, ${r}.accepted_at, ${r}.created_at)
+    AND ${r}.accepted_at <= ${r}.updated_at
+    AND (${r}.approaching_at IS NULL OR (${r}.created_at <= ${r}.approaching_at AND ${r}.approaching_at <= ${r}.updated_at))
+    AND (${r}.arrived_at     IS NULL OR (${r}.created_at <= ${r}.arrived_at     AND ${r}.arrived_at     <= ${r}.updated_at))
+    AND (${r}.started_at     IS NULL OR (${r}.created_at <= ${r}.started_at     AND ${r}.started_at     <= ${r}.updated_at))
+    AND (${r}.completed_at   IS NULL OR (${r}.created_at <= ${r}.completed_at   AND ${r}.completed_at   <= ${r}.updated_at))
+    AND (${r}.canceled_at    IS NULL OR (${r}.created_at <= ${r}.canceled_at    AND ${r}.canceled_at    <= ${r}.updated_at))
   )`;
 
 // Entry point for GET /ride-state/rides/:tripId. Anchored on the (unique) rides.trip_id, so
@@ -126,11 +143,20 @@ const CHRONOLOGY_SQL = (r) => `(
 // ambiguity lives entirely inside candidate_order_count, computed via UNION (never a naked
 // scalar subquery). Returns null when no such ride exists at all (today's 404 case,
 // unrelated to recovery).
+//
+// The canonical-derivation branch (#938 Codex finding #5) requires the LITERAL `trip_` prefix
+// (`r.trip_id ~ '^trip_'`) before ever joining on the stripped remainder. Without this guard,
+// `regexp_replace(r.trip_id, '^trip_', '')` returns a noncanonical trip_id UNCHANGED (no match,
+// no substitution) — if that unchanged string happened to equal an UNRELATED order's
+// legacy_id, the join would report a false "1 candidate" for a genuinely standalone ride,
+// turning the intended zero-candidate bypass into an incorrect 409. The order_id FK branch is
+// unaffected and untouched — it remains the sole resolution path for a linked-but-noncanonical
+// Ride (confirmed still correctly recovers via that branch).
 export async function findRecoveryBundleByTripId(db, tripId) {
   const { rows } = await db.query(
     `WITH candidate_orders AS (
        SELECT o.id FROM rides r
-         JOIN orders o ON o.legacy_id = regexp_replace(r.trip_id, '^trip_', '')
+         JOIN orders o ON r.trip_id ~ '^trip_' AND o.legacy_id = regexp_replace(r.trip_id, '^trip_', '')
         WHERE r.trip_id = $1
        UNION
        SELECT o.id FROM rides r

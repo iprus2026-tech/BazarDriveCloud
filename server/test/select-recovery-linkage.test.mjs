@@ -249,9 +249,14 @@ test('backward non-terminal transition WAITING_PASSENGER -> DRIVER_EN_ROUTE pass
   const ride = makeRide({ status: 'DRIVER_EN_ROUTE', approaching_at: T, arrived_at: T });
   assert.equal(check({ ride }).ok, true);
 });
-test('CANCELED with the full prefix through completed_at still passes (shape is no longer restricted)', () => {
-  const ride = makeRide({ status: 'CANCELED', approaching_at: T, arrived_at: T, started_at: T, completed_at: T, canceled_at: T });
-  assert.equal(check({ ride }).ok, true);
+// Corrected (finding #8): the intermediate stage prefix is still unrestricted, but
+// completed_at specifically is NOT — it is exclusive to COMPLETED and cannot coexist with
+// CANCELED, unlike the 5 revisitable intermediate stage columns above.
+test('CANCELED with the full intermediate prefix still passes, but completed_at also set fails', () => {
+  const coherentPrefix = makeRide({ status: 'CANCELED', approaching_at: T, arrived_at: T, started_at: T, canceled_at: T });
+  assert.equal(check({ ride: coherentPrefix }).ok, true, 'the intermediate prefix itself is still unrestricted');
+  const withCompletedToo = { ...coherentPrefix, completed_at: T };
+  assert.deepEqual(check({ ride: withCompletedToo }), { ok: false, reason: 'terminal_timestamp_incoherent' });
 });
 
 // ── cancel field coherence — FAIL ────────────────────────────────────────────
@@ -287,6 +292,45 @@ test('CANCELED with both cancel fields null passes (the plain API-driven shape)'
 test('CANCELED with an actor outside the schema CHECK constraint fails', () => {
   const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: 'bogus-actor', cancel_reason: null });
   assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
+});
+
+// ── self-selection (finding #7) — FAIL ──────────────────────────────────────
+test('self-selected driver (driver_user_id === passenger_user_id) fails', () => {
+  const verdict = check({
+    ride: makeRide({ driver_user_id: PASSENGER_ID }),
+    offers: [makeOffer({ driver_id: PASSENGER_ID })],
+    assignment: makeAssignment({ selected_driver_id: PASSENGER_ID }),
+  });
+  assert.deepEqual(verdict, { ok: false, reason: 'self_selected_driver' });
+});
+
+// ── terminal timestamp exclusivity matrix (finding #8) ──────────────────────
+test('CANCELED with completed_at also populated fails', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, completed_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+test('NO_SHOW with completed_at also populated fails', () => {
+  const ride = rideForStatus('NO_SHOW', { completed_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+test('COMPLETED with canceled_at also populated fails', () => {
+  const ride = rideForStatus('COMPLETED', { canceled_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+for (const status of ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS']) {
+  test(`non-terminal ${status} with completed_at populated fails`, () => {
+    const ride = rideForStatus(status, { completed_at: T });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+  });
+  test(`non-terminal ${status} with canceled_at populated fails`, () => {
+    const ride = rideForStatus(status, { canceled_at: T });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+  });
+}
+test('COMPLETED without canceled_at and CANCELED/NO_SHOW without completed_at remain unaffected (regression)', () => {
+  assert.equal(check({ ride: rideForStatus('COMPLETED') }).ok, true);
+  assert.equal(check({ ride: makeRide({ status: 'CANCELED', canceled_at: T }) }).ok, true);
+  assert.equal(check({ ride: rideForStatus('NO_SHOW') }).ok, true);
 });
 
 // ── always-null columns — each individually populated — FAIL ───────────────
