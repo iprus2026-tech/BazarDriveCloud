@@ -195,6 +195,18 @@ export async function findRecoveryBundleByTripId(db, tripId) {
 // never advanced past CREATED has no ride yet, which is the normal (non-recovery) offers-GET
 // case; the caller decides applicability using candidate_ride_count together with the
 // order's own status/offers/assignment footprint.
+//
+// `offers` carries an explicit `ORDER BY f.created_at DESC` INSIDE the json_agg() call (#938
+// Codex Finding A follow-up) — this field is served DIRECTLY to the client by the matching
+// service's CREATED/no-footprint offers-GET bypass (services/matching/index.js), which must
+// match repositories/offers.js's listOffersByOrder() ordering exactly (its own explicit
+// `ORDER BY created_at DESC`), the ordering the validated (non-bypass) path still uses. A bare
+// json_agg(row_to_json(f)) with no ORDER BY has NO guaranteed row order at all — confirmed
+// empirically to return plain physical/insertion order instead, which can silently change
+// after an UPDATE (e.g. a withdrawn offer being re-sent) or a different query plan. This is
+// PURELY a response-ordering concern: findRecoveryBundleByTripId's own (unordered) offers
+// subquery is intentionally left AS-IS, since ride-state-GET never serves that field to a
+// client — it is only ever filtered (never positionally indexed) by validateRecoveryLinkage().
 export async function findRecoveryBundleByOrderId(db, orderId) {
   const { rows } = await db.query(
     `WITH candidate_rides AS (
@@ -213,7 +225,7 @@ export async function findRecoveryBundleByOrderId(db, orderId) {
        row_to_json(o) AS "order",
        CASE WHEN c.candidate_ride_count = 1 THEN row_to_json(r) END AS ride,
        row_to_json(a) AS assignment,
-       (SELECT json_agg(row_to_json(f)) FROM offers f WHERE f.order_id = o.id) AS offers,
+       (SELECT json_agg(row_to_json(f) ORDER BY f.created_at DESC) FROM offers f WHERE f.order_id = o.id) AS offers,
        c.candidate_ride_count,
        CASE WHEN c.candidate_ride_count = 1
             THEN (r.created_at IS NOT NULL AND r.accepted_at IS NOT NULL AND r.updated_at IS NOT NULL)

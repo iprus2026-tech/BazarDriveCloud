@@ -10,7 +10,7 @@
 // (no role grants flow until R17); R04 requires authentication, not a specific role. The PWA write
 // cutover is R18; until then only this server + tests exercise these routes.
 import { newOfferId } from '../../infra/ids.js';
-import { serializeOffer, serializeOrder, serializeAssignment, serializeRide } from '../../serialize.js';
+import { serializeOffer, serializeOrder, serializeAssignment, serializeRide, serializeRecoveredOffer } from '../../serialize.js';
 import { findOrderByLegacyId, lockOrderByLegacyId, markOrderAccepted } from '../../repositories/orders.js';
 import { upsertOffer, findOfferByOrderDriver, listOffersByOrder, acceptOffer, rejectPeerOffers } from '../../repositories/offers.js';
 import { insertAssignment } from '../../repositories/assignment.js';
@@ -137,7 +137,8 @@ export default async function matchingService(app) {
   // Bypassed only in the genuinely "nothing to recover" case: the order is still CREATED AND
   // no accepted-offer/assignment/Ride footprint exists yet. Any footprint at all, or any
   // other order status, forces the gate — an ambiguous or unresolved recovery state can
-  // never be read back as a plain offers list.
+  // never be read back as a plain offers list. On bypass, the response is served from the SAME
+  // bundle statement that decided to bypass — never a second, later read (#938 Codex Finding A).
   app.get('/offers', {
     schema: {
       querystring: {
@@ -162,8 +163,15 @@ export default async function matchingService(app) {
       || bundle.assignment != null
       || (bundle.offers ?? []).some((o) => o.status === 'accepted');
     if (order.status === 'CREATED' && !hasFootprint) {
-      const rows = await listOffersByOrder(app.db, order.id);
-      return { items: rows.map((r) => serializeOffer(r, { orderLegacyId: order.legacy_id })) };
+      // #938 Codex Finding A — serve straight from bundle.offers, the SAME statement that just
+      // computed hasFootprint above. A second, later listOffersByOrder() read here would be a
+      // separate, non-atomic statement: a concurrent /select could commit between the two reads,
+      // and this bypass would then serve a freshly-accepted offer without validateRecoveryLinkage()
+      // ever running (a genuine TOCTOU, reproduced deterministically in the flow test). Serving the
+      // bundle's own (possibly by-now-stale) snapshot instead is correct: a request whose bundle
+      // predates a concurrent /select is entitled to that pre-select view; the NEXT request re-reads
+      // a fresh bundle and goes through full invariant validation.
+      return { items: (bundle.offers ?? []).map((r) => serializeRecoveredOffer(r, { orderLegacyId: order.legacy_id })) };
     }
     if (bundle.candidate_ride_count >= 2) {
       return problem(reply, 409, 'RIDE_RECOVERY_UNVERIFIED', 'ride acceptance is unverified', false);

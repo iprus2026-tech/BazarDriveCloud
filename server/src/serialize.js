@@ -149,6 +149,36 @@ function toIsoFromBundle(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// #938 Codex Finding A — project a row_to_json()-nested offer straight from
+// rides.findRecoveryBundleByOrderId's `offers` field (matching/index.js's offers-GET
+// CREATED/no-footprint bypass), never from a plain listOffersByOrder() row. Field-for-field
+// identical to serializeOffer() above, except the three timestamp columns go through
+// toIsoFromBundle() instead of toIso(): row_to_json() emits PostgreSQL's own JSON timestamp TEXT
+// (full microsecond precision, `+00:00` offset), and toIso()'s non-Date branch is a bare
+// String(value) passthrough — feeding it a bundle timestamp directly would leak that raw text
+// instead of the existing public `.toISOString()` shape. Introduced so the bypass branch can
+// serve its response from the SAME statement that decided to bypass, closing the TOCTOU where a
+// second, later listOffersByOrder() read could straddle a concurrent /select commit and serve a
+// freshly-accepted offer without validateRecoveryLinkage() ever running.
+export function serializeRecoveredOffer(row, { orderLegacyId = null } = {}) {
+  if (!row) return null;
+  return {
+    id: row.legacy_id,
+    orderId: orderLegacyId,
+    driverId: row.driver_id,
+    status: row.status,
+    driverName: row.driver_name ?? null,
+    car: row.car ?? null,
+    rating: row.rating ?? null,
+    etaMin: row.eta_min ?? null,
+    price: row.price == null ? null : Number(row.price),
+    message: row.message ?? null,
+    createdAt: toIsoFromBundle(row.created_at),
+    updatedAt: toIsoFromBundle(row.updated_at),
+    expiresAt: toIsoFromBundle(row.expires_at),
+  };
+}
+
 // Mirrors matching/index.js's own (unexported, unchanged) formatRub() exactly — duplicated
 // rather than imported to avoid a services->serialize dependency inversion. Number(null) is
 // 0 (finite), so formatRub(null) would wrongly return '0 ₽' — the caller must never call this

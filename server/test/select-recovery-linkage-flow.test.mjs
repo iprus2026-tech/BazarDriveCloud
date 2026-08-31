@@ -11,6 +11,7 @@ import pg from 'pg';
 
 import { buildApp } from '../src/server.js';
 import { findRecoveryBundleByTripId, findRecoveryBundleByOrderId } from '../src/repositories/rides.js';
+import { listOffersByOrder } from '../src/repositories/offers.js';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -915,4 +916,143 @@ test('recovery gate: every terminal-timestamp contradiction fails closed (409) o
     const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
     assert.equal(offersRes.statusCode, 409, `${status} with ${extraCol} also populated fails offers-GET`);
   }
+});
+
+// ── 22) finding A fix-proof: the CREATED/no-footprint offers-GET bypass serves the EXACT bundle
+// snapshot that formed the decision — never a second, later listOffersByOrder() read — closing
+// the TOCTOU between the bypass decision and its response payload. Deterministic, no sleep: we
+// intercept app.db.query (the plain single-statement seam GET /offers uses — /select's own
+// writes run through a SEPARATE raw pg.Client obtained via app.db.tx(), so this interception
+// never touches /select's transaction at all) and hold the bundle statement's ALREADY-FETCHED
+// result back from the handler until we explicitly release it, with a real /select commit
+// forced into the gap in between.
+test('recovery gate: offers-GET bypass serves its own bundle snapshot, never a later listOffersByOrder race (Codex Finding A)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}22`;
+  const paxS = await mintSession(app, `+1709${ns}`);
+  const drvS = await mintSession(app, `+1710${ns}`);
+  const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+  const offer = (await post(app, '/api/v1/matching/offers', { orderId: order.id, driverName: 'Racer' }, bearer(drvS))).json().offer;
+
+  // Intercept ONLY the bundle statement (its SQL is uniquely identifiable by its `candidate_rides`
+  // CTE name, distinct from findRecoveryBundleByTripId's `candidate_orders`). The REAL query still
+  // runs and its REAL (pre-select) result is captured immediately — we only delay handing that
+  // already-fetched result back to the caller, via an explicitly awaited release signal.
+  const originalQuery = app.db.query;
+  let captureResolve;
+  const captured = new Promise((resolve) => { captureResolve = resolve; });
+  let releaseResolve;
+  const released = new Promise((resolve) => { releaseResolve = resolve; });
+  let intercepted = false;
+  app.db.query = async (text, params) => {
+    const result = await originalQuery(text, params);
+    if (!intercepted && typeof text === 'string' && text.includes('candidate_rides')) {
+      intercepted = true;
+      captureResolve();
+      await released;
+    }
+    return result;
+  };
+
+  // try/finally guarantees the monkey-patch is restored and the interceptor is released EVEN IF
+  // an assertion throws mid-sequence — confirmed necessary via a dedicated failure-path probe: a
+  // bare sequential release+restore (no finally) left app.db.query permanently monkey-patched and
+  // the held GET's promise permanently pending on a thrown assertion (app.close() itself did not
+  // hang, but the dangling promise and un-restored patch are a genuine cleanup gap on this path).
+  let heldGet;
+  try {
+    heldGet = get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    await captured; // the bundle statement has already executed and returned its CREATED/sent snapshot — held back from the handler
+
+    const selectRes = await post(app, '/api/v1/matching/select', { orderId: order.id, driverId: offer.driverId }, bearer(paxS));
+    assert.equal(selectRes.statusCode, 200, '/select commits fully while the held GET is still holding its captured pre-select bundle');
+
+    releaseResolve(); // let the held GET continue with the snapshot it already captured
+    const firstRes = await heldGet;
+
+    assert.equal(firstRes.statusCode, 200, 'the held GET, using its captured snapshot, still returns 200 (the bypass it already decided on)');
+    const firstItems = firstRes.json().items;
+    assert.equal(firstItems.length, 1);
+    assert.equal(firstItems[0].status, 'sent', 'the held GET serves its CAPTURED pre-select snapshot ("sent"), never a later, post-commit re-read ("accepted")');
+    assert.match(firstItems[0].createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, 'bundle-sourced timestamps are re-normalized to the existing public ISO format');
+    assert.match(firstItems[0].expiresAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+    const secondRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+    assert.equal(secondRes.statusCode, 200, 'a FRESH GET after the commit re-reads a fresh bundle and passes full invariant validation');
+    const acceptedItem = secondRes.json().items.find((o) => o.status === 'accepted');
+    assert.ok(acceptedItem, 'the fresh GET reflects the now-committed accepted offer, validated by validateRecoveryLinkage()');
+    assert.match(acceptedItem.createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, 'the validated-path response keeps its existing ISO format too');
+  } finally {
+    app.db.query = originalQuery; // ALWAYS restore, even on a thrown assertion above
+    releaseResolve(); // ALWAYS release — a no-op if already resolved on the normal-success path
+    if (heldGet) await heldGet.catch(() => {}); // drain it so no background promise is left dangling
+  }
+});
+
+// ── 23) finding A ordering regression: the CREATED/no-footprint bypass must return offers in
+// the SAME order listOffersByOrder does (created_at DESC) — never json_agg's unordered default.
+// Offers are physically INSERTed out of created_at order (earliest first, latest second, middle
+// third) specifically so a plain insertion-order aggregate would visibly disagree with the
+// correct created_at DESC ordering — a coincidental match is ruled out by construction.
+test('recovery gate: offers-GET bypass returns offers in the same created_at DESC order as listOffersByOrder', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}23`;
+  const paxS = await mintSession(app, `+1711${ns}`);
+  const order = (await post(app, '/api/v1/orders', { pickup: { label: 'A' }, dropoff: { label: 'B' } }, bearer(paxS))).json().order;
+  orderIds.push(order.id);
+  const orderUuid = await internalOrderId(cleanup, order.id);
+
+  const drivers = [];
+  for (let i = 0; i < 3; i++) {
+    const drvS = await mintSession(app, `+1712${ns}${i}`);
+    drivers.push(drvS.user.userId);
+  }
+  // Insertion order (a, b, c) is deliberately NOT created_at order: a=earliest, b=latest, c=middle.
+  const rowsToInsert = [
+    { legacyId: 'offer-order-a', createdAt: '2026-08-31 09:00:00+00' },
+    { legacyId: 'offer-order-b', createdAt: '2026-08-31 11:00:00+00' },
+    { legacyId: 'offer-order-c', createdAt: '2026-08-31 10:00:00+00' },
+  ];
+  for (const [i, row] of rowsToInsert.entries()) {
+    await cleanup.query(
+      `INSERT INTO offers (legacy_id, order_id, driver_id, status, driver_name, created_at, updated_at, expires_at)
+       VALUES ($1, $2, $3, 'sent', $4, $5, $5, $5::timestamptz + interval '15 minutes')`,
+      [row.legacyId, orderUuid, drivers[i], `Driver ${i}`, row.createdAt],
+    );
+  }
+
+  const bypassRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+  assert.equal(bypassRes.statusCode, 200, 'still a genuine CREATED/no-footprint bypass');
+  const bypassOrder = bypassRes.json().items.map((i) => i.id);
+
+  // Independently compute the expected order the SAME way listOffersByOrder does — not hardcoded.
+  const expectedRows = await listOffersByOrder(cleanup, orderUuid);
+  const expectedOrder = expectedRows.map((r) => r.legacy_id);
+
+  assert.deepEqual(expectedOrder, ['offer-order-b', 'offer-order-c', 'offer-order-a'],
+    'sanity: the expected created_at DESC order genuinely differs from physical insertion order (a, b, c)');
+  assert.deepEqual(bypassOrder, expectedOrder,
+    "CREATED-bypass items are ordered EXACTLY like listOffersByOrder (created_at DESC), never json_agg's unordered default");
 });
