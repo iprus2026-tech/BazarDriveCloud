@@ -134,7 +134,7 @@ expect('ownership begins UNCONFIRMED under backend and settles only to SERVER_BA
     && ownershipSetter.includes('backendWriteCandidate = nextOwnership === PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED')
     && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED)')
     && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)'));
-// #938-01B-A — setReadState's own syncPassengerMutationGate() call only runs
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — setReadState's own syncPassengerMutationGate() call only runs
 // on its LOADED branch, and the initial readState is now LOADING whenever
 // backendRead is true (requirement #1) even with a usable local ride, so an
 // explicit call right after the initial setReadState keeps
@@ -151,7 +151,7 @@ expect('404/RIDE_NOT_FOUND settles local ownership while unknown IDs still rende
     && initialRead.includes('renderLoadedRide(recovery)')
     && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
-// #938-01B-A — a genuinely missing server Ride (404) confirms the trip is
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a genuinely missing server Ride (404) confirms the trip is
 // local-only, so an already-terminal local/demo ride (e.g. a stale
 // COMPLETED/CANCELED snapshot) still swaps to its own terminal renderer
 // here exactly like the pre-01B-A backend-off path — never gated behind a
@@ -161,7 +161,7 @@ expect('404/RIDE_NOT_FOUND local-only path still swaps to the terminal renderer 
     && initialRead.includes('swapToTerminalPassengerScreen(ride);'));
 const loadedRenderer = functionBody(passenger, 'renderLoadedRide');
 const inPlaceRefresh = functionBody(passenger, 'refreshPassengerRideFieldsInPlace');
-// #938-01B-A — the FIRST paint no longer special-cases an already-usable
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — the FIRST paint no longer special-cases an already-usable
 // local ride: `backendRead` alone (regardless of hasUsableLocalRide) forces
 // the initial LOADING state, so no local/demo Ride — terminal or not — is
 // shown before a settled participant GET (requirement #1). The prior
@@ -196,7 +196,7 @@ expect('recovery merge preserves a locally-ahead lifecycle status while acceptin
     && mergeServer.includes('preserveLocallyAheadStatus && localRank > serverRank')
     && mergeServer.includes('? ride.status')
     && initialRead.includes('ride = mergeServerRide(srv, recovery)'));
-// #938-01B-A — vehicle/payment/chat have no server source at all today (the
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — vehicle/payment/chat have no server source at all today (the
 // focused serializer never emits srv.vehicle/srv.payment/srv.chat), so the
 // OLD keep(local, server) merge for these three left any pre-existing
 // local/demo value untouched forever on a real, server-confirmed ride.
@@ -225,7 +225,7 @@ expect('markPassengerRideAuthoritative is defined and marks a NON-enumerable, in
 expect('every mergeServerRide() call site inside runInitialRead immediately marks the result authoritative',
   (initialRead.match(/ride = mergeServerRide\(srv, recovery\);\s*\n\s*markPassengerRideAuthoritative\(ride\);/g) || []).length === 2);
 
-// ── #938-01B-A — display helpers suppress demo fallbacks only for a
+// ── BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — display helpers suppress demo fallbacks only for a
 // server-confirmed (authoritative) ride; a genuinely local/demo ride keeps
 // the exact prior fallback strings, so the backend-off prototype is
 // unchanged (requirement #6). No server source exists for
@@ -257,7 +257,7 @@ const chatLabelForBody = functionBody(passenger, 'chatLabelFor');
 expect('chatLabelFor defaults unread to 0 (not the demo "2 unread") for an authoritative ride with no real chat data',
   chatLabelForBody.includes('const authoritative = !!(ride && ride.authoritative)')
     && chatLabelForBody.includes('hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2)'));
-// #938-01B-A review-fix (MEDIUM finding) — arrivingDropoffAmount() feeds
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix (MEDIUM finding) — arrivingDropoffAmount() feeds
 // BOTH authoritative surfaces: renderPassengerRideComplete's "Итого к
 // оплате" (via completedPaymentInfo) and the IN_PROGRESS+ARRIVING_DROPOFF
 // amount (renderArrivingDropoffSheet / refreshPassengerRideFieldsInPlace).
@@ -266,7 +266,7 @@ expect('chatLabelFor defaults unread to 0 (not the demo "2 unread") for an autho
 // authoritative branch — only the LAST-RESORT literal is gated, exactly
 // mirroring carLine/paymentInfo/chatLabelFor's authoritative-or-demo policy.
 const arrivingDropoffAmountBody = functionBody(passenger, 'arrivingDropoffAmount');
-// #938-01B-A review-fix #2 — an authoritative ride takes a COMPLETELY
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 — an authoritative ride takes a COMPLETELY
 // SEPARATE branch that consults ONLY ride.order.offerPrice, never
 // pay/r.price at all (r.price can legitimately still carry a stale
 // local/demo value when the server omits the `ride` sub-object — see
@@ -286,7 +286,7 @@ expect('arrivingDropoffAmount: the authoritative branch is structurally first, s
   arrivingDropoffAmountBody.indexOf('if (ride && ride.authoritative) {') < arrivingDropoffAmountBody.indexOf('const pay = (ride && ride.payment) || {};'));
 expect('arrivingDropoffAmount is exported for direct deterministic testing (its authoritative branch is otherwise unobservable through the live DOM — see smoke-passenger-active-ride-local-sync-runtime.mjs)',
   /export function arrivingDropoffAmount\(/.test(passenger));
-// #938-01B-A review-fix #2 — order.offerPrice is the authoritative fare
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 — order.offerPrice is the authoritative fare
 // source, so it must be overwritten unconditionally from srv, never
 // keep()-preserved: a missing/null srv.order.offerPrice normalizes straight
 // to null here, at merge time — never left as whatever the pre-merge
@@ -443,7 +443,7 @@ expect('a boarding PATCH failure returns before any local save/update (catch blo
 expect('boarding did not gain a second/extra patchRideStatus call',
   (boardedHandlerOuter.match(/patchRideStatus\(/g) || []).length === 1);
 
-// #938-01B-A — requirement #7: a 401/403/5xx/malformed/transport failure on
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — requirement #7: a 401/403/5xx/malformed/transport failure on
 // the very FIRST-EVER read (epoch === 1) must land in ERROR, never fall back
 // to a stale local/demo Ride as if it were confirmed — only a LATER
 // recovery/retry read (epoch > 1) of an ALREADY-confirmed ride keeps the
@@ -480,7 +480,7 @@ expect('retryable failures preserve confirmed server ownership while permanent n
     && initialRead.includes('if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true)')
     && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
     && !initialRead.includes('if (permanentFailure) backendWriteCandidate = false'));
-// #938-01B-A review-fix — this exact token also appears in the OTHER
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix — this exact token also appears in the OTHER
 // (epoch>1 graceful-banner) branch above, so a plain .includes() above
 // cannot tell whether THIS occurrence — the one requirement #7 actually
 // added, preserving background self-healing for a first-ever-read (epoch===1)
@@ -528,7 +528,7 @@ expect('deferred forward status keeps the highest pending lifecycle rank while o
   remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
     && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
     && remount.includes('nextRank > pendingRank'));
-// #938-01B-A — runInitialRead now calls mergeServerRide(srv, recovery)
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — runInitialRead now calls mergeServerRide(srv, recovery)
 // TWICE: once early, only for a status that needsSeparatePassengerRenderer
 // (an unconditional check that must see the terminal renderer's own merge
 // regardless of maybeReMount, and returns before ever reaching the

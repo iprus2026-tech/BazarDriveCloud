@@ -507,7 +507,7 @@ const {
   DEMO_ACTIVE_RIDE_ID,
 } = await import('../public/src/ride_state.js');
 const activeRide = (await import('../public/src/screens/active_ride.js')).default;
-// #938-01B-A review-fix #2 — direct deterministic import, NOT DOM-driven:
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 — direct deterministic import, NOT DOM-driven:
 // arrivingDropoffAmount's authoritative branch is otherwise unobservable
 // through the live DOM (paymentBlockHtml independently hides the
 // ARRIVING_DROPOFF payment card whenever an authoritative ride has no real
@@ -797,7 +797,7 @@ saveActiveRide(baseRide('trip_ordI', RIDE_STATUS.WAITING_PASSENGER));
 // The backend now resolves as OFF/absent for this trip (404-shaped): settle LOCAL_ONLY.
 resolveFetch({ ok: false, status: 404, text: async () => JSON.stringify({ code: 'RIDE_NOT_FOUND' }) });
 await tick(12);
-// #938-01B-A — reconcileLocalOnlyRide() detects the missed forward
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — reconcileLocalOnlyRide() detects the missed forward
 // transition and navigates to a fresh mount. Requirement #1 means even THIS
 // remount never trusts the just-written local WAITING_PASSENGER record on
 // sight — it starts LOADING again and waits for its OWN authoritative GET,
@@ -887,7 +887,7 @@ await tick();
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// ── Scenario 13 — #938-01B-A: the very FIRST successful backend GET
+// ── Scenario 13 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939): the very FIRST successful backend GET
 // resolves a terminal status directly (no 404, no local-status coincidence,
 // no persisted local record at all). Requirement #1: nothing local paints
 // before that GET settles. Requirement #2/#3: the settled GET alone decides
@@ -938,7 +938,7 @@ await tick(12);
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// ── Scenario 14 — #938-01B-A requirement #7: a generic failure (5xx) on the
+// ── Scenario 14 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) requirement #7: a generic failure (5xx) on the
 // very FIRST-EVER read never falls back to a stale local Ride, even when a
 // usable local record already exists for this trip — only a LATER
 // recovery/retry read of an ALREADY-confirmed ride gets the graceful
@@ -965,7 +965,7 @@ await tick(12);
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// ── Unit block — #938-01B-A review-fix #2 (P1 finding): direct, real
+// ── Unit block — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 (P1 finding): direct, real
 // execution of arrivingDropoffAmount(ride), the actual mutation-sensitive
 // proof. A prior round's runtime scenarios (S15/S16) sent an EMPTY-STRING
 // ride.price override in the fake server payload — that masked the real
@@ -1023,7 +1023,7 @@ expect('arrivingDropoffAmount: non-authoritative + payment.dropoffAmount real ->
     order: { offerPrice: '800 ₽' },
   }) === '500 ₽');
 
-// ── Scenario 15 — #938-01B-A review-fix (MEDIUM/P1 finding): an
+// ── Scenario 15 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix (MEDIUM/P1 finding): an
 // authoritative COMPLETED ride, mounted end-to-end through the real
 // GET/merge/render pipeline, with a REALISTIC server payload — no `ride`
 // key at all (a real serializeRide() never emits it) — shows the real
@@ -1106,7 +1106,7 @@ await tick(12);
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// ── Scenario 16 — #938-01B-A review-fix: an authoritative IN_PROGRESS +
+// ── Scenario 16 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: an authoritative IN_PROGRESS +
 // ARRIVING_DROPOFF ride with a realistic server payload (no `ride` key, a
 // real order.offerPrice) never shows '1 540 ₽' anywhere in the rendered
 // sheet. The local ride is seeded to status=IN_PROGRESS via the URL BEFORE
@@ -1156,7 +1156,7 @@ await tick(12);
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// ── Scenario 17 — #938-01B-A review-fix: local/backend-off COMPLETED with
+// ── Scenario 17 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: local/backend-off COMPLETED with
 // no real price preserves the EXACT prior '1 540 ₽' demo fallback — the
 // backend-off prototype is unchanged. ──
 reset();
@@ -1170,7 +1170,7 @@ await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordP');
     app.querySelector('.passenger-complete__pay-total')?.textContent);
 }
 
-// ── Scenario 18 — #938-01B-A review-fix: local/backend-off IN_PROGRESS +
+// ── Scenario 18 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: local/backend-off IN_PROGRESS +
 // ARRIVING_DROPOFF with no real price preserves the EXACT prior '1 540 ₽'
 // demo fallback. Unlike the authoritative case (S16), a non-authoritative
 // ride's paymentInfo() returns real demo last4/method, so the payment card

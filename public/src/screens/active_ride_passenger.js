@@ -3004,7 +3004,7 @@ export default function activeRidePassenger(options = {}) {
 
   async function runInitialRead(recovery = false) {
     const epoch = ++readEpoch;
-    // #938-01B-A — never show ANY local ride (terminal or not) as the very
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — never show ANY local ride (terminal or not) as the very
     // first paint when backend is authoritative; only a settled participant
     // GET may do that (see the initial `readState` computation above).
     // Recovery/retry calls (epoch > 1) reuse the existing optimistic "keep
@@ -3054,7 +3054,7 @@ export default function activeRidePassenger(options = {}) {
       // return, so every successful server read — including one that
       // immediately remounts on a forward status — reaches storage.
       persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
-      // #938-01B-A — a server status needing an entirely separate top-level
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a server status needing an entirely separate top-level
       // renderer never fits the shared map/sheet flow this function builds
       // — regardless of what the untrusted, pre-read local `ride.status`
       // said, so this check runs unconditionally, not just when it differs
@@ -3095,7 +3095,7 @@ export default function activeRidePassenger(options = {}) {
         delete root.dataset.refreshState;
         if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
         if (hasUsableLocalRide) {
-          // #938-01B-A — a genuinely missing server Ride (404) confirms this
+          // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a genuinely missing server Ride (404) confirms this
           // trip is local-only; the existing local/demo prototype — INCLUDING
           // a terminal one — is authoritative for this path exactly like the
           // pre-01B-A backend-off behavior (never gated behind a server GET
@@ -3115,7 +3115,7 @@ export default function activeRidePassenger(options = {}) {
       const authFailure = isPassengerRideAuthorizationFailure(err);
       backendRide = false;
       if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true);
-      // #938-01B-A — the FIRST-EVER read (epoch === 1) must never fall back
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — the FIRST-EVER read (epoch === 1) must never fall back
       // to showing a local/demo Ride as if it were confirmed: a 401/403/5xx/
       // malformed/transport failure here means genuinely uncertain state,
       // not proof the local snapshot is safe to trust. A retryable failure
