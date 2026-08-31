@@ -131,6 +131,125 @@ export function serializeRide(row) {
   };
 }
 
+// BD-RIDE-SELECT-RECOVERY-LINKAGE-INVARIANT-01A — local-only helpers, used exclusively by
+// serializeRecoveredRide below. Deliberately NOT changes to toIso()/formatRub() — every other
+// caller (serializeRide, serializeOffer, matching/index.js's own buildRideSeed) is unaffected.
+//
+// row_to_json()-nested bundle rows (rides.findRecoveryBundleByTripId/ByOrderId) carry their
+// timestamp columns as PostgreSQL's own JSON timestamp text (full microsecond precision,
+// `+00:00` offset) rather than JS Date objects, since they never pass through node-pg's
+// per-column timestamptz parser once wrapped in row_to_json(). toIso()'s existing non-Date
+// branch just does String(value) — a straight passthrough, not a reformat — so feeding it a
+// Postgres-native timestamp string directly would leak a DIFFERENT public format than every
+// other endpoint's `.toISOString()` convention. Re-parsing to a Date first restores the
+// existing byte-identical public shape.
+function toIsoFromBundle(value) {
+  if (value == null) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// #938 Codex Finding A — project a row_to_json()-nested offer straight from
+// rides.findRecoveryBundleByOrderId's `offers` field (matching/index.js's offers-GET
+// CREATED/no-footprint bypass), never from a plain listOffersByOrder() row. Field-for-field
+// identical to serializeOffer() above, except the three timestamp columns go through
+// toIsoFromBundle() instead of toIso(): row_to_json() emits PostgreSQL's own JSON timestamp TEXT
+// (full microsecond precision, `+00:00` offset), and toIso()'s non-Date branch is a bare
+// String(value) passthrough — feeding it a bundle timestamp directly would leak that raw text
+// instead of the existing public `.toISOString()` shape. Introduced so the bypass branch can
+// serve its response from the SAME statement that decided to bypass, closing the TOCTOU where a
+// second, later listOffersByOrder() read could straddle a concurrent /select commit and serve a
+// freshly-accepted offer without validateRecoveryLinkage() ever running.
+export function serializeRecoveredOffer(row, { orderLegacyId = null } = {}) {
+  if (!row) return null;
+  return {
+    id: row.legacy_id,
+    orderId: orderLegacyId,
+    driverId: row.driver_id,
+    status: row.status,
+    driverName: row.driver_name ?? null,
+    car: row.car ?? null,
+    rating: row.rating ?? null,
+    etaMin: row.eta_min ?? null,
+    price: row.price == null ? null : Number(row.price),
+    message: row.message ?? null,
+    createdAt: toIsoFromBundle(row.created_at),
+    updatedAt: toIsoFromBundle(row.updated_at),
+    expiresAt: toIsoFromBundle(row.expires_at),
+  };
+}
+
+// Mirrors matching/index.js's own (unexported, unchanged) formatRub() exactly — duplicated
+// rather than imported to avoid a services->serialize dependency inversion. Number(null) is
+// 0 (finite), so formatRub(null) would wrongly return '0 ₽' — the caller must never call this
+// with a null price; see the explicit `!= null` guard in serializeRecoveredRide below.
+function formatRub(numeric) {
+  const n = Number(numeric);
+  return Number.isFinite(n) ? `${n.toLocaleString('ru-RU')} ₽` : null;
+}
+
+// Serve ONLY after domain/select-recovery-linkage.js's validateRecoveryLinkage() has passed.
+// Deliberately separate from serializeRide() above (untouched — still used by /select's
+// write-time response and any non-recovery-gated read): the passenger/driver/route/fare
+// snapshot fields are reprojected FRESH from the immutable order/accepted-offer source
+// (verified: neither offers.driver_name/car/rating/price nor orders.passenger_snapshot/
+// pickup/dropoff/comment/estimated_price_label is ever UPDATEd after insert), never read
+// from `ride`'s own cached copy — a corrupted or historically-stale Ride cache can never
+// reach the client through this path. Fields with no backing source at all
+// (passenger.rating, driver.initials, both route ETAs) are projected null —
+// validateRecoveryLinkage() has already required them to BE null in storage, so this is a
+// restatement, not a guess. status/cancel/timestamps are server-owned LIVE fields (not
+// snapshot data) and are served as-is, already coherence-verified by the caller.
+// `ride`/`order`/`acceptedOffer` are the row_to_json()-nested bundle objects — see
+// toIsoFromBundle()'s header note on why their timestamps need local re-normalization.
+export function serializeRecoveredRide(ride, { order, acceptedOffer }) {
+  const snap = (order.passenger_snapshot && typeof order.passenger_snapshot === 'object') ? order.passenger_snapshot : {};
+  const name = typeof snap.name === 'string' && snap.name.trim() ? snap.name.trim() : 'Пассажир';
+  const initials = typeof snap.initials === 'string' && snap.initials.trim() ? snap.initials.trim() : name.charAt(0).toUpperCase();
+  const label = (point, fallback) => (point && typeof point.label === 'string' && point.label.trim() ? point.label.trim() : fallback);
+  // Explicit != null guard — formatRub(null) would wrongly return '0 ₽' (Number(null) is 0).
+  const price = acceptedOffer.price != null ? formatRub(acceptedOffer.price) : (order.estimated_price_label || null);
+
+  return {
+    tripId: ride.trip_id,
+    status: ride.status,
+    role: ride.role ?? null,
+    passenger: {
+      name,
+      initials,
+      rating: null,
+      phoneMasked: typeof snap.phoneMasked === 'string' ? snap.phoneMasked : null,
+    },
+    driver: {
+      name: acceptedOffer.driver_name ?? null,
+      initials: null,
+      rating: acceptedOffer.rating ?? null,
+      car: acceptedOffer.car ?? null,
+    },
+    route: {
+      pickupLabel: label(order.pickup, 'Точка подачи'),
+      dropoffLabel: label(order.dropoff, 'Точка назначения'),
+      etaToPickup: null,
+      etaToDestination: null,
+    },
+    order: { offerPrice: price },
+    cancel: {
+      by: ride.cancel_by ?? null,
+      reason: ride.cancel_reason ?? null,
+    },
+    timestamps: {
+      createdAt: toIsoFromBundle(ride.created_at),
+      acceptedAt: toIsoFromBundle(ride.accepted_at),
+      approachingAt: toIsoFromBundle(ride.approaching_at),
+      arrivedAt: toIsoFromBundle(ride.arrived_at),
+      startedAt: toIsoFromBundle(ride.started_at),
+      completedAt: toIsoFromBundle(ride.completed_at),
+      canceledAt: toIsoFromBundle(ride.canceled_at),
+      updatedAt: toIsoFromBundle(ride.updated_at),
+    },
+  };
+}
+
 // Project a ride_history VIEW row (#8, R08) for the viewer's own history. Role-agnostic
 // counterparty (a passenger row sees the driver; a driver row sees the passenger). Internal user
 // ids (viewer_user_id / counterparty_id) are NOT exposed. The receipt sub-object is present only on

@@ -1,0 +1,389 @@
+// /server/test/select-recovery-linkage.test.mjs — BD-RIDE-SELECT-RECOVERY-LINKAGE-INVARIANT-01A.
+// Pure, table-driven unit coverage for domain/select-recovery-linkage.js. No database: every
+// case is a synthetic plain-object bundle, so this runs everywhere (no DATABASE_URL gate).
+// The DB/candidate-count/reprojection coverage that actually exercises the bundle queries and
+// the two reinforced GET handlers lives in select-recovery-linkage-flow.test.mjs.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { validateRecoveryLinkage, validateStandaloneCandidate } from '../src/domain/select-recovery-linkage.js';
+
+const ORDER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const DRIVER_ID = '11111111-2222-4333-8444-555555555555';
+const PASSENGER_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+const OTHER_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+const T = '2026-08-30T12:00:00.000Z';
+
+function makeOrder(overrides = {}) {
+  return { id: ORDER_ID, legacy_id: 'order-1', passenger_id: PASSENGER_ID, status: 'ACCEPTED', ...overrides };
+}
+function makeOffer(overrides = {}) {
+  return { order_id: ORDER_ID, driver_id: DRIVER_ID, status: 'accepted', ...overrides };
+}
+function makeAssignment(overrides = {}) {
+  return { order_id: ORDER_ID, status: 'ACCEPTED', selected_driver_id: DRIVER_ID, ...overrides };
+}
+function makeRide(overrides = {}) {
+  return {
+    trip_id: 'trip_order-1',
+    order_id: ORDER_ID,
+    role: 'passenger',
+    driver_user_id: DRIVER_ID,
+    passenger_user_id: PASSENGER_ID,
+    status: 'ACCEPTED',
+    passenger_rating: null,
+    driver_initials: null,
+    route_eta_to_pickup: null,
+    route_eta_to_destination: null,
+    cancel_by: null,
+    cancel_reason: null,
+    accepted_at: T,
+    approaching_at: null, arrived_at: null, started_at: null, completed_at: null, canceled_at: null,
+    ...overrides,
+  };
+}
+const OK_FACTS = Object.freeze({ pg_has_core_timestamps: true, pg_accepted_at_matches_order: true, pg_chronology_ok: true });
+
+function check(overrides = {}) {
+  return validateRecoveryLinkage({
+    ride: 'ride' in overrides ? overrides.ride : makeRide(),
+    order: 'order' in overrides ? overrides.order : makeOrder(),
+    assignment: 'assignment' in overrides ? overrides.assignment : makeAssignment(),
+    offers: 'offers' in overrides ? overrides.offers : [makeOffer()],
+    facts: 'facts' in overrides ? overrides.facts : OK_FACTS,
+  });
+}
+
+// Builds a ride with the exact non-null timestamp prefix a given status requires.
+function rideForStatus(status, overrides = {}) {
+  const base = makeRide({ status });
+  switch (status) {
+    case 'ACCEPTED':
+    case 'DRIVER_EN_ROUTE':
+      return { ...base, ...overrides };
+    case 'DRIVER_APPROACHING_PICKUP':
+      return { ...base, approaching_at: T, ...overrides };
+    case 'WAITING_PASSENGER':
+      return { ...base, approaching_at: T, arrived_at: T, ...overrides };
+    case 'IN_PROGRESS':
+      return { ...base, approaching_at: T, arrived_at: T, started_at: T, ...overrides };
+    case 'COMPLETED':
+      return { ...base, approaching_at: T, arrived_at: T, started_at: T, completed_at: T, ...overrides };
+    case 'NO_SHOW':
+      return {
+        ...base, approaching_at: T, arrived_at: T,
+        cancel_by: 'driver', cancel_reason: 'passenger_no_show', canceled_at: T, ...overrides,
+      };
+    default:
+      throw new Error(`rideForStatus: unhandled status ${status}`);
+  }
+}
+
+// ── coherent bundle — PASS, acceptedOffer returned ──────────────────────────
+test('coherent bundle passes and returns the accepted offer', () => {
+  const offer = makeOffer();
+  const verdict = check({ offers: [offer] });
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.reason, null);
+  assert.equal(verdict.acceptedOffer, offer);
+});
+
+// ── UUID case canonicalization — PASS ───────────────────────────────────────
+test('UUID case canonicalization: uppercase ids across ride/order/offer/assignment still pass', () => {
+  const verdict = check({
+    ride: makeRide({ order_id: ORDER_ID.toUpperCase(), driver_user_id: DRIVER_ID.toUpperCase(), passenger_user_id: PASSENGER_ID.toUpperCase() }),
+    offers: [makeOffer({ order_id: ORDER_ID.toUpperCase(), driver_id: DRIVER_ID.toUpperCase() })],
+    assignment: makeAssignment({ order_id: ORDER_ID.toUpperCase(), selected_driver_id: DRIVER_ID.toUpperCase() }),
+  });
+  assert.equal(verdict.ok, true);
+});
+
+// ── every recovery-eligible status, with its exact required timestamp prefix — PASS ─
+for (const status of ['ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS', 'COMPLETED', 'NO_SHOW']) {
+  test(`recovery-eligible status with correct lifecycle shape passes: ${status}`, () => {
+    const verdict = check({ ride: rideForStatus(status) });
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.reason, null);
+  });
+}
+
+// ── CANCELED: any continuous pre-cancel prefix (1-4), never 5 — PASS for each length ─
+const CANCELED_PREFIXES = [
+  {},
+  { approaching_at: T },
+  { approaching_at: T, arrived_at: T },
+  { approaching_at: T, arrived_at: T, started_at: T },
+];
+CANCELED_PREFIXES.forEach((prefix, i) => {
+  test(`CANCELED with pre-cancel prefix length ${i + 1} passes`, () => {
+    const ride = makeRide({ status: 'CANCELED', canceled_at: T, ...prefix });
+    assert.equal(check({ ride }).ok, true);
+  });
+});
+
+// ── mandatory linkage — every check individually broken, one at a time — FAIL ──────
+test('order missing fails', () => {
+  assert.deepEqual(check({ order: null }), { ok: false, reason: 'order_missing' });
+});
+for (const status of ['CREATED', 'IN_PROGRESS', 'COMPLETED', 'CANCELED']) {
+  test(`order.status !== literal 'ACCEPTED' fails: ${status}`, () => {
+    assert.deepEqual(check({ order: makeOrder({ status }) }), { ok: false, reason: 'order_not_accepted' });
+  });
+}
+test('ride missing fails', () => {
+  assert.deepEqual(check({ ride: null }), { ok: false, reason: 'ride_missing' });
+});
+test('ride.order_id null despite a resolved order fails (the applicability-bypass fix)', () => {
+  assert.deepEqual(check({ ride: makeRide({ order_id: null }) }), { ok: false, reason: 'ride_order_id_mismatch' });
+});
+test('ride.order_id pointing at a different order fails', () => {
+  assert.deepEqual(check({ ride: makeRide({ order_id: OTHER_ID }) }), { ok: false, reason: 'ride_order_id_mismatch' });
+});
+test('noncanonical trip_id fails even when ride.order_id correctly matches', () => {
+  assert.deepEqual(check({ ride: makeRide({ trip_id: 'trip-noncanonical-xyz' }) }), { ok: false, reason: 'trip_linkage_mismatch' });
+});
+test('role other than passenger fails', () => {
+  assert.deepEqual(check({ ride: makeRide({ role: 'driver' }) }), { ok: false, reason: 'role_mismatch' });
+});
+test('zero accepted offers fails', () => {
+  assert.deepEqual(check({ offers: [makeOffer({ status: 'sent' })] }), { ok: false, reason: 'accepted_offer_count' });
+});
+test('two accepted offers fails', () => {
+  assert.deepEqual(check({ offers: [makeOffer(), makeOffer({ driver_id: OTHER_ID })] }), { ok: false, reason: 'accepted_offer_count' });
+});
+test('accepted offer scoped to a different order fails', () => {
+  assert.deepEqual(check({ offers: [makeOffer({ order_id: OTHER_ID })] }), { ok: false, reason: 'offer_order_mismatch' });
+});
+test('assignment missing fails', () => {
+  assert.deepEqual(check({ assignment: null }), { ok: false, reason: 'assignment_missing' });
+});
+test('assignment not ACCEPTED fails', () => {
+  assert.deepEqual(check({ assignment: makeAssignment({ status: 'CANCELED' }) }), { ok: false, reason: 'assignment_not_accepted' });
+});
+test('assignment scoped to a different order fails', () => {
+  assert.deepEqual(check({ assignment: makeAssignment({ order_id: OTHER_ID }) }), { ok: false, reason: 'assignment_order_mismatch' });
+});
+test('assignment driver mismatched against the accepted offer fails', () => {
+  assert.deepEqual(check({ assignment: makeAssignment({ selected_driver_id: OTHER_ID }) }), { ok: false, reason: 'assignment_driver_mismatch' });
+});
+test('ride.driver_user_id null fails (mandatory, never skipped)', () => {
+  assert.deepEqual(check({ ride: makeRide({ driver_user_id: null }) }), { ok: false, reason: 'ride_driver_missing' });
+});
+test('ride.driver_user_id mismatched against the accepted offer fails', () => {
+  assert.deepEqual(check({ ride: makeRide({ driver_user_id: OTHER_ID }) }), { ok: false, reason: 'ride_driver_mismatch' });
+});
+test('ride.passenger_user_id null fails (mandatory, never skipped)', () => {
+  assert.deepEqual(check({ ride: makeRide({ passenger_user_id: null }) }), { ok: false, reason: 'ride_passenger_missing' });
+});
+test('ride.passenger_user_id mismatched against order.passenger_id fails', () => {
+  assert.deepEqual(check({ ride: makeRide({ passenger_user_id: OTHER_ID }) }), { ok: false, reason: 'ride_passenger_mismatch' });
+});
+
+// ── every excluded pre-acceptance status — FAIL ─────────────────────────────
+for (const status of ['NEW_ORDER', 'CONFIRMATION_PENDING', 'CONFIRMED', 'CHAT_STARTED']) {
+  test(`pre-acceptance status is not recovery-eligible: ${status}`, () => {
+    assert.deepEqual(check({ ride: makeRide({ status }) }), { ok: false, reason: 'ride_status_not_recovery_eligible' });
+  });
+}
+
+// ── PostgreSQL-native facts — strict === true, never Date-derived — FAIL on anything else ──
+const PG_FACT_REASONS = [
+  ['pg_has_core_timestamps', 'missing_core_timestamps'],
+  ['pg_accepted_at_matches_order', 'accepted_at_matches_order'],
+  ['pg_chronology_ok', 'lifecycle_chronology_violation'],
+];
+for (const [fact, reason] of PG_FACT_REASONS) {
+  for (const badValue of [false, null, undefined, 'true']) {
+    test(`pg fact ${fact} = ${JSON.stringify(badValue)} fails: ${reason}`, () => {
+      assert.deepEqual(check({ facts: { ...OK_FACTS, [fact]: badValue } }), { ok: false, reason });
+    });
+  }
+}
+
+// ── current-status timestamp missing — FAIL, for every recovery-eligible status ─────────────
+// (finding #1 fix) the PATCH chokepoint permits ANY non-terminal status to move directly to
+// any other valid status, stamping ONLY that target's own STATUS_TIMESTAMP_FIELD column — so
+// the ONLY shape fact this validator still requires is presence of the CURRENT status's own
+// timestamp. Missing it must still fail closed.
+const CURRENT_STATUS_COLUMN = {
+  ACCEPTED: 'accepted_at', DRIVER_EN_ROUTE: 'accepted_at',
+  DRIVER_APPROACHING_PICKUP: 'approaching_at', WAITING_PASSENGER: 'arrived_at',
+  IN_PROGRESS: 'started_at', COMPLETED: 'completed_at',
+  CANCELED: 'canceled_at', NO_SHOW: 'canceled_at',
+};
+for (const [status, column] of Object.entries(CURRENT_STATUS_COLUMN)) {
+  test(`current-status timestamp missing fails: ${status} needs ${column}`, () => {
+    const ride = status === 'CANCELED' || status === 'NO_SHOW'
+      ? makeRide({ status, cancel_by: status === 'NO_SHOW' ? 'driver' : null, cancel_reason: status === 'NO_SHOW' ? 'passenger_no_show' : null, [column]: null })
+      : rideForStatus(status, { [column]: null });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'current_status_timestamp_missing' });
+  });
+}
+
+// ── skip-forward and backward non-terminal transitions — PASS (finding #1 fix) ─────────────
+// Direct transitions FROM DRIVER_EN_ROUTE into every reachable target (sparse — every
+// intermediate stage timestamp left null, exactly as the real PATCH would leave them), plus a
+// genuine backward non-terminal transition (later-stage timestamps STILL populated after the
+// status regresses) — none of this is corruption; the PATCH chokepoint produces it routinely.
+test('sparse DRIVER_EN_ROUTE -> DRIVER_APPROACHING_PICKUP passes (no intermediate skipped yet)', () => {
+  const ride = makeRide({ status: 'DRIVER_APPROACHING_PICKUP', approaching_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+test('sparse DRIVER_EN_ROUTE -> WAITING_PASSENGER passes (approaching_at skipped)', () => {
+  const ride = makeRide({ status: 'WAITING_PASSENGER', approaching_at: null, arrived_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+test('sparse DRIVER_EN_ROUTE -> IN_PROGRESS passes (approaching_at/arrived_at both skipped)', () => {
+  const ride = makeRide({ status: 'IN_PROGRESS', approaching_at: null, arrived_at: null, started_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+test('sparse DRIVER_EN_ROUTE -> COMPLETED passes (every intermediate stage skipped)', () => {
+  const ride = makeRide({ status: 'COMPLETED', approaching_at: null, arrived_at: null, started_at: null, completed_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+test('sparse DRIVER_EN_ROUTE -> CANCELED passes (API-driven, no actor, every intermediate stage skipped)', () => {
+  const ride = makeRide({ status: 'CANCELED', approaching_at: null, arrived_at: null, canceled_at: T, cancel_by: null, cancel_reason: null });
+  assert.equal(check({ ride }).ok, true);
+});
+test('backward non-terminal transition WAITING_PASSENGER -> DRIVER_EN_ROUTE passes (later-stage timestamps stay populated)', () => {
+  const ride = makeRide({ status: 'DRIVER_EN_ROUTE', approaching_at: T, arrived_at: T });
+  assert.equal(check({ ride }).ok, true);
+});
+// Corrected (finding #8): the intermediate stage prefix is still unrestricted, but
+// completed_at specifically is NOT — it is exclusive to COMPLETED and cannot coexist with
+// CANCELED, unlike the 5 revisitable intermediate stage columns above.
+test('CANCELED with the full intermediate prefix still passes, but completed_at also set fails', () => {
+  const coherentPrefix = makeRide({ status: 'CANCELED', approaching_at: T, arrived_at: T, started_at: T, canceled_at: T });
+  assert.equal(check({ ride: coherentPrefix }).ok, true, 'the intermediate prefix itself is still unrestricted');
+  const withCompletedToo = { ...coherentPrefix, completed_at: T };
+  assert.deepEqual(check({ ride: withCompletedToo }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+
+// ── cancel field coherence — FAIL ────────────────────────────────────────────
+test('NO_SHOW with wrong cancel_by/reason fails', () => {
+  const ride = rideForStatus('NO_SHOW', { cancel_by: 'passenger', cancel_reason: 'other' });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
+});
+test('a non-NO_SHOW, non-CANCELED status with cancel_by populated fails', () => {
+  const ride = rideForStatus('IN_PROGRESS', { cancel_by: 'driver' });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
+});
+
+// ── CANCELED cancel-field matrix (finding #3 fix) — every schema-allowed actor + nullable
+// reason PASS; an actor outside the schema's CHECK constraint FAILS ─────────────────────────
+for (const actor of ['driver', 'passenger', 'system']) {
+  test(`CANCELED with schema-valid actor '${actor}' and a reason passes`, () => {
+    const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: actor, cancel_reason: 'some reason' });
+    assert.equal(check({ ride }).ok, true);
+  });
+  test(`CANCELED with schema-valid actor '${actor}' and null reason passes (no actor<->reason linkage)`, () => {
+    const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: actor, cancel_reason: null });
+    assert.equal(check({ ride }).ok, true);
+  });
+}
+test('CANCELED with null actor but a populated reason passes (no linkage either direction)', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: null, cancel_reason: 'some reason' });
+  assert.equal(check({ ride }).ok, true);
+});
+test('CANCELED with both cancel fields null passes (the plain API-driven shape)', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: null, cancel_reason: null });
+  assert.equal(check({ ride }).ok, true);
+});
+test('CANCELED with an actor outside the schema CHECK constraint fails', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, cancel_by: 'bogus-actor', cancel_reason: null });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'cancel_fields_incoherent' });
+});
+
+// ── self-selection (finding #7) — FAIL ──────────────────────────────────────
+test('self-selected driver (driver_user_id === passenger_user_id) fails', () => {
+  const verdict = check({
+    ride: makeRide({ driver_user_id: PASSENGER_ID }),
+    offers: [makeOffer({ driver_id: PASSENGER_ID })],
+    assignment: makeAssignment({ selected_driver_id: PASSENGER_ID }),
+  });
+  assert.deepEqual(verdict, { ok: false, reason: 'self_selected_driver' });
+});
+
+// ── terminal timestamp exclusivity matrix (finding #8) ──────────────────────
+test('CANCELED with completed_at also populated fails', () => {
+  const ride = makeRide({ status: 'CANCELED', canceled_at: T, completed_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+test('NO_SHOW with completed_at also populated fails', () => {
+  const ride = rideForStatus('NO_SHOW', { completed_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+test('COMPLETED with canceled_at also populated fails', () => {
+  const ride = rideForStatus('COMPLETED', { canceled_at: T });
+  assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+});
+for (const status of ['DRIVER_APPROACHING_PICKUP', 'WAITING_PASSENGER', 'IN_PROGRESS']) {
+  test(`non-terminal ${status} with completed_at populated fails`, () => {
+    const ride = rideForStatus(status, { completed_at: T });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+  });
+  test(`non-terminal ${status} with canceled_at populated fails`, () => {
+    const ride = rideForStatus(status, { canceled_at: T });
+    assert.deepEqual(check({ ride }), { ok: false, reason: 'terminal_timestamp_incoherent' });
+  });
+}
+test('COMPLETED without canceled_at and CANCELED/NO_SHOW without completed_at remain unaffected (regression)', () => {
+  assert.equal(check({ ride: rideForStatus('COMPLETED') }).ok, true);
+  assert.equal(check({ ride: makeRide({ status: 'CANCELED', canceled_at: T }) }).ok, true);
+  assert.equal(check({ ride: rideForStatus('NO_SHOW') }).ok, true);
+});
+
+// ── always-null columns — each individually populated — FAIL ───────────────
+for (const col of ['passenger_rating', 'driver_initials', 'route_eta_to_pickup', 'route_eta_to_destination']) {
+  test(`always-null column populated fails: ${col}`, () => {
+    assert.deepEqual(check({ ride: makeRide({ [col]: 'stale-value' }) }), { ok: false, reason: 'stale_column_populated' });
+  });
+}
+
+// ── canonical-orphan applicability (finding C, validateStandaloneCandidate) ─────────────────
+test('validateStandaloneCandidate: a canonical trip_ prefix fails (order was deleted)', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip_order-1'), { ok: false, reason: 'canonical_order_missing' });
+});
+test('validateStandaloneCandidate: a canonical prefix with a legacy_id-like suffix still fails', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip_deleted-legacy-id-123'), { ok: false, reason: 'canonical_order_missing' });
+});
+test('validateStandaloneCandidate: a noncanonical trip_id (hyphen, no underscore) passes, genuinely standalone', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip-standalone-123'), { ok: true, reason: null });
+});
+test('validateStandaloneCandidate: an unrelated identifier with no trip_ prefix at all passes', () => {
+  assert.deepEqual(validateStandaloneCandidate('collision-abc'), { ok: true, reason: null });
+});
+
+// ── passenger-snapshot authority (finding D, passengerSnapshotAuthorOk) ─────────────────────
+const SNAPSHOT_OK = { name: 'RealOwner', phoneMasked: '+7 900 ***-**-01', authorId: PASSENGER_ID };
+
+test('passenger_snapshot: null snapshot passes (nothing to verify, neutral projection)', () => {
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: null }) }).ok, true);
+});
+test('passenger_snapshot: undefined (key absent) passes, matching the default makeOrder() shape', () => {
+  assert.equal(check({ order: makeOrder() }).ok, true);
+});
+test('passenger_snapshot: authorId matching order.passenger_id passes', () => {
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: SNAPSHOT_OK }) }).ok, true);
+});
+test('passenger_snapshot: authorId matching case-insensitively (canonical UUID compare) passes', () => {
+  const snap = { ...SNAPSHOT_OK, authorId: PASSENGER_ID.toUpperCase() };
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: snap }) }).ok, true);
+});
+test('passenger_snapshot: missing authorId key fails', () => {
+  const snap = { name: 'NoAuthorId', phoneMasked: '+7 000' };
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: snap }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: authorId belonging to an unrelated user fails', () => {
+  const snap = { ...SNAPSHOT_OK, authorId: OTHER_ID };
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: snap }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (string) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: 'not-an-object' }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (number) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: 42 }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (array) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: ['not', 'an', 'object'] }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
