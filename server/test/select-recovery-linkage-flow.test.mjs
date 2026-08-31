@@ -1056,3 +1056,167 @@ test('recovery gate: offers-GET bypass returns offers in the same created_at DES
   assert.deepEqual(bypassOrder, expectedOrder,
     "CREATED-bypass items are ordered EXACTLY like listOffersByOrder (created_at DESC), never json_agg's unordered default");
 });
+
+// ── 24) finding C fix-proof: a canonical trip_id whose backing order was physically deleted
+// fails closed (409, no `ride` body) on ride-state-GET; offers-GET stays 404 (unaffected, since
+// findOrderByLegacyId fails first — the order genuinely no longer exists). rides.order_id is
+// ON DELETE SET NULL, so the Ride survives the delete with its canonical trip_id intact but
+// candidate_order_count silently drops to 0 — exactly the shape a genuinely standalone Ride
+// uses, which the fix must distinguish rather than collapse into a false bypass.
+test('recovery gate: a canonical trip_id whose order was physically deleted fails closed (409), offers-GET stays 404 (Codex Finding C)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const tripIds = [];
+  t.after(async () => {
+    await deleteRidesWithEvents(cleanup, tripIds);
+    await cleanup.end();
+    await app.close();
+  });
+
+  const ns = `${process.pid}24`;
+  const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+  tripIds.push(tripId);
+
+  // Poison the cached snapshot BEFORE deleting the order — proves that if the bypass fired, it
+  // would serve exactly this raw, unvalidated data.
+  await cleanup.query(
+    `UPDATE rides SET passenger_name = 'ORPHAN-LEAK-PASSENGER', driver_name = 'ORPHAN-LEAK-DRIVER',
+        route_pickup_label = 'ORPHAN-LEAK-PICKUP', order_offer_price = 'ORPHAN-LEAK-PRICE'
+      WHERE trip_id = $1`,
+    [tripId],
+  );
+
+  const orderUuid = await internalOrderId(cleanup, order.id);
+  await cleanup.query('DELETE FROM orders WHERE id = $1', [orderUuid]);
+  const rideRowAfter = (await cleanup.query('SELECT order_id FROM rides WHERE trip_id = $1', [tripId])).rows[0];
+  assert.equal(rideRowAfter.order_id, null, 'sanity: ON DELETE SET NULL fired — order_id is now null');
+
+  const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+  assert.equal(rideRes.statusCode, 409, 'a canonical-but-now-unresolvable trip_id fails closed, never bypassed as standalone');
+  assert.equal(rideRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+  assert.equal(rideRes.json().retryable, false);
+  assert.equal(rideRes.json().ride, undefined, 'no raw/poisoned Ride body on failure');
+  assert.equal(JSON.stringify(rideRes.json()).includes('ORPHAN-LEAK'), false, 'the poisoned cache never reaches the response');
+
+  const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+  assert.equal(offersRes.statusCode, 404, 'offers-GET is unaffected — findOrderByLegacyId fails first since the order no longer exists');
+  assert.equal(offersRes.json().code, 'ORDER_NOT_FOUND');
+});
+
+// ── 25) finding D fix-proof: passenger_snapshot author-binding matrix — null passes (neutral
+// projection unaffected); missing authorId, a mismatched real unrelated user, and malformed
+// non-object snapshots all fail closed (409) on BOTH GETs, with no leak of the injected data.
+test('recovery gate: passenger_snapshot author-binding matrix — null/missing/malformed/mismatched (Codex Finding D)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const cleanup = makeCleanupClient();
+  await cleanup.connect();
+  const orderIds = [];
+  t.after(async () => {
+    if (orderIds.length) {
+      await cleanup.query('DELETE FROM rides WHERE trip_id = ANY($1)', [orderIds.map((id) => `trip_${id}`)]).catch(() => {});
+      await cleanup.query('DELETE FROM orders WHERE legacy_id = ANY($1)', [orderIds]).catch(() => {});
+    }
+    await cleanup.end();
+    await app.close();
+  });
+
+  const MARKER = 'LEAK-CANARY-D';
+  const cases = ['null-snapshot', 'missing-authorId', 'mismatched-real-user', 'malformed-string', 'malformed-array'];
+
+  for (const [i, label] of cases.entries()) {
+    const ns = `${process.pid}25${i}`;
+    const { paxS, order, tripId } = await acceptedFixture(app, cleanup, ns);
+    orderIds.push(order.id);
+
+    let snapshotSql;
+    if (label === 'null-snapshot') {
+      snapshotSql = null;
+    } else if (label === 'missing-authorId') {
+      snapshotSql = JSON.stringify({ name: MARKER, phoneMasked: '+7 000' });
+    } else if (label === 'mismatched-real-user') {
+      const otherS = await mintSession(app, `+1715${ns}`);
+      snapshotSql = JSON.stringify({ name: MARKER, phoneMasked: '+7 999 UNRELATED', authorId: otherS.user.userId });
+    } else if (label === 'malformed-string') {
+      snapshotSql = JSON.stringify(MARKER);
+    } else {
+      snapshotSql = JSON.stringify([MARKER]);
+    }
+    await cleanup.query('UPDATE orders SET passenger_snapshot = $1 WHERE legacy_id = $2', [snapshotSql, order.id]);
+
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(order.id)}`, bearer(paxS));
+
+    if (label === 'null-snapshot') {
+      assert.equal(rideRes.statusCode, 200, `${label}: ride-state-GET still passes (neutral projection unaffected)`);
+    } else {
+      assert.equal(rideRes.statusCode, 409, `${label}: ride-state-GET fails closed`);
+      assert.equal(rideRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+      assert.equal(offersRes.statusCode, 409, `${label}: offers-GET fails closed too`);
+      assert.equal(offersRes.json().code, 'RIDE_RECOVERY_UNVERIFIED');
+      assert.equal(JSON.stringify(rideRes.json()).includes(MARKER), false, `${label}: the injected marker never leaks into ride-state-GET`);
+      assert.equal(JSON.stringify(offersRes.json()).includes(MARKER), false, `${label}: the injected marker never leaks into offers-GET`);
+    }
+  }
+});
+
+// ── 26) finding E fix-proof: every optional lifecycle timestamp strictly inside
+// (created_at, accepted_at) — a stage stamp physically preceding acceptance, impossible under
+// any real write path — fails closed via pg_chronology_ok on both bundle functions and both
+// real GETs. Requires a raw multi-column INSERT (not accept-then-corrupt): a real accept always
+// stamps created_at/accepted_at from the SAME transaction-start `now()`, so there is no
+// measurable gap between them to place a timestamp into.
+test('recovery gate: an optional lifecycle timestamp inside (created_at, accepted_at) fails closed via pg_chronology_ok (Codex Finding E)', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config });
+  const client = makeCleanupClient();
+  await client.connect();
+  const tripIds = [];
+  t.after(async () => {
+    if (tripIds.length) await client.query('DELETE FROM rides WHERE trip_id = ANY($1)', [tripIds]).catch(() => {});
+    await client.query('DELETE FROM orders WHERE legacy_id LIKE $1', [`order-recovery-preaccept-%-${process.pid}`]).catch(() => {});
+    await client.end();
+    await app.close();
+  });
+
+  const OPTIONAL_COLUMNS = ['approaching_at', 'arrived_at', 'started_at', 'completed_at', 'canceled_at'];
+  for (const [i, col] of OPTIONAL_COLUMNS.entries()) {
+    const legacyId = `order-recovery-preaccept-${col}-${process.pid}`;
+    const tripId = `trip_${legacyId}`;
+    tripIds.push(tripId);
+    const paxPhone = `+176${i}${String(process.pid).padStart(7, '0')}0`;
+    const drvPhone = `+176${i}${String(process.pid).padStart(7, '0')}1`;
+    const passenger = (await client.query(`INSERT INTO users (phone) VALUES ($1) RETURNING id`, [paxPhone])).rows[0];
+    const driver = (await client.query(`INSERT INTO users (phone) VALUES ($1) RETURNING id`, [drvPhone])).rows[0];
+    t.after(async () => {
+      await client.query('DELETE FROM users WHERE id = ANY($1)', [[passenger.id, driver.id]]).catch(() => {});
+    });
+
+    const tCreated = '2026-08-31 08:00:00+00';
+    const tPreAccept = '2026-08-31 08:30:00+00'; // strictly between created_at and accepted_at
+    const tAccepted = '2026-08-31 09:00:00+00';
+    const tUpdated = '2026-08-31 09:30:00+00';
+    const orderRow = (await client.query(
+      `INSERT INTO orders (legacy_id, passenger_id, status, accepted_at) VALUES ($1, $2, 'ACCEPTED', $3) RETURNING id`,
+      [legacyId, passenger.id, tAccepted],
+    )).rows[0];
+    const cols = { approaching_at: null, arrived_at: null, started_at: null, completed_at: null, canceled_at: null };
+    cols[col] = tPreAccept;
+    await client.query(
+      `INSERT INTO rides (trip_id, order_id, status, role, driver_user_id, passenger_user_id,
+                           created_at, accepted_at, updated_at,
+                           approaching_at, arrived_at, started_at, completed_at, canceled_at)
+       VALUES ($1,$2,'ACCEPTED','passenger',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [tripId, orderRow.id, driver.id, passenger.id, tCreated, tAccepted, tUpdated,
+        cols.approaching_at, cols.arrived_at, cols.started_at, cols.completed_at, cols.canceled_at],
+    );
+
+    const bundle = await findRecoveryBundleByTripId(client, tripId);
+    assert.equal(bundle.pg_chronology_ok, false, `${col} inside (created_at, accepted_at) trips pg_chronology_ok`);
+
+    const paxS = await mintSession(app, paxPhone);
+    const rideRes = await get(app, `/api/v1/ride-state/rides/${encodeURIComponent(tripId)}`, bearer(paxS));
+    assert.equal(rideRes.statusCode, 409, `${col} inside (created_at, accepted_at) fails ride-state-GET`);
+    const offersRes = await get(app, `/api/v1/matching/offers?orderId=${encodeURIComponent(legacyId)}`, bearer(paxS));
+    assert.equal(offersRes.statusCode, 409, `${col} inside (created_at, accepted_at) fails offers-GET`);
+  }
+});

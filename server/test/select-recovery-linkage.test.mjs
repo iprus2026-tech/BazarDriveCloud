@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateRecoveryLinkage } from '../src/domain/select-recovery-linkage.js';
+import { validateRecoveryLinkage, validateStandaloneCandidate } from '../src/domain/select-recovery-linkage.js';
 
 const ORDER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const DRIVER_ID = '11111111-2222-4333-8444-555555555555';
@@ -339,3 +339,51 @@ for (const col of ['passenger_rating', 'driver_initials', 'route_eta_to_pickup',
     assert.deepEqual(check({ ride: makeRide({ [col]: 'stale-value' }) }), { ok: false, reason: 'stale_column_populated' });
   });
 }
+
+// ── canonical-orphan applicability (finding C, validateStandaloneCandidate) ─────────────────
+test('validateStandaloneCandidate: a canonical trip_ prefix fails (order was deleted)', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip_order-1'), { ok: false, reason: 'canonical_order_missing' });
+});
+test('validateStandaloneCandidate: a canonical prefix with a legacy_id-like suffix still fails', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip_deleted-legacy-id-123'), { ok: false, reason: 'canonical_order_missing' });
+});
+test('validateStandaloneCandidate: a noncanonical trip_id (hyphen, no underscore) passes, genuinely standalone', () => {
+  assert.deepEqual(validateStandaloneCandidate('trip-standalone-123'), { ok: true, reason: null });
+});
+test('validateStandaloneCandidate: an unrelated identifier with no trip_ prefix at all passes', () => {
+  assert.deepEqual(validateStandaloneCandidate('collision-abc'), { ok: true, reason: null });
+});
+
+// ── passenger-snapshot authority (finding D, passengerSnapshotAuthorOk) ─────────────────────
+const SNAPSHOT_OK = { name: 'RealOwner', phoneMasked: '+7 900 ***-**-01', authorId: PASSENGER_ID };
+
+test('passenger_snapshot: null snapshot passes (nothing to verify, neutral projection)', () => {
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: null }) }).ok, true);
+});
+test('passenger_snapshot: undefined (key absent) passes, matching the default makeOrder() shape', () => {
+  assert.equal(check({ order: makeOrder() }).ok, true);
+});
+test('passenger_snapshot: authorId matching order.passenger_id passes', () => {
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: SNAPSHOT_OK }) }).ok, true);
+});
+test('passenger_snapshot: authorId matching case-insensitively (canonical UUID compare) passes', () => {
+  const snap = { ...SNAPSHOT_OK, authorId: PASSENGER_ID.toUpperCase() };
+  assert.equal(check({ order: makeOrder({ passenger_snapshot: snap }) }).ok, true);
+});
+test('passenger_snapshot: missing authorId key fails', () => {
+  const snap = { name: 'NoAuthorId', phoneMasked: '+7 000' };
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: snap }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: authorId belonging to an unrelated user fails', () => {
+  const snap = { ...SNAPSHOT_OK, authorId: OTHER_ID };
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: snap }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (string) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: 'not-an-object' }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (number) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: 42 }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});
+test('passenger_snapshot: a non-object (array) snapshot fails', () => {
+  assert.deepEqual(check({ order: makeOrder({ passenger_snapshot: ['not', 'an', 'object'] }) }), { ok: false, reason: 'passenger_snapshot_author_mismatch' });
+});

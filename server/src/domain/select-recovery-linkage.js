@@ -62,6 +62,24 @@
 //   - always-null columns — verified empirically: no write path (bootstrapRide,
 //     patchRideStatus, patchRideNoShow) ever populates passenger_rating, driver_initials, or
 //     either route ETA column, on ANY Ride, ever. A non-null value here is corruption.
+//   - canonical-orphan applicability (#938 Codex finding C) — rides.order_id is
+//     `ON DELETE SET NULL` (migrations/0001): if an accepted order is ever deleted, its Ride
+//     keeps a canonical trip_<legacy_id> trip_id while candidate_order_count silently drops to
+//     0 — the SAME shape the applicability rule uses to recognize a genuinely standalone Ride.
+//     No production write path deletes an order today (verified against services/ and
+//     scripts/), so this requires a direct/administrative DB delete — but the schema itself
+//     permits it, so a canonical-looking trip_id resolving to zero candidates is treated as a
+//     suspicious orphan, never a legitimate standalone bypass. A NONCANONICAL trip_id (the
+//     shape every genuinely standalone Ride actually uses — see select-recovery-linkage-flow.
+//     test.mjs's own standalone fixtures) is completely unaffected.
+//   - passenger-snapshot authority (#938 Codex finding D) — orders.passenger_snapshot is
+//     unconstrained JSONB; the only production write path (services/orders/index.js's
+//     sanitizeSnapshot()) unconditionally stamps `authorId` to the AUTHENTICATED creator, so
+//     `passenger_snapshot.authorId === order.passenger_id` is a structural invariant for every
+//     live-created order — but nothing enforced it here, so a legacy/imported snapshot with a
+//     missing, malformed, or mismatched authorId could leak an unrelated person's name/phone to
+//     both Ride participants. A `null` snapshot is untouched — serializeRecoveredRide() already
+//     neutral-projects that case safely.
 
 import { STATUS_TIMESTAMP_FIELD } from './ride-status.js';
 
@@ -127,6 +145,30 @@ function terminalTimestampsOk(ride) {
   return ride.completed_at == null && ride.canceled_at == null;
 }
 
+// #938 Codex finding D — passenger_snapshot is untrusted JSONB: a null snapshot has nothing to
+// verify (the caller already neutral-projects that case), but a PRESENT snapshot must prove its
+// own authorship. A non-object value (string/number/array — a malformed or truncated import) is
+// rejected outright; otherwise authorId must canonically equal order.passenger_id. A missing
+// authorId key resolves to `undefined`, which uuidEq() already treats as a non-match.
+function passengerSnapshotAuthorOk(order) {
+  const snap = order.passenger_snapshot;
+  if (snap == null) return true;
+  if (typeof snap !== 'object' || Array.isArray(snap)) return false;
+  return uuidEq(snap.authorId, order.passenger_id);
+}
+
+// #938 Codex finding C — the candidate_order_count===0 applicability decision, run by the
+// caller BEFORE any candidate is resolved (validateRecoveryLinkage below explicitly assumes it
+// has already been handed exactly one unambiguous candidate, so it cannot judge this case
+// itself). A trip_id that never claimed canonical order-derivation is genuinely standalone,
+// unaffected; one that DOES match the canonical `trip_<legacy_id>` shape but resolves to zero
+// candidates has necessarily lost a real linkage (the order was deleted) — fail closed rather
+// than silently serving the Ride's raw, unvalidated cache.
+export function validateStandaloneCandidate(tripId) {
+  if (/^trip_/.test(tripId)) return fail('canonical_order_missing');
+  return { ok: true, reason: null };
+}
+
 // validateRecoveryLinkage({ ride, order, assignment, offers, facts }) — pure, synchronous.
 //   ride       — the resolved Ride row, or null.
 //   order      — the resolved Order row, or null.
@@ -158,6 +200,7 @@ export function validateRecoveryLinkage({ ride, order, assignment, offers, facts
   if (ride.passenger_user_id == null) return fail('ride_passenger_missing');
   if (!uuidEq(ride.passenger_user_id, order.passenger_id)) return fail('ride_passenger_mismatch');
   if (uuidEq(ride.driver_user_id, ride.passenger_user_id)) return fail('self_selected_driver');
+  if (!passengerSnapshotAuthorOk(order)) return fail('passenger_snapshot_author_mismatch');
 
   if (!RECOVERY_ALLOWED_STATUSES.has(ride.status)) return fail('ride_status_not_recovery_eligible');
 

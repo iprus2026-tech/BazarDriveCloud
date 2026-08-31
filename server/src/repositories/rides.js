@@ -128,14 +128,26 @@ export async function lockConflictRideForSelection(db, { tripId, orderId }) {
 // that SAME statement) — so this still rejects genuine corruption (a timestamp predating the
 // row, or exceeding its own last-write instant) without asserting an inter-stage ordering
 // nothing in the contract promises.
+//
+// Lower bound for the 5 post-accept columns is accepted_at, NOT created_at (#938 Codex finding
+// E): every live write path bootstraps accepted_at FIRST (bootstrapRide, inside the /select
+// tx), before any status PATCH can stamp approaching/arrived/started/completed/canceled — so a
+// legitimate stage timestamp can never precede acceptance. The old created_at-based bound let a
+// row with created_at < approaching_at < accepted_at <= updated_at (a stage stamped BEFORE the
+// ride was ever accepted — physically impossible under the real write path) pass as coherent.
+// Verified this bound still holds true for every real, API-committed sequence the finding #4
+// fix protects (forward skips, backward transitions, revisited stages) — accepted_at is always
+// the FIRST timestamp stamped in real execution, so every later stage write is later by
+// construction, never earlier. accepted_at's OWN bound (against created_at/updated_at) is
+// unchanged.
 const CHRONOLOGY_SQL = (r) => `(
     ${r}.created_at <= ${r}.accepted_at
     AND ${r}.accepted_at <= ${r}.updated_at
-    AND (${r}.approaching_at IS NULL OR (${r}.created_at <= ${r}.approaching_at AND ${r}.approaching_at <= ${r}.updated_at))
-    AND (${r}.arrived_at     IS NULL OR (${r}.created_at <= ${r}.arrived_at     AND ${r}.arrived_at     <= ${r}.updated_at))
-    AND (${r}.started_at     IS NULL OR (${r}.created_at <= ${r}.started_at     AND ${r}.started_at     <= ${r}.updated_at))
-    AND (${r}.completed_at   IS NULL OR (${r}.created_at <= ${r}.completed_at   AND ${r}.completed_at   <= ${r}.updated_at))
-    AND (${r}.canceled_at    IS NULL OR (${r}.created_at <= ${r}.canceled_at    AND ${r}.canceled_at    <= ${r}.updated_at))
+    AND (${r}.approaching_at IS NULL OR (${r}.accepted_at <= ${r}.approaching_at AND ${r}.approaching_at <= ${r}.updated_at))
+    AND (${r}.arrived_at     IS NULL OR (${r}.accepted_at <= ${r}.arrived_at     AND ${r}.arrived_at     <= ${r}.updated_at))
+    AND (${r}.started_at     IS NULL OR (${r}.accepted_at <= ${r}.started_at     AND ${r}.started_at     <= ${r}.updated_at))
+    AND (${r}.completed_at   IS NULL OR (${r}.accepted_at <= ${r}.completed_at   AND ${r}.completed_at   <= ${r}.updated_at))
+    AND (${r}.canceled_at    IS NULL OR (${r}.accepted_at <= ${r}.canceled_at    AND ${r}.canceled_at    <= ${r}.updated_at))
   )`;
 
 // Entry point for GET /ride-state/rides/:tripId. Anchored on the (unique) rides.trip_id, so

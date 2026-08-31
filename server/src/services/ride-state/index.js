@@ -13,7 +13,7 @@ import { RIDE_STATUS, isValidRideStatus, TERMINAL_RIDE_STATUSES, STATUS_TIMESTAM
 import { serializeRide, serializeRecoveredRide } from '../../serialize.js';
 import { findRideByTripId, lockRideByTripId, patchRideStatus, patchRideNoShow, findRecoveryBundleByTripId } from '../../repositories/rides.js';
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
-import { validateRecoveryLinkage } from '../../domain/select-recovery-linkage.js';
+import { validateRecoveryLinkage, validateStandaloneCandidate } from '../../domain/select-recovery-linkage.js';
 
 const problem = (reply, status, code, error, retryable = false) =>
   reply.code(status).send({ error, code, retryable });
@@ -45,8 +45,12 @@ export default async function rideStateService(app) {
   // GET /matching/offers instead (see matching/index.js). Applicability is decided by
   // candidate_order_count, resolved via BOTH the canonical trip_<legacy_id> convention and
   // the direct rides.order_id FK, so a Ride linked via either path can never remain
-  // standalone: 0 candidates = genuinely standalone (today's plain read, unaffected); 1 =
-  // gate runs; 2+ = ambiguous, fail-closed without ever guessing which order is "right".
+  // standalone: 0 candidates AND a noncanonical trip_id = genuinely standalone (today's plain
+  // read, unaffected); 0 candidates but a CANONICAL trip_id = a canonical orphan (the order was
+  // deleted — rides.order_id is ON DELETE SET NULL — while the trip_id still claims order
+  // derivation), fail-closed rather than serving the Ride's raw, unvalidated cache (#938 Codex
+  // finding C, validateStandaloneCandidate); 1 candidate = gate runs; 2+ = ambiguous,
+  // fail-closed without ever guessing which order is "right".
   app.get('/rides/:tripId', async (req, reply) => {
     const viewer = await req.resolveUser();
     if (req.authError) return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
@@ -57,6 +61,8 @@ export default async function rideStateService(app) {
 
     const bundle = await findRecoveryBundleByTripId(app.db, req.params.tripId);
     if (bundle.candidate_order_count === 0) {
+      const standaloneVerdict = validateStandaloneCandidate(ride.trip_id);
+      if (!standaloneVerdict.ok) return problem(reply, 409, 'RIDE_RECOVERY_UNVERIFIED', 'ride acceptance is unverified', false);
       return { ride: serializeRide(ride) };
     }
     if (bundle.candidate_order_count >= 2) {
