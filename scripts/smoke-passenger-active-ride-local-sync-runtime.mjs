@@ -507,6 +507,14 @@ const {
   DEMO_ACTIVE_RIDE_ID,
 } = await import('../public/src/ride_state.js');
 const activeRide = (await import('../public/src/screens/active_ride.js')).default;
+// #938-01B-A review-fix #2 — direct deterministic import, NOT DOM-driven:
+// arrivingDropoffAmount's authoritative branch is otherwise unobservable
+// through the live DOM (paymentBlockHtml independently hides the
+// ARRIVING_DROPOFF payment card whenever an authoritative ride has no real
+// payment method, which is always true today), so this is the actual
+// mutation-sensitive proof for that branch's decision logic — real
+// execution of the real function, not source-text pattern matching.
+const { arrivingDropoffAmount } = await import('../public/src/screens/active_ride_passenger.js');
 
 // ─────────────────────────────────────────────────────────────────────────
 // ── Test helpers ─────────────────────────────────────────────────────────
@@ -789,8 +797,17 @@ saveActiveRide(baseRide('trip_ordI', RIDE_STATUS.WAITING_PASSENGER));
 // The backend now resolves as OFF/absent for this trip (404-shaped): settle LOCAL_ONLY.
 resolveFetch({ ok: false, status: 404, text: async () => JSON.stringify({ code: 'RIDE_NOT_FOUND' }) });
 await tick(12);
+// #938-01B-A — reconcileLocalOnlyRide() detects the missed forward
+// transition and navigates to a fresh mount. Requirement #1 means even THIS
+// remount never trusts the just-written local WAITING_PASSENGER record on
+// sight — it starts LOADING again and waits for its OWN authoritative GET,
+// exactly like the very first mount did. Resolve that second,
+// remount-triggered GET too (a purely local trip's 404 is stable/consistent
+// across repeated reads) before asserting the final settled sheet.
+resolveFetch({ ok: false, status: 404, text: async () => JSON.stringify({ code: 'RIDE_NOT_FOUND' }) });
+await tick(12);
 {
-  expect('S10: LOCAL_ONLY settlement re-checks the store and picks up the missed transition',
+  expect('S10: LOCAL_ONLY settlement re-checks the store, navigates to the missed transition, and the remount settles LOCAL_ONLY on its own authoritative read',
     currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER
       || app.querySelector('.active-ride-passenger--complete') !== null,
     currentSheet()?.dataset.status);
@@ -866,6 +883,307 @@ await tick();
   expect('S12: the remounted screen renders the COMPLETED view for the SAME trip',
     app.querySelector('.active-ride-passenger--complete') !== null && tripLabelText().includes('trip_ordK'),
     tripLabelText());
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 13 — #938-01B-A: the very FIRST successful backend GET
+// resolves a terminal status directly (no 404, no local-status coincidence,
+// no persisted local record at all). Requirement #1: nothing local paints
+// before that GET settles. Requirement #2/#3: the settled GET alone decides
+// terminal vs. normal, and COMPLETED renders from the server Ride. Requirement
+// #5: with no server vehicle/payment source, the render neutralizes rather
+// than showing the built-in demo's fabricated driver/car/card. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch13;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch13 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordL');
+expect('S13 pre: no local/demo ride is shown while the very first backend read is in flight',
+  currentSheet()?.dataset.status === 'loading', currentSheet()?.dataset.status);
+resolveFetch13({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordL',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Мария В.', initials: 'МВ', rating: '5,00' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '999 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // Deliberately no vehicle/payment/chat — a real serializeRide() never
+      // emits them either; the render must neutralize, never fabricate.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S13: a terminal status from the very first successful GET swaps straight to the COMPLETE renderer',
+    app.querySelector('.active-ride-passenger--complete') !== null);
+  expect('S13: the COMPLETE renderer shows the server-confirmed driver name, never the built-in demo default',
+    (app.querySelector('.active-ride-passenger__driver-name')?.textContent || '').includes('Мария В.'),
+    app.querySelector('.active-ride-passenger__driver-name')?.textContent);
+  expect('S13: with no server vehicle/payment source, the payment line is a truthful neutral line, never a fabricated card',
+    app.querySelector('.passenger-complete__pay-method-title')?.textContent === 'Способ оплаты не указан',
+    app.querySelector('.passenger-complete__pay-method-title')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 14 — #938-01B-A requirement #7: a generic failure (5xx) on the
+// very FIRST-EVER read never falls back to a stale local Ride, even when a
+// usable local record already exists for this trip — only a LATER
+// recovery/retry read of an ALREADY-confirmed ride gets the graceful
+// stale-with-banner treatment (unchanged, not this scenario). ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch14;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch14 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordM', 'trip_ordM']);
+saveActiveRide(baseRide('trip_ordM', RIDE_STATUS.DRIVER_EN_ROUTE));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordM');
+resolveFetch14({ ok: false, status: 500, text: async () => JSON.stringify({ code: 'INTERNAL' }) });
+await tick(12);
+{
+  expect('S14: a first-read 5xx failure shows the ERROR state, never the stale local DRIVER_EN_ROUTE sheet, even though a usable local record exists',
+    currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Unit block — #938-01B-A review-fix #2 (P1 finding): direct, real
+// execution of arrivingDropoffAmount(ride), the actual mutation-sensitive
+// proof. A prior round's runtime scenarios (S15/S16) sent an EMPTY-STRING
+// ride.price override in the fake server payload — that masked the real
+// defect: a REALISTIC server response omits the `ride` sub-object entirely
+// (serializeRide()/serializeRecoveredRide() never emit it), and
+// mergeServerRide's keep(local, undefined) then silently preserves whatever
+// ride.price the PRE-MERGE local/demo record already had — which, for a
+// fresh/unseeded mount, is createDemoActiveRide()'s own '1 540 ₽' default.
+// The old priority chain checked r.price BEFORE order.offerPrice, so that
+// stale demo value would outrank a genuinely real, present order.offerPrice
+// from the server. These cases construct the ride objects directly —
+// exactly the shape mergeServerRide would produce — with NO `ride` key at
+// all, proving the decision helper itself, independent of any DOM/hide
+// mechanism. ──
+expect('arrivingDropoffAmount: authoritative + a real order.offerPrice from the server -> the real price (900 ₽), never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: '900 ₽' } }) === '900 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: '900 ₽' } }));
+expect('arrivingDropoffAmount: authoritative + order.offerPrice null -> the neutral "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: null } }) === '—',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: null } }));
+expect('arrivingDropoffAmount: authoritative + no `ride` key at all (the realistic serializeRide() shape) and no order.offerPrice -> "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: {} }) === '—',
+  arrivingDropoffAmount({ authoritative: true, order: {} }));
+expect('arrivingDropoffAmount: authoritative + NO order key at all -> "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true }) === '—',
+  arrivingDropoffAmount({ authoritative: true }));
+// THE P1 regression itself: a stale local/demo ride.price (exactly what a
+// pre-merge local record, or a naive keep()-based merge, could still carry)
+// must NEVER outrank — or leak past — a real, present order.offerPrice on
+// an authoritative ride. This is the object shape the P1 finding describes.
+expect('arrivingDropoffAmount: authoritative + a stale ride.price/payment.amount alongside a real order.offerPrice -> the real order.offerPrice wins, the stale fields are never even consulted',
+  arrivingDropoffAmount({
+    authoritative: true,
+    ride: { price: '1 540 ₽' },
+    payment: { amount: '1 480 ₽', dropoffAmount: '1 480 ₽' },
+    order: { offerPrice: '900 ₽' },
+  }) === '900 ₽');
+expect('arrivingDropoffAmount: authoritative + a stale ride.price alongside a null order.offerPrice -> "—", the stale ride.price never leaks',
+  arrivingDropoffAmount({
+    authoritative: true,
+    ride: { price: '1 540 ₽' },
+    order: { offerPrice: null },
+  }) === '—');
+// Local/backend-off — unchanged real-value priority chain and fallback.
+expect('arrivingDropoffAmount: non-authoritative + no real value anywhere -> the exact prior "1 540 ₽" demo fallback preserved',
+  arrivingDropoffAmount({ order: {} }) === '1 540 ₽');
+expect('arrivingDropoffAmount: non-authoritative + only order.offerPrice real -> that value (priority chain intact)',
+  arrivingDropoffAmount({ order: { offerPrice: '750 ₽' } }) === '750 ₽');
+expect('arrivingDropoffAmount: non-authoritative + ride.price real (and no payment) -> ride.price wins over order.offerPrice (priority order unchanged)',
+  arrivingDropoffAmount({ ride: { price: '600 ₽' }, order: { offerPrice: '750 ₽' } }) === '600 ₽');
+expect('arrivingDropoffAmount: non-authoritative + payment.dropoffAmount real -> it wins over everything else (priority order unchanged)',
+  arrivingDropoffAmount({
+    payment: { dropoffAmount: '500 ₽', amount: '600 ₽' },
+    ride: { price: '700 ₽' },
+    order: { offerPrice: '800 ₽' },
+  }) === '500 ₽');
+
+// ── Scenario 15 — #938-01B-A review-fix (MEDIUM/P1 finding): an
+// authoritative COMPLETED ride, mounted end-to-end through the real
+// GET/merge/render pipeline, with a REALISTIC server payload — no `ride`
+// key at all (a real serializeRide() never emits it) — shows the real
+// order.offerPrice on "Итого к оплате", never the stale local/demo fare. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch15;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch15 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordN');
+resolveFetch15({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordN',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Олег Р.', initials: 'ОР', rating: '4,80' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 3', dropoffLabel: 'ул. Финишная, 4' },
+      order: { offerPrice: '900 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object and no `payment` at all — the exact
+      // serializeRide()/serializeRecoveredRide() shape. The pre-merge local
+      // fallback (createDemoActiveRide(), no seed for this tripId) DOES
+      // carry its own demo ride.price ('1 540 ₽') — proving this real
+      // order.offerPrice correctly wins end-to-end through the actual
+      // merge, not just in the isolated unit block above.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S15: authoritative COMPLETED with a REAL order.offerPrice from a realistic (no `ride` key) server payload shows that real price, never the stale local/demo fare',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '900 ₽',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 15b — same realistic shape, order.offerPrice: null. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch15b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch15b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordN2');
+resolveFetch15b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordN2',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Дина К.', initials: 'ДК', rating: '4,90' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 7', dropoffLabel: 'ул. Финишная, 8' },
+      order: { offerPrice: null },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object, no `payment` — realistic shape.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S15b: authoritative COMPLETED with order.offerPrice: null in a realistic server payload shows the neutral "—", never the stale local/demo fare',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '—',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 16 — #938-01B-A review-fix: an authoritative IN_PROGRESS +
+// ARRIVING_DROPOFF ride with a realistic server payload (no `ride` key, a
+// real order.offerPrice) never shows '1 540 ₽' anywhere in the rendered
+// sheet. The local ride is seeded to status=IN_PROGRESS via the URL BEFORE
+// the server read settles, so the settled srv.status === ride.status and
+// maybeReMount never re-navigates (which would drop the &phase= query param
+// this scenario depends on — see maybeReMount's URL, role+status+tripId
+// only). Note: paymentInfo() always returns last4/method = null for ANY
+// authoritative ride (mergeServerRide always sets payment: null), so
+// paymentBlockHtml's pre-existing whole-card hide ALSO independently
+// prevents this card from ever rendering here — this scenario proves the
+// end-to-end OUTCOME through the real DOM; the decision helper itself is
+// proven directly, mutation-sensitively, by the unit block above. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch16;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch16 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordR&phase=arriving_dropoff');
+resolveFetch16({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordR',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: 'Павел Д.', initials: 'ПД', rating: '4,70' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 5', dropoffLabel: 'ул. Финишная, 6' },
+      order: { offerPrice: '900 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object, no `payment` — realistic shape.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S16: authoritative IN_PROGRESS+ARRIVING_DROPOFF with a realistic server payload never shows the stale 1 540 ₽ anywhere in the rendered sheet',
+    !(currentSheet()?.textContent || '').includes('1 540'));
+  expect('S16: the payment card is correctly absent for an authoritative ride with no real payment method (independent confirmation alongside the amount gate)',
+    app.querySelector('.active-ride-passenger__payment') === null);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 17 — #938-01B-A review-fix: local/backend-off COMPLETED with
+// no real price preserves the EXACT prior '1 540 ₽' demo fallback — the
+// backend-off prototype is unchanged. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordP', RIDE_STATUS.COMPLETED, { order: {}, ride: {} }));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordP');
+{
+  expect('S17: local/backend-off COMPLETED with no real price preserves the prior 1 540 ₽ demo fallback',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '1 540 ₽',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+
+// ── Scenario 18 — #938-01B-A review-fix: local/backend-off IN_PROGRESS +
+// ARRIVING_DROPOFF with no real price preserves the EXACT prior '1 540 ₽'
+// demo fallback. Unlike the authoritative case (S16), a non-authoritative
+// ride's paymentInfo() returns real demo last4/method, so the payment card
+// is NOT hidden here and its amount node is directly checkable. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordQ', RIDE_STATUS.IN_PROGRESS, { order: {}, ride: {} }));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordQ&phase=arriving_dropoff');
+{
+  expect('S18: local/backend-off ARRIVING_DROPOFF with no real price preserves the prior 1 540 ₽ demo fallback',
+    app.querySelector('.active-ride-passenger__payment-amount')?.textContent === '1 540 ₽',
+    app.querySelector('.active-ride-passenger__payment-amount')?.textContent);
 }
 
 if (issues.length) {

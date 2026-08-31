@@ -134,18 +134,46 @@ expect('ownership begins UNCONFIRMED under backend and settles only to SERVER_BA
     && ownershipSetter.includes('backendWriteCandidate = nextOwnership === PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED')
     && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED)')
     && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)'));
+// #938-01B-A — setReadState's own syncPassengerMutationGate() call only runs
+// on its LOADED branch, and the initial readState is now LOADING whenever
+// backendRead is true (requirement #1) even with a usable local ride, so an
+// explicit call right after the initial setReadState keeps
+// root.dataset.ownershipState observable from the very first synchronous
+// mount instead of leaving it unset until the first read settles.
+expect('the initial mount explicitly syncs the mutation gate right after setReadState (before runInitialRead), so ownershipState is never left unset during the first LOADING paint',
+  /setReadState\(readState\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*syncPassengerMutationGate\(\);\s*\n\s*if \(!fixture && backendRead\) runInitialRead\(\);/.test(passenger));
 expect('404/RIDE_NOT_FOUND settles local ownership while unknown IDs still render empty',
   initialRead.includes('err.status === 404')
     && initialRead.includes("err.code === 'RIDE_NOT_FOUND'")
     && initialRead.includes('setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.LOCAL_ONLY)')
     && initialRead.includes('setPassengerMutationBlocked(false)')
-    && initialRead.includes('if (hasUsableLocalRide) renderLoadedRide(recovery)')
+    && initialRead.includes('if (hasUsableLocalRide) {')
+    && initialRead.includes('renderLoadedRide(recovery)')
     && passenger.includes('const hasUsableLocalRide = hasPersistedLocalRide || isBuiltInDemoRide')
     && initialRead.includes('PASSENGER_RIDE_READ_STATE.EMPTY'));
+// #938-01B-A — a genuinely missing server Ride (404) confirms the trip is
+// local-only, so an already-terminal local/demo ride (e.g. a stale
+// COMPLETED/CANCELED snapshot) still swaps to its own terminal renderer
+// here exactly like the pre-01B-A backend-off path — never gated behind a
+// participant GET that can never resolve to anything for a purely local trip.
+expect('404/RIDE_NOT_FOUND local-only path still swaps to the terminal renderer for an already-terminal local ride',
+  initialRead.includes('if (needsSeparatePassengerRenderer(ride.status)) {')
+    && initialRead.includes('swapToTerminalPassengerScreen(ride);'));
 const loadedRenderer = functionBody(passenger, 'renderLoadedRide');
 const inPlaceRefresh = functionBody(passenger, 'refreshPassengerRideFieldsInPlace');
-expect('usable local ride stays loaded while backend refresh starts without replacing its DOM',
-  /backendRead\s*&&\s*!hasUsableLocalRide[\s\S]{0,120}PASSENGER_RIDE_READ_STATE\.LOADING/.test(passenger)
+// #938-01B-A — the FIRST paint no longer special-cases an already-usable
+// local ride: `backendRead` alone (regardless of hasUsableLocalRide) forces
+// the initial LOADING state, so no local/demo Ride — terminal or not — is
+// shown before a settled participant GET (requirement #1). The prior
+// `backendRead && !hasUsableLocalRide` gate is asserted GONE, not just
+// replaced, so a future regression that reintroduces it fails loudly here.
+expect('no local ride, usable or not, is shown before the first backend read settles',
+  passenger.includes('let readState = fixture || (backendRead')
+    && passenger.includes('? PASSENGER_RIDE_READ_STATE.LOADING')
+    && passenger.includes(': PASSENGER_RIDE_READ_STATE.LOADED);')
+    && !passenger.includes('backendRead && !hasUsableLocalRide'));
+expect('a LATER recovery/retry read of an already-confirmed ride still keeps its DOM in place while refreshing',
+  initialRead.includes('hasUsableLocalRide && epoch > 1')
     && initialRead.includes("root.dataset.refreshState = 'loading'")
     && initialRead.includes('renderLoadedRide(true)')
     && loadedRenderer.includes('preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED')
@@ -168,13 +196,124 @@ expect('recovery merge preserves a locally-ahead lifecycle status while acceptin
     && mergeServer.includes('preserveLocallyAheadStatus && localRank > serverRank')
     && mergeServer.includes('? ride.status')
     && initialRead.includes('ride = mergeServerRide(srv, recovery)'));
-expect('server merge accepts all display sub-objects without clobbering local fallbacks',
-  mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
-    && mergeServer.includes('order: keep(ride.order, srv.order)')
-    && mergeServer.includes('payment: keep(ride.payment, srv.payment)')
+// #938-01B-A — vehicle/payment/chat have no server source at all today (the
+// focused serializer never emits srv.vehicle/srv.payment/srv.chat), so the
+// OLD keep(local, server) merge for these three left any pre-existing
+// local/demo value untouched forever on a real, server-confirmed ride.
+// order/route/ride/waiting/timestamps ARE properly server-sourced already
+// and correctly keep their unchanged keep()-based merge.
+expect('server merge keeps route/ride/waiting/timestamps via keep(), neutralizes vehicle/payment/chat to authoritative-or-null, and computes order.offerPrice straight from srv (never keep()-preserved)',
+  mergeServer.includes('vehicle: { model: (srv.driver && srv.driver.car) || null, color: null, plate: null }')
+    && mergeServer.includes('order: { ...keep(ride.order, srv.order), offerPrice: (srv.order && srv.order.offerPrice) || null }')
+    && mergeServer.includes('route: keep(ride.route, srv.route)')
+    && mergeServer.includes('payment: null')
     && mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)')
     && mergeServer.includes('ride: keep(ride.ride, srv.ride)')
-    && mergeServer.includes('chat: keep(ride.chat, srv.chat)'));
+    && mergeServer.includes('timestamps: keep(ride.timestamps, srv.timestamps)')
+    && mergeServer.includes('chat: null'));
+expect('mergeServerRide never carries a stale vehicle/payment/chat forward via keep() (the banned pattern is fully gone, not just supplemented), and order.offerPrice specifically is never a bare keep()-preserved property either (only wrapped, with offerPrice separately overwritten)',
+  !mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
+    && !mergeServer.includes('payment: keep(ride.payment, srv.payment)')
+    && !mergeServer.includes('chat: keep(ride.chat, srv.chat)')
+    && !/order:\s*keep\(ride\.order, srv\.order\),/.test(mergeServer));
+const markAuthoritative = functionBody(passenger, 'markPassengerRideAuthoritative');
+expect('markPassengerRideAuthoritative is defined and marks a NON-enumerable, in-memory-only property',
+  markAuthoritative.length > 0
+    && markAuthoritative.includes("value: true")
+    && markAuthoritative.includes('enumerable: false')
+    && markAuthoritative.includes('Object.defineProperty(mergedRide, \'authoritative\''));
+expect('every mergeServerRide() call site inside runInitialRead immediately marks the result authoritative',
+  (initialRead.match(/ride = mergeServerRide\(srv, recovery\);\s*\n\s*markPassengerRideAuthoritative\(ride\);/g) || []).length === 2);
+
+// ── #938-01B-A — display helpers suppress demo fallbacks only for a
+// server-confirmed (authoritative) ride; a genuinely local/demo ride keeps
+// the exact prior fallback strings, so the backend-off prototype is
+// unchanged (requirement #6). No server source exists for
+// vehicle.color/plate, any payment field, or chat.unread today, so an
+// authoritative ride with none of these gets a neutral/omitted value, never
+// a fabricated one (requirement #5) — never demo-vs-authoritative differ
+// only inside the render call, both must be visible in the pure helper.
+const carLineBody = functionBody(passenger, 'carLine');
+expect('carLine omits model/plate for an authoritative ride with no real vehicle data, but keeps the demo fallback for a non-authoritative one',
+  carLineBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && carLineBody.includes("authoritative ? (v.model || null) : (v.model || 'Toyota Camry')")
+    && carLineBody.includes("v.plate || (authoritative ? null : 'А 124 ВВ 77')"));
+const paymentInfoBody = functionBody(passenger, 'paymentInfo');
+expect('paymentInfo returns last4/method/note = null for an authoritative ride with no real payment data (amount still resolves from ride.order.offerPrice)',
+  paymentInfoBody.includes('if (ride && ride.authoritative)')
+    && /last4:\s*pay\.last4 \|\| null/.test(paymentInfoBody)
+    && /method:\s*pay\.method \|\| null/.test(paymentInfoBody)
+    && /note:\s*pay\.note \|\| null/.test(paymentInfoBody)
+    && paymentInfoBody.includes("amount: pay.amount || (ride.order && ride.order.offerPrice) || null"));
+// functionBody() above stops at the FIRST '{' after the name, which for
+// `paymentBlockHtml(ride, options = {})` is the param default's own empty
+// object literal, not the real body — so this checks the whole file instead
+// of a functionBody()-scoped slice. The matched string is specific enough
+// (the full authoritative+last4+method condition) to stay uniquely scoped
+// to this one guard without a real function-body extraction.
+expect('paymentBlockHtml hides the whole card for an authoritative ride with no real last4/method, instead of rendering a "•• null · null" fragment',
+  passenger.includes('if (ride && ride.authoritative && pay.last4 == null && pay.method == null) return \'\';'));
+const chatLabelForBody = functionBody(passenger, 'chatLabelFor');
+expect('chatLabelFor defaults unread to 0 (not the demo "2 unread") for an authoritative ride with no real chat data',
+  chatLabelForBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && chatLabelForBody.includes('hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2)'));
+// #938-01B-A review-fix (MEDIUM finding) — arrivingDropoffAmount() feeds
+// BOTH authoritative surfaces: renderPassengerRideComplete's "Итого к
+// оплате" (via completedPaymentInfo) and the IN_PROGRESS+ARRIVING_DROPOFF
+// amount (renderArrivingDropoffSheet / refreshPassengerRideFieldsInPlace).
+// The real-value priority chain (dropoffAmount -> amount -> ride.price ->
+// order.offerPrice) is required to stay intact and checked BEFORE the
+// authoritative branch — only the LAST-RESORT literal is gated, exactly
+// mirroring carLine/paymentInfo/chatLabelFor's authoritative-or-demo policy.
+const arrivingDropoffAmountBody = functionBody(passenger, 'arrivingDropoffAmount');
+// #938-01B-A review-fix #2 — an authoritative ride takes a COMPLETELY
+// SEPARATE branch that consults ONLY ride.order.offerPrice, never
+// pay/r.price at all (r.price can legitimately still carry a stale
+// local/demo value when the server omits the `ride` sub-object — see
+// mergeServerRide's order field comment). The local/backend-off branch
+// keeps the exact prior real-value priority chain and '1 540 ₽' fallback
+// unbroken, checked only in that branch.
+expect('arrivingDropoffAmount: an authoritative ride takes a separate branch consulting ONLY order.offerPrice (never pay/r.price), neutral "—" when absent',
+  arrivingDropoffAmountBody.includes('if (ride && ride.authoritative) {')
+    && arrivingDropoffAmountBody.includes('const order = ride.order || {};')
+    && arrivingDropoffAmountBody.includes("return order.offerPrice || '—';"));
+expect('arrivingDropoffAmount: the local/backend-off branch preserves the exact prior real-value priority chain and "1 540 ₽" fallback, unbroken',
+  arrivingDropoffAmountBody.includes('const pay = (ride && ride.payment) || {};')
+    && arrivingDropoffAmountBody.includes('const r = (ride && ride.ride) || {};')
+    && arrivingDropoffAmountBody.includes('const order = (ride && ride.order) || {};')
+    && arrivingDropoffAmountBody.includes("return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || '1 540 ₽';"));
+expect('arrivingDropoffAmount: the authoritative branch is structurally first, so it can never fall through into the pay/r.price chain',
+  arrivingDropoffAmountBody.indexOf('if (ride && ride.authoritative) {') < arrivingDropoffAmountBody.indexOf('const pay = (ride && ride.payment) || {};'));
+expect('arrivingDropoffAmount is exported for direct deterministic testing (its authoritative branch is otherwise unobservable through the live DOM — see smoke-passenger-active-ride-local-sync-runtime.mjs)',
+  /export function arrivingDropoffAmount\(/.test(passenger));
+// #938-01B-A review-fix #2 — order.offerPrice is the authoritative fare
+// source, so it must be overwritten unconditionally from srv, never
+// keep()-preserved: a missing/null srv.order.offerPrice normalizes straight
+// to null here, at merge time — never left as whatever the pre-merge
+// local/demo ride.order.offerPrice happened to be.
+expect('mergeServerRide computes order.offerPrice unconditionally from srv (never keep()-preserved from local), normalizing a missing/null/empty server value straight to null',
+  mergeServer.includes('offerPrice: (srv.order && srv.order.offerPrice) || null'));
+expect('refreshPassengerRideFieldsInPlace mirrors paymentBlockHtml\'s null handling (no raw string-concat "null" leak into the in-place payment title)',
+  inPlaceRefresh.includes("(pay.last4 != null || pay.method != null) ? ('•• ' + pay.last4 + ' · ' + pay.method) : null"));
+const rideCompleteBody = functionBody(passenger, 'renderPassengerRideComplete');
+expect('renderPassengerRideComplete shows a truthful neutral payment line instead of a raw "•• null · null" fragment when no real payment method is known',
+  rideCompleteBody.includes('const payMethodLine = (pay.last4 != null || pay.method != null)')
+    && rideCompleteBody.includes("'Способ оплаты не указан'")
+    && rideCompleteBody.includes('${payMethodLine}')
+    && !rideCompleteBody.includes('${escapeHtml(payMethodLine)}'));
+const swapToTerminal = functionBody(passenger, 'swapToTerminalPassengerScreen');
+const renderTerminal = functionBody(passenger, 'renderTerminalPassengerScreen');
+expect('swapToTerminalPassengerScreen tears down the mount\'s own read/poll/recovery/listeners before an in-place DOM swap (never a go()-based re-navigation, which would re-fetch and could loop)',
+  swapToTerminal.includes('teardownPassengerReads()')
+    && swapToTerminal.includes("window.removeEventListener('hashchange', onHashChange)")
+    && swapToTerminal.includes('teardownObserver.disconnect()')
+    && swapToTerminal.includes('root.replaceWith(renderTerminalPassengerScreen(terminalRide))')
+    && !swapToTerminal.includes('go('));
+expect('renderTerminalPassengerScreen reuses the exact same unmodified terminal renderers as the backend-off synchronous path (CANCELED/NO_SHOW/unsupported/COMPLETED)',
+  renderTerminal.includes("renderPassengerCanceledFallback(terminalRide, 'canceled')")
+    && renderTerminal.includes("renderPassengerCanceledFallback(terminalRide, 'no_show')")
+    && renderTerminal.includes('renderPassengerStub(PASSENGER_STUB_BY_STATUS[terminalRide.status])')
+    && renderTerminal.includes('renderPassengerRideComplete(terminalRide,'));
 
 // ── BD-RIDE-WAITING-01E Codex follow-up — backend-confirmed waiting cleanup ──
 // A transient createDemoActiveRide() placeholder (no local canonical record
@@ -304,6 +443,24 @@ expect('a boarding PATCH failure returns before any local save/update (catch blo
 expect('boarding did not gain a second/extra patchRideStatus call',
   (boardedHandlerOuter.match(/patchRideStatus\(/g) || []).length === 1);
 
+// #938-01B-A — requirement #7: a 401/403/5xx/malformed/transport failure on
+// the very FIRST-EVER read (epoch === 1) must land in ERROR, never fall back
+// to a stale local/demo Ride as if it were confirmed — only a LATER
+// recovery/retry read (epoch > 1) of an ALREADY-confirmed ride keeps the
+// pre-existing graceful stale-with-banner UX. The gate is scoped by `&&
+// epoch > 1`, not `hasUsableLocalRide` alone, so this exact condition is
+// pinned to guard against a future "simplification" silently regressing #7.
+// Both runInitialRead call sites (the success/refresh path AND the
+// generic-failure catch tail) share this exact token, so a plain .includes()
+// can't tell them apart — a mutation that strips `&& epoch > 1` from just
+// the catch tail still leaves the OTHER, untouched occurrence for .includes()
+// to find. Require the exact count (2) instead, and anchor the LAST
+// occurrence's position — the catch tail's own — between the failure
+// classification and the final ERROR fallback.
+expect('the generic-failure catch tail gates its stale-local fallback on epoch > 1, not on hasUsableLocalRide alone — a first-ever-read failure always reaches ERROR',
+  (initialRead.match(/if \(hasUsableLocalRide && epoch > 1\) \{/g) || []).length === 2
+    && initialRead.indexOf('const retryable = isPassengerRideRecoveryRetryable(err)') < initialRead.lastIndexOf('if (hasUsableLocalRide && epoch > 1) {')
+    && initialRead.lastIndexOf('if (hasUsableLocalRide && epoch > 1) {') < initialRead.lastIndexOf('setReadState(PASSENGER_RIDE_READ_STATE.ERROR)'));
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
@@ -323,6 +480,19 @@ expect('retryable failures preserve confirmed server ownership while permanent n
     && initialRead.includes('if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true)')
     && initialRead.includes('if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery()')
     && !initialRead.includes('if (permanentFailure) backendWriteCandidate = false'));
+// #938-01B-A review-fix — this exact token also appears in the OTHER
+// (epoch>1 graceful-banner) branch above, so a plain .includes() above
+// cannot tell whether THIS occurrence — the one requirement #7 actually
+// added, preserving background self-healing for a first-ever-read (epoch===1)
+// retryable failure — is present, missing, or misplaced. Anchor on the
+// literal adjacency to the final setReadState(ERROR) call (only the
+// epoch===1 fallthrough's occurrence is immediately followed by it — the
+// epoch>1 branch's occurrence is followed by `else stopPassengerRideRecovery()`
+// instead) and require the exact count of two, so neither occurrence can be
+// silently dropped or duplicated.
+expect('the first-ever-read (epoch===1) failure path also schedules background recovery for a retryable failure, positioned immediately before the final ERROR fallback — distinct from the epoch>1 graceful-banner branch\'s own occurrence',
+  /if \(retryable && hasPersistedLocalRide\) schedulePassengerRideRecovery\(\);\s*\n\s*setReadState\(PASSENGER_RIDE_READ_STATE\.ERROR\);/.test(initialRead)
+    && (initialRead.match(/if \(retryable && hasPersistedLocalRide\) schedulePassengerRideRecovery\(\);/g) || []).length === 2);
 expect('successful/null/404 server settlement clears the permanent mutation block',
   initialRead.match(/setPassengerMutationBlocked\(false\)/g)?.length >= 3);
 const remount = functionBody(passenger, 'maybeReMount');
@@ -358,9 +528,18 @@ expect('deferred forward status keeps the highest pending lifecycle rank while o
   remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
     && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
     && remount.includes('nextRank > pendingRank'));
+// #938-01B-A — runInitialRead now calls mergeServerRide(srv, recovery)
+// TWICE: once early, only for a status that needsSeparatePassengerRenderer
+// (an unconditional check that must see the terminal renderer's own merge
+// regardless of maybeReMount, and returns before ever reaching the
+// DEFERRED-handling code below it), and once after the maybeReMount check,
+// which is the merge this invariant is actually about. lastIndexOf targets
+// that second, post-remount call specifically — indexOf would wrongly
+// compare against the earlier, unrelated terminal-swap merge instead.
 expect('deferred recovery returns before merging server status into the current ride',
   initialRead.includes('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED')
-    && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)')
+    && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.lastIndexOf('ride = mergeServerRide(srv, recovery)')
+    && (initialRead.match(/ride = mergeServerRide\(srv, recovery\)/g) || []).length === 2
     && initialRead.includes('startPassengerRidePoll()'));
 expect('background recovery settlement preserves controls/focus and refreshes the map in place',
   initialRead.includes('renderLoadedRide(recovery)')

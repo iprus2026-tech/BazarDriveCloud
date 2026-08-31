@@ -195,7 +195,13 @@
 // still gets MOCK_DRIVERS), and buildPassengerActiveRide's existing-ride reuse now requires an
 // exact selectedDriver.responseId pin match. No storage schema, backend/API, or cache-strategy
 // change.
-const VERSION    = 'v319';
+// v320 (BD-RIDE-SELECT-ACK-AUTHORITY-01B-A) — precached screens/active_ride_passenger.js changed:
+// while backend is enabled, no local or terminal Ride paints before the participant GET settles;
+// a settled GET alone picks the normal vs. terminal (CANCELED/NO_SHOW/COMPLETED) renderer, and a
+// server-confirmed ride's vehicle.color/plate, payment and chat neutralize to null/hidden instead
+// of the legacy demo fallbacks (driver.car still maps to the vehicle model). No storage schema,
+// backend/API, or cache-strategy change.
+const VERSION    = 'v320';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
