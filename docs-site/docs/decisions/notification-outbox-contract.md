@@ -19,7 +19,7 @@ related:
     - server/src/infra/bus.js
     - public/src/screens/inbox.js
     - public/src/mock_api.js
-  issues: []
+  issues: ["#941"]
   prs: []
 tags: [decision-record, adr, notifications, outbox, transactional, target]
 slug: /decisions/notification-outbox-contract
