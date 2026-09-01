@@ -2,7 +2,8 @@
 // through the real Fastify app + real Postgres. There is no API to create a `rides` row yet (that
 // is R10), so the test SEEDS one directly, then drives GET snapshot + PATCH status through the
 // endpoint: participant gating, a status advance with timestamp stamping, the append-only
-// status_change event, and the terminal-freeze. SKIPPED without DATABASE_URL; runs in server-ci.
+// status_change event + transactional notification source, and the terminal-freeze. SKIPPED
+// without DATABASE_URL; runs in server-ci.
 //
 // CLEANUP: ride_events is append-only (trg_ride_events_no_mutation rejects DELETE; rides<-ride_events
 // is ON DELETE RESTRICT), so the rows can't be deleted normally. The CI db is the postgres superuser,
@@ -35,6 +36,16 @@ async function mintSession(app, phone) {
   return (await post(app, '/api/v1/auth/otp/verify', { phone, code })).json();
 }
 
+async function writeCounts(db, tripId) {
+  return (await db.query(
+    `SELECT (SELECT count(*)::int FROM ride_events WHERE trip_id = $1) AS ride_events,
+            (SELECT count(*)::int
+               FROM notification_outbox
+              WHERE immutable_envelope #>> '{aggregate,key}' = $1) AS notification_outbox`,
+    [tripId],
+  )).rows[0];
+}
+
 test('ride-state: snapshot + transitions (stamp, status_change event, terminal-freeze) + guards', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const drv = `+1601${String(process.pid).padStart(7, '0')}`;
@@ -49,6 +60,10 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
     // append-only timeline: drop test rows with triggers/FK checks off (CI superuser), best-effort.
     await cleanup.query("SET session_replication_role = 'replica'").catch(() => {});
     for (const id of [tripId, noShowTripId, noShowWrongTripId]) {
+      await cleanup.query(
+        "DELETE FROM notification_outbox WHERE immutable_envelope #>> '{aggregate,key}' = $1",
+        [id],
+      ).catch(() => {});
       await cleanup.query('DELETE FROM ride_events WHERE trip_id = $1', [id]).catch(() => {});
       await cleanup.query('DELETE FROM rides WHERE trip_id = $1', [id]).catch(() => {});
     }
@@ -72,8 +87,9 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
     [tripId, drvS.user.userId, paxS.user.userId],
   );
 
-  // a fully-migrated DB (incl. 0003) reports ready (Codex #792 — /readyz covers the status_change CHECK).
-  assert.equal((await get(app, '/api/v1/readyz')).statusCode, 200, 'readyz is green once 0003 is applied');
+  // A fully-migrated DB reports ready only when both the status_change source and its
+  // transactional outbox (0004) exist.
+  assert.equal((await get(app, '/api/v1/readyz')).statusCode, 200, 'readyz is green once 0004 is applied');
 
   // GET snapshot — participant only.
   const snap = await get(app, `/api/v1/ride-state/rides/${tripId}`, bearer(drvS));
@@ -118,6 +134,53 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   // a status_change event was appended per accepted transition (EN_ROUTE, IN_PROGRESS, COMPLETED = 3).
   const n = (await cleanup.query("SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'", [tripId])).rows[0].n;
   assert.equal(n, 3, 'three status_change events appended (no event for the rejected/no-op patches)');
+  const outboxRows = (await cleanup.query(
+    `SELECT o.outbox_seq::text AS event_seq,
+            o.source_event_id::text,
+            o.immutable_envelope,
+            e.id::text AS event_id,
+            e.ride_id::text,
+            e.role,
+            e.payload->>'from' AS from_status,
+            e.payload->>'to' AS to_status,
+            to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS event_at,
+            to_char(o.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS outbox_at
+       FROM notification_outbox o
+       JOIN ride_events e ON e.id = o.source_event_id
+      WHERE e.trip_id = $1 AND e.type = 'status_change'
+      ORDER BY e.at, e.id`,
+    [tripId],
+  )).rows;
+  assert.equal(outboxRows.length, 3, 'each accepted transition has exactly one outbox source');
+  const audience = [drvS.user.userId.toLowerCase(), paxS.user.userId.toLowerCase()].sort();
+  const expectedTransitions = [
+    ['ACCEPTED', 'DRIVER_EN_ROUTE', drvS.user.userId.toLowerCase(), 'driver'],
+    ['DRIVER_EN_ROUTE', 'IN_PROGRESS', paxS.user.userId.toLowerCase(), 'passenger'],
+    ['IN_PROGRESS', 'COMPLETED', drvS.user.userId.toLowerCase(), 'driver'],
+  ];
+  const rowsByTransition = new Map(outboxRows.map((row) => [
+    `${row.from_status}->${row.to_status}`,
+    row,
+  ]));
+  expectedTransitions.forEach(([fromStatus, toStatus, actorUserId, actorRole]) => {
+    const row = rowsByTransition.get(`${fromStatus}->${toStatus}`);
+    assert.ok(row, `outbox row exists for ${fromStatus} -> ${toStatus}`);
+    assert.equal(row.source_event_id, row.event_id, 'source_event_id is exactly ride_events.id');
+    assert.equal(row.outbox_at, row.event_at, 'occurred_at is exactly ride_events.at');
+    assert.match(row.event_seq, /^[1-9][0-9]*$/, 'eventSeq materializes separately as decimal text');
+    assert.equal(Object.hasOwn(row.immutable_envelope, 'eventSeq'), false, 'eventSeq is not immutable content');
+    assert.deepEqual(row.immutable_envelope, {
+      eventId: row.event_id,
+      eventType: 'ride.status_changed.v1',
+      schemaVersion: 1,
+      producer: 'ride-state',
+      aggregate: { type: 'ride', id: row.ride_id, key: tripId },
+      occurredAt: row.event_at,
+      actor: { userId: actorUserId, role: actorRole },
+      audience: { policyVersion: 1, userIds: audience },
+      payload: { fromStatus, toStatus },
+    }, 'immutable envelope is the exact privacy allowlist');
+  });
 
   // V2-04C1: backend-owned NO_SHOW authority. Seed a waiting ride for the assigned driver.
   await cleanup.query(
@@ -135,6 +198,11 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(passengerNoShow.statusCode, 403, 'passenger cannot mark no-show');
   assert.equal(passengerNoShow.json().code, 'FORBIDDEN');
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowTripId),
+    { ride_events: 0, notification_outbox: 0 },
+    'rejected passenger NO_SHOW writes neither an event nor an outbox source',
+  );
 
   // Assigned driver may close WAITING_PASSENGER as NO_SHOW; cancel metadata is server-derived.
   const noShow = await patch(
@@ -159,11 +227,24 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(noShowRetry.statusCode, 200);
   assert.equal(noShowRetry.json().ride.timestamps.canceledAt, noShowCanceledAt);
-  const noShowEvents = (await cleanup.query(
-    "SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'",
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowTripId),
+    { ride_events: 1, notification_outbox: 1 },
+    'accepted NO_SHOW writes one pair and its retry writes none',
+  );
+  const noShowOutbox = (await cleanup.query(
+    `SELECT o.immutable_envelope
+       FROM notification_outbox o
+      WHERE o.immutable_envelope #>> '{aggregate,key}' = $1`,
     [noShowTripId],
-  )).rows[0].n;
-  assert.equal(noShowEvents, 1, 'NO_SHOW retry does not append a duplicate event');
+  )).rows;
+  assert.equal(noShowOutbox.length, 1, 'accepted NO_SHOW has one outbox row; retry has none');
+  assert.deepEqual(noShowOutbox[0].immutable_envelope.actor, {
+    userId: drvS.user.userId.toLowerCase(), role: 'driver',
+  });
+  assert.deepEqual(noShowOutbox[0].immutable_envelope.payload, {
+    fromStatus: 'WAITING_PASSENGER', toStatus: 'NO_SHOW',
+  });
 
   // Driver cannot jump to NO_SHOW from another non-terminal state.
   await cleanup.query(
@@ -179,8 +260,14 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(wrongFrom.statusCode, 409);
   assert.equal(wrongFrom.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowWrongTripId),
+    { ride_events: 0, notification_outbox: 0 },
+    'rejected ACCEPTED -> NO_SHOW writes neither an event nor an outbox source',
+  );
 
   // A different terminal state keeps the existing terminal-freeze response.
+  const terminalWritesBefore = await writeCounts(cleanup, tripId);
   const terminalNoShow = await patch(
     app,
     `/api/v1/ride-state/rides/${tripId}/status`,
@@ -189,4 +276,14 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(terminalNoShow.statusCode, 409);
   assert.equal(terminalNoShow.json().code, 'RIDE_TERMINAL');
+  assert.deepEqual(
+    terminalWritesBefore,
+    { ride_events: 3, notification_outbox: 3 },
+    'terminal rejection starts from the three accepted transition pairs',
+  );
+  assert.deepEqual(
+    await writeCounts(cleanup, tripId),
+    terminalWritesBefore,
+    'rejected COMPLETED -> NO_SHOW writes zero additional events and outbox sources',
+  );
 });

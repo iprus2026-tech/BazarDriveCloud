@@ -13,6 +13,7 @@ import { RIDE_STATUS, isValidRideStatus, TERMINAL_RIDE_STATUSES, STATUS_TIMESTAM
 import { serializeRide, serializeRecoveredRide } from '../../serialize.js';
 import { findRideByTripId, lockRideByTripId, patchRideStatus, patchRideNoShow, findRecoveryBundleByTripId } from '../../repositories/rides.js';
 import { insertStatusChangeEvent } from '../../repositories/ride_events.js';
+import { insertRideStatusNotificationOutbox } from '../../repositories/notification_outbox.js';
 import { validateRecoveryLinkage, validateStandaloneCandidate } from '../../domain/select-recovery-linkage.js';
 
 const problem = (reply, status, code, error, retryable = false) =>
@@ -35,6 +36,28 @@ function participantRole(ride, viewerId) {
   if (ride.driver_user_id && String(ride.driver_user_id) === String(viewerId)) return 'driver';
   if (ride.passenger_user_id && String(ride.passenger_user_id) === String(viewerId)) return 'passenger';
   return null;
+}
+
+// The status-change timeline row is the authoritative notification source. Both writes are
+// awaited inside the caller's existing Ride transaction: an outbox failure therefore rolls
+// back the Ride mutation and its timeline event together. Same-status/rejected paths never call
+// this helper, so they emit neither source row nor outbox row.
+async function appendStatusChangeSource(
+  client,
+  { ride, actorUserId, actorRole, toStatus },
+) {
+  const event = await insertStatusChangeEvent(client, {
+    rideId: ride.id,
+    tripId: ride.trip_id,
+    role: actorRole,
+    fromStatus: ride.status,
+    toStatus,
+  });
+  await insertRideStatusNotificationOutbox(client, {
+    sourceEventId: event.id,
+    actorUserId,
+    actorRole,
+  });
 }
 
 export default async function rideStateService(app) {
@@ -124,11 +147,10 @@ export default async function rideStateService(app) {
           };
         }
         const updated = await patchRideNoShow(client, { id: ride.id });
-        await insertStatusChangeEvent(client, {
-          rideId: ride.id,
-          tripId: ride.trip_id,
-          role,
-          fromStatus: ride.status,
+        await appendStatusChangeSource(client, {
+          ride,
+          actorUserId: viewer.userId,
+          actorRole: role,
           toStatus: RIDE_STATUS.NO_SHOW,
         });
         return { ok: { ride: updated } };
@@ -152,11 +174,10 @@ export default async function rideStateService(app) {
         timestampColumn,
         firstStampOnly: timestampColumn === 'accepted_at',
       });
-      await insertStatusChangeEvent(client, {
-        rideId: ride.id,
-        tripId: ride.trip_id,
-        role,
-        fromStatus: ride.status,
+      await appendStatusChangeSource(client, {
+        ride,
+        actorUserId: viewer.userId,
+        actorRole: role,
         toStatus: status,
       });
       return { ok: { ride: updated } };

@@ -62,19 +62,25 @@ jobs:
 
       - name: Assert core objects exist
         run: |
-          # 11 base tables from 0001 + auth_otp + auth_session from 0002 = 13.
+          # 11 base tables from 0001 + auth_otp/auth_session + notification_outbox = 14.
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 13
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 14
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('auth_otp','auth_session')" | grep -qx 2
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='notification_outbox'" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select to_regprocedure('public.notification_outbox_insert_guarded(uuid,jsonb,bytea,text)') is not null" | grep -qx t
           psql -v ON_ERROR_STOP=1 -tAc \
             "select 1 from information_schema.views where table_name='ride_history'" | grep -qx 1
           # pg_trigger has ONE row per trigger (information_schema.triggers has one
           # row per event, so a BEFORE UPDATE OR DELETE trigger would appear twice).
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from pg_trigger where tgname='trg_rides_freeze_terminal' and not tgisinternal" | grep -qx 1
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='rides' and t.tgname='trg_rides_freeze_terminal' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from pg_trigger where tgname='trg_ride_events_no_mutation' and not tgisinternal" | grep -qx 1
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='ride_events' and t.tgname='trg_ride_events_no_mutation' and not t.tgisinternal" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='notification_outbox' and t.tgname='trg_notification_outbox_no_mutation' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -109,10 +115,129 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
+      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH now
+      # depends on 0004, so a database with only 0001..0003 must not enter service.
+      - name: Apply pre-outbox migrations and assert readiness is incomplete
+        run: |
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql; do
+            psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
+          done
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 503);
+            assert.deepEqual(response.json(), { status: 'degraded', db: 'schema-incomplete' });
+          } finally {
+            await app.close();
+          }
+          NODE
       # Validate the Node migration runner end-to-end against real PostgreSQL 16
       # (the migrations job above also applies the same SQL via psql).
       - run: npm run migrate
+      - name: Assert readiness is complete after all migrations
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 200);
+            assert.deepEqual(response.json(), { status: 'ready', db: 'up' });
+          } finally {
+            await app.close();
+          }
+          NODE
       - run: npm test
+
+      - name: Prove PostgreSQL outbox errors keep immutable data private
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -Eeuo pipefail
+
+          assert_setting() {
+            actual="$(psql -X -v ON_ERROR_STOP=1 -A -t "$DATABASE_URL" -c "SHOW $1")"
+            if [[ "$actual" != "$2" ]]; then
+              echo "unsafe PostgreSQL log-test baseline: $1"
+              exit 1
+            fi
+          }
+          if [[ -z "$POSTGRES_CONTAINER_ID" ]]; then
+            echo 'PostgreSQL service container ID is unavailable'
+            exit 1
+          fi
+
+          # PostgreSQL defaults to logging complete bind values for sampled/duration
+          # statements. Pin that independent operational path off before proving the
+          # error boundary, then verify every statement/duration sampling route used by
+          # core PostgreSQL logging is disabled for the test connection.
+          psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL" >/dev/null <<'SQL'
+          ALTER SYSTEM SET log_parameter_max_length = 0;
+          SELECT pg_reload_conf();
+          SQL
+          assert_setting log_error_verbosity default
+          assert_setting log_min_error_statement error
+          assert_setting log_statement none
+          assert_setting log_duration off
+          assert_setting log_min_duration_statement -1
+          assert_setting log_min_duration_sample -1
+          assert_setting log_transaction_sample_rate 0
+          assert_setting log_parameter_max_length 0
+          assert_setting log_parameter_max_length_on_error 0
+
+          started_at="$(date -u +'%Y-%m-%dT%H:%M:%S.%NZ')"
+          node --test \
+            --test-name-pattern='notification outbox: guarded insert keeps PostgreSQL logs private' \
+            test/notification-outbox-flow.test.mjs
+
+          # Emit a non-sensitive end marker only after the test connection has closed.
+          # Waiting for this marker prevents a snapshot that sees ERROR but misses a
+          # later DETAIL/CONTEXT/STATEMENT line from the same database operation.
+          psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL" >/dev/null 2>&1 <<'SQL'
+          DO $$ BEGIN RAISE WARNING 'notification-outbox-log-proof-complete'; END $$;
+          SQL
+
+          log_file="${RUNNER_TEMP:?}/notification-outbox-postgres.log"
+          end_marker_found=false
+          for _ in {1..100}; do
+            docker logs --since "$started_at" "$POSTGRES_CONTAINER_ID" >"$log_file" 2>&1
+            if grep -Fq 'notification-outbox-log-proof-complete' "$log_file"; then
+              end_marker_found=true
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$end_marker_found" != true ]]; then
+            echo 'PostgreSQL log proof end marker was not observed'
+            exit 1
+          fi
+          # Take one final snapshot after the ordered marker is visible.
+          sleep 0.2
+          docker logs --since "$started_at" "$POSTGRES_CONTAINER_ID" >"$log_file" 2>&1
+          if ! grep -Fq 'notification outbox insert failed' "$log_file"; then
+            echo 'expected guarded PostgreSQL error was not logged'
+            exit 1
+          fi
+          for forbidden in \
+            'Failing row contains' \
+            'BD-NOTIF-OUTBOX-LOG-CANARY' \
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' \
+            '"eventId"'; do
+            if grep -Fq "$forbidden" "$log_file"; then
+              echo 'PostgreSQL log privacy assertion failed'
+              exit 1
+            fi
+          done
+          if grep -Eq '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$log_file"; then
+            echo 'PostgreSQL log contains a UUID-shaped identifier'
+            exit 1
+          fi
 
   container-smoke:
     name: container contract (build + liveness)
