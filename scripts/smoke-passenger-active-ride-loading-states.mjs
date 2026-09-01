@@ -172,13 +172,23 @@ expect('no local ride, usable or not, is shown before the first backend read set
     && passenger.includes('? PASSENGER_RIDE_READ_STATE.LOADING')
     && passenger.includes(': PASSENGER_RIDE_READ_STATE.LOADED);')
     && !passenger.includes('backendRead && !hasUsableLocalRide'));
+// #939 Codex review-fix — gated on hasConfirmedServerRide, NOT `epoch > 1`:
+// a scheduled recovery call after the FIRST read already failed also bumps
+// epoch past 1 without ever having confirmed anything (see
+// hasConfirmedServerRide's own declaration comment) — `epoch > 1` alone
+// would incorrectly let that call show the never-confirmed local ride.
 expect('a LATER recovery/retry read of an already-confirmed ride still keeps its DOM in place while refreshing',
-  initialRead.includes('hasUsableLocalRide && epoch > 1')
+  initialRead.includes('hasUsableLocalRide && hasConfirmedServerRide')
     && initialRead.includes("root.dataset.refreshState = 'loading'")
     && initialRead.includes('renderLoadedRide(true)')
     && loadedRenderer.includes('preserveDom && readState === PASSENGER_RIDE_READ_STATE.LOADED')
     && loadedRenderer.includes('refreshPassengerRideFieldsInPlace()')
     && loadedRenderer.includes('syncPassengerMutationGate()'));
+expect('hasConfirmedServerRide is declared false and is set true ONLY at the two mergeServerRide()+markPassengerRideAuthoritative() call sites, never at any epoch/attempt-only signal',
+  passenger.includes('let hasConfirmedServerRide = false;')
+    && (initialRead.match(/hasConfirmedServerRide = true;/g) || []).length === 2
+    && /markPassengerRideAuthoritative\(ride\);\s*\n\s*hasConfirmedServerRide = true;/.test(initialRead)
+    && (initialRead.match(/markPassengerRideAuthoritative\(ride\);\s*\n\s*hasConfirmedServerRide = true;/g) || []).length === 2);
 expect('successful recovery refreshes mutable driver, route, fare and ETA fields in place',
   inPlaceRefresh.includes('.active-ride-passenger__driver-sub')
     && inPlaceRefresh.includes('.active-ride-passenger__route-main')
@@ -200,22 +210,109 @@ expect('recovery merge preserves a locally-ahead lifecycle status while acceptin
 // focused serializer never emits srv.vehicle/srv.payment/srv.chat), so the
 // OLD keep(local, server) merge for these three left any pre-existing
 // local/demo value untouched forever on a real, server-confirmed ride.
-// order/route/ride/waiting/timestamps ARE properly server-sourced already
-// and correctly keep their unchanged keep()-based merge.
-expect('server merge keeps route/ride/waiting/timestamps via keep(), neutralizes vehicle/payment/chat to authoritative-or-null, and computes order.offerPrice straight from srv (never keep()-preserved)',
+// ride/waiting/timestamps ARE properly server-sourced already and correctly
+// keep their unchanged keep()-based merge.
+expect('server merge keeps ride/waiting/timestamps via keep(), neutralizes vehicle/payment/chat to authoritative-or-null, and computes order.offerPrice straight from srv (never keep()-preserved)',
   mergeServer.includes('vehicle: { model: (srv.driver && srv.driver.car) || null, color: null, plate: null }')
-    && mergeServer.includes('order: { ...keep(ride.order, srv.order), offerPrice: (srv.order && srv.order.offerPrice) || null }')
-    && mergeServer.includes('route: keep(ride.route, srv.route)')
+    && mergeServer.includes('offerPrice: (srv.order && srv.order.offerPrice) || null,')
     && mergeServer.includes('payment: null')
     && mergeServer.includes('waiting: mergeServerWaiting(ride.waiting, srv.waiting)')
     && mergeServer.includes('ride: keep(ride.ride, srv.ride)')
     && mergeServer.includes('timestamps: keep(ride.timestamps, srv.timestamps)')
     && mergeServer.includes('chat: null'));
-expect('mergeServerRide never carries a stale vehicle/payment/chat forward via keep() (the banned pattern is fully gone, not just supplemented), and order.offerPrice specifically is never a bare keep()-preserved property either (only wrapped, with offerPrice separately overwritten)',
+expect('mergeServerRide never carries a stale vehicle/payment/chat forward via keep() (the banned pattern is fully gone, not just supplemented)',
   !mergeServer.includes('vehicle: keep(ride.vehicle, srv.vehicle)')
     && !mergeServer.includes('payment: keep(ride.payment, srv.payment)')
     && !mergeServer.includes('chat: keep(ride.chat, srv.chat)')
     && !/order:\s*keep\(ride\.order, srv\.order\),/.test(mergeServer));
+// #939 focused pre-commit audit round 4 — EXPLICIT PROVENANCE MODEL,
+// replacing the round-2/3 blanket "overwrite every passenger/driver/route
+// field unconditionally from srv" policy. server/src/domain/
+// select-recovery-linkage.js's own ALWAYS_NULL_COLUMNS (passenger_rating,
+// driver_initials, route_eta_to_pickup, route_eta_to_destination) lists
+// columns NO write path in this backend has ever populated (verified
+// directly against repositories/rides.js: zero occurrences of any of the
+// four column names anywhere in that file). SEED_FIELD_MAP
+// (select-conflict-ride.js) independently cross-confirms the split: it
+// lists exactly the complement (passenger_name, passenger_initials,
+// passenger_phone_masked, driver_name, driver_car, driver_rating,
+// route_pickup_label, route_dropoff_label — never passenger_rating,
+// driver_initials, or either route_eta_to_* column).
+expect('mergeServerRide overwrites every SERVER-POPULATED passenger/driver/route field unconditionally from srv (?? null), never bare keep()-preserved',
+  mergeServer.includes('name: (srv.passenger && srv.passenger.name) ?? null')
+    && mergeServer.includes('initials: (srv.passenger && srv.passenger.initials) ?? null')
+    && mergeServer.includes('phoneMasked: (srv.passenger && srv.passenger.phoneMasked) ?? null')
+    && mergeServer.includes('name: (srv.driver && srv.driver.name) ?? null')
+    && mergeServer.includes('rating: (srv.driver && srv.driver.rating) ?? null')
+    && mergeServer.includes('car: (srv.driver && srv.driver.car) ?? null')
+    && mergeServer.includes('pickupLabel: (srv.route && srv.route.pickupLabel) ?? null')
+    && mergeServer.includes('dropoffLabel: (srv.route && srv.route.dropoffLabel) ?? null')
+    && !/passenger:\s*keep\(ride\.passenger, srv\.passenger\),/.test(mergeServer)
+    && !/driver:\s*keep\(ride\.driver, srv\.driver\),/.test(mergeServer)
+    && !/route:\s*keep\(ride\.route, srv\.route\),/.test(mergeServer));
+expect('mergeServerRide round 5: driver.initials is DERIVED from the CONFIRMED srv.driver.name via initialsFromName() — never a bare keep()-preserved local value, and never read from srv.driver.initials either (driver_initials is server-side ALWAYS_NULL_COLUMNS — there is nothing there to read)',
+  mergeServer.includes('initials: initialsFromName((srv.driver && srv.driver.name) ?? null)')
+    && !mergeServer.includes('initials: (srv.driver && srv.driver.initials)'));
+expect('mergeServerRide round 5: passenger.rating is never carried over from local (explicit null, not keep()-preserved, not read from srv either — passenger_rating is also ALWAYS_NULL_COLUMNS)',
+  mergeServer.includes('rating: null,')
+    && !mergeServer.includes('rating: (srv.passenger && srv.passenger.rating)'));
+// #939 focused pre-commit audit round 7 — FOUR successive independent cold
+// audits (4/5/6/7) each found a way to defeat every attempt to trust a
+// LOCAL route.etaToDestination/order.pickupEta/destinationEta/
+// destinationDistance value: round 4/5 let createDemoActiveRide()'s own
+// fabricated defaults survive; round 6's orderId/tripId/localProvenance
+// gate was defeated twice over — persistPassengerServerConfirmedWaitingProjection
+// (an unrelated repair helper that runs on every successful read) strips
+// ride.localProvenance from STORAGE the moment the very first read
+// succeeds, and the shipped composer.js publish path sets durationMin: 0
+// for every real new order today, so ride_seed.js's `durationMin ? ... :
+// '28 мин'` derivation makes a GENUINE accepted ride's route/order ETA
+// fields carry the exact same fabricated literal, passing every structural
+// check a gate could ever build from local data alone. Round 7 abandons
+// the pursuit entirely: SERVER-OR-NEUTRAL, no local value read at all for
+// any of these four fields — real srv value if the backend ever sends one,
+// neutral null otherwise. This also fully replaces round 5's
+// "route.etaToPickup: neutralized unconditionally (null)" — it now
+// resolves from srv the same way, ready for a future non-null value
+// instead of being permanently hardcoded null.
+expect('mergeServerRide round 7: route.etaToPickup and route.etaToDestination are BOTH resolved directly from srv.route — server-or-neutral, no local value consulted at all, and no gate/marker of any kind involved',
+  mergeServer.includes('etaToPickup: (srv.route && srv.route.etaToPickup) ?? null,')
+    && mergeServer.includes('etaToDestination: (srv.route && srv.route.etaToDestination) ?? null,')
+    && !mergeServer.includes('preserveLocalDestinationEta')
+    && !mergeServer.includes('localProvenanceIsSimAudit')
+    && !mergeServer.includes('localTripOrderLinkageProven')
+    && !mergeServer.includes('localOrderIdReal'));
+expect('mergeServerRide round 7: route is still built from keep(ride.route, srv.route) underneath (mergedRoute) for the fields that are NOT explicitly overridden — same spread-then-override shape as passenger/driver, just assigned via a named variable instead of an inline object literal',
+  mergeServer.includes('const mergedRoute = {')
+    && mergeServer.includes('...keep(ride.route, srv.route)')
+    && mergeServer.includes('route: mergedRoute,'));
+expect('mergeServerRide round 7: order.pickupEta/destinationEta/destinationDistance are ALSO resolved directly from srv.order now — the one part of `order` a fourth audit found was still silently keep()-preserving local/demo literals indefinitely',
+  mergeServer.includes('pickupEta: (srv.order && srv.order.pickupEta) ?? null,')
+    && mergeServer.includes('destinationEta: (srv.order && srv.order.destinationEta) ?? null,')
+    && mergeServer.includes('destinationDistance: (srv.order && srv.order.destinationDistance) ?? null,'));
+expect('mergeServerRide round 7: no trace of round 5/6\'s local-provenance gate mechanism remains ANYWHERE in this file (not just superseded — fully removed), including loadPassengerRideView, which no longer stamps or reads any linkage marker',
+  !passenger.includes('localCanonicalLinkage')
+    && !passenger.includes('localTripOrderLinkageProven')
+    && !passenger.includes('localOrderIdReal')
+    && !passenger.includes('preserveLocalDestinationEta')
+    && !passenger.includes('localDestinationEtaConsistent'));
+// #939 focused pre-commit audit round 5 — initialsFromName() is the shared
+// two-initial derivation mergeServerRide's driver.initials now uses,
+// following the SAME convention already established elsewhere in this
+// codebase (chat.js's deriveInitials(), profile.js's initials()): first
+// letter of up to the first two whitespace-separated words, uppercased,
+// '' (never a crash or 'undefined') for an empty/missing name.
+const initialsFromNameBody = functionBody(passenger, 'initialsFromName');
+expect('initialsFromName is defined at module scope (not nested — reusable, no per-mount re-creation) and follows the established two-initial convention',
+  passenger.includes('function initialsFromName(name) {')
+    && initialsFromNameBody.includes("if (!trimmed) return '';")
+    && initialsFromNameBody.includes('.split(/\\s+/)')
+    && initialsFromNameBody.includes('.slice(0, 2)')
+    && initialsFromNameBody.includes('.toUpperCase()'));
+// initialsFromName's actual behavior (not just its source shape) is
+// verified by real DOM-level runtime scenarios in
+// scripts/smoke-passenger-active-ride-local-sync-runtime.mjs — the source
+// pin above only guards against the implementation being deleted/altered.
 const markAuthoritative = functionBody(passenger, 'markPassengerRideAuthoritative');
 expect('markPassengerRideAuthoritative is defined and marks a NON-enumerable, in-memory-only property',
   markAuthoritative.length > 0
@@ -257,6 +354,177 @@ const chatLabelForBody = functionBody(passenger, 'chatLabelFor');
 expect('chatLabelFor defaults unread to 0 (not the demo "2 unread") for an authoritative ride with no real chat data',
   chatLabelForBody.includes('const authoritative = !!(ride && ride.authoritative)')
     && chatLabelForBody.includes('hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2)'));
+// #939 Codex review-fix #2 — driver identity (name/initials) and route
+// pickup/dropoff labels get the same authoritative-or-demo policy as
+// carLine/paymentInfo/chatLabelFor. topDriverCardHtml/routeBlockHtml both
+// take an `options = {}` second parameter, which functionBody() above stops
+// at (the param default's own empty object literal, not the real body — see
+// paymentBlockHtml's own note) — checked against the whole file instead;
+// the matched patterns are specific enough (the full authoritative ternary)
+// to stay uniquely scoped to these two guards. renderPassengerRideComplete
+// and refreshPassengerRideFieldsInPlace have no such pitfall and are
+// checked function-scoped.
+expect('topDriverCardHtml/renderPassengerRideComplete: driver name/initials show the neutral "—" for an authoritative ride with no real driver identity, keeping the exact demo fallback for a non-authoritative one',
+  passenger.includes("const driverName = authoritative\n    ? ((ride.driver && ride.driver.name) || '—')\n    : ((ride.driver && ride.driver.name) || 'Рустам К.');")
+    && passenger.includes("const driverInitials = authoritative\n    ? ((ride.driver && ride.driver.initials) || '—')\n    : ((ride.driver && ride.driver.initials) || 'РК');")
+    && (passenger.match(/const driverName = authoritative\n {4}\? \(\(ride\.driver && ride\.driver\.name\) \|\| '—'\)\n {4}: \(\(ride\.driver && ride\.driver\.name\) \|\| 'Рустам К\.'\);/g) || []).length === 2);
+// #939 focused pre-commit audit round 4 — the regex below
+// (`pickup(?:Label)? \|\| \(authoritative...`) requires "pickup"/"pickupLabel"
+// to be IMMEDIATELY followed by ` || (`. routeBlockHtml's own literal is
+// `(ride.route && ride.route.pickupLabel) || (authoritative ? ...)` — the
+// extra `)` before ` || (` breaks that match, so despite this check
+// reporting `=== 2` as "passing", routeBlockHtml's own authoritative gate
+// had ZERO static coverage here (the 2 real matches were both
+// renderPassengerRideComplete and refreshPassengerRideFieldsInPlace, which
+// destructure `route` locally and use the bare `route.pickupLabel || (...)`
+// form — never routeBlockHtml). Count each literal SHAPE separately via
+// exact substring counts (no interpretive regex) so a specific shape going
+// missing fails this check instead of silently passing on the other one.
+const countOccurrences = (haystack, needle) => haystack.split(needle).length - 1;
+expect('routeBlockHtml: pickup/dropoff labels show the neutral "—" for an authoritative ride with no real route data, keeping the exact demo fallback for a non-authoritative one',
+  passenger.includes("const pickup = (ride.route && ride.route.pickupLabel) || (authoritative ? '—' : 'ул. Малая Бронная, 28');")
+    && passenger.includes("const dropoff = (ride.route && ride.route.dropoffLabel) || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');"));
+expect('renderPassengerRideComplete/refreshPassengerRideFieldsInPlace: pickup/dropoff labels show the neutral "—" for an authoritative ride with no real route data, keeping the exact demo fallback for a non-authoritative one',
+  countOccurrences(passenger, "route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28')") === 2
+    && countOccurrences(passenger, "route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В')") === 2);
+const refreshInPlaceBody = functionBody(passenger, 'refreshPassengerRideFieldsInPlace');
+expect('refreshPassengerRideFieldsInPlace mirrors the same authoritative-or-demo policy for driver identity and route labels in the in-place update path',
+  refreshInPlaceBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && refreshInPlaceBody.includes("const driverName = authoritative ? (driver.name || '—') : (driver.name || 'Рустам К.');")
+    && refreshInPlaceBody.includes("const driverInitials = authoritative ? (driver.initials || '—') : (driver.initials || 'РК');")
+    && refreshInPlaceBody.includes("routeFields[0].textContent = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');")
+    && refreshInPlaceBody.includes("routeFields[1].textContent = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');"));
+const rideCompleteBodyEarly = functionBody(passenger, 'renderPassengerRideComplete');
+// #939 focused pre-commit audit round 4 — indexOf() returns -1 when a
+// substring is absent, and -1 is numerically less than any real
+// (non-negative) index, so an ordering check alone (`indexOf(a) < indexOf(b)`)
+// is silently satisfied if `a` were ever removed entirely, never verifying
+// it's actually THERE (the same pitfall already guarded for
+// swapToTerminalPassengerScreen below — this sibling check had been left
+// unguarded). Require presence via .includes() first, independent of the
+// ordering check.
+expect('renderPassengerRideComplete declares both const authoritative = ... and const driverName = authoritative',
+  rideCompleteBodyEarly.includes('const authoritative = !!(ride && ride.authoritative)')
+    && rideCompleteBodyEarly.includes('const driverName = authoritative'));
+expect('renderPassengerRideComplete computes its own authoritative flag before deriving driver/route display fields',
+  rideCompleteBodyEarly.indexOf('const authoritative = !!(ride && ride.authoritative)')
+    < rideCompleteBodyEarly.indexOf('const driverName = authoritative'));
+// #939 Codex review-fix #3 — swapToTerminalPassengerScreen syncs the
+// server-confirmed terminal status into the URL (via history.replaceState,
+// never a `go()`/`location.hash=` navigation, which would fire hashchange
+// and re-trigger this same mount's own teardown) before tearing anything
+// down, so a reload reading the URL alone lands on the correct terminal
+// status. Only `status` is overwritten — every other query param (parsed
+// via URLSearchParams, not hand-rolled) survives untouched.
+const syncTerminalUrlBody = functionBody(passenger, 'syncTerminalStatusIntoUrl');
+expect('syncTerminalStatusIntoUrl uses history.replaceState (never go()/location.hash=, which would fire hashchange and re-trigger this mount\'s own teardown) and preserves every other query param via URLSearchParams',
+  syncTerminalUrlBody.includes('window.history.replaceState(null')
+    && syncTerminalUrlBody.includes('new URLSearchParams(')
+    && syncTerminalUrlBody.includes("params.set('status', terminalStatus)")
+    && !syncTerminalUrlBody.includes('go(')
+    && !syncTerminalUrlBody.includes('location.hash ='));
+const swapToTerminalBody = functionBody(passenger, 'swapToTerminalPassengerScreen');
+// indexOf() returns -1 when a substring is absent, and -1 is numerically
+// less than any real (non-negative) index — so an ordering check alone
+// (`indexOf(a) < indexOf(b)`) is silently satisfied if `a` were ever
+// removed entirely, never verifying it's actually THERE. Require presence
+// via .includes() first, independent of the ordering check.
+expect('swapToTerminalPassengerScreen calls syncTerminalStatusIntoUrl(...)',
+  swapToTerminalBody.includes('syncTerminalStatusIntoUrl('));
+expect('swapToTerminalPassengerScreen syncs the URL BEFORE tearing down/swapping, so the address bar is already correct the instant the terminal screen replaces the live one',
+  swapToTerminalBody.indexOf('syncTerminalStatusIntoUrl(') < swapToTerminalBody.indexOf('teardownPassengerReads()')
+    && swapToTerminalBody.indexOf('teardownPassengerReads()') < swapToTerminalBody.indexOf('root.replaceWith('));
+// #939 focused pre-commit audit follow-up — inProgressInfo()'s ETA fallback
+// was found ungated during the audit: route.etaToDestination is a real
+// serializeRide() contract field the merge fix already nulls correctly,
+// but this consumer still fell through to the stale ride.ride.etaToDestination
+// (a DIFFERENT sub-object, still merged via plain keep()) and then to the
+// hardcoded '17 мин' regardless of authoritative state. An authoritative
+// ride now consults ONLY route.etaToDestination, never ride.ride's copy,
+// with the neutral '—' when genuinely absent; local/backend-off keeps the
+// exact prior three-step chain.
+const inProgressInfoBody = functionBody(passenger, 'inProgressInfo');
+expect('inProgressInfo: an authoritative ride consults ONLY route.etaToDestination (never the stale ride.ride.etaToDestination), neutral "—" when absent, local/backend-off chain unchanged',
+  inProgressInfoBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && inProgressInfoBody.includes("? (route.etaToDestination || '—')")
+    && inProgressInfoBody.includes(": (route.etaToDestination || r.etaToDestination || '17 мин')"));
+// #939 focused pre-commit audit round 4 — arrivalTime (ride.ride.arrivalTime)
+// has no server contract field behind it at all (serializeRide() never
+// emits a top-level `ride:` key — mergeServerRide's own keep(ride.ride,
+// srv.ride) is a pure local pass-through), so this was found ungated
+// alongside the etaToDestination fix above: an authoritative ride with no
+// local record fell through to the fabricated '14:32' regardless of
+// confirmation state.
+expect('inProgressInfo: arrivalTime shows the neutral "—" for an authoritative ride with no local record, keeping the exact prior "14:32" fallback for a non-authoritative one',
+  inProgressInfoBody.includes("const arrivalTime = r.arrivalTime || (authoritative ? '—' : '14:32')")
+    && inProgressInfoBody.indexOf('const authoritative = !!(ride && ride.authoritative)')
+      < inProgressInfoBody.indexOf('const arrivalTime ='));
+// #939 focused pre-commit audit round 4 — arrivingDropoffInfo is
+// inProgressInfo's exact sibling (both feed the SAME 'до места' top-card
+// ETA slot via topDriverCardEta, this one only for the ARRIVING_DROPOFF
+// phase). Pre-audit it read `route.etaToDropoff`/`r.etaToDropoff` — a
+// field name that appears NOWHERE else in this file or in ride_seed.js,
+// so it always silently fell through to the hardcoded '1 мин' regardless
+// of authoritative state or real local data. The real serializeRide()
+// contract field for "ETA to destination" is route.etaToDestination — the
+// same field inProgressInfo consults; there is no separate dropoff-
+// specific ETA column on either side.
+const arrivingDropoffInfoBody = functionBody(passenger, 'arrivingDropoffInfo');
+// #939 focused pre-commit audit round 5 — a second independent audit found
+// round 4's non-authoritative fix (swapping in route.etaToDestination)
+// was an unintended shipped-behavior change for local/backend-off rides
+// (ARRIVING_DROPOFF is reachable only via an explicit ?phase= deep link —
+// not the normal flow — but still a real deviation from "preserve local/
+// backend-off behavior exactly"). Both branches are now pinned separately
+// and explicitly, so a future round can't silently re-couple them again:
+// the authoritative branch consults ONLY route.etaToDestination with a
+// neutral '—' fallback (no ride.ride reference, no demo literal); the
+// non-authoritative branch is reverted BYTE-FOR-BYTE to the pre-round-4
+// baseline.
+expect('arrivingDropoffInfo authoritative branch: ONLY route.etaToDestination || \'—\' — no ride.ride reference, no demo literal',
+  arrivingDropoffInfoBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && arrivingDropoffInfoBody.includes("? (route.etaToDestination || '—')"));
+expect('arrivingDropoffInfo non-authoritative/backend-off branch: reverted byte-for-byte to the pre-round-4 baseline (route.etaToDropoff || r.etaToDropoff || \'1 мин\') — round 4\'s route.etaToDestination swap there is gone',
+  arrivingDropoffInfoBody.includes(": (route.etaToDropoff || r.etaToDropoff || '1 мин')")
+    && !arrivingDropoffInfoBody.includes(": (route.etaToDestination || r.etaToDropoff || '1 мин')"));
+// #939 focused pre-commit audit round 4 — etaText's order.pickupEta has no
+// server contract field behind it either: serializeRide()'s `order`
+// sub-object carries only `offerPrice` (server/src/serialize.js), so
+// mergeServerRide's keep(ride.order, srv.order) never even sees a
+// pickupEta key from the server — it is a pure local/demo pass-through,
+// same situation as arrivalTime above.
+const etaTextBody = functionBody(passenger, 'etaText');
+expect('etaText: shows the neutral "—" for an authoritative ride with no local order.pickupEta, keeping the exact prior "4 мин" fallback for a non-authoritative one',
+  etaTextBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && etaTextBody.includes("(ride && ride.order && ride.order.pickupEta) || (authoritative ? '—' : '4 мин')"));
+// #939 focused pre-commit audit round 4 — completedStats' r.duration/
+// r.distance live on `ride.ride` (never server-populated, same as
+// arrivalTime) and order.destinationEta/destinationDistance have no
+// serializeRide() contract field either (order only ever carries
+// offerPrice) — visibly present, ungated, in S23's own COMPLETE DOM today.
+const completedStatsBody = functionBody(passenger, 'completedStats');
+expect('completedStats: duration/distance show the neutral "—" for an authoritative ride with nothing real in either slot, keeping the exact prior "42 мин"/"38 км" fallbacks for a non-authoritative one',
+  completedStatsBody.includes('const authoritative = !!(ride && ride.authoritative)')
+    && completedStatsBody.includes("r.duration || order.destinationEta || (authoritative ? '—' : '42 мин')")
+    && completedStatsBody.includes("r.distance || order.destinationDistance || (authoritative ? '—' : '38 км')"));
+// #939 focused pre-commit audit round 4 — a truthy `srv` with no `status`
+// field at all is a malformed 2xx, not a valid confirmation (every real
+// serializeRide() shape always carries `status`). Left unguarded,
+// mergeServerRide's own `srv.status || ride.status` fallback would
+// silently resolve to the UNCONFIRMED local status while runInitialRead
+// still set hasConfirmedServerRide = true right after — promoting a
+// never-verified local status to "authoritative" on nothing but a broken
+// response body. This lives in runInitialRead itself (before
+// backendRide/ownership are ever touched), not in mock_api.js — the fix
+// stays entirely inside this screen's own scope, reusing the exact same
+// catch-block error handling as any other unusable read instead of
+// duplicating it.
+expect('runInitialRead treats a status-less srv as a malformed response — thrown BEFORE backendRide/ownership are set, and before either mergeServerRide call site could ever run',
+  initialRead.includes("if (!srv.status) {")
+    && initialRead.includes("throw Object.assign(new Error('Malformed ride response: missing status'), {")
+    && initialRead.includes("code: 'MALFORMED_RIDE_RESPONSE',")
+    && initialRead.indexOf('if (!srv.status) {') < initialRead.indexOf('backendRide = true;')
+    && initialRead.indexOf('if (!srv.status) {') < initialRead.indexOf('ride = mergeServerRide(srv, recovery)'));
 // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix (MEDIUM finding) — arrivingDropoffAmount() feeds
 // BOTH authoritative surfaces: renderPassengerRideComplete's "Итого к
 // оплате" (via completedPaymentInfo) and the IN_PROGRESS+ARRIVING_DROPOFF
@@ -457,10 +725,16 @@ expect('boarding did not gain a second/extra patchRideStatus call',
 // to find. Require the exact count (2) instead, and anchor the LAST
 // occurrence's position — the catch tail's own — between the failure
 // classification and the final ERROR fallback.
-expect('the generic-failure catch tail gates its stale-local fallback on epoch > 1, not on hasUsableLocalRide alone — a first-ever-read failure always reaches ERROR',
-  (initialRead.match(/if \(hasUsableLocalRide && epoch > 1\) \{/g) || []).length === 2
-    && initialRead.indexOf('const retryable = isPassengerRideRecoveryRetryable(err)') < initialRead.lastIndexOf('if (hasUsableLocalRide && epoch > 1) {')
-    && initialRead.lastIndexOf('if (hasUsableLocalRide && epoch > 1) {') < initialRead.lastIndexOf('setReadState(PASSENGER_RIDE_READ_STATE.ERROR)'));
+// #939 Codex review-fix — the gate is hasConfirmedServerRide, not
+// `epoch > 1`: a scheduled recovery call after the first read already
+// failed bumps epoch to 2 without ever having confirmed anything, so
+// `epoch > 1` alone would have let this exact failure fall through to the
+// graceful stale-with-banner branch and show a never-confirmed local Ride —
+// precisely the bug this flag replacement fixes.
+expect('the generic-failure catch tail gates its stale-local fallback on hasConfirmedServerRide, not on hasUsableLocalRide alone or a mere read-attempt count — a first-ever-read failure always reaches ERROR',
+  (initialRead.match(/if \(hasUsableLocalRide && hasConfirmedServerRide\) \{/g) || []).length === 2
+    && initialRead.indexOf('const retryable = isPassengerRideRecoveryRetryable(err)') < initialRead.lastIndexOf('if (hasUsableLocalRide && hasConfirmedServerRide) {')
+    && initialRead.lastIndexOf('if (hasUsableLocalRide && hasConfirmedServerRide) {') < initialRead.lastIndexOf('setReadState(PASSENGER_RIDE_READ_STATE.ERROR)'));
 expect('non-404 initial/recovery failure keeps usable local content non-destructively',
   initialRead.includes('if (hasUsableLocalRide)')
     && initialRead.includes("root.dataset.refreshState = 'error'")
