@@ -36,6 +36,16 @@ async function mintSession(app, phone) {
   return (await post(app, '/api/v1/auth/otp/verify', { phone, code })).json();
 }
 
+async function writeCounts(db, tripId) {
+  return (await db.query(
+    `SELECT (SELECT count(*)::int FROM ride_events WHERE trip_id = $1) AS ride_events,
+            (SELECT count(*)::int
+               FROM notification_outbox
+              WHERE immutable_envelope #>> '{aggregate,key}' = $1) AS notification_outbox`,
+    [tripId],
+  )).rows[0];
+}
+
 test('ride-state: snapshot + transitions (stamp, status_change event, terminal-freeze) + guards', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config });
   const drv = `+1601${String(process.pid).padStart(7, '0')}`;
@@ -188,6 +198,11 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(passengerNoShow.statusCode, 403, 'passenger cannot mark no-show');
   assert.equal(passengerNoShow.json().code, 'FORBIDDEN');
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowTripId),
+    { ride_events: 0, notification_outbox: 0 },
+    'rejected passenger NO_SHOW writes neither an event nor an outbox source',
+  );
 
   // Assigned driver may close WAITING_PASSENGER as NO_SHOW; cancel metadata is server-derived.
   const noShow = await patch(
@@ -212,16 +227,15 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(noShowRetry.statusCode, 200);
   assert.equal(noShowRetry.json().ride.timestamps.canceledAt, noShowCanceledAt);
-  const noShowEvents = (await cleanup.query(
-    "SELECT count(*)::int AS n FROM ride_events WHERE trip_id = $1 AND type = 'status_change'",
-    [noShowTripId],
-  )).rows[0].n;
-  assert.equal(noShowEvents, 1, 'NO_SHOW retry does not append a duplicate event');
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowTripId),
+    { ride_events: 1, notification_outbox: 1 },
+    'accepted NO_SHOW writes one pair and its retry writes none',
+  );
   const noShowOutbox = (await cleanup.query(
     `SELECT o.immutable_envelope
        FROM notification_outbox o
-       JOIN ride_events e ON e.id = o.source_event_id
-      WHERE e.trip_id = $1`,
+      WHERE o.immutable_envelope #>> '{aggregate,key}' = $1`,
     [noShowTripId],
   )).rows;
   assert.equal(noShowOutbox.length, 1, 'accepted NO_SHOW has one outbox row; retry has none');
@@ -246,8 +260,14 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(wrongFrom.statusCode, 409);
   assert.equal(wrongFrom.json().code, 'RIDE_TRANSITION_NOT_ALLOWED');
+  assert.deepEqual(
+    await writeCounts(cleanup, noShowWrongTripId),
+    { ride_events: 0, notification_outbox: 0 },
+    'rejected ACCEPTED -> NO_SHOW writes neither an event nor an outbox source',
+  );
 
   // A different terminal state keeps the existing terminal-freeze response.
+  const terminalWritesBefore = await writeCounts(cleanup, tripId);
   const terminalNoShow = await patch(
     app,
     `/api/v1/ride-state/rides/${tripId}/status`,
@@ -256,16 +276,14 @@ test('ride-state: snapshot + transitions (stamp, status_change event, terminal-f
   );
   assert.equal(terminalNoShow.statusCode, 409);
   assert.equal(terminalNoShow.json().code, 'RIDE_TERMINAL');
-  const rejectedOutboxCounts = (await cleanup.query(
-    `SELECT immutable_envelope #>> '{aggregate,key}' AS trip_id, count(*)::int AS n
-       FROM notification_outbox
-      WHERE immutable_envelope #>> '{aggregate,key}' = ANY($1::text[])
-      GROUP BY immutable_envelope #>> '{aggregate,key}'`,
-    [[tripId, noShowTripId, noShowWrongTripId]],
-  )).rows;
   assert.deepEqual(
-    Object.fromEntries(rejectedOutboxCounts.map((row) => [row.trip_id, row.n])),
-    { [tripId]: 3, [noShowTripId]: 1 },
-    'rejected/no-op paths never append notification sources',
+    terminalWritesBefore,
+    { ride_events: 3, notification_outbox: 3 },
+    'terminal rejection starts from the three accepted transition pairs',
+  );
+  assert.deepEqual(
+    await writeCounts(cleanup, tripId),
+    terminalWritesBefore,
+    'rejected COMPLETED -> NO_SHOW writes zero additional events and outbox sources',
   );
 });

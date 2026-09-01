@@ -149,6 +149,44 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
   )
 );
 
+-- Keep invariant failures inside PostgreSQL from disclosing the immutable envelope in
+-- operational logs. A table CHECK error normally carries `DETAIL: Failing row contains (...)`,
+-- including actor/audience IDs. The sole runtime write seam calls this function, whose exception
+-- block rolls back the failed inner statement and exposes only a low-cardinality error.
+CREATE OR REPLACE FUNCTION public.notification_outbox_insert_guarded(
+  p_source_event_id UUID,
+  p_immutable_envelope JSONB,
+  p_immutable_digest BYTEA,
+  p_occurred_at TEXT
+)
+RETURNS TABLE(event_seq TEXT)
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+BEGIN
+  RETURN QUERY
+  INSERT INTO public.notification_outbox AS target
+    (source_event_id, occurred_at, immutable_envelope, immutable_digest)
+  SELECT e.id, e.at, p_immutable_envelope, p_immutable_digest
+    FROM public.ride_events e
+   WHERE e.id = p_source_event_id
+     AND e.type = 'status_change'
+     AND to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') = p_occurred_at
+     AND e.ride_id::text = (p_immutable_envelope #>> '{aggregate,id}')
+     AND e.trip_id = (p_immutable_envelope #>> '{aggregate,key}')
+     AND e.role = (p_immutable_envelope #>> '{actor,role}')
+     AND e.payload->>'from' = (p_immutable_envelope #>> '{payload,fromStatus}')
+     AND e.payload->>'to' = (p_immutable_envelope #>> '{payload,toStatus}')
+  ON CONFLICT ON CONSTRAINT notification_outbox_source_event_id_key DO NOTHING
+  RETURNING target.outbox_seq::text;
+EXCEPTION
+  WHEN integrity_constraint_violation THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'notification outbox insert failed';
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION notification_outbox_block_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

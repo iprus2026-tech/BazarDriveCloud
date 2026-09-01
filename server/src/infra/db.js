@@ -83,6 +83,9 @@ async function dbPlugin(app, opts) {
                       AND NOT t.tgisinternal
                  )
             )
+            AND to_regprocedure(
+              'public.notification_outbox_insert_guarded(uuid,jsonb,bytea,text)'
+            ) IS NOT NULL
             AND EXISTS (
               SELECT 1
                 FROM pg_constraint pc

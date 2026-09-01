@@ -178,26 +178,15 @@ export async function insertRideStatusNotificationOutbox(
   let inserted;
   try {
     inserted = await db.query(
-      `INSERT INTO notification_outbox
-         (source_event_id, occurred_at, immutable_envelope, immutable_digest)
-       SELECT e.id, e.at, $2::jsonb, $3::bytea
-         FROM ride_events e
-        WHERE e.id = $1::uuid
-          AND e.type = 'status_change'
-          AND to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') = $4
-          AND e.ride_id::text = ($2::jsonb #>> '{aggregate,id}')
-          AND e.trip_id = ($2::jsonb #>> '{aggregate,key}')
-          AND e.role = ($2::jsonb #>> '{actor,role}')
-          AND e.payload->>'from' = ($2::jsonb #>> '{payload,fromStatus}')
-          AND e.payload->>'to' = ($2::jsonb #>> '{payload,toStatus}')
-       ON CONFLICT (source_event_id) DO NOTHING
-       RETURNING outbox_seq::text AS event_seq`,
+      `SELECT event_seq
+         FROM public.notification_outbox_insert_guarded(
+           $1::uuid, $2::jsonb, $3::bytea, $4::text
+         )`,
       [normalizedSourceId, envelope, immutableDigest, envelope.occurredAt],
     );
   } catch {
-    // PostgreSQL CHECK errors include `detail: Failing row contains (...)`. Never let that raw
-    // object reach request logging: it would disclose actor/audience IDs and event payload.
-    // A fresh low-cardinality error preserves rollback/500 behavior without params or a cause.
+    // The guarded PostgreSQL function strips CHECK row DETAIL before it can reach database logs.
+    // This second boundary also keeps raw database errors out of application request logging.
     throw invariant('NOTIFICATION_OUTBOX_INSERT_FAILED', 'notification outbox insert failed');
   }
 

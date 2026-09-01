@@ -12,6 +12,8 @@ import { insertRideStatusNotificationOutbox } from '../src/repositories/notifica
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
+const LOG_PRIVATE_USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const LOG_PRIVATE_MARKER = 'BD-NOTIF-OUTBOX-LOG-CANARY';
 
 const config = {
   nodeEnv: 'test', isProd: false, port: 0, host: '127.0.0.1', logLevel: 'silent',
@@ -180,7 +182,7 @@ test('notification outbox: raw PostgreSQL insert detail is normalized before log
   const db = {
     async query(sql) {
       if (sql.includes('JOIN rides r')) return { rows: [source] };
-      if (sql.includes('INSERT INTO notification_outbox')) throw raw;
+      if (sql.includes('notification_outbox_insert_guarded')) throw raw;
       throw new Error('unexpected query');
     },
   };
@@ -200,6 +202,80 @@ test('notification outbox: raw PostgreSQL insert detail is normalized before log
       return true;
     },
   );
+});
+
+test('notification outbox: guarded insert keeps PostgreSQL logs private', { skip: SKIP }, async (t) => {
+  const client = new pg.Client({ connectionString: DATABASE_URL });
+  const fixtures = [];
+  let rawError;
+  await client.connect();
+  t.after(async () => {
+    await cleanupFixtures(client, fixtures).catch(() => {});
+    await client.end();
+  });
+
+  const fixture = await seedStatusChange(client, {
+    label: 'log-private',
+    occurredAt: '2026-09-01T12:34:56.123457Z',
+  });
+  fixtures.push(fixture);
+
+  const guardedDb = {
+    async query(sql, params) {
+      if (!String(sql).includes('notification_outbox_insert_guarded')) {
+        return client.query(sql, params);
+      }
+
+      const privateParams = [...params];
+      privateParams[1] = {
+        ...structuredClone(params[1]),
+        eventId: LOG_PRIVATE_USER_ID,
+        actor: { ...params[1].actor, userId: LOG_PRIVATE_USER_ID },
+        audience: { policyVersion: 1, userIds: [LOG_PRIVATE_USER_ID] },
+        logCanary: LOG_PRIVATE_MARKER,
+      };
+      try {
+        return await client.query(sql, privateParams);
+      } catch (error) {
+        rawError = error;
+        throw error;
+      }
+    },
+  };
+
+  await assert.rejects(
+    withTransaction(guardedDb, (tx) => insertRideStatusNotificationOutbox(tx, {
+      sourceEventId: fixture.eventId,
+      actorUserId: fixture.actorUserId,
+      actorRole: fixture.actorRole,
+    })),
+    (error) => {
+      assert.equal(error.code, 'NOTIFICATION_OUTBOX_INSERT_FAILED');
+      assert.equal(error.message, 'notification outbox insert failed');
+      assert.equal(Object.hasOwn(error, 'detail'), false);
+      assert.equal(Object.hasOwn(error, 'cause'), false);
+      return true;
+    },
+  );
+
+  assert.equal(rawError?.code, 'P0001');
+  assert.equal(rawError?.message, 'notification outbox insert failed');
+  assert.equal(rawError?.detail, undefined);
+  const rawDiagnostic = [
+    rawError?.message,
+    rawError?.detail,
+    rawError?.hint,
+    rawError?.where,
+    rawError?.internalQuery,
+    JSON.stringify(rawError),
+  ].filter(Boolean).join('\n');
+  assert.equal(rawDiagnostic.includes('Failing row contains'), false);
+  assert.equal(rawDiagnostic.includes(LOG_PRIVATE_USER_ID), false);
+  assert.equal(rawDiagnostic.includes(LOG_PRIVATE_MARKER), false);
+  assert.equal((await client.query(
+    'SELECT count(*)::int AS n FROM notification_outbox WHERE source_event_id = $1',
+    [fixture.eventId],
+  )).rows[0].n, 0, 'the rejected envelope never persists');
 });
 
 test('notification outbox: exact microseconds, JCS digest, idempotency and hard collision', { skip: SKIP }, async (t) => {
@@ -292,21 +368,25 @@ test('notification outbox: exact microseconds, JCS digest, idempotency and hard 
     occurredAt: '2026-09-01T12:35:00.000001Z',
   });
   fixtures.push(malformed);
-  const nullRoleEnvelope = expectedEnvelope(malformed, {
-    actor: { userId: malformed.actorUserId.toLowerCase(), role: null },
+  const nullActorEnvelope = expectedEnvelope(malformed, {
+    actor: { userId: null, role: malformed.actorRole },
   });
   await assert.rejects(
     client.query(
-      `INSERT INTO notification_outbox
-         (source_event_id, occurred_at, immutable_envelope, immutable_digest)
-       SELECT id, at, $2::jsonb, $3::bytea FROM ride_events WHERE id = $1`,
+      `SELECT event_seq
+         FROM public.notification_outbox_insert_guarded(
+           $1::uuid, $2::jsonb, $3::bytea, $4::text
+         )`,
       [
         malformed.eventId,
-        nullRoleEnvelope,
-        createHash('sha256').update(jcs(nullRoleEnvelope), 'utf8').digest(),
+        nullActorEnvelope,
+        createHash('sha256').update(jcs(nullActorEnvelope), 'utf8').digest(),
+        malformed.occurredAt,
       ],
     ),
-    (error) => error.code === '23514',
+    (error) => error.code === 'P0001'
+      && error.message === 'notification outbox insert failed'
+      && error.detail === undefined,
     'semantic JSON null is rejected rather than passing CHECK as SQL UNKNOWN',
   );
 
@@ -412,7 +492,7 @@ test('notification outbox: a PostgreSQL insert failure rolls back Ride + event +
         if (property === 'query') {
           return async (...args) => {
             const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
-            if (/INSERT\s+INTO\s+notification_outbox/i.test(sql ?? '')) {
+            if (/notification_outbox_insert_guarded/i.test(sql ?? '')) {
               // A real SQL error on this same session marks the transaction aborted. The normal
               // db.tx catch path must ROLLBACK it; no global test trigger or shared DDL is needed.
               return target.query('SELECT 1/0 /* forced notification outbox failure */');
