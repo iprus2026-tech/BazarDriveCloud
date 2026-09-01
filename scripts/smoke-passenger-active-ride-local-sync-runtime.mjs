@@ -2090,14 +2090,243 @@ await tick(12);
 delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 
-// S22/S22b/S23b/S24/S24b/S24c/S25/S26/S26b/S27/S27b/S29 are backend-enabled
-// with a non-terminal ride (S23b/S27/S27b are terminal and settle
-// synchronously, no poll/recovery timer), so most of these successful
-// merges (or S25's scheduled recovery) start a real poll setInterval /
-// recovery timer. Every prior scenario transition tears the previous mount
-// down via the NEXT scenario's own reset() (location.hash's setter
-// dispatches 'hashchange' -> teardownPassengerReads() ->
-// stopPassengerRidePoll()'s clearInterval). S29 is now the last scenario
+// ── Scenario 34 — #939 focused pre-commit audit round 8: PR #940 review
+// thread E (P1) — "Preserve local-ahead status only after a prior
+// confirmation". A fourth independent audit reproduced this directly at
+// runtime: a first-ever retryable failure schedules a real background
+// recovery (same clamped-setTimeout technique as S19); the recovery GET
+// then succeeds, but with a server status BEHIND the persisted local
+// status (server WAITING_PASSENGER, local IN_PROGRESS) — since this is
+// the mount's FIRST successful confirmation, hasConfirmedServerRide is
+// still false at the moment of that merge, so there is no prior
+// confirmation making the local-ahead status trustworthy. The server
+// status must win. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch34First;
+let resolveFetch34Recovery;
+let fetchCallCount34 = 0;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    fetchCallCount34 += 1;
+    if (fetchCallCount34 === 1) return new Promise((resolve) => { resolveFetch34First = resolve; });
+    return new Promise((resolve) => { resolveFetch34Recovery = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordKK', 'trip_ordKK']);
+saveActiveRide(baseRide('trip_ordKK', RIDE_STATUS.IN_PROGRESS));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordKK');
+const realSetTimeout34 = globalThis.setTimeout;
+globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout34(fn, Math.min(ms, 10), ...args);
+resolveFetch34First({ ok: false, status: 500, text: async () => JSON.stringify({ code: 'INTERNAL' }) });
+await tick(12);
+expect('S34 pre: first-ever retryable failure shows ERROR (hasConfirmedServerRide is still false)',
+  currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+await new Promise((resolve) => realSetTimeout34(resolve, 100));
+globalThis.setTimeout = realSetTimeout34;
+expect('S34 pre: the scheduled recovery GET actually started',
+  fetchCallCount34 === 2);
+resolveFetch34Recovery({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordKK',
+      status: RIDE_STATUS.WAITING_PASSENGER,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S34: the FIRST-EVER confirmation, reached via recovery, correctly takes the SERVER status (WAITING_PASSENGER) — never the local-ahead, never-confirmed IN_PROGRESS',
+  currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER, currentSheet()?.dataset.status);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 34b — #939 focused pre-commit audit round 8: control for S34
+// — a plain FIRST-EVER read (recovery=false, no prior failure at all)
+// with the server status behind local. Confirms the server already wins
+// on a non-recovery read today (unaffected by this round's fix, since
+// preserveLocallyAheadStatus is `recovery && hasConfirmedServerRide`,
+// which is trivially false whenever `recovery` itself is false) — pinned
+// so a future change to the guard can't accidentally regress this
+// non-recovery baseline while touching the recovery path. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch34b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch34b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordKK2', 'trip_ordKK2']);
+saveActiveRide(baseRide('trip_ordKK2', RIDE_STATUS.IN_PROGRESS));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordKK2');
+resolveFetch34b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordKK2',
+      status: RIDE_STATUS.WAITING_PASSENGER,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S34b (control): a plain first-ever (non-recovery) read with server-behind-local already resolves to the server status today, unaffected by this round\'s guard change',
+  currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER, currentSheet()?.dataset.status);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 35 — #939 focused pre-commit audit round 8: PR #940 review
+// thread D (P2) — "Persist the confirmed terminal status for offline
+// reloads", local CANCELED vs server COMPLETED direction. A fourth
+// independent audit reproduced this directly at runtime: a local record
+// frozen CANCELED+canceledAt (exactly what bindCancelAffordance's own
+// updateActiveRideStatus(...CANCELED...) commits, e.g. moments before an
+// independent server-side COMPLETED resolution wins the race) must, once
+// an authoritative GET confirms COMPLETED, end up with the STORED record
+// itself showing COMPLETED — completedAt set to the server's own
+// timestamps.completedAt, canceledAt cleared — and a later backend-off
+// reload (reading back the exact ?status=COMPLETED
+// syncTerminalStatusIntoUrl already wrote) must show the COMPLETE
+// renderer, not the stale CANCELED fallback. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch35;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch35 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordLL', 'trip_ordLL']);
+saveActiveRide(baseRide('trip_ordLL', RIDE_STATUS.CANCELED, {
+  timestamps: { createdAt: new Date().toISOString(), canceledAt: new Date().toISOString() },
+  cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept', comment: '' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordLL');
+const serverCompletedAt35 = new Date().toISOString();
+resolveFetch35({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordLL',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: serverCompletedAt35 },
+    },
+  }),
+});
+await tick(12);
+expect('S35 step 1: THIS mount correctly swaps to COMPLETED once the server confirms it',
+  app.querySelector('.active-ride-passenger--complete') !== null);
+const storedAfterS35 = findActiveRide('trip_ordLL');
+expect('S35 — FIX: the STORED record now shows status=COMPLETED with the server\'s own completedAt timestamp, and canceledAt cleared',
+  storedAfterS35?.status === RIDE_STATUS.COMPLETED
+    && storedAfterS35?.timestamps?.completedAt === serverCompletedAt35
+    && storedAfterS35?.timestamps?.canceledAt == null,
+  JSON.stringify(storedAfterS35?.timestamps));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordLL');
+expect('S35 step 2 — FIX: a later backend-off reload, reading back the persisted ?status=COMPLETED, now correctly shows the COMPLETE renderer, never the stale CANCELED fallback',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && app.querySelector('.passenger-cancel-fallback') === null);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 36 — #939 focused pre-commit audit round 8: PR #940 review
+// thread D (P2), the symmetric direction — local COMPLETED vs server
+// CANCELED. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch36;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch36 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordMM', 'trip_ordMM']);
+saveActiveRide(baseRide('trip_ordMM', RIDE_STATUS.COMPLETED, {
+  timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordMM');
+const serverCanceledAt36 = new Date().toISOString();
+resolveFetch36({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordMM',
+      status: RIDE_STATUS.CANCELED,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt36 },
+      cancel: { by: 'driver', reason: null },
+    },
+  }),
+});
+await tick(12);
+expect('S36 step 1: THIS mount correctly swaps to the CANCELED fallback once the server confirms it',
+  app.querySelector('.passenger-cancel-fallback') !== null);
+const storedAfterS36 = findActiveRide('trip_ordMM');
+expect('S36 — FIX: the STORED record now shows status=CANCELED with the server\'s own canceledAt timestamp, and completedAt cleared',
+  storedAfterS36?.status === RIDE_STATUS.CANCELED
+    && storedAfterS36?.timestamps?.canceledAt === serverCanceledAt36
+    && storedAfterS36?.timestamps?.completedAt == null,
+  JSON.stringify(storedAfterS36?.timestamps));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordMM');
+expect('S36 step 2 — FIX: a later backend-off reload, reading back the persisted ?status=CANCELED, now correctly shows the CANCELED fallback, never the stale COMPLETE renderer',
+  app.querySelector('.passenger-cancel-fallback') !== null
+    && app.querySelector('.active-ride-passenger--complete') === null);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// S22/S22b/S23b/S24/S24b/S24c/S25/S26/S26b/S27/S27b/S29/S34/S34b/S35/S36 are
+// backend-enabled with a non-terminal ride (S23b/S27/S27b/S35/S36 are
+// terminal and settle synchronously, no poll/recovery timer), so most of
+// these successful merges (or S25/S34's scheduled recovery) start a real
+// poll setInterval / recovery timer. Every prior scenario transition tears
+// the previous mount down via the NEXT scenario's own reset() (location.hash's
+// setter dispatches 'hashchange' -> teardownPassengerReads() ->
+// stopPassengerRidePoll()'s clearInterval). S36 is now the last scenario
 // in the file, so a final reset() is called here to clean up its own poll.
 reset();
 

@@ -16,6 +16,9 @@ import {
   RIDE_STATUS,
   resolveRideStatusLabel,
   DEMO_ACTIVE_RIDE_ID,
+  STATUS_TIMESTAMP_FIELD,
+  loadActiveRideStore,
+  saveActiveRideStore,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import { upgradeStoredActiveRideForOrder } from './responses.js';
@@ -2808,6 +2811,84 @@ export default function activeRidePassenger(options = {}) {
     saveActiveRide(repaired);
   }
 
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+  // round 8 — a fourth independent audit (Codex, PR #940 review thread D)
+  // found swapToTerminalPassengerScreen's own syncTerminalStatusIntoUrl
+  // only ever rewrites the URL, never the canonical store: a genuine
+  // terminal-vs-terminal race (e.g. bindCancelAffordance's fire-and-forget
+  // cancel PATCH committing local CANCELED+canceledAt moments before an
+  // independent server-side COMPLETED resolution, or the symmetric
+  // reverse) leaves the STORED record permanently frozen at the wrong
+  // terminal status. A later reload — even reading back the exact
+  // syncTerminalStatusIntoUrl-updated ?status= this same session just
+  // wrote — resurrects the stale terminal screen, because
+  // applyPassengerStatusFromQuery's own symmetric terminal-conflict guard
+  // (COMPLETED refused when ts.canceledAt is set; CANCELED/NO_SHOW refused
+  // when ts.completedAt is set) cannot distinguish "opposite-terminal and
+  // correct" from "opposite-terminal only because a real confirmation was
+  // never written back". Reproduced directly at runtime by the audit, both
+  // directions.
+  //
+  // Repairs the STORED record — same base pattern as
+  // persistPassengerServerConfirmedWaitingProjection (starts from the
+  // EXISTING stored record so every unrelated field — passenger, driver,
+  // vehicle, route, payment, ride, chat, orderId, acceptedSource, waiting —
+  // survives untouched) — the moment a settled, authoritative participant
+  // GET confirms a terminal status:
+  //   - writes the confirmed terminal status;
+  //   - stamps the matching STATUS_TIMESTAMP_FIELD entry from the server's
+  //     own raw response (srv) when the server actually sent one for it,
+  //     falling back to `new Date().toISOString()` — the exact same
+  //     convention updateActiveRideStatus already uses — only when it did
+  //     not;
+  //   - clears every OTHER terminal-status timestamp field, derived from
+  //     STATUS_TIMESTAMP_FIELD itself (not a hardcoded completedAt/
+  //     canceledAt pair, so a future terminal status is covered
+  //     automatically) — this is what actually disarms
+  //     applyPassengerStatusFromQuery's guard for the opposite status.
+  //
+  // saveActiveRide() itself refuses any write that would change an
+  // existing TERMINAL record to a DIFFERENT status (BD-ACTIVE-RIDE-TERM-01
+  // P2's own store-level freeze, in ride_state.js — a real, separate guard
+  // from updateActiveRideStatus's own terminal check, confirmed by reading
+  // saveActiveRide() directly) — exactly the race this function exists to
+  // resolve. This is therefore a deliberate, narrow exception: it writes
+  // through the raw store primitives (loadActiveRideStore/
+  // saveActiveRideStore) instead of saveActiveRide(), bypassing that guard
+  // ONLY here, ONLY for a status this function's one caller
+  // (runInitialRead's authoritative-terminal branch) has already proven
+  // server-confirmed — never reachable from the 404/local-only fallback,
+  // which calls swapToTerminalPassengerScreen directly without ever
+  // calling this function first. No-op when nothing is stored yet (the
+  // first-save path is covered elsewhere).
+  const TERMINAL_STATUS_TIMESTAMP_FIELDS = Array.from(new Set(
+    [RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW]
+      .map((status) => STATUS_TIMESTAMP_FIELD[status])
+      .filter(Boolean),
+  ));
+  function persistPassengerServerConfirmedTerminalProjection(terminalStatus, srv) {
+    const timestampField = STATUS_TIMESTAMP_FIELD[terminalStatus];
+    if (!timestampField) return;
+    const storedRide = findActiveRide(ride.tripId);
+    if (!storedRide) return;
+    const serverTimestamp = srv && srv.timestamps && srv.timestamps[timestampField];
+    const timestamps = { ...(storedRide.timestamps || {}) };
+    for (const field of TERMINAL_STATUS_TIMESTAMP_FIELDS) {
+      if (field === timestampField) continue;
+      timestamps[field] = null;
+    }
+    timestamps[timestampField] = serverTimestamp || new Date().toISOString();
+    const repaired = {
+      ...storedRide,
+      status: terminalStatus,
+      timestamps,
+    };
+    delete repaired.localProvenance;
+    const store = loadActiveRideStore();
+    store[repaired.tripId] = repaired;
+    saveActiveRideStore(store);
+  }
+
   let passengerPollId = null;
   let passengerCursor = null;
   let passengerPollBusy = false;
@@ -3364,6 +3445,22 @@ export default function activeRidePassenger(options = {}) {
       // return, so every successful server read — including one that
       // immediately remounts on a forward status — reaches storage.
       persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+      // round 8 — a fourth independent audit (Codex, PR #940 review thread
+      // E): the bare `recovery` boolean below used to gate
+      // mergeServerRide's preserveLocallyAheadStatus, but a recovery
+      // attempt can be the FIRST successful read of the whole mount (an
+      // earlier attempt failed retryably, scheduling this one) — in that
+      // case hasConfirmedServerRide is still false going into this exact
+      // merge, so there is no prior confirmation that makes a locally-ahead
+      // status trustworthy. Reading hasConfirmedServerRide HERE, before
+      // either call below sets it true, and requiring both flags together
+      // fixes the gap while leaving the legitimate case (a mount that has
+      // already confirmed a real ride once, and a LATER recovery attempt
+      // sees a transiently-behind server status) completely unchanged —
+      // `recovery && hasConfirmedServerRide` is provably identical to bare
+      // `recovery` whenever hasConfirmedServerRide is already true.
+      const preserveLocallyAheadStatus = recovery && hasConfirmedServerRide;
       // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a server status needing an entirely separate top-level
       // renderer never fits the shared map/sheet flow this function builds
       // — regardless of what the untrusted, pre-read local `ride.status`
@@ -3375,9 +3472,15 @@ export default function activeRidePassenger(options = {}) {
       // Merge first so the terminal renderer sees authoritative
       // passenger/driver/route/fare data, never the raw Ride cache.
       if (srv.status && needsSeparatePassengerRenderer(srv.status)) {
-        ride = mergeServerRide(srv, recovery);
+        ride = mergeServerRide(srv, preserveLocallyAheadStatus);
         markPassengerRideAuthoritative(ride);
         hasConfirmedServerRide = true;
+        // round 8 (PR #940 review thread D) — reconcile the STORED record
+        // to this confirmed terminal status, clearing any conflicting
+        // opposite-terminal timestamp, BEFORE swapToTerminalPassengerScreen
+        // syncs the URL / tears down / swaps the DOM — see this function's
+        // own doc comment for the full race it closes.
+        persistPassengerServerConfirmedTerminalProjection(srv.status, srv);
         swapToTerminalPassengerScreen(ride);
         return;
       }
@@ -3389,7 +3492,7 @@ export default function activeRidePassenger(options = {}) {
           return;
         }
       }
-      ride = mergeServerRide(srv, recovery);
+      ride = mergeServerRide(srv, preserveLocallyAheadStatus);
       markPassengerRideAuthoritative(ride);
       hasConfirmedServerRide = true;
       renderLoadedRide(recovery);
