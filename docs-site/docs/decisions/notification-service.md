@@ -4,7 +4,7 @@ docType: decision-record
 title: "Phase 5: Notification Service — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-09-01
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -17,6 +17,10 @@ related:
     - public/src/state.js
     - public/sw.js
     - public/src/screens/profile.js
+    - server/src/services/notifications/index.js
+    - server/src/services/ride-state/index.js
+    - server/src/repositories/ride_events.js
+    - server/src/infra/bus.js
   issues: []
   prs: []
 tags: [decision-record, adr, notifications, push, real-time, target, phase-5]
@@ -33,14 +37,20 @@ slug: /decisions/notification-service
 > the [Data Layer Contract (BD-DOCS-031)](../design/data-layer-contract.md),
 > [Phase 2 Presence & Heartbeat (BD-DOCS-033)](presence-heartbeat.md),
 > [Phase 3 Dispatch & Matching (BD-DOCS-034)](dispatch-matching.md), and
-> [Auth & Identity (BD-DOCS-032)](auth-identity.md). BazarDrive **today** is a
-> backless PWA; nothing here is built.
+> [Auth & Identity (BD-DOCS-032)](auth-identity.md). The backend spine and
+> authoritative Ride event path now exist, but the Notification service itself
+> remains a dark `501 NOT_IMPLEMENTED` skeleton. The first source boundary is
+> specified separately by the contract-only
+> [Notification Outbox Source Contract (BD-DOCS-050)](notification-outbox-contract.md);
+> no outbox or delivery runtime is implemented.
 
 ## Context
 
-Today there is **no notification delivery** — there are no network events at all.
-The `/inbox` hub (`public/src/screens/inbox.js`, BD-NOTIF-01) renders a tabbed
-list (Все / Отклики / Сообщения / Поездки) from a **static mock seed**
+Today there is **no notification delivery**. The backend has authoritative Ride
+state and participant-only polling for the append-only Ride timeline, but there
+is no durable notification outbox, fan-out worker or per-user notification feed.
+The `/inbox` hub (`public/src/screens/inbox.js`, BD-NOTIF-01) still renders a
+tabbed list (Все / Отклики / Сообщения / Поездки) from a **static mock seed**
 (`INBOX_ITEMS_V1` in `public/src/mock_api.js`) with per-item `unread` flags and
 an unread badge. The push prompt is **UI-only**: its own disclaimer reads
 "Демо-режим — реальные push не отправляются", and tapping "Включить" merely sets
@@ -57,11 +67,12 @@ driver action `#pf2-act-notif` (`public/src/screens/profile.js`) both
 
 The **service worker** (`public/sw.js`) is pure precache + offline fallback: **no
 `push` listener, no `notificationclick` handler, no `showNotification()`** — zero
-push capability. And there is **no real-time mechanism anywhere**: no polling, no
-WebSocket, no SSE. A passenger only "finds out" a driver responded by **opening**
+push capability. The live backend polling seam exposes a Ride's participant-only
+timeline; it is not a notification feed and does not fan out to user channels.
+A passenger still only "finds out" about a mock/local response by **opening**
 `/responses` or `/inbox`, which read `localStorage`/mock synchronously on
-navigation. Phase 3 produces real events (offer made, assigned, ride status
-changes); nothing delivers them.
+navigation. The server now produces authoritative Ride `status_change` events,
+but nothing persists or delivers them as notifications.
 
 ## Decision
 
@@ -71,7 +82,9 @@ Introduce a server-side **Notification Service** (#6) — an event fan-out hub:
    other services (dispatch #1, ride state #5, chat) — new response, offer,
    assignment, ride-status change, message — flow into a **per-user notification
    feed**. `/inbox` renders that feed instead of the static `INBOX_ITEMS_V1`
-   seed.
+   seed. The first durable source boundary is frozen by
+   [BD-DOCS-050](notification-outbox-contract.md); that contract does not itself
+   implement the outbox, feed or delivery runtime.
 2. **Real-time delivery via channel fan-out.** The service is the **fan-out
    hub**: one event → the channels a user has enabled. **In-app real-time** uses
    the same transport decided for Phase 2/3 (WebSocket or polling); **out-of-app**
@@ -130,6 +143,10 @@ batching are deferred (see Follow-ups).
     **denied**; the UX must degrade gracefully to other channels.
   - Per-channel preferences and the feed need persistence (Phase 1 data layer).
 - **Follow-ups:**
+  - [Notification Outbox Source Contract (BD-DOCS-050)](notification-outbox-contract.md)
+    — freeze event identity, producer-frozen audience, same-transaction
+    Ride/timeline/outbox atomicity and late-commit-safe sequence semantics before
+    the first outbox runtime slice.
   - Transport — shared with the Phase 2/3 real-time decision (WebSocket vs poll).
   - Channel providers — Web Push/VAPID, Telegram bot, SMS/email; deliverability.
   - Notification taxonomy — categories, batching/coalescing, quiet hours.
@@ -144,4 +161,6 @@ See [Mini-Yonder Background Services](../governance/mini-yonder-background-servi
 [Phase 2 Presence & Heartbeat (BD-DOCS-033)](presence-heartbeat.md) for the
 presence signal that picks the delivery channel, and
 [Phase 3 Dispatch & Matching (BD-DOCS-034)](dispatch-matching.md) for the events
-this service delivers.
+this service delivers, and the
+[Notification Outbox Source Contract (BD-DOCS-050)](notification-outbox-contract.md)
+for the contract-only first durable source boundary.
