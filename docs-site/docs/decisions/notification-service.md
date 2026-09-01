@@ -150,9 +150,6 @@ batching are deferred (see Follow-ups).
   - Transport — shared with the Phase 2/3 real-time decision (WebSocket vs poll).
   - Channel providers — Web Push/VAPID, Telegram bot, SMS/email; deliverability.
   - Notification taxonomy — categories, batching/coalescing, quiet hours.
-  - **Docs drift (separate fix):** CLAUDE.md states `#pf2-act-notif` toggles
-    `notificationsEnabled`, but it now navigates to `/inbox`; update in a
-    docs-contract task, not here.
   - `/inbox` vs a future `/notifications` split stays deferred pending the
     CLAUDE.md audit rule.
 
