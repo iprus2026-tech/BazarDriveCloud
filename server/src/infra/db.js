@@ -39,17 +39,60 @@ async function dbPlugin(app, opts) {
     },
 
     // Readiness check (used by /readyz): connectivity AND that the migrations the LIVE endpoints
-    // depend on are applied — not just 0002's auth_session, but also 0003's widened
-    // ride_events.type CHECK (the #5 status_change write path, Codex #792). Without the 0003 leg, an
-    // env on 0001/0002 would report ready and then every status PATCH would roll back on the
-    // constraint. A bare SELECT 1 would report a fresh, un-migrated database as ready.
+    // depend on are applied — not just 0002's auth_session and 0003's widened
+    // ride_events.type CHECK, but also 0004's transactional notification_outbox. Without that
+    // final leg an env could report ready while every accepted Ride transition rolls back at the
+    // outbox insert. A bare SELECT 1 would report a fresh, un-migrated database as ready.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
             AND EXISTS (
-              SELECT 1 FROM pg_constraint
-               WHERE conname = 'ride_events_type_check'
-                 AND pg_get_constraintdef(oid) LIKE '%status_change%'
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'notification_outbox'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'outbox_seq', 'source_event_id', 'occurred_at',
+                        'immutable_envelope', 'immutable_digest', 'created_at'
+                      )
+                 ) = 6
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'notification_outbox_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'notification_outbox_source_event_id_key'
+                      AND pc.contype = 'u'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_notification_outbox_no_mutation'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_constraint pc
+                JOIN pg_class c ON c.oid = pc.conrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'ride_events'
+                 AND pc.conname = 'ride_events_type_check'
+                 AND pc.contype = 'c'
+                 AND pg_get_constraintdef(pc.oid) LIKE '%status_change%'
             ) AS ok`,
       );
       return rows[0]?.ok === true;

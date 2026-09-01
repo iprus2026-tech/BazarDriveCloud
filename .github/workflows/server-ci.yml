@@ -62,19 +62,23 @@ jobs:
 
       - name: Assert core objects exist
         run: |
-          # 11 base tables from 0001 + auth_otp + auth_session from 0002 = 13.
+          # 11 base tables from 0001 + auth_otp/auth_session + notification_outbox = 14.
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 13
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 14
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('auth_otp','auth_session')" | grep -qx 2
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='notification_outbox'" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select 1 from information_schema.views where table_name='ride_history'" | grep -qx 1
           # pg_trigger has ONE row per trigger (information_schema.triggers has one
           # row per event, so a BEFORE UPDATE OR DELETE trigger would appear twice).
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from pg_trigger where tgname='trg_rides_freeze_terminal' and not tgisinternal" | grep -qx 1
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='rides' and t.tgname='trg_rides_freeze_terminal' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from pg_trigger where tgname='trg_ride_events_no_mutation' and not tgisinternal" | grep -qx 1
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='ride_events' and t.tgname='trg_ride_events_no_mutation' and not t.tgisinternal" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='notification_outbox' and t.tgname='trg_notification_outbox_no_mutation' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -109,9 +113,44 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
+      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH now
+      # depends on 0004, so a database with only 0001..0003 must not enter service.
+      - name: Apply pre-outbox migrations and assert readiness is incomplete
+        run: |
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql; do
+            psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
+          done
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 503);
+            assert.deepEqual(response.json(), { status: 'degraded', db: 'schema-incomplete' });
+          } finally {
+            await app.close();
+          }
+          NODE
       # Validate the Node migration runner end-to-end against real PostgreSQL 16
       # (the migrations job above also applies the same SQL via psql).
       - run: npm run migrate
+      - name: Assert readiness is complete after all migrations
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { buildApp } from './src/server.js';
+
+          const app = await buildApp();
+          try {
+            const response = await app.inject({ method: 'GET', url: '/api/v1/readyz' });
+            assert.equal(response.statusCode, 200);
+            assert.deepEqual(response.json(), { status: 'ready', db: 'up' });
+          } finally {
+            await app.close();
+          }
+          NODE
       - run: npm test
 
   container-smoke:
