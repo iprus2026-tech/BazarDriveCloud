@@ -2,7 +2,7 @@
 
 > **Layer:** Cloud Design / Figma / Docs / Screen contracts.  
 > **Runtime impact:** none.  
-> **Snapshot baseline:** `main@a2f578bd50bac538e7f95ee945088341789ba6de` (2026-09-02).  
+> **Snapshot baseline:** `main@d1aea15ff046cfef474648c99c2668966c2d38f8` (2026-09-02).  
 > **Figma file:** https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd/BazarDriveCloud-Architecture-Screen-References
 
 This document binds the replaceable interface layer to the Mini-Yonder architecture and the runtime source tree.
