@@ -867,9 +867,12 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 | Route | `/inbox` |
 | File | `public/src/screens/inbox.js` |
 | Data | Mock inbox items from `mock_api.js`. |
-| Main states | Responses, messages, rides, unread indicators, empty tab. |
-| Actions | Open primary target, secondary chat/ride actions. |
-| Acceptance | Links stay inside the registered route set. |
+| Main states | Four filters: all, responses, messages, rides. The Inbox read boundary owns `loading \| loaded \| empty \| error`; the screen shell mounts synchronously before the initial read settles. Existing unread indicators and per-tab empty copy remain unchanged. |
+| Deterministic fixtures | `#/inbox?fixture=loading\|loaded\|empty\|error`. `fixture=loaded` represents responses, messages and rides across the four-filter composition; recognized fixtures bypass real reads and demo seeding and remain network-, mutation- and navigation-inert. |
+| Read and Retry | Initial loading keeps request-level `aria-busy` on `.inbox-read-body`. A loaded/empty background refresh is non-destructive on failure. In the settled error state, Retry progress belongs to `[data-inbox-retry]` (`disabled`, `aria-disabled`, `aria-busy`, pending label) while the read body stays settled. Obsolete reads fail closed through the router render generation, exact `/inbox` route and mounted-root identity/connectivity guard before settlement mutates state, DOM or focus. |
+| Actions | Normal-runtime cards keep their existing primary target, secondary chat/ride actions and keyboard navigation. Loaded fixture cards expose no enabled button semantics or focus target. |
+| Domain boundary | This repair changes only Inbox presentation and read lifecycle. Inbox item schema, unread meaning, normal targets/actions, push-prompt behavior, Daily Communication and backend/domain persistence remain unchanged. |
+| Acceptance | Registered-route links remain internal; canonical fixtures are deterministic and inert; initial, Retry, background-refresh and obsolete-render paths preserve the request-state and accessibility rules above. |
 
 ### BD-POST-01 - Post detail
 

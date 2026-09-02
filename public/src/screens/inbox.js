@@ -141,6 +141,12 @@ function getRouteParam(name) {
   return new URLSearchParams(hash.slice(qi + 1)).get(name);
 }
 
+function getCurrentRoutePath() {
+  const hash = window.location.hash || '';
+  const fullPath = hash.startsWith('#') ? hash.slice(1) : hash;
+  return fullPath.split('?')[0];
+}
+
 function getInboxFixture() {
   const raw = (getRouteParam('fixture') || '').toLowerCase();
   return INBOX_FIXTURES.has(raw) ? raw : '';
@@ -223,7 +229,7 @@ function renderActions(item) {
   return `<div class="inbox-item__actions">${parts.join('')}</div>`;
 }
 
-function renderItem(item) {
+function renderItem(item, interactive = true) {
   const glyph     = KIND_GLYPH[item.kind] || '•';
   const kindLabel = KIND_LABEL[item.kind] || 'Событие';
 
@@ -240,12 +246,14 @@ function renderItem(item) {
     INBOX_STATUS_LABEL[item.status],
   ].filter(Boolean).join(' · ');
 
+  const interactionAttributes = interactive
+    ? '\n             role="button"\n             tabindex="0"'
+    : '';
+
   return `
     <article class="bd-card inbox-item${item.unread ? ' inbox-item--unread' : ''}"
              data-inbox-id="${escapeHtml(item.id)}"
-             data-href="${escapeHtml(fallbackHref)}"
-             role="button"
-             tabindex="0"
+             data-href="${escapeHtml(fallbackHref)}"${interactionAttributes}
              aria-label="${escapeHtml(ariaLabel)}">
       <div class="inbox-item__head">
         <div class="inbox-item__avatar" aria-hidden="true">${escapeHtml(glyph)}</div>
@@ -336,7 +344,9 @@ function renderReadError(retrying = false) {
       <div class="bd-empty__title" id="inbox-read-error-title">Не удалось загрузить входящие</div>
       <p>Проверьте соединение и попробуйте ещё раз.</p>
       <button type="button" class="bd-btn ghost sm" data-inbox-retry
-              ${retrying ? 'disabled aria-disabled="true"' : ''}>
+              aria-busy="${retrying ? 'true' : 'false'}"
+              aria-disabled="${retrying ? 'true' : 'false'}"
+              ${retrying ? 'disabled' : ''}>
         ${retrying ? 'Повторяем…' : 'Повторить'}
       </button>
     </div>
@@ -344,6 +354,7 @@ function renderReadError(retrying = false) {
 }
 
 export default function inbox() {
+  const renderContext = arguments[0];
   const fixture = getInboxFixture();
   const fixtureMode = Boolean(fixture);
   if (!fixtureMode) ensureDemoResponseOrder();
@@ -356,6 +367,30 @@ export default function inbox() {
 
   const root = document.createElement('section');
   root.className = 'screen screen--inbox';
+
+  // BD-CLOUD-DESIGN-LOADING-02F-R1 (#880) — a hash-prefix check cannot
+  // distinguish this mounted Inbox from an older A→B→A instance. Bind reads
+  // to the router generation, the exact route and this root's mount identity.
+  // The narrow pre-mount allowance is required because inbox() returns its
+  // shell synchronously and starts the initial read before router.js appends it.
+  const appRoot = document.getElementById('app');
+  const isCurrentRender = renderContext && typeof renderContext.isCurrent === 'function'
+    ? renderContext.isCurrent
+    : () => true;
+  let hasMounted = false;
+  function isCurrentInboxInstance() {
+    if (!isCurrentRender() || getCurrentRoutePath() !== '/inbox') return false;
+    const mountedHere = Boolean(appRoot && root.isConnected && appRoot.contains(root));
+    if (mountedHere) hasMounted = true;
+    const awaitingInitialMount = Boolean(
+      appRoot
+        && !hasMounted
+        && !root.isConnected
+        && root.parentNode === null
+        && appRoot.childElementCount === 0,
+    );
+    return mountedHere || awaitingInitialMount;
+  }
 
   root.innerHTML = `
     <div class="bd-topbar">
@@ -507,7 +542,7 @@ export default function inbox() {
     }
     const visible = filterItems(items, activeTab);
     const body = visible.length
-      ? visible.map(renderItem).join('')
+      ? visible.map((item) => renderItem(item, !fixtureMode)).join('')
       : renderEmpty(activeTab, fixtureMode);
     const daily = fixtureMode ? '' : renderDailyCommunicationEntry();
     listEl.innerHTML = daily + body;
@@ -516,16 +551,19 @@ export default function inbox() {
   const onInboxRetry = () => { refreshInbox('retry'); };
 
   function setRetryPending(pending) {
-    listEl.setAttribute('aria-busy', pending ? 'true' : 'false');
+    // Retry is a settled user command, not a new initial read. Keep the feed
+    // settled and expose progress on the command that initiated it.
+    listEl.setAttribute('aria-busy', 'false');
     const retryBtn = listEl.querySelector('[data-inbox-retry]');
     if (!retryBtn) return;
     retryBtn.disabled = pending;
     retryBtn.setAttribute('aria-disabled', pending ? 'true' : 'false');
+    retryBtn.setAttribute('aria-busy', pending ? 'true' : 'false');
     retryBtn.textContent = pending ? 'Повторяем…' : 'Повторить';
   }
 
   async function refreshInbox(mode = 'background') {
-    if (fixtureMode || readPending) return;
+    if (fixtureMode || readPending || !isCurrentInboxInstance()) return;
     const isInitial = mode === 'initial';
     const isRetry = mode === 'retry';
     const hadUsableContent = readState === 'loaded' || readState === 'empty';
@@ -543,11 +581,16 @@ export default function inbox() {
       onRetry: onInboxRetry,
       isRetry,
       fallback: INBOX_READ_FAILED,
-      isActive: () => (window.location.hash || '').startsWith('#/inbox'),
+      isActive: isCurrentInboxInstance,
     });
 
-    if (epoch !== readEpoch) return;
+    // loadResource owns the overlay catch, so the same predicate is passed
+    // above and repeated immediately after settlement before any local state,
+    // DOM or focus mutation can escape a stale instance.
+    const stillCurrent = isCurrentInboxInstance();
+    if (!stillCurrent || epoch !== readEpoch) return;
     readPending = false;
+    if (isRetry && readState === 'error') setRetryPending(false);
 
     if (result === INBOX_READ_FAILED) {
       if (hadUsableContent) {
@@ -556,7 +599,6 @@ export default function inbox() {
       }
       readState = 'error';
       if (isRetry) {
-        setRetryPending(false);
         updateTopbar();
       } else {
         renderList();

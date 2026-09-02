@@ -201,7 +201,11 @@
 // server-confirmed ride's vehicle.color/plate, payment and chat neutralize to null/hidden instead
 // of the legacy demo fallbacks (driver.car still maps to the vehicle model). No storage schema,
 // backend/API, or cache-strategy change.
-const VERSION    = 'v320';
+// v321 (BD-CLOUD-DESIGN-LOADING-02F-R1 #880) — precached screens/inbox.js and
+// inbox_02f.css changed (instance-scoped stale-read guard, button-owned Retry
+// progress, inert loaded fixtures and restored read-body spacing). No PRECACHE
+// membership, backend/domain contract, or cache-strategy change.
+const VERSION    = 'v321';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
