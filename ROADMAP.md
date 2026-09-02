@@ -2,6 +2,8 @@
 
 > Roadmap отражает реальное состояние Cloud/PWA-репо. PWA остаётся local-first, а Phase-1 Fastify/PostgreSQL backend spine уже существует в `/server`. Backend и auth ещё не активированы для PWA и остаются pilot-blocked до закрытия authorization, delivery, deploy и operations gates. Real Mapbox SDK, payments, uploads, push и APK остаются отдельными фазами. См. также [`docs/screen-contracts.md`](docs/screen-contracts.md), [`docs/flow-contracts.md`](docs/flow-contracts.md), [`docs/active-ride-plan.md`](docs/active-ride-plan.md).
 
+> **Project-map sync 2026-09-02.** Не путать три разных состояния: **server implementation**, **PWA consumption/activation** и **полную целевую Mini-Yonder фазу**. Живой backend-модуль может быть shipped, пока PWA всё ещё работает local-first; отдельный фундамент внутри тёмного сервиса не делает весь сервис shipped.
+
 ---
 
 ## Phase 1 - PWA-каркас (✓ готово)
@@ -50,10 +52,24 @@ Cloud/PWA-репо уже вышел за рамки исходной доски
 - [x] **Service Worker update banner** - `public/src/sw-update.js`, mock `skipWaiting` handshake
 - [x] **Role-based dispatch inside `/active-ride`** - `active_ride.js` imports `active_ride_passenger.js`; no separate `/active-ride-passenger` route
 
+### Backend / Mini-Yonder status sync - 2026-09-02
+
+| Layer | What is real now | What remains |
+|---|---|---|
+| **Shared data / API spine** | PostgreSQL-backed auth/session, orders, matching, Ride State, Ride events, history/receipts and chat persistence exist behind guarded seams. | PWA stays backend-OFF/local-first by default; auth/policy/deploy/activation gates remain. |
+| **#3 Matching & Assignment** | Offers/select/assignment/Ride bootstrap are live. Conflict and recovery authority were hardened by #934, #936 and #938. | Passenger select-side ACK/ambiguous-outcome reconciliation remains #947. Dispatcher ranking/broadcast is a different #1 gap. |
+| **#5 Ride State Machine** | Participant GET/PATCH and append-only `ride_events` are live. Passenger authoritative-first hydration/terminal reconciliation shipped in #940. | Global PWA backend activation is still gated. |
+| **#6 Notification Service** | The durable Ride notification source ledger shipped in #944: `ride_events` and `notification_outbox` are written atomically for accepted Ride transitions. | Notification routes, worker/claim/lease/retry, Inbox feed, Push/Telegram/SMS/email and activation remain dark. Contract-first next step: #948. |
+| **#8 History & Receipt** | Server history reads and write-once receipt path exist; client history/receipt anchor also exists. | Full product cutover still follows pilot activation gates. |
+| **#2 Availability / #4 Route & Price / #7 Safety** | Target ADRs and client placeholders exist. | Backend services remain dark; Redis/Mapbox/Safety runtime are future slices. |
+| **#9 Monitoring & Audit** | Health/readiness, CI and repository checks exist. | `/metrics`, runtime fleet dashboard, alerts and operational audit surface remain incomplete. |
+
 ### Gaps that remain real
 
 - [ ] **Real Mapbox SDK** - not connected. All map screens use DOM placeholders (the `driver_markers.js` / `trip_status_layer.js` foundation stubs exist; real Mapbox GL is the gap).
 - [ ] **Backend pilot gates** - OTP delivery/rate limiting, session lifecycle and role policy, chat participant authorization, staging deploy/rollback and observability remain before PWA activation.
+- [ ] **Passenger select ACK outcome reconciliation** - coherent success/409/5xx/transport ambiguity must converge through authoritative ACK/read-side recovery without a second local success source (#947).
+- [ ] **Notification worker contract/runtime** - the source outbox exists, but claim/lease/retry/consumer semantics must be frozen before a dark worker is added (#948).
 - [ ] **Driver no-show completion** - основной flow уже реализован; оставшиеся no-show/error/dispute состояния и product gaps отслеживаются в `docs/missing-screens.md`.
 - [ ] **Client/PWA automated coverage** - `node scripts/check.mjs` and smoke scripts are the current client guards; broader client node:test/browser coverage remains technical debt. The `/server` layer already has node:test route/contract coverage and separate server CI.
 
@@ -66,6 +82,10 @@ Phase-1 backend code already exists. This phase is about hardening, validating a
 - [x] **Phase-1 backend spine** - Fastify/PostgreSQL, ordered migrations, repository layer and guarded PWA seams
 - [x] **Thin API client** - `public/src/api_client.js` exists; backend remains OFF by default
 - [x] **Orders / matching / ride-state / polling / history foundations** - backend routes exist; module-specific pilot gates still apply
+- [x] **Matching conflict/recovery authority** - #934, #936 and #938 enforce conflict-Ride linkage, PostgreSQL timestamp precision and recovery linkage
+- [x] **Passenger authoritative Ride hydration** - #940 reads server state before backend-mode render and reconciles terminal state server-first
+- [x] **Notification source outbox foundation** - #944 adds the durable same-transaction Ride notification source; this does not activate Notification Service
+- [ ] **Passenger select ACK outcome reconciliation** - #947
 - [ ] **Per-resource PWA cutover** - move reads/writes from local stores only after each module's exit conditions are closed
 - [ ] **Phone + OTP auth hardening** - production delivery, throttling, session lifecycle and role/readiness policy
 - [ ] **Chat participant authorization** - sender identity and order/ride participation must be session-derived before activation
@@ -84,6 +104,8 @@ Phase-1 backend code already exists. This phase is about hardening, validating a
 - [ ] Favorites and saved searches
 - [ ] Ratings and profile aggregates backed by server data
 - [ ] Trusted contacts and shared ride links
+
+> Notification note: the durable source outbox is already a shipped backend foundation (#944), but user-facing notification delivery remains future work. Do not count the source ledger as Web Push or as a shipped Notification Service.
 
 ---
 
