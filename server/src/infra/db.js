@@ -38,11 +38,11 @@ async function dbPlugin(app, opts) {
       }
     },
 
-    // Readiness check (used by /readyz): connectivity AND that the migrations the LIVE endpoints
-    // depend on are applied — not just 0002's auth_session and 0003's widened
-    // ride_events.type CHECK, but also 0004's transactional notification_outbox. Without that
-    // final leg an env could report ready while every accepted Ride transition rolls back at the
-    // outbox insert. A bare SELECT 1 would report a fresh, un-migrated database as ready.
+    // Readiness check (used by /readyz): connectivity AND every migration shape required by a
+    // LIVE endpoint. In addition to auth/session, Ride events and the transactional outbox,
+    // migration 0005's driver_documents table is now required because the narrow Safety &
+    // Compliance read is live. A bare SELECT 1 would report a fresh or partially-migrated
+    // database as ready while real requests fail.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -96,7 +96,69 @@ async function dbPlugin(app, opts) {
                  AND pc.conname = 'ride_events_type_check'
                  AND pc.contype = 'c'
                  AND pg_get_constraintdef(pc.oid) LIKE '%status_change%'
-            ) AS ok`,
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_documents'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id', 'driver_id', 'document_type', 'status',
+                        'valid_from', 'valid_until', 'issued_at', 'verified_at',
+                        'verification_source', 'verification_reason', 'object_key',
+                        'created_at', 'updated_at'
+                      )
+                 ) = 13
+                 -- Readiness names every migration-0005 constraint, including
+                 -- ownership, temporal, verification-metadata and PII-reference
+                 -- guards. A table with only its headline PK/enum checks is not
+                 -- safe enough to serve the live compliance projection.
+                 AND (
+                   SELECT count(*)
+                     FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND (
+                        (pc.contype = 'p' AND pc.conname IN (
+                          'driver_documents_pkey'
+                        ))
+                        OR (pc.contype = 'f' AND pc.conname IN (
+                          'driver_documents_driver_id_fkey'
+                        ))
+                        OR (pc.contype = 'u' AND pc.conname IN (
+                          'driver_documents_driver_type_uq'
+                        ))
+                        OR (pc.contype = 'c' AND pc.conname IN (
+                          'driver_documents_document_type_check',
+                          'driver_documents_status_check',
+                          'driver_documents_validity_range_check',
+                          'driver_documents_shift_validity_check',
+                          'driver_documents_expiring_validity_check',
+                          'driver_documents_authoritative_metadata_check',
+                          'driver_documents_rejected_reason_check',
+                          'driver_documents_source_shape_check',
+                          'driver_documents_reason_shape_check',
+                          'driver_documents_object_key_shape_check'
+                        ))
+                      )
+                 ) = 13
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_documents_updated_at'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            AND to_regclass('public.driver_documents_object_key_uq') IS NOT NULL
+            AND to_regclass('public.idx_driver_documents_expiry') IS NOT NULL
+          AS ok`,
       );
       return rows[0]?.ok === true;
     },

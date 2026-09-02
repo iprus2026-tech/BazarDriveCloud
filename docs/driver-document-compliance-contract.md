@@ -186,3 +186,20 @@ This slice does not add:
 ## Figma boundary
 
 The design reference belongs under `BD-PROFILE-D-03` as the existing Documents pane. Figma owns visual and interaction intent only. Backend contracts own document state and readiness authority.
+
+## 01B implementation boundary
+
+Issue: #955
+
+`BD-DRIVER-DOCUMENT-COMPLIANCE-01B` implements the first dark server realization of this contract:
+
+- PostgreSQL table `driver_documents` with constrained type/status vocabulary, one row per driver/type, temporal validity rules, protected object references, expiry indexing, and `updated_at` trigger;
+- authenticated self-scoped `GET /api/v1/safety/driver/compliance`;
+- a pure server projection that always returns all five document types, synthesizes absent rows as `MISSING`, separates long-lived and shift readiness, and computes `lineReady`;
+- fail-closed evaluation of elapsed `valid_until`, future `valid_from`, malformed shift validity, duplicates, unknown types, and unknown states;
+- `/readyz` dependency on the complete migration-0005 schema;
+- unit, hermetic HTTP, and PostgreSQL-gated flow coverage.
+
+The endpoint does not accept a driver identity selector. Identity comes only from the authenticated session. The repository does not select `object_key` or `verification_source` into the driver-facing projection, and the response is `Cache-Control: no-store`.
+
+01B does **not** make the PWA consume this projection and does not activate upload, object storage, verification, audit events, Presence/Availability enforcement, Dispatcher enforcement, or GitHub Pages backend mode. Those boundaries remain owned by 01C–01G.
