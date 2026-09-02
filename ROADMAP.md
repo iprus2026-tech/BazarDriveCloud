@@ -18,7 +18,7 @@
 - [x] FAB только на ленте, bottom navigation
 - [x] Service Worker: precache + offline fallback на `index.html`
 - [x] PWA manifest с PNG-иконками 192/512
-- [x] Строгий CSP без `unsafe-inline`
+- [x] CSP остаётся fail-closed для scripts (`script-src 'self'`); Mapbox GL требует отдельного ограниченного `style-src 'unsafe-inline'` плюс exact Mapbox connect/img/worker boundaries
 - [x] CI: проверки CSP-инвариантов и синтаксиса JS
 - [x] GitHub Pages deploy из `public/`
 
