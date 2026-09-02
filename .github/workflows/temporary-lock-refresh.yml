@@ -11,17 +11,20 @@ on:
       - '.github/workflows/temporary-lock-refresh.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  generate:
-    name: generate audited Node 22 lockfile and CI schema guard
+  finalize:
+    name: finalize audited Node 22 lockfile and CI schema guard
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: feat/bd-driver-document-compliance-01b
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version-file: server/.nvmrc
@@ -73,11 +76,14 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
           git -C .. diff --check -- .github/workflows/server-ci.yml
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bd-server-runtime-inputs-${{ github.sha }}
-          path: |
-            server/package-lock.json
-            .github/workflows/server-ci.yml
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit final inputs and remove this temporary workflow
+        working-directory: .
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/package.json server/package-lock.json .github/workflows/server-ci.yml
+          git rm .github/workflows/temporary-lock-refresh.yml
+          git diff --cached --check
+          git diff --cached --name-status
+          git commit -m 'fix(ci): align schema and dependency gates'
+          git push origin HEAD:feat/bd-driver-document-compliance-01b
