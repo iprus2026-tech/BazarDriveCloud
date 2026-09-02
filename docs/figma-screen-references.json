@@ -1,0 +1,37 @@
+{
+  "schema": "bazardrive.figma-screen-references.v1",
+  "snapshot": {
+    "date": "2026-09-02",
+    "main": "a2f578bd50bac538e7f95ee945088341789ba6de"
+  },
+  "figma": {
+    "fileKey": "DWA1DhPOT5ib2sFZQAqNUd",
+    "fileUrl": "https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd/BazarDriveCloud-Architecture-Screen-References",
+    "architectureRootNodeId": "1:12",
+    "screenRegistryRootNodeId": "2:3"
+  },
+  "screens": [
+    {"screenId":"BD-ONBOARDING-01","nodeId":"2:8","routes":["/welcome","/onboarding"],"files":["public/src/screens/welcome.js","public/src/screens/onboarding.js"],"role":"guest/common","architecture":"Passenger/Driver entry"},
+    {"screenId":"BD-FEED-01","nodeId":"2:24","routes":["/feed"],"files":["public/src/screens/feed.js"],"role":"common","architecture":"Passenger + Driver discovery"},
+    {"screenId":"BD-COMPOSER-01","nodeId":"2:40","routes":["/new"],"files":["public/src/screens/composer.js"],"role":"common","architecture":"PWA / Store"},
+    {"screenId":"BD-PROFILE-01/02","nodeId":"2:56","routes":["/profile"],"files":["public/src/screens/profile.js"],"role":"passenger/driver","architecture":"Identity / Driver readiness"},
+    {"screenId":"BD-MAP-01","nodeId":"2:72","routes":["/map"],"files":["public/src/screens/map.js"],"role":"passenger","architecture":"Real Mapbox on Pages / Route & Price future"},
+    {"screenId":"BD-MAP-02","nodeId":"2:88","routes":["/location-permission"],"files":["public/src/screens/location_permission.js"],"role":"common","architecture":"Geolocation gate"},
+    {"screenId":"BD-MAP-03","nodeId":"2:104","routes":["/route-picker"],"files":["public/src/screens/route_picker.js"],"role":"passenger","architecture":"Route draft / Mapbox"},
+    {"screenId":"BD-MAP-04","nodeId":"2:120","routes":["/route-preview"],"files":["public/src/screens/route_preview.js"],"role":"passenger","architecture":"Route & Price"},
+    {"screenId":"BD-MAP-05","nodeId":"2:136","routes":["/order-map-draft"],"files":["public/src/screens/order_map_draft.js"],"role":"passenger","architecture":"Order creation / Store/API seam"},
+    {"screenId":"BD-ORDER-DETAIL-01","nodeId":"2:152","routes":["/order/<id>"],"files":["public/src/screens/order_detail.js"],"role":"passenger/driver","architecture":"Orders / Matching"},
+    {"screenId":"BD-DRIVER-01","nodeId":"2:168","routes":["/driver-map"],"files":["public/src/screens/driver_map.js"],"role":"driver","architecture":"Availability / Dispatcher"},
+    {"screenId":"BD-RESPOND-01","nodeId":"2:184","routes":["/respond?postId=…"],"files":["public/src/screens/respond.js"],"role":"driver/passenger","architecture":"Offers / Matching"},
+    {"screenId":"BD-RESPONSES-01","nodeId":"2:200","routes":["/responses"],"files":["public/src/screens/responses.js"],"role":"passenger","architecture":"Matching / Select authority"},
+    {"screenId":"BD-CHAT-01","nodeId":"2:216","routes":["/chat?tripId=…","/chat?responseId=…"],"files":["public/src/screens/chat.js"],"role":"common","architecture":"Chat / participant auth"},
+    {"screenId":"BD-CONFIRM-01","nodeId":"2:232","routes":["/trip-confirmation"],"files":["public/src/screens/trip_confirmation.js"],"role":"common","architecture":"Handoff / Ride bootstrap"},
+    {"screenId":"BD-RIDE-P-01..07","nodeId":"2:248","routes":["/active-ride?role=passenger"],"files":["public/src/screens/active_ride_passenger.js"],"role":"passenger","architecture":"Ride State Machine"},
+    {"screenId":"BD-RIDE-D-01..09","nodeId":"2:264","routes":["/active-ride?role=driver"],"files":["public/src/screens/active_ride.js"],"role":"driver","architecture":"Ride State / Availability"},
+    {"screenId":"BD-INBOX-01","nodeId":"2:280","routes":["/inbox"],"files":["public/src/screens/inbox.js"],"role":"common","architecture":"Notification projection / service #6"},
+    {"screenId":"BD-POST-01","nodeId":"2:296","routes":["/post?id=…"],"files":["public/src/screens/post_detail.js"],"role":"common","architecture":"Feed detail / action routing"},
+    {"screenId":"BD-RULES-01","nodeId":"2:312","routes":["/rules"],"files":["public/src/screens/rules.js"],"role":"common","architecture":"Static policy UI"},
+    {"screenId":"BD-SETTINGS-01","nodeId":"2:328","routes":["/settings"],"files":["public/src/screens/settings.js"],"role":"common","architecture":"Preferences / role-aware shell"},
+    {"screenId":"BD-RECEIPT-01","nodeId":"2:344","routes":["/receipt?tripId=…"],"files":["public/src/screens/trip_receipt.js"],"role":"driver/common","architecture":"History & Receipt #8"}
+  ]
+}
