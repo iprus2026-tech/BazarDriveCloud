@@ -1,6 +1,7 @@
-// BD-INBOX-03 / BD-CLOUD-DESIGN-LOADING-02F — static regression smoke for
-// the Inbox hub, including the list-owned read-state boundary and deterministic
-// fixtures. STATIC only: no browser, DOM, jsdom, Playwright, network or backend.
+// BD-INBOX-03 / BD-CLOUD-DESIGN-LOADING-02F-R1 — static regression smoke for
+// the Inbox hub, including the list-owned read-state boundary, deterministic
+// fixtures and current-render settlement guard. STATIC source checks only;
+// the companion error-trigger smoke executes the repaired pure helpers.
 
 import fs from 'node:fs';
 
@@ -15,6 +16,7 @@ const css      = read('../public/styles/cloud.css');
 const inboxCss = read('../public/styles/inbox_02f.css');
 const dailyStore = read('../public/src/daily_communication_store.js');
 const dailyScreen = read('../public/src/screens/daily_communication.js');
+const screenContracts = read('../docs/screen-contracts.md');
 
 const issues = [];
 function expect(label, cond, detail = '') {
@@ -116,9 +118,14 @@ expect('renderStatus() uses INBOX_STATUS_TONE[item.status]',
 
 const renderItemBody = functionBody(inbox, 'renderItem') || '';
 expect('renderItem() body resolved', renderItemBody.length > 0);
-for (const hook of ['data-inbox-id', 'data-href', 'role="button"', 'tabindex="0"', 'aria-label=']) {
+for (const hook of ['data-inbox-id', 'data-href', 'aria-label=']) {
   expect(`renderItem() card has ${hook}`, renderItemBody.includes(hook));
 }
+expect('renderItem() keeps normal-runtime card interaction as the default',
+  /function\s+renderItem\(\s*item\s*,\s*interactive\s*=\s*true\s*\)/.test(inbox));
+expect('renderItem() emits button role + tabindex only through its interactive branch',
+  /const\s+interactionAttributes\s*=\s*interactive\s*\?[\s\S]*?role="button"[\s\S]*?tabindex="0"[\s\S]*?:\s*''/.test(renderItemBody)
+  && /data-href="\$\{escapeHtml\(fallbackHref\)\}"\$\{interactionAttributes\}/.test(renderItemBody));
 
 const renderActionsBody = functionBody(inbox, 'renderActions') || '';
 expect('renderActions() body resolved', renderActionsBody.length > 0);
@@ -215,15 +222,23 @@ const updateTopbarBody = functionBody(inbox, 'updateTopbar') || '';
 const clearTopbarBody = functionBody(inbox, 'clearTopbarSummary') || '';
 const captureFocusBody = functionBody(inbox, 'captureScreenFocus') || '';
 const restoreFocusBody = functionBody(inbox, 'restoreScreenFocus') || '';
+const currentRoutePathBody = functionBody(inbox, 'getCurrentRoutePath') || '';
+const currentInstanceBody = functionBody(inbox, 'isCurrentInboxInstance') || '';
+const retryPendingBody = functionBody(inbox, 'setRetryPending') || '';
+const renderReadErrorBody = functionBody(inbox, 'renderReadError') || '';
+const inboxReadBodyCss = inboxCss.match(/\.screen--inbox\s+\.inbox-read-body\s*\{([^{}]*)\}/)?.[1] || '';
+const inboxContract = screenContracts.match(/### BD-INBOX-01[\s\S]*?(?=\n### |$)/)?.[0] || '';
 
 expect('Inbox fixture vocabulary is exactly loading|loaded|empty|error',
   /const\s+INBOX_FIXTURES\s*=\s*new Set\(\s*\[\s*'loading'\s*,\s*'loaded'\s*,\s*'empty'\s*,\s*'error'\s*\]\s*\)/.test(inbox));
 expect('Inbox loader is synchronous so shell can mount before initial read settles',
   /export\s+default\s+function\s+inbox\s*\(/.test(inbox) && !/export\s+default\s+async\s+function\s+inbox/.test(inbox));
+expect('Inbox preserves its zero-parameter loader contract while capturing router renderContext',
+  /export\s+default\s+function\s+inbox\(\)\s*\{\s*const\s+renderContext\s*=\s*arguments\[0\]/.test(inbox));
 expect('initial read starts after the read-body + prompt host are resolved',
   inbox.indexOf("refreshInbox('initial')") > inbox.indexOf("const listEl = root.querySelector('.inbox-read-body')")
   && inbox.indexOf("refreshInbox('initial')") > inbox.indexOf("const promptHost = root.querySelector('[data-inbox-prompt-host]')"));
-expect('only the inner read-body owns aria-busy and skeleton settlement',
+expect('the inner read-body owns initial request busy + skeleton settlement',
   /class="bd-scroll inbox-list"/.test(inbox)
   && /class="inbox-read-body" role="feed" aria-label="События" aria-busy="true" tabindex="-1"/.test(inbox)
   && /listEl\.setAttribute\('aria-busy',\s*'true'\)/.test(renderListBody)
@@ -236,21 +251,57 @@ expect('failed read is distinguishable from genuine empty via local sentinel fal
   /const\s+INBOX_READ_FAILED\s*=\s*Symbol/.test(inbox)
   && /fallback:\s*INBOX_READ_FAILED/.test(refreshInboxBody)
   && /result === INBOX_READ_FAILED/.test(refreshInboxBody));
-expect('in-list error exposes a real Повторить button', /data-inbox-retry/.test(inbox) && /Повторить/.test(inbox));
+expect('in-list error exposes a settled Повторить button with explicit accessibility state',
+  /data-inbox-retry/.test(renderReadErrorBody)
+  && /aria-busy="\$\{retrying \? 'true' : 'false'\}"/.test(renderReadErrorBody)
+  && /aria-disabled="\$\{retrying \? 'true' : 'false'\}"/.test(renderReadErrorBody)
+  && /\$\{retrying \? 'disabled' : ''\}/.test(renderReadErrorBody)
+  && /\$\{retrying \? 'Повторяем…' : 'Повторить'\}/.test(renderReadErrorBody));
 expect('retry repeats only the Inbox read through refreshInbox(retry)',
   /refreshInbox\('retry'\)/.test(inbox) && /loadResource\(listInboxItems/.test(refreshInboxBody));
+expect('Retry progress belongs to the button while the read body stays settled',
+  /listEl\.setAttribute\('aria-busy',\s*'false'\)/.test(retryPendingBody)
+  && /retryBtn\.disabled\s*=\s*pending/.test(retryPendingBody)
+  && /retryBtn\.setAttribute\('aria-disabled',\s*pending \? 'true' : 'false'\)/.test(retryPendingBody)
+  && /retryBtn\.setAttribute\('aria-busy',\s*pending \? 'true' : 'false'\)/.test(retryPendingBody)
+  && /retryBtn\.textContent\s*=\s*pending \? 'Повторяем…' : 'Повторить'/.test(retryPendingBody));
 expect('normal refresh keeps usable content on failure instead of re-skeletoning',
   /const\s+hadUsableContent\s*=\s*readState === 'loaded' \|\| readState === 'empty'/.test(refreshInboxBody)
   && /if\s*\(result === INBOX_READ_FAILED\)[\s\S]*?if\s*\(hadUsableContent\)/.test(refreshInboxBody));
-expect('refresh work is single-flight + epoch guarded',
-  /if\s*\(fixtureMode \|\| readPending\) return/.test(refreshInboxBody)
+expect('refresh work is single-flight + current-instance + epoch guarded',
+  /if\s*\(fixtureMode \|\| readPending \|\| !isCurrentInboxInstance\(\)\) return/.test(refreshInboxBody)
   && /const\s+epoch\s*=\s*\+\+readEpoch/.test(refreshInboxBody)
-  && /if\s*\(epoch !== readEpoch\) return/.test(refreshInboxBody));
-expect('loadResource gets an Inbox route activity guard so stale loads do not raise overlay on another screen',
-  /isActive:\s*\(\) => \(window\.location\.hash \|\| ''\)\.startsWith\('#\/inbox'\)/.test(refreshInboxBody));
+  && /const\s+stillCurrent\s*=\s*isCurrentInboxInstance\(\)/.test(refreshInboxBody)
+  && /if\s*\(!stillCurrent \|\| epoch !== readEpoch\) return/.test(refreshInboxBody));
+expect('exact route parsing rejects prefix lookalikes while preserving query parameters',
+  /window\.location\.hash \|\| ''/.test(currentRoutePathBody)
+  && /fullPath\.split\('\?'\)\[0\]/.test(currentRoutePathBody)
+  && /getCurrentRoutePath\(\) !== '\/inbox'/.test(currentInstanceBody)
+  && !/startsWith\('#\/inbox'\)/.test(inbox));
+expect('current-instance predicate binds router generation + this mounted root identity',
+  /renderContext\s*&&\s*typeof\s+renderContext\.isCurrent\s*===\s*'function'/.test(inboxBody)
+  && /renderContext\.isCurrent/.test(inboxBody)
+  && /root\.isConnected/.test(currentInstanceBody)
+  && /appRoot\.contains\(root\)/.test(currentInstanceBody)
+  && /root\.parentNode === null/.test(currentInstanceBody)
+  && /!hasMounted/.test(currentInstanceBody));
+expect('loadResource receives the exact same current-instance predicate used after await',
+  /isActive:\s*isCurrentInboxInstance/.test(refreshInboxBody)
+  && /const\s+stillCurrent\s*=\s*isCurrentInboxInstance\(\)/.test(refreshInboxBody));
+const postAwaitGuardIndex = refreshInboxBody.indexOf('const stillCurrent = isCurrentInboxInstance()');
+const pendingClearIndex = refreshInboxBody.indexOf('readPending = false');
+const resultBranchIndex = refreshInboxBody.indexOf('if (result === INBOX_READ_FAILED)');
+const focusSnapshotIndex = refreshInboxBody.indexOf('const focusSnapshot = captureScreenFocus()');
+expect('post-await current-instance guard precedes state, result, DOM and focus settlement',
+  postAwaitGuardIndex !== -1
+  && pendingClearIndex > postAwaitGuardIndex
+  && resultBranchIndex > pendingClearIndex
+  && focusSnapshotIndex > resultBranchIndex);
 expect('recognized fixtures bypass demo seeding and real Inbox reads',
   /if\s*\(!fixtureMode\)\s*ensureDemoResponseOrder\(\)/.test(inboxBody)
-  && /if\s*\(fixtureMode \|\| readPending\) return/.test(refreshInboxBody));
+  && /if\s*\(fixtureMode \|\| readPending \|\| !isCurrentInboxInstance\(\)\) return/.test(refreshInboxBody));
+expect('loaded fixture cards are inert while normal-runtime cards stay interactive',
+  /visible\.map\(\(item\) => renderItem\(item, !fixtureMode\)\)\.join\(''\)/.test(renderListBody));
 expect('fixture navigation is inert through openHref()', /if\s*\(!href \|\| fixtureMode\) return/.test(openHrefBody));
 expect('fixture empty CTA is disabled and normal empty copy is reused',
   /renderEmpty\(activeTab, fixtureMode\)/.test(inbox)
@@ -289,7 +340,24 @@ expect('final audit repair keeps badge geometry in a scoped slot while preservin
   && /class="bd-badge accent inbox-unread-badge" data-inbox-unread-badge hidden/.test(inbox)
   && !/inbox-unread-badge"[^>]*style=/.test(inbox)
   && /\.screen--inbox\s+\.inbox-unread-slot\s*\{[\s\S]*?width:\s*36px;[\s\S]*?min-width:\s*36px;[\s\S]*?flex-shrink:\s*0;[\s\S]*?\}/.test(inboxCss)
-  && /\.screen--inbox\s+\.inbox-read-body\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?\}/.test(inboxCss));
+  && /display:\s*flex;/.test(inboxReadBodyCss)
+  && /flex-direction:\s*column;/.test(inboxReadBodyCss));
+expect('the exact scoped Inbox read-body rule restores 12px vertical spacing',
+  /gap:\s*12px;/.test(inboxReadBodyCss));
+expect('02F-R1 bumps the service worker for the two changed precached Inbox assets',
+  /const\s+VERSION\s*=\s*'v321'/.test(sw)
+  && /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw)
+  && /['"]\.\/styles\/inbox_02f\.css['"]/.test(sw));
+expect('BD-INBOX-01 documents fixtures, Retry ownership and stale-settlement boundary',
+  /### BD-INBOX-01/.test(inboxContract)
+  && /loading \\?\| loaded \\?\| empty \\?\| error/.test(inboxContract)
+  && /Deterministic fixtures/.test(inboxContract)
+  && /shell mounts synchronously before the initial read settles/.test(inboxContract)
+  && /background refresh is non-destructive on failure/.test(inboxContract)
+  && /Retry progress belongs to/.test(inboxContract)
+  && /router render generation, exact `\/inbox` route and mounted-root identity\/connectivity guard/.test(inboxContract)
+  && /Loaded fixture cards expose no enabled button semantics or focus target/.test(inboxContract)
+  && /Domain boundary/.test(inboxContract));
 expect('02F loaded message fixture uses representative actor/role metadata without duplicate Сообщение copy',
   /id:\s*'inbox-fixture-message'[\s\S]{0,180}actor:\s*'Алексей М\.'[\s\S]{0,120}actorRole:\s*'Водитель'/.test(fixtureItemsBody)
   && !/id:\s*'inbox-fixture-message'[\s\S]{0,220}actorRole:\s*'Сообщение'/.test(fixtureItemsBody));
