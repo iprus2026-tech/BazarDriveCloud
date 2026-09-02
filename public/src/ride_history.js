@@ -117,6 +117,35 @@ export function saveRideHistoryEntry(entry) {
   return stamped;
 }
 
+// PR #940 review-fix — a completed passenger screen persists history as
+// soon as it renders. A later participant-authorized Ride GET can prove
+// that the actual terminal outcome was CANCELED/NO_SHOW instead. Remove
+// exactly that now-false role+trip entry while preserving the opposite
+// role and every sibling trip. Absence/malformed storage is a no-op, so
+// this helper is idempotent and never turns an unreadable store into [].
+export function removeRideHistoryEntry(identity) {
+  if (!isPlainObject(identity)) return false;
+  const { role, tripId } = identity;
+  if (!ROLE_SCOPED_HISTORY.has(role) || typeof tripId !== 'string' || !tripId) return false;
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return false;
+    let removed = false;
+    const next = parsed.filter((entry) => {
+      if (!isPlainObject(entry) || entry.role !== role || entry.tripId !== tripId) return true;
+      removed = true;
+      return false;
+    });
+    if (!removed) return false;
+    return writeStore(next);
+  } catch {
+    return false;
+  }
+}
+
 export function clearRideHistory() {
   try { localStorage.removeItem(HISTORY_KEY); } catch {}
 }

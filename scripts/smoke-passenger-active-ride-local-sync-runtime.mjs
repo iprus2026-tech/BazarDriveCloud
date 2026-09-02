@@ -534,6 +534,16 @@ const activeRide = (await import('../public/src/screens/active_ride.js')).defaul
 // mutation-sensitive proof for that branch's decision logic — real
 // execution of the real function, not source-text pattern matching.
 const { arrivingDropoffAmount } = await import('../public/src/screens/active_ride_passenger.js');
+const {
+  getOrderById,
+  countCompletedPassengerTrips,
+  reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+} = await import('../public/src/mock_api.js');
+const {
+  loadRideHistory,
+  saveRideHistoryEntry,
+  removeRideHistoryEntry,
+} = await import('../public/src/ride_history.js');
 
 // ─────────────────────────────────────────────────────────────────────────
 // ── Test helpers ─────────────────────────────────────────────────────────
@@ -569,12 +579,14 @@ function baseRide(tripId, status, overrides = {}) {
   };
 }
 
+function seedCanonicalOrders(...orders) {
+  localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify(orders));
+}
+
 function seedHandedOffOrder(...pairs) {
   // pairs: [[orderId, tripId], ...] newest (index 0) first, matching
   // loadRideOrdersRaw()'s documented newest-first contract.
-  localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify(
-    pairs.map(([id]) => ({ id, status: 'ACCEPTED' })),
-  ));
+  seedCanonicalOrders(...pairs.map(([id]) => ({ id, status: 'ACCEPTED' })));
 }
 function currentSheet() { return app.querySelector('.active-ride-passenger__sheet'); }
 function currentRoot() { return app.querySelector('.active-ride-passenger, .passenger-cancel-fallback'); }
@@ -2215,7 +2227,12 @@ globalThis.fetch = (url) => {
   }
   return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
 };
-seedHandedOffOrder(['ordLL', 'trip_ordLL']);
+seedCanonicalOrders({
+  id: 'ordLL',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
 saveActiveRide(baseRide('trip_ordLL', RIDE_STATUS.CANCELED, {
   timestamps: { createdAt: new Date().toISOString(), canceledAt: new Date().toISOString() },
   cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept', comment: '' },
@@ -2245,8 +2262,21 @@ const storedAfterS35 = findActiveRide('trip_ordLL');
 expect('S35 — FIX: the STORED record now shows status=COMPLETED with the server\'s own completedAt timestamp, and canceledAt cleared',
   storedAfterS35?.status === RIDE_STATUS.COMPLETED
     && storedAfterS35?.timestamps?.completedAt === serverCompletedAt35
-    && storedAfterS35?.timestamps?.canceledAt == null,
+    && storedAfterS35?.timestamps?.canceledAt == null
+    && storedAfterS35?.cancel == null,
   JSON.stringify(storedAfterS35?.timestamps));
+const canonicalAfterS35 = getOrderById('ordLL');
+const tripCountsAfterS35 = countCompletedPassengerTrips();
+const historyAfterS35 = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordLL');
+expect('S35 — the server-confirmed COMPLETED outcome overrides an opposite-terminal CANCELED canonical order and uses the server timestamp',
+  canonicalAfterS35?.status === RIDE_STATUS.COMPLETED
+    && canonicalAfterS35?.statusUpdatedAt === serverCompletedAt35,
+  JSON.stringify(canonicalAfterS35));
+expect('S35 — profile trip counts immediately observe the reconciled canonical COMPLETED order',
+  tripCountsAfterS35.total === 1 && tripCountsAfterS35.thisWeek === 1,
+  JSON.stringify(tripCountsAfterS35));
+expect('S35 — terminal history uses the confirmed fare, never a local/demo ride.price',
+  historyAfterS35?.fare === '700 ₽', JSON.stringify(historyAfterS35));
 location.hash = '#/welcome-reload-reset-' + Math.random();
 await tick();
 app.replaceChildren();
@@ -2265,6 +2295,54 @@ reset();
 // thread D (P2), the symmetric direction — local COMPLETED vs server
 // CANCELED. ──
 reset();
+localStorage.setItem('bazardrive.ride_history.v1', '{malformed');
+const malformedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — targeted history deletion is a no-op on malformed storage and preserves the unreadable payload for explicit recovery',
+  malformedHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === '{malformed');
+reset();
+localStorage.setItem('bazardrive.ride_history.v1', '{"legacy":"non-array"}');
+const nonArrayHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — targeted history deletion is also a no-op on valid non-array JSON',
+  nonArrayHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === '{"legacy":"non-array"}');
+reset();
+const legacySibling36 = { role: 'passenger', tripId: 'trip_legacy_sibling36', marker: 'legacy-object' };
+localStorage.setItem('bazardrive.ride_history.v1', JSON.stringify([
+  { role: 'passenger', tripId: 'trip_target36', marker: 'remove-me' },
+  'legacy-string-sibling',
+  null,
+  legacySibling36,
+]));
+const mixedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_target36',
+});
+expect('S36 pre — targeted deletion preserves opposite/legacy sibling array elements byte-for-byte in order',
+  mixedHistoryRemoval36 === true
+    && localStorage.getItem('bazardrive.ride_history.v1') === JSON.stringify([
+      'legacy-string-sibling',
+      null,
+      legacySibling36,
+    ]),
+  localStorage.getItem('bazardrive.ride_history.v1'));
+reset();
+saveRideHistoryEntry({ role: 'passenger', tripId: 'trip_sibling36', marker: 'sibling' });
+const absentHistoryRawBefore36 = localStorage.getItem('bazardrive.ride_history.v1');
+const absentHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — absent role+trip deletion is idempotent and leaves the history serialization unchanged',
+  absentHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === absentHistoryRawBefore36);
+reset();
 globalThis.__BD_API_BASE__ = 'https://fake.test';
 let resolveFetch36;
 globalThis.fetch = (url) => {
@@ -2273,10 +2351,33 @@ globalThis.fetch = (url) => {
   }
   return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
 };
-seedHandedOffOrder(['ordMM', 'trip_ordMM']);
+seedCanonicalOrders({
+  id: 'ordMM',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
 saveActiveRide(baseRide('trip_ordMM', RIDE_STATUS.COMPLETED, {
   timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
 }));
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordMM',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'false-passenger-completed',
+});
+saveRideHistoryEntry({
+  role: 'driver',
+  tripId: 'trip_ordMM',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'same-trip-opposite-role',
+});
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_sibling36',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'sibling-trip',
+});
 mountPassenger();
 await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordMM');
 const serverCanceledAt36 = new Date().toISOString();
@@ -2303,8 +2404,33 @@ const storedAfterS36 = findActiveRide('trip_ordMM');
 expect('S36 — FIX: the STORED record now shows status=CANCELED with the server\'s own canceledAt timestamp, and completedAt cleared',
   storedAfterS36?.status === RIDE_STATUS.CANCELED
     && storedAfterS36?.timestamps?.canceledAt === serverCanceledAt36
-    && storedAfterS36?.timestamps?.completedAt == null,
+    && storedAfterS36?.timestamps?.completedAt == null
+    && storedAfterS36?.cancel?.by === 'driver',
   JSON.stringify(storedAfterS36?.timestamps));
+const canonicalAfterS36 = getOrderById('ordMM');
+expect('S36 — the server-confirmed CANCELED outcome overrides an opposite-terminal COMPLETED canonical order and removes it from completed-trip counts',
+  canonicalAfterS36?.status === RIDE_STATUS.CANCELED
+    && canonicalAfterS36?.statusUpdatedAt === serverCanceledAt36
+    && countCompletedPassengerTrips().total === 0,
+  JSON.stringify(canonicalAfterS36));
+const historyAfterS36 = loadRideHistory();
+expect('S36 — authoritative CANCELED removes only the false passenger COMPLETED row, preserving same-trip driver history and passenger siblings',
+  !historyAfterS36.some((entry) => entry?.role === 'passenger' && entry?.tripId === 'trip_ordMM')
+    && historyAfterS36.some((entry) => entry?.role === 'driver'
+      && entry?.tripId === 'trip_ordMM'
+      && entry?.marker === 'same-trip-opposite-role')
+    && historyAfterS36.some((entry) => entry?.role === 'passenger'
+      && entry?.tripId === 'trip_sibling36'
+      && entry?.marker === 'sibling-trip'),
+  JSON.stringify(historyAfterS36));
+const historyRawBeforeRepeat36 = localStorage.getItem('bazardrive.ride_history.v1');
+const repeatedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordMM',
+});
+expect('S36 — repeating the already-applied passenger history correction is a no-op with no serialization churn',
+  repeatedHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === historyRawBeforeRepeat36);
 location.hash = '#/welcome-reload-reset-' + Math.random();
 await tick();
 app.replaceChildren();
@@ -2319,14 +2445,538 @@ delete globalThis.__BD_API_BASE__;
 delete globalThis.fetch;
 reset();
 
-// S22/S22b/S23b/S24/S24b/S24c/S25/S26/S26b/S27/S27b/S29/S34/S34b/S35/S36 are
-// backend-enabled with a non-terminal ride (S23b/S27/S27b/S35/S36 are
+// ── Scenario 37 — latest PR #940 P2: the terminal status can agree while
+// cancellation ownership differs. The server actor/reason must replace the
+// locally persisted passenger cancellation and survive backend-off reload. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch37;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch37 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordNN',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordNN', RIDE_STATUS.CANCELED, {
+  timestamps: { createdAt: new Date().toISOString(), canceledAt: '2026-01-01T00:00:00.000Z' },
+  cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept', comment: 'stale-local' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordNN');
+const serverCanceledAt37 = new Date().toISOString();
+resolveFetch37({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordNN',
+      status: RIDE_STATUS.CANCELED,
+      role: 'passenger',
+      driver: { name: 'Водитель Отменил', initials: null, rating: '4,90', car: 'Kia K5' },
+      passenger: { name: 'Анна П.', initials: 'АП', phoneMasked: null },
+      route: { pickupLabel: 'Точка 37А', dropoffLabel: 'Точка 37Б' },
+      order: { offerPrice: '710 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt37 },
+      cancel: { by: 'driver', reason: 'driver_emergency' },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS37 = findActiveRide('trip_ordNN');
+const cancelText37 = app.querySelector('.passenger-cancel-fallback__text')?.textContent || '';
+expect('S37 — same-status server CANCELED replaces stale passenger cancel ownership/reason and drops the local-only comment',
+  storedAfterS37?.cancel?.by === 'driver'
+    && storedAfterS37?.cancel?.reason === 'driver_emergency'
+    && !Object.hasOwn(storedAfterS37?.cancel || {}, 'comment')
+    && cancelText37.includes('Водитель отменил'),
+  JSON.stringify({ cancel: storedAfterS37?.cancel, cancelText37 }));
+expect('S37 — same-status canonical cancellation adopts the server timestamp',
+  getOrderById('ordNN')?.statusUpdatedAt === serverCanceledAt37,
+  JSON.stringify(getOrderById('ordNN')));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordNN');
+expect('S37 reload — backend-off copy still attributes cancellation to the driver',
+  (app.querySelector('.passenger-cancel-fallback__text')?.textContent || '').includes('Водитель отменил'));
+reset();
+
+// ── Scenario 38 — canonical orders do not expose NO_SHOW, so an
+// authoritative NO_SHOW Ride projects to canonical CANCELED even across an
+// opposite local COMPLETED terminal. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch38;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch38 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordOO',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordOO', RIDE_STATUS.COMPLETED, {
+  timestamps: { createdAt: new Date().toISOString(), completedAt: '2026-01-01T00:00:00.000Z' },
+}));
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordOO',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'false-passenger-no-show',
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordOO');
+const serverCanceledAt38 = new Date().toISOString();
+resolveFetch38({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordOO',
+      status: RIDE_STATUS.NO_SHOW,
+      role: 'passenger',
+      driver: { name: 'Водитель No Show', initials: null, rating: '4,80', car: null },
+      passenger: { name: 'Анна П.', initials: 'АП', phoneMasked: null },
+      route: { pickupLabel: 'Точка 38А', dropoffLabel: 'Точка 38Б' },
+      order: { offerPrice: '720 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt38 },
+      cancel: { by: 'driver', reason: 'passenger_no_show' },
+    },
+  }),
+});
+await tick(12);
+expect('S38 — server NO_SHOW persists on the active Ride and maps to canonical CANCELED with the server timestamp',
+  findActiveRide('trip_ordOO')?.status === RIDE_STATUS.NO_SHOW
+    && getOrderById('ordOO')?.status === RIDE_STATUS.CANCELED
+    && getOrderById('ordOO')?.statusUpdatedAt === serverCanceledAt38
+    && countCompletedPassengerTrips().total === 0,
+  JSON.stringify({ ride: findActiveRide('trip_ordOO'), order: getOrderById('ordOO') }));
+expect('S38 — NO_SHOW uses the truthful no-show renderer',
+  app.querySelector('.passenger-cancel-fallback')?.dataset.variant === 'no_show');
+expect('S38 — authoritative NO_SHOW removes the stale passenger COMPLETED history row',
+  !loadRideHistory().some((entry) => entry?.role === 'passenger' && entry?.tripId === 'trip_ordOO'),
+  JSON.stringify(loadRideHistory()));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 39 — latest PR #940 fresh-device P2. No active Ride and no
+// canonical order exist. The explicit terminal URL creates the adversarial
+// SIM_AUDIT fallback, but the successful GET must produce one server-only
+// projection for storage, first history save, and backend-off reload. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch39;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch39 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordPP');
+const serverCompletedAt39 = new Date().toISOString();
+resolveFetch39({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordPP',
+      status: RIDE_STATUS.COMPLETED,
+      role: 'passenger',
+      driver: { name: 'Сергей Верный', initials: null, rating: '4,99', car: 'Kia K5' },
+      passenger: { name: 'Руслан П.', initials: 'РП', rating: null, phoneMasked: '+7 ... 00-39' },
+      route: { pickupLabel: 'Серверная 39А', dropoffLabel: 'Серверная 39Б', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '730 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: serverCompletedAt39 },
+      cancel: { by: null, reason: null },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS39 = findActiveRide('trip_ordPP');
+const historyAfterS39 = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordPP');
+expect('S39 — fresh-device first-save stores only the authoritative terminal projection and derives canonical orderId from the confirmed tripId',
+  storedAfterS39?.status === RIDE_STATUS.COMPLETED
+    && storedAfterS39?.orderId === 'ordPP'
+    && storedAfterS39?.serverConfirmedTerminal === true
+    && storedAfterS39?.driver?.name === 'Сергей Верный'
+    && storedAfterS39?.driver?.initials === 'СВ'
+    && storedAfterS39?.vehicle?.model === 'Kia K5'
+    && storedAfterS39?.route?.pickupLabel === 'Серверная 39А'
+    && storedAfterS39?.order?.offerPrice === '730 ₽'
+    && storedAfterS39?.ride == null
+    && storedAfterS39?.cancel == null
+    && storedAfterS39?.localProvenance == null
+    && storedAfterS39?.driver?.onlineLabel == null
+    && storedAfterS39?.passenger?.luggage == null
+    && storedAfterS39?.route?.currentInstruction == null
+    && storedAfterS39?.order?.rate == null,
+  JSON.stringify(storedAfterS39));
+expect('S39 — the very first COMPLETED render/history save uses exact server identity, route, vehicle and fare; demo ride.price never wins',
+  historyAfterS39?.driver?.name === 'Сергей Верный'
+    && historyAfterS39?.vehicle?.model === 'Kia K5'
+    && historyAfterS39?.route?.pickupLabel === 'Серверная 39А'
+    && historyAfterS39?.route?.dropoffLabel === 'Серверная 39Б'
+    && historyAfterS39?.fare === '730 ₽',
+  JSON.stringify(historyAfterS39));
+expect('S39 — a fresh-device server Ride does not fabricate a missing canonical order',
+  getOrderById('ordPP') == null);
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordPP');
+const historyAfterS39Reload = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordPP');
+const completedTextAfterS39Reload = app.querySelector('.active-ride-passenger--complete')?.textContent || '';
+expect('S39 reload — durable server-terminal provenance keeps both DOM and history authoritative; no demo plate/card/stats return',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && historyAfterS39Reload?.driver?.name === 'Сергей Верный'
+    && historyAfterS39Reload?.fare === '730 ₽'
+    && !completedTextAfterS39Reload.includes('А 124 ВВ 77')
+    && !completedTextAfterS39Reload.includes('4417')
+    && !completedTextAfterS39Reload.includes('Тинькофф')
+    && !completedTextAfterS39Reload.includes('42 мин')
+    && !completedTextAfterS39Reload.includes('38 км'),
+  JSON.stringify({ history: historyAfterS39Reload, completedTextAfterS39Reload }));
+reset();
+
+// ── Scenario 40 — fresh-device CANCELED uses the same first-save path and
+// preserves the server cancellation actor for a later backend-off reload. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch40;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch40 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordQQ');
+const serverCanceledAt40 = new Date().toISOString();
+resolveFetch40({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordQQ',
+      status: RIDE_STATUS.CANCELED,
+      role: 'passenger',
+      driver: { name: 'Водитель Свежий', initials: null, rating: '4,70', car: null },
+      passenger: { name: 'Руслан П.', initials: 'РП', phoneMasked: null },
+      route: { pickupLabel: 'Серверная 40А', dropoffLabel: 'Серверная 40Б' },
+      order: { offerPrice: '740 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt40 },
+      cancel: { by: 'driver', reason: 'driver_emergency' },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS40 = findActiveRide('trip_ordQQ');
+expect('S40 — fresh-device CANCELED first-save persists the server actor and no demo Ride payload',
+  storedAfterS40?.status === RIDE_STATUS.CANCELED
+    && storedAfterS40?.cancel?.by === 'driver'
+    && storedAfterS40?.cancel?.reason === 'driver_emergency'
+    && storedAfterS40?.ride == null
+    && storedAfterS40?.route?.pickupLabel === 'Серверная 40А',
+  JSON.stringify(storedAfterS40));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordQQ');
+expect('S40 reload — backend-off copy still attributes the fresh-device cancellation to the driver',
+  (app.querySelector('.passenger-cancel-fallback__text')?.textContent || '').includes('Водитель отменил'));
+reset();
+
+// ── Scenario 41 — inherited Object.prototype keys are not Ride statuses.
+// Both the canonical helper and the screen-level terminal projection must
+// reject them without persisting a Ride or corrupting an existing order. ──
+reset();
+const canonicalPrototypeTimestamp41 = '2026-01-01T00:00:00.000Z';
+seedCanonicalOrders({
+  id: 'ordRR',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: canonicalPrototypeTimestamp41,
+});
+const directPrototypeResult41 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordRR',
+  status: 'toString',
+  timestamps: {},
+}, 'trip_ordRR');
+const directArrayStatusResult41 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordRR',
+  status: [RIDE_STATUS.COMPLETED],
+  timestamps: { completedAt: new Date().toISOString() },
+}, 'trip_ordRR');
+expect('S41 direct — inherited keys and coercible non-string statuses are rejected by canonical terminal reconciliation without dropping the order status',
+  directPrototypeResult41 == null
+    && directArrayStatusResult41 == null
+    && getOrderById('ordRR')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordRR')?.statusUpdatedAt === canonicalPrototypeTimestamp41,
+  JSON.stringify(getOrderById('ordRR')));
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch41;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch41 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordRR');
+resolveFetch41({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordRR',
+      status: 'toString',
+      role: 'passenger',
+      timestamps: { updatedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S41 screen — an inherited status key may use the existing unsupported-status stub, but never the authoritative terminal persistence bypass',
+  findActiveRide('trip_ordRR') == null
+    && getOrderById('ordRR')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordRR')?.statusUpdatedAt === canonicalPrototypeTimestamp41,
+  JSON.stringify({ ride: findActiveRide('trip_ordRR'), order: getOrderById('ordRR') }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 42 — runInitialRead rejects a coercible non-string status
+// before ownership or either persistence boundary is reached. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch42;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch42 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+const canonicalArrayTimestamp42 = '2026-01-02T00:00:00.000Z';
+seedCanonicalOrders({
+  id: 'ordSS',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: canonicalArrayTimestamp42,
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordSS');
+resolveFetch42({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordSS',
+      status: [RIDE_STATUS.COMPLETED],
+      role: 'passenger',
+      timestamps: { completedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S42 — a coercible non-string server status reaches ERROR without materializing a Ride or mutating the canonical order',
+  currentRoot()?.dataset.readState === 'error'
+    && findActiveRide('trip_ordSS') == null
+    && getOrderById('ordSS')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordSS')?.statusUpdatedAt === canonicalArrayTimestamp42,
+  JSON.stringify({ readState: currentRoot()?.dataset.readState, ride: findActiveRide('trip_ordSS'), order: getOrderById('ordSS') }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 43 — invalid/missing terminal timestamps never poison weekly
+// counts, and one effective fallback timestamp is shared by the Ride and
+// canonical order and remains stable across an identical repeat GET. ──
+const siblingOrder43 = {
+  id: 'ordSibling43',
+  status: RIDE_STATUS.ACCEPTED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-03T00:00:00.000Z',
+};
+const legacyInvalidOrder43 = {
+  id: 'ordLegacy43',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: 'not-a-date',
+};
+seedCanonicalOrders({
+  id: 'ordTT',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+}, siblingOrder43, legacyInvalidOrder43);
+const invalidTimestampResult43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordTT',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: 'not-a-date' },
+}, 'trip_ordTT');
+await new Promise((resolve) => setTimeout(resolve, 5));
+const invalidTimestampRepeat43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordTT',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: 'not-a-date' },
+}, 'trip_ordTT');
+const sameStatusInvalidResult43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordLegacy43',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: null },
+}, 'trip_ordLegacy43');
+expect('S43 direct — invalid server/existing timestamps fall back to finite idempotent clocks and leave sibling orders byte-for-byte intact',
+  invalidTimestampResult43?.status === RIDE_STATUS.COMPLETED
+    && invalidTimestampResult43?.statusUpdatedAt !== 'not-a-date'
+    && Number.isFinite(Date.parse(invalidTimestampResult43?.statusUpdatedAt || ''))
+    && invalidTimestampRepeat43?.statusUpdatedAt === invalidTimestampResult43?.statusUpdatedAt
+    && sameStatusInvalidResult43?.statusUpdatedAt !== 'not-a-date'
+    && Number.isFinite(Date.parse(sameStatusInvalidResult43?.statusUpdatedAt || ''))
+    && JSON.stringify(getOrderById('ordSibling43')) === JSON.stringify(siblingOrder43),
+  JSON.stringify({
+    invalidTimestampResult43,
+    invalidTimestampRepeat43,
+    sameStatusInvalidResult43,
+    sibling: getOrderById('ordSibling43'),
+  }));
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+const invalidTimestampServerRide43 = {
+  tripId: 'trip_ordUU',
+  status: RIDE_STATUS.COMPLETED,
+  role: 'passenger',
+  passenger: { name: 'Пассажир 43', initials: 'П4', phoneMasked: null },
+  driver: { name: 'Водитель 43', initials: null, rating: '4,43', car: null },
+  route: { pickupLabel: 'Точка 43А', dropoffLabel: 'Точка 43Б' },
+  order: { offerPrice: '743 ₽' },
+  timestamps: { createdAt: '2026-09-02T01:00:00.000Z', completedAt: 'not-a-date' },
+  cancel: { by: null, reason: null },
+};
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ride: invalidTimestampServerRide43 }),
+    });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordUU',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordUU');
+await tick(12);
+const firstMissingRideTimestamp43 = findActiveRide('trip_ordUU')?.timestamps?.completedAt;
+const firstMissingOrderTimestamp43 = getOrderById('ordUU')?.statusUpdatedAt;
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+await new Promise((resolve) => setTimeout(resolve, 5));
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordUU');
+await tick(12);
+expect('S43 screen — invalid server timestamp yields one shared Ride/order timestamp and an identical repeat GET does not restamp either store',
+  Number.isFinite(Date.parse(firstMissingRideTimestamp43 || ''))
+    && firstMissingOrderTimestamp43 === firstMissingRideTimestamp43
+    && findActiveRide('trip_ordUU')?.timestamps?.completedAt === firstMissingRideTimestamp43
+    && getOrderById('ordUU')?.statusUpdatedAt === firstMissingOrderTimestamp43,
+  JSON.stringify({
+    firstMissingRideTimestamp43,
+    firstMissingOrderTimestamp43,
+    secondRideTimestamp: findActiveRide('trip_ordUU')?.timestamps?.completedAt,
+    secondOrderTimestamp: getOrderById('ordUU')?.statusUpdatedAt,
+  }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 44 — a participant-authorized standalone Ride id still gets
+// the clean terminal projection; only canonical-order reconciliation is
+// intentionally restricted to trip_<orderId>. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+const standaloneTrip44 = '__proto__';
+const standaloneCompletedAt44 = '2026-09-02T02:00:00.000Z';
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ride: {
+          tripId: standaloneTrip44,
+          status: RIDE_STATUS.COMPLETED,
+          role: 'passenger',
+          passenger: { name: 'Standalone Passenger', initials: 'SP', phoneMasked: null },
+          driver: { name: 'Standalone Driver', initials: null, rating: '4,44', car: null },
+          route: { pickupLabel: 'Standalone A', dropoffLabel: 'Standalone B' },
+          order: { offerPrice: '744 ₽' },
+          timestamps: { createdAt: '2026-09-02T01:30:00.000Z', completedAt: standaloneCompletedAt44 },
+          cancel: { by: null, reason: null },
+        },
+      }),
+    });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate(`/active-ride?role=passenger&status=COMPLETED&tripId=${standaloneTrip44}`);
+await tick(12);
+const storedStandalone44 = findActiveRide(standaloneTrip44);
+expect('S44 — standalone terminal Ride persists the sanitized authoritative projection without fabricating canonical order linkage',
+  storedStandalone44?.tripId === standaloneTrip44
+    && storedStandalone44?.orderId == null
+    && storedStandalone44?.serverConfirmedTerminal === true
+    && storedStandalone44?.timestamps?.completedAt === standaloneCompletedAt44
+    && storedStandalone44?.driver?.name === 'Standalone Driver'
+    && storedStandalone44?.ride == null,
+  JSON.stringify(storedStandalone44));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate(`/active-ride?role=passenger&status=COMPLETED&tripId=${standaloneTrip44}`);
+const standaloneReloadText44 = app.querySelector('.active-ride-passenger--complete')?.textContent || '';
+expect('S44 reload — standalone backend-off render keeps authoritative neutral fields and never resurrects demo card/plate/stats',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && !standaloneReloadText44.includes('А 124 ВВ 77')
+    && !standaloneReloadText44.includes('4417')
+    && !standaloneReloadText44.includes('42 мин')
+    && !standaloneReloadText44.includes('38 км'),
+  standaloneReloadText44);
+reset();
+
+// S22/S22b/S23b/S24/S24b/S24c/S25/S26/S26b/S27/S27b/S29/S34/S34b/S35/S36/S37/S38/S39/S40/S41/S42/S43/S44 are
+// backend-enabled with a non-terminal ride (S23b/S27/S27b/S35/S36/S37/S38/S39/S40/S41/S43/S44 are
 // terminal and settle synchronously, no poll/recovery timer), so most of
 // these successful merges (or S25/S34's scheduled recovery) start a real
 // poll setInterval / recovery timer. Every prior scenario transition tears
 // the previous mount down via the NEXT scenario's own reset() (location.hash's
 // setter dispatches 'hashchange' -> teardownPassengerReads() ->
-// stopPassengerRidePoll()'s clearInterval). S36 is now the last scenario
+// stopPassengerRidePoll()'s clearInterval). S44 is now the last scenario
 // in the file, so a final reset() is called here to clean up its own poll.
 reset();
 

@@ -7,6 +7,7 @@ const passengerSheets = read('../public/src/screens/active_ride_passenger_sheets
 const activeRide = read('../public/src/screens/active_ride.js');
 const app = read('../public/src/app.js');
 const mockApi = read('../public/src/mock_api.js');
+const rideHistory = read('../public/src/ride_history.js');
 const css = read('../public/styles/cloud.css');
 const sw = read('../public/sw.js');
 const issues = [];
@@ -64,6 +65,7 @@ expect('backend read is explicitly gated out of fixture mode',
 const usableSource = functionBody(passenger, 'hasUsablePassengerRideSource');
 expect('persisted local fallback recognizes canonical and handoff sources',
   usableSource.includes('loadCanonicalActiveRide')
+    && usableSource.includes('canonicalRide.tripId === tripId')
     && usableSource.includes('loadDriverHandoffSnapshot'));
 expect('built-in demo is renderable fallback but remains UNCONFIRMED before backend settlement',
   passenger.includes('const hasPersistedLocalRide = !fixture && hasUsablePassengerRideSource(tripId)')
@@ -215,10 +217,12 @@ expect('recovery merge preserves a locally-ahead lifecycle status while acceptin
 // trustworthy. Reproduced directly at runtime by the audit: first
 // retryable failure -> ERROR -> recovery GET succeeds with server BEHIND
 // local -> the never-confirmed local status rendered as server-backed.
-expect('runInitialRead computes a single preserveLocallyAheadStatus = recovery && hasConfirmedServerRide guard, read BEFORE either mergeServerRide call site sets hasConfirmedServerRide, and reuses that same variable at BOTH call sites (never bare `recovery` at either)',
+expect('runInitialRead computes a single preserveLocallyAheadStatus = recovery && hasConfirmedServerRide guard, read BEFORE either mergeServerRide fallback sets hasConfirmedServerRide, and reuses that same variable at BOTH call sites (never bare `recovery` at either)',
   initialRead.includes('const preserveLocallyAheadStatus = recovery && hasConfirmedServerRide;')
     && initialRead.indexOf('const preserveLocallyAheadStatus = recovery && hasConfirmedServerRide;') < initialRead.indexOf('hasConfirmedServerRide = true;')
-    && (initialRead.match(/ride = mergeServerRide\(srv, preserveLocallyAheadStatus\)/g) || []).length === 2
+    && (initialRead.match(/mergeServerRide\(srv, preserveLocallyAheadStatus\)/g) || []).length === 2
+    && initialRead.includes('ride = terminalProjection || mergeServerRide(srv, preserveLocallyAheadStatus);')
+    && initialRead.includes('ride = mergeServerRide(srv, preserveLocallyAheadStatus);')
     && !initialRead.includes('mergeServerRide(srv, recovery)'));
 // #939 focused pre-commit audit round 8 — non-regression for the
 // LEGITIMATE preserve-local-ahead case (a mount that already confirmed a
@@ -355,8 +359,9 @@ expect('markPassengerRideAuthoritative is defined and marks a NON-enumerable, in
     && markAuthoritative.includes("value: true")
     && markAuthoritative.includes('enumerable: false')
     && markAuthoritative.includes('Object.defineProperty(mergedRide, \'authoritative\''));
-expect('every mergeServerRide() call site inside runInitialRead immediately marks the result authoritative',
-  (initialRead.match(/ride = mergeServerRide\(srv, preserveLocallyAheadStatus\);\s*\n\s*markPassengerRideAuthoritative\(ride\);/g) || []).length === 2);
+expect('both the terminal projection-or-merge result and the normal merge result are immediately marked authoritative',
+  /ride = terminalProjection \|\| mergeServerRide\(srv, preserveLocallyAheadStatus\);\s*\n\s*markPassengerRideAuthoritative\(ride\);/.test(initialRead)
+    && /ride = mergeServerRide\(srv, preserveLocallyAheadStatus\);\s*\n\s*markPassengerRideAuthoritative\(ride\);/.test(initialRead));
 
 // ── BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — display helpers suppress demo fallbacks only for a
 // server-confirmed (authoritative) ride; a genuinely local/demo ride keeps
@@ -555,12 +560,18 @@ expect('completedStats: duration/distance show the neutral "—" for an authorit
 // stays entirely inside this screen's own scope, reusing the exact same
 // catch-block error handling as any other unusable read instead of
 // duplicating it.
-expect('runInitialRead treats a status-less srv as a malformed response — thrown BEFORE backendRide/ownership are set, and before either mergeServerRide call site could ever run',
-  initialRead.includes("if (!srv.status) {")
-    && initialRead.includes("throw Object.assign(new Error('Malformed ride response: missing status'), {")
+expect('runInitialRead treats a missing, blank or non-string srv.status as malformed — thrown BEFORE backendRide/ownership are set, and before either mergeServerRide call site could ever run',
+  initialRead.includes("if (typeof srv.status !== 'string' || !srv.status.trim()) {")
+    && initialRead.includes("throw Object.assign(new Error('Malformed ride response: invalid status'), {")
     && initialRead.includes("code: 'MALFORMED_RIDE_RESPONSE',")
-    && initialRead.indexOf('if (!srv.status) {') < initialRead.indexOf('backendRide = true;')
-    && initialRead.indexOf('if (!srv.status) {') < initialRead.indexOf('ride = mergeServerRide(srv, preserveLocallyAheadStatus)'));
+    && initialRead.indexOf("if (typeof srv.status !== 'string' || !srv.status.trim()) {") < initialRead.indexOf('backendRide = true;')
+    && initialRead.indexOf("if (typeof srv.status !== 'string' || !srv.status.trim()) {") < initialRead.indexOf('mergeServerRide(srv, preserveLocallyAheadStatus)'));
+expect('runInitialRead rejects a missing/mismatched server tripId before claiming SERVER_BACKED ownership or invoking either authoritative persistence path',
+  initialRead.includes("if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {")
+    && initialRead.includes("throw Object.assign(new Error('Malformed ride response: tripId mismatch'), {")
+    && initialRead.indexOf("if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {") < initialRead.indexOf('backendRide = true;')
+    && initialRead.indexOf("if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {") < initialRead.indexOf('persistPassengerServerConfirmedWaitingProjection(')
+    && initialRead.indexOf("if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {") < initialRead.indexOf('projectPassengerServerConfirmedTerminalRide('));
 // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix (MEDIUM finding) — arrivingDropoffAmount() feeds
 // BOTH authoritative surfaces: renderPassengerRideComplete's "Итого к
 // оплате" (via completedPaymentInfo) and the IN_PROGRESS+ARRIVING_DROPOFF
@@ -650,8 +661,9 @@ expect('mergeServerWaiting/mergeServerRide never call saveActiveRide, updateActi
     && !mergeServer.includes('saveActiveRide(')
     && !mergeServer.includes('updateActiveRideStatus('));
 expect('runInitialRead only merges the server ride after a successful read (srv truthy) — the !srv branch returns before mergeServerRide ever runs',
-  initialRead.includes('const srv = await readManager.run(ride.tripId)')
-    && initialRead.indexOf('if (!srv) {') < initialRead.indexOf('ride = mergeServerRide(srv, preserveLocallyAheadStatus)')
+  initialRead.includes('const requestedTripId = ride.tripId;')
+    && initialRead.includes('const srv = await readManager.run(requestedTripId)')
+    && initialRead.indexOf('if (!srv) {') < initialRead.indexOf('mergeServerRide(srv, preserveLocallyAheadStatus)')
     && /if\s*\(!srv\)\s*\{[\s\S]*?return;[\s\S]*?\}/.test(initialRead));
 
 // ── BD-RIDE-WAITING-01E Codex follow-up — explicit local simulation
@@ -666,6 +678,8 @@ expect('runInitialRead only merges the server ride after a successful read (srv 
 const loadPassengerRideView = functionBody(passenger, 'loadPassengerRideView');
 expect('loadPassengerRideView can stamp localProvenance = \'sim_audit\' on its own simulation fallback (no real snapshot backing it)',
   loadPassengerRideView.includes("ride.localProvenance = 'sim_audit'"));
+expect('loadPassengerRideView rejects inherited/prototype store lookups unless the hydrated Ride is explicitly bound to the exact mounted tripId',
+  loadPassengerRideView.includes('if (ride && ride.tripId !== tripId) ride = null;'));
 expect('mergeServerRide deletes localProvenance from the merged server-backed projection once the server has confirmed the trip is real',
   mergeServer.includes('delete merged.localProvenance;'));
 expect('the localProvenance cleanup lives inside mergeServerRide itself, so it is structurally unreachable from the !srv / 404 / error branches (which return before ever calling mergeServerRide)',
@@ -724,52 +738,157 @@ expect('the generic failure/auth/retryable catch tail does not invoke the server
     return !tail.includes('persistPassengerServerConfirmedWaitingProjection(');
   })());
 
-// #939 focused pre-commit audit round 8 — PR #940 review thread D (P2):
-// persistPassengerServerConfirmedTerminalProjection, the new store-level
-// repair that reconciles a genuine terminal-vs-terminal race (see its own
-// doc comment in the source for the full history). Same base shape as
-// persistPassengerServerConfirmedWaitingProjection (starts from the
-// stored record, deletes localProvenance) but deliberately does NOT
-// persist through saveActiveRide — see the dedicated bypass assertion
-// below.
+// PR #940 review-fix — an authoritative terminal GET now has one
+// server-only projection for rendering/history + the local Ride mirror,
+// plus a separate canonical-order boundary helper. This deliberately does
+// NOT inherit the waiting repair's stored-record spread: doing that here
+// would retain stale cancel ownership and SIM/demo fare/identity fields,
+// including on the very first terminal GET on a fresh device.
+const terminalProjection = functionBody(passenger, 'projectPassengerServerConfirmedTerminalRide');
 const terminalRepair = functionBody(passenger, 'persistPassengerServerConfirmedTerminalProjection');
+const canonicalTerminalRepair = functionBody(mockApi, 'reconcileCanonicalOrderFromAuthoritativeTerminalRide');
+const historyRemoval = functionBody(rideHistory, 'removeRideHistoryEntry');
+expect('projectPassengerServerConfirmedTerminalRide helper is defined',
+  terminalProjection.length > 0);
 expect('persistPassengerServerConfirmedTerminalProjection helper is defined',
   terminalRepair.length > 0);
-expect('the terminal repair reads the existing stored ride via findActiveRide(ride.tripId), and no-ops for a status with no STATUS_TIMESTAMP_FIELD entry or when nothing is stored yet',
-  /const\s+timestampField\s*=\s*STATUS_TIMESTAMP_FIELD\[terminalStatus\]/.test(terminalRepair)
-    && /if\s*\(!timestampField\)\s*return;/.test(terminalRepair)
-    && /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(terminalRepair)
-    && /if\s*\(!storedRide\)\s*return;/.test(terminalRepair));
-expect('the repaired object is based on storedRide — every unrelated field (passenger, driver, vehicle, route, payment, ride, chat, orderId, acceptedSource, waiting) survives from storage untouched',
-  /\{\s*\.\.\.storedRide\s*,/.test(terminalRepair));
-expect('the matching timestamp field is taken from the server\'s OWN raw response (srv.timestamps) when the server actually sent one, falling back to new Date().toISOString() — the same convention updateActiveRideStatus already uses — only when it did not',
-  terminalRepair.includes('const serverTimestamp = srv && srv.timestamps && srv.timestamps[timestampField];')
-    && terminalRepair.includes('timestamps[timestampField] = serverTimestamp || new Date().toISOString();'));
-expect('EVERY OTHER terminal-status timestamp field is explicitly cleared to null — derived from STATUS_TIMESTAMP_FIELD itself (TERMINAL_STATUS_TIMESTAMP_FIELDS), not a hardcoded completedAt/canceledAt pair, so a future terminal status is covered automatically',
-  passenger.includes('const TERMINAL_STATUS_TIMESTAMP_FIELDS = Array.from(new Set(')
-    && passenger.includes('[RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW]')
-    && terminalRepair.includes('for (const field of TERMINAL_STATUS_TIMESTAMP_FIELDS) {')
-    && terminalRepair.includes('if (field === timestampField) continue;')
-    && terminalRepair.includes('timestamps[field] = null;'));
-expect('the repair helper deletes localProvenance from the repaired copy, same as the waiting-projection repair',
-  /delete\s+repaired\.localProvenance;/.test(terminalRepair));
-expect('BYPASS: the terminal repair writes through the RAW store primitives (loadActiveRideStore/saveActiveRideStore), never through saveActiveRide() — saveActiveRide() itself refuses any write that would change an existing TERMINAL record to a DIFFERENT status (confirmed directly against ride_state.js), which is exactly the race this function exists to resolve',
-  terminalRepair.includes('const store = loadActiveRideStore();')
-    && terminalRepair.includes('store[repaired.tripId] = repaired;')
-    && terminalRepair.includes('saveActiveRideStore(store);')
-    && !terminalRepair.includes('saveActiveRide('));
-expect('persistPassengerServerConfirmedTerminalProjection is called with (srv.status, srv) BEFORE swapToTerminalPassengerScreen(ride) — synchronously ahead of syncTerminalStatusIntoUrl/teardown/DOM-swap, inside the SAME authoritative-terminal branch that also sets hasConfirmedServerRide, never reachable from the 404/local-only fallback (which calls swapToTerminalPassengerScreen(ride) directly)',
+expect('reconcileCanonicalOrderFromAuthoritativeTerminalRide helper is exported from the canonical-order module',
+  canonicalTerminalRepair.length > 0
+    && mockApi.includes('export function reconcileCanonicalOrderFromAuthoritativeTerminalRide(serverRide, expectedTripId)'));
+expect('removeRideHistoryEntry is an exported exact role+tripId deletion boundary',
+  historyRemoval.length > 0
+    && rideHistory.includes('export function removeRideHistoryEntry(identity)')
+    && historyRemoval.includes('if (!isPlainObject(identity)) return false;')
+    && historyRemoval.includes('const { role, tripId } = identity;')
+    && historyRemoval.includes('ROLE_SCOPED_HISTORY.has(role)')
+    && historyRemoval.includes("typeof tripId !== 'string'")
+    && historyRemoval.includes('entry.role !== role || entry.tripId !== tripId'));
+expect('history deletion parses the raw array so malformed storage is untouched, legacy siblings survive, and absence is idempotent without a write',
+  historyRemoval.includes('const raw = localStorage.getItem(HISTORY_KEY);')
+    && historyRemoval.includes('const parsed = JSON.parse(raw);')
+    && historyRemoval.includes('if (!Array.isArray(parsed)) return false;')
+    && historyRemoval.includes('const next = parsed.filter(')
+    && historyRemoval.includes('if (!isPlainObject(entry)')
+    && historyRemoval.includes('if (!removed) return false;')
+    && historyRemoval.includes('return writeStore(next);')
+    && historyRemoval.includes('} catch {')
+    && !historyRemoval.includes('clearRideHistory(')
+    && !historyRemoval.includes('removeItem('));
+expect('the terminal projection accepts only a known terminal status for the exact mounted trip id',
+  terminalProjection.includes('PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(srv.status)')
+    && terminalProjection.includes('const timestampField = STATUS_TIMESTAMP_FIELD[srv.status];')
+    && terminalProjection.includes('!serverTripId || serverTripId !== expectedTripId')
+    && terminalProjection.includes('serverTripId !== expectedTripId')
+    && terminalProjection.includes('return null;'));
+expect('the terminal projection is a server-only whitelist: no stored/local Ride spread, demo ride/payment/chat are nulled, and canonical orderId is derived only for trip_ linkage',
+  terminalProjection.includes("orderId: serverTripId.startsWith('trip_')")
+    && terminalProjection.includes("serverTripId.slice('trip_'.length) || null")
+    && terminalProjection.includes('payment: null')
+    && terminalProjection.includes('ride: null')
+    && terminalProjection.includes('chat: null')
+    && terminalProjection.includes('serverConfirmedTerminal: true')
+    && terminalProjection.includes('waiting: mergeServerWaiting(null, srv.waiting)')
+    && !terminalProjection.includes('...storedRide')
+    && !terminalProjection.includes('...ride'));
+expect('the server-only whitelist explicitly projects passenger, driver, route and fare data and derives driver initials from the confirmed server name',
+  terminalProjection.includes('name: serverPassenger.name ?? null')
+    && terminalProjection.includes('name: serverDriver.name ?? null')
+    && terminalProjection.includes('initials: initialsFromName(serverDriver.name ?? null)')
+    && terminalProjection.includes('pickupLabel: serverRoute.pickupLabel ?? null')
+    && terminalProjection.includes('dropoffLabel: serverRoute.dropoffLabel ?? null')
+    && terminalProjection.includes('offerPrice: serverOrder.offerPrice ?? null'));
+const normalizeServerRideTimestamp = functionBody(passenger, 'normalizeServerRideTimestamp');
+expect('the terminal projection validates every persisted server timestamp, clears every opposite-terminal timestamp, and reuses only a prior confirmed same-status fallback before generating now',
+  passenger.includes('const PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES = new Set([')
+    && passenger.includes('RIDE_STATUS.COMPLETED,')
+    && passenger.includes('RIDE_STATUS.CANCELED,')
+    && passenger.includes('RIDE_STATUS.NO_SHOW,')
+    && passenger.includes('const TERMINAL_STATUS_TIMESTAMP_FIELDS = Array.from(new Set(')
+    && passenger.includes('Array.from(PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES)')
+    && passenger.includes("const SERVER_RIDE_TIMESTAMP_FIELDS = Object.freeze([")
+    && normalizeServerRideTimestamp.includes('Number.isFinite(Date.parse(trimmed))')
+    && terminalProjection.includes('timestamps[field] = normalizeServerRideTimestamp(serverTimestamps[field]);')
+    && terminalProjection.includes('for (const field of TERMINAL_STATUS_TIMESTAMP_FIELDS) {')
+    && terminalProjection.includes('if (field === timestampField) continue;')
+    && terminalProjection.includes('timestamps[field] = null;')
+    && terminalProjection.includes('storedRide.serverConfirmedTerminal === true')
+    && terminalProjection.includes('storedRide.status === srv.status')
+    && terminalProjection.includes('normalizeServerRideTimestamp(serverTimestamps[timestampField])')
+    && terminalProjection.includes('|| storedTerminalTimestamp')
+    && terminalProjection.includes('new Date().toISOString()'));
+expect('the terminal projection takes cancellation ownership/reason only from the server and clears cancel data for COMPLETED',
+  terminalProjection.includes('const canceled = srv.status === RIDE_STATUS.CANCELED || srv.status === RIDE_STATUS.NO_SHOW;')
+    && terminalProjection.includes('cancel: canceled ? {')
+    && terminalProjection.includes('by: (srv.cancel && srv.cancel.by) ?? null')
+    && terminalProjection.includes('reason: (srv.cancel && srv.cancel.reason) ?? null')
+    && terminalProjection.includes('} : null'));
+expect('acceptedSource is the only stored identity/linkage metadata allowed into the server-only terminal projection (apart from the guarded same-status timestamp reuse)',
+  terminalProjection.includes('const storedRide = findActiveRide(serverTripId);')
+    && terminalProjection.includes("typeof storedRide.acceptedSource === 'string'")
+    && terminalProjection.includes('projection.acceptedSource = storedRide.acceptedSource.trim();')
+    && !terminalProjection.includes('storedRide.orderId'));
+expect('BYPASS: terminal persistence writes the already-sanitized projection through raw Ride-store primitives, supports first materialization, and never uses saveActiveRide() or spreads the old record',
+  terminalRepair.includes('terminalRide.tripId !== expectedTripId')
+    && terminalRepair.indexOf('terminalRide.tripId !== expectedTripId') < terminalRepair.indexOf('const store = loadActiveRideStore();')
+    && terminalRepair.includes('const store = loadActiveRideStore();')
+    && terminalRepair.includes('[terminalRide.tripId]: { ...terminalRide }')
+    && terminalRepair.includes('saveActiveRideStore(nextStore);')
+    && !terminalRepair.includes('store[terminalRide.tripId] =')
+    && !terminalRepair.includes('saveActiveRide(')
+    && !terminalRepair.includes('findActiveRide('));
+expect('a persisted server terminal carries durable provenance and is re-marked with the non-enumerable authoritative flag on backend-off hydration only for a known terminal status',
+  passenger.includes('ride.serverConfirmedTerminal === true')
+    && passenger.includes('PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(ride.status)')
+    && passenger.includes('markPassengerRideAuthoritative(ride);'));
+expect('canonical terminal reconciliation validates exact trip linkage and maps COMPLETED/CANCELED/NO_SHOW at the mock-api store boundary',
+  canonicalTerminalRepair.includes('serverTripId !== mountedTripId')
+    && canonicalTerminalRepair.includes("!serverTripId.startsWith('trip_')")
+    && canonicalTerminalRepair.includes("const orderId = serverTripId.slice('trip_'.length);")
+    && canonicalTerminalRepair.includes("typeof serverRide.status !== 'string'")
+    && canonicalTerminalRepair.includes('Object.hasOwn(AUTHORITATIVE_RIDE_TERMINAL_ORDER_PROJECTION, serverRide.status)')
+    && mockApi.includes("COMPLETED: Object.freeze({ orderStatus: 'COMPLETED', timestampField: 'completedAt' })")
+    && mockApi.includes("CANCELED: Object.freeze({ orderStatus: 'CANCELED', timestampField: 'canceledAt' })")
+    && mockApi.includes("NO_SHOW: Object.freeze({ orderStatus: 'CANCELED', timestampField: 'canceledAt' })"));
+expect('canonical reconciliation updates only an existing order, never fabricates one, and bypasses updateTripStatus only inside this authoritative helper',
+  canonicalTerminalRepair.includes('const list = loadRideOrdersRaw();')
+    && canonicalTerminalRepair.includes('const next = list.map((order) => {')
+    && canonicalTerminalRepair.includes('if (!reconciled) return null;')
+    && canonicalTerminalRepair.includes('if (changed) persistRideOrders(next);')
+    && !canonicalTerminalRepair.includes('.push(')
+    && !canonicalTerminalRepair.includes('updateTripStatus('));
+expect('canonical reconciliation uses the matching server terminal timestamp, preserves a same-status timestamp only when the server omitted it, and is idempotent for an identical repeat',
+  canonicalTerminalRepair.includes('serverRide.timestamps[projection.timestampField]')
+    && canonicalTerminalRepair.includes('Number.isFinite(Date.parse(trimmedTimestamp))')
+    && canonicalTerminalRepair.includes('order.status === projection.orderStatus')
+    && canonicalTerminalRepair.includes("typeof order.statusUpdatedAt === 'string'")
+    && canonicalTerminalRepair.includes('Number.isFinite(Date.parse(existingTimestamp))')
+    && canonicalTerminalRepair.includes('if (order.status === projection.orderStatus && order.statusUpdatedAt === statusUpdatedAt) {')
+    && canonicalTerminalRepair.includes('changed = true;'));
+expect('terminal Ride persistence invokes canonical reconciliation with the same sanitized projection/effective timestamp and exact requested tripId',
+  terminalRepair.includes('reconcileCanonicalOrderFromAuthoritativeTerminalRide(terminalRide, expectedTripId);'));
+expect('only authoritative CANCELED/NO_SHOW terminal persistence removes the matching passenger history entry; COMPLETED never enters the removal branch',
+  terminalRepair.includes('terminalRide.status === RIDE_STATUS.CANCELED || terminalRide.status === RIDE_STATUS.NO_SHOW')
+    && terminalRepair.includes("removeRideHistoryEntry({ role: 'passenger', tripId: terminalRide.tripId });")
+    && terminalRepair.indexOf('reconcileCanonicalOrderFromAuthoritativeTerminalRide(terminalRide, expectedTripId);')
+      < terminalRepair.indexOf("removeRideHistoryEntry({ role: 'passenger', tripId: terminalRide.tripId });"));
+expect('the sanitized terminal projection is rendered and persisted BEFORE swapToTerminalPassengerScreen — synchronously ahead of URL sync/teardown/DOM swap, and never from 404/generic failure handling',
   (() => {
-    const callIdx = initialRead.indexOf('persistPassengerServerConfirmedTerminalProjection(srv.status, srv);');
+    const projectionIdx = initialRead.indexOf('const terminalProjection = projectPassengerServerConfirmedTerminalRide(srv, requestedTripId);');
+    const assignmentIdx = initialRead.indexOf('ride = terminalProjection || mergeServerRide(srv, preserveLocallyAheadStatus);');
+    const callIdx = initialRead.indexOf('persistPassengerServerConfirmedTerminalProjection(terminalProjection, requestedTripId);');
     const swapIdx = initialRead.indexOf('swapToTerminalPassengerScreen(ride);');
     const confirmIdx = initialRead.indexOf('hasConfirmedServerRide = true;');
     const notFoundBlock = initialRead.slice(
       initialRead.indexOf("err.status === 404"),
       initialRead.indexOf('const retryable ='),
     );
-    return callIdx !== -1 && swapIdx !== -1 && confirmIdx !== -1
+    const genericFailureTail = initialRead.slice(initialRead.indexOf('const retryable ='));
+    return projectionIdx !== -1 && assignmentIdx !== -1 && callIdx !== -1
+      && swapIdx !== -1 && confirmIdx !== -1
+      && projectionIdx < assignmentIdx && assignmentIdx < confirmIdx
       && confirmIdx < callIdx && callIdx < swapIdx
-      && !notFoundBlock.includes('persistPassengerServerConfirmedTerminalProjection(');
+      && !notFoundBlock.includes('persistPassengerServerConfirmedTerminalProjection(')
+      && !genericFailureTail.includes('persistPassengerServerConfirmedTerminalProjection(');
   })());
 
 const boardedHandlerOuter = functionBody(passenger, 'renderSheet');
@@ -886,19 +1005,15 @@ expect('deferred forward status keeps the highest pending lifecycle rank while o
   remount.includes('const pendingRank = STATUS_RANK[deferredPassengerServerStatus] ?? -1')
     && remount.includes('const nextRank = STATUS_RANK[srvStatus] ?? 0')
     && remount.includes('nextRank > pendingRank'));
-// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — runInitialRead now calls
-// mergeServerRide(srv, preserveLocallyAheadStatus) TWICE: once early, only
-// for a status that needsSeparatePassengerRenderer (an unconditional check
-// that must see the terminal renderer's own merge regardless of
-// maybeReMount, and returns before ever reaching the DEFERRED-handling
-// code below it), and once after the maybeReMount check, which is the
-// merge this invariant is actually about. lastIndexOf targets that
-// second, post-remount call specifically — indexOf would wrongly compare
-// against the earlier, unrelated terminal-swap merge instead.
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — runInitialRead still has two
+// mergeServerRide fallbacks: the terminal branch uses it only for an
+// unsupported separate renderer when the known-terminal whitelist returns
+// null, and the normal branch uses it after maybeReMount. lastIndexOf
+// targets that second, post-remount assignment specifically.
 expect('deferred recovery returns before merging server status into the current ride',
   initialRead.includes('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED')
     && initialRead.indexOf('remountResult === PASSENGER_REMOUNT_RESULT.DEFERRED') < initialRead.lastIndexOf('ride = mergeServerRide(srv, preserveLocallyAheadStatus)')
-    && (initialRead.match(/ride = mergeServerRide\(srv, preserveLocallyAheadStatus\)/g) || []).length === 2
+    && (initialRead.match(/mergeServerRide\(srv, preserveLocallyAheadStatus\)/g) || []).length === 2
     && initialRead.includes('startPassengerRidePoll()'));
 expect('background recovery settlement preserves controls/focus and refreshes the map in place',
   initialRead.includes('renderLoadedRide(recovery)')

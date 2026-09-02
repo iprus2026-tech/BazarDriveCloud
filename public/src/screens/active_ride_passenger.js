@@ -26,7 +26,13 @@ import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
-import { updateTripStatus, getRideFromBackend, pollRide, patchRideStatus } from '../mock_api.js';
+import {
+  updateTripStatus,
+  getRideFromBackend,
+  pollRide,
+  patchRideStatus,
+  reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+} from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { openPassengerSafetySheet, openPassengerCancelSheet } from './active_ride_passenger_sheets.js';
@@ -34,6 +40,7 @@ import {
   saveRideHistoryEntry,
   buildPassengerHistoryEntry,
   loadRideHistory,
+  removeRideHistoryEntry,
 } from '../ride_history.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../ride_waiting_policy.js';
 
@@ -168,7 +175,7 @@ function getPassengerRideFixture() {
 
 function hasUsablePassengerRideSource(tripId) {
   const canonicalRide = loadCanonicalActiveRide({ tripId, role: 'passenger' });
-  if (canonicalRide) return true;
+  if (canonicalRide && canonicalRide.tripId === tripId) return true;
   return Boolean(loadDriverHandoffSnapshot(tripId));
 }
 
@@ -365,6 +372,10 @@ function loadPassengerRideView(tripId, statusQuery) {
   // this only ensures the passenger view does not fork the trip
   // identity when only the other role has materialized data.
   let ride = loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  // Store maps are plain objects for legacy compatibility. Reject any
+  // inherited/prototype lookup (for example a standalone id "__proto__")
+  // unless the returned Ride is explicitly bound to this exact tripId.
+  if (ride && ride.tripId !== tripId) ride = null;
   // BD-LIFE-05 (Codex P2) — direct entry to /active-ride must also pick up
   // the latest real driverSnapshot so a stale demo seed (DriverMap accept
   // legacy / createDemoActiveRide fallback) cannot render forever as
@@ -851,11 +862,17 @@ const PASSENGER_SUPPORTED_STATUSES = new Set([
   RIDE_STATUS.COMPLETED,
 ]);
 
+const PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES = new Set([
+  RIDE_STATUS.COMPLETED,
+  RIDE_STATUS.CANCELED,
+  RIDE_STATUS.NO_SHOW,
+]);
+
 // Catch-all stub for statuses the passenger UI does not yet render
 // (e.g. NEW_ORDER / CONFIRMATION_PENDING). CANCELED and NO_SHOW are
 // served by `renderPassengerCanceledFallback`, so they don't appear
 // in this table.
-const PASSENGER_STUB_BY_STATUS = {};
+const PASSENGER_STUB_BY_STATUS = Object.create(null);
 
 // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a status this screen renders through
 // a SEPARATE top-level function (renderPassengerCanceledFallback /
@@ -2111,6 +2128,15 @@ export default function activeRidePassenger(options = {}) {
     ? createPassengerFixtureRide(tripId)
     : loadPassengerRideView(tripId, statusQuery);
   if (!fixture) ride = applyPassengerStatusFromQuery(ride, statusQuery);
+  // The in-memory `authoritative` marker is intentionally non-enumerable,
+  // so a sanitized terminal projection persists a separate, narrowly
+  // validated provenance bit. Re-mark only a known terminal projection on
+  // hydration; arbitrary local/demo rides keep their existing fallbacks.
+  if (!fixture
+    && ride.serverConfirmedTerminal === true
+    && PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(ride.status)) {
+    markPassengerRideAuthoritative(ride);
+  }
   const backendRead = !fixture && isBackendEnabled();
   // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — no local ride, even one that
   // already exists locally, is shown as the FIRST paint when backend is
@@ -2811,82 +2837,132 @@ export default function activeRidePassenger(options = {}) {
     saveActiveRide(repaired);
   }
 
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
-  // round 8 — a fourth independent audit (Codex, PR #940 review thread D)
-  // found swapToTerminalPassengerScreen's own syncTerminalStatusIntoUrl
-  // only ever rewrites the URL, never the canonical store: a genuine
-  // terminal-vs-terminal race (e.g. bindCancelAffordance's fire-and-forget
-  // cancel PATCH committing local CANCELED+canceledAt moments before an
-  // independent server-side COMPLETED resolution, or the symmetric
-  // reverse) leaves the STORED record permanently frozen at the wrong
-  // terminal status. A later reload — even reading back the exact
-  // syncTerminalStatusIntoUrl-updated ?status= this same session just
-  // wrote — resurrects the stale terminal screen, because
-  // applyPassengerStatusFromQuery's own symmetric terminal-conflict guard
-  // (COMPLETED refused when ts.canceledAt is set; CANCELED/NO_SHOW refused
-  // when ts.completedAt is set) cannot distinguish "opposite-terminal and
-  // correct" from "opposite-terminal only because a real confirmation was
-  // never written back". Reproduced directly at runtime by the audit, both
-  // directions.
-  //
-  // Repairs the STORED record — same base pattern as
-  // persistPassengerServerConfirmedWaitingProjection (starts from the
-  // EXISTING stored record so every unrelated field — passenger, driver,
-  // vehicle, route, payment, ride, chat, orderId, acceptedSource, waiting —
-  // survives untouched) — the moment a settled, authoritative participant
-  // GET confirms a terminal status:
-  //   - writes the confirmed terminal status;
-  //   - stamps the matching STATUS_TIMESTAMP_FIELD entry from the server's
-  //     own raw response (srv) when the server actually sent one for it,
-  //     falling back to `new Date().toISOString()` — the exact same
-  //     convention updateActiveRideStatus already uses — only when it did
-  //     not;
-  //   - clears every OTHER terminal-status timestamp field, derived from
-  //     STATUS_TIMESTAMP_FIELD itself (not a hardcoded completedAt/
-  //     canceledAt pair, so a future terminal status is covered
-  //     automatically) — this is what actually disarms
-  //     applyPassengerStatusFromQuery's guard for the opposite status.
-  //
-  // saveActiveRide() itself refuses any write that would change an
-  // existing TERMINAL record to a DIFFERENT status (BD-ACTIVE-RIDE-TERM-01
-  // P2's own store-level freeze, in ride_state.js — a real, separate guard
-  // from updateActiveRideStatus's own terminal check, confirmed by reading
-  // saveActiveRide() directly) — exactly the race this function exists to
-  // resolve. This is therefore a deliberate, narrow exception: it writes
-  // through the raw store primitives (loadActiveRideStore/
-  // saveActiveRideStore) instead of saveActiveRide(), bypassing that guard
-  // ONLY here, ONLY for a status this function's one caller
-  // (runInitialRead's authoritative-terminal branch) has already proven
-  // server-confirmed — never reachable from the 404/local-only fallback,
-  // which calls swapToTerminalPassengerScreen directly without ever
-  // calling this function first. No-op when nothing is stored yet (the
-  // first-save path is covered elsewhere).
+  // PR #940 review-fix — a successful participant GET may supersede an
+  // opposite local terminal, or be the first materialized Ride on a fresh
+  // device. Terminal persistence therefore cannot spread the old local/demo
+  // record: doing so would preserve stale cancel ownership and demo-only
+  // identity/route/fare fields. Build one server-only whitelist projection
+  // and use it for both the terminal renderer/history and the local mirror.
   const TERMINAL_STATUS_TIMESTAMP_FIELDS = Array.from(new Set(
-    [RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELED, RIDE_STATUS.NO_SHOW]
+    Array.from(PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES)
       .map((status) => STATUS_TIMESTAMP_FIELD[status])
       .filter(Boolean),
   ));
-  function persistPassengerServerConfirmedTerminalProjection(terminalStatus, srv) {
-    const timestampField = STATUS_TIMESTAMP_FIELD[terminalStatus];
-    if (!timestampField) return;
-    const storedRide = findActiveRide(ride.tripId);
-    if (!storedRide) return;
-    const serverTimestamp = srv && srv.timestamps && srv.timestamps[timestampField];
-    const timestamps = { ...(storedRide.timestamps || {}) };
+
+  const SERVER_RIDE_TIMESTAMP_FIELDS = Object.freeze([
+    'createdAt',
+    'acceptedAt',
+    'approachingAt',
+    'arrivedAt',
+    'startedAt',
+    'completedAt',
+    'canceledAt',
+    'updatedAt',
+  ]);
+
+  function normalizeServerRideTimestamp(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed && Number.isFinite(Date.parse(trimmed)) ? trimmed : null;
+  }
+
+  function projectPassengerServerConfirmedTerminalRide(srv, expectedTripId) {
+    if (!srv || !PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(srv.status)) return null;
+    const timestampField = STATUS_TIMESTAMP_FIELD[srv.status];
+    const serverTripId = typeof (srv && srv.tripId) === 'string' ? srv.tripId.trim() : '';
+    if (!serverTripId || serverTripId !== expectedTripId) return null;
+
+    const storedRide = findActiveRide(serverTripId);
+    const serverPassenger = (srv && srv.passenger) || {};
+    const serverDriver = (srv && srv.driver) || {};
+    const serverRoute = (srv && srv.route) || {};
+    const serverOrder = (srv && srv.order) || {};
+    const serverTimestamps = (srv && srv.timestamps) || {};
+    const timestamps = {};
+    for (const field of SERVER_RIDE_TIMESTAMP_FIELDS) {
+      timestamps[field] = normalizeServerRideTimestamp(serverTimestamps[field]);
+    }
     for (const field of TERMINAL_STATUS_TIMESTAMP_FIELDS) {
       if (field === timestampField) continue;
       timestamps[field] = null;
     }
-    timestamps[timestampField] = serverTimestamp || new Date().toISOString();
-    const repaired = {
-      ...storedRide,
-      status: terminalStatus,
+    const storedTerminalTimestamp = storedRide
+      && storedRide.serverConfirmedTerminal === true
+      && storedRide.status === srv.status
+      ? normalizeServerRideTimestamp(storedRide.timestamps && storedRide.timestamps[timestampField])
+      : null;
+    timestamps[timestampField] = normalizeServerRideTimestamp(serverTimestamps[timestampField])
+      || storedTerminalTimestamp
+      || new Date().toISOString();
+
+    const canceled = srv.status === RIDE_STATUS.CANCELED || srv.status === RIDE_STATUS.NO_SHOW;
+    const projection = {
+      tripId: serverTripId,
+      orderId: serverTripId.startsWith('trip_')
+        ? (serverTripId.slice('trip_'.length) || null)
+        : null,
+      role: srv.role ?? null,
+      status: srv.status,
+      serverConfirmedTerminal: true,
+      passenger: {
+        name: serverPassenger.name ?? null,
+        initials: serverPassenger.initials ?? null,
+        rating: null,
+        phoneMasked: serverPassenger.phoneMasked ?? null,
+      },
+      driver: {
+        name: serverDriver.name ?? null,
+        initials: initialsFromName(serverDriver.name ?? null),
+        rating: serverDriver.rating ?? null,
+        car: serverDriver.car ?? null,
+      },
+      vehicle: {
+        model: serverDriver.car || null,
+        color: null,
+        plate: null,
+      },
+      route: {
+        pickupLabel: serverRoute.pickupLabel ?? null,
+        dropoffLabel: serverRoute.dropoffLabel ?? null,
+        etaToPickup: serverRoute.etaToPickup ?? null,
+        etaToDestination: serverRoute.etaToDestination ?? null,
+      },
+      order: {
+        offerPrice: serverOrder.offerPrice ?? null,
+        pickupEta: serverOrder.pickupEta ?? null,
+        destinationEta: serverOrder.destinationEta ?? null,
+        destinationDistance: serverOrder.destinationDistance ?? null,
+      },
+      payment: null,
+      waiting: mergeServerWaiting(null, srv.waiting),
+      ride: null,
+      chat: null,
       timestamps,
+      cancel: canceled ? {
+        by: (srv.cancel && srv.cancel.by) ?? null,
+        reason: (srv.cancel && srv.cancel.reason) ?? null,
+      } : null,
     };
-    delete repaired.localProvenance;
+    if (storedRide && typeof storedRide.acceptedSource === 'string' && storedRide.acceptedSource.trim()) {
+      projection.acceptedSource = storedRide.acceptedSource.trim();
+    }
+    return projection;
+  }
+
+  function persistPassengerServerConfirmedTerminalProjection(terminalRide, expectedTripId) {
+    if (!terminalRide
+      || terminalRide.tripId !== expectedTripId
+      || !PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(terminalRide.status)) return;
     const store = loadActiveRideStore();
-    store[repaired.tripId] = repaired;
-    saveActiveRideStore(store);
+    const nextStore = {
+      ...store,
+      [terminalRide.tripId]: { ...terminalRide },
+    };
+    saveActiveRideStore(nextStore);
+    reconcileCanonicalOrderFromAuthoritativeTerminalRide(terminalRide, expectedTripId);
+    if (terminalRide.status === RIDE_STATUS.CANCELED || terminalRide.status === RIDE_STATUS.NO_SHOW) {
+      removeRideHistoryEntry({ role: 'passenger', tripId: terminalRide.tripId });
+    }
   }
 
   let passengerPollId = null;
@@ -3387,7 +3463,8 @@ export default function activeRidePassenger(options = {}) {
       setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
     }
     try {
-      const srv = await readManager.run(ride.tripId);
+      const requestedTripId = ride.tripId;
+      const srv = await readManager.run(requestedTripId);
       if (destroyed || epoch !== readEpoch) return;
       if (!srv) {
         backendRide = false;
@@ -3428,8 +3505,13 @@ export default function activeRidePassenger(options = {}) {
       // self-heals via schedulePassengerRideRecovery on a later read,
       // exactly like a 5xx — it just never gets to call itself confirmed
       // on this attempt.
-      if (!srv.status) {
-        throw Object.assign(new Error('Malformed ride response: missing status'), {
+      if (typeof srv.status !== 'string' || !srv.status.trim()) {
+        throw Object.assign(new Error('Malformed ride response: invalid status'), {
+          code: 'MALFORMED_RIDE_RESPONSE',
+        });
+      }
+      if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {
+        throw Object.assign(new Error('Malformed ride response: tripId mismatch'), {
           code: 'MALFORMED_RIDE_RESPONSE',
         });
       }
@@ -3469,18 +3551,18 @@ export default function activeRidePassenger(options = {}) {
       // the SAME terminal value by coincidence — e.g. stale demo data —
       // which must still route to the terminal renderer, never fall
       // through to the sheet-based flow, which has no matching case).
-      // Merge first so the terminal renderer sees authoritative
-      // passenger/driver/route/fare data, never the raw Ride cache.
+      // Known terminal states use a server-only whitelist projection so
+      // the renderer/history and local mirror cannot retain demo fields.
+      // Unsupported separate-renderer statuses keep the existing merge and
+      // remain non-persistent here.
       if (srv.status && needsSeparatePassengerRenderer(srv.status)) {
-        ride = mergeServerRide(srv, preserveLocallyAheadStatus);
+        const terminalProjection = projectPassengerServerConfirmedTerminalRide(srv, requestedTripId);
+        ride = terminalProjection || mergeServerRide(srv, preserveLocallyAheadStatus);
         markPassengerRideAuthoritative(ride);
         hasConfirmedServerRide = true;
-        // round 8 (PR #940 review thread D) — reconcile the STORED record
-        // to this confirmed terminal status, clearing any conflicting
-        // opposite-terminal timestamp, BEFORE swapToTerminalPassengerScreen
-        // syncs the URL / tears down / swaps the DOM — see this function's
-        // own doc comment for the full race it closes.
-        persistPassengerServerConfirmedTerminalProjection(srv.status, srv);
+        if (terminalProjection) {
+          persistPassengerServerConfirmedTerminalProjection(terminalProjection, requestedTripId);
+        }
         swapToTerminalPassengerScreen(ride);
         return;
       }
