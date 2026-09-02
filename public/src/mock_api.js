@@ -916,6 +916,66 @@ export function updateTripStatus(id, status) {
   return updated;
 }
 
+// PR #940 review-fix — the regular lifecycle writer above deliberately
+// freezes terminal canonical orders. A participant-authorized Ride GET can,
+// however, prove that a different terminal outcome committed on the server.
+// Keep that narrow authority override here at the canonical-order store
+// boundary instead of teaching a screen to rewrite bazardrive.ride_orders.v1
+// directly. The caller must already have a successful authoritative read.
+const AUTHORITATIVE_RIDE_TERMINAL_ORDER_PROJECTION = Object.freeze({
+  COMPLETED: Object.freeze({ orderStatus: 'COMPLETED', timestampField: 'completedAt' }),
+  CANCELED: Object.freeze({ orderStatus: 'CANCELED', timestampField: 'canceledAt' }),
+  NO_SHOW: Object.freeze({ orderStatus: 'CANCELED', timestampField: 'canceledAt' }),
+});
+
+export function reconcileCanonicalOrderFromAuthoritativeTerminalRide(serverRide, expectedTripId) {
+  if (!serverRide || typeof serverRide !== 'object' || Array.isArray(serverRide)) return null;
+  const serverTripId = typeof serverRide.tripId === 'string' ? serverRide.tripId.trim() : '';
+  const mountedTripId = typeof expectedTripId === 'string' ? expectedTripId.trim() : '';
+  if (!serverTripId || serverTripId !== mountedTripId || !serverTripId.startsWith('trip_')) return null;
+  const orderId = serverTripId.slice('trip_'.length);
+  if (!orderId) return null;
+
+  if (typeof serverRide.status !== 'string'
+    || !Object.hasOwn(AUTHORITATIVE_RIDE_TERMINAL_ORDER_PROJECTION, serverRide.status)) return null;
+  const projection = AUTHORITATIVE_RIDE_TERMINAL_ORDER_PROJECTION[serverRide.status];
+
+  const rawTimestamp = serverRide.timestamps && serverRide.timestamps[projection.timestampField];
+  const trimmedTimestamp = typeof rawTimestamp === 'string' ? rawTimestamp.trim() : '';
+  const authoritativeTimestamp = trimmedTimestamp && Number.isFinite(Date.parse(trimmedTimestamp))
+    ? trimmedTimestamp
+    : null;
+  const list = loadRideOrdersRaw();
+  let reconciled = null;
+  let changed = false;
+
+  const next = list.map((order) => {
+    if (!order || order.id !== orderId) return order;
+    const existingTimestamp = typeof order.statusUpdatedAt === 'string'
+      ? order.statusUpdatedAt.trim()
+      : '';
+    const reusableTimestamp = order.status === projection.orderStatus
+      && existingTimestamp
+      && Number.isFinite(Date.parse(existingTimestamp))
+      ? existingTimestamp
+      : null;
+    const statusUpdatedAt = authoritativeTimestamp
+      || reusableTimestamp
+      || new Date().toISOString();
+    if (order.status === projection.orderStatus && order.statusUpdatedAt === statusUpdatedAt) {
+      reconciled = order;
+      return order;
+    }
+    reconciled = { ...order, status: projection.orderStatus, statusUpdatedAt };
+    changed = true;
+    return reconciled;
+  });
+
+  if (!reconciled) return null;
+  if (changed) persistRideOrders(next);
+  return reconciled;
+}
+
 // BD-PROFILE-01 / #717 — the driver's «количество поездок» is DERIVED, not stored:
 // it counts passenger-created ride orders (the bazardrive.ride_orders.v1 store) that
 // the driver drove to LOGICAL COMPLETION (status COMPLETED). CANCELED / NO_SHOW /

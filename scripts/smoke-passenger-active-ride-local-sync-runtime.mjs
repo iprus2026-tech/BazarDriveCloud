@@ -435,9 +435,27 @@ function createWindow(doc) {
       win.dispatchEvent({ type: 'hashchange' });
     },
   });
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #3 —
+  // history.replaceState mirrors the one real-DOM behavior
+  // syncTerminalStatusIntoUrl() depends on: it silently rewrites the
+  // address bar's hash — no 'hashchange'/'popstate' event, matching real
+  // browsers — unlike this shim's own `location.hash =` setter above, which
+  // deliberately DOES dispatch 'hashchange' (matching real browsers too).
+  // replaceStateCalls records every call so tests can assert on the exact
+  // url passed, without needing a real history stack.
+  const history = {
+    replaceStateCalls: [],
+    replaceState(state, title, url) {
+      history.replaceStateCalls.push(url);
+      if (typeof url !== 'string') return;
+      const hashIndex = url.indexOf('#');
+      currentHash = hashIndex === -1 ? url : url.slice(hashIndex);
+    },
+  };
   const win = {
     location,
     document: doc,
+    history,
     addEventListener(type, fn) {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type).add(fn);
@@ -457,7 +475,7 @@ function createWindow(doc) {
     clearInterval: (...a) => clearInterval(...a),
   };
   function type_of(evt) { return evt.type; }
-  return { win, location };
+  return { win, location, history };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -479,10 +497,11 @@ globalThis.sessionStorage = {
 };
 
 const doc = createDocument();
-const { win, location } = createWindow(doc);
+const { win, location, history } = createWindow(doc);
 globalThis.document = doc;
 globalThis.window = win;
 globalThis.location = location;
+globalThis.history = history;
 globalThis.MutationObserver = BDMutationObserver;
 
 // Build the #shell > #app / #tabbar / #fab skeleton router.js expects.
@@ -507,6 +526,24 @@ const {
   DEMO_ACTIVE_RIDE_ID,
 } = await import('../public/src/ride_state.js');
 const activeRide = (await import('../public/src/screens/active_ride.js')).default;
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 — direct deterministic import, NOT DOM-driven:
+// arrivingDropoffAmount's authoritative branch is otherwise unobservable
+// through the live DOM (paymentBlockHtml independently hides the
+// ARRIVING_DROPOFF payment card whenever an authoritative ride has no real
+// payment method, which is always true today), so this is the actual
+// mutation-sensitive proof for that branch's decision logic — real
+// execution of the real function, not source-text pattern matching.
+const { arrivingDropoffAmount } = await import('../public/src/screens/active_ride_passenger.js');
+const {
+  getOrderById,
+  countCompletedPassengerTrips,
+  reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+} = await import('../public/src/mock_api.js');
+const {
+  loadRideHistory,
+  saveRideHistoryEntry,
+  removeRideHistoryEntry,
+} = await import('../public/src/ride_history.js');
 
 // ─────────────────────────────────────────────────────────────────────────
 // ── Test helpers ─────────────────────────────────────────────────────────
@@ -542,12 +579,14 @@ function baseRide(tripId, status, overrides = {}) {
   };
 }
 
+function seedCanonicalOrders(...orders) {
+  localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify(orders));
+}
+
 function seedHandedOffOrder(...pairs) {
   // pairs: [[orderId, tripId], ...] newest (index 0) first, matching
   // loadRideOrdersRaw()'s documented newest-first contract.
-  localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify(
-    pairs.map(([id]) => ({ id, status: 'ACCEPTED' })),
-  ));
+  seedCanonicalOrders(...pairs.map(([id]) => ({ id, status: 'ACCEPTED' })));
 }
 function currentSheet() { return app.querySelector('.active-ride-passenger__sheet'); }
 function currentRoot() { return app.querySelector('.active-ride-passenger, .passenger-cancel-fallback'); }
@@ -789,8 +828,17 @@ saveActiveRide(baseRide('trip_ordI', RIDE_STATUS.WAITING_PASSENGER));
 // The backend now resolves as OFF/absent for this trip (404-shaped): settle LOCAL_ONLY.
 resolveFetch({ ok: false, status: 404, text: async () => JSON.stringify({ code: 'RIDE_NOT_FOUND' }) });
 await tick(12);
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — reconcileLocalOnlyRide() detects the missed forward
+// transition and navigates to a fresh mount. Requirement #1 means even THIS
+// remount never trusts the just-written local WAITING_PASSENGER record on
+// sight — it starts LOADING again and waits for its OWN authoritative GET,
+// exactly like the very first mount did. Resolve that second,
+// remount-triggered GET too (a purely local trip's 404 is stable/consistent
+// across repeated reads) before asserting the final settled sheet.
+resolveFetch({ ok: false, status: 404, text: async () => JSON.stringify({ code: 'RIDE_NOT_FOUND' }) });
+await tick(12);
 {
-  expect('S10: LOCAL_ONLY settlement re-checks the store and picks up the missed transition',
+  expect('S10: LOCAL_ONLY settlement re-checks the store, navigates to the missed transition, and the remount settles LOCAL_ONLY on its own authoritative read',
     currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER
       || app.querySelector('.active-ride-passenger--complete') !== null,
     currentSheet()?.dataset.status);
@@ -867,6 +915,2070 @@ await tick();
     app.querySelector('.active-ride-passenger--complete') !== null && tripLabelText().includes('trip_ordK'),
     tripLabelText());
 }
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 13 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939): the very FIRST successful backend GET
+// resolves a terminal status directly (no 404, no local-status coincidence,
+// no persisted local record at all). Requirement #1: nothing local paints
+// before that GET settles. Requirement #2/#3: the settled GET alone decides
+// terminal vs. normal, and COMPLETED renders from the server Ride. Requirement
+// #5: with no server vehicle/payment source, the render neutralizes rather
+// than showing the built-in demo's fabricated driver/car/card. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch13;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch13 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordL');
+expect('S13 pre: no local/demo ride is shown while the very first backend read is in flight',
+  currentSheet()?.dataset.status === 'loading', currentSheet()?.dataset.status);
+resolveFetch13({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordL',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Мария В.', initials: 'МВ', rating: '5,00' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '999 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // Deliberately no vehicle/payment/chat — a real serializeRide() never
+      // emits them either; the render must neutralize, never fabricate.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S13: a terminal status from the very first successful GET swaps straight to the COMPLETE renderer',
+    app.querySelector('.active-ride-passenger--complete') !== null);
+  expect('S13: the COMPLETE renderer shows the server-confirmed driver name, never the built-in demo default',
+    (app.querySelector('.active-ride-passenger__driver-name')?.textContent || '').includes('Мария В.'),
+    app.querySelector('.active-ride-passenger__driver-name')?.textContent);
+  expect('S13: with no server vehicle/payment source, the payment line is a truthful neutral line, never a fabricated card',
+    app.querySelector('.passenger-complete__pay-method-title')?.textContent === 'Способ оплаты не указан',
+    app.querySelector('.passenger-complete__pay-method-title')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 14 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) requirement #7: a generic failure (5xx) on the
+// very FIRST-EVER read never falls back to a stale local Ride, even when a
+// usable local record already exists for this trip — only a LATER
+// recovery/retry read of an ALREADY-confirmed ride gets the graceful
+// stale-with-banner treatment (unchanged, not this scenario). ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch14;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch14 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordM', 'trip_ordM']);
+saveActiveRide(baseRide('trip_ordM', RIDE_STATUS.DRIVER_EN_ROUTE));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordM');
+resolveFetch14({ ok: false, status: 500, text: async () => JSON.stringify({ code: 'INTERNAL' }) });
+await tick(12);
+{
+  expect('S14: a first-read 5xx failure shows the ERROR state, never the stale local DRIVER_EN_ROUTE sheet, even though a usable local record exists',
+    currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Unit block — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix #2 (P1 finding): direct, real
+// execution of arrivingDropoffAmount(ride), the actual mutation-sensitive
+// proof. A prior round's runtime scenarios (S15/S16) sent an EMPTY-STRING
+// ride.price override in the fake server payload — that masked the real
+// defect: a REALISTIC server response omits the `ride` sub-object entirely
+// (serializeRide()/serializeRecoveredRide() never emit it), and
+// mergeServerRide's keep(local, undefined) then silently preserves whatever
+// ride.price the PRE-MERGE local/demo record already had — which, for a
+// fresh/unseeded mount, is createDemoActiveRide()'s own '1 540 ₽' default.
+// The old priority chain checked r.price BEFORE order.offerPrice, so that
+// stale demo value would outrank a genuinely real, present order.offerPrice
+// from the server. These cases construct the ride objects directly —
+// exactly the shape mergeServerRide would produce — with NO `ride` key at
+// all, proving the decision helper itself, independent of any DOM/hide
+// mechanism. ──
+expect('arrivingDropoffAmount: authoritative + a real order.offerPrice from the server -> the real price (900 ₽), never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: '900 ₽' } }) === '900 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: '900 ₽' } }));
+expect('arrivingDropoffAmount: authoritative + order.offerPrice null -> the neutral "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: null } }) === '—',
+  arrivingDropoffAmount({ authoritative: true, order: { offerPrice: null } }));
+expect('arrivingDropoffAmount: authoritative + no `ride` key at all (the realistic serializeRide() shape) and no order.offerPrice -> "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true, order: {} }) === '—',
+  arrivingDropoffAmount({ authoritative: true, order: {} }));
+expect('arrivingDropoffAmount: authoritative + NO order key at all -> "—", never 1 540 ₽',
+  arrivingDropoffAmount({ authoritative: true }) === '—',
+  arrivingDropoffAmount({ authoritative: true }));
+// THE P1 regression itself: a stale local/demo ride.price (exactly what a
+// pre-merge local record, or a naive keep()-based merge, could still carry)
+// must NEVER outrank — or leak past — a real, present order.offerPrice on
+// an authoritative ride. This is the object shape the P1 finding describes.
+expect('arrivingDropoffAmount: authoritative + a stale ride.price/payment.amount alongside a real order.offerPrice -> the real order.offerPrice wins, the stale fields are never even consulted',
+  arrivingDropoffAmount({
+    authoritative: true,
+    ride: { price: '1 540 ₽' },
+    payment: { amount: '1 480 ₽', dropoffAmount: '1 480 ₽' },
+    order: { offerPrice: '900 ₽' },
+  }) === '900 ₽');
+expect('arrivingDropoffAmount: authoritative + a stale ride.price alongside a null order.offerPrice -> "—", the stale ride.price never leaks',
+  arrivingDropoffAmount({
+    authoritative: true,
+    ride: { price: '1 540 ₽' },
+    order: { offerPrice: null },
+  }) === '—');
+// Local/backend-off — unchanged real-value priority chain and fallback.
+expect('arrivingDropoffAmount: non-authoritative + no real value anywhere -> the exact prior "1 540 ₽" demo fallback preserved',
+  arrivingDropoffAmount({ order: {} }) === '1 540 ₽');
+expect('arrivingDropoffAmount: non-authoritative + only order.offerPrice real -> that value (priority chain intact)',
+  arrivingDropoffAmount({ order: { offerPrice: '750 ₽' } }) === '750 ₽');
+expect('arrivingDropoffAmount: non-authoritative + ride.price real (and no payment) -> ride.price wins over order.offerPrice (priority order unchanged)',
+  arrivingDropoffAmount({ ride: { price: '600 ₽' }, order: { offerPrice: '750 ₽' } }) === '600 ₽');
+expect('arrivingDropoffAmount: non-authoritative + payment.dropoffAmount real -> it wins over everything else (priority order unchanged)',
+  arrivingDropoffAmount({
+    payment: { dropoffAmount: '500 ₽', amount: '600 ₽' },
+    ride: { price: '700 ₽' },
+    order: { offerPrice: '800 ₽' },
+  }) === '500 ₽');
+
+// ── Scenario 15 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix (MEDIUM/P1 finding): an
+// authoritative COMPLETED ride, mounted end-to-end through the real
+// GET/merge/render pipeline, with a REALISTIC server payload — no `ride`
+// key at all (a real serializeRide() never emits it) — shows the real
+// order.offerPrice on "Итого к оплате", never the stale local/demo fare. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch15;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch15 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordN');
+resolveFetch15({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordN',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Олег Р.', initials: 'ОР', rating: '4,80' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 3', dropoffLabel: 'ул. Финишная, 4' },
+      order: { offerPrice: '900 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object and no `payment` at all — the exact
+      // serializeRide()/serializeRecoveredRide() shape. The pre-merge local
+      // fallback (createDemoActiveRide(), no seed for this tripId) DOES
+      // carry its own demo ride.price ('1 540 ₽') — proving this real
+      // order.offerPrice correctly wins end-to-end through the actual
+      // merge, not just in the isolated unit block above.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S15: authoritative COMPLETED with a REAL order.offerPrice from a realistic (no `ride` key) server payload shows that real price, never the stale local/demo fare',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '900 ₽',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 15b — same realistic shape, order.offerPrice: null. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch15b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch15b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&tripId=trip_ordN2');
+resolveFetch15b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordN2',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Дина К.', initials: 'ДК', rating: '4,90' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 7', dropoffLabel: 'ул. Финишная, 8' },
+      order: { offerPrice: null },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object, no `payment` — realistic shape.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S15b: authoritative COMPLETED with order.offerPrice: null in a realistic server payload shows the neutral "—", never the stale local/demo fare',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '—',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 16 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: an authoritative IN_PROGRESS +
+// ARRIVING_DROPOFF ride with a realistic server payload (no `ride` key, a
+// real order.offerPrice) never shows '1 540 ₽' anywhere in the rendered
+// sheet. The local ride is seeded to status=IN_PROGRESS via the URL BEFORE
+// the server read settles, so the settled srv.status === ride.status and
+// maybeReMount never re-navigates (which would drop the &phase= query param
+// this scenario depends on — see maybeReMount's URL, role+status+tripId
+// only). Note: paymentInfo() always returns last4/method = null for ANY
+// authoritative ride (mergeServerRide always sets payment: null), so
+// paymentBlockHtml's pre-existing whole-card hide ALSO independently
+// prevents this card from ever rendering here — this scenario proves the
+// end-to-end OUTCOME through the real DOM; the decision helper itself is
+// proven directly, mutation-sensitively, by the unit block above. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch16;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch16 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordR&phase=arriving_dropoff');
+resolveFetch16({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordR',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: 'Павел Д.', initials: 'ПД', rating: '4,70' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 5', dropoffLabel: 'ул. Финишная, 6' },
+      order: { offerPrice: '900 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object, no `payment` — realistic shape.
+    },
+  }),
+});
+await tick(12);
+{
+  expect('S16: authoritative IN_PROGRESS+ARRIVING_DROPOFF with a realistic server payload never shows the stale 1 540 ₽ anywhere in the rendered sheet',
+    !(currentSheet()?.textContent || '').includes('1 540'));
+  expect('S16: the payment card is correctly absent for an authoritative ride with no real payment method (independent confirmation alongside the amount gate)',
+    app.querySelector('.active-ride-passenger__payment') === null);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 17 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: local/backend-off COMPLETED with
+// no real price preserves the EXACT prior '1 540 ₽' demo fallback — the
+// backend-off prototype is unchanged. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordP', RIDE_STATUS.COMPLETED, { order: {}, ride: {} }));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordP');
+{
+  expect('S17: local/backend-off COMPLETED with no real price preserves the prior 1 540 ₽ demo fallback',
+    app.querySelector('.passenger-complete__pay-total')?.textContent === '1 540 ₽',
+    app.querySelector('.passenger-complete__pay-total')?.textContent);
+}
+
+// ── Scenario 18 — BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix: local/backend-off IN_PROGRESS +
+// ARRIVING_DROPOFF with no real price preserves the EXACT prior '1 540 ₽'
+// demo fallback. Unlike the authoritative case (S16), a non-authoritative
+// ride's paymentInfo() returns real demo last4/method, so the payment card
+// is NOT hidden here and its amount node is directly checkable. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordQ', RIDE_STATUS.IN_PROGRESS, { order: {}, ride: {} }));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordQ&phase=arriving_dropoff');
+{
+  expect('S18: local/backend-off ARRIVING_DROPOFF with no real price preserves the prior 1 540 ₽ demo fallback',
+    app.querySelector('.active-ride-passenger__payment-amount')?.textContent === '1 540 ₽',
+    app.querySelector('.active-ride-passenger__payment-amount')?.textContent);
+}
+
+// ── Scenario 19 — #939 Codex review-fix P1: readEpoch is an attempt
+// counter, not a confirmation signal. A first-read retryable failure
+// schedules a real background recovery (schedulePassengerRideRecovery's
+// setTimeout(fn, PASSENGER_RIDE_POLL_MS) -> runInitialRead(true)), which
+// bumps readEpoch to 2 despite nothing ever having succeeded. The OLD
+// `epoch > 1` gate would have treated that as "already confirmed, safe to
+// show optimistically" and rendered the stale local DRIVER_EN_ROUTE ride
+// the instant the recovery attempt STARTED — before its own GET even
+// settled. hasConfirmedServerRide fixes this: it stays false through the
+// whole chain until a read actually succeeds.
+//
+// The scheduling delay is a REAL setTimeout (PASSENGER_RIDE_POLL_MS =
+// 2500ms) — this shim's setTimeout is Node's real timer, unmocked. Rather
+// than waiting 2.5 real seconds, globalThis.setTimeout is clamped to a few
+// ms for the duration of this one scenario only (restored immediately
+// after) — schedulePassengerRideRecovery/runInitialRead still run for
+// real, through a real (just much shorter) timer; nothing about the
+// mechanism itself is bypassed or mocked.
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch19First;
+let resolveFetch19Recovery;
+let fetchCallCount19 = 0;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    fetchCallCount19 += 1;
+    if (fetchCallCount19 === 1) return new Promise((resolve) => { resolveFetch19First = resolve; });
+    return new Promise((resolve) => { resolveFetch19Recovery = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordS', 'trip_ordS']);
+saveActiveRide(baseRide('trip_ordS', RIDE_STATUS.DRIVER_EN_ROUTE));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordS');
+const realSetTimeout19 = globalThis.setTimeout;
+globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout19(fn, Math.min(ms, 10), ...args);
+resolveFetch19First({ ok: false, status: 500, text: async () => JSON.stringify({ code: 'INTERNAL' }) });
+await tick(12);
+expect('S19 pre: the very first read failing retryably shows ERROR, not the stale local ride (hasConfirmedServerRide is still false)',
+  currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+// Let the (now-clamped) recovery timer actually fire for real, then restore
+// the real setTimeout before doing anything else.
+await new Promise((resolve) => realSetTimeout19(resolve, 100));
+globalThis.setTimeout = realSetTimeout19;
+expect('S19 pre: the scheduled recovery attempt actually started (its own GET is in flight)',
+  fetchCallCount19 === 2);
+expect('S19: while the recovery GET is in flight (not yet settled), the screen shows LOADING — never the stale local DRIVER_EN_ROUTE ride the OLD `epoch > 1` gate would have shown the instant this attempt started',
+  currentSheet()?.dataset.status === 'loading', currentSheet()?.dataset.status);
+// Now let the recovery GET actually succeed — only NOW is it safe to show
+// the confirmed ride, and hasConfirmedServerRide should flip to true.
+resolveFetch19Recovery({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordS',
+      status: RIDE_STATUS.DRIVER_EN_ROUTE,
+      driver: { name: 'Игорь Т.', initials: 'ИТ', rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 9', dropoffLabel: 'ул. Финишная, 10' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S19: after the recovery GET actually succeeds, the confirmed ride renders normally, from server data',
+  currentSheet()?.dataset.status === RIDE_STATUS.DRIVER_EN_ROUTE, currentSheet()?.dataset.status);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 20 — #939 Codex review-fix P2: swapToTerminalPassengerScreen
+// syncs the terminal status into the URL via history.replaceState BEFORE
+// the DOM swap, so a reload picks up the terminal renderer even though the
+// swap itself never navigates. Uses the very first successful GET path
+// (mirrors S13) so the terminal swap fires from the success branch.
+//
+// Focused pre-commit audit follow-up — the ORIGINAL version of this
+// scenario asserted "never fired a hashchange" by checking only that
+// `location.hash` changed, which is ALSO true if the sync mechanism had
+// (wrongly) used a hashchange-firing `location.hash = …` assignment
+// instead of `history.replaceState`. A real 'hashchange' listener is
+// registered for the whole scenario instead, so hashchangeCount is an
+// actual event count, not an inferred proxy — and a fetchCallCount tracks
+// that the swap itself never triggers a second/duplicate GET. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch20;
+let fetchCallCount20 = 0;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    fetchCallCount20 += 1;
+    return new Promise((resolve) => { resolveFetch20 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordT&phase=arriving_dropoff');
+let hashchangeCount20 = 0;
+const onHashchange20 = () => { hashchangeCount20 += 1; };
+window.addEventListener('hashchange', onHashchange20);
+const hashBeforeSwap20 = location.hash;
+const replaceCallsBefore20 = history.replaceStateCalls.length;
+resolveFetch20({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordT',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Света М.', initials: 'СМ', rating: '4,85' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 11', dropoffLabel: 'ул. Финишная, 12' },
+      order: { offerPrice: '650 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+window.removeEventListener('hashchange', onHashchange20);
+{
+  const syncedUrl = history.replaceStateCalls[history.replaceStateCalls.length - 1];
+  // All asserted together, in one place, as the audit required: exactly one
+  // replaceState, the correct terminal hash/argument, every other query
+  // param preserved, zero real hashchange events, and exactly one GET for
+  // the whole scenario (the swap itself never triggers a second one).
+  //
+  // location.hash DOES change to the new value — history.replaceState is a
+  // real address-bar update in real browsers, exactly like this shim's own
+  // replaceState mirrors — the guarantee is only that no 'hashchange'/
+  // 'popstate' EVENT fires for it (unlike a plain `location.hash =`
+  // assignment, which both changes the value AND fires the event). An
+  // earlier draft of this assertion wrongly required the hash to stay at
+  // its PRE-swap value, conflating "no event" with "no change" — fixed
+  // here to require the hash reflect the newly-synced URL exactly.
+  expect('S20: exactly one history.replaceState call, with the correct terminal hash (status=COMPLETED, role/tripId/phase preserved) actually reflected in location.hash, zero real hashchange events, and exactly one GET for the whole scenario',
+    history.replaceStateCalls.length === replaceCallsBefore20 + 1
+      && typeof syncedUrl === 'string'
+      && syncedUrl === '#/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordT&phase=arriving_dropoff'
+      && hashchangeCount20 === 0
+      && location.hash === syncedUrl
+      && location.hash !== hashBeforeSwap20
+      && fetchCallCount20 === 1,
+    JSON.stringify({ syncedUrl, hashchangeCount20, fetchCallCount20, hash: location.hash, hashBeforeSwap20 }));
+  expect('S20: the DOM correctly shows the COMPLETE renderer (the swap itself still happened, even though the URL never navigated)',
+    app.querySelector('.active-ride-passenger--complete') !== null);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 21 — #939 Codex review-fix P2 (the actual product concern):
+// after the URL sync, a fresh mount for the SAME trip — reading ONLY the
+// updated URL, exactly like a page reload — correctly resolves to the
+// terminal renderer via applyPassengerStatusFromQuery(), without needing
+// any additional storage write. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordT', RIDE_STATUS.DRIVER_EN_ROUTE));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordT');
+{
+  expect('S21: a fresh mount reading the URL-synced ?status=COMPLETED alone (backend-off, simulating a reload) resolves to the terminal COMPLETE renderer for the SAME trip',
+    app.querySelector('.active-ride-passenger--complete') !== null && tripLabelText().includes('trip_ordT'),
+    tripLabelText());
+}
+
+// ── Scenario 22 — #939 Codex review-fix P2: passenger/driver/route
+// neutralization end-to-end. A realistic server payload with genuinely null
+// driver/passenger/route fields (serializeRide()'s own `?? null` shape) must
+// never let the stale local/demo driver name or route addresses survive on
+// an authoritative ride — on the live sheet (top card / route block).
+//
+// Focused pre-commit audit follow-up — the ORIGINAL version of this
+// scenario seeded the LOCAL record with baseRide()'s own generic defaults
+// ('Илья С.' / 'A' / 'B') but then only asserted the RENDER FUNCTION's own
+// internal demo-fallback constant ('Рустам К.') was absent — which is
+// trivially guaranteed by the authoritative ternary's own structure and
+// proves nothing about whether mergeServerRide() actually discarded the
+// SEEDED stale value. A distinctive, easily-greppable stale seed (never
+// used anywhere else in this file, and not equal to any built-in demo
+// constant) makes this a real, positive proof that the specific pre-merge
+// local value does not leak through. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch22;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch22 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordU', 'trip_ordU']);
+saveActiveRide(baseRide('trip_ordU', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  driver: { name: 'Форсаж Дрифтович', initials: 'ФД', rating: '3,33' },
+  route: { pickupLabel: 'ул. Небывалая, 404', dropoffLabel: 'тупик Задачи, 500' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordU');
+resolveFetch22({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordU',
+      status: RIDE_STATUS.DRIVER_EN_ROUTE,
+      // Realistic serializeRide() shape: every field present, driver/route
+      // genuinely null (never omitted — the server always includes the
+      // sub-object, per server/src/serialize.js).
+      driver: { name: null, initials: null, rating: null, car: null },
+      passenger: { name: null, initials: null, rating: null, phoneMasked: null },
+      route: { pickupLabel: null, dropoffLabel: null, etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '820 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const sheetText22 = currentSheet()?.textContent || '';
+  const topCardText22 = app.querySelector('.active-ride-passenger__top-card')?.textContent || '';
+  expect('S22: authoritative live sheet shows neither the distinctive stale local seed nor the render function\'s own internal demo fallback for the SERVER-POPULATED fields (driver.name, route labels), when the server genuinely returns null for them',
+    !topCardText22.includes('Форсаж')
+      && !sheetText22.includes('Небывалая')
+      && !sheetText22.includes('Задачи')
+      && !topCardText22.includes('Рустам')
+      && !sheetText22.includes('Малая Бронная')
+      && !sheetText22.includes('Шереметьево'));
+  expect('S22: the top card shows the neutral "—" for driver NAME instead of silently blanking or crashing',
+    (app.querySelector('.active-ride-passenger__driver-name')?.textContent || '').includes('—'));
+  expect('S22: the route block shows the neutral "—" for pickup/dropoff instead of silently blanking or crashing',
+    Array.from(app.querySelectorAll('.active-ride-passenger__route-main')).every((n) => (n.textContent || '').trim() === '—'));
+  // #939 focused pre-commit audit round 5 — a SECOND independent audit
+  // found round 4's "driver.initials survives" behavior was itself the bug:
+  // when NO canonical local record exists, this same "survival" preserves
+  // createDemoActiveRide()'s own FABRICATED default ('РК'), rendered as if
+  // server-confirmed. mergeServerRide now derives driver.initials from the
+  // CONFIRMED srv.driver.name instead — when the server genuinely nulls
+  // the name (this scenario), initials must be neutral too, matching the
+  // name's own '—' state, never the stale seeded 'ФД'.
+  expect('S22: the avatar shows the neutral "—" (derived from the null confirmed name), never the stale seeded "ФД" nor the built-in demo "РК"',
+    (app.querySelector('.active-ride-passenger__avatar')?.textContent || '').includes('—')
+      && !(app.querySelector('.active-ride-passenger__avatar')?.textContent || '').includes('ФД')
+      && !(app.querySelector('.active-ride-passenger__avatar')?.textContent || '').includes('РК'));
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 22b — #939 focused pre-commit audit round 5: the positive
+// counterpart to S22 — the server CONFIRMS a real driver, but a DIFFERENT
+// one from the stale local seed (proving both the demo-leak fix AND the
+// "stale local initials next to a different confirmed name" desync an
+// independent audit reproduced directly at runtime). The avatar must show
+// initials freshly DERIVED from the confirmed name ('ТО' for 'Тимофей
+// Орлов'), never the stale local 'ФД', matching the confirmed driver-name
+// text exactly (initials and name can never disagree again). ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch22b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch22b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordU2', 'trip_ordU2']);
+saveActiveRide(baseRide('trip_ordU2', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  driver: { name: 'Форсаж Дрифтович', initials: 'ФД', rating: '3,33' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordU2');
+resolveFetch22b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordU2',
+      status: RIDE_STATUS.DRIVER_EN_ROUTE,
+      driver: { name: 'Тимофей Орлов', initials: null, rating: '4,80', car: 'Kia Rio' },
+      passenger: { name: null, initials: null, rating: null, phoneMasked: null },
+      route: { pickupLabel: 'ул. Тестовая, 51', dropoffLabel: 'ул. Финишная, 52', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '640 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const driverNameText22b = app.querySelector('.active-ride-passenger__driver-name')?.textContent || '';
+  const avatarText22b = app.querySelector('.active-ride-passenger__avatar')?.textContent || '';
+  expect('S22b: the top card shows the CONFIRMED driver name ("Тимофей Орлов"), never the stale local "Форсаж Дрифтович"',
+    driverNameText22b.includes('Тимофей Орлов') && !driverNameText22b.includes('Форсаж'),
+    driverNameText22b);
+  expect('S22b: the avatar shows initials DERIVED from the confirmed name ("ТО"), never the stale local "ФД" — proving initials and name can no longer disagree when the confirmed driver differs from the local seed',
+    avatarText22b.includes('ТО') && !avatarText22b.includes('ФД'),
+    avatarText22b);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 23 — #939 focused pre-commit audit follow-up: passenger/
+// driver/route neutralization on the TERMINAL COMPLETE renderer
+// specifically (S22 only covered the live, non-terminal sheet — the audit
+// flagged that item 7 explicitly asked for BOTH). A realistic authoritative
+// COMPLETED GET with driver/route genuinely null must show neutral values
+// on renderPassengerRideComplete's own DOM, and must not leak a distinctive
+// stale LOCAL seed (deliberately different from S22's, so no cross-
+// scenario coincidence could mask a real leak). passenger.name/initials/
+// rating/phoneMasked are also sent (matching the realistic serializeRide()
+// shape) but are NOT independently asserted here: this screen has zero DOM
+// consumers for ride.passenger.* anywhere (re-confirmed by grep before
+// writing this scenario) — there is structurally nothing to check against,
+// which is a real, stated limitation of this coverage, not an oversight. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch23;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch23 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordW', 'trip_ordW']);
+saveActiveRide(baseRide('trip_ordW', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  driver: { name: 'Ветер Полуночный', initials: 'ВП', rating: '2,71' },
+  route: { pickupLabel: 'бул. Затерянный, 88', dropoffLabel: 'пл. Забвения, 13' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordW');
+resolveFetch23({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordW',
+      status: RIDE_STATUS.COMPLETED,
+      // Realistic serializeRide() shape: every sub-object present,
+      // driver/route/passenger genuinely null field-by-field (never
+      // omitted — see server/src/serialize.js).
+      driver: { name: null, initials: null, rating: null, car: null },
+      passenger: { name: null, initials: null, rating: null, phoneMasked: null },
+      route: { pickupLabel: null, dropoffLabel: null, etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '910 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const completeText23 = app.querySelector('.active-ride-passenger--complete')?.textContent || '';
+  expect('S23: the terminal COMPLETE renderer swaps in correctly for an authoritative COMPLETED GET',
+    app.querySelector('.active-ride-passenger--complete') !== null);
+  // #939 focused pre-commit audit round 4 — same ALWAYS_NULL_COLUMNS
+  // carve-out as S22: driver.initials ('ВП') correctly SURVIVES a server
+  // response that genuinely nulls it, so it is deliberately excluded from
+  // this "must never leak" list and checked as a positive survival instead
+  // (below). Only driver.name and the route labels — both server-
+  // populated — must actually show the neutral '—'.
+  expect('S23: the terminal COMPLETE renderer shows neither the distinctive stale local seed nor any built-in demo fallback for the SERVER-POPULATED fields (driver.name, route labels), when the server genuinely returns null for them',
+    !completeText23.includes('Ветер')
+      && !completeText23.includes('Затерянный')
+      && !completeText23.includes('Забвения')
+      && !completeText23.includes('Рустам')
+      && !completeText23.includes('Малая Бронная')
+      && !completeText23.includes('Шереметьево'));
+  expect('S23: the terminal COMPLETE renderer shows the neutral "—" for driver NAME',
+    (app.querySelector('.active-ride-passenger--complete .active-ride-passenger__driver-name')?.textContent || '').includes('—'));
+  expect('S23: the terminal COMPLETE renderer shows the neutral "—" for both pickup and dropoff',
+    Array.from(app.querySelectorAll('.active-ride-passenger--complete .active-ride-passenger__route-main')).length === 2
+      && Array.from(app.querySelectorAll('.active-ride-passenger--complete .active-ride-passenger__route-main')).every((n) => (n.textContent || '').trim() === '—'));
+  // #939 focused pre-commit audit round 5 — same fix as S22: driver.initials
+  // is now derived from the confirmed (here: null) srv.driver.name, so the
+  // terminal renderer's avatar must also show the neutral '—', never the
+  // stale local 'ВП' nor the built-in demo 'РК'.
+  expect('S23: the terminal COMPLETE renderer\'s avatar shows the neutral "—" (derived from the null confirmed name), never the stale local "ВП" nor the built-in demo "РК"',
+    (() => {
+      const t = app.querySelector('.active-ride-passenger--complete .active-ride-passenger__avatar')?.textContent || '';
+      return t.includes('—') && !t.includes('ВП') && !t.includes('РК');
+    })());
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 23b — #939 focused pre-commit audit round 5: the positive
+// counterpart to S23 — the terminal COMPLETE renderer must show initials
+// DERIVED from a genuinely CONFIRMED driver name, never the stale local
+// seed, mirroring S22b for the terminal path. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch23b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch23b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordW2', 'trip_ordW2']);
+saveActiveRide(baseRide('trip_ordW2', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  driver: { name: 'Ветер Полуночный', initials: 'ВП', rating: '2,71' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordW2');
+resolveFetch23b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordW2',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Марат Гусев', initials: null, rating: '4,20', car: 'Hyundai Solaris' },
+      passenger: { name: null, initials: null, rating: null, phoneMasked: null },
+      route: { pickupLabel: 'ул. Тестовая, 61', dropoffLabel: 'ул. Финишная, 62', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '710 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const driverNameText23b = app.querySelector('.active-ride-passenger--complete .active-ride-passenger__driver-name')?.textContent || '';
+  const avatarText23b = app.querySelector('.active-ride-passenger--complete .active-ride-passenger__avatar')?.textContent || '';
+  expect('S23b: the terminal COMPLETE renderer shows the CONFIRMED driver name ("Марат Гусев"), never the stale local "Ветер Полуночный"',
+    driverNameText23b.includes('Марат Гусев') && !driverNameText23b.includes('Ветер'),
+    driverNameText23b);
+  expect('S23b: the terminal COMPLETE renderer\'s avatar shows initials DERIVED from the confirmed name ("МГ"), never the stale local "ВП"',
+    avatarText23b.includes('МГ') && !avatarText23b.includes('ВП'),
+    avatarText23b);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 24 — #939 focused pre-commit audit round 7: FOUR successive
+// independent audits (4/5/6/7) each found that trying to trust a LOCAL
+// route.etaToDestination value — however "real" it was made to look — can
+// always be defeated (round 6's own orderId/tripId/localProvenance gate
+// was defeated by an unrelated repair helper stripping localProvenance
+// from storage, AND by the shipped composer.js publish path making a
+// GENUINE accepted ride's route/order ETA carry the identical fabricated
+// literal). This scenario constructs the MOST realistic-looking local
+// record a gate could ever demand — real orderId, tripId matching
+// `trip_${orderId}`, route.etaToDestination/order.destinationEta
+// consistent with each other, no sim_audit stamp — and proves it no
+// longer matters at all: an authoritative GET with a genuinely null
+// route.etaToDestination shows the neutral "—" regardless. Mounts plain
+// IN_PROGRESS (not the ARRIVING_DROPOFF sub-phase, which uses the
+// separate, already-covered arrivingDropoffInfo() — see S29). ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch24;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch24 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordX', 'trip_ordX']);
+saveActiveRide(baseRide('trip_ordX', RIDE_STATUS.IN_PROGRESS, {
+  orderId: 'ordX',
+  route: { pickupLabel: 'A', dropoffLabel: 'B', etaToDestination: '99 мин' },
+  order: { offerPrice: '1 240 ₽', destinationEta: '99 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordX');
+resolveFetch24({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordX',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: 'Юрий Р.', initials: null, rating: '4,50' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 13', dropoffLabel: 'ул. Финишная, 14', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '540 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+      // No `ride` sub-object — a real serializeRide() never emits it.
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText24 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S24: an authoritative IN_PROGRESS ride with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("99 мин", real orderId/tripId, consistent) and the server genuinely null STILL shows the neutral "—" — local is never consulted at all, no matter how real it looks',
+    etaValueText24 === '—',
+    etaValueText24);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 24b — #939 focused pre-commit audit round 7: the positive
+// counterpart to S24 — a realistic authoritative GET where the SERVER
+// itself sends a real, non-null route.etaToDestination. This column is
+// provably never populated by any write path today (ALWAYS_NULL_COLUMNS
+// in select-recovery-linkage.js), so this response shape is synthetic —
+// it proves the CODE is ready for a future real server value, not that
+// today's backend ever sends one. The local record deliberately carries a
+// DIFFERENT stale value ("15 мин") to prove the server value wins over it
+// unconditionally. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch24b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch24b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordY', 'trip_ordY']);
+saveActiveRide(baseRide('trip_ordY', RIDE_STATUS.IN_PROGRESS, {
+  route: { pickupLabel: 'A', dropoffLabel: 'B', etaToDestination: '15 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordY');
+resolveFetch24b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordY',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: 'Олег Н.', initials: 'ОН', rating: '4,10' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 21', dropoffLabel: 'ул. Финишная, 22', etaToPickup: null, etaToDestination: '6 мин' },
+      order: { offerPrice: '640 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText24b = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S24b: a synthetic-but-real server-supplied route.etaToDestination ("6 мин") is shown, never the stale local "15 мин" nor the "17 мин" demo fallback — server-or-neutral means a real server value always wins',
+    etaValueText24b === '6 мин',
+    etaValueText24b);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 24c — #939 focused pre-commit audit round 5/6, kept as a
+// permanent regression pin under round 7's new policy: the EXACT
+// SIM_AUDIT_RIDE_OVERRIDES reproduction a second independent audit ran
+// directly at runtime. No saveActiveRide/seedHandedOffOrder call at all
+// (genuinely no canonical record AND no driver-handoff snapshot for this
+// tripId) — mounting with a `?status=` query makes
+// loadPassengerRideView's useSimOverrides true, so `ride =
+// createDemoActiveRide({tripId, ...SIM_AUDIT_RIDE_OVERRIDES})`.
+// SIM_AUDIT_RIDE_OVERRIDES (ride_state.js) sets route.etaToDestination AND
+// order.destinationEta to the SAME literal ('28 мин') — historically the
+// hardest case to catch, since every structural signal a gate could ever
+// check agreed. Under round 7's server-or-neutral policy this needs no
+// gate at all: local is never read, so this now passes trivially — kept
+// as a named pin specifically so this literal never silently reappears if
+// a future change reintroduces ANY local read for this field. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch24c;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch24c = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordGG');
+resolveFetch24c({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordGG',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: null, initials: null, rating: null, car: null },
+      passenger: { name: null, initials: null, rating: null, phoneMasked: null },
+      route: { pickupLabel: null, dropoffLabel: null, etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: null },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText24c = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  const avatarText24c = app.querySelector('.active-ride-passenger__avatar')?.textContent || '';
+  expect('S24c: no canonical record + a statusQuery-triggered SIM_AUDIT fallback (whose route.etaToDestination/order.destinationEta happen to genuinely agree, "28 мин") shows the neutral "—" ETA on an authoritative GET — the historical hardest-to-catch case, now trivially correct since local is never consulted',
+    etaValueText24c === '—',
+    etaValueText24c);
+  expect('S24c: the same SIM_AUDIT fallback\'s avatar shows the neutral "—", never the built-in demo "РК"',
+    avatarText24c === '—' || avatarText24c.includes('—'),
+    avatarText24c);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 25 — #939 focused pre-commit audit round 4: a truthy `srv`
+// with no `status` field at all (a malformed 2xx — e.g. `{ride: {}}`,
+// which getRideFromBackend's own validation in mock_api.js already accepts
+// as a well-formed truthy `r.ride` object, since it only checks `typeof
+// r.ride === 'object'`, never that it carries a `status` key) must never be
+// treated as a confirmation. On the very FIRST-EVER read, with a usable
+// local record already present, the OLD code would have silently resolved
+// mergeServerRide's `srv.status || ride.status` to the unconfirmed local
+// status while still marking hasConfirmedServerRide = true right after —
+// this proves the fix at the live-DOM level: the screen must show ERROR,
+// exactly like S14's 5xx case, never the promoted stale local sheet. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch25;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch25 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordZ', 'trip_ordZ']);
+saveActiveRide(baseRide('trip_ordZ', RIDE_STATUS.DRIVER_EN_ROUTE));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordZ');
+resolveFetch25({ ok: true, status: 200, text: async () => JSON.stringify({ ride: {} }) });
+await tick(12);
+{
+  expect('S25: a truthy but status-less ("malformed 2xx") first-ever read shows the ERROR state, never a confirmed-and-promoted stale local DRIVER_EN_ROUTE sheet',
+    currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 26 — #939 focused pre-commit audit round 4/7: etaText's
+// order.pickupEta has no serializeRide() contract field behind it at all
+// (order only ever carries offerPrice). round 7 — a fourth independent
+// audit found order.pickupEta/destinationEta/destinationDistance were the
+// one place the old keep()-based merge still silently preserved local/
+// demo literals indefinitely, so this scenario now deliberately seeds a
+// REAL-looking local pickupEta ("99 мин") to prove it is genuinely never
+// consulted any more, not merely that there was nothing to leak before. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch26;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch26 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordAA', 'trip_ordAA']);
+saveActiveRide(baseRide('trip_ordAA', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  order: { offerPrice: '500 ₽', pickupEta: '99 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordAA');
+resolveFetch26({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordAA',
+      status: RIDE_STATUS.DRIVER_EN_ROUTE,
+      driver: { name: 'Павел Т.', initials: 'ПТ', rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 31', dropoffLabel: 'ул. Финишная, 32' },
+      order: { offerPrice: '500 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText26 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S26: an authoritative DRIVER_EN_ROUTE ride with a REAL-looking local order.pickupEta ("99 мин") but the server genuinely null shows the neutral "—" ETA — local is never consulted, never the "4 мин" demo fallback either',
+    etaValueText26 === '—',
+    etaValueText26);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 26b — #939 focused pre-commit audit round 7: the positive
+// counterpart to S26 — a synthetic-but-real server-supplied
+// order.pickupEta. serializeRide()'s real `order` shape has never carried
+// this field either, so this response is synthetic (proving code
+// readiness, not today's backend behavior) — a real server value must
+// still win over a different stale local one. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch26b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch26b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordA2', 'trip_ordA2']);
+saveActiveRide(baseRide('trip_ordA2', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  order: { offerPrice: '500 ₽', pickupEta: '99 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordA2');
+resolveFetch26b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordA2',
+      status: RIDE_STATUS.DRIVER_EN_ROUTE,
+      driver: { name: 'Павел Т.', initials: 'ПТ', rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 31', dropoffLabel: 'ул. Финишная, 32' },
+      order: { offerPrice: '500 ₽', pickupEta: '7 мин' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText26b = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S26b: a synthetic-but-real server-supplied order.pickupEta ("7 мин") is shown, never the stale local "99 мин" nor the "4 мин" demo fallback',
+    etaValueText26b === '7 мин',
+    etaValueText26b);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 27 — #939 focused pre-commit audit round 4/7: completedStats'
+// order.destinationEta/destinationDistance have no serializeRide() contract
+// field either (same reasoning as S26). round 7 — deliberately seeds
+// REAL-looking local values ("99 мин"/"77 км") to prove they are genuinely
+// never consulted any more. A real timestamps.completedAt is included so
+// formatCompletedAt's OWN separate arrivalTime-based fallback (a distinct,
+// out-of-scope ungated literal noted for follow-up) never fires and cannot
+// mask this assertion. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch27;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch27 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordBB', 'trip_ordBB']);
+saveActiveRide(baseRide('trip_ordBB', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  order: { offerPrice: '700 ₽', destinationEta: '99 мин', destinationDistance: '77 км' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordBB');
+resolveFetch27({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordBB',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Семён Д.', initials: 'СД', rating: '4,70' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 41', dropoffLabel: 'ул. Финишная, 42' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  // .passenger-complete__stat-value renders THREE stats in template order:
+  // time, distance, completedAt (the last from formatCompletedAt, a
+  // separate function with its own out-of-scope fallback — see the
+  // scenario comment above). Only the first two (time/distance) are
+  // completedStats' own fields under test here.
+  const statValues27 = Array.from(app.querySelectorAll('.active-ride-passenger--complete .passenger-complete__stat-value'))
+    .map((n) => (n.textContent || '').trim());
+  expect('S27: an authoritative COMPLETED ride with REAL-looking local order.destinationEta/destinationDistance ("99 мин"/"77 км") but the server genuinely null shows the neutral "—" for both completedStats fields — local is never consulted, never "42 мин"/"38 км" either',
+    statValues27.length === 3 && statValues27[0] === '—' && statValues27[1] === '—',
+    statValues27);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 27b — #939 focused pre-commit audit round 7: the positive
+// counterpart to S27 — synthetic-but-real server-supplied
+// destinationEta/destinationDistance, proving code readiness for a future
+// real backend value; must win over different stale local ones. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch27b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch27b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordB2', 'trip_ordB2']);
+saveActiveRide(baseRide('trip_ordB2', RIDE_STATUS.DRIVER_EN_ROUTE, {
+  order: { offerPrice: '700 ₽', destinationEta: '99 мин', destinationDistance: '77 км' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordB2');
+resolveFetch27b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordB2',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Семён Д.', initials: 'СД', rating: '4,70' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 41', dropoffLabel: 'ул. Финишная, 42' },
+      order: { offerPrice: '700 ₽', destinationEta: '19 мин', destinationDistance: '15 км' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const statValues27b = Array.from(app.querySelectorAll('.active-ride-passenger--complete .passenger-complete__stat-value'))
+    .map((n) => (n.textContent || '').trim());
+  expect('S27b: synthetic-but-real server-supplied destinationEta/destinationDistance ("19 мин"/"15 км") are shown, never the stale local "99 мин"/"77 км" nor the "42 мин"/"38 км" demo fallback',
+    statValues27b.length === 3 && statValues27b[0] === '19 мин' && statValues27b[1] === '15 км',
+    statValues27b);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 28 — #939 focused pre-commit audit round 5: arrivingDropoffInfo
+// non-authoritative/backend-off branch, pinning the byte-for-byte baseline
+// revert. A REAL route.etaToDestination is deliberately seeded locally (the
+// value that round 4's now-reverted swap WOULD have shown) to prove it is
+// NOT consulted at all in this branch — the ARRIVING_DROPOFF top-card ETA
+// must show the exact prior '1 мин' literal regardless. ──
+reset();
+delete globalThis.__BD_API_BASE__;
+saveActiveRide(baseRide('trip_ordDD', RIDE_STATUS.IN_PROGRESS, {
+  route: { pickupLabel: 'A', dropoffLabel: 'B', etaToDestination: '55 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordDD&phase=arriving_dropoff');
+{
+  const etaValueText28 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S28: local/backend-off ARRIVING_DROPOFF shows the exact prior "1 мин" fallback, never the real local route.etaToDestination ("55 мин") — the non-authoritative branch reads route.etaToDropoff (a field that does not exist), byte-for-byte reverted to baseline',
+    etaValueText28 === '1 мин',
+    etaValueText28);
+}
+
+// ── Scenario 29 — #939 focused pre-commit audit round 7: arrivingDropoffInfo
+// authoritative branch — the SAME "local ignored, however real it looks"
+// proof as S24, but for the ARRIVING_DROPOFF phase specifically (its own
+// consumer function, sharing the same merged route.etaToDestination). ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch29;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch29 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordEE', 'trip_ordEE']);
+saveActiveRide(baseRide('trip_ordEE', RIDE_STATUS.IN_PROGRESS, {
+  orderId: 'ordEE',
+  route: { pickupLabel: 'A', dropoffLabel: 'B', etaToDestination: '2 мин' },
+  order: { offerPrice: '1 240 ₽', destinationEta: '2 мин' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordEE&phase=arriving_dropoff');
+resolveFetch29({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordEE',
+      status: RIDE_STATUS.IN_PROGRESS,
+      driver: { name: 'Глеб С.', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 71', dropoffLabel: 'ул. Финишная, 72', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '480 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+{
+  const etaValueText29 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
+  expect('S29: authoritative IN_PROGRESS+ARRIVING_DROPOFF with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("2 мин") and the server genuinely null STILL shows the neutral "—" — local is never consulted, never the "1 мин" backend-off fallback either',
+    etaValueText29 === '—',
+    etaValueText29);
+}
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+
+// ── Scenario 34 — #939 focused pre-commit audit round 8: PR #940 review
+// thread E (P1) — "Preserve local-ahead status only after a prior
+// confirmation". A fourth independent audit reproduced this directly at
+// runtime: a first-ever retryable failure schedules a real background
+// recovery (same clamped-setTimeout technique as S19); the recovery GET
+// then succeeds, but with a server status BEHIND the persisted local
+// status (server WAITING_PASSENGER, local IN_PROGRESS) — since this is
+// the mount's FIRST successful confirmation, hasConfirmedServerRide is
+// still false at the moment of that merge, so there is no prior
+// confirmation making the local-ahead status trustworthy. The server
+// status must win. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch34First;
+let resolveFetch34Recovery;
+let fetchCallCount34 = 0;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    fetchCallCount34 += 1;
+    if (fetchCallCount34 === 1) return new Promise((resolve) => { resolveFetch34First = resolve; });
+    return new Promise((resolve) => { resolveFetch34Recovery = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordKK', 'trip_ordKK']);
+saveActiveRide(baseRide('trip_ordKK', RIDE_STATUS.IN_PROGRESS));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordKK');
+const realSetTimeout34 = globalThis.setTimeout;
+globalThis.setTimeout = (fn, ms, ...args) => realSetTimeout34(fn, Math.min(ms, 10), ...args);
+resolveFetch34First({ ok: false, status: 500, text: async () => JSON.stringify({ code: 'INTERNAL' }) });
+await tick(12);
+expect('S34 pre: first-ever retryable failure shows ERROR (hasConfirmedServerRide is still false)',
+  currentSheet()?.dataset.status === 'error', currentSheet()?.dataset.status);
+await new Promise((resolve) => realSetTimeout34(resolve, 100));
+globalThis.setTimeout = realSetTimeout34;
+expect('S34 pre: the scheduled recovery GET actually started',
+  fetchCallCount34 === 2);
+resolveFetch34Recovery({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordKK',
+      status: RIDE_STATUS.WAITING_PASSENGER,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S34: the FIRST-EVER confirmation, reached via recovery, correctly takes the SERVER status (WAITING_PASSENGER) — never the local-ahead, never-confirmed IN_PROGRESS',
+  currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER, currentSheet()?.dataset.status);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 34b — #939 focused pre-commit audit round 8: control for S34
+// — a plain FIRST-EVER read (recovery=false, no prior failure at all)
+// with the server status behind local. Confirms the server already wins
+// on a non-recovery read today (unaffected by this round's fix, since
+// preserveLocallyAheadStatus is `recovery && hasConfirmedServerRide`,
+// which is trivially false whenever `recovery` itself is false) — pinned
+// so a future change to the guard can't accidentally regress this
+// non-recovery baseline while touching the recovery path. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch34b;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch34b = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedHandedOffOrder(['ordKK2', 'trip_ordKK2']);
+saveActiveRide(baseRide('trip_ordKK2', RIDE_STATUS.IN_PROGRESS));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=IN_PROGRESS&tripId=trip_ordKK2');
+resolveFetch34b({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordKK2',
+      status: RIDE_STATUS.WAITING_PASSENGER,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S34b (control): a plain first-ever (non-recovery) read with server-behind-local already resolves to the server status today, unaffected by this round\'s guard change',
+  currentSheet()?.dataset.status === RIDE_STATUS.WAITING_PASSENGER, currentSheet()?.dataset.status);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 35 — #939 focused pre-commit audit round 8: PR #940 review
+// thread D (P2) — "Persist the confirmed terminal status for offline
+// reloads", local CANCELED vs server COMPLETED direction. A fourth
+// independent audit reproduced this directly at runtime: a local record
+// frozen CANCELED+canceledAt (exactly what bindCancelAffordance's own
+// updateActiveRideStatus(...CANCELED...) commits, e.g. moments before an
+// independent server-side COMPLETED resolution wins the race) must, once
+// an authoritative GET confirms COMPLETED, end up with the STORED record
+// itself showing COMPLETED — completedAt set to the server's own
+// timestamps.completedAt, canceledAt cleared — and a later backend-off
+// reload (reading back the exact ?status=COMPLETED
+// syncTerminalStatusIntoUrl already wrote) must show the COMPLETE
+// renderer, not the stale CANCELED fallback. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch35;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch35 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordLL',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordLL', RIDE_STATUS.CANCELED, {
+  timestamps: { createdAt: new Date().toISOString(), canceledAt: new Date().toISOString() },
+  cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept', comment: '' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordLL');
+const serverCompletedAt35 = new Date().toISOString();
+resolveFetch35({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordLL',
+      status: RIDE_STATUS.COMPLETED,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: serverCompletedAt35 },
+    },
+  }),
+});
+await tick(12);
+expect('S35 step 1: THIS mount correctly swaps to COMPLETED once the server confirms it',
+  app.querySelector('.active-ride-passenger--complete') !== null);
+const storedAfterS35 = findActiveRide('trip_ordLL');
+expect('S35 — FIX: the STORED record now shows status=COMPLETED with the server\'s own completedAt timestamp, and canceledAt cleared',
+  storedAfterS35?.status === RIDE_STATUS.COMPLETED
+    && storedAfterS35?.timestamps?.completedAt === serverCompletedAt35
+    && storedAfterS35?.timestamps?.canceledAt == null
+    && storedAfterS35?.cancel == null,
+  JSON.stringify(storedAfterS35?.timestamps));
+const canonicalAfterS35 = getOrderById('ordLL');
+const tripCountsAfterS35 = countCompletedPassengerTrips();
+const historyAfterS35 = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordLL');
+expect('S35 — the server-confirmed COMPLETED outcome overrides an opposite-terminal CANCELED canonical order and uses the server timestamp',
+  canonicalAfterS35?.status === RIDE_STATUS.COMPLETED
+    && canonicalAfterS35?.statusUpdatedAt === serverCompletedAt35,
+  JSON.stringify(canonicalAfterS35));
+expect('S35 — profile trip counts immediately observe the reconciled canonical COMPLETED order',
+  tripCountsAfterS35.total === 1 && tripCountsAfterS35.thisWeek === 1,
+  JSON.stringify(tripCountsAfterS35));
+expect('S35 — terminal history uses the confirmed fare, never a local/demo ride.price',
+  historyAfterS35?.fare === '700 ₽', JSON.stringify(historyAfterS35));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordLL');
+expect('S35 step 2 — FIX: a later backend-off reload, reading back the persisted ?status=COMPLETED, now correctly shows the COMPLETE renderer, never the stale CANCELED fallback',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && app.querySelector('.passenger-cancel-fallback') === null);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 36 — #939 focused pre-commit audit round 8: PR #940 review
+// thread D (P2), the symmetric direction — local COMPLETED vs server
+// CANCELED. ──
+reset();
+localStorage.setItem('bazardrive.ride_history.v1', '{malformed');
+const malformedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — targeted history deletion is a no-op on malformed storage and preserves the unreadable payload for explicit recovery',
+  malformedHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === '{malformed');
+reset();
+localStorage.setItem('bazardrive.ride_history.v1', '{"legacy":"non-array"}');
+const nonArrayHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — targeted history deletion is also a no-op on valid non-array JSON',
+  nonArrayHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === '{"legacy":"non-array"}');
+reset();
+const legacySibling36 = { role: 'passenger', tripId: 'trip_legacy_sibling36', marker: 'legacy-object' };
+localStorage.setItem('bazardrive.ride_history.v1', JSON.stringify([
+  { role: 'passenger', tripId: 'trip_target36', marker: 'remove-me' },
+  'legacy-string-sibling',
+  null,
+  legacySibling36,
+]));
+const mixedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_target36',
+});
+expect('S36 pre — targeted deletion preserves opposite/legacy sibling array elements byte-for-byte in order',
+  mixedHistoryRemoval36 === true
+    && localStorage.getItem('bazardrive.ride_history.v1') === JSON.stringify([
+      'legacy-string-sibling',
+      null,
+      legacySibling36,
+    ]),
+  localStorage.getItem('bazardrive.ride_history.v1'));
+reset();
+saveRideHistoryEntry({ role: 'passenger', tripId: 'trip_sibling36', marker: 'sibling' });
+const absentHistoryRawBefore36 = localStorage.getItem('bazardrive.ride_history.v1');
+const absentHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_missing36',
+});
+expect('S36 pre — absent role+trip deletion is idempotent and leaves the history serialization unchanged',
+  absentHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === absentHistoryRawBefore36);
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch36;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch36 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordMM',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordMM', RIDE_STATUS.COMPLETED, {
+  timestamps: { createdAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+}));
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordMM',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'false-passenger-completed',
+});
+saveRideHistoryEntry({
+  role: 'driver',
+  tripId: 'trip_ordMM',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'same-trip-opposite-role',
+});
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_sibling36',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'sibling-trip',
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordMM');
+const serverCanceledAt36 = new Date().toISOString();
+resolveFetch36({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordMM',
+      status: RIDE_STATUS.CANCELED,
+      driver: { name: 'Настоящий Водитель', initials: null, rating: '4,60' },
+      passenger: { name: 'Анна П.', initials: 'АП' },
+      route: { pickupLabel: 'ул. Тестовая, 1', dropoffLabel: 'ул. Финишная, 2' },
+      order: { offerPrice: '700 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt36 },
+      cancel: { by: 'driver', reason: null },
+    },
+  }),
+});
+await tick(12);
+expect('S36 step 1: THIS mount correctly swaps to the CANCELED fallback once the server confirms it',
+  app.querySelector('.passenger-cancel-fallback') !== null);
+const storedAfterS36 = findActiveRide('trip_ordMM');
+expect('S36 — FIX: the STORED record now shows status=CANCELED with the server\'s own canceledAt timestamp, and completedAt cleared',
+  storedAfterS36?.status === RIDE_STATUS.CANCELED
+    && storedAfterS36?.timestamps?.canceledAt === serverCanceledAt36
+    && storedAfterS36?.timestamps?.completedAt == null
+    && storedAfterS36?.cancel?.by === 'driver',
+  JSON.stringify(storedAfterS36?.timestamps));
+const canonicalAfterS36 = getOrderById('ordMM');
+expect('S36 — the server-confirmed CANCELED outcome overrides an opposite-terminal COMPLETED canonical order and removes it from completed-trip counts',
+  canonicalAfterS36?.status === RIDE_STATUS.CANCELED
+    && canonicalAfterS36?.statusUpdatedAt === serverCanceledAt36
+    && countCompletedPassengerTrips().total === 0,
+  JSON.stringify(canonicalAfterS36));
+const historyAfterS36 = loadRideHistory();
+expect('S36 — authoritative CANCELED removes only the false passenger COMPLETED row, preserving same-trip driver history and passenger siblings',
+  !historyAfterS36.some((entry) => entry?.role === 'passenger' && entry?.tripId === 'trip_ordMM')
+    && historyAfterS36.some((entry) => entry?.role === 'driver'
+      && entry?.tripId === 'trip_ordMM'
+      && entry?.marker === 'same-trip-opposite-role')
+    && historyAfterS36.some((entry) => entry?.role === 'passenger'
+      && entry?.tripId === 'trip_sibling36'
+      && entry?.marker === 'sibling-trip'),
+  JSON.stringify(historyAfterS36));
+const historyRawBeforeRepeat36 = localStorage.getItem('bazardrive.ride_history.v1');
+const repeatedHistoryRemoval36 = removeRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordMM',
+});
+expect('S36 — repeating the already-applied passenger history correction is a no-op with no serialization churn',
+  repeatedHistoryRemoval36 === false
+    && localStorage.getItem('bazardrive.ride_history.v1') === historyRawBeforeRepeat36);
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordMM');
+expect('S36 step 2 — FIX: a later backend-off reload, reading back the persisted ?status=CANCELED, now correctly shows the CANCELED fallback, never the stale COMPLETE renderer',
+  app.querySelector('.passenger-cancel-fallback') !== null
+    && app.querySelector('.active-ride-passenger--complete') === null);
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 37 — latest PR #940 P2: the terminal status can agree while
+// cancellation ownership differs. The server actor/reason must replace the
+// locally persisted passenger cancellation and survive backend-off reload. ──
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch37;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch37 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordNN',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordNN', RIDE_STATUS.CANCELED, {
+  timestamps: { createdAt: new Date().toISOString(), canceledAt: '2026-01-01T00:00:00.000Z' },
+  cancel: { by: 'passenger', reason: 'passenger_cancel_after_accept', comment: 'stale-local' },
+}));
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordNN');
+const serverCanceledAt37 = new Date().toISOString();
+resolveFetch37({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordNN',
+      status: RIDE_STATUS.CANCELED,
+      role: 'passenger',
+      driver: { name: 'Водитель Отменил', initials: null, rating: '4,90', car: 'Kia K5' },
+      passenger: { name: 'Анна П.', initials: 'АП', phoneMasked: null },
+      route: { pickupLabel: 'Точка 37А', dropoffLabel: 'Точка 37Б' },
+      order: { offerPrice: '710 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt37 },
+      cancel: { by: 'driver', reason: 'driver_emergency' },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS37 = findActiveRide('trip_ordNN');
+const cancelText37 = app.querySelector('.passenger-cancel-fallback__text')?.textContent || '';
+expect('S37 — same-status server CANCELED replaces stale passenger cancel ownership/reason and drops the local-only comment',
+  storedAfterS37?.cancel?.by === 'driver'
+    && storedAfterS37?.cancel?.reason === 'driver_emergency'
+    && !Object.hasOwn(storedAfterS37?.cancel || {}, 'comment')
+    && cancelText37.includes('Водитель отменил'),
+  JSON.stringify({ cancel: storedAfterS37?.cancel, cancelText37 }));
+expect('S37 — same-status canonical cancellation adopts the server timestamp',
+  getOrderById('ordNN')?.statusUpdatedAt === serverCanceledAt37,
+  JSON.stringify(getOrderById('ordNN')));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordNN');
+expect('S37 reload — backend-off copy still attributes cancellation to the driver',
+  (app.querySelector('.passenger-cancel-fallback__text')?.textContent || '').includes('Водитель отменил'));
+reset();
+
+// ── Scenario 38 — canonical orders do not expose NO_SHOW, so an
+// authoritative NO_SHOW Ride projects to canonical CANCELED even across an
+// opposite local COMPLETED terminal. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch38;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch38 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordOO',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+saveActiveRide(baseRide('trip_ordOO', RIDE_STATUS.COMPLETED, {
+  timestamps: { createdAt: new Date().toISOString(), completedAt: '2026-01-01T00:00:00.000Z' },
+}));
+saveRideHistoryEntry({
+  role: 'passenger',
+  tripId: 'trip_ordOO',
+  completedAt: '2026-01-01T00:00:00.000Z',
+  marker: 'false-passenger-no-show',
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordOO');
+const serverCanceledAt38 = new Date().toISOString();
+resolveFetch38({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordOO',
+      status: RIDE_STATUS.NO_SHOW,
+      role: 'passenger',
+      driver: { name: 'Водитель No Show', initials: null, rating: '4,80', car: null },
+      passenger: { name: 'Анна П.', initials: 'АП', phoneMasked: null },
+      route: { pickupLabel: 'Точка 38А', dropoffLabel: 'Точка 38Б' },
+      order: { offerPrice: '720 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt38 },
+      cancel: { by: 'driver', reason: 'passenger_no_show' },
+    },
+  }),
+});
+await tick(12);
+expect('S38 — server NO_SHOW persists on the active Ride and maps to canonical CANCELED with the server timestamp',
+  findActiveRide('trip_ordOO')?.status === RIDE_STATUS.NO_SHOW
+    && getOrderById('ordOO')?.status === RIDE_STATUS.CANCELED
+    && getOrderById('ordOO')?.statusUpdatedAt === serverCanceledAt38
+    && countCompletedPassengerTrips().total === 0,
+  JSON.stringify({ ride: findActiveRide('trip_ordOO'), order: getOrderById('ordOO') }));
+expect('S38 — NO_SHOW uses the truthful no-show renderer',
+  app.querySelector('.passenger-cancel-fallback')?.dataset.variant === 'no_show');
+expect('S38 — authoritative NO_SHOW removes the stale passenger COMPLETED history row',
+  !loadRideHistory().some((entry) => entry?.role === 'passenger' && entry?.tripId === 'trip_ordOO'),
+  JSON.stringify(loadRideHistory()));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 39 — latest PR #940 fresh-device P2. No active Ride and no
+// canonical order exist. The explicit terminal URL creates the adversarial
+// SIM_AUDIT fallback, but the successful GET must produce one server-only
+// projection for storage, first history save, and backend-off reload. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch39;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch39 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordPP');
+const serverCompletedAt39 = new Date().toISOString();
+resolveFetch39({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordPP',
+      status: RIDE_STATUS.COMPLETED,
+      role: 'passenger',
+      driver: { name: 'Сергей Верный', initials: null, rating: '4,99', car: 'Kia K5' },
+      passenger: { name: 'Руслан П.', initials: 'РП', rating: null, phoneMasked: '+7 ... 00-39' },
+      route: { pickupLabel: 'Серверная 39А', dropoffLabel: 'Серверная 39Б', etaToPickup: null, etaToDestination: null },
+      order: { offerPrice: '730 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), completedAt: serverCompletedAt39 },
+      cancel: { by: null, reason: null },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS39 = findActiveRide('trip_ordPP');
+const historyAfterS39 = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordPP');
+expect('S39 — fresh-device first-save stores only the authoritative terminal projection and derives canonical orderId from the confirmed tripId',
+  storedAfterS39?.status === RIDE_STATUS.COMPLETED
+    && storedAfterS39?.orderId === 'ordPP'
+    && storedAfterS39?.serverConfirmedTerminal === true
+    && storedAfterS39?.driver?.name === 'Сергей Верный'
+    && storedAfterS39?.driver?.initials === 'СВ'
+    && storedAfterS39?.vehicle?.model === 'Kia K5'
+    && storedAfterS39?.route?.pickupLabel === 'Серверная 39А'
+    && storedAfterS39?.order?.offerPrice === '730 ₽'
+    && storedAfterS39?.ride == null
+    && storedAfterS39?.cancel == null
+    && storedAfterS39?.localProvenance == null
+    && storedAfterS39?.driver?.onlineLabel == null
+    && storedAfterS39?.passenger?.luggage == null
+    && storedAfterS39?.route?.currentInstruction == null
+    && storedAfterS39?.order?.rate == null,
+  JSON.stringify(storedAfterS39));
+expect('S39 — the very first COMPLETED render/history save uses exact server identity, route, vehicle and fare; demo ride.price never wins',
+  historyAfterS39?.driver?.name === 'Сергей Верный'
+    && historyAfterS39?.vehicle?.model === 'Kia K5'
+    && historyAfterS39?.route?.pickupLabel === 'Серверная 39А'
+    && historyAfterS39?.route?.dropoffLabel === 'Серверная 39Б'
+    && historyAfterS39?.fare === '730 ₽',
+  JSON.stringify(historyAfterS39));
+expect('S39 — a fresh-device server Ride does not fabricate a missing canonical order',
+  getOrderById('ordPP') == null);
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordPP');
+const historyAfterS39Reload = loadRideHistory().find((entry) => entry?.tripId === 'trip_ordPP');
+const completedTextAfterS39Reload = app.querySelector('.active-ride-passenger--complete')?.textContent || '';
+expect('S39 reload — durable server-terminal provenance keeps both DOM and history authoritative; no demo plate/card/stats return',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && historyAfterS39Reload?.driver?.name === 'Сергей Верный'
+    && historyAfterS39Reload?.fare === '730 ₽'
+    && !completedTextAfterS39Reload.includes('А 124 ВВ 77')
+    && !completedTextAfterS39Reload.includes('4417')
+    && !completedTextAfterS39Reload.includes('Тинькофф')
+    && !completedTextAfterS39Reload.includes('42 мин')
+    && !completedTextAfterS39Reload.includes('38 км'),
+  JSON.stringify({ history: historyAfterS39Reload, completedTextAfterS39Reload }));
+reset();
+
+// ── Scenario 40 — fresh-device CANCELED uses the same first-save path and
+// preserves the server cancellation actor for a later backend-off reload. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch40;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch40 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordQQ');
+const serverCanceledAt40 = new Date().toISOString();
+resolveFetch40({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordQQ',
+      status: RIDE_STATUS.CANCELED,
+      role: 'passenger',
+      driver: { name: 'Водитель Свежий', initials: null, rating: '4,70', car: null },
+      passenger: { name: 'Руслан П.', initials: 'РП', phoneMasked: null },
+      route: { pickupLabel: 'Серверная 40А', dropoffLabel: 'Серверная 40Б' },
+      order: { offerPrice: '740 ₽' },
+      timestamps: { createdAt: new Date().toISOString(), canceledAt: serverCanceledAt40 },
+      cancel: { by: 'driver', reason: 'driver_emergency' },
+    },
+  }),
+});
+await tick(12);
+const storedAfterS40 = findActiveRide('trip_ordQQ');
+expect('S40 — fresh-device CANCELED first-save persists the server actor and no demo Ride payload',
+  storedAfterS40?.status === RIDE_STATUS.CANCELED
+    && storedAfterS40?.cancel?.by === 'driver'
+    && storedAfterS40?.cancel?.reason === 'driver_emergency'
+    && storedAfterS40?.ride == null
+    && storedAfterS40?.route?.pickupLabel === 'Серверная 40А',
+  JSON.stringify(storedAfterS40));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordQQ');
+expect('S40 reload — backend-off copy still attributes the fresh-device cancellation to the driver',
+  (app.querySelector('.passenger-cancel-fallback__text')?.textContent || '').includes('Водитель отменил'));
+reset();
+
+// ── Scenario 41 — inherited Object.prototype keys are not Ride statuses.
+// Both the canonical helper and the screen-level terminal projection must
+// reject them without persisting a Ride or corrupting an existing order. ──
+reset();
+const canonicalPrototypeTimestamp41 = '2026-01-01T00:00:00.000Z';
+seedCanonicalOrders({
+  id: 'ordRR',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: canonicalPrototypeTimestamp41,
+});
+const directPrototypeResult41 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordRR',
+  status: 'toString',
+  timestamps: {},
+}, 'trip_ordRR');
+const directArrayStatusResult41 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordRR',
+  status: [RIDE_STATUS.COMPLETED],
+  timestamps: { completedAt: new Date().toISOString() },
+}, 'trip_ordRR');
+expect('S41 direct — inherited keys and coercible non-string statuses are rejected by canonical terminal reconciliation without dropping the order status',
+  directPrototypeResult41 == null
+    && directArrayStatusResult41 == null
+    && getOrderById('ordRR')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordRR')?.statusUpdatedAt === canonicalPrototypeTimestamp41,
+  JSON.stringify(getOrderById('ordRR')));
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch41;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch41 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordRR');
+resolveFetch41({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordRR',
+      status: 'toString',
+      role: 'passenger',
+      timestamps: { updatedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S41 screen — an inherited status key may use the existing unsupported-status stub, but never the authoritative terminal persistence bypass',
+  findActiveRide('trip_ordRR') == null
+    && getOrderById('ordRR')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordRR')?.statusUpdatedAt === canonicalPrototypeTimestamp41,
+  JSON.stringify({ ride: findActiveRide('trip_ordRR'), order: getOrderById('ordRR') }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 42 — runInitialRead rejects a coercible non-string status
+// before ownership or either persistence boundary is reached. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+let resolveFetch42;
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return new Promise((resolve) => { resolveFetch42 = resolve; });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+const canonicalArrayTimestamp42 = '2026-01-02T00:00:00.000Z';
+seedCanonicalOrders({
+  id: 'ordSS',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: canonicalArrayTimestamp42,
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=DRIVER_EN_ROUTE&tripId=trip_ordSS');
+resolveFetch42({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({
+    ride: {
+      tripId: 'trip_ordSS',
+      status: [RIDE_STATUS.COMPLETED],
+      role: 'passenger',
+      timestamps: { completedAt: new Date().toISOString() },
+    },
+  }),
+});
+await tick(12);
+expect('S42 — a coercible non-string server status reaches ERROR without materializing a Ride or mutating the canonical order',
+  currentRoot()?.dataset.readState === 'error'
+    && findActiveRide('trip_ordSS') == null
+    && getOrderById('ordSS')?.status === RIDE_STATUS.COMPLETED
+    && getOrderById('ordSS')?.statusUpdatedAt === canonicalArrayTimestamp42,
+  JSON.stringify({ readState: currentRoot()?.dataset.readState, ride: findActiveRide('trip_ordSS'), order: getOrderById('ordSS') }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 43 — invalid/missing terminal timestamps never poison weekly
+// counts, and one effective fallback timestamp is shared by the Ride and
+// canonical order and remains stable across an identical repeat GET. ──
+const siblingOrder43 = {
+  id: 'ordSibling43',
+  status: RIDE_STATUS.ACCEPTED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-03T00:00:00.000Z',
+};
+const legacyInvalidOrder43 = {
+  id: 'ordLegacy43',
+  status: RIDE_STATUS.COMPLETED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: 'not-a-date',
+};
+seedCanonicalOrders({
+  id: 'ordTT',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+}, siblingOrder43, legacyInvalidOrder43);
+const invalidTimestampResult43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordTT',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: 'not-a-date' },
+}, 'trip_ordTT');
+await new Promise((resolve) => setTimeout(resolve, 5));
+const invalidTimestampRepeat43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordTT',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: 'not-a-date' },
+}, 'trip_ordTT');
+const sameStatusInvalidResult43 = reconcileCanonicalOrderFromAuthoritativeTerminalRide({
+  tripId: 'trip_ordLegacy43',
+  status: RIDE_STATUS.COMPLETED,
+  timestamps: { completedAt: null },
+}, 'trip_ordLegacy43');
+expect('S43 direct — invalid server/existing timestamps fall back to finite idempotent clocks and leave sibling orders byte-for-byte intact',
+  invalidTimestampResult43?.status === RIDE_STATUS.COMPLETED
+    && invalidTimestampResult43?.statusUpdatedAt !== 'not-a-date'
+    && Number.isFinite(Date.parse(invalidTimestampResult43?.statusUpdatedAt || ''))
+    && invalidTimestampRepeat43?.statusUpdatedAt === invalidTimestampResult43?.statusUpdatedAt
+    && sameStatusInvalidResult43?.statusUpdatedAt !== 'not-a-date'
+    && Number.isFinite(Date.parse(sameStatusInvalidResult43?.statusUpdatedAt || ''))
+    && JSON.stringify(getOrderById('ordSibling43')) === JSON.stringify(siblingOrder43),
+  JSON.stringify({
+    invalidTimestampResult43,
+    invalidTimestampRepeat43,
+    sameStatusInvalidResult43,
+    sibling: getOrderById('ordSibling43'),
+  }));
+reset();
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+const invalidTimestampServerRide43 = {
+  tripId: 'trip_ordUU',
+  status: RIDE_STATUS.COMPLETED,
+  role: 'passenger',
+  passenger: { name: 'Пассажир 43', initials: 'П4', phoneMasked: null },
+  driver: { name: 'Водитель 43', initials: null, rating: '4,43', car: null },
+  route: { pickupLabel: 'Точка 43А', dropoffLabel: 'Точка 43Б' },
+  order: { offerPrice: '743 ₽' },
+  timestamps: { createdAt: '2026-09-02T01:00:00.000Z', completedAt: 'not-a-date' },
+  cancel: { by: null, reason: null },
+};
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ride: invalidTimestampServerRide43 }),
+    });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+seedCanonicalOrders({
+  id: 'ordUU',
+  status: RIDE_STATUS.CANCELED,
+  createdByRole: 'passenger',
+  statusUpdatedAt: '2026-01-01T00:00:00.000Z',
+});
+mountPassenger();
+await navigate('/active-ride?role=passenger&status=CANCELED&tripId=trip_ordUU');
+await tick(12);
+const firstMissingRideTimestamp43 = findActiveRide('trip_ordUU')?.timestamps?.completedAt;
+const firstMissingOrderTimestamp43 = getOrderById('ordUU')?.statusUpdatedAt;
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+await new Promise((resolve) => setTimeout(resolve, 5));
+await navigate('/active-ride?role=passenger&status=COMPLETED&tripId=trip_ordUU');
+await tick(12);
+expect('S43 screen — invalid server timestamp yields one shared Ride/order timestamp and an identical repeat GET does not restamp either store',
+  Number.isFinite(Date.parse(firstMissingRideTimestamp43 || ''))
+    && firstMissingOrderTimestamp43 === firstMissingRideTimestamp43
+    && findActiveRide('trip_ordUU')?.timestamps?.completedAt === firstMissingRideTimestamp43
+    && getOrderById('ordUU')?.statusUpdatedAt === firstMissingOrderTimestamp43,
+  JSON.stringify({
+    firstMissingRideTimestamp43,
+    firstMissingOrderTimestamp43,
+    secondRideTimestamp: findActiveRide('trip_ordUU')?.timestamps?.completedAt,
+    secondOrderTimestamp: getOrderById('ordUU')?.statusUpdatedAt,
+  }));
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+reset();
+
+// ── Scenario 44 — a participant-authorized standalone Ride id still gets
+// the clean terminal projection; only canonical-order reconciliation is
+// intentionally restricted to trip_<orderId>. ──
+globalThis.__BD_API_BASE__ = 'https://fake.test';
+const standaloneTrip44 = '__proto__';
+const standaloneCompletedAt44 = '2026-09-02T02:00:00.000Z';
+globalThis.fetch = (url) => {
+  if (String(url).includes('/ride-state/rides/')) {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ride: {
+          tripId: standaloneTrip44,
+          status: RIDE_STATUS.COMPLETED,
+          role: 'passenger',
+          passenger: { name: 'Standalone Passenger', initials: 'SP', phoneMasked: null },
+          driver: { name: 'Standalone Driver', initials: null, rating: '4,44', car: null },
+          route: { pickupLabel: 'Standalone A', dropoffLabel: 'Standalone B' },
+          order: { offerPrice: '744 ₽' },
+          timestamps: { createdAt: '2026-09-02T01:30:00.000Z', completedAt: standaloneCompletedAt44 },
+          cancel: { by: null, reason: null },
+        },
+      }),
+    });
+  }
+  return Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({}) });
+};
+mountPassenger();
+await navigate(`/active-ride?role=passenger&status=COMPLETED&tripId=${standaloneTrip44}`);
+await tick(12);
+const storedStandalone44 = findActiveRide(standaloneTrip44);
+expect('S44 — standalone terminal Ride persists the sanitized authoritative projection without fabricating canonical order linkage',
+  storedStandalone44?.tripId === standaloneTrip44
+    && storedStandalone44?.orderId == null
+    && storedStandalone44?.serverConfirmedTerminal === true
+    && storedStandalone44?.timestamps?.completedAt === standaloneCompletedAt44
+    && storedStandalone44?.driver?.name === 'Standalone Driver'
+    && storedStandalone44?.ride == null,
+  JSON.stringify(storedStandalone44));
+location.hash = '#/welcome-reload-reset-' + Math.random();
+await tick();
+app.replaceChildren();
+mutationObservers = [];
+delete globalThis.__BD_API_BASE__;
+delete globalThis.fetch;
+await navigate(`/active-ride?role=passenger&status=COMPLETED&tripId=${standaloneTrip44}`);
+const standaloneReloadText44 = app.querySelector('.active-ride-passenger--complete')?.textContent || '';
+expect('S44 reload — standalone backend-off render keeps authoritative neutral fields and never resurrects demo card/plate/stats',
+  app.querySelector('.active-ride-passenger--complete') !== null
+    && !standaloneReloadText44.includes('А 124 ВВ 77')
+    && !standaloneReloadText44.includes('4417')
+    && !standaloneReloadText44.includes('42 мин')
+    && !standaloneReloadText44.includes('38 км'),
+  standaloneReloadText44);
+reset();
+
+// S22/S22b/S23b/S24/S24b/S24c/S25/S26/S26b/S27/S27b/S29/S34/S34b/S35/S36/S37/S38/S39/S40/S41/S42/S43/S44 are
+// backend-enabled with a non-terminal ride (S23b/S27/S27b/S35/S36/S37/S38/S39/S40/S41/S43/S44 are
+// terminal and settle synchronously, no poll/recovery timer), so most of
+// these successful merges (or S25/S34's scheduled recovery) start a real
+// poll setInterval / recovery timer. Every prior scenario transition tears
+// the previous mount down via the NEXT scenario's own reset() (location.hash's
+// setter dispatches 'hashchange' -> teardownPassengerReads() ->
+// stopPassengerRidePoll()'s clearInterval). S44 is now the last scenario
+// in the file, so a final reset() is called here to clean up its own poll.
+reset();
 
 if (issues.length) {
   console.error(`\n${issues.length} runtime regression(s) failed.`);

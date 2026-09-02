@@ -16,6 +16,9 @@ import {
   RIDE_STATUS,
   resolveRideStatusLabel,
   DEMO_ACTIVE_RIDE_ID,
+  STATUS_TIMESTAMP_FIELD,
+  loadActiveRideStore,
+  saveActiveRideStore,
 } from '../ride_state.js';
 import { loadCanonicalActiveRide } from './trip_confirmation_handoff.js';
 import { upgradeStoredActiveRideForOrder } from './responses.js';
@@ -23,7 +26,13 @@ import {
   loadDriverHandoffSnapshot,
   applyDriverHandoffSnapshotToRide,
 } from './driver_handoff_snapshot.js';
-import { updateTripStatus, getRideFromBackend, pollRide, patchRideStatus } from '../mock_api.js';
+import {
+  updateTripStatus,
+  getRideFromBackend,
+  pollRide,
+  patchRideStatus,
+  reconcileCanonicalOrderFromAuthoritativeTerminalRide,
+} from '../mock_api.js';
 import { isBackendEnabled } from '../api_config.js';
 import { createMapShell } from '../mapbox/map_shell.js';
 import { openPassengerSafetySheet, openPassengerCancelSheet } from './active_ride_passenger_sheets.js';
@@ -31,6 +40,7 @@ import {
   saveRideHistoryEntry,
   buildPassengerHistoryEntry,
   loadRideHistory,
+  removeRideHistoryEntry,
 } from '../ride_history.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../ride_waiting_policy.js';
 
@@ -165,7 +175,7 @@ function getPassengerRideFixture() {
 
 function hasUsablePassengerRideSource(tripId) {
   const canonicalRide = loadCanonicalActiveRide({ tripId, role: 'passenger' });
-  if (canonicalRide) return true;
+  if (canonicalRide && canonicalRide.tripId === tripId) return true;
   return Boolean(loadDriverHandoffSnapshot(tripId));
 }
 
@@ -362,6 +372,10 @@ function loadPassengerRideView(tripId, statusQuery) {
   // this only ensures the passenger view does not fork the trip
   // identity when only the other role has materialized data.
   let ride = loadCanonicalActiveRide({ tripId, role: 'passenger' });
+  // Store maps are plain objects for legacy compatibility. Reject any
+  // inherited/prototype lookup (for example a standalone id "__proto__")
+  // unless the returned Ride is explicitly bound to this exact tripId.
+  if (ride && ride.tripId !== tripId) ride = null;
   // BD-LIFE-05 (Codex P2) — direct entry to /active-ride must also pick up
   // the latest real driverSnapshot so a stale demo seed (DriverMap accept
   // legacy / createDemoActiveRide fallback) cannot render forever as
@@ -411,6 +425,13 @@ function loadPassengerRideView(tripId, statusQuery) {
       ride.localProvenance = 'sim_audit';
     }
   }
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — rounds 5 and 6 each added a
+  // marker/gate here (and in mergeServerRide) trying to prove a local
+  // route.etaToDestination value real before letting it survive a server
+  // merge; both were defeated by independent audits. round 7 abandons that
+  // approach entirely (server-or-neutral — see mergeServerRide's own
+  // top-of-body comment) — no marker of any kind is needed in this
+  // function any more.
   if (ride.status === RIDE_STATUS.NEW_ORDER) {
     return { ...ride, status: RIDE_STATUS.ACCEPTED };
   }
@@ -483,9 +504,21 @@ function formatTripNumber(tripId) {
 
 function carLine(ride) {
   const v = (ride && ride.vehicle) || {};
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a server-confirmed ride
+  // (mergeServerRide's markPassengerRideAuthoritative marker) never falls
+  // back to a fabricated demo model/plate: no server source exists for
+  // either today, so a missing value is omitted, never invented. A
+  // genuinely local/demo ride (the marker absent) keeps the exact prior
+  // fallback strings — the backend-off prototype is unchanged.
+  const authoritative = !!(ride && ride.authoritative);
   const parts = [];
-  const model = v.model || 'Toyota Camry';
-  parts.push(model);
+  // Kept as `v.model || 'Toyota Camry'` — a literal, positional `||`
+  // fallback — inside the non-authoritative branch on purpose: it is the
+  // exact token sequence smoke-order-detail-active-ride-passenger-seed.mjs
+  // pins on to prove the banned demo string can only ever surface as a
+  // fallback, never a primary value.
+  const model = authoritative ? (v.model || null) : (v.model || 'Toyota Camry');
+  if (model) parts.push(model);
   // BD-LIFE-07 — Drop the 'серый' demo fallback. BD-LIFE-06 writes either
   // the real vehicle color or the neutral 'цвет не указан' onto real
   // accepted rides, so the `|| 'серый'` chain only ever fired on
@@ -493,12 +526,27 @@ function carLine(ride) {
   // signal with a fabricated grey. Omit the color slot when v.color is
   // missing rather than padding it with demo data.
   if (v.color) parts.push(v.color);
-  parts.push(v.plate || 'А 124 ВВ 77');
+  const plate = v.plate || (authoritative ? null : 'А 124 ВВ 77');
+  if (plate) parts.push(plate);
   return parts.join(' · ');
 }
 
 function paymentInfo(ride) {
   const pay = (ride && ride.payment) || {};
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — same authoritative-or-neutral
+  // policy as carLine above: no server source exists for any payment field
+  // today, so a confirmed ride gets null (rendered neutrally / hidden by
+  // paymentBlockHtml), never a fabricated card. `amount` still resolves via
+  // ride.order.offerPrice independently of ride.payment, since that field
+  // IS a real, reprojected server value.
+  if (ride && ride.authoritative) {
+    return {
+      last4: pay.last4 || null,
+      method: pay.method || null,
+      note: pay.note || null,
+      amount: pay.amount || (ride.order && ride.order.offerPrice) || null,
+    };
+  }
   return {
     last4: pay.last4 || '4417',
     method: pay.method || 'Тинькофф',
@@ -508,8 +556,37 @@ function paymentInfo(ride) {
 }
 
 function etaText(ride) {
-  const eta = (ride && ride.order && ride.order.pickupEta) || '4 мин';
-  return eta.replace(/\s*мин(уты?|у)?$/i, ' мин');
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — order.pickupEta has no
+  // server contract field behind it at all: serializeRide()'s `order`
+  // sub-object carries only `offerPrice` (see server/src/serialize.js).
+  // round 7 — mergeServerRide now resolves order.pickupEta directly from
+  // `srv.order.pickupEta` (server-or-neutral: real server value if the
+  // backend ever adds one, neutral null otherwise) instead of leaving it
+  // to keep()'s local-preserving spread, which a fourth independent audit
+  // found silently carried the fabricated '4 мин' forward indefinitely. An
+  // authoritative ride with no server order data shows the neutral '—'
+  // instead of the fabricated '4 мин'; local/backend-off keeps the exact
+  // prior fallback.
+  const authoritative = !!(ride && ride.authoritative);
+  const eta = (ride && ride.order && ride.order.pickupEta) || (authoritative ? '—' : '4 мин');
+  return String(eta).replace(/\s*мин(уты?|у)?$/i, ' мин');
+}
+
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit round
+// 5 — mergeServerRide() derives driver.initials from the server-CONFIRMED
+// driver.name (never a stale/fabricated local value; driver_initials is
+// one of the server's own ALWAYS_NULL_COLUMNS, so the server itself can
+// never supply it). Same two-initial convention already established
+// elsewhere in this codebase (chat.js's deriveInitials(), profile.js's
+// initials()) — first letter of up to the first two whitespace-separated
+// words, uppercased. '' for an empty/missing name (never null/undefined),
+// so the existing `driver.initials || '—'` template fallbacks in this file
+// stay graceful — an empty name correctly yields empty initials, which
+// those fallbacks already turn into the neutral '—'.
+function initialsFromName(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 }
 
 function toSeconds(mmss) {
@@ -572,8 +649,42 @@ export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
 function inProgressInfo(ride) {
   const r = (ride && ride.ride) || {};
   const route = (ride && ride.route) || {};
-  const arrivalTime = r.arrivalTime || '14:32';
-  const rawEta = route.etaToDestination || r.etaToDestination || '17 мин';
+  const authoritative = !!(ride && ride.authoritative);
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+  // round 4 — arrivalTime lives on `ride.ride`, the same sub-object
+  // r.etaToDestination used to read from below: serializeRide() never
+  // emits a top-level `ride:` key at all (see mergeServerRide's plain
+  // keep(ride.ride, srv.ride), a pure local pass-through), so r.arrivalTime
+  // is always whatever the local/demo record has, with no server contract
+  // field behind it whatsoever — unlike route.etaToDestination, there is no
+  // "genuinely absent on the server" case to distinguish from "the server
+  // said so"; there is only "a local value exists" or "it doesn't". An
+  // authoritative ride with no local value shows the neutral '—' instead
+  // of the fabricated '14:32'; local/backend-off keeps the exact prior
+  // fallback.
+  const arrivalTime = r.arrivalTime || (authoritative ? '—' : '14:32');
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix round 2 — same
+  // authoritative-or-demo policy as the merge/render fixes above. Pre-audit
+  // this fell through to `r.etaToDestination` (ride.ride, a DIFFERENT
+  // sub-object still merged via plain keep() — see mergeServerRide) and
+  // then to the hardcoded '17 мин' regardless of authoritative state, even
+  // though `route.etaToDestination` is a real serializeRide() contract
+  // field. An authoritative ride now consults ONLY route.etaToDestination —
+  // never the stale ride.ride.etaToDestination, never the demo literal.
+  //
+  // round 7 — mergeServerRide now resolves route.etaToDestination directly
+  // from `srv.route.etaToDestination` (server-or-neutral), after three
+  // successive rounds (4/5/6) of trying and failing to prove a LOCAL value
+  // real instead (see mergeServerRide's own top-of-body comment for the
+  // full history). For this authoritative branch the effect is simple:
+  // route.etaToDestination is real server truth or null, so
+  // `route.etaToDestination || '—'` already means exactly what it says.
+  // Local/backend-off keeps the exact prior three-step chain unchanged —
+  // this branch reads the pre-merge, non-authoritative `ride.route`
+  // directly and was never touched by any of these merge-side changes.
+  const rawEta = authoritative
+    ? (route.etaToDestination || '—')
+    : (route.etaToDestination || r.etaToDestination || '17 мин');
   const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
   return { arrivalTime, eta };
 }
@@ -581,7 +692,42 @@ function inProgressInfo(ride) {
 function arrivingDropoffInfo(ride) {
   const r = (ride && ride.ride) || {};
   const route = (ride && ride.route) || {};
-  const rawEta = route.etaToDropoff || r.etaToDropoff || '1 мин';
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+  // round 4 — arrivingDropoffInfo is inProgressInfo's exact sibling: both
+  // feed the SAME 'до места' top-card ETA slot via topDriverCardEta (this
+  // one only for the ARRIVING_DROPOFF phase). Pre-audit this read
+  // `route.etaToDropoff` / `r.etaToDropoff` — a field name that appears
+  // NOWHERE else in this file or in ride_seed.js; no local, demo, or
+  // server payload has ever populated it, so this always silently fell
+  // through to the hardcoded '1 мин', for every ride, authoritative or
+  // not. The real serializeRide() contract field for "ETA to
+  // destination" is `route.etaToDestination` — the same field
+  // inProgressInfo consults; there is no separate dropoff-specific ETA
+  // column on either side.
+  //
+  // round 5 update, per a second independent audit round — the
+  // authoritative branch stays ONLY `route.etaToDestination || '—'`: no
+  // `ride.ride` reference, no demo literal, so it can never show a
+  // fabricated value on a server-confirmed ride. (round 7 — this is even
+  // simpler now: mergeServerRide resolves route.etaToDestination directly
+  // from srv, server-or-neutral, so it is always real server truth or
+  // null — see mergeServerRide's own top-of-body comment.) The
+  // non-authoritative/backend-off branch is reverted BYTE-FOR-BYTE to the
+  // pre-round-4 baseline (`route.etaToDropoff || r.etaToDropoff || '1
+  // мин'`) — round 4's swap to route.etaToDestination there was a real,
+  // unintended shipped-behavior change for local/demo rides (ARRIVING_DROPOFF
+  // is reachable only via an explicit `?phase=` deep link — see the TODO
+  // near PASSENGER_IN_PROGRESS_PHASE above — so this was a demo/QA-path
+  // regression, not a normal user-facing one, but still a real deviation
+  // from "preserve local/backend-off behavior exactly"). Yes, this means
+  // `route.etaToDropoff` is a field name that provably does not exist
+  // anywhere in this codebase, so the non-authoritative branch always
+  // resolves to the literal '1 мин' — that is the exact, deliberately
+  // unchanged baseline behavior, not a bug to "fix" again.
+  const authoritative = !!(ride && ride.authoritative);
+  const rawEta = authoritative
+    ? (route.etaToDestination || '—')
+    : (route.etaToDropoff || r.etaToDropoff || '1 мин');
   const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
   return { eta };
 }
@@ -591,15 +737,42 @@ function arrivingDropoffInfo(ride) {
 // payment amount, then the live ride price, then the original offer.
 // Fallback matches the Cloud Design mock so the screen still has a
 // believable number when no ride data is wired up.
-function arrivingDropoffAmount(ride) {
+//
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A review-fix #2 — an authoritative ride
+// consults ONLY ride.order.offerPrice (which mergeServerRide now computes
+// straight from srv.order.offerPrice, never keep()-preserved from local —
+// see mergeServerRide's order field). pay and r.price are NOT consulted for
+// an authoritative ride at all, even though checking them first would often
+// look harmless: ride.payment is always null once merged (pay is always
+// {}), but ride.ride.price (r.price) can legitimately still carry a stale
+// local/demo value picked up before this ride was ever confirmed — a real
+// serializeRide()/serializeRecoveredRide() response may omit the `ride`
+// sub-object entirely, and consulting r.price here would let that stale
+// value both outrank a real order.offerPrice (the old chain checked
+// r.price BEFORE order.offerPrice) and leak on its own when
+// order.offerPrice is genuinely absent. The local/backend-off path is
+// completely unchanged: same real-value priority chain
+// (dropoffAmount -> amount -> ride.price -> order.offerPrice), same
+// '1 540 ₽' Cloud Design mock fallback. Feeds both authoritative surfaces
+// that read this value: renderPassengerRideComplete's "Итого к оплате"
+// (via completedPaymentInfo) and the IN_PROGRESS + ARRIVING_DROPOFF amount
+// (renderArrivingDropoffSheet's initial render and
+// refreshPassengerRideFieldsInPlace's in-place update). Exported for direct
+// deterministic testing (mirrors deriveWaitCountdown/waitingInfo above) —
+// the authoritative branch's own output is otherwise unobservable through
+// the live DOM: paymentBlockHtml independently hides the ARRIVING_DROPOFF
+// payment card whenever an authoritative ride has no real payment method
+// (always true today), so a DOM-only assertion on that surface cannot tell
+// this function's authoritative branch apart from that unrelated hide.
+export function arrivingDropoffAmount(ride) {
+  if (ride && ride.authoritative) {
+    const order = ride.order || {};
+    return order.offerPrice || '—';
+  }
   const pay = (ride && ride.payment) || {};
   const r = (ride && ride.ride) || {};
   const order = (ride && ride.order) || {};
-  return pay.dropoffAmount
-    || pay.amount
-    || r.price
-    || order.offerPrice
-    || '1 540 ₽';
+  return pay.dropoffAmount || pay.amount || r.price || order.offerPrice || '1 540 ₽';
 }
 
 // BD-RIDE-WAITING-01E — remaining/paidStartsAt are time-dependent values a
@@ -689,11 +862,30 @@ const PASSENGER_SUPPORTED_STATUSES = new Set([
   RIDE_STATUS.COMPLETED,
 ]);
 
+const PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES = new Set([
+  RIDE_STATUS.COMPLETED,
+  RIDE_STATUS.CANCELED,
+  RIDE_STATUS.NO_SHOW,
+]);
+
 // Catch-all stub for statuses the passenger UI does not yet render
 // (e.g. NEW_ORDER / CONFIRMATION_PENDING). CANCELED and NO_SHOW are
 // served by `renderPassengerCanceledFallback`, so they don't appear
 // in this table.
-const PASSENGER_STUB_BY_STATUS = {};
+const PASSENGER_STUB_BY_STATUS = Object.create(null);
+
+// BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a status this screen renders through
+// a SEPARATE top-level function (renderPassengerCanceledFallback /
+// renderPassengerRideComplete / renderPassengerStub) rather than the shared
+// map/sheet flow. Used both by the initial synchronous local-status
+// short-circuit (backend-off only) and by the authoritative post-GET swap in
+// runInitialRead, so both paths agree on exactly which statuses need it.
+function needsSeparatePassengerRenderer(status) {
+  return status === RIDE_STATUS.CANCELED
+    || status === RIDE_STATUS.NO_SHOW
+    || status === RIDE_STATUS.COMPLETED
+    || !PASSENGER_SUPPORTED_STATUSES.has(status);
+}
 
 function renderPassengerStub(message) {
   const root = document.createElement('section');
@@ -709,9 +901,14 @@ function renderPassengerStub(message) {
 
 function chatLabelFor(ride) {
   const rawUnread = ride.chat && ride.chat.unread;
-  const unreadCount = Number.isFinite(Number(rawUnread)) && rawUnread != null
-    ? Number(rawUnread)
-    : 2;
+  const hasRawUnread = Number.isFinite(Number(rawUnread)) && rawUnread != null;
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — no server source for chat/unread
+  // exists today (see mergeServerRide: chat is always neutralized to null
+  // for a confirmed ride), so a server-confirmed ride with no real count
+  // shows zero unread — never the fabricated demo "2 unread" badge. A
+  // genuinely local/demo ride keeps the exact prior fallback.
+  const authoritative = !!(ride && ride.authoritative);
+  const unreadCount = hasRawUnread ? Number(rawUnread) : (authoritative ? 0 : 2);
   const label = unreadCount > 0
     ? `Написать водителю · ${unreadCount} непрочитанных`
     : 'Написать водителю';
@@ -750,8 +947,23 @@ function topDriverCardEta(ride, phase, waitingSnapshot = null) {
 }
 
 function topDriverCardHtml(ride, options = {}) {
-  const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
-  const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
+  // authoritative-or-demo policy as carLine/paymentInfo/chatLabelFor: a
+  // server-confirmed ride with a genuinely null driver name/initials shows
+  // the neutral '—', never the fabricated 'Рустам К.'/'РК' demo identity.
+  // Kept as `driver.name || 'Рустам К.'`/`driver.initials || 'РК'` — literal,
+  // positional `||` fallbacks — inside the non-authoritative branch on
+  // purpose: the exact token sequence
+  // smoke-order-detail-active-ride-passenger-seed.mjs pins on to prove these
+  // banned demo strings can only ever surface as a fallback, never a
+  // primary value.
+  const authoritative = !!(ride && ride.authoritative);
+  const driverName = authoritative
+    ? ((ride.driver && ride.driver.name) || '—')
+    : ((ride.driver && ride.driver.name) || 'Рустам К.');
+  const driverInitials = authoritative
+    ? ((ride.driver && ride.driver.initials) || '—')
+    : ((ride.driver && ride.driver.initials) || 'РК');
   // BD-LIFE-07 — Drop the '4,92' demo fallback. BD-LIFE-06 writes either
   // the numeric ru-RU rating ("4,95") or the neutral '—' onto real
   // accepted rides, so the `|| '4,92'` chain only ever fired on legacy
@@ -794,8 +1006,13 @@ function topDriverCardHtml(ride, options = {}) {
 }
 
 function routeBlockHtml(ride, options = {}) {
-  const pickup = (ride.route && ride.route.pickupLabel) || 'ул. Малая Бронная, 28';
-  const dropoff = (ride.route && ride.route.dropoffLabel) || 'Аэропорт Шереметьево, терминал В';
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
+  // authoritative-or-demo policy as driver identity above: a server-
+  // confirmed ride with genuinely null pickup/dropoff labels shows the
+  // neutral '—', never the fabricated demo addresses.
+  const authoritative = !!(ride && ride.authoritative);
+  const pickup = (ride.route && ride.route.pickupLabel) || (authoritative ? '—' : 'ул. Малая Бронная, 28');
+  const dropoff = (ride.route && ride.route.dropoffLabel) || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
   const editable = options.editable !== false;
   const modifier = editable ? '' : ' active-ride-passenger__route--locked';
   const editBtn = editable
@@ -826,6 +1043,12 @@ function routeBlockHtml(ride, options = {}) {
 function paymentBlockHtml(ride, options = {}) {
   const pay = paymentInfo(ride);
   if (options.amountOverride) pay.amount = options.amountOverride;
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a server-confirmed ride with no
+  // real payment-method source (last4/method are always null today — see
+  // paymentInfo) hides the whole card rather than rendering a broken
+  // "•• null · null" fragment. amount alone (a real, reprojected fare) is
+  // not enough to show a payment-METHOD card.
+  if (ride && ride.authoritative && pay.last4 == null && pay.method == null) return '';
   return `
     <div class="active-ride-passenger__payment" role="group" aria-label="Способ оплаты">
       <div class="active-ride-passenger__payment-icon" aria-hidden="true">${CARD_SVG}</div>
@@ -1042,8 +1265,23 @@ function completedStats(ride) {
   const order = (ride && ride.order) || {};
   const route = (ride && ride.route) || {};
   const r = (ride && ride.ride) || {};
-  const time = r.duration || order.destinationEta || '42 мин';
-  const distance = r.distance || order.destinationDistance || '38 км';
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — r.duration/r.distance live
+  // on `ride.ride`, which the server never populates at all (plain keep()
+  // pass-through) and has no consumer path to a real value either way.
+  // round 7 — order.destinationEta/destinationDistance now get the same
+  // server-or-neutral treatment as pickupEta (see mergeServerRide's own
+  // top-of-body comment): resolved directly from srv.order, never left to
+  // keep()'s local-preserving spread, which a fourth independent audit
+  // found silently carried the fabricated '42 мин'/'38 км' forward
+  // indefinitely (serializeRide()'s real `order` shape has never carried
+  // either field — order only ever carries offerPrice — so this was
+  // always real server truth or null in principle, just never actually
+  // wired that way until now). An authoritative ride with nothing real in
+  // either slot shows the neutral '—' instead of the fabricated '42 мин'/
+  // '38 км'; local/backend-off keeps the exact prior two fallbacks.
+  const authoritative = !!(ride && ride.authoritative);
+  const time = r.duration || order.destinationEta || (authoritative ? '—' : '42 мин');
+  const distance = r.distance || order.destinationDistance || (authoritative ? '—' : '38 км');
   const completedAt = formatCompletedAt(ride);
   return { time, distance, completedAt };
 }
@@ -1158,11 +1396,30 @@ function renderPassengerRideComplete(ride, deps) {
   const initialPayment = normalizePayment(paymentStatus);
   const stats = completedStats(ride);
   const pay = completedPaymentInfo(ride);
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a server-confirmed ride has no real
+  // payment-method source (last4/method are always null — see paymentInfo);
+  // a truthful neutral line replaces the raw "•• null · null" the template
+  // would otherwise produce, never a fabricated card number.
+  const payMethodLine = (pay.last4 != null || pay.method != null)
+    ? `•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}`
+    : 'Способ оплаты не указан';
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
+  // authoritative-or-demo policy as topDriverCardHtml/routeBlockHtml: a
+  // server-confirmed ride with genuinely null identity/route fields shows
+  // the neutral '—', never the fabricated demo values. Kept as
+  // `driver.name || 'Рустам К.'`/`driver.initials || 'РК'` — literal,
+  // positional `||` fallbacks — inside the non-authoritative branch on
+  // purpose, per the same seed-smoke pin as topDriverCardHtml.
+  const authoritative = !!(ride && ride.authoritative);
   const route = (ride && ride.route) || {};
-  const pickup = route.pickupLabel || 'ул. Малая Бронная, 28';
-  const dropoff = route.dropoffLabel || 'Аэропорт Шереметьево, терминал В';
-  const driverName = (ride.driver && ride.driver.name) || 'Рустам К.';
-  const driverInitials = (ride.driver && ride.driver.initials) || 'РК';
+  const pickup = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');
+  const dropoff = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
+  const driverName = authoritative
+    ? ((ride.driver && ride.driver.name) || '—')
+    : ((ride.driver && ride.driver.name) || 'Рустам К.');
+  const driverInitials = authoritative
+    ? ((ride.driver && ride.driver.initials) || '—')
+    : ((ride.driver && ride.driver.initials) || 'РК');
   // BD-LIFE-07 — Drop the '4,92' demo fallback. BD-LIFE-06 writes either
   // the numeric ru-RU rating ("4,95") or the neutral '—' onto real
   // accepted rides, so the `|| '4,92'` chain only ever fired on legacy
@@ -1263,7 +1520,7 @@ function renderPassengerRideComplete(ride, deps) {
       <div class="passenger-complete__pay-method">
         <div class="passenger-complete__pay-icon" aria-hidden="true">${CARD_SVG}</div>
         <div class="passenger-complete__pay-method-body">
-          <div class="passenger-complete__pay-method-title">•• ${escapeHtml(pay.last4)} · ${escapeHtml(pay.method)}</div>
+          <div class="passenger-complete__pay-method-title">${payMethodLine}</div>
           <div class="passenger-complete__pay-method-note" data-pay-show="auto">Оплата автоматически после поездки</div>
           <div class="passenger-complete__pay-method-note" data-pay-show="pending">Списываем сумму с карты...</div>
           <div class="passenger-complete__pay-method-note" data-pay-show="paid">Списано · сегодня в ${escapeHtml(stats.completedAt)}</div>
@@ -1871,8 +2128,23 @@ export default function activeRidePassenger(options = {}) {
     ? createPassengerFixtureRide(tripId)
     : loadPassengerRideView(tripId, statusQuery);
   if (!fixture) ride = applyPassengerStatusFromQuery(ride, statusQuery);
+  // The in-memory `authoritative` marker is intentionally non-enumerable,
+  // so a sanitized terminal projection persists a separate, narrowly
+  // validated provenance bit. Re-mark only a known terminal projection on
+  // hydration; arbitrary local/demo rides keep their existing fallbacks.
+  if (!fixture
+    && ride.serverConfirmedTerminal === true
+    && PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(ride.status)) {
+    markPassengerRideAuthoritative(ride);
+  }
   const backendRead = !fixture && isBackendEnabled();
-  let readState = fixture || (backendRead && !hasUsableLocalRide
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — no local ride, even one that
+  // already exists locally, is shown as the FIRST paint when backend is
+  // authoritative: only a settled participant GET may do that (see
+  // runInitialRead's own epoch-gated optimistic-refresh exception below,
+  // which is scoped to LATER recovery/retry reads of an already-confirmed
+  // ride, not this initial mount).
+  let readState = fixture || (backendRead
     ? PASSENGER_RIDE_READ_STATE.LOADING
     : PASSENGER_RIDE_READ_STATE.LOADED);
 
@@ -1881,27 +2153,39 @@ export default function activeRidePassenger(options = {}) {
   // ?status=CANCELED / ?status=NO_SHOW. NO_SHOW reuses the same layout
   // with truthful "Поездка не состоялась" copy so it doesn't pretend
   // the user manually canceled.
-  if (ride.status === RIDE_STATUS.CANCELED) {
-    return renderPassengerCanceledFallback(ride, 'canceled');
-  }
-  if (ride.status === RIDE_STATUS.NO_SHOW) {
-    return renderPassengerCanceledFallback(ride, 'no_show');
-  }
+  //
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — this synchronous, LOCAL-status
+  // short-circuit is only safe when there is no participant GET to wait
+  // for: backend-off, fixture, and local-only sessions (backendRead is
+  // always false for those) keep it exactly as before. When backend is
+  // authoritative, an unconfirmed local/demo/query-derived terminal or
+  // unsupported status must never choose the renderer — falling through
+  // into the normal map/sheet flow below (forced to LOADING) lets
+  // runInitialRead's own needsSeparatePassengerRenderer swap reach the
+  // correct terminal screen only once the server has actually confirmed it.
+  if (!backendRead) {
+    if (ride.status === RIDE_STATUS.CANCELED) {
+      return renderPassengerCanceledFallback(ride, 'canceled');
+    }
+    if (ride.status === RIDE_STATUS.NO_SHOW) {
+      return renderPassengerCanceledFallback(ride, 'no_show');
+    }
 
-  if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
-    return renderPassengerStub(PASSENGER_STUB_BY_STATUS[ride.status]);
-  }
+    if (!PASSENGER_SUPPORTED_STATUSES.has(ride.status)) {
+      return renderPassengerStub(PASSENGER_STUB_BY_STATUS[ride.status]);
+    }
 
-  // BD-RIDE-P-05 — COMPLETED uses a scrollable layout without a map
-  // and runs its own top bar / handlers, so branch out before the
-  // map/sheet pipeline used by the en-route, waiting and in-progress
-  // phases.
-  if (ride.status === RIDE_STATUS.COMPLETED) {
-    return renderPassengerRideComplete(ride, {
-      go,
-      toast: showNotice,
-      paymentStatus: paymentQuery,
-    });
+    // BD-RIDE-P-05 — COMPLETED uses a scrollable layout without a map
+    // and runs its own top bar / handlers, so branch out before the
+    // map/sheet pipeline used by the en-route, waiting and in-progress
+    // phases.
+    if (ride.status === RIDE_STATUS.COMPLETED) {
+      return renderPassengerRideComplete(ride, {
+        go,
+        toast: showNotice,
+        paymentStatus: paymentQuery,
+      });
+    }
   }
 
   const root = document.createElement('section');
@@ -2376,24 +2660,153 @@ export default function activeRidePassenger(options = {}) {
     const mergedStatus = preserveLocallyAheadStatus && localRank > serverRank
       ? ride.status
       : serverStatus;
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+    // round 7 — FOUR successive independent cold audits (rounds 4/5/6/7)
+    // each found a way to defeat every attempt to distinguish "a real
+    // local value" from "a fabricated local value" for these fields:
+    //   - round 4/5: preserving whatever local value existed let
+    //     createDemoActiveRide()'s own fabricated defaults ('РК', '17 мин'/
+    //     '28 мин' — ride_state.js) survive as if server-confirmed.
+    //   - round 6's orderId/tripId/localProvenance gate was defeated TWICE
+    //     over: (a) persistPassengerServerConfirmedWaitingProjection (an
+    //     unrelated repair helper, runs on every successful read) strips
+    //     ride.localProvenance from STORAGE the moment the very first read
+    //     succeeds — the marker never survives to a second mount of the
+    //     same trip; (b) the shipped composer.js publish path sets
+    //     durationMin: 0 for every real new order today, and ride_seed.js
+    //     derives BOTH route.etaToDestination and order.destinationEta from
+    //     `durationMin ? ... : '28 мин'` — so a GENUINE, real-orderId,
+    //     real-tripId accepted ride has the exact same fabricated '28 мин'
+    //     on both fields, passing every structural check a gate could ever
+    //     construct from local data alone. There is no reliable way to
+    //     prove a LOCAL value real for these fields; the pursuit is
+    //     abandoned as of this round.
+    //
+    // New policy — SERVER-OR-NEUTRAL, no local provenance signal consulted
+    // at all: an authoritative Ride shows ONLY what the settled `srv`
+    // response actually contains for these fields; a field the server
+    // omits (every one below, today, always — none of them exist on
+    // serializeRide()'s real response shape) renders the neutral '—'
+    // (etaText/inProgressInfo/arrivingDropoffInfo/completedStats already
+    // gate on `ride.authoritative` for exactly this). The day the backend
+    // contract adds any of these fields for real, a non-null srv value
+    // wins immediately and automatically — no gate to update here.
+    //   - driver.initials: unchanged from round 5 — DERIVED from the
+    //     CONFIRMED srv.driver.name via initialsFromName() (defined
+    //     above), never carried over from local. This was never a "trust
+    //     local" mechanism to begin with, so none of rounds 6/7's findings
+    //     apply to it.
+    //   - route.etaToPickup / route.etaToDestination: `(srv.route &&
+    //     srv.route.X) ?? null` — never read from local at all any more
+    //     (previously: never-overwritten in round 4/5, then a four-part
+    //     local-trust gate in round 6; both approaches are gone).
+    //   - order.pickupEta / order.destinationEta / order.destinationDistance:
+    //     same treatment, newly added this round — these were NEVER
+    //     gated before (keep()'s null-skip silently preserved whatever
+    //     local/demo value pre-existed on `ride.order`, since srv.order
+    //     has never carried any of the three), which a fourth audit found
+    //     leaking demo literals ('4 мин', '42 мин'/'38 км') onto an
+    //     authoritative screen exactly like the route fields did.
+    //   - passenger.rating: unchanged from round 5 — never carried over
+    //     from local at all (no consumer anywhere in this file).
+    //
+    // Every OTHER passenger/driver/route/order field is a field the server
+    // DOES populate today (per select-conflict-ride.js's SEED_FIELD_MAP)
+    // and stays overwritten unconditionally, `?? null` — a genuinely null
+    // value here IS real, current server truth.
+    const mergedRoute = {
+      ...keep(ride.route, srv.route),
+      pickupLabel: (srv.route && srv.route.pickupLabel) ?? null,
+      dropoffLabel: (srv.route && srv.route.dropoffLabel) ?? null,
+      etaToPickup: (srv.route && srv.route.etaToPickup) ?? null,
+      etaToDestination: (srv.route && srv.route.etaToDestination) ?? null,
+    };
     const merged = {
       ...ride,
       tripId: srv.tripId || ride.tripId,
       status: mergedStatus,
-      passenger: keep(ride.passenger, srv.passenger),
-      driver: keep(ride.driver, srv.driver),
-      vehicle: keep(ride.vehicle, srv.vehicle),
-      order: keep(ride.order, srv.order),
-      route: keep(ride.route, srv.route),
-      payment: keep(ride.payment, srv.payment),
+      passenger: {
+        ...keep(ride.passenger, srv.passenger),
+        name: (srv.passenger && srv.passenger.name) ?? null,
+        initials: (srv.passenger && srv.passenger.initials) ?? null,
+        phoneMasked: (srv.passenger && srv.passenger.phoneMasked) ?? null,
+        rating: null,
+      },
+      driver: {
+        ...keep(ride.driver, srv.driver),
+        name: (srv.driver && srv.driver.name) ?? null,
+        rating: (srv.driver && srv.driver.rating) ?? null,
+        car: (srv.driver && srv.driver.car) ?? null,
+        initials: initialsFromName((srv.driver && srv.driver.name) ?? null),
+      },
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — vehicle/payment/chat are
+      // authoritative-or-neutral, never a silent local/demo carry-forward:
+      // the focused serializer never emits srv.vehicle/srv.payment/srv.chat
+      // at all, so the OLD `keep(ride.X, srv.X)` merge left any pre-existing
+      // local/demo value in these three sections untouched forever on a
+      // real, server-confirmed ride. `driver.car` IS a real server-owned
+      // field and stands in for vehicle.model; color/plate/payment/chat
+      // have no server source at all today and are explicitly neutralized
+      // (carLine/paymentInfo/paymentBlockHtml/chatLabelFor all render a
+      // neutral/omitted state for a marked-authoritative ride — see
+      // markPassengerRideAuthoritative below).
+      vehicle: { model: (srv.driver && srv.driver.car) || null, color: null, plate: null },
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A review-fix #2 — order.offerPrice
+      // is the ONE authoritative fare source (arrivingDropoffAmount/
+      // paymentInfo both read it for a confirmed ride) and must never be
+      // keep()-preserved from a stale local/demo value when the server
+      // genuinely omits it: keep()'s null-skip means a missing/null
+      // srv.order.offerPrice would otherwise silently leave whatever
+      // pre-merge local/demo offerPrice was already on `ride.order` in
+      // place, indistinguishable from a real confirmed price.
+      //
+      // round 7 — pickupEta/destinationEta/destinationDistance get the
+      // SAME server-or-neutral treatment as offerPrice now (see this
+      // function's own top-of-body comment): a fourth independent audit
+      // found these three were the one place the old keep()-based merge
+      // still silently preserved local/demo literals ('4 мин', '42 мин'/
+      // '38 км') indefinitely, since serializeRide()'s real `order` shape
+      // has never carried any of them either. Every field on `order` is
+      // now explicitly resolved from `srv.order` alone; none are left to
+      // keep()'s local-preserving spread.
+      order: {
+        ...keep(ride.order, srv.order),
+        offerPrice: (srv.order && srv.order.offerPrice) || null,
+        pickupEta: (srv.order && srv.order.pickupEta) ?? null,
+        destinationEta: (srv.order && srv.order.destinationEta) ?? null,
+        destinationDistance: (srv.order && srv.order.destinationDistance) ?? null,
+      },
+      route: mergedRoute,
+      payment: null,
       waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       ride: keep(ride.ride, srv.ride),
-      chat: keep(ride.chat, srv.chat),
+      chat: null,
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
     };
     delete merged.localProvenance;
     return merged;
+  }
+
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — a non-enumerable, in-memory-only
+  // marker: carLine/paymentInfo/paymentBlockHtml/chatLabelFor check
+  // `ride.authoritative` to switch off their local/demo fallback strings for
+  // a server-confirmed ride. Non-enumerable so it is invisible to
+  // JSON.stringify/Object.keys/object-spread — it can never leak into a
+  // saveActiveRide() persisted record even though `ride` does get passed to
+  // saveActiveRide elsewhere in this closure (e.g. the boarded-transition
+  // handler), and it does not survive a future `{ ...ride }` merge (spread
+  // only copies own ENUMERABLE properties), so each successful read must
+  // re-mark its own freshly merged object — done at every mergeServerRide()
+  // call site, never assumed to persist across reads.
+  function markPassengerRideAuthoritative(mergedRide) {
+    Object.defineProperty(mergedRide, 'authoritative', {
+      value: true,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    return mergedRide;
   }
 
   // Codex follow-up — mergeServerRide's cleanup only ever lives in the
@@ -2424,6 +2837,134 @@ export default function activeRidePassenger(options = {}) {
     saveActiveRide(repaired);
   }
 
+  // PR #940 review-fix — a successful participant GET may supersede an
+  // opposite local terminal, or be the first materialized Ride on a fresh
+  // device. Terminal persistence therefore cannot spread the old local/demo
+  // record: doing so would preserve stale cancel ownership and demo-only
+  // identity/route/fare fields. Build one server-only whitelist projection
+  // and use it for both the terminal renderer/history and the local mirror.
+  const TERMINAL_STATUS_TIMESTAMP_FIELDS = Array.from(new Set(
+    Array.from(PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES)
+      .map((status) => STATUS_TIMESTAMP_FIELD[status])
+      .filter(Boolean),
+  ));
+
+  const SERVER_RIDE_TIMESTAMP_FIELDS = Object.freeze([
+    'createdAt',
+    'acceptedAt',
+    'approachingAt',
+    'arrivedAt',
+    'startedAt',
+    'completedAt',
+    'canceledAt',
+    'updatedAt',
+  ]);
+
+  function normalizeServerRideTimestamp(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed && Number.isFinite(Date.parse(trimmed)) ? trimmed : null;
+  }
+
+  function projectPassengerServerConfirmedTerminalRide(srv, expectedTripId) {
+    if (!srv || !PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(srv.status)) return null;
+    const timestampField = STATUS_TIMESTAMP_FIELD[srv.status];
+    const serverTripId = typeof (srv && srv.tripId) === 'string' ? srv.tripId.trim() : '';
+    if (!serverTripId || serverTripId !== expectedTripId) return null;
+
+    const storedRide = findActiveRide(serverTripId);
+    const serverPassenger = (srv && srv.passenger) || {};
+    const serverDriver = (srv && srv.driver) || {};
+    const serverRoute = (srv && srv.route) || {};
+    const serverOrder = (srv && srv.order) || {};
+    const serverTimestamps = (srv && srv.timestamps) || {};
+    const timestamps = {};
+    for (const field of SERVER_RIDE_TIMESTAMP_FIELDS) {
+      timestamps[field] = normalizeServerRideTimestamp(serverTimestamps[field]);
+    }
+    for (const field of TERMINAL_STATUS_TIMESTAMP_FIELDS) {
+      if (field === timestampField) continue;
+      timestamps[field] = null;
+    }
+    const storedTerminalTimestamp = storedRide
+      && storedRide.serverConfirmedTerminal === true
+      && storedRide.status === srv.status
+      ? normalizeServerRideTimestamp(storedRide.timestamps && storedRide.timestamps[timestampField])
+      : null;
+    timestamps[timestampField] = normalizeServerRideTimestamp(serverTimestamps[timestampField])
+      || storedTerminalTimestamp
+      || new Date().toISOString();
+
+    const canceled = srv.status === RIDE_STATUS.CANCELED || srv.status === RIDE_STATUS.NO_SHOW;
+    const projection = {
+      tripId: serverTripId,
+      orderId: serverTripId.startsWith('trip_')
+        ? (serverTripId.slice('trip_'.length) || null)
+        : null,
+      role: srv.role ?? null,
+      status: srv.status,
+      serverConfirmedTerminal: true,
+      passenger: {
+        name: serverPassenger.name ?? null,
+        initials: serverPassenger.initials ?? null,
+        rating: null,
+        phoneMasked: serverPassenger.phoneMasked ?? null,
+      },
+      driver: {
+        name: serverDriver.name ?? null,
+        initials: initialsFromName(serverDriver.name ?? null),
+        rating: serverDriver.rating ?? null,
+        car: serverDriver.car ?? null,
+      },
+      vehicle: {
+        model: serverDriver.car || null,
+        color: null,
+        plate: null,
+      },
+      route: {
+        pickupLabel: serverRoute.pickupLabel ?? null,
+        dropoffLabel: serverRoute.dropoffLabel ?? null,
+        etaToPickup: serverRoute.etaToPickup ?? null,
+        etaToDestination: serverRoute.etaToDestination ?? null,
+      },
+      order: {
+        offerPrice: serverOrder.offerPrice ?? null,
+        pickupEta: serverOrder.pickupEta ?? null,
+        destinationEta: serverOrder.destinationEta ?? null,
+        destinationDistance: serverOrder.destinationDistance ?? null,
+      },
+      payment: null,
+      waiting: mergeServerWaiting(null, srv.waiting),
+      ride: null,
+      chat: null,
+      timestamps,
+      cancel: canceled ? {
+        by: (srv.cancel && srv.cancel.by) ?? null,
+        reason: (srv.cancel && srv.cancel.reason) ?? null,
+      } : null,
+    };
+    if (storedRide && typeof storedRide.acceptedSource === 'string' && storedRide.acceptedSource.trim()) {
+      projection.acceptedSource = storedRide.acceptedSource.trim();
+    }
+    return projection;
+  }
+
+  function persistPassengerServerConfirmedTerminalProjection(terminalRide, expectedTripId) {
+    if (!terminalRide
+      || terminalRide.tripId !== expectedTripId
+      || !PASSENGER_AUTHORITATIVE_TERMINAL_STATUSES.has(terminalRide.status)) return;
+    const store = loadActiveRideStore();
+    const nextStore = {
+      ...store,
+      [terminalRide.tripId]: { ...terminalRide },
+    };
+    saveActiveRideStore(nextStore);
+    reconcileCanonicalOrderFromAuthoritativeTerminalRide(terminalRide, expectedTripId);
+    if (terminalRide.status === RIDE_STATUS.CANCELED || terminalRide.status === RIDE_STATUS.NO_SHOW) {
+      removeRideHistoryEntry({ role: 'passenger', tripId: terminalRide.tripId });
+    }
+  }
+
   let passengerPollId = null;
   let passengerCursor = null;
   let passengerPollBusy = false;
@@ -2431,6 +2972,17 @@ export default function activeRidePassenger(options = {}) {
   let passengerRecoveryId = null;
   let fixtureRetryId = null;
   let readEpoch = 0;
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix — readEpoch is
+  // purely an attempt counter (it increments on every runInitialRead() call,
+  // success or failure). It must never stand in for "this mount has already
+  // shown a server-confirmed Ride" — a first-read failure schedules a
+  // recovery attempt (schedulePassengerRideRecovery -> runInitialRead(true))
+  // that also bumps readEpoch to 2 despite never having confirmed anything.
+  // hasConfirmedServerRide is set true ONLY at the two mergeServerRide() +
+  // markPassengerRideAuthoritative() call sites below (a real successful
+  // GET, merged and marked) and gates every "trust the local snapshot while
+  // refreshing" branch instead.
+  let hasConfirmedServerRide = false;
   let destroyed = false;
   let deferredPassengerServerStatus = null;
   const readManager = createPassengerRideReadManager(
@@ -2609,9 +3161,15 @@ export default function activeRidePassenger(options = {}) {
   function refreshPassengerRideFieldsInPlace() {
     if (readState !== PASSENGER_RIDE_READ_STATE.LOADED) return;
 
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
+    // authoritative-or-demo policy as topDriverCardHtml/routeBlockHtml.
+    // Kept as `driver.name || 'Рустам К.'`/`driver.initials || 'РК'` —
+    // literal, positional `||` fallbacks — inside the non-authoritative
+    // branch on purpose, per the same seed-smoke pin.
+    const authoritative = !!(ride && ride.authoritative);
     const driver = (ride && ride.driver) || {};
-    const driverName = driver.name || 'Рустам К.';
-    const driverInitials = driver.initials || 'РК';
+    const driverName = authoritative ? (driver.name || '—') : (driver.name || 'Рустам К.');
+    const driverInitials = authoritative ? (driver.initials || '—') : (driver.initials || 'РК');
     const driverRating = driver.rating || '';
     const driverNameNode = topCard.querySelector('.active-ride-passenger__driver-name');
     if (driverNameNode) {
@@ -2655,17 +3213,24 @@ export default function activeRidePassenger(options = {}) {
       }
     }
 
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
+    // authoritative-or-demo policy as routeBlockHtml.
     const route = (ride && ride.route) || {};
     const routeFields = sheet.querySelectorAll('.active-ride-passenger__route-main');
-    if (routeFields[0]) routeFields[0].textContent = route.pickupLabel || 'ул. Малая Бронная, 28';
-    if (routeFields[1]) routeFields[1].textContent = route.dropoffLabel || 'Аэропорт Шереметьево, терминал В';
+    if (routeFields[0]) routeFields[0].textContent = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');
+    if (routeFields[1]) routeFields[1].textContent = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
 
     const pay = paymentInfo(ride);
     const amount = ride.status === RIDE_STATUS.IN_PROGRESS
       && phaseQuery === PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF
       ? arrivingDropoffAmount(ride)
       : pay.amount;
-    updatePassengerText(sheet, '.active-ride-passenger__payment-title', '•• ' + pay.last4 + ' · ' + pay.method);
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — mirror paymentBlockHtml's null
+    // handling here too: raw string concatenation coerces a missing
+    // last4/method to the literal text "null", which paymentInfo now
+    // legitimately returns for a server-confirmed ride.
+    updatePassengerText(sheet, '.active-ride-passenger__payment-title',
+      (pay.last4 != null || pay.method != null) ? ('•• ' + pay.last4 + ' · ' + pay.method) : null);
     updatePassengerText(sheet, '.active-ride-passenger__payment-note', pay.note);
     updatePassengerText(sheet, '.active-ride-passenger__payment-amount', amount);
 
@@ -2820,16 +3385,86 @@ export default function activeRidePassenger(options = {}) {
     }, PASSENGER_RIDE_POLL_MS);
   }
 
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #3 — the
+  // in-place DOM swap below never otherwise touches the URL, so a reload
+  // (or a backend-disabled session) reading a stale non-terminal `?status=`
+  // plus the untouched local record could resurrect the wrong, non-terminal
+  // screen. history.replaceState only rewrites the address bar — no
+  // 'hashchange'/'popstate' fires (unlike a plain `location.hash = …`
+  // assignment, which would also re-trigger this mount's own
+  // onHashChange -> teardown and the router's own hashchange -> render()),
+  // so this cannot cause a remount, a duplicate GET, or a duplicate select.
+  // Only `status` is overwritten; every other query param (role, tripId,
+  // phase, …) survives untouched. applyPassengerStatusFromQuery() already
+  // promotes a stored ride to a `?status=COMPLETED/CANCELED/NO_SHOW` query
+  // override on load, so this alone is enough for a later reload to pick
+  // the correct terminal renderer — no additional storage write needed.
+  function syncTerminalStatusIntoUrl(terminalStatus) {
+    if (!terminalStatus || !window.history || typeof window.history.replaceState !== 'function') return;
+    const hash = window.location.hash || '';
+    const withoutHash = hash.startsWith('#') ? hash.slice(1) : hash;
+    const qIndex = withoutHash.indexOf('?');
+    const pathPart = qIndex === -1 ? withoutHash : withoutHash.slice(0, qIndex);
+    const params = new URLSearchParams(qIndex === -1 ? '' : withoutHash.slice(qIndex + 1));
+    if (params.get('status') === terminalStatus) return;
+    params.set('status', terminalStatus);
+    window.history.replaceState(null, '', `#${pathPart}?${params.toString()}`);
+  }
+
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — swap this mount's live-ride DOM/
+  // lifecycle for the correct separate terminal/stub renderer once the
+  // server has confirmed the status needs one. Tears down the same
+  // machinery a real navigation-away would (readManager/polls/recovery
+  // timers/listeners/observer) since a terminal ride needs none of it, then
+  // replaces `root` in place — the same end state a full re-navigation
+  // would reach, without an extra round-trip GET or select.
+  function swapToTerminalPassengerScreen(terminalRide) {
+    syncTerminalStatusIntoUrl(terminalRide && terminalRide.status);
+    teardownPassengerReads();
+    window.removeEventListener('hashchange', onHashChange);
+    teardownObserver.disconnect();
+    root.replaceWith(renderTerminalPassengerScreen(terminalRide));
+  }
+
+  function renderTerminalPassengerScreen(terminalRide) {
+    if (terminalRide.status === RIDE_STATUS.CANCELED) {
+      return renderPassengerCanceledFallback(terminalRide, 'canceled');
+    }
+    if (terminalRide.status === RIDE_STATUS.NO_SHOW) {
+      return renderPassengerCanceledFallback(terminalRide, 'no_show');
+    }
+    if (!PASSENGER_SUPPORTED_STATUSES.has(terminalRide.status)) {
+      return renderPassengerStub(PASSENGER_STUB_BY_STATUS[terminalRide.status]);
+    }
+    return renderPassengerRideComplete(terminalRide, {
+      go,
+      toast: showNotice,
+      paymentStatus: paymentQuery,
+    });
+  }
+
   async function runInitialRead(recovery = false) {
     const epoch = ++readEpoch;
-    if (hasUsableLocalRide) {
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — never show ANY local ride (terminal or not) as the very
+    // first paint when backend is authoritative; only a settled participant
+    // GET may do that (see the initial `readState` computation above).
+    // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix — gated on
+    // hasConfirmedServerRide, NOT `epoch > 1`: a later CALL isn't necessarily
+    // a later CONFIRMATION (a first-read failure's scheduled recovery call
+    // also bumps epoch past 1 despite never having confirmed anything — see
+    // hasConfirmedServerRide's own declaration comment). Only once this mount
+    // has actually merged and marked a real server Ride once does a later
+    // call reuse the optimistic "keep showing the last-confirmed local
+    // snapshot while refreshing" UX.
+    if (hasUsableLocalRide && hasConfirmedServerRide) {
       root.dataset.refreshState = 'loading';
       renderLoadedRide(true);
     } else {
       setReadState(PASSENGER_RIDE_READ_STATE.LOADING);
     }
     try {
-      const srv = await readManager.run(ride.tripId);
+      const requestedTripId = ride.tripId;
+      const srv = await readManager.run(requestedTripId);
       if (destroyed || epoch !== readEpoch) return;
       if (!srv) {
         backendRide = false;
@@ -2853,6 +3488,33 @@ export default function activeRidePassenger(options = {}) {
         startPassengerRidePoll();
         return;
       }
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+      // round 4 — a truthy `srv` with no `status` field at all is a
+      // malformed 2xx, not a valid confirmation: every real serializeRide()
+      // shape always carries `status` (see server/src/serialize.js), so this
+      // can only mean a broken/unexpected response body. Left unguarded,
+      // mergeServerRide's own `srv.status || ride.status` fallback would
+      // silently resolve to the UNCONFIRMED local status while this
+      // function still set hasConfirmedServerRide = true right after —
+      // promoting a never-verified local status to "authoritative" on
+      // nothing but a malformed envelope. Route it through the exact same
+      // catch-block handling as any other unusable read instead: no
+      // `.status`/`.retryable` on the thrown error makes
+      // isPassengerRideRecoveryRetryable's final fallback treat it as
+      // retryable (a transient backend bug is plausible), so it still
+      // self-heals via schedulePassengerRideRecovery on a later read,
+      // exactly like a 5xx — it just never gets to call itself confirmed
+      // on this attempt.
+      if (typeof srv.status !== 'string' || !srv.status.trim()) {
+        throw Object.assign(new Error('Malformed ride response: invalid status'), {
+          code: 'MALFORMED_RIDE_RESPONSE',
+        });
+      }
+      if (typeof srv.tripId !== 'string' || srv.tripId.trim() !== requestedTripId) {
+        throw Object.assign(new Error('Malformed ride response: tripId mismatch'), {
+          code: 'MALFORMED_RIDE_RESPONSE',
+        });
+      }
       backendRide = true;
       setPassengerRideOwnership(PASSENGER_RIDE_OWNERSHIP.SERVER_BACKED);
       setPassengerMutationBlocked(false);
@@ -2865,6 +3527,45 @@ export default function activeRidePassenger(options = {}) {
       // return, so every successful server read — including one that
       // immediately remounts on a forward status — reaches storage.
       persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
+      // round 8 — a fourth independent audit (Codex, PR #940 review thread
+      // E): the bare `recovery` boolean below used to gate
+      // mergeServerRide's preserveLocallyAheadStatus, but a recovery
+      // attempt can be the FIRST successful read of the whole mount (an
+      // earlier attempt failed retryably, scheduling this one) — in that
+      // case hasConfirmedServerRide is still false going into this exact
+      // merge, so there is no prior confirmation that makes a locally-ahead
+      // status trustworthy. Reading hasConfirmedServerRide HERE, before
+      // either call below sets it true, and requiring both flags together
+      // fixes the gap while leaving the legitimate case (a mount that has
+      // already confirmed a real ride once, and a LATER recovery attempt
+      // sees a transiently-behind server status) completely unchanged —
+      // `recovery && hasConfirmedServerRide` is provably identical to bare
+      // `recovery` whenever hasConfirmedServerRide is already true.
+      const preserveLocallyAheadStatus = recovery && hasConfirmedServerRide;
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a server status needing an entirely separate top-level
+      // renderer never fits the shared map/sheet flow this function builds
+      // — regardless of what the untrusted, pre-read local `ride.status`
+      // said, so this check runs unconditionally, not just when it differs
+      // from `ride.status` (an unconfirmed local ride can already read as
+      // the SAME terminal value by coincidence — e.g. stale demo data —
+      // which must still route to the terminal renderer, never fall
+      // through to the sheet-based flow, which has no matching case).
+      // Known terminal states use a server-only whitelist projection so
+      // the renderer/history and local mirror cannot retain demo fields.
+      // Unsupported separate-renderer statuses keep the existing merge and
+      // remain non-persistent here.
+      if (srv.status && needsSeparatePassengerRenderer(srv.status)) {
+        const terminalProjection = projectPassengerServerConfirmedTerminalRide(srv, requestedTripId);
+        ride = terminalProjection || mergeServerRide(srv, preserveLocallyAheadStatus);
+        markPassengerRideAuthoritative(ride);
+        hasConfirmedServerRide = true;
+        if (terminalProjection) {
+          persistPassengerServerConfirmedTerminalProjection(terminalProjection, requestedTripId);
+        }
+        swapToTerminalPassengerScreen(ride);
+        return;
+      }
       if (srv.status && srv.status !== ride.status) {
         const remountResult = maybeReMount(srv.status);
         if (remountResult === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
@@ -2873,7 +3574,9 @@ export default function activeRidePassenger(options = {}) {
           return;
         }
       }
-      ride = mergeServerRide(srv, recovery);
+      ride = mergeServerRide(srv, preserveLocallyAheadStatus);
+      markPassengerRideAuthoritative(ride);
+      hasConfirmedServerRide = true;
       renderLoadedRide(recovery);
       startPassengerRidePoll();
     } catch (err) {
@@ -2888,8 +3591,20 @@ export default function activeRidePassenger(options = {}) {
         stopPassengerRideRecovery();
         delete root.dataset.refreshState;
         if (reconcileLocalOnlyRide() === PASSENGER_REMOUNT_RESULT.NAVIGATED) return;
-        if (hasUsableLocalRide) renderLoadedRide(recovery);
-        else setReadState(PASSENGER_RIDE_READ_STATE.EMPTY);
+        if (hasUsableLocalRide) {
+          // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a genuinely missing server Ride (404) confirms this
+          // trip is local-only; the existing local/demo prototype — INCLUDING
+          // a terminal one — is authoritative for this path exactly like the
+          // pre-01B-A backend-off behavior (never gated behind a server GET
+          // that will never resolve to anything for a purely local trip).
+          if (needsSeparatePassengerRenderer(ride.status)) {
+            swapToTerminalPassengerScreen(ride);
+            return;
+          }
+          renderLoadedRide(recovery);
+        } else {
+          setReadState(PASSENGER_RIDE_READ_STATE.EMPTY);
+        }
         return;
       }
       const retryable = isPassengerRideRecoveryRetryable(err);
@@ -2897,7 +3612,24 @@ export default function activeRidePassenger(options = {}) {
       const authFailure = isPassengerRideAuthorizationFailure(err);
       backendRide = false;
       if (permanentFailure && hasUsableLocalRide) setPassengerMutationBlocked(true);
-      if (hasUsableLocalRide) {
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — a failure before this
+      // mount has EVER confirmed a server Ride must never fall back to
+      // showing a local/demo Ride as if it were confirmed: a 401/403/5xx/
+      // malformed/transport failure here means genuinely uncertain state,
+      // not proof the local snapshot is safe to trust. A retryable failure
+      // still schedules the same background recovery attempt as before, so
+      // a transient hiccup still self-heals into a real confirmed render
+      // once a read actually succeeds.
+      // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix — gated
+      // on hasConfirmedServerRide, NOT `epoch > 1` (see its declaration
+      // comment): a scheduled recovery attempt after the FIRST read already
+      // failed bumps epoch to 2 without ever having confirmed anything, so
+      // `epoch > 1` alone would incorrectly let this failure fall through to
+      // the graceful stale-with-banner branch below and show a never-
+      // confirmed local Ride. Only once at least one read has actually
+      // succeeded on this mount does a LATER background failure get to keep
+      // showing that already-confirmed screen with an error banner.
+      if (hasUsableLocalRide && hasConfirmedServerRide) {
         root.dataset.refreshState = 'error';
         renderLoadedRide(recovery);
         if (!recovery) toast(permanentFailure && hasPersistedLocalRide
@@ -2909,6 +3641,7 @@ export default function activeRidePassenger(options = {}) {
         else stopPassengerRideRecovery();
         return;
       }
+      if (retryable && hasPersistedLocalRide) schedulePassengerRideRecovery();
       setReadState(PASSENGER_RIDE_READ_STATE.ERROR);
     }
   }
@@ -2960,6 +3693,17 @@ export default function activeRidePassenger(options = {}) {
   teardownObserver.observe(document.body, { childList: true, subtree: true });
 
   setReadState(readState);
+  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A — setReadState's LOADING/EMPTY/ERROR
+  // branches all return before reaching its own syncPassengerMutationGate()
+  // call (that call only happens on its LOADED branch — see setReadState
+  // above), and the initial readState is now LOADING whenever backendRead is
+  // true, even with a usable local ride (requirement #1). Call it explicitly
+  // here too so `root.dataset.ownershipState` always reflects the current
+  // ownership from the very first synchronous mount, not just once the first
+  // read settles into LOADED — idempotent (safe to also run right after
+  // setReadState's own LOADED-branch call above; it just re-derives the same
+  // gate from current state).
+  syncPassengerMutationGate();
   if (!fixture && backendRead) runInitialRead();
   // BD-RIDE-PASSENGER-WAIT-COUNTDOWN-01A (#911) review-fix — only start here
   // when readState has already settled to LOADED at this exact synchronous
