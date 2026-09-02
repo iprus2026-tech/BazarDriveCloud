@@ -7,6 +7,7 @@ on:
     paths:
       - 'server/package.json'
       - 'server/package-lock.json'
+      - '.github/workflows/server-ci.yml'
       - '.github/workflows/temporary-lock-refresh.yml'
 
 permissions:
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   generate:
-    name: generate audited Node 22 lockfile
+    name: generate audited Node 22 lockfile and CI schema guard
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,9 +33,51 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Prove supply-chain gate
         run: npm audit --omit=dev --audit-level=high
+      - name: Generate exact migration-0005 CI guard
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('../.github/workflows/server-ci.yml')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  '# 11 base tables from 0001 + auth_otp/auth_session + notification_outbox = 14.',
+                  '# 11 base tables from 0001 + auth_otp/auth_session + notification_outbox + driver_documents = 15.',
+              ),
+              (
+                  '"select count(*) from information_schema.tables where table_schema=\'public\' and table_type=\'BASE TABLE\'" | grep -qx 14',
+                  '"select count(*) from information_schema.tables where table_schema=\'public\' and table_type=\'BASE TABLE\'" | grep -qx 15',
+              ),
+              (
+                  "          psql -v ON_ERROR_STOP=1 -tAc \\\n            \"select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='notification_outbox'\" | grep -qx 1\n",
+                  "          psql -v ON_ERROR_STOP=1 -tAc \\\n            \"select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='notification_outbox'\" | grep -qx 1\n          psql -v ON_ERROR_STOP=1 -tAc \\\n            \"select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='driver_documents'\" | grep -qx 1\n",
+              ),
+              (
+                  '      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH now\n      # depends on 0004, so a database with only 0001..0003 must not enter service.\n      - name: Apply pre-outbox migrations and assert readiness is incomplete',
+                  '      # Prove readiness fails closed on the immediately preceding schema: the live\n      # compliance read depends on 0005, so a database with only 0001..0004 stays degraded.\n      - name: Apply pre-compliance migrations and assert readiness is incomplete',
+              ),
+              (
+                  '          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql; do',
+                  '          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql; do',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one CI anchor, got {count}: {old[:80]!r}')
+              text = text.replace(old, new)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+          git -C .. diff --check -- .github/workflows/server-ci.yml
       - uses: actions/upload-artifact@v4
         with:
-          name: bd-server-package-lock-${{ github.sha }}
-          path: server/package-lock.json
+          name: bd-server-runtime-inputs-${{ github.sha }}
+          path: |
+            server/package-lock.json
+            .github/workflows/server-ci.yml
           if-no-files-found: error
           retention-days: 1
