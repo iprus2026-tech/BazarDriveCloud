@@ -122,10 +122,16 @@ storage remain future infrastructure; the Yandex remote-state Object Storage
 work is an infrastructure-state track and must not be confused with product
 media/document storage.
 
-## External services (future / not activated)
+## External services / client integrations
 
-Mapbox (maps & routes) · SMS / Push providers · Payment gateway · Telegram bot ·
-Analytics. None is activated as a production PWA integration today.
+Mapbox GL is now partially activated on the PWA side: the SDK is vendored, the
+GitHub Pages origin has a URL-restricted public token, and `/map` performs a real
+Mapbox render with a MapShell fallback. That does **not** make service #4 Route &
+Price live: `/route-price/*` remains dark, and geocoding, authoritative route
+ETA/distance/fare and the remaining map surfaces are still future work.
+
+SMS / Push providers · Payment gateway · Telegram bot · Analytics remain future
+or inactive production integrations.
 
 ## Monitoring & Operations / Audit
 
@@ -165,8 +171,9 @@ map. Orders, Matching, Ride State, realtime Ride polling and History/Receipts
 have real server behavior. Matching conflict/recovery authority was hardened by
 PRs #934, #936 and #938. Passenger authoritative-first Ride hydration shipped in
 #940. PR #944 added the first durable Notification source ledger inside the Ride
-transition transaction. None of those facts automatically enables production
-PWA traffic.
+transition transaction. On the client side, Mapbox GL foundation and the first
+real `/map` render are also shipped. None of those facts automatically enables
+production backend traffic or completes service #4 Route & Price.
 
 ## Implementation / activation matrix
 
@@ -181,7 +188,7 @@ Legend:
 | **1. Order Dispatcher** | Orders API is live, but there is no fleet queue/broadcast/ranking dispatcher. | Passenger order creation remains local-first by default. | ◐ foundation; full #1 not shipped |
 | **2. Driver Availability** | `/availability/*` remains DARK `501`; no Redis heartbeat/presence. | `isDriverLineReady()` + local `driverOnline` only. | 🔮 / Designed (ADR) |
 | **3. Matching & Assignment** | Offer create/list, transactional select, exactly-one assignment and Ride bootstrap are LIVE. Direct conflict and recovery linkage invariants shipped in #934/#936/#938. | Selected-response identity gate shipped in #928; full select ACK/uncertain outcome consumption remains #947. | ✅ server core; ◐ client cutover |
-| **4. Route & Price (Map)** | `/route-price/*` remains DARK `501`. | Mapbox modules are stubs/MapShell; prices/ETA are mock. | 🔮 / Designed (ADR) |
+| **4. Route & Price (Map)** | `/route-price/*` remains DARK `501`; no authoritative route/ETA/fare service. | Vendored Mapbox GL foundation is shipped and `/map` renders a real map on GitHub Pages; other map surfaces, geocoding and pricing remain incomplete. | ◐ client foundation; server service stays Designed (ADR) |
 | **5. Ride State Machine** | Participant Ride GET/PATCH and append-only `ride_events` are LIVE; terminal freeze is server-owned. | Client state machine exists; authoritative Passenger hydration/terminal reconciliation shipped in #940; backend activation remains guarded. | ✅ server + client anchor; ◐ activation |
 | **6. Notification Service** | Notification route/service remains DARK, but #944 ships a durable `notification_outbox` source row atomically with accepted Ride transitions. No worker/feed/channels. | `/inbox` remains mock-backed; permission prompt is not real push. | ◐ source foundation; service stays Designed (ADR) |
 | **7. Safety & Compliance** | `/safety/*` remains DARK `501`. | In-ride safety/report UI exists without fraud/risk/compliance authority. | 🔮 / Designed (ADR) |
@@ -201,7 +208,7 @@ Recommended state interpretation after the 2026-09-02 audit:
 | **#1 Order Dispatcher** | **Designed (ADR)** | Orders exist, but queue/broadcast/ranking/fleet routing do not. |
 | **#2 Driver Availability** | **Designed (ADR)** | Backend service is still dark. |
 | **#3 Matching & Assignment** | **Shipped** for the server service | Real offers/select/assignment behavior is live and hardened; #947 is a PWA consumption gap, not absence of the server service. |
-| **#4 Route & Price** | **Designed (ADR)** | Backend service and real Mapbox remain dark/future. |
+| **#4 Route & Price** | **Designed (ADR)** | The PWA Mapbox foundation and `/map` render are partial client progress; the backend Route & Price service remains dark. |
 | **#5 Ride State Machine** | **Shipped** | Real client anchor and live server Ride State exist. Activation remains a separate work status. |
 | **#6 Notification Service** | **Designed (ADR)** | #944 is a shipped source foundation only; service route, worker, feed and channels remain dark. |
 | **#7 Safety & Compliance** | **Designed (ADR)** | Backend service remains dark. |
@@ -232,7 +239,7 @@ areas:
 | **1** | Isolated client storage | ◐ backend spine live; PWA cutover incomplete | local product stores → guarded shared API/DB authority | Data layer |
 | **2** | No presence | 🔮 | local `driverOnline` → heartbeat/TTL/live readiness | #2 |
 | **3** | No broadcast/ranking | ◐ Matching core live; Dispatcher incomplete | queue + broadcast + ranked fleet assignment | #1, #3 |
-| **4** | Mock map / price | 🔮 | Mapbox stub → real route / ETA / price | #4 |
+| **4** | Mock map / price | ◐ first real `/map` surface shipped; Route & Price backend dark | expand real map surfaces, then authoritative route / ETA / price | #4 |
 | **5** | No durable notification delivery | ◐ durable source outbox shipped; worker/feed/channels dark | source ledger → worker → in-app/out-of-app fan-out | #6 |
 | **6** | Trust "on trust" | 🔮 | safety UI → fraud / no-show / compliance backend | #7 |
 | **7** | Build-time monitoring only | ◐ health/readiness exist; fleet ops dark | runtime metrics/audit/dashboard/alerts | #9 |
@@ -265,15 +272,16 @@ A third important spine is now visible:
    authorization, idempotency, observability and two-session staging proof.
 4. Keep **Availability/Dispatcher/Redis** as the later fleet-coordination track;
    do not mix it into Passenger select cleanup or Notification worker contracts.
-5. Keep **Mapbox**, **Safety**, **Payments** and external notification channels as
-   independent explicitly authorized tracks.
+5. Keep the **remaining Mapbox surfaces / Route & Price**, **Safety**, **Payments**
+   and external notification channels as independent explicitly authorized tracks.
 
 ## Out of scope / future work
 
 This page is both a target map and an honest implementation matrix; it is not an
-activation order. Redis, product object storage, payments, real Mapbox, Push,
-Telegram/SMS delivery and full Safety remain separate work. A partial foundation
-must never be used to claim an entire service is shipped.
+activation order. Redis, product object storage, payments, the remaining Mapbox
+surface rollout, the server Route & Price service, Push, Telegram/SMS delivery
+and full Safety remain separate work. A partial foundation must never be used to
+claim an entire service is shipped.
 
 See [Mini-Yonder Model](mini-yonder-model.md) for the docs-as-code governance
 layer, [Project Tracking](../processes/project-tracking.md) for board semantics,
