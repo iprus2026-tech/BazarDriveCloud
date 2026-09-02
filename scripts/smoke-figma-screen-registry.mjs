@@ -10,8 +10,8 @@ const fail = (message) => {
   console.error(`FAIL: ${message}`);
   process.exitCode = 1;
 };
-
 const pass = (message) => console.log(`PASS: ${message}`);
+const routeBase = (route) => String(route || '').split('?')[0];
 
 if (!fs.existsSync(figmaPath)) {
   fail('docs/figma-screen-references.json is missing');
@@ -55,7 +55,6 @@ let match;
 while ((match = entryPattern.exec(screensBlock)) !== null) {
   opsScreens.push({ screenId: match[1], route: match[2], file: match[3] });
 }
-
 if (opsScreens.length < 20) {
   fail(`ScreenOps extraction unexpectedly found only ${opsScreens.length} screens`);
 }
@@ -78,8 +77,14 @@ for (const row of figmaScreens) {
     fail(`duplicate Figma screenId: ${row.screenId}`);
   }
   byId.set(row.screenId, row);
-  if (typeof row.route !== 'string' || row.route.includes('?') || row.route.includes('<')) {
-    fail(`canonical route must be query/placeholder-free for ${row.screenId}: ${row.route}`);
+
+  if (typeof row.route !== 'string' || !row.route.startsWith('/')) {
+    fail(`exact ScreenOps route missing for ${row.screenId}`);
+  }
+  if (typeof row.routeBase !== 'string' || row.routeBase.includes('?') || row.routeBase.includes('<')) {
+    fail(`routeBase must be a query/placeholder-free router base for ${row.screenId}: ${row.routeBase}`);
+  } else if (row.routeBase !== routeBase(row.route)) {
+    fail(`routeBase drift for ${row.screenId}: route=${row.route}, routeBase=${row.routeBase}`);
   }
   if (!Array.isArray(row.urlVariants)) {
     fail(`urlVariants[] missing for ${row.screenId}`);
@@ -108,6 +113,9 @@ for (const ops of opsScreens) {
   if (overlay.route !== ops.route) {
     fail(`route drift for ${ops.screenId}: ScreenOps=${ops.route}, Figma=${overlay.route}`);
   }
+  if (overlay.routeBase !== routeBase(ops.route)) {
+    fail(`routeBase drift against ScreenOps for ${ops.screenId}: expected=${routeBase(ops.route)}, Figma=${overlay.routeBase}`);
+  }
   if (!overlay.files.includes(ops.file)) {
     fail(`primary runtime file drift for ${ops.screenId}: missing ${ops.file}`);
   }
@@ -132,6 +140,7 @@ if (!daily || daily.renderStatus !== 'render-pending' || daily.nodeId !== null) 
 
 if (!process.exitCode) {
   pass(`${opsScreens.length}/${opsScreens.length} ScreenOps screens have canonical Figma overlay decisions`);
+  pass('exact ScreenOps routes and routeBase values are aligned');
   pass('/ops/screens is explicitly excluded as dev/docs');
   pass('BD-DAILY-COMM-01 is explicitly render-pending');
 }

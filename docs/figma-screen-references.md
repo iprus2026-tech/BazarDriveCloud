@@ -9,7 +9,7 @@ This document is an **overlay**, not a third screen source of truth.
 
 ```text
 ScreenOps registry
-  → canonical screenId + product route + runtime file
+  → canonical screenId + exact screen route + runtime file
 Screen contract
   → state + data + actions + acceptance
 Figma / Cloud Design
@@ -20,7 +20,7 @@ Backend / DB
   → product source of truth after activation
 ```
 
-Canonical IDs come from `public/src/ops/ops_registry.js`. Figma may attach design-family aliases in `designIds[]`, but automation must never join on a compound/range alias. Query-string examples belong in `urlVariants[]`; the canonical `route` stays equal to the ScreenOps route.
+Canonical IDs and exact screen routes come from `public/src/ops/ops_registry.js`. Figma may attach design-family aliases in `designIds[]`, but automation must never join on a compound/range alias. `routeBase` records the router-registration base, while `urlVariants[]` carries additional deep-link examples.
 
 A Figma frame or node is never a source of order, offer, Ride, profile, notification, payment, rating or history state.
 
@@ -29,13 +29,13 @@ A Figma frame or node is never a source of order, offer, Ride, profile, notifica
 | Page | Figma node | Purpose |
 |---|---|---|
 | `01 Architecture` | [`1:12`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=1-12) | Mini-Yonder services, authority corridor, shipped/partial/dark boundaries. |
-| `02 Screen References` | [`2:3`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-3) | Canonical ScreenOps ID → route → runtime file → architecture layer → Figma reference state. |
+| `02 Screen References` | [`2:3`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-3) | Canonical ScreenOps ID → exact route → runtime file → architecture layer → Figma reference state. |
 
 ## Canonical screen references
 
-| Canonical ScreenOps ID | Route | Runtime file | Figma state | Figma node |
+| Canonical ScreenOps ID | Exact ScreenOps route | Runtime file | Figma state | Figma node |
 |---|---|---|---|---|
-| BD-ONBOARDING-01 | `/welcome` (`/onboarding` host variant) | `public/src/screens/welcome.js`, `onboarding.js` | current | [`2:8`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-8) |
+| BD-ONBOARDING-01 | `/welcome` | `public/src/screens/welcome.js`, `onboarding.js` | current | [`2:8`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-8) |
 | BD-FEED-01 | `/feed` | `public/src/screens/feed.js` | current | [`2:24`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-24) |
 | BD-POST-01 | `/post` | `public/src/screens/post_detail.js` | current | [`2:296`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-296) |
 | BD-COMPOSER-01 | `/new` | `public/src/screens/composer.js` | current | [`2:40`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-40) |
@@ -48,8 +48,8 @@ A Figma frame or node is never a source of order, offer, Ride, profile, notifica
 | BD-RESPONSES-01 | `/responses` | `public/src/screens/responses.js` | current | [`2:200`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-200) |
 | BD-RESPOND-01 | `/respond` | `public/src/screens/respond.js` | current | [`2:184`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-184) |
 | BD-CONFIRM-01 | `/trip-confirmation` | `public/src/screens/trip_confirmation.js` | current | [`2:232`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-232) |
-| BD-RIDE-D-02 | `/active-ride` | `public/src/screens/active_ride.js` | current | [`2:264`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-264) |
-| BD-RIDE-P-01 | `/active-ride` | `public/src/screens/active_ride_passenger.js` | current | [`2:248`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-248) |
+| BD-RIDE-D-02 | `/active-ride?role=driver` | `public/src/screens/active_ride.js` | current | [`2:264`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-264) |
+| BD-RIDE-P-01 | `/active-ride?role=passenger` | `public/src/screens/active_ride_passenger.js` | current | [`2:248`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-248) |
 | BD-DRIVER-01 | `/driver-map` | `public/src/screens/driver_map.js` | current | [`2:168`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-168) |
 | BD-CHAT-01 | `/chat` | `public/src/screens/chat.js` | current | [`2:216`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-216) |
 | BD-INBOX-01 | `/inbox` | `public/src/screens/inbox.js` | current | [`2:280`](https://www.figma.com/design/DWA1DhPOT5ib2sFZQAqNUd?node-id=2-280) |
@@ -63,11 +63,12 @@ A Figma frame or node is never a source of order, offer, Ride, profile, notifica
 
 `/ops/screens` is a dev/docs route and the ScreenOps registry UI itself. It is intentionally excluded from product Figma coverage and is recorded in `docs/figma-screen-references.json.exclusions` rather than silently omitted.
 
-## Variant rules
+## Route and variant rules
 
 - `screenId` is always one exact canonical ScreenOps ID.
-- `route` is always the ScreenOps product route and never contains `?` or a path placeholder.
-- `urlVariants[]` carries query/path examples such as `/chat?tripId=…`, `/order/<id>` and role-specific active-ride URLs.
+- `route` is the **exact ScreenOps route**, including a role query when ScreenOps itself uses one to distinguish a canonical role surface.
+- `routeBase` is the router-registration base before `?`, for example both active-ride role rows use `/active-ride`.
+- `urlVariants[]` carries extra deep-links such as `tripId`, `responseId`, `/order/<id>`, or the `/onboarding` host variant.
 - `designIds[]` may preserve design-family aliases such as `BD-RIDE-D-01..09`, but these aliases are never canonical automation keys.
 - A product screen without a Figma frame remains in the overlay with `nodeId: null` and `renderStatus: render-pending`.
 
@@ -78,7 +79,7 @@ Every future screen task should carry:
 ```text
 canonical ScreenOps screenId
 Figma fileKey + nodeId (or render-pending)
-route + urlVariants
+exact ScreenOps route + routeBase + urlVariants
 runtime file(s)
 role variant
 architecture layer
@@ -98,7 +99,7 @@ If a task changes data, status, order, driver, response, Ride, profile, rating, 
 
 - a ScreenOps product screen has no Figma overlay decision;
 - a Figma `screenId` is not a canonical ScreenOps ID;
-- a canonical route or primary runtime file drifts;
+- the exact ScreenOps route, derived `routeBase`, or primary runtime file drifts;
 - a compound/range alias leaks into `screenId`;
 - `renderStatus: current` has no node, or `render-pending` pretends to have one;
 - the `/ops/screens` dev/docs exclusion disappears.
