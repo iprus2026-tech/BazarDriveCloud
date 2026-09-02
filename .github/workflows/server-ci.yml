@@ -62,13 +62,15 @@ jobs:
 
       - name: Assert core objects exist
         run: |
-          # 11 base tables from 0001 + auth_otp/auth_session + notification_outbox = 14.
+          # 11 base tables from 0001 + auth_otp/auth_session + notification_outbox + driver_documents = 15.
           psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 14
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 15
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('auth_otp','auth_session')" | grep -qx 2
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='notification_outbox'" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='driver_documents'" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select to_regprocedure('public.notification_outbox_insert_guarded(uuid,jsonb,bytea,text)') is not null" | grep -qx t
           psql -v ON_ERROR_STOP=1 -tAc \
@@ -115,11 +117,11 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
-      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH now
-      # depends on 0004, so a database with only 0001..0003 must not enter service.
-      - name: Apply pre-outbox migrations and assert readiness is incomplete
+      # Prove readiness fails closed on the immediately preceding schema: the live
+      # compliance read depends on 0005, so a database with only 0001..0004 stays degraded.
+      - name: Apply pre-compliance migrations and assert readiness is incomplete
         run: |
-          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql; do
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
           node --input-type=module <<'NODE'
