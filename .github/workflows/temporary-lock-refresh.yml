@@ -1,0 +1,40 @@
+name: temporary-lock-refresh
+
+on:
+  push:
+    branches:
+      - feat/bd-driver-document-compliance-01b
+    paths:
+      - 'server/package.json'
+      - 'server/package-lock.json'
+      - '.github/workflows/temporary-lock-refresh.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    name: generate audited Node 22 lockfile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: server/.nvmrc
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Regenerate lock from committed dependency policy
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Prove deterministic install
+        run: npm ci --ignore-scripts
+      - name: Prove supply-chain gate
+        run: npm audit --omit=dev --audit-level=high
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bd-server-package-lock-${{ github.sha }}
+          path: server/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
