@@ -117,36 +117,38 @@ async function dbPlugin(app, opts) {
                         'created_at', 'updated_at'
                       )
                  ) = 13
-                 AND EXISTS (
-                   SELECT 1 FROM pg_constraint pc
+                 -- Readiness names every migration-0005 constraint, including
+                 -- ownership, temporal, verification-metadata and PII-reference
+                 -- guards. A table with only its headline PK/enum checks is not
+                 -- safe enough to serve the live compliance projection.
+                 AND (
+                   SELECT count(*)
+                     FROM pg_constraint pc
                     WHERE pc.conrelid = c.oid
-                      AND pc.conname = 'driver_documents_pkey'
-                      AND pc.contype = 'p'
-                 )
-                 AND EXISTS (
-                   SELECT 1 FROM pg_constraint pc
-                    WHERE pc.conrelid = c.oid
-                      AND pc.conname = 'driver_documents_driver_type_uq'
-                      AND pc.contype = 'u'
-                 )
-                 AND EXISTS (
-                   SELECT 1 FROM pg_constraint pc
-                    WHERE pc.conrelid = c.oid
-                      AND pc.conname = 'driver_documents_document_type_check'
-                      AND pc.contype = 'c'
-                 )
-                 AND EXISTS (
-                   SELECT 1 FROM pg_constraint pc
-                    WHERE pc.conrelid = c.oid
-                      AND pc.conname = 'driver_documents_status_check'
-                      AND pc.contype = 'c'
-                 )
-                 AND EXISTS (
-                   SELECT 1 FROM pg_constraint pc
-                    WHERE pc.conrelid = c.oid
-                      AND pc.conname = 'driver_documents_shift_validity_check'
-                      AND pc.contype = 'c'
-                 )
+                      AND (
+                        (pc.contype = 'p' AND pc.conname IN (
+                          'driver_documents_pkey'
+                        ))
+                        OR (pc.contype = 'f' AND pc.conname IN (
+                          'driver_documents_driver_id_fkey'
+                        ))
+                        OR (pc.contype = 'u' AND pc.conname IN (
+                          'driver_documents_driver_type_uq'
+                        ))
+                        OR (pc.contype = 'c' AND pc.conname IN (
+                          'driver_documents_document_type_check',
+                          'driver_documents_status_check',
+                          'driver_documents_validity_range_check',
+                          'driver_documents_shift_validity_check',
+                          'driver_documents_expiring_validity_check',
+                          'driver_documents_authoritative_metadata_check',
+                          'driver_documents_rejected_reason_check',
+                          'driver_documents_source_shape_check',
+                          'driver_documents_reason_shape_check',
+                          'driver_documents_object_key_shape_check'
+                        ))
+                      )
+                 ) = 13
                  AND EXISTS (
                    SELECT 1 FROM pg_trigger t
                     WHERE t.tgrelid = c.oid
