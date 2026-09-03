@@ -66,7 +66,7 @@ A row's fields split into two groups. Only the second group is ever written afte
 **Server-mutable lifecycle fields (updated in place on this same row as verification proceeds):**
 
 - `status`
-- `supersedes_id` — `null` at creation; write-once `null -> priorEffective.id`, set only when this row is atomically approved as the lineage's new effective version and there was a prior effective version to replace (see Submission lineage and renewal handling). Stays `null` for `UPLOADED`, `VERIFYING`, and `REJECTED`, and stays `null` even after reaching `VALID` if the lineage had no prior effective version. Internal only — never returned in the public projection.
+- `supersedes_id` — `null` at creation; write-once `null -> priorEffective.id`, set only when this row is atomically *activated* as the lineage's new effective version and there was a prior effective version to replace (see Submission lineage and renewal handling). Stays `null` for `UPLOADED`, `VERIFYING`, `APPROVED`, and `REJECTED`, and stays `null` even after activating to `VALID` if the lineage had no prior effective version. Internal only — never returned in the public projection.
 - `valid_from`
 - `valid_until`
 - `verified_at`
@@ -80,46 +80,74 @@ A change to the document itself (a new photo, a corrected date, a renewal) never
 
 A **lineage** is every submission ever made for one exact `document_type` + exact subject tuple — e.g. `DRIVER_LICENSE` + `driver_id`; `TAXI_OSAGO` + `vehicle_id`; `WAYBILL` + `driver_id` + `vehicle_id` + `shift_id`. The server assigns `lineage_id` on the first submission, and every later submission for that same document_type + subject tuple carries it unchanged — that is what keeps the full history (successful, rejected, and pending attempts alike) together. `lineage_id` is never client-chosen and never appears in the public projection.
 
+**Exactly one lineage exists per `document_type` + exact subject tuple.** Creating a lineage's first row is itself atomic and serialized against concurrent first uploads for the same document_type + subject tuple — at the future database layer this is a uniqueness constraint (or an equivalent serializing lock) on `(document_type, driver_id, vehicle_id, shift_id)`, so two simultaneous first-time uploads for the same vehicle's `TAXI_OSAGO` can never mint two different `lineage_id`s. A losing concurrent request attaches to the lineage the winner created; it never starts a second one.
+
 Every upload — first-ever, a re-upload after rejection/expiry, or a renewal of a still-valid document — creates a **new** submission row in the lineage. No row is ever reused across an upload; see Verification state machine, below, for why `REJECTED -> UPLOADED` and `EXPIRED -> UPLOADED` are not valid in-place transitions.
+
+**At most one open submission per lineage** — an initial hard invariant. `open` = `UPLOADED`, `VERIFYING`, or `APPROVED` (a future-dated `APPROVED` renewal waiting to activate counts as open; an already-`effective` `VALID`/`EXPIRING` row does not). A new upload is accepted into a lineage only when that lineage currently has no open submission; a second upload for the same `document_type` + subject tuple while one attempt is still in flight is rejected, not queued. At the future database layer this is a partial uniqueness constraint over `open` rows per `lineage_id`. One consequence: a stale `APPROVED` row can never be activated behind a newer attempt, because no newer open attempt can be created while the stale one is still open.
 
 `lineage_id` and `supersedes_id` answer two different questions, and must not be conflated:
 
 - `lineage_id` answers *"which document history does this attempt belong to?"* — set once at creation, shared by every attempt in the history regardless of outcome.
-- `supersedes_id` answers the narrower question *"which effective version did this approved attempt actually replace?"* — it starts `null` on every new row and is write-once: it flips from `null` to the prior effective row's `id` **only** at the moment this row is atomically approved as the lineage's new effective version (see the atomic transition below).
-  - a row that is `UPLOADED`, `VERIFYING`, or `REJECTED` always has `supersedes_id: null` — a pending or rejected attempt never "supersedes" anything.
-  - if a `VALID` row is its lineage's first-ever approved version (nothing was effective before it), its `supersedes_id` also stays `null` — there is nothing to replace.
+- `supersedes_id` answers the narrower question *"which effective version did this attempt actually replace?"* — it starts `null` on every new row and is write-once: it flips from `null` to the prior effective row's `id` **only** at the moment this row is atomically **activated** as the lineage's new effective version (see Approval vs. activation, below).
+  - a row that is `UPLOADED`, `VERIFYING`, `APPROVED`, or `REJECTED` always has `supersedes_id: null` — a pending, scheduled, or rejected attempt never "supersedes" anything.
+  - if a row activating to `VALID` is its lineage's first-ever effective version (nothing was effective before it), its `supersedes_id` also stays `null` — there is nothing to replace.
 
-The **effective** version of a lineage is its current server-approved submission that is `VALID` or `EXPIRING` and not expired, revoked, or superseded — there is at most one at a time. The **latest submission** is simply the newest row in the lineage by `created_at`, regardless of status. These are usually the same row, but diverge exactly while a renewal is pending or was rejected:
+#### Approval vs. activation
 
-- while a new submission sits in `UPLOADED`, `VERIFYING`, or `REJECTED`, the lineage's existing `VALID`/`EXPIRING` row remains effective and keeps backing readiness — the pending/rejected attempt is surfaced separately (see Compliance projection, below) but never removes existing readiness, and is never itself described as superseding anything;
-- a lineage has no effective row (reads as `MISSING` for readiness) only when no row in it is currently `VALID` or `EXPIRING`.
+Verification concluding positively (`VERIFYING` resolving) is not the same moment as a document becoming effective — a document can be fully verified today and still be scheduled to start next month. The two are deliberately split:
 
-Atomic successful replacement — one server transaction, never observably partial:
+- if `new.valid_from <= evaluatedAt` at the moment verification concludes (the document is already within its validity window), approval and activation happen together: `VERIFYING -> VALID`, immediately followed by the Atomic activation transaction below.
+- if `new.valid_from > evaluatedAt` (a future-dated document — verified ahead of when it starts), verification concludes as `VERIFYING -> APPROVED` and stops there. `APPROVED` is **not** effective and gives no readiness on its own; if a prior `VALID`/`EXPIRING` row exists in the lineage, it is untouched and keeps backing the verdict undisturbed until `new.valid_from` actually arrives.
+- at `valid_from`, an `APPROVED` row is activated by the same Atomic activation transaction below, triggered by the clock — a background worker, or read-path reconciliation (see Temporal validity) — rather than by verification concluding.
+- if an `APPROVED` row's entire validity window elapses before it is ever activated (`evaluatedAt >= valid_until` at the first activation attempt), it does not activate: `APPROVED -> EXPIRED`, and any prior effective row is left untouched — `supersedes_id` stays `null` and nothing is superseded.
+- an `APPROVED` row can also be invalidated before it ever activates (a revoked license, a fraud finding discovered before the start date): `APPROVED -> REVOKED`. Once `EXPIRED` or `REVOKED`, the row is terminal — it can never be the target of an activation transaction.
+
+The **effective** version of a lineage is its current server-approved submission for which `effectiveAt(evaluatedAt)` holds (see Temporal validity, below) — there is at most one at a time. The **latest submission** is the newest row in the lineage, ordered by `(created_at, id)` for a deterministic tie-break, regardless of status — or `null` if the lineage has no rows at all (see Compliance projection for how an empty lineage is represented). These are usually the same row, but diverge exactly while a renewal is pending, scheduled, or was rejected:
+
+- while a new submission sits in `UPLOADED`, `VERIFYING`, `APPROVED`, or `REJECTED`, the lineage's existing effective row (if any) is untouched and keeps backing readiness — the pending/scheduled/rejected attempt is surfaced separately (see Compliance projection, below) but never removes existing readiness, and is never itself described as superseding anything;
+- a lineage has no effective row (reads as `MISSING` for readiness) when no row in it currently satisfies `effectiveAt(evaluatedAt)` — including the case of an `APPROVED` row with no prior effective version, which stays blocking until it activates.
+
+Atomic activation transaction — used for an immediate `VERIFYING -> VALID`, and for resolving an `APPROVED` row once the clock reaches it: `APPROVED -> VALID`, or `APPROVED -> EXPIRED` if the whole window has already closed. One server transaction, never observably partial:
 
 ```text
 lock lineage / current effective record
 
 assert:
-  new.lineage_id == prior.lineage_id
-  new.document_type == prior.document_type
-  new subject tuple == prior subject tuple
-  prior.status in { VALID, EXPIRING }
-  prior is still the current effective version
-  new is still eligible for approval
+  new.status in { VERIFYING, APPROVED }
+  new is not REVOKED
+  no other open submission exists in the lineage   (guaranteed by the one-open
+                                                    invariant; re-checked here)
+  new.valid_from <= evaluatedAt                     (lower bound: the window has opened)
 
-write atomically:
-  new.status: VERIFYING -> VALID
-  new.supersedes_id: null -> prior.id
-  prior.status: VALID/EXPIRING -> SUPERSEDED
+  if the lineage has an existing effective version, also assert:
+    new.lineage_id     == prior.lineage_id
+    new.document_type  == prior.document_type
+    new subject tuple  == prior subject tuple
+    prior.status in { VALID, EXPIRING }
+    prior is still the current effective version
+
+branch on the upper bound (valid_until) of new's validity window:
+
+  new.valid_until is null OR evaluatedAt < new.valid_until   -- window still open:
+    write atomically:
+      new.status: VERIFYING/APPROVED -> VALID
+      new.supersedes_id: null -> prior.id           (only if a prior effective version existed)
+      prior.status: VALID/EXPIRING -> SUPERSEDED    (only if a prior effective version existed)
+
+  else   -- evaluatedAt >= new.valid_until: the window closed before the row ever took
+         -- effect. Only an APPROVED row reaches this branch; the immediate
+         -- VERIFYING -> VALID path requires the document to still be within its window.
+    write atomically:
+      new.status: APPROVED -> EXPIRED
+    no prior effective row is touched; new.supersedes_id stays null; nothing is superseded
 ```
 
-If any assertion fails: rollback — no partial status change, no `supersedes_id` write, prior remains effective.
+If any assertion fails: rollback — no partial status change, no `supersedes_id` write, any prior effective row is unaffected, and `new` stays at its pre-transaction status (`VERIFYING` or `APPROVED`).
 
 Invariant: one prior record can have at most one successful successor — at most one other row may ever carry that row's `id` as its (non-null) `supersedes_id`. At the future database layer this is ordinarily a foreign key plus a uniqueness constraint on non-null `supersedes_id` values.
 
-If the lineage has no prior effective version at all, a new submission may still reach `VALID` — its `supersedes_id` simply remains `null`, per the write-once rule above.
-
-A valid document can also be invalidated outside the renewal flow entirely (a revoked license, a fraud finding, an expiring document pulled before it lapses): that is `VALID/EXPIRING -> REVOKED` on the effective row itself, with no new submission involved and no `supersedes_id` write on any row. `SUPERSEDED` means "replaced by a newer valid submission"; `REVOKED` means "invalidated with no replacement in hand."
+A valid document can also be invalidated outside the renewal flow entirely, after it is already effective (a revoked license, a fraud finding, an expiring document pulled before it lapses): that is `VALID/EXPIRING -> REVOKED` on the effective row itself, with no new submission involved and no `supersedes_id` write on any row. `SUPERSEDED` means "replaced by a newer valid submission"; `REVOKED` means "invalidated with no replacement in hand," whether that happens before or after the row was ever effective.
 
 ### Initial document types
 
@@ -138,6 +166,7 @@ Canonical states:
 - `MISSING`
 - `UPLOADED`
 - `VERIFYING`
+- `APPROVED`
 - `VALID`
 - `EXPIRING`
 - `REJECTED`
@@ -145,7 +174,9 @@ Canonical states:
 - `SUPERSEDED`
 - `REVOKED`
 
-`MISSING` is not a row state — it is what the projection synthesizes when a lineage has no row at all, or no row currently `VALID`/`EXPIRING` (see Compliance projection). Every other state is a real value of a submission row's `status` field.
+`MISSING` is not a row state — it is what the projection synthesizes when a lineage has no effective row (see Compliance projection). Every other state is a real value of a submission row's `status` field.
+
+`APPROVED` means verification concluded positively but the document's `valid_from` is still in the future (see Submission lineage and renewal handling, Approval vs. activation). It is a real row status, but it is **never** an `effective` status and never gives readiness on its own.
 
 Allowed transitions (`MISSING -> UPLOADED` creates a lineage's first row; every other line is an in-place update to one existing submission row):
 
@@ -153,7 +184,11 @@ Allowed transitions (`MISSING -> UPLOADED` creates a lineage's first row; every 
 MISSING -> UPLOADED
 UPLOADED -> VERIFYING
 VERIFYING -> VALID
+VERIFYING -> APPROVED
 VERIFYING -> REJECTED
+APPROVED -> VALID
+APPROVED -> EXPIRED
+APPROVED -> REVOKED
 VALID -> EXPIRING
 VALID -> EXPIRED
 VALID -> SUPERSEDED
@@ -163,9 +198,43 @@ EXPIRING -> SUPERSEDED
 EXPIRING -> REVOKED
 ```
 
-`REJECTED`, `EXPIRED`, `SUPERSEDED`, and `REVOKED` are terminal **for that submission row** — none of them ever transitions back to `UPLOADED` or anywhere else. There is deliberately no `REJECTED -> UPLOADED` or `EXPIRED -> UPLOADED`: a re-upload after rejection or expiry never reuses the old row, it always creates a brand-new submission row in the same lineage (see Submission lineage and renewal handling).
+`REJECTED`, `EXPIRED`, `SUPERSEDED`, and `REVOKED` are terminal **for that submission row** — none of them ever transitions back to `UPLOADED` or anywhere else. There is deliberately no `REJECTED -> UPLOADED` or `EXPIRED -> UPLOADED`: a re-upload after rejection or expiry never reuses the old row, it always creates a brand-new submission row in the same lineage (see Submission lineage and renewal handling). `APPROVED` is not terminal — it always eventually resolves to `VALID` (activated once `valid_from` arrives), `EXPIRED` (its whole validity window elapsed before it ever activated), or `REVOKED` (invalidated before it ever activates); once `EXPIRED` or `REVOKED`, it can never reach `VALID`.
 
-The client cannot set `VALID`, `REJECTED`, `EXPIRING`, `EXPIRED`, `SUPERSEDED`, or `REVOKED`.
+The client cannot set `VALID`, `REJECTED`, `EXPIRING`, `EXPIRED`, `SUPERSEDED`, `REVOKED`, or `APPROVED`.
+
+## Temporal validity
+
+A stored `status` of `VALID`/`EXPIRING` is not sufficient on its own for readiness — activation and expiry are moments in time, and correctness cannot depend on a background worker having already run by the time a verdict is read. The projection recomputes temporal validity live, at evaluation time:
+
+```text
+effectiveAt(t) =
+  status in { VALID, EXPIRING }
+  AND (valid_from is null OR valid_from <= t)
+  AND (valid_until is null OR t < valid_until)
+  AND not revoked
+  AND not superseded
+```
+
+- `t` is `evaluatedAt`, server time — never client-supplied.
+- A row whose stored `status` is still `VALID` but whose `valid_until` has already passed never yields `ready: true`, even if an expiry worker hasn't yet flipped it to `EXPIRED`/`EXPIRING`.
+- A row whose `valid_from` is still in the future never yields `ready: true`, regardless of stored `status` — this is exactly why a future-dated approval uses `APPROVED`, not `VALID` (see Submission lineage and renewal handling, Approval vs. activation).
+- Expiry and activation workers exist to materialize `status` for storage, audit, and query efficiency — a performance and bookkeeping detail. The projection's correctness never depends on their timeliness: `effectiveAt(t)` is the source of truth for what counts as `effective` at read time, not the stored `status` alone.
+
+### Read-path activation reconciliation
+
+`effectiveAt(t)` requires a stored `status` of `VALID`/`EXPIRING`, so a **due** `APPROVED` row — one whose `valid_from` has already passed — is not yet `effective` on its stored status alone. To keep the projection independent of whether the activation worker has run, building the projection first reconciles the lineage, in one idempotent step per request:
+
+```text
+GET compliance projection
+  1. read server evaluatedAt (server time; never client-supplied)
+  2. under the lineage lock, find any due APPROVED candidate
+     (status == APPROVED AND valid_from <= evaluatedAt)
+  3. run the same Atomic activation transaction
+     (APPROVED -> VALID, or APPROVED -> EXPIRED if evaluatedAt >= valid_until)
+  4. only then build the effective / latestSubmission projection for the response
+```
+
+The background activation worker runs the **same** idempotent transaction ahead of read time; it is an optimization, never the only mechanism that makes a due `APPROVED` row take effect. When the worker has already activated the row, step 2 finds no due `APPROVED` candidate and step 3 is a no-op. After step 3, every lineage's `effective` is once again exactly `VALID`, `EXPIRING`, or `MISSING` (per `effectiveAt(evaluatedAt)`), and `ready` is computed from that reconciled state.
 
 ## Compliance evaluation context
 
@@ -187,9 +256,17 @@ Fail-closed rule: if the context is missing `activeVehicleId` or `shiftId` and t
 
 The backend exposes a derived readiness projection rather than asking the PWA to reconstruct authority from individual records. The projection is a public API shape: it carries subject identity and status, not internal storage fields.
 
-`documents[]` always contains **exactly five entries**, one per Initial document type, in this fixed order: `DRIVER_LICENSE`, `TAXI_OSAGO`, `TAXI_REGISTRY`, `WAYBILL`, `MEDICAL_CHECK`. A type with no row at all in its lineage is synthesized as an entry with `effective.status: "MISSING"` — it is never omitted from the array.
+`documents[]` always contains **exactly five entries**, one per Initial document type, in this fixed order: `DRIVER_LICENSE`, `TAXI_OSAGO`, `TAXI_REGISTRY`, `WAYBILL`, `MEDICAL_CHECK`. A type with no effective row is always present in the array — `effective.status` is synthesized as `"MISSING"` rather than the entry being omitted.
 
-Each entry separates the **effective** document (what currently backs readiness) from the **latest submission** (the newest row in the lineage, which may be a pending or rejected renewal that has not displaced the effective document):
+Each entry separates the **effective** document (what currently backs readiness, per `effectiveAt(evaluatedAt)` — see Temporal validity) from the **latest submission** (the newest real row in the lineage, or `null` if the lineage has no rows at all):
+
+```text
+effective.status        ∈ { VALID, EXPIRING, MISSING }
+latestSubmission.status ∈ { UPLOADED, VERIFYING, APPROVED, VALID, EXPIRING,
+                             REJECTED, EXPIRED, SUPERSEDED, REVOKED }   (or latestSubmission is null)
+```
+
+`MISSING` is never a `latestSubmission` status — it isn't a real row status (see Verification state machine) — and it is never a `latestSubmission` value either: an empty lineage is represented as `latestSubmission: null`, not as a synthetic `MISSING` submission.
 
 Example shape:
 
@@ -211,7 +288,7 @@ Example shape:
       "documentType": "TAXI_OSAGO",
       "subject": { "vehicleId": "..." },
       "effective": { "status": "VALID", "validFrom": "2026-02-01", "validUntil": "2026-12-31" },
-      "latestSubmission": { "status": "VERIFYING", "reasonCode": null },
+      "latestSubmission": { "status": "APPROVED", "reasonCode": null },
       "ready": true,
       "reasonCode": null
     },
@@ -219,7 +296,7 @@ Example shape:
       "documentType": "TAXI_REGISTRY",
       "subject": { "vehicleId": "..." },
       "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
-      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "latestSubmission": null,
       "ready": false,
       "reasonCode": "TAXI_REGISTRY_MISSING"
     },
@@ -227,7 +304,7 @@ Example shape:
       "documentType": "WAYBILL",
       "subject": { "driverId": "...", "vehicleId": "...", "shiftId": "..." },
       "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
-      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "latestSubmission": null,
       "ready": false,
       "reasonCode": "WAYBILL_MISSING"
     },
@@ -235,9 +312,9 @@ Example shape:
       "documentType": "MEDICAL_CHECK",
       "subject": { "driverId": "...", "shiftId": "..." },
       "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
-      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "latestSubmission": { "status": "APPROVED", "reasonCode": null },
       "ready": false,
-      "reasonCode": "MEDICAL_CHECK_MISSING"
+      "reasonCode": "MEDICAL_CHECK_APPROVED_NOT_YET_ACTIVE"
     }
   ],
   "documentsReady": false,
@@ -246,20 +323,22 @@ Example shape:
   "blockingReasons": [
     "TAXI_REGISTRY_MISSING",
     "WAYBILL_MISSING",
-    "MEDICAL_CHECK_MISSING"
+    "MEDICAL_CHECK_APPROVED_NOT_YET_ACTIVE"
   ],
   "warnings": [
-    "TAXI_OSAGO_RENEWAL_VERIFYING"
+    "TAXI_OSAGO_RENEWAL_APPROVED_SCHEDULED"
   ],
-  "evaluatedAt": "2026-09-03T00:00:00Z"
+  "evaluatedAt": "2026-12-01T00:00:00Z"
 }
 ```
 
+`TAXI_OSAGO` above is exactly the scenario that motivated the approval/activation split: the effective policy is valid through `2026-12-31`, a renewal has already been verified and is `APPROVED` for `2027-01-01`, and the slot stays `ready: true` off the still-current `effective` document — the scheduled renewal is visible only as a `warnings` entry. `MEDICAL_CHECK` shows the opposite case: an `APPROVED` submission with **no** prior effective version stays blocking (`ready: false`) until it activates at its own `valid_from`.
+
 Per entry:
 
-- `effective` — the lineage's current server-approved submission that is `VALID` or `EXPIRING` and not expired, revoked, or superseded, or `MISSING` if none exists. `ready` is computed **only** from `effective.status`, never from `latestSubmission.status`.
-- `latestSubmission` — the newest row in the lineage by `created_at`, regardless of status (`UPLOADED`, `VERIFYING`, `VALID`, `REJECTED`, `EXPIRING`, `EXPIRED`, `SUPERSEDED`, or `REVOKED`), with its own safe `reasonCode` (e.g. a rejection reason). While a renewal is pending or was rejected, `latestSubmission` differs from `effective` — that difference is exactly what surfaces the pending/rejected attempt to the driver without touching the readiness the still-valid `effective` document provides. A `latestSubmission` in `UPLOADED`/`VERIFYING`/`REJECTED` is never itself described as superseding the effective document.
-- `ready` — `true` only when `effective.status` is `VALID` or `EXPIRING`; `false` otherwise.
+- `effective` — the lineage's current submission for which `effectiveAt(evaluatedAt)` holds (see Temporal validity), or `MISSING` if none exists. Its `status` is only ever `VALID`, `EXPIRING`, or `MISSING`. `ready` is computed **only** from `effective`, never from `latestSubmission`.
+- `latestSubmission` — the newest row in the lineage, ordered by `(created_at, id)`, regardless of status; `null` if the lineage has no rows at all. Carries its own safe `reasonCode` (e.g. a rejection reason). While a renewal is pending, scheduled, or was rejected, `latestSubmission` differs from `effective` — that difference is exactly what surfaces the attempt to the driver without touching the readiness the still-valid `effective` document provides. A `latestSubmission` in `UPLOADED`/`VERIFYING`/`APPROVED`/`REJECTED` is never itself described as superseding the effective document.
+- `ready` — `true` only when `effective.status` is `VALID` or `EXPIRING`; `false` otherwise (including when the only submission in the lineage is `APPROVED` but not yet active).
 - `reasonCode` (top-level, per entry) — the safe blocking reason for this slot when `ready` is `false`; `null` when `ready` is `true`.
 
 `documents[]` entries never include `lineageId`, `objectKey`, `verificationSource`, `verifiedAt`, `supersedesId`, or any other internal storage field — those stay server-internal.
@@ -272,7 +351,7 @@ shiftReady      = ready(WAYBILL) && ready(MEDICAL_CHECK)
 complianceReady = documentsReady && shiftReady
 ```
 
-A pending or rejected renewal (`latestSubmission` in `UPLOADED`/`VERIFYING`/`REJECTED` while `effective` is still `VALID`/`EXPIRING`) never appears in `blockingReasons` and never flips `ready` to `false` — it may appear in `warnings` (e.g. `TAXI_OSAGO_RENEWAL_VERIFYING`) as a non-blocking, informational signal only.
+A pending, scheduled, or rejected renewal (`latestSubmission` in `UPLOADED`/`VERIFYING`/`APPROVED`/`REJECTED` while `effective` is still `VALID`/`EXPIRING`) never appears in `blockingReasons` and never flips `ready` to `false` — it may appear in `warnings` (e.g. `TAXI_OSAGO_RENEWAL_APPROVED_SCHEDULED`) as a non-blocking, informational signal only. An `APPROVED` submission with no effective document to back it *does* block (`ready: false`) — it is not yet active, and pending-renewal leniency only ever applies on top of an existing effective document, never in place of one.
 
 ### Invariant
 
@@ -297,18 +376,35 @@ No document binary or sensitive PII is stored in `localStorage`.
 
 ## Driver App rendering contract
 
-The existing Documents pane renders each slot's `effective` status for blocking/warning purposes, using the canonical states:
+`effective` and `latestSubmission` drive two different, non-overlapping parts of the pane:
+
+**`effective` decides readiness only** — it only ever takes one of three values, and each renders as:
 
 - `VALID` — accepted and non-blocking
 - `EXPIRING` — warning, with expiry date
-- `VERIFYING` — pending verification; never rendered as ready
-- `REJECTED` — blocking with reason
-- `EXPIRED` — blocking
 - `MISSING` — blocking
-- `SUPERSEDED` — not rendered directly; the pane always shows the current lineage version, so a superseded row is invisible to the driver once its replacement resolves
-- `REVOKED` — blocking with reason, rendered the same as `REJECTED`
 
-When `latestSubmission` differs from `effective` (a renewal in flight), the pane keeps the `effective` state above as the blocking/non-blocking signal and separately surfaces the pending `latestSubmission` (e.g. "проверяется продление" / "продление отклонено") as a non-blocking indicator — it never overrides the `effective` state.
+**`latestSubmission` decides the attempt-status presentation** — `UPLOADED`, `VERIFYING`, `APPROVED`, `REJECTED`, `EXPIRED`, and `REVOKED` are never `effective` values, and are rendered only through `latestSubmission`:
+
+- `UPLOADED` / `VERIFYING` — pending verification; never rendered as ready on their own
+- `APPROVED` — verified, scheduled to activate on its `validFrom`; never rendered as ready on its own
+- `REJECTED` — blocking with reason, if it is also the whole readiness story (no effective document behind it)
+- `EXPIRED` — blocking, if it is also the whole readiness story
+- `REVOKED` — blocking with reason, if it is also the whole readiness story
+- `SUPERSEDED` — never rendered; it only ever describes a row that is no longer anyone's `latestSubmission`, so the pane never surfaces it
+
+When `latestSubmission` differs from `effective` and `effective` is `VALID`/`EXPIRING` (a renewal in flight or scheduled), the pane keeps the `effective` state above as the sole blocking/non-blocking signal, and separately surfaces `latestSubmission` as a non-blocking indicator ("проверяется продление" / "одобрено, начнёт действовать с …" / "продление отклонено") — it never overrides `effective`.
+
+When `effective` is `MISSING`, the blocking copy is **not** a single generic "документ отсутствует" — it is determined by `latestSubmission`:
+
+- `latestSubmission: null` (nothing ever submitted) — "Документ не загружен"
+- `VERIFYING` / `UPLOADED` — "Документ проверяется"
+- `APPROVED` (not yet active) — "Одобрен, начнёт действовать с `validFrom`"
+- `REJECTED` — "Документ отклонён"
+- `EXPIRED` — "Срок действия истёк"
+- `REVOKED` — "Документ отозван"
+
+Readiness itself is unaffected by which copy is shown — it is still derived only from `effective`.
 
 Warnings and hard blockers are separate UI concepts.
 
