@@ -47,35 +47,79 @@ A submission carries exactly the subject ids its type's scope requires (e.g. a `
 
 ### `driver_documents`
 
-Server-owned, versioned submission record — not a single mutable (driver, document_type) row. Each row is one immutable submission version; the current version of a lineage is the row with no later submission superseding it (see Renewal handling, below).
+Server-owned, versioned submission record — not a single mutable (driver, document_type) row. Each row is one submission version; `lineage_id` (below) is what actually threads every submission for the same (subject, document_type) into one history — see Submission lineage and renewal handling.
 
-Minimum fields:
+A row's fields split into two groups. Only the second group is ever written after row creation:
+
+**Immutable at creation, never rewritten:**
 
 - `id`
+- `lineage_id` — server-generated on the lineage's first submission; every later submission for the same `document_type` + exact subject tuple carries the same value. Never client-chosen or client-supplied. Internal only — never returned in the public projection.
 - `document_type`
 - `driver_id` — present when the type's subject scope includes `DRIVER`
 - `vehicle_id` — present when the type's subject scope includes `VEHICLE`
 - `shift_id` — present when the type's subject scope includes `SHIFT`
-- `supersedes_id` — the prior submission version this one replaces, or `null` for the first submission in a lineage
+- `object_key` or external reference where applicable
+- `issued_at`
+- `created_at`
+
+**Server-mutable lifecycle fields (updated in place on this same row as verification proceeds):**
+
 - `status`
+- `supersedes_id` — `null` at creation; write-once `null -> priorEffective.id`, set only when this row is atomically approved as the lineage's new effective version and there was a prior effective version to replace (see Submission lineage and renewal handling). Stays `null` for `UPLOADED`, `VERIFYING`, and `REJECTED`, and stays `null` even after reaching `VALID` if the lineage had no prior effective version. Internal only — never returned in the public projection.
 - `valid_from`
 - `valid_until`
-- `issued_at`
 - `verified_at`
 - `verification_source`
 - `verification_reason`
-- `object_key` or external reference where applicable
-- `created_at`
 - `updated_at`
 
-### Renewal handling
+A change to the document itself (a new photo, a corrected date, a renewal) never rewrites `object_key`, `lineage_id`, or the subject tuple on an existing row — it is always a new row in the same lineage (see Submission lineage and renewal handling).
 
-When a new submission is uploaded for an already-`VALID` lineage (a renewal), the existing `VALID` row is retained and keeps backing the compliance verdict while the new submission runs `UPLOADED -> VERIFYING`:
+### Submission lineage and renewal handling
 
-- new submission reaches `VALID` → the prior version transitions `VALID -> SUPERSEDED`, and the new row's `supersedes_id` points at it;
-- new submission reaches `REJECTED` → the prior version stays `VALID` (no supersession) and keeps backing the verdict.
+A **lineage** is every submission ever made for one exact `document_type` + exact subject tuple — e.g. `DRIVER_LICENSE` + `driver_id`; `TAXI_OSAGO` + `vehicle_id`; `WAYBILL` + `driver_id` + `vehicle_id` + `shift_id`. The server assigns `lineage_id` on the first submission, and every later submission for that same document_type + subject tuple carries it unchanged — that is what keeps the full history (successful, rejected, and pending attempts alike) together. `lineage_id` is never client-chosen and never appears in the public projection.
 
-A valid document can also be invalidated outside the renewal flow (a revoked license, a fraud finding): that is `VALID -> REVOKED`, distinct from `SUPERSEDED`. `SUPERSEDED` means "replaced by a newer valid submission"; `REVOKED` means "invalidated with no replacement in hand."
+Every upload — first-ever, a re-upload after rejection/expiry, or a renewal of a still-valid document — creates a **new** submission row in the lineage. No row is ever reused across an upload; see Verification state machine, below, for why `REJECTED -> UPLOADED` and `EXPIRED -> UPLOADED` are not valid in-place transitions.
+
+`lineage_id` and `supersedes_id` answer two different questions, and must not be conflated:
+
+- `lineage_id` answers *"which document history does this attempt belong to?"* — set once at creation, shared by every attempt in the history regardless of outcome.
+- `supersedes_id` answers the narrower question *"which effective version did this approved attempt actually replace?"* — it starts `null` on every new row and is write-once: it flips from `null` to the prior effective row's `id` **only** at the moment this row is atomically approved as the lineage's new effective version (see the atomic transition below).
+  - a row that is `UPLOADED`, `VERIFYING`, or `REJECTED` always has `supersedes_id: null` — a pending or rejected attempt never "supersedes" anything.
+  - if a `VALID` row is its lineage's first-ever approved version (nothing was effective before it), its `supersedes_id` also stays `null` — there is nothing to replace.
+
+The **effective** version of a lineage is its current server-approved submission that is `VALID` or `EXPIRING` and not expired, revoked, or superseded — there is at most one at a time. The **latest submission** is simply the newest row in the lineage by `created_at`, regardless of status. These are usually the same row, but diverge exactly while a renewal is pending or was rejected:
+
+- while a new submission sits in `UPLOADED`, `VERIFYING`, or `REJECTED`, the lineage's existing `VALID`/`EXPIRING` row remains effective and keeps backing readiness — the pending/rejected attempt is surfaced separately (see Compliance projection, below) but never removes existing readiness, and is never itself described as superseding anything;
+- a lineage has no effective row (reads as `MISSING` for readiness) only when no row in it is currently `VALID` or `EXPIRING`.
+
+Atomic successful replacement — one server transaction, never observably partial:
+
+```text
+lock lineage / current effective record
+
+assert:
+  new.lineage_id == prior.lineage_id
+  new.document_type == prior.document_type
+  new subject tuple == prior subject tuple
+  prior.status in { VALID, EXPIRING }
+  prior is still the current effective version
+  new is still eligible for approval
+
+write atomically:
+  new.status: VERIFYING -> VALID
+  new.supersedes_id: null -> prior.id
+  prior.status: VALID/EXPIRING -> SUPERSEDED
+```
+
+If any assertion fails: rollback — no partial status change, no `supersedes_id` write, prior remains effective.
+
+Invariant: one prior record can have at most one successful successor — at most one other row may ever carry that row's `id` as its (non-null) `supersedes_id`. At the future database layer this is ordinarily a foreign key plus a uniqueness constraint on non-null `supersedes_id` values.
+
+If the lineage has no prior effective version at all, a new submission may still reach `VALID` — its `supersedes_id` simply remains `null`, per the write-once rule above.
+
+A valid document can also be invalidated outside the renewal flow entirely (a revoked license, a fraud finding, an expiring document pulled before it lapses): that is `VALID/EXPIRING -> REVOKED` on the effective row itself, with no new submission involved and no `supersedes_id` write on any row. `SUPERSEDED` means "replaced by a newer valid submission"; `REVOKED` means "invalidated with no replacement in hand."
 
 ### Initial document types
 
@@ -101,7 +145,9 @@ Canonical states:
 - `SUPERSEDED`
 - `REVOKED`
 
-Allowed transitions:
+`MISSING` is not a row state — it is what the projection synthesizes when a lineage has no row at all, or no row currently `VALID`/`EXPIRING` (see Compliance projection). Every other state is a real value of a submission row's `status` field.
+
+Allowed transitions (`MISSING -> UPLOADED` creates a lineage's first row; every other line is an in-place update to one existing submission row):
 
 ```text
 MISSING -> UPLOADED
@@ -114,31 +160,36 @@ VALID -> SUPERSEDED
 VALID -> REVOKED
 EXPIRING -> EXPIRED
 EXPIRING -> SUPERSEDED
-REJECTED -> UPLOADED
-EXPIRED -> UPLOADED
+EXPIRING -> REVOKED
 ```
 
-`SUPERSEDED` and `REVOKED` are terminal for that submission version; a subsequent document is a new submission in the lineage (see Renewal handling), not a reuse of the same row.
+`REJECTED`, `EXPIRED`, `SUPERSEDED`, and `REVOKED` are terminal **for that submission row** — none of them ever transitions back to `UPLOADED` or anywhere else. There is deliberately no `REJECTED -> UPLOADED` or `EXPIRED -> UPLOADED`: a re-upload after rejection or expiry never reuses the old row, it always creates a brand-new submission row in the same lineage (see Submission lineage and renewal handling).
 
 The client cannot set `VALID`, `REJECTED`, `EXPIRING`, `EXPIRED`, `SUPERSEDED`, or `REVOKED`.
 
 ## Compliance evaluation context
 
-The compliance verdict is never computed from a driver id alone. It is always evaluated for an explicit context:
+The compliance verdict is never computed from a driver id alone. It is always evaluated for an explicit context, and every part of that context is server-authoritative — none of it is an accepted client parameter:
 
 ```text
 context = { driverId, activeVehicleId, shiftId }
 ```
 
-- `driverId` — always required.
-- `activeVehicleId` — the vehicle the driver is currently assigned/declared against; required to evaluate any `VEHICLE`-scoped document (`TAXI_OSAGO`, `TAXI_REGISTRY`) and the `VEHICLE` component of `WAYBILL`.
-- `shiftId` — a server-authoritative open shift id; required to evaluate any `SHIFT`-scoped document (`WAYBILL`, `MEDICAL_CHECK`).
+- `driverId` — taken only from the authenticated session. Never a request parameter.
+- `activeVehicleId` — taken only from the driver's server-owned active assignment (Availability/garage). If a vehicle id is ever accepted as input for any other purpose, the server must verify it is currently assigned to this exact `driverId` before using it; an unassigned or someone-else's vehicle id is rejected outright, not silently treated as absent.
+- `shiftId` — must identify a shift that is (a) currently `OPEN` and (b) linked to this exact `driverId` **and** this exact `activeVehicleId`. A well-formed shift id open for a different driver or a different vehicle is not a valid context.
 
-Fail-closed rule: if the context is missing `activeVehicleId` or `shiftId` and the document set being evaluated includes a type scoped to that missing subject, the verdict for that type — and therefore the overall verdict — resolves to non-compliant, never to a default pass. In particular, evaluating with no server-authoritative shift can never yield `complianceReady: true`; it is treated the same as a `MISSING` shift-scoped document, not skipped.
+The client cannot select which vehicle or shift the verdict is evaluated against beyond what the server has already assigned to it. An authenticated driver's own session is never authority to request a compliance verdict for another driver, an unassigned vehicle, or an unrelated shift.
+
+Fail-closed rule: if the context is missing `activeVehicleId` or `shiftId` and the document set being evaluated includes a type scoped to that missing subject, the verdict for that type — and therefore the overall verdict — resolves to non-compliant, never to a default pass. In particular, evaluating with no server-authoritative OPEN shift can never yield `complianceReady: true`; it is treated the same as a `MISSING` shift-scoped document, not skipped.
 
 ## Compliance projection
 
 The backend exposes a derived readiness projection rather than asking the PWA to reconstruct authority from individual records. The projection is a public API shape: it carries subject identity and status, not internal storage fields.
+
+`documents[]` always contains **exactly five entries**, one per Initial document type, in this fixed order: `DRIVER_LICENSE`, `TAXI_OSAGO`, `TAXI_REGISTRY`, `WAYBILL`, `MEDICAL_CHECK`. A type with no row at all in its lineage is synthesized as an entry with `effective.status: "MISSING"` — it is never omitted from the array.
+
+Each entry separates the **effective** document (what currently backs readiness) from the **latest submission** (the newest row in the lineage, which may be a pending or rejected renewal that has not displaced the effective document):
 
 Example shape:
 
@@ -151,25 +202,41 @@ Example shape:
     {
       "documentType": "DRIVER_LICENSE",
       "subject": { "driverId": "..." },
-      "status": "VALID",
-      "validFrom": "2026-01-10",
-      "validUntil": "2031-01-10",
+      "effective": { "status": "VALID", "validFrom": "2026-01-10", "validUntil": "2031-01-10" },
+      "latestSubmission": { "status": "VALID", "reasonCode": null },
+      "ready": true,
       "reasonCode": null
     },
     {
       "documentType": "TAXI_OSAGO",
       "subject": { "vehicleId": "..." },
-      "status": "VERIFYING",
-      "validFrom": null,
-      "validUntil": null,
-      "reasonCode": "TAXI_OSAGO_VERIFYING"
+      "effective": { "status": "VALID", "validFrom": "2026-02-01", "validUntil": "2026-12-31" },
+      "latestSubmission": { "status": "VERIFYING", "reasonCode": null },
+      "ready": true,
+      "reasonCode": null
+    },
+    {
+      "documentType": "TAXI_REGISTRY",
+      "subject": { "vehicleId": "..." },
+      "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
+      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "ready": false,
+      "reasonCode": "TAXI_REGISTRY_MISSING"
+    },
+    {
+      "documentType": "WAYBILL",
+      "subject": { "driverId": "...", "vehicleId": "...", "shiftId": "..." },
+      "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
+      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "ready": false,
+      "reasonCode": "WAYBILL_MISSING"
     },
     {
       "documentType": "MEDICAL_CHECK",
       "subject": { "driverId": "...", "shiftId": "..." },
-      "status": "MISSING",
-      "validFrom": null,
-      "validUntil": null,
+      "effective": { "status": "MISSING", "validFrom": null, "validUntil": null },
+      "latestSubmission": { "status": "MISSING", "reasonCode": null },
+      "ready": false,
       "reasonCode": "MEDICAL_CHECK_MISSING"
     }
   ],
@@ -177,17 +244,35 @@ Example shape:
   "shiftReady": false,
   "complianceReady": false,
   "blockingReasons": [
-    "TAXI_OSAGO_VERIFYING",
+    "TAXI_REGISTRY_MISSING",
+    "WAYBILL_MISSING",
     "MEDICAL_CHECK_MISSING"
   ],
   "warnings": [
-    "DRIVER_LICENSE_EXPIRING_SOON"
+    "TAXI_OSAGO_RENEWAL_VERIFYING"
   ],
   "evaluatedAt": "2026-09-03T00:00:00Z"
 }
 ```
 
-`documents[]` entries never include `objectKey`, `verificationSource`, `verifiedAt`, `supersedesId`, or any other internal storage field — those stay server-internal. Each entry exposes only `documentType`, `subject` (the subject ids relevant to that type, per the scope table above), `status`, `validFrom`/`validUntil`, and a safe `reasonCode` (or `null` when not blocking/warning).
+Per entry:
+
+- `effective` — the lineage's current server-approved submission that is `VALID` or `EXPIRING` and not expired, revoked, or superseded, or `MISSING` if none exists. `ready` is computed **only** from `effective.status`, never from `latestSubmission.status`.
+- `latestSubmission` — the newest row in the lineage by `created_at`, regardless of status (`UPLOADED`, `VERIFYING`, `VALID`, `REJECTED`, `EXPIRING`, `EXPIRED`, `SUPERSEDED`, or `REVOKED`), with its own safe `reasonCode` (e.g. a rejection reason). While a renewal is pending or was rejected, `latestSubmission` differs from `effective` — that difference is exactly what surfaces the pending/rejected attempt to the driver without touching the readiness the still-valid `effective` document provides. A `latestSubmission` in `UPLOADED`/`VERIFYING`/`REJECTED` is never itself described as superseding the effective document.
+- `ready` — `true` only when `effective.status` is `VALID` or `EXPIRING`; `false` otherwise.
+- `reasonCode` (top-level, per entry) — the safe blocking reason for this slot when `ready` is `false`; `null` when `ready` is `true`.
+
+`documents[]` entries never include `lineageId`, `objectKey`, `verificationSource`, `verifiedAt`, `supersedesId`, or any other internal storage field — those stay server-internal.
+
+Readiness rolls up from `ready`, never from raw `latestSubmission` status:
+
+```text
+documentsReady  = ready(DRIVER_LICENSE) && ready(TAXI_OSAGO) && ready(TAXI_REGISTRY)
+shiftReady      = ready(WAYBILL) && ready(MEDICAL_CHECK)
+complianceReady = documentsReady && shiftReady
+```
+
+A pending or rejected renewal (`latestSubmission` in `UPLOADED`/`VERIFYING`/`REJECTED` while `effective` is still `VALID`/`EXPIRING`) never appears in `blockingReasons` and never flips `ready` to `false` — it may appear in `warnings` (e.g. `TAXI_OSAGO_RENEWAL_VERIFYING`) as a non-blocking, informational signal only.
 
 ### Invariant
 
@@ -212,7 +297,7 @@ No document binary or sensitive PII is stored in `localStorage`.
 
 ## Driver App rendering contract
 
-The existing Documents pane renders server state using the canonical states:
+The existing Documents pane renders each slot's `effective` status for blocking/warning purposes, using the canonical states:
 
 - `VALID` — accepted and non-blocking
 - `EXPIRING` — warning, with expiry date
@@ -222,6 +307,8 @@ The existing Documents pane renders server state using the canonical states:
 - `MISSING` — blocking
 - `SUPERSEDED` — not rendered directly; the pane always shows the current lineage version, so a superseded row is invisible to the driver once its replacement resolves
 - `REVOKED` — blocking with reason, rendered the same as `REJECTED`
+
+When `latestSubmission` differs from `effective` (a renewal in flight), the pane keeps the `effective` state above as the blocking/non-blocking signal and separately surfaces the pending `latestSubmission` (e.g. "проверяется продление" / "продление отклонено") as a non-blocking indicator — it never overrides the `effective` state.
 
 Warnings and hard blockers are separate UI concepts.
 
