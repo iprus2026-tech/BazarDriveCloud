@@ -43,7 +43,7 @@ Registered in `public/src/app.js`.
 | `/welcome` | BD-ONBOARDING-01 | `public/src/screens/welcome.js` | implemented |
 | `/onboarding` | BD-ONBOARDING-01 | `public/src/screens/onboarding.js` | implemented |
 | `/feed` | BD-FEED-01 | `public/src/screens/feed.js` | implemented |
-| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented, mock MapShell only |
+| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL on GitHub Pages when the URL-restricted Pages token activates, MapShell fallback otherwise |
 | `/location-permission` | BD-MAP-02 | `public/src/screens/location_permission.js` | implemented, mock permission UX |
 | `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented, mock orders only; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
 | `/route-picker` | BD-MAP-03 | `public/src/screens/route_picker.js` | implemented, route draft store |
@@ -72,7 +72,7 @@ Registered in `public/src/app.js`.
 | Map tab | Tab button targets `/map`; `app.js` routes drivers to `/driver-map`, passengers/guests to `/map`. |
 | Driver route guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
 | Active ride role split | No `/active-ride-passenger` route. Passenger UI is rendered by `active_ride_passenger.js` inside `/active-ride?role=passenger`. |
-| Real Mapbox | Not connected. Screens use DOM placeholders from `public/src/mapbox/map_shell.js`. |
+| Real Mapbox | `/map` renders real Mapbox GL when the URL-restricted public token activates on the GitHub Pages origin; `map_shell.js` remains the dark/no-token/failure fallback there and the only surface on every other origin/screen. |
 
 ---
 
@@ -1296,7 +1296,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/map` |
 | File | `public/src/screens/map.js` |
 | Storage | `bazardrive.map_prefs.v1` as device preference if used. |
-| Map layer | `createMapShell()` only. No Mapbox SDK. |
+| Map layer | `createMapShell()` renders first; hydrates the real vendored Mapbox GL SDK when the URL-restricted Pages token activates. `createMapShell()` remains the dark/no-token/failure fallback. |
 | Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the map keeps 5 numbered cluster markers while the bottom sheet shows top-3 nearby rows. |
 | Actions | My location mock, choose route, orders nearby, route to driver map for driver role through `app.js`. |
 | Acceptance | Works without token, network, or geolocation permission. |
@@ -1585,7 +1585,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 
 | Gap | Why it remains open |
 |---|---|
-| Real Mapbox SDK | Separate Phase 4 issue. Requires CSP and SW update. |
+| ~~Real Mapbox SDK~~ | Resolved for `/map` (BD-MAP-FOUND-01 / BD-MAP-RENDER-MAP / BD-MAP-ACTIVATE, #805): real vendored Mapbox GL renders on GitHub Pages via a URL-restricted public token, under the pre-existing CSP exception. Server Route & Price authority, other map surfaces, geocoding, traffic, and authoritative distance/ETA/fare remain separate, still-dark scope. |
 | ~~`driver_markers.js` and `trip_status_layer.js` stubs~~ | Resolved (BD-MAP-FOUND-03 / BD-MAP-FOUND-04): both foundation stubs now exist in `public/src/mapbox/` as no-op / pure-helper modules (no real Mapbox, no token, no network), precached in `sw.js` and guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
 | ~~DriverMap readiness gate~~ | Resolved (BD-DRIVER-02): `/driver-map` now enforces `isDriverLineReady()` — the shared `state.js` rule — alongside the role guard. |
