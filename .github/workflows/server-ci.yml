@@ -62,9 +62,13 @@ jobs:
 
       - name: Assert core objects exist
         run: |
-          # 11 base tables from 0001 + auth_otp/auth_session + notification_outbox = 14.
-          psql -v ON_ERROR_STOP=1 -tAc \
-            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | grep -qx 14
+          # No blanket total BASE TABLE count here (deliberately removed, BD-DRIVER-VEHICLE-
+          # ASSIGNMENT-AUTHORITY-01B review) — a global count is a landmine for every future
+          # migration that adds a table (each one would need to bump an unrelated magic
+          # number). Every load-bearing object this CI actually depends on is asserted by
+          # name below instead: auth_otp/auth_session, notification_outbox (+ its function/
+          # constraints/trigger), ride_history, the rides/ride_events freeze/append-only
+          # triggers, and (0005) vehicle_driver_assignments/driver_active_vehicle.
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('auth_otp','auth_session')" | grep -qx 2
           psql -v ON_ERROR_STOP=1 -tAc \
@@ -81,6 +85,27 @@ jobs:
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='ride_events' and t.tgname='trg_ride_events_no_mutation' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='notification_outbox' and t.tgname='trg_notification_outbox_no_mutation' and not t.tgisinternal" | grep -qx 1
+          # BD-DRIVER-VEHICLE-ASSIGNMENT-AUTHORITY-01B (0005) — named objects from the frozen
+          # contract's data model, not just table existence.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('vehicle_driver_assignments','driver_active_vehicle')" | grep -qx 2
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_actor_xor'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_window_check'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_active_iff_not_terminated'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_id_driver_uq'" | grep -qx u
+          # exclusion constraint (contype 'x') — the non-overlapping-entitlement-window guard.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_no_overlap'" | grep -qx x
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_active_vehicle' and pc.conname='driver_active_vehicle_assignment_driver_fkey'" | grep -qx f
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='vehicle_driver_assignments' and t.tgname='trg_vehicle_driver_assignments_updated_at' and not t.tgisinternal" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_active_vehicle' and t.tgname='trg_driver_active_vehicle_updated_at' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -115,11 +140,13 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
-      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH now
-      # depends on 0004, so a database with only 0001..0003 must not enter service.
-      - name: Apply pre-outbox migrations and assert readiness is incomplete
+      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH depends
+      # on 0004 and readiness now also depends on 0005's authority schema (BD-DRIVER-VEHICLE-
+      # ASSIGNMENT-AUTHORITY-01B), so a database with 0001..0004 but NOT 0005 must not enter
+      # service.
+      - name: Apply pre-authority-schema migrations (0001-0004) and assert readiness is incomplete
         run: |
-          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql; do
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
           node --input-type=module <<'NODE'
