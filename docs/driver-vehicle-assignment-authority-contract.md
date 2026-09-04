@@ -50,8 +50,8 @@ vehicles                       canonical vehicle data + OWNER  (exists today —
 vehicle_driver_assignments      server-owned entitlement: this driver MAY work on this vehicle
         │                       (assignment_type OWNER | RENTAL | FLEET; status ACTIVE | ENDED | REVOKED)
         ▼
-driver_active_vehicle           server-owned CURRENT selection: which of the driver's ACTIVE
-        │                       assignments the driver has chosen to work with right now
+driver_active_vehicle           server-owned CURRENT selection: which of the driver's usable
+        │                       assignments (assignmentUsableAt(serverTime) == true) the driver picked
         ▼
 driver_shift                    an OPEN shift PINS driver_id + vehicle_id + assignment_id
         │                       (owned by Driver Availability / Presence — BD-DRIVER-SHIFT-AUTHORITY, a later slice)
@@ -61,7 +61,7 @@ Safety & Compliance             evaluates documents for the exact driver + vehic
 
 Each layer is a distinct concept and must not be collapsed into another:
 
-- **Ownership** (`vehicles.owner_user_id`) ≠ **entitlement** (an `ACTIVE` `vehicle_driver_assignments` row) ≠ **selection** (`driver_active_vehicle`) ≠ **working** (an `OPEN` `driver_shift`).
+- **Ownership** (`vehicles.owner_user_id`) ≠ **entitlement** (a `vehicle_driver_assignments` row that is not `ENDED`/`REVOKED`) ≠ **selection** (`driver_active_vehicle`) ≠ **working** (an `OPEN` `driver_shift`).
 - A driver can be *entitled* to several vehicles at once (own one, rent another), *select* at most one at a time, and be *working* on exactly the one their `OPEN` shift pinned.
 
 The client may display a driver's assignments and their current selection, and may request a selection change. It may not create, end, or revoke an assignment, and it may not assert the selection server-side — the server owns both.
@@ -74,7 +74,7 @@ The client may display a driver's assignments and their current selection, and m
 
 This contract changes the **meaning** attributed to two of its columns, not the schema:
 
-- `owner_user_id` is the **owner**. It is the FK target for `vehicle_driver_assignments.vehicle_id`'s owner-side checks and nothing more. It is never read as "the driver working on this vehicle".
+- `owner_user_id` is the **owner**. `vehicle_driver_assignments.vehicle_id` references `vehicles.id` (**not** `owner_user_id`); owner-side authorization — e.g. "may this actor create a `RENTAL` grant for this vehicle?" — *reads* `vehicles.owner_user_id`. It is never read as "the driver working on this vehicle".
 - `is_active` is **legacy / derived only** (see the dedicated section below). No server decision reads it.
 - `archived = TRUE` (BD-PROFILE-D-05I soft-delete) means the vehicle is withdrawn from use. A future "blocked" state (safety hold, ownership dispute, stolen) is a separate flag the runtime slice may add; this contract refers to both together as **archived/blocked**.
 
@@ -89,20 +89,23 @@ One row = one grant of the right for a driver to work on a vehicle. Append-mostl
 | `id` | Surrogate PK (server-generated UUID). |
 | `vehicle_id` | FK → `vehicles(id)`. The vehicle the grant is for. |
 | `driver_id` | FK → `users(id)`. The driver being entitled. |
-| `assigned_by` | FK → `users(id)` — the principal the server resolved the grant to. Server-set from the authenticated actor or a service principal; the client can never pass an arbitrary `assigned_by` (see *Who may create an assignment*). |
+| `assigned_by_user_id` | `UUID NULL`, FK → `users(id)`. Set when a **human** actor (owner / rental operator / fleet manager / Ops) created the grant. |
+| `assigned_by_service_id` | `TEXT NULL`. Set when a **server-owned procedure** (e.g. ownership onboarding) created the grant — a service-principal identifier, not a `users` row. |
 | `assignment_type` | `OWNER` \| `RENTAL` \| `FLEET`. `OWNER` = the owner driving their own vehicle (`driver_id == vehicles.owner_user_id`). `RENTAL` = the owner lets another specific driver use it. `FLEET` = a fleet/company vehicle assigned to a driver by an operator. |
-| `starts_at` | When the entitlement window opens (server time). |
+| `starts_at` | When the entitlement window opens (server time). **May be in the future** — a scheduled grant is entitled only once `starts_at` is reached. |
 | `created_at` | Row creation (server time). |
+
+Exactly one of `assigned_by_user_id` / `assigned_by_service_id` is non-null — an exactly-one `CHECK` at the future DB layer. The client sets neither; the logical "who assigned this" is always a server-resolved actor. `users` today is a stub with roles `passenger` / `driver` / `guest` and models no service principal, so a service actor is never written as a `users` row.
 
 **Server-mutable lifecycle fields:**
 
 | Field | Meaning |
 | --- | --- |
-| `status` | `ACTIVE` \| `ENDED` \| `REVOKED`. `ACTIVE` = usable now. `ENDED` = the entitlement window closed normally (rental term over, driver left the fleet). `REVOKED` = terminated out-of-band (dispute, fraud, safety) — takes effect immediately. |
-| `ends_at` | Set when `status` leaves `ACTIVE`. For `ENDED` it is the planned/actual close; for `REVOKED` it is the revocation instant. |
+| `status` | `ACTIVE` \| `ENDED` \| `REVOKED`. `ACTIVE` means the grant is **not yet** `ENDED`/`REVOKED` — it does **not** mean "usable now". Current usability is `assignmentUsableAt(serverTime)` alone: a still-`ACTIVE` grant that is past its `ends_at`, or before its `starts_at`, is not usable. `ENDED` = the entitlement window closed normally (rental term over, driver left the fleet). `REVOKED` = terminated out-of-band (dispute, fraud, safety) — takes effect immediately. |
+| `ends_at` | The planned upper bound of the entitlement window. **May be set at row creation** (a fixed-term rental), and may later be **shortened** by an authorized server action (owner / operator / Ops). On an `ENDED`/`REVOKED` transition it must be **≤ the server-side transition time**. `NULL` = open-ended (see *Non-overlapping entitlement windows*). |
 | `updated_at` | Last lifecycle write (server time). |
 
-**Uniqueness (contract level).** At most one assignment satisfying `assignmentEntitledAt(now())` (see *Assignment usability*) may exist per `(vehicle_id, driver_id)` at a time. A new grant for a pair that already has an entitled one is rejected, not stacked. History is retained: `ENDED`/`REVOKED` rows stay. At the future database layer this is a partial-unique constraint over the entitled rows plus a serializing insert (the house `INSERT … ON CONFLICT … / re-read` pattern); this contract does not prescribe the DDL.
+**Non-overlapping entitlement windows (contract level).** An assignment's *entitlement window* is the half-open interval `[starts_at, ends_at)`, where `ends_at IS NULL` means *infinity*. For one `(vehicle_id, driver_id)` pair, the entitlement windows of any two **non-terminal** assignments (`status = ACTIVE`) must **not overlap** — a scheduled future grant is accepted only if its window is disjoint from every existing non-terminal one for that pair. This is deliberately a *time-range* invariant, **not** a "one row where `assignmentEntitledAt(now())`" rule: membership of that set changes with the clock alone, with no `INSERT`/`UPDATE`, so a static partial-unique index over a `now()`-dependent predicate cannot enforce it, and two future grants that do not overlap *today* could overlap *later*. At the future database layer this is an exclusion constraint over the entitlement-window range per `(vehicle_id, driver_id)` (or an equivalent serialized check on write); this contract does not prescribe the DDL. Terminal `ENDED`/`REVOKED` rows are excluded from the constraint and retained as history.
 
 Multiple drivers **may** hold entitled assignments on the same vehicle simultaneously (the owner's `OWNER` grant and a `RENTAL` grant to a tenant can coexist). Exclusivity is enforced **only at the shift layer** (one `OPEN` `driver_shift` per `vehicle_id`) — never at the entitlement or the selection layer.
 
@@ -114,7 +117,7 @@ Multiple drivers **may** hold entitled assignments on the same vehicle simultane
 | `RENTAL` | the vehicle owner, or an authorized rental operator. |
 | `FLEET` | a fleet manager, or the Ops authority for that fleet. |
 
-A driver can never assign themselves someone else's vehicle: the client cannot write `vehicle_driver_assignments` at all, and `assigned_by` is always the server-resolved principal. Ending or revoking an assignment is likewise a server / owner / operator / Ops action, never a driver self-service one.
+A driver can never assign themselves someone else's vehicle: the client cannot write `vehicle_driver_assignments` at all, and the server sets `assigned_by_user_id` / `assigned_by_service_id` from the resolved actor. Ending or revoking an assignment is likewise a server / owner / operator / Ops action, never a driver self-service one.
 
 ### Assignment usability
 
@@ -122,28 +125,40 @@ Whether an assignment may be acted on is a **single fail-closed predicate**, `as
 
 ```text
 assignmentEntitledAt(t) =
-  assignment.status == ACTIVE
+  assignment.status == ACTIVE                       -- i.e. not ENDED / REVOKED
   AND assignment.starts_at <= t
   AND (assignment.ends_at IS NULL OR t < assignment.ends_at)
 
 vehicleOperationalAt(t) =
   vehicle.archived == false
-  AND no effective server-side vehicle block exists at t
+  AND vehicleBlockState(t) == UNBLOCKED
 
 assignmentUsableAt(t) =
   assignmentEntitledAt(t)
   AND vehicleOperationalAt(t)
 ```
 
+`vehicleBlockState(t)` is three-valued:
+
+- **`UNBLOCKED`** — no effective server-side block record applies at `t`.
+- **`BLOCKED`** — an effective server-side block record applies at `t` (safety hold, ownership dispute, stolen).
+- **`UNKNOWN`** — the authoritative block source errored or was unreachable.
+
+`vehicleOperationalAt(t)` is `true` **only** for `UNBLOCKED`; both `BLOCKED` and `UNKNOWN` make it `false`. Where the block state is physically stored (a column on `vehicles`, a separate table, an external service) is a runtime / DB decision this contract does not fix.
+
 Every critical operation evaluates the **full `assignmentUsableAt(serverTime)`** — never `status = ACTIVE` alone, and never the entitlement half without the operational half:
 
 - selecting an active vehicle (`NONE → SELECTED`) and switching it (`SELECTED(A) → SELECTED(B)`)
 - opening a `driver_shift`
+- **matching** — before a driver is added to a candidate set, on that driver's `OPEN` shift's pinned assignment
+- **dispatch** — immediately before a final order is assigned to the driver, re-checked on the pinned assignment
 - the server's periodic / event-driven re-validation of a current selection or an open shift
 
-**Temporal fail-closed.** An assignment whose `ends_at` is already in the past is **unusable immediately** — correctness does not wait for a background job to materialise `status = ENDED`. `assignmentEntitledAt(t)` is computed from `starts_at` / `ends_at` / `status` at evaluation time, server clock only; a stale stored `status = ACTIVE` past `ends_at` never yields `true`.
+**Temporal fail-closed.** An assignment whose `ends_at` is already in the past is **unusable immediately** — correctness does not wait for a background job to materialise `status = ENDED`. `assignmentEntitledAt(t)` is computed from `starts_at` / `ends_at` / `status` at evaluation time, server clock only; a stale stored `status = ACTIVE` past `ends_at` (or before `starts_at`) never yields `true`.
 
-**Operational fail-closed.** If `vehicleOperationalAt(t)` cannot be determined — a dependent vehicle-state service errors or is unreachable — selection, switch, and shift-open **fail closed** with a retryable error. The client is never granted the operation by default.
+**Operational fail-closed.** When `vehicleBlockState(t)` is `UNKNOWN` — the authoritative block source errored or was unreachable — `vehicleOperationalAt(t)` is `false`: an interactive operation (selection, switch, shift-open) **fails closed** with a retryable error, and dispatch inclusion is refused. The client is never granted the operation by default.
+
+**Dispatch fail-closed gate.** `assignmentUsableAt(serverTime)` is re-evaluated on the `OPEN` shift's pinned assignment at two points in the order pipeline, independently of any event or worker: (a) before the driver is added to a matching candidate set, and (b) immediately before a final order is assigned. A `false` **or `UNKNOWN`** result excludes the driver — no order is offered and none is assigned. The event-driven invalidation policy (*Downstream contract*) and any periodic worker are accelerators that materialise `OFFLINE` / shift-close sooner; correctness never depends on their timeliness.
 
 ### `driver_active_vehicle` (new — target entity, not created by 01A)
 
@@ -152,10 +167,18 @@ One row = a driver's current choice of which entitled vehicle to work with. It i
 | Field | Meaning |
 | --- | --- |
 | `driver_id` | PK / FK → `users(id)`. One row per driver at most; absence of a row = the `NONE` state. |
-| `assignment_id` | FK → `vehicle_driver_assignments(id)`. The selected grant. Must satisfy `assignmentUsableAt(now())` at selection time (see *Assignment usability*). |
-| `vehicle_id` | FK → `vehicles(id)`. Denormalised from the selected assignment for read convenience; always equals `assignment.vehicle_id`. |
+| `assignment_id` | FK → `vehicle_driver_assignments(id)`. The selected grant. Must satisfy `assignmentUsableAt(serverTime)` at selection time (see *Assignment usability*). |
 | `selected_at` | When this selection was made (server time). |
 | `updated_at` | Last write (server time). |
+
+The selected **vehicle is derived** — it is the `vehicle_id` of the `vehicle_driver_assignments` row that `assignment_id` points at — and is **not** stored on `driver_active_vehicle`. To make an internally inconsistent selection unrepresentable, the reference is a **composite foreign key** to the assignment plus its driver:
+
+```text
+(driver_active_vehicle.assignment_id, driver_active_vehicle.driver_id)
+  REFERENCES vehicle_driver_assignments (id, driver_id)
+```
+
+so the selected assignment always belongs to the selecting driver (at the future DB layer `vehicle_driver_assignments` carries the matching `UNIQUE (id, driver_id)` to be an FK target). If a future runtime slice keeps a denormalised `vehicle_id` on `driver_active_vehicle` for read convenience, it must be covered by a **three-column** composite FK to `vehicle_driver_assignments (id, driver_id, vehicle_id)` — never an application-level assert.
 
 `driver_active_vehicle` is the driver's **pre-shift preference** — what the driver picks in the garage before going on duty. It is explicitly **not**:
 
@@ -181,10 +204,10 @@ Because it is only a preference, it needs no TTL, lease, or heartbeat, and a sta
 ### Assignment lifecycle
 
 ```
-(created) ──▶ ACTIVE
+(created) ──▶ ACTIVE            (ends_at may already be set as the planned upper bound)
                 │
-                ├──▶ ENDED     (entitlement window closed normally; ends_at stamped)
-                └──▶ REVOKED   (terminated out-of-band; immediate; ends_at stamped)
+                ├──▶ ENDED     (window closed normally; ends_at finalized ≤ transition server time)
+                └──▶ REVOKED   (terminated out-of-band, immediate; ends_at finalized ≤ transition server time)
 ```
 
 `ENDED` and `REVOKED` are terminal for the row. There is no `ENDED → ACTIVE` or `REVOKED → ACTIVE`: renewing an entitlement creates a **new** assignment row.
@@ -211,7 +234,7 @@ A selection is **never** marked stale merely because another driver opened a shi
 1. **Every critical operation uses `assignmentUsableAt(serverTime)`.** Selecting a vehicle, switching it, opening a `driver_shift`, and every server-side re-validation evaluate the full predicate — entitlement (`status` / `starts_at` / `ends_at`) **and** vehicle-operational (`archived` / server-side block) — never `status = ACTIVE` alone and never the entitlement half in isolation. See *Assignment usability*.
 2. **Fail-closed on an unknowable vehicle state.** If `vehicleOperationalAt(t)` cannot be determined (a dependent vehicle-state service errors or is unreachable), selection / switch / shift-open are refused with a retryable error — never granted by default.
 3. **At most one selected vehicle per driver.** `driver_active_vehicle` has at most one row per `driver_id` (PK on `driver_id`).
-4. **Selection is not an occupancy lock.** There is **no** uniqueness constraint on `driver_active_vehicle.vehicle_id`. Several drivers who each hold a usable assignment on the same vehicle may each select it simultaneously. A selection is a preference — not a reservation, an occupancy lock, or proof of work — and carries no TTL, lease, or heartbeat; a forgotten selection can never block the vehicle for another driver.
+4. **Selection is not an occupancy lock.** The selected vehicle is **derived** from `assignment_id` (`driver_active_vehicle` stores no `vehicle_id` column), and there is **no** uniqueness on the derived vehicle across drivers. Several drivers who each hold a usable assignment on the same vehicle may each select it simultaneously. A selection is a preference — not a reservation, an occupancy lock, or proof of work — and carries no TTL, lease, or heartbeat; a forgotten selection can never block the vehicle for another driver.
 5. **Exclusivity lives on the shift layer.** At most one `OPEN` `driver_shift` per `driver_id`, **and** at most one `OPEN` `driver_shift` per `vehicle_id`. This — not the selection — is what makes "one working driver per vehicle" true. Opening a shift when the vehicle already has an `OPEN` shift is rejected with `409 VEHICLE_ALREADY_IN_OPEN_SHIFT`; the losing driver's `driver_active_vehicle` selection is left intact (a preference that simply cannot become a shift right now), never cleared or flagged stale.
 6. **Atomic switch.** Changing `driver_active_vehicle` (`NONE → SELECTED`, `SELECTED(A) → SELECTED(B)`, `SELECTED(A) → NONE`) is a single server transaction — it never leaves a driver with two selections or a half-written row. At the future database layer this is `db.tx` + a row lock on the driver's selection (`SELECT … FOR UPDATE`), consistent with the house `lock<Entity>By<Key>()` pattern.
 7. **No switch during an `OPEN` shift.** While the driver has an `OPEN` `driver_shift`, the active-vehicle selection is frozen. The car for that shift is whatever the shift pinned; changing it mid-shift is not a selection change — it is closing the shift and opening a new one.
@@ -223,7 +246,7 @@ A selection is **never** marked stale merely because another driver opened a shi
 | Data | Stored where | Written by | Read by |
 | --- | --- | --- | --- |
 | `vehicles` row (owner, model, plate, `archived`, `is_active`) | PostgreSQL | garage CRUD (future BD-PROFILE-D-05x runtime slice) | Driver App garage, Assignment authority, Ops |
-| `vehicle_driver_assignments` | PostgreSQL | Backend API on an owner / rental-operator / fleet-manager / Ops action — never the driver; `assigned_by` is the server-resolved principal | Driver App (own assignments), Shift authority, Safety & Compliance, Ops |
+| `vehicle_driver_assignments` | PostgreSQL | Backend API on an owner / rental-operator / fleet-manager / Ops action — never the driver; `assigned_by_user_id` / `assigned_by_service_id` are server-resolved | Driver App (own assignments), Shift authority, Safety & Compliance, Ops |
 | `driver_active_vehicle` | PostgreSQL | Backend API on the authenticated driver's own selection request, transactionally | Driver App (own selection), Shift authority (at shift-open) |
 | Pinned shift tuple (`driver_id` + `vehicle_id` + `assignment_id`) | PostgreSQL (`driver_shift`) | Driver Availability / Presence at shift-open (BD-DRIVER-SHIFT-AUTHORITY) | Safety & Compliance, Dispatcher, Ops |
 | Audit event | DB / audit ledger | backend services | Monitoring / Ops |
