@@ -101,8 +101,9 @@ Exactly one of `assigned_by_user_id` / `assigned_by_service_id` is non-null — 
 
 | Field | Meaning |
 | --- | --- |
-| `status` | `ACTIVE` \| `ENDED` \| `REVOKED`. `ACTIVE` means the grant is **not yet** `ENDED`/`REVOKED` — it does **not** mean "usable now". Current usability is `assignmentUsableAt(serverTime)` alone: a still-`ACTIVE` grant that is past its `ends_at`, or before its `starts_at`, is not usable. `ENDED` = the entitlement window closed normally (rental term over, driver left the fleet). `REVOKED` = terminated out-of-band (dispute, fraud, safety) — takes effect immediately. |
-| `ends_at` | The planned upper bound of the entitlement window. **May be set at row creation** (a fixed-term rental), and may later be **shortened** by an authorized server action (owner / operator / Ops). On an `ENDED`/`REVOKED` transition it must be **≤ the server-side transition time**. `NULL` = open-ended (see *Non-overlapping entitlement windows*). |
+| `status` | `ACTIVE` \| `ENDED` \| `REVOKED`. `ACTIVE` means the grant is **not yet** `ENDED`/`REVOKED` — it does **not** mean "usable now"; current usability is `assignmentUsableAt(serverTime)` alone (a still-`ACTIVE` grant past its `ends_at`, or before its `starts_at`, is not usable). `ENDED` = the entitlement window closed normally (rental term over, driver left the fleet). `REVOKED` = terminated out-of-band (dispute, fraud, safety) — takes effect immediately. `ACTIVE` ⇔ `terminated_at IS NULL`. |
+| `ends_at` | The **planned** upper bound of the entitlement window (a fixed-term rental's end date). It is either `NULL` (open-ended) or **strictly after `starts_at`** — never inverted. May be set at row creation, and while the grant is `ACTIVE` may be **shortened** by an authorized server action (owner / operator / Ops), still to a value `> starts_at`. It is **not** repurposed as the termination timestamp — see `terminated_at`. (See *Non-overlapping entitlement windows*.) |
+| `terminated_at` | `NULL` while `ACTIVE`. On the `ACTIVE → ENDED`/`REVOKED` transition it is stamped with the **exact server transition time** — this, not `ends_at`, is when the grant actually stopped. For an early `REVOKED`/`ENDED` **before a future `starts_at`**, `ends_at` keeps its planned value (or `NULL`) and `terminated_at` records the instant; `assignmentEntitledAt` is already `false` from the terminal `status`, so no `[starts_at, ends_at)` inversion is ever created. |
 | `updated_at` | Last lifecycle write (server time). |
 
 **Non-overlapping entitlement windows (contract level).** An assignment's *entitlement window* is the half-open interval `[starts_at, ends_at)`, where `ends_at IS NULL` means *infinity*. For one `(vehicle_id, driver_id)` pair, the entitlement windows of any two **non-terminal** assignments (`status = ACTIVE`) must **not overlap** — a scheduled future grant is accepted only if its window is disjoint from every existing non-terminal one for that pair. This is deliberately a *time-range* invariant, **not** a "one row where `assignmentEntitledAt(now())`" rule: membership of that set changes with the clock alone, with no `INSERT`/`UPDATE`, so a static partial-unique index over a `now()`-dependent predicate cannot enforce it, and two future grants that do not overlap *today* could overlap *later*. At the future database layer this is an exclusion constraint over the entitlement-window range per `(vehicle_id, driver_id)` (or an equivalent serialized check on write); this contract does not prescribe the DDL. Terminal `ENDED`/`REVOKED` rows are excluded from the constraint and retained as history.
@@ -125,7 +126,7 @@ Whether an assignment may be acted on is a **single fail-closed predicate**, `as
 
 ```text
 assignmentEntitledAt(t) =
-  assignment.status == ACTIVE                       -- i.e. not ENDED / REVOKED
+  assignment.status == ACTIVE                       -- i.e. terminated_at IS NULL, not ENDED / REVOKED
   AND assignment.starts_at <= t
   AND (assignment.ends_at IS NULL OR t < assignment.ends_at)
 
@@ -146,6 +147,23 @@ assignmentUsableAt(t) =
 
 `vehicleOperationalAt(t)` is `true` **only** for `UNBLOCKED`; both `BLOCKED` and `UNKNOWN` make it `false`. Where the block state is physically stored (a column on `vehicles`, a separate table, an external service) is a runtime / DB decision this contract does not fix.
 
+The **decision** an operation acts on is three-valued — `assignmentUsabilityDecision(t)`:
+
+```text
+assignmentUsabilityDecision(t) =
+  UNKNOWN   if vehicleBlockState(t) == UNKNOWN
+  UNUSABLE  else if (NOT assignmentEntitledAt(t))       -- terminal status, elapsed ends_at, or before starts_at
+                 OR vehicle.archived == true
+                 OR vehicleBlockState(t) == BLOCKED
+  USABLE    otherwise
+```
+
+- **`USABLE`** — a full positive verdict; the operation may proceed.
+- **`UNUSABLE`** — a **confirmed** negative: `ENDED`/`REVOKED`, an elapsed `ends_at`, `starts_at` not yet reached, `vehicle.archived`, or a confirmed `BLOCKED`.
+- **`UNKNOWN`** — the authoritative vehicle-block source errored or was unreachable; the true state is not known.
+
+`assignmentUsableAt(t)` is the boolean shorthand for `assignmentUsabilityDecision(t) == USABLE` — so **both** `UNUSABLE` and `UNKNOWN` yield `false`. The two are **not** interchangeable for durable state changes (see *`UNKNOWN` vs. confirmed `UNUSABLE`*, below).
+
 Every critical operation evaluates the **full `assignmentUsableAt(serverTime)`** — never `status = ACTIVE` alone, and never the entitlement half without the operational half:
 
 - selecting an active vehicle (`NONE → SELECTED`) and switching it (`SELECTED(A) → SELECTED(B)`)
@@ -156,9 +174,21 @@ Every critical operation evaluates the **full `assignmentUsableAt(serverTime)`**
 
 **Temporal fail-closed.** An assignment whose `ends_at` is already in the past is **unusable immediately** — correctness does not wait for a background job to materialise `status = ENDED`. `assignmentEntitledAt(t)` is computed from `starts_at` / `ends_at` / `status` at evaluation time, server clock only; a stale stored `status = ACTIVE` past `ends_at` (or before `starts_at`) never yields `true`.
 
-**Operational fail-closed.** When `vehicleBlockState(t)` is `UNKNOWN` — the authoritative block source errored or was unreachable — `vehicleOperationalAt(t)` is `false`: an interactive operation (selection, switch, shift-open) **fails closed** with a retryable error, and dispatch inclusion is refused. The client is never granted the operation by default.
+**Operational fail-closed.** When `vehicleBlockState(t)` is `UNKNOWN` — the authoritative block source errored or was unreachable — `vehicleOperationalAt(t)` is `false`, so `assignmentUsabilityDecision(serverTime)` is `UNKNOWN` and every forward operation (`select` / `switch` / `clear` / shift-open / matching / dispatch) is refused fail-closed. The client is never granted the operation by default. `UNKNOWN` does **not**, on its own, drive durable state — see *`UNKNOWN` vs. confirmed `UNUSABLE`*.
 
-**Dispatch fail-closed gate.** `assignmentUsableAt(serverTime)` is re-evaluated on the `OPEN` shift's pinned assignment at two points in the order pipeline, independently of any event or worker: (a) before the driver is added to a matching candidate set, and (b) immediately before a final order is assigned. A `false` **or `UNKNOWN`** result excludes the driver — no order is offered and none is assigned. The event-driven invalidation policy (*Downstream contract*) and any periodic worker are accelerators that materialise `OFFLINE` / shift-close sooner; correctness never depends on their timeliness.
+**Dispatch fail-closed gate.** `assignmentUsableAt(serverTime)` is re-evaluated on the `OPEN` shift's pinned assignment at two points in the order pipeline, independently of any event or worker: (a) before the driver is added to a matching candidate set, and (b) immediately before a final order is assigned. A `false` result — `UNUSABLE` **or `UNKNOWN`** — excludes the driver: no order is offered and none is assigned. The event-driven invalidation policy (*Downstream contract*) and any periodic worker are accelerators that materialise `OFFLINE` / shift-close sooner; correctness never depends on their timeliness.
+
+### `UNKNOWN` vs. confirmed `UNUSABLE`
+
+`UNKNOWN` and `UNUSABLE` both make `assignmentUsableAt(serverTime)` `false`, so both **refuse forward progress**:
+
+- `select` / `switch` / `clear` / shift-open → a **retryable** fail-closed error;
+- matching candidate inclusion → **prohibited**;
+- final order assignment → **prohibited**;
+- no new offer or order is created;
+- the server raises an **alert** and retries / reconciles against the block source.
+
+But `UNKNOWN` **must not, on its own, drive durable state**: it does **not** close an `OPEN` shift, set the driver `OFFLINE`, or reset `driver_active_vehicle`. Those durable actions — and the *Mid-shift invalidation* policy — fire **only** on a transition to a **confirmed `UNUSABLE`** (`ENDED`, `REVOKED`, an elapsed `ends_at`, `archived`, or a confirmed `BLOCKED`). A time-bounded escalation for a *prolonged* `UNKNOWN` (e.g. "block source unreachable for N minutes ⇒ force-close") is a separate Driver Availability / Operations policy, out of scope for this contract.
 
 ### `driver_active_vehicle` (new — target entity, not created by 01A)
 
@@ -204,10 +234,10 @@ Because it is only a preference, it needs no TTL, lease, or heartbeat, and a sta
 ### Assignment lifecycle
 
 ```
-(created) ──▶ ACTIVE            (ends_at may already be set as the planned upper bound)
+(created) ──▶ ACTIVE            (ends_at may already be set: NULL, or a planned bound > starts_at)
                 │
-                ├──▶ ENDED     (window closed normally; ends_at finalized ≤ transition server time)
-                └──▶ REVOKED   (terminated out-of-band, immediate; ends_at finalized ≤ transition server time)
+                ├──▶ ENDED     (window closed normally; terminated_at = transition server time)
+                └──▶ REVOKED   (terminated out-of-band, immediate; terminated_at = transition server time)
 ```
 
 `ENDED` and `REVOKED` are terminal for the row. There is no `ENDED → ACTIVE` or `REVOKED → ACTIVE`: renewing an entitlement creates a **new** assignment row.
@@ -217,12 +247,22 @@ Because it is only a preference, it needs no TTL, lease, or heartbeat, and a sta
 ```
 NONE ──▶ SELECTED(assignment A)          the driver picks a usable assignment
 SELECTED(A) ──▶ SELECTED(assignment B)   the driver switches to a different usable assignment
-SELECTED(A) ──▶ NONE                     the driver clears the selection
+SELECTED(A) ──▶ NONE                     the driver clears it (a mutation — same guards as a switch)
 ```
 
-A selection transition (`NONE → SELECTED(A)`, `SELECTED(A) → SELECTED(B)`) is valid only when `assignmentUsableAt(serverTime)` holds for the target assignment and `A.driver_id` is the selecting driver (see *Assignment usability* and *Invariants*). `SELECTED(A) → SELECTED(A)` is a no-op. `SELECTED(A) → NONE` is always allowed.
+Every driver-initiated selection transition — `NONE → SELECTED(A)`, `SELECTED(A) → SELECTED(B)`, **and `SELECTED(A) → NONE`** — is a *mutation* and obeys the same guards: it is rejected while the driver has an `OPEN` `driver_shift` or a non-terminal ride (Invariants 7–8), and a `→ SELECTED` target additionally requires `assignmentUsabilityDecision(serverTime) == USABLE` and `target.driver_id` = the selecting driver (see *Assignment usability* and *Invariants*). A `SELECTED(A) → SELECTED(A)` request that changes no state is a no-op. The **only** actor that may move the selection while a shift is open is the **server**, and only inside the authoritative *shift-close* / stale-cleanup transaction (see *Downstream contract*).
 
-A selection becomes **stale** the moment `assignmentUsableAt(t)` goes `true → false` for its assignment — whether the cause is `status → ENDED`, `status → REVOKED`, an elapsed `ends_at`, the vehicle being archived, or a server-side vehicle block. Staleness is resolved by whether a shift is open:
+**Selection-mutation sequence** (`select` / `switch` / `clear`), one `db.tx`:
+
+1. take the per-driver authority lock (Invariant 6);
+2. under the lock, assert the driver has **no** `OPEN` `driver_shift`;
+3. under the lock, assert the driver has **no** non-terminal ride;
+4. for a `→ SELECTED` target: lock that `vehicle_driver_assignments` row, assert `assignmentUsabilityDecision(serverTime) == USABLE`, and assert it belongs to this driver;
+5. write the selection (upsert for `select`/`switch`, delete for `clear`).
+
+Because step 1 is always the per-driver lock, a selection mutation cannot interleave with a `driver_shift` open for the same driver.
+
+A selection becomes **stale** the moment `assignmentUsabilityDecision(t)` reaches a **confirmed `UNUSABLE`** for its assignment — `status → ENDED`, `status → REVOKED`, an elapsed `ends_at`, the vehicle being archived, or a confirmed `BLOCKED`. A transient `UNKNOWN` does **not** make a selection stale (see *`UNKNOWN` vs. confirmed `UNUSABLE`*). Staleness is resolved by whether a shift is open:
 
 - **No `OPEN` shift** — the server resets the selection to `NONE`. A new shift cannot be opened from a stale selection.
 - **An `OPEN` shift exists** — the mutable `driver_active_vehicle` row is **no longer consulted as authority** (the shift's pinned tuple already is). The pinned tuple is kept until the shift closes safely (see *Downstream contract*); the stale selection is reset to `NONE` inside the shift-close transaction if the assignment is still unusable at that point.
@@ -232,14 +272,14 @@ A selection is **never** marked stale merely because another driver opened a shi
 ## Invariants
 
 1. **Every critical operation uses `assignmentUsableAt(serverTime)`.** Selecting a vehicle, switching it, opening a `driver_shift`, and every server-side re-validation evaluate the full predicate — entitlement (`status` / `starts_at` / `ends_at`) **and** vehicle-operational (`archived` / server-side block) — never `status = ACTIVE` alone and never the entitlement half in isolation. See *Assignment usability*.
-2. **Fail-closed on an unknowable vehicle state.** If `vehicleOperationalAt(t)` cannot be determined (a dependent vehicle-state service errors or is unreachable), selection / switch / shift-open are refused with a retryable error — never granted by default.
+2. **Fail-closed on an unknowable vehicle state.** When `assignmentUsabilityDecision(t)` is `UNKNOWN` (the authoritative block source errored or was unreachable), `select` / `switch` / `clear` / shift-open are refused with a retryable error and the driver is excluded from matching/dispatch — never granted by default. A transient `UNKNOWN` does **not**, by itself, close a shift, set the driver `OFFLINE`, or reset the selection (see *`UNKNOWN` vs. confirmed `UNUSABLE`*).
 3. **At most one selected vehicle per driver.** `driver_active_vehicle` has at most one row per `driver_id` (PK on `driver_id`).
 4. **Selection is not an occupancy lock.** The selected vehicle is **derived** from `assignment_id` (`driver_active_vehicle` stores no `vehicle_id` column), and there is **no** uniqueness on the derived vehicle across drivers. Several drivers who each hold a usable assignment on the same vehicle may each select it simultaneously. A selection is a preference — not a reservation, an occupancy lock, or proof of work — and carries no TTL, lease, or heartbeat; a forgotten selection can never block the vehicle for another driver.
 5. **Exclusivity lives on the shift layer.** At most one `OPEN` `driver_shift` per `driver_id`, **and** at most one `OPEN` `driver_shift` per `vehicle_id`. This — not the selection — is what makes "one working driver per vehicle" true. Opening a shift when the vehicle already has an `OPEN` shift is rejected with `409 VEHICLE_ALREADY_IN_OPEN_SHIFT`; the losing driver's `driver_active_vehicle` selection is left intact (a preference that simply cannot become a shift right now), never cleared or flagged stale.
-6. **Atomic switch.** Changing `driver_active_vehicle` (`NONE → SELECTED`, `SELECTED(A) → SELECTED(B)`, `SELECTED(A) → NONE`) is a single server transaction — it never leaves a driver with two selections or a half-written row. At the future database layer this is `db.tx` + a row lock on the driver's selection (`SELECT … FOR UPDATE`), consistent with the house `lock<Entity>By<Key>()` pattern.
-7. **No switch during an `OPEN` shift.** While the driver has an `OPEN` `driver_shift`, the active-vehicle selection is frozen. The car for that shift is whatever the shift pinned; changing it mid-shift is not a selection change — it is closing the shift and opening a new one.
-8. **No switch during an active ride.** While the driver has a non-terminal ride, the selection is frozen. "Active ride" = a `rides` row for the driver whose `status` is past `ACCEPTED` and not terminal: `ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS` (`server/src/domain/ride-status.js`; `TERMINAL_RIDE_STATUSES = {COMPLETED, CANCELED, NO_SHOW}`). Pre-accept states (`NEW_ORDER`, `CONFIRMATION_PENDING`, `CONFIRMED`, `CHAT_STARTED`) do not freeze the selection.
-9. **Selection change requires a matching, usable target.** A `SELECTED(A) → SELECTED(B)` or `NONE → SELECTED(B)` transition is rejected unless `B.vehicle_id` and `B.driver_id` match the request **and** `assignmentUsableAt(serverTime)` holds for `B`.
+6. **One per-driver authority lock serializes selection *and* shift.** Every `driver_active_vehicle` mutation (`select` / `switch` / `clear`) **and** every `driver_shift` open runs in one `db.tx` that acquires the **same stable per-driver lock first**. That lock must exist even when the driver has **no** `driver_active_vehicle` row (the `NONE` state), so it is taken on a row that always exists — `SELECT … FROM users WHERE id = $driver_id FOR UPDATE`, or a transaction-scoped advisory lock keyed by `driver_id`. A `FOR UPDATE` on the `driver_active_vehicle` row **alone is insufficient**: a missing row locks nothing, so a concurrent `select` and a `shift-open` could each read "no shift, selection = A" and both commit — pinning a shift to `A` while the selection has moved to `B`. Every selection and shift transaction takes the per-driver lock **before** any `vehicle_driver_assignments` or `vehicles` row lock, giving a single global lock order and no deadlock cycle. The atomic-`db.tx` guarantee (no two selections, no half-written row) still holds.
+7. **No driver-initiated selection change during an `OPEN` shift.** While the driver has an `OPEN` `driver_shift`, `select` / `switch` / **`clear`** are all rejected. The car for that shift is whatever the shift pinned; changing it mid-shift is not a selection change — it is closing the shift and opening a new one. The only exception is the **server** resetting a stale selection **inside** the authoritative shift-close / cleanup transaction.
+8. **No driver-initiated selection change during an active ride.** While the driver has a non-terminal ride, `select` / `switch` / `clear` are all rejected. "Active ride" = a `rides` row for the driver whose `status` is past `ACCEPTED` and not terminal: `ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS` (`server/src/domain/ride-status.js`; `TERMINAL_RIDE_STATUSES = {COMPLETED, CANCELED, NO_SHOW}`). Pre-accept states (`NEW_ORDER`, `CONFIRMATION_PENDING`, `CONFIRMED`, `CHAT_STARTED`) do not freeze the selection.
+9. **Selection change requires a matching, `USABLE` target.** A `SELECTED(A) → SELECTED(B)` or `NONE → SELECTED(B)` transition is rejected unless `B.vehicle_id` and `B.driver_id` match the request **and** `assignmentUsabilityDecision(serverTime) == USABLE` for `B` (`UNUSABLE` and `UNKNOWN` both reject).
 
 ## Read/write ownership
 
@@ -263,12 +303,12 @@ This is a **future audit contract** — names are indicative, the sink and outbo
 - `DRIVER_ACTIVE_VEHICLE_SELECTED`
 - `DRIVER_ACTIVE_VEHICLE_SWITCHED`
 - `DRIVER_ACTIVE_VEHICLE_CLEARED`
-- `DRIVER_ACTIVE_VEHICLE_RESET_STALE` — server-initiated reset when a selection's assignment stops satisfying `assignmentUsableAt` and no `OPEN` shift protects it, or inside a shift-close transaction if still unusable
-- `DRIVER_SHIFT_ASSIGNMENT_INVALIDATED` — the pinned assignment's `assignmentUsableAt` went `true → false` while its shift was `OPEN`
+- `DRIVER_ACTIVE_VEHICLE_RESET_STALE` — server-initiated reset when a selection's assignment reaches a **confirmed `UNUSABLE`** and no `OPEN` shift protects it, or inside a shift-close transaction if still `UNUSABLE` (never fired for a transient `UNKNOWN`)
+- `DRIVER_SHIFT_ASSIGNMENT_INVALIDATED` — the pinned assignment reached a **confirmed `UNUSABLE`** while its shift was `OPEN`
 - `DRIVER_SHIFT_CLOSE_DEFERRED_FOR_ACTIVE_RIDE` — shift-close held until the in-flight ride reaches a terminal state
 - `DRIVER_SHIFT_FORCED_CLOSED_ASSIGNMENT_UNUSABLE` — shift closed with `close_reason = ASSIGNMENT_UNUSABLE`
 
-Each event records actor/source, `vehicle_id`, `driver_id`, `assignment_id` where applicable, `assignment_type`, previous/new state, and timestamp.
+Each event records actor/source, `vehicle_id`, `driver_id`, `assignment_id` where applicable, `assignment_type`, previous/new state, `terminated_at` for a lifecycle transition, and timestamp.
 
 ## Downstream contract — driver shift
 
@@ -279,20 +319,23 @@ Each event records actor/source, `vehicle_id`, `driver_id`, `assignment_id` wher
 Opening an `OPEN` `driver_shift` is **one server transaction**:
 
 ```text
-lock driver
-lock vehicle
-lock the selected assignment
-
-assert  assignmentUsableAt(serverTime)                     -- full predicate, not status alone
-assert  selected assignment belongs to this driver + this vehicle
+take the per-driver authority lock (Invariant 6)     -- users(driver_id) FOR UPDATE, or advisory(driver_id)
+re-read driver_active_vehicle UNDER the lock          -- never a value cached earlier in the request
+assert  a selection still exists  (state is not NONE)
+lock the selected vehicle_driver_assignments row
+lock the vehicle
+assert  assignmentUsabilityDecision(serverTime) == USABLE   -- UNUSABLE or UNKNOWN both abort
+assert  the selected assignment belongs to this exact driver
 assert  no OPEN driver_shift for this driver_id
 assert  no OPEN driver_shift for this vehicle_id
-assert  no active ride for this driver that blocks a shift change
+assert  no non-terminal ride for this driver that blocks a shift change
 
 insert OPEN driver_shift  pinning  driver_id + vehicle_id + assignment_id
+                                   taken from the re-read selection
 ```
 
-- The pinned `driver_id` + `vehicle_id` + `assignment_id` are copied from the driver's `driver_active_vehicle` selection **at open time**, after the asserts pass.
+- The pinned tuple is taken from the selection **re-read under the per-driver lock** — never from a value cached earlier in the request.
+- Because a selection mutation and a shift-open both take the same per-driver lock first, they cannot both commit against different assignments: whichever runs second observes the other's result.
 - If the vehicle already has an `OPEN` shift: **`409 VEHICLE_ALREADY_IN_OPEN_SHIFT`**. The driver's `driver_active_vehicle` selection is **not** cleared or marked stale — it is a preference that simply cannot become a shift right now (a UI may later show "the car is in use by another driver").
 
 ### While a shift is `OPEN`
@@ -302,7 +345,7 @@ insert OPEN driver_shift  pinning  driver_id + vehicle_id + assignment_id
 
 ### An assignment becomes unusable during an `OPEN` shift
 
-The policy fires on **any** `assignmentUsableAt(t): true → false` transition for the pinned assignment — `status → ENDED`, `status → REVOKED`, an elapsed `ends_at`, the vehicle archived, or a server-side vehicle block:
+The policy fires on a transition of the pinned assignment to a **confirmed `UNUSABLE`** (`assignmentUsabilityDecision` reaching `UNUSABLE`) — `status → ENDED`, `status → REVOKED`, an elapsed `ends_at`, the vehicle archived, or a confirmed `BLOCKED`. A transient `UNKNOWN` triggers only the fail-closed refusals in *`UNKNOWN` vs. confirmed `UNUSABLE`*, **not** this durable policy:
 
 1. **New orders are blocked immediately.** The driver is removed from matching/dispatch for further trips at once, regardless of ride state.
 2. **No active ride** — the shift is closed with `close_reason = ASSIGNMENT_UNUSABLE`, the driver is set `OFFLINE`, and the stale `driver_active_vehicle` selection is reset to `NONE`.
