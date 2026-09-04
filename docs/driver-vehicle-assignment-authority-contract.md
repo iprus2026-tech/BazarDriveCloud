@@ -151,16 +151,40 @@ The **decision** an operation acts on is three-valued — `assignmentUsabilityDe
 
 ```text
 assignmentUsabilityDecision(t) =
-  UNKNOWN   if vehicleBlockState(t) == UNKNOWN
-  UNUSABLE  else if (NOT assignmentEntitledAt(t))       -- terminal status, elapsed ends_at, or before starts_at
-                 OR vehicle.archived == true
-                 OR vehicleBlockState(t) == BLOCKED
+  UNUSABLE  if (NOT assignmentEntitledAt(t))            -- terminal status (ENDED/REVOKED),
+                                                        --   elapsed ends_at, or before starts_at
+             OR vehicle.archived == true
+             OR vehicleBlockState(t) == BLOCKED
+  UNKNOWN   else if vehicleBlockState(t) == UNKNOWN     -- reached ONLY when every locally-known
+                                                        --   fact still permits work
   USABLE    otherwise
 ```
 
+**Precedence: confirmed negative > `UNKNOWN` > positive.** A fact the server already knows for certain — the assignment is terminal (`ENDED`/`REVOKED`) or outside its temporal window, or the vehicle is `archived` — decides `UNUSABLE` **regardless** of whether the vehicle-block source is reachable. `UNKNOWN` is reached **only** when every locally-known condition still allows the assignment to be used and the *sole* remaining question — the block state — cannot be answered.
+
+Equivalent short-circuit ordering — cheap authoritative-local facts first, the external call last:
+
+```text
+if NOT assignmentEntitledAt(t):   return UNUSABLE     -- terminal status / temporal window; no external read
+if vehicle.archived == true:      return UNUSABLE
+blockState = read the authoritative block source
+if blockState == BLOCKED:         return UNUSABLE
+if blockState == UNKNOWN:         return UNKNOWN
+return USABLE
+```
+
+Implementations **SHOULD** short-circuit the confirmed-local `UNUSABLE` facts before calling the remote / external block source, so correctness never depends on a dependency call the outcome does not need. Worked cases:
+
+- `REVOKED` + block-source `UNKNOWN` ⇒ **`UNUSABLE`**
+- `ENDED` + block-source `UNKNOWN` ⇒ **`UNUSABLE`**
+- elapsed `ends_at` + `UNKNOWN` ⇒ **`UNUSABLE`**
+- future `starts_at` + `UNKNOWN` ⇒ **`UNUSABLE`**
+- `vehicle.archived` + `UNKNOWN` ⇒ **`UNUSABLE`**
+- an otherwise-valid assignment + a block-source outage ⇒ **`UNKNOWN`**
+
 - **`USABLE`** — a full positive verdict; the operation may proceed.
-- **`UNUSABLE`** — a **confirmed** negative: `ENDED`/`REVOKED`, an elapsed `ends_at`, `starts_at` not yet reached, `vehicle.archived`, or a confirmed `BLOCKED`.
-- **`UNKNOWN`** — the authoritative vehicle-block source errored or was unreachable; the true state is not known.
+- **`UNUSABLE`** — a **confirmed** negative: `ENDED`/`REVOKED`, an elapsed `ends_at`, `starts_at` not yet reached, `vehicle.archived`, or a confirmed `BLOCKED`. It **takes precedence over** `UNKNOWN`.
+- **`UNKNOWN`** — every locally-known fact still permits work, but the authoritative vehicle-block source errored or was unreachable, so the true state is not known.
 
 `assignmentUsableAt(t)` is the boolean shorthand for `assignmentUsabilityDecision(t) == USABLE` — so **both** `UNUSABLE` and `UNKNOWN` yield `false`. The two are **not** interchangeable for durable state changes (see *`UNKNOWN` vs. confirmed `UNUSABLE`*, below).
 
@@ -188,7 +212,11 @@ Every critical operation evaluates the **full `assignmentUsableAt(serverTime)`**
 - no new offer or order is created;
 - the server raises an **alert** and retries / reconciles against the block source.
 
-But `UNKNOWN` **must not, on its own, drive durable state**: it does **not** close an `OPEN` shift, set the driver `OFFLINE`, or reset `driver_active_vehicle`. Those durable actions — and the *Mid-shift invalidation* policy — fire **only** on a transition to a **confirmed `UNUSABLE`** (`ENDED`, `REVOKED`, an elapsed `ends_at`, `archived`, or a confirmed `BLOCKED`). A time-bounded escalation for a *prolonged* `UNKNOWN` (e.g. "block source unreachable for N minutes ⇒ force-close") is a separate Driver Availability / Operations policy, out of scope for this contract.
+But `UNKNOWN` **must not, on its own, drive durable state**: it does **not** close an `OPEN` shift, set the driver `OFFLINE`, or reset `driver_active_vehicle`. Those durable actions — and the *Mid-shift invalidation* policy — fire **only** on a transition to a **confirmed `UNUSABLE`** (`ENDED`, `REVOKED`, an elapsed `ends_at`, `archived`, or a confirmed `BLOCKED`).
+
+Because confirmed `UNUSABLE` **outranks** `UNKNOWN` (see the precedence in *Assignment usability*), a block-source outage can **never mask** an already-known `UNUSABLE`: a `REVOKED` / `ENDED` / expired / archived assignment is `UNUSABLE` — and therefore drives the full durable *Mid-shift invalidation* policy — even while `vehicleBlockState` is `UNKNOWN`. An already-revoked driver never stays stuck in an `OPEN` shift just because the block source is down.
+
+A time-bounded escalation for a *prolonged* `UNKNOWN` (e.g. "block source unreachable for N minutes ⇒ force-close") is a separate Driver Availability / Operations policy, out of scope for this contract.
 
 ### `driver_active_vehicle` (new — target entity, not created by 01A)
 
@@ -272,7 +300,7 @@ A selection is **never** marked stale merely because another driver opened a shi
 ## Invariants
 
 1. **Every critical operation uses `assignmentUsableAt(serverTime)`.** Selecting a vehicle, switching it, opening a `driver_shift`, and every server-side re-validation evaluate the full predicate — entitlement (`status` / `starts_at` / `ends_at`) **and** vehicle-operational (`archived` / server-side block) — never `status = ACTIVE` alone and never the entitlement half in isolation. See *Assignment usability*.
-2. **Fail-closed on an unknowable vehicle state.** When `assignmentUsabilityDecision(t)` is `UNKNOWN` (the authoritative block source errored or was unreachable), `select` / `switch` / `clear` / shift-open are refused with a retryable error and the driver is excluded from matching/dispatch — never granted by default. A transient `UNKNOWN` does **not**, by itself, close a shift, set the driver `OFFLINE`, or reset the selection (see *`UNKNOWN` vs. confirmed `UNUSABLE`*).
+2. **Fail-closed on an unknowable vehicle state — and only when it is genuinely unknowable.** `assignmentUsabilityDecision(t)` is `UNKNOWN` **only** when every locally-known fact still permits work and the sole open question is an unreachable / errored authoritative block source; a `REVOKED` / `ENDED` / expired / archived assignment is `UNUSABLE` regardless of block-source reachability (confirmed negative outranks `UNKNOWN` — see *Assignment usability*). On `UNKNOWN`, `select` / `switch` / `clear` / shift-open are refused with a retryable error and the driver is excluded from matching/dispatch — never granted by default — but a transient `UNKNOWN` does **not**, by itself, close a shift, set the driver `OFFLINE`, or reset the selection (see *`UNKNOWN` vs. confirmed `UNUSABLE`*). A confirmed `UNUSABLE` still drives the full durable *Mid-shift invalidation* policy.
 3. **At most one selected vehicle per driver.** `driver_active_vehicle` has at most one row per `driver_id` (PK on `driver_id`).
 4. **Selection is not an occupancy lock.** The selected vehicle is **derived** from `assignment_id` (`driver_active_vehicle` stores no `vehicle_id` column), and there is **no** uniqueness on the derived vehicle across drivers. Several drivers who each hold a usable assignment on the same vehicle may each select it simultaneously. A selection is a preference — not a reservation, an occupancy lock, or proof of work — and carries no TTL, lease, or heartbeat; a forgotten selection can never block the vehicle for another driver.
 5. **Exclusivity lives on the shift layer.** At most one `OPEN` `driver_shift` per `driver_id`, **and** at most one `OPEN` `driver_shift` per `vehicle_id`. This — not the selection — is what makes "one working driver per vehicle" true. Opening a shift when the vehicle already has an `OPEN` shift is rejected with `409 VEHICLE_ALREADY_IN_OPEN_SHIFT`; the losing driver's `driver_active_vehicle` selection is left intact (a preference that simply cannot become a shift right now), never cleared or flagged stale.
