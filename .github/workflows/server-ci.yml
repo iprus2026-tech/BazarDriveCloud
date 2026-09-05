@@ -106,6 +106,30 @@ jobs:
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='vehicle_driver_assignments' and t.tgname='trg_vehicle_driver_assignments_updated_at' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_active_vehicle' and t.tgname='trg_driver_active_vehicle_updated_at' and not t.tgisinternal" | grep -qx 1
+          # BD-DRIVER-SHIFT-AUTHORITY-01B (0006) — named objects from the frozen contract's
+          # data model, not just table existence.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name='driver_shift'" | grep -qx 1
+          # additive composite key on vehicle_driver_assignments — coexists with 0005's own
+          # vehicle_driver_assignments_id_driver_uq (asserted above, untouched).
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='vehicle_driver_assignments' and pc.conname='vehicle_driver_assignments_id_driver_vehicle_uq'" | grep -qx u
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_shift' and pc.conname='driver_shift_assignment_driver_vehicle_fkey'" | grep -qx f
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_shift' and pc.conname='driver_shift_lifecycle_check'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_shift' and pc.conname='driver_shift_close_reason_check'" | grep -qx c
+          # exclusivity backstop — partial unique indexes (contype has no row for a plain
+          # index; check pg_class.relkind = 'i' instead).
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select relkind from pg_class where relname='driver_shift_one_open_per_driver_uq'" | grep -qx i
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select relkind from pg_class where relname='driver_shift_one_open_per_vehicle_uq'" | grep -qx i
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_shift' and t.tgname='trg_driver_shift_guard_immutability' and not t.tgisinternal" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_shift' and t.tgname='trg_driver_shift_updated_at' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -140,13 +164,12 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
-      # Prove readiness fails closed on the immediately preceding schema: Ride PATCH depends
-      # on 0004 and readiness now also depends on 0005's authority schema (BD-DRIVER-VEHICLE-
-      # ASSIGNMENT-AUTHORITY-01B), so a database with 0001..0004 but NOT 0005 must not enter
-      # service.
-      - name: Apply pre-authority-schema migrations (0001-0004) and assert readiness is incomplete
+      # Prove readiness fails closed on the immediately preceding schema: readiness now also
+      # depends on 0006's working-identity schema (BD-DRIVER-SHIFT-AUTHORITY-01B), so a
+      # database with 0001..0005 but NOT 0006 must not enter service.
+      - name: Apply pre-shift-authority-schema migrations (0001-0005) and assert readiness is incomplete
         run: |
-          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql; do
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
           node --input-type=module <<'NODE'
