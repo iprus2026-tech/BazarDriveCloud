@@ -29,64 +29,17 @@ import {
   insertOpenShift, closeShift, findShiftById, lockOpenShiftById,
 } from '../../repositories/driver_shifts.js';
 import { findActiveRideForDriver } from '../../repositories/rides.js';
-
-// -----------------------------------------------------------------------------------------
 // Critical usability seam (docs/driver-shift-authority-contract.md, "Critical usability
-// seam"). The merged Assignment Authority (migration 0005) only stores the ENTITLEMENT half
-// authoritatively (status/starts_at/ends_at -> entitled_now); full vehicle
-// operational/block authority has NO physical storage anywhere in this repository yet. This
-// seam must therefore preserve `confirmed UNUSABLE > UNKNOWN > USABLE` without inventing new
-// persistence and without defaulting an unresolved operational state to USABLE.
-//
-// resolveVehicleBlockState is an INJECTED, internal server dependency — never client input.
-// The default implementation always returns 'UNKNOWN' (there is no authoritative block-state
-// resolver wired in yet); tests may supply a deterministic resolver to exercise the
-// UNBLOCKED / BLOCKED / UNKNOWN paths. Its absence/error must yield ASSIGNMENT_STATE_UNKNOWN
-// with zero shift writes — callers below never let a thrown/rejected resolver escape as an
-// uncaught error into a partially-decided state.
-// -----------------------------------------------------------------------------------------
-export async function defaultResolveVehicleBlockState(_vehicleId, _client) {
-  return 'UNKNOWN';
-}
+// seam"): the tri-state `confirmed UNUSABLE > UNKNOWN > USABLE` decision and its default
+// injected block-state resolver. Both moved to domain/assignment-usability.js in
+// BD-DRIVER-SHIFT-AUTHORITY-01C-A so the driver-initiated selection-mutation service
+// (services/driver-vehicle-assignment-authority/index.js) composes the SAME decision from ONE
+// copy — behaviour reached from here is byte-for-byte unchanged.
+import { decideAssignmentUsability, defaultResolveVehicleBlockState } from '../../domain/assignment-usability.js';
 
-// Classify WHICH confirmed-negative reason applies when a locked assignment's entitled_now is
-// false. status ENDED/REVOKED are unambiguous from the row alone. status ACTIVE but not
-// entitled_now means either the window hasn't opened yet (BEFORE_START) or it has closed
-// (ELAPSED) — distinguishing those needs a time reference, fetched here via a bare
-// `SELECT now()` (no table touched, so this does not violate vehicle_driver_assignments.js's
-// single-SQL-seam ownership of that table) so the comparison is anchored to PostgreSQL's own
-// clock, never the JS host clock — no app/DB clock-skew window.
-async function classifyEntitlementUnusableReason(client, assignment) {
-  if (assignment.status === 'ENDED') return 'ENDED';
-  if (assignment.status === 'REVOKED') return 'REVOKED';
-  const { rows: [{ server_now: serverNow }] } = await client.query('SELECT now() AS server_now');
-  if (assignment.starts_at != null && new Date(assignment.starts_at) > serverNow) return 'BEFORE_START';
-  return 'ELAPSED';
-}
-
-// The tri-state usability decision, in the frozen short-circuit order: confirmed
-// entitlement-negative first (real DB data, already locked) -> archived vehicle (real DB
-// data, already locked) -> injected block-state resolver (UNBLOCKED/BLOCKED/UNKNOWN) only
-// once the first two are clear. Returns { decision: 'USABLE' | 'UNKNOWN' | 'UNUSABLE', reason }
-// — reason is null unless decision === 'UNUSABLE'.
-async function decideAssignmentUsability(client, { assignment, vehicle, resolveVehicleBlockState }) {
-  if (!assignment.entitled_now) {
-    const reason = await classifyEntitlementUnusableReason(client, assignment);
-    return { decision: 'UNUSABLE', reason };
-  }
-  if (vehicle.archived) {
-    return { decision: 'UNUSABLE', reason: 'ARCHIVED' };
-  }
-  let blockState;
-  try {
-    blockState = await resolveVehicleBlockState(vehicle.id, client);
-  } catch {
-    blockState = 'UNKNOWN'; // resolver failure fails closed to UNKNOWN, never to USABLE.
-  }
-  if (blockState === 'BLOCKED') return { decision: 'UNUSABLE', reason: 'BLOCKED' };
-  if (blockState !== 'UNBLOCKED') return { decision: 'UNKNOWN', reason: null }; // covers 'UNKNOWN' and any unrecognized value — fail closed.
-  return { decision: 'USABLE', reason: null };
-}
+// Re-exported unchanged so existing importers (test/driver-shift-authority.test.mjs) keep
+// their import path.
+export { defaultResolveVehicleBlockState };
 
 // -----------------------------------------------------------------------------------------
 // openDriverShift — the full opening sequence, exact lock order from the frozen contract:
