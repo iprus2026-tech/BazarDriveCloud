@@ -54,6 +54,10 @@ async function dbPlugin(app, opts) {
     // 0006 (BD-DRIVER-SHIFT-AUTHORITY-01B) extends this the same way: driver_shift has no live
     // route yet either, but a database with 0001-0005 and not 0006 must already report
     // schema-incomplete, not just when 01C eventually wires a route behind it.
+    //
+    // 0007 (BD-DRIVER-DOCUMENT-COMPLIANCE-01B rebuild) extends this identically once more:
+    // driver_document_lineages/driver_documents have no live route yet either, but a database
+    // with 0001-0006 and not 0007 must already report schema-incomplete.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -274,6 +278,163 @@ async function dbPlugin(app, opts) {
                    SELECT 1 FROM pg_trigger t
                     WHERE t.tgrelid = c.oid
                       AND t.tgname = 'trg_driver_shift_updated_at'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            -- 0007 (BD-DRIVER-DOCUMENT-COMPLIANCE-01B rebuild) — the two additive composite
+            -- keys on driver_shift, purely additive FK targets for driver_document_lineages'
+            -- own composite FKs below.
+            AND EXISTS (
+              SELECT 1 FROM pg_constraint pc
+               JOIN pg_class c ON c.oid = pc.conrelid
+               WHERE c.relname = 'driver_shift'
+                 AND pc.conname = 'driver_shift_id_driver_uq'
+                 AND pc.contype = 'u'
+            )
+            AND EXISTS (
+              SELECT 1 FROM pg_constraint pc
+               JOIN pg_class c ON c.oid = pc.conrelid
+               WHERE c.relname = 'driver_shift'
+                 AND pc.conname = 'driver_shift_id_driver_vehicle_uq'
+                 AND pc.contype = 'u'
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_document_lineages'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id', 'document_type', 'driver_id', 'vehicle_id', 'shift_id', 'created_at'
+                      )
+                 ) = 6
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_document_lineages_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_document_lineages_document_type_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_document_lineages_subject_shape_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_document_lineages_shift_driver_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_document_lineages_shift_driver_vehicle_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_document_lineages_driver_license_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_document_lineages_taxi_osago_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_document_lineages_taxi_registry_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_document_lineages_waybill_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_document_lineages_medical_check_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_document_lineages_guard_immutability'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_documents'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id', 'lineage_id', 'status', 'supersedes_id', 'object_key',
+                        'issued_at', 'valid_from', 'valid_until', 'verified_at',
+                        'verification_source', 'verification_reason', 'created_at', 'updated_at'
+                      )
+                 ) = 13
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_documents_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_documents_status_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_documents_lineage_id_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_documents_supersedes_id_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_documents_supersedes_id_key'
+                      AND pc.contype = 'u'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_documents_one_open_per_lineage_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_documents_guard_immutability'
+                      AND NOT t.tgisinternal
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_documents_updated_at'
                       AND NOT t.tgisinternal
                  )
             ) AS ok`,
