@@ -54,6 +54,38 @@ export async function lockOpenShiftForDriver(db, driverId) {
   return rows[0] ?? null;
 }
 
+// Plain, UNLOCKED read by exact shift id (independent review P2-1 fix). Deliberately not a
+// lock: this exists only to discover the pinned identity (driver_id/vehicle_id/assignment_id)
+// of a specific shift BEFORE any lock is taken, so a caller can acquire the per-driver
+// authority lock first (the frozen global order: per-driver -> assignment -> vehicle ->
+// shift row -> mutation) instead of locking the shift row first and only then discovering
+// which driver it belongs to. This is a SEED read only — never an authority decision by
+// itself; a caller that is about to mutate must re-verify under lockOpenShiftById below, since
+// this row can go stale between the two reads. Returns null if no such shift exists at all
+// (open or closed) — a plain existence check with no status filter.
+export async function findShiftById(db, shiftId) {
+  const { rows } = await db.query(
+    `SELECT * FROM driver_shift WHERE id = $1`,
+    [shiftId],
+  );
+  return rows[0] ?? null;
+}
+
+// Lock a SPECIFIC shift by its exact id (SELECT ... FOR UPDATE), guarded to only match while
+// still OPEN — the reconciliation sequence's own row lock, taken LAST in the global order
+// (after per-driver, assignment, and vehicle locks), never first. Returns null if this exact
+// shift is no longer OPEN (already closed, by anyone, for any reason) — the caller treats that
+// as ALREADY_CLOSED_OR_NOT_FOUND, never silently substituting some OTHER OPEN shift for the
+// same driver (the exact shiftId is the identity being reconciled, not "whatever this driver
+// currently has open").
+export async function lockOpenShiftById(db, shiftId) {
+  const { rows } = await db.query(
+    `SELECT * FROM driver_shift WHERE id = $1 AND status = 'OPEN' FOR UPDATE`,
+    [shiftId],
+  );
+  return rows[0] ?? null;
+}
+
 // Insert a new OPEN shift. Callers must already hold: the per-driver authority lock, the
 // locked assignment row (entitlement re-confirmed), and the locked vehicle row — and must
 // have already checked no OPEN shift exists for either the driver or the vehicle. This

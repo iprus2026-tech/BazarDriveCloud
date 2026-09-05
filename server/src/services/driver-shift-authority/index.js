@@ -26,7 +26,7 @@ import { lockAssignmentForEntitlementCheck } from '../../repositories/vehicle_dr
 import { lockVehicleById } from '../../repositories/vehicles.js';
 import {
   findOpenShiftForDriver, findOpenShiftForVehicle, lockOpenShiftForDriver,
-  insertOpenShift, closeShift,
+  insertOpenShift, closeShift, findShiftById, lockOpenShiftById,
 } from '../../repositories/driver_shifts.js';
 import { findActiveRideForDriver } from '../../repositories/rides.js';
 
@@ -205,6 +205,30 @@ export function getOpenDriverShift(db, driverId) {
 // never trusts the caller's claim that the assignment is unusable, and re-derives that fact
 // itself under lock before acting.
 //
+// LOCK ORDER (independent review finding P2-1, fixed here): the frozen contract's Invariant 2
+// fixes ONE global lock order for every driver_shift operation — per-driver -> assignment ->
+// vehicle/dependent authority -> shift row -> mutation. closeDriverShift already follows this
+// (driver lock, then the shift row). The previous version of this function inverted it (shift
+// row FIRST, then the driver lock), which is exactly the opposite order closeDriverShift uses
+// for the SAME two resources — a classic lock-order-inversion deadlock setup, confirmed by
+// adversarial testing: closeDriverShift holding the driver lock while waiting on the shift row,
+// racing this function holding the shift row while waiting on the driver lock, reproducibly
+// aborts one side with a raw, untranslated 40P01 deadlock_detected.
+//
+// The fix: an UNLOCKED seed read (findShiftById) discovers the pinned driver_id/assignment_id/
+// vehicle_id WITHOUT taking any lock, so the per-driver lock can be acquired FIRST, exactly
+// like every other driver_shift operation. The shift row itself is locked LAST (lockOpenShiftById),
+// after the driver/assignment/vehicle locks — restoring the one true global order everywhere.
+// Since the seed read is unlocked, it can go stale between steps 1 and 6; because pinned
+// identity is DB-immutable (trg_driver_shift_guard_immutability), a staleness re-check of the
+// PINNED fields themselves is a structurally-unreachable defensive assertion, not a live
+// business rule — but the exact shiftId given still narrows lockOpenShiftById to the SAME row
+// this call was asked to reconcile, never a different (e.g. newer) OPEN shift for the same
+// driver: if shift A closed between the seed read and the driver lock, and the driver has since
+// opened a brand-new shift B, lockOpenShiftById(A) correctly returns null (A is not OPEN,
+// regardless of B's existence) and this call reports ALREADY_CLOSED_OR_NOT_FOUND for A — it
+// never substitutes B.
+//
 // No PENDING_CLOSE field/state is introduced anywhere in this flow. A deferred outcome
 // (active ride present) performs zero writes and leaves the shift OPEN and the selection
 // untouched — the pinned tuple + durable facts are enough for a later re-invocation (once the
@@ -214,16 +238,38 @@ export function getOpenDriverShift(db, driverId) {
 export async function reconcileAssignmentUnusableShift(db, shiftId, opts = {}) {
   const { resolveVehicleBlockState = defaultResolveVehicleBlockState } = opts;
   return db.tx(async (client) => {
-    const { rows } = await client.query(
-      `SELECT * FROM driver_shift WHERE id = $1 AND status = 'OPEN' FOR UPDATE`,
-      [shiftId],
-    );
-    const shift = rows[0];
-    if (!shift) return { ok: true, code: 'ALREADY_CLOSED_OR_NOT_FOUND', idempotent: true };
+    // 1. Unlocked seed read — discovers the pinned identity only, never an authority decision.
+    const seed = await findShiftById(client, shiftId);
+    // 2. Absent, or not currently OPEN (already closed by anyone, for any reason): idempotent,
+    //    zero writes. (No CLOSED shift can ever reopen under this exact id — the state machine
+    //    forbids it — so "not OPEN now" is as final an answer as re-checking later would give.)
+    if (!seed || seed.status !== 'OPEN') {
+      return { ok: true, code: 'ALREADY_CLOSED_OR_NOT_FOUND', idempotent: true };
+    }
 
-    await lockDriverAuthority(client, shift.driver_id);
-    const assignment = await lockAssignmentForEntitlementCheck(client, shift.assignment_id);
-    const vehicle = await lockVehicleById(client, shift.vehicle_id);
+    // 3-5. The frozen global order: per-driver -> assignment -> vehicle, using the SEED's
+    // pinned values (safe: driver_id/assignment_id/vehicle_id can never change for this row).
+    await lockDriverAuthority(client, seed.driver_id);
+    const assignment = await lockAssignmentForEntitlementCheck(client, seed.assignment_id);
+    const vehicle = await lockVehicleById(client, seed.vehicle_id);
+
+    // 6. The shift row itself, LOCKED, LAST, by its exact id (never by driver_id — this call
+    //    reconciles the exact shift it was asked to, never a different one for the same driver).
+    const shift = await lockOpenShiftById(client, shiftId);
+    if (!shift) {
+      // Closed by a concurrent operation (e.g. the driver's own closeDriverShift) in the window
+      // between the seed read and this lock — same idempotent, zero-write outcome as step 2.
+      return { ok: true, code: 'ALREADY_CLOSED_OR_NOT_FOUND', idempotent: true };
+    }
+    // 7. Defensive re-verification against the seed snapshot. Structurally unreachable given
+    //    pinned-identity immutability (the DB trigger guarantees these fields never change for
+    //    a given id) — but fail closed rather than silently trust a stale seed if this ever
+    //    somehow disagrees.
+    if (shift.driver_id !== seed.driver_id || shift.assignment_id !== seed.assignment_id || shift.vehicle_id !== seed.vehicle_id) {
+      return { ok: false, code: 'SHIFT_IDENTITY_MISMATCH' };
+    }
+
+    // 8. Only now evaluate usability, under all the relevant locks.
     const usability = await decideAssignmentUsability(client, { assignment, vehicle, resolveVehicleBlockState });
     if (usability.decision !== 'UNUSABLE') {
       // Refuse to act on anything less than a CONFIRMED unusable assignment — UNKNOWN alone
@@ -237,6 +283,7 @@ export async function reconcileAssignmentUnusableShift(db, shiftId, opts = {}) {
       return { ok: true, code: 'DEFERRED_ACTIVE_RIDE_PRESENT', shift };
     }
 
+    // 9. Mutation last.
     const closed = await closeShift(client, shift.id, { closeReason: 'ASSIGNMENT_UNUSABLE' });
     // Clear the now-stale selection only if it still points at this exact pinned assignment —
     // a driver may have already switched to a different (usable) assignment in the meantime,

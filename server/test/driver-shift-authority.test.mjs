@@ -34,7 +34,7 @@ import {
 import { lockVehicleById } from '../src/repositories/vehicles.js';
 import {
   findOpenShiftForDriver, findOpenShiftForVehicle, lockOpenShiftForDriver,
-  insertOpenShift, closeShift,
+  insertOpenShift, closeShift, findShiftById, lockOpenShiftById,
 } from '../src/repositories/driver_shifts.js';
 import { findActiveRideForDriver } from '../src/repositories/rides.js';
 import {
@@ -395,6 +395,25 @@ test('driver_shifts.js primitives: find/lock/insert/close round-trip', { skip: S
   // a repeated close is a no-op (WHERE status='OPEN' guard), not an error.
   assert.equal(await closeShift(db, shift.id, { closeReason: 'DRIVER_REQUESTED' }), null);
   assert.equal(await findOpenShiftForDriver(db, driver), null, 'no longer OPEN');
+});
+
+// P2-1 review-fix primitives: an UNLOCKED seed read by exact id (findShiftById) and a
+// lock-by-exact-id (lockOpenShiftById, filtered by id AND status='OPEN' — never by driver_id).
+test('driver_shifts.js primitives: findShiftById (unlocked) and lockOpenShiftById (exact id, OPEN only)', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { driver, vehicleId, assignment } = await seedUsableScenario(db);
+  assert.equal(await findShiftById(db, randomUUID()), null, 'no such id at all');
+  assert.equal(await lockOpenShiftById(db, randomUUID()), null, 'no such id at all');
+
+  const shift = await insertOpenShift(db, { driverId: driver, vehicleId, assignmentId: assignment.id });
+  const seed = await findShiftById(db, shift.id);
+  assert.equal(seed.id, shift.id);
+  assert.equal(seed.status, 'OPEN');
+  assert.equal((await lockOpenShiftById(db, shift.id)).id, shift.id);
+
+  await closeShift(db, shift.id, { closeReason: 'DRIVER_REQUESTED' });
+  assert.equal((await findShiftById(db, shift.id)).status, 'CLOSED', 'findShiftById sees a CLOSED row too (unlocked, no status filter)');
+  assert.equal(await lockOpenShiftById(db, shift.id), null, 'lockOpenShiftById never matches a CLOSED row, even by its exact id');
 });
 
 test('vehicles.js: lockVehicleById returns the row including its archived flag', { skip: SKIP }, async (t) => {
@@ -861,4 +880,252 @@ test('assignment-revoke race: the locked entitlement row blocks a concurrent REV
 
   const { rows } = await seed.query(`SELECT status FROM driver_shift WHERE id = $1`, [shift.id]);
   assert.equal(rows[0].status, 'OPEN', 'the shift A opened under a genuinely-valid lock is not retroactively invalidated');
+});
+
+// ── 14. P2-1 review-fix: lock-order-inversion deadlock between closeDriverShift and
+// reconcileAssignmentUnusableShift, and its regression coverage ─────────────────────────────
+
+// STEP 6 — a lightweight structural/source-order assertion: reconcileAssignmentUnusableShift's
+// own source text must reference these identifiers in exactly this order, protecting the fixed
+// lock sequence against a future silent reordering. Deliberately NOT a DB test — a pure string
+// check against Function.prototype.toString() of the exported function (works because it is a
+// plain, non-native async function; V8 preserves the original source text).
+test('lock-order structural assertion: reconcileAssignmentUnusableShift references locks in the frozen global order', { skip: SKIP }, () => {
+  const src = reconcileAssignmentUnusableShift.toString();
+  const order = ['findShiftById', 'lockDriverAuthority', 'lockAssignmentForEntitlementCheck', 'lockVehicleById', 'lockOpenShiftById'];
+  const indices = order.map((name) => src.indexOf(name));
+  for (const idx of indices) assert.notEqual(idx, -1, 'every expected identifier must appear in the source');
+  for (let i = 1; i < indices.length; i += 1) {
+    assert.ok(indices[i - 1] < indices[i], `${order[i - 1]} must appear before ${order[i]} in source order`);
+  }
+});
+
+// STEP 4 — deterministic regression proving the OLD shift-row-first inversion cannot return.
+// While reconcileAssignmentUnusableShift is blocked waiting for the driver lock (held by an
+// independent connection), an independent THIRD connection must be able to lock the SAME shift
+// row immediately — proving reconciliation has NOT locked it yet. Under the old (pre-fix)
+// ordering, reconciliation would have locked the shift row FIRST, and this exact probe would
+// have blocked too.
+test('P2-1 regression: reconciliation does not hold the shift-row lock while still waiting for the driver lock', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config: APP_CONFIG });
+  const seed = new pg.Client({ connectionString: DATABASE_URL });
+  await seed.connect();
+  const seedDb = { query: (text, params) => seed.query(text, params) };
+  const { owner, driver, vehicleId, assignment } = await seedUsableScenario(seedDb);
+  const opened = await openDriverShift(app.db, driver, usable);
+  assert.equal(opened.ok, true);
+  const shiftId = opened.shift.id;
+
+  const holder = new pg.Client({ connectionString: DATABASE_URL }); // holds the driver lock.
+  const probe = new pg.Client({ connectionString: DATABASE_URL }); // probes the shift-row lock.
+  await holder.connect();
+  await probe.connect();
+
+  t.after(async () => {
+    await holder.query('ROLLBACK').catch(() => {});
+    await probe.query('ROLLBACK').catch(() => {});
+    await holder.end();
+    await probe.end();
+    await cleanupScenario(seed, {
+      shiftIds: [shiftId], driverIds: [driver], assignmentIds: [assignment.id],
+      vehicleIds: [vehicleId], userIds: [owner, driver],
+    });
+    await seed.end();
+    await app.close();
+  });
+
+  await holder.query('BEGIN');
+  await holder.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [driver]); // holds the per-driver lock.
+
+  let reconcileResolved = false;
+  const reconcilePromise = reconcileAssignmentUnusableShift(app.db, shiftId, usable)
+    .then((r) => { reconcileResolved = true; return r; });
+
+  await delay(300);
+  assert.equal(reconcileResolved, false, 'reconciliation is genuinely blocked waiting for the driver lock');
+
+  // The critical probe: an INDEPENDENT third connection must be able to lock the shift row
+  // RIGHT NOW, with no contention — proving reconciliation has not touched it yet.
+  await probe.query('BEGIN');
+  const probeStart = Date.now();
+  await probe.query(`SELECT * FROM driver_shift WHERE id = $1 FOR UPDATE`, [shiftId]);
+  const probeElapsed = Date.now() - probeStart;
+  assert.ok(probeElapsed < 500, `the shift row must be immediately lockable (took ${probeElapsed}ms) — reconciliation must not have locked it before the driver lock`);
+  await probe.query('COMMIT');
+
+  await holder.query('COMMIT'); // release the driver lock — reconciliation can now proceed.
+  const result = await reconcilePromise;
+  assert.equal(reconcileResolved, true, 'reconciliation completes cleanly once the driver lock is released');
+  // The assignment was never revoked/ended and the resolver says UNBLOCKED, so usability is
+  // USABLE, not a confirmed UNUSABLE — reconciliation correctly refuses to act. The point of
+  // this test is the LOCK-ORDER probe above, not this outcome, but asserting it confirms
+  // reconciliation genuinely ran through to completion rather than throwing.
+  assert.deepEqual(result, { ok: false, code: 'NOT_CONFIRMED_UNUSABLE' });
+});
+
+// STEP 5 — real closeDriverShift vs reconcileAssignmentUnusableShift concurrency, several
+// trials, using the ACTUAL functions (no manual lock staging). No fixed winner is asserted —
+// only that the outcome is always one of the allowed coherent serial results, with no raw
+// PostgreSQL error (specifically no 40P01) ever escaping either call.
+test('P2-1 regression: closeDriverShift vs reconcileAssignmentUnusableShift never deadlocks, never corrupts, always one coherent terminal state', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config: APP_CONFIG });
+  const seed = new pg.Client({ connectionString: DATABASE_URL });
+  await seed.connect();
+  const seedDb = { query: (text, params) => seed.query(text, params) };
+  t.after(async () => { await seed.end(); await app.close(); });
+
+  const TRIALS = 8;
+  for (let trial = 0; trial < TRIALS; trial += 1) {
+    const owner = await insertUser(seedDb);
+    const driver = await insertUser(seedDb);
+    const vehicleId = await insertVehicle(seedDb, owner);
+    const assignment = await createAssignment(seedDb, {
+      vehicleId, driverId: driver, assignedByUserId: owner, assignmentType: 'OWNER', startsAt: new Date(Date.now() - HOUR),
+    });
+    await setSelection(seedDb, { driverId: driver, assignmentId: assignment.id });
+    const opened = await openDriverShift(app.db, driver, usable);
+    assert.equal(opened.ok, true);
+    await revokeAssignment(seedDb, assignment.id); // makes the pinned assignment confirmed UNUSABLE.
+
+    const settled = await Promise.allSettled([
+      closeDriverShift(app.db, driver),
+      reconcileAssignmentUnusableShift(app.db, opened.shift.id, usable),
+    ]);
+
+    for (const s of settled) {
+      if (s.status === 'rejected') {
+        assert.notEqual(s.reason && s.reason.code, '40P01', `trial ${trial}: no raw deadlock may ever escape either call: ${s.reason}`);
+        // Any OTHER rejection is itself unexpected — surface it plainly.
+        assert.fail(`trial ${trial}: unexpected rejection: ${s.reason}`);
+      }
+    }
+    const [closeRes, reconcileRes] = settled.map((s) => s.value);
+
+    const { rows: finalRows } = await seedDb.query(`SELECT status, close_reason FROM driver_shift WHERE id = $1`, [opened.shift.id]);
+    assert.equal(finalRows[0].status, 'CLOSED', `trial ${trial}: the shift always ends CLOSED`);
+    assert.ok(
+      finalRows[0].close_reason === 'DRIVER_REQUESTED' || finalRows[0].close_reason === 'ASSIGNMENT_UNUSABLE',
+      `trial ${trial}: close_reason must be one of the two frozen values, got ${finalRows[0].close_reason}`,
+    );
+    // Exactly one side actually performed the close mutation (ok + a CLOSED/CLOSED_AND_CLEANED
+    // code); the other observed NO_OPEN_SHIFT or ALREADY_CLOSED_OR_NOT_FOUND — never both
+    // "succeeding" at closing, never both failing.
+    const closers = [closeRes, reconcileRes].filter((r) => r.ok && (r.code === 'CLOSED' || r.code === 'CLOSED_AND_CLEANED'));
+    assert.equal(closers.length, 1, `trial ${trial}: exactly one side performs the close mutation: close=${JSON.stringify(closeRes)} reconcile=${JSON.stringify(reconcileRes)}`);
+
+    // Selection behavior corresponds to the winning path: if reconcile's close won, the
+    // selection is cleared (it still pointed at the revoked assignment); if the driver-requested
+    // close won first (before reconcile's usability check), reconcile then finds the shift
+    // already closed and reports its own idempotent/refusal outcome, and the selection is left
+    // untouched by the DRIVER_REQUESTED close (matching normal-close semantics).
+    const selection = await readSelection(seedDb, driver);
+    if (finalRows[0].close_reason === 'ASSIGNMENT_UNUSABLE') {
+      assert.equal(selection, null, `trial ${trial}: ASSIGNMENT_UNUSABLE close must have cleared the stale selection`);
+    } else {
+      assert.ok(selection, `trial ${trial}: DRIVER_REQUESTED close must leave the selection untouched`);
+    }
+  }
+});
+
+// STEP 2 critical case — a stale seed must never let reconciliation act on a DIFFERENT, newer
+// OPEN shift for the same driver. Deterministically forced: hold the driver lock, close shift A
+// and open shift B for the SAME driver from that SAME holding connection/transaction (so
+// reconciliation, blocked on the driver lock the whole time, cannot observe either write until
+// the holder commits), then release and confirm reconciliation reports A as
+// ALREADY_CLOSED_OR_NOT_FOUND and never touches B.
+test('P2-1 regression: a stale seed never lets reconciliation act on a newer, different OPEN shift for the same driver', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config: APP_CONFIG });
+  const seed = new pg.Client({ connectionString: DATABASE_URL });
+  await seed.connect();
+  const seedDb = { query: (text, params) => seed.query(text, params) };
+  const { owner, driver, vehicleId, assignment } = await seedUsableScenario(seedDb);
+  const openedA = await openDriverShift(app.db, driver, usable);
+  assert.equal(openedA.ok, true);
+  const shiftIdA = openedA.shift.id;
+
+  const holder = new pg.Client({ connectionString: DATABASE_URL });
+  await holder.connect();
+  const holderDb = { query: (text, params) => holder.query(text, params) };
+
+  let shiftIdB;
+  t.after(async () => {
+    await holder.query('ROLLBACK').catch(() => {});
+    await holder.end();
+    await cleanupScenario(seed, {
+      shiftIds: [shiftIdA, shiftIdB].filter(Boolean), driverIds: [driver],
+      assignmentIds: [assignment.id], vehicleIds: [vehicleId], userIds: [owner, driver],
+    });
+    await seed.end();
+    await app.close();
+  });
+
+  await holder.query('BEGIN');
+  await holder.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [driver]); // A's driver lock.
+
+  // Reconciliation seed-reads shift A (unlocked) and then blocks on the driver lock.
+  let reconcileResolved = false;
+  const reconcilePromise = reconcileAssignmentUnusableShift(app.db, shiftIdA, usable)
+    .then((r) => { reconcileResolved = true; return r; });
+  await delay(300);
+  assert.equal(reconcileResolved, false, 'reconciliation for A is blocked on the driver lock');
+
+  // While still holding the driver lock, close A and open a NEW shift B for the SAME driver —
+  // all via the SAME connection/transaction (a transaction never blocks on its own locks).
+  await closeShift(holderDb, shiftIdA, { closeReason: 'DRIVER_REQUESTED' });
+  const shiftB = await insertOpenShift(holderDb, { driverId: driver, vehicleId, assignmentId: assignment.id });
+  shiftIdB = shiftB.id;
+  await holder.query('COMMIT'); // releases the driver lock; A is CLOSED, B is OPEN, durably.
+
+  const result = await reconcilePromise;
+  assert.equal(reconcileResolved, true);
+  assert.deepEqual(result, { ok: true, code: 'ALREADY_CLOSED_OR_NOT_FOUND', idempotent: true }, 'reconciliation for A reports stale/idempotent, never substituting B');
+
+  const { rows: bRows } = await seed.query(`SELECT status FROM driver_shift WHERE id = $1`, [shiftIdB]);
+  assert.equal(bRows[0].status, 'OPEN', 'shift B was never touched');
+  const selectionAfter = await readSelection(seedDb, driver);
+  assert.ok(selectionAfter, 'shift B\'s selection was never cleared');
+});
+
+// Assignment-revoke vs reconciliation — confirms the FIXED lock order still correctly
+// serializes reconciliation against a concurrent REVOKE on the exact assignment row (the same
+// guarantee already proven for openDriverShift vs revoke, above, now re-verified for
+// reconcileAssignmentUnusableShift specifically, since its lock sequence changed).
+test('P2-1 regression: reconcileAssignmentUnusableShift still serializes correctly against a concurrent assignment REVOKE', { skip: SKIP }, async (t) => {
+  const app = await buildApp({ config: APP_CONFIG });
+  const seed = new pg.Client({ connectionString: DATABASE_URL });
+  await seed.connect();
+  const seedDb = { query: (text, params) => seed.query(text, params) };
+  const { owner, driver, vehicleId, assignment } = await seedUsableScenario(seedDb);
+  const opened = await openDriverShift(app.db, driver, usable);
+  assert.equal(opened.ok, true);
+
+  const clientA = new pg.Client({ connectionString: DATABASE_URL }); // holds the assignment lock.
+  await clientA.connect();
+  const dbA = { query: (text, params) => clientA.query(text, params) };
+
+  t.after(async () => {
+    await clientA.query('ROLLBACK').catch(() => {});
+    await clientA.end();
+    await cleanupScenario(seed, {
+      shiftIds: [opened.shift.id], driverIds: [driver], assignmentIds: [assignment.id],
+      vehicleIds: [vehicleId], userIds: [owner, driver],
+    });
+    await seed.end();
+    await app.close();
+  });
+
+  await clientA.query('BEGIN');
+  await lockAssignmentForEntitlementCheck(dbA, assignment.id); // A holds the assignment row lock.
+
+  let reconcileResolved = false;
+  const reconcilePromise = reconcileAssignmentUnusableShift(app.db, opened.shift.id, usable)
+    .then((r) => { reconcileResolved = true; return r; });
+  await delay(300);
+  assert.equal(reconcileResolved, false, 'reconciliation is blocked on the held assignment row lock');
+
+  await clientA.query('COMMIT'); // releases the assignment lock without revoking (A only read it).
+  const result = await reconcilePromise;
+  assert.equal(reconcileResolved, true);
+  // The assignment is still USABLE (A never revoked it) -> reconciliation correctly refuses.
+  assert.deepEqual(result, { ok: false, code: 'NOT_CONFIRMED_UNUSABLE' });
 });
