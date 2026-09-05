@@ -43,6 +43,13 @@ async function dbPlugin(app, opts) {
     // ride_events.type CHECK, but also 0004's transactional notification_outbox. Without that
     // final leg an env could report ready while every accepted Ride transition rolls back at the
     // outbox insert. A bare SELECT 1 would report a fresh, un-migrated database as ready.
+    //
+    // 0005 (BD-DRIVER-VEHICLE-ASSIGNMENT-AUTHORITY-01B) is included too, even though no route
+    // reads it live yet: readiness is a schema-completeness gate, not a "some endpoint calls
+    // this today" gate, so a future 01C route landing behind this same /readyz never has to
+    // remember to widen the check — a database with 0001-0004 but not 0005 must already report
+    // schema-incomplete. Checked structurally (load-bearing columns + named constraints +
+    // trigger), not just to_regclass — a same-named-but-wrong-shape table must not pass.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -96,6 +103,103 @@ async function dbPlugin(app, opts) {
                  AND pc.conname = 'ride_events_type_check'
                  AND pc.contype = 'c'
                  AND pg_get_constraintdef(pc.oid) LIKE '%status_change%'
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'vehicle_driver_assignments'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id', 'vehicle_id', 'driver_id', 'assigned_by_user_id',
+                        'assigned_by_service_id', 'assignment_type', 'status',
+                        'starts_at', 'ends_at', 'entitlement_window', 'terminated_at',
+                        'created_at', 'updated_at'
+                      )
+                 ) = 13
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_actor_xor'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_window_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_active_iff_not_terminated'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_id_driver_uq'
+                      AND pc.contype = 'u'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'vehicle_driver_assignments_no_overlap'
+                      AND pc.contype = 'x'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_vehicle_driver_assignments_updated_at'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_active_vehicle'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN ('driver_id', 'assignment_id', 'selected_at', 'updated_at')
+                 ) = 4
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_active_vehicle_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_active_vehicle_assignment_driver_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_active_vehicle_updated_at'
+                      AND NOT t.tgisinternal
+                 )
             ) AS ok`,
       );
       return rows[0]?.ok === true;
