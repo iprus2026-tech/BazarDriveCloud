@@ -92,6 +92,10 @@
 --
 -- HARD INVARIANTS, DB-enforced (structural/subject-identity correctness ONLY — see the
 -- explicit non-goal note below):
+--   - lineage identity is immutable after INSERT: id/document_type/driver_id/vehicle_id/
+--     shift_id/created_at cannot be rewritten (named BEFORE UPDATE guard below)
+--   - submission creation identity is immutable after INSERT: id/lineage_id/object_key/
+--     issued_at/created_at cannot be rewritten; lifecycle fields remain mutable
 --   - at most one OPEN submission per lineage, WHERE status IN ('UPLOADED','VERIFYING',
 --     'APPROVED') — a partial unique index, mirroring driver_shift's own
 --     one-OPEN-per-driver/vehicle partial-unique-index pattern exactly
@@ -124,9 +128,9 @@
 -- "Approval vs. activation"), not a schema-level constraint this slice enforces.
 --
 -- IDEMPOTENCY (server-ci re-applies every migration, twice, per run): CREATE TABLE / INDEX
--- IF NOT EXISTS, DO-block guards for the two additive driver_shift constraints, DROP TRIGGER
--- IF EXISTS + CREATE TRIGGER — a second apply is a clean no-op, matching 0001-0006's
--- convention exactly. Wrapped in BEGIN/COMMIT.
+-- IF NOT EXISTS, DO-block guards for the two additive driver_shift constraints,
+-- CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS + CREATE TRIGGER — a second apply is a
+-- clean no-op, matching 0001-0006's convention exactly. Wrapped in BEGIN/COMMIT.
 -- =============================================================================
 
 BEGIN;
@@ -223,6 +227,30 @@ CREATE TABLE IF NOT EXISTS driver_document_lineages (
     ON DELETE RESTRICT
 );
 
+-- Immutable lineage identity is a DB invariant, not application discipline. A CHECK cannot
+-- compare OLD and NEW, so a named BEFORE UPDATE guard mirrors driver_shift's own immutability
+-- pattern from migration 0006. Idempotent re-saves of unchanged values remain valid.
+CREATE OR REPLACE FUNCTION driver_document_lineages_guard_immutability()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.document_type IS DISTINCT FROM OLD.document_type
+     OR NEW.driver_id IS DISTINCT FROM OLD.driver_id
+     OR NEW.vehicle_id IS DISTINCT FROM OLD.vehicle_id
+     OR NEW.shift_id IS DISTINCT FROM OLD.shift_id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'driver_document_lineage % identity is immutable', OLD.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_driver_document_lineages_guard_immutability ON driver_document_lineages;
+CREATE TRIGGER trg_driver_document_lineages_guard_immutability
+  BEFORE UPDATE ON driver_document_lineages FOR EACH ROW
+  EXECUTE FUNCTION driver_document_lineages_guard_immutability();
+
 -- "At most one lineage per subject tuple per type" — type-specific partial unique indexes,
 -- correctly NULL-aware under PostgreSQL semantics. Deliberately NOT the old #956
 -- UNIQUE(driver_id, document_type) model (see file header): that shape cannot express a
@@ -303,6 +331,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS driver_documents_one_open_per_lineage_uq
 -- Lookup index (history/read paths) — mirrors 0005/0006's own convention.
 CREATE INDEX IF NOT EXISTS idx_driver_documents_lineage_status
   ON driver_documents (lineage_id, status);
+
+-- A submission's creation identity is immutable, while lifecycle fields are deliberately
+-- mutable in place. This guard runs BEFORE the updated_at trigger because PostgreSQL orders
+-- same-kind triggers alphabetically: "...guard_immutability" sorts before "...updated_at".
+CREATE OR REPLACE FUNCTION driver_documents_guard_immutability()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.lineage_id IS DISTINCT FROM OLD.lineage_id
+     OR NEW.object_key IS DISTINCT FROM OLD.object_key
+     OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'driver_document % creation identity is immutable', OLD.id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_driver_documents_guard_immutability ON driver_documents;
+CREATE TRIGGER trg_driver_documents_guard_immutability
+  BEFORE UPDATE ON driver_documents FOR EACH ROW
+  EXECUTE FUNCTION driver_documents_guard_immutability();
 
 DROP TRIGGER IF EXISTS trg_driver_documents_updated_at ON driver_documents;
 CREATE TRIGGER trg_driver_documents_updated_at
