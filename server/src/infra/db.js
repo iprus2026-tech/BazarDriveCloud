@@ -50,6 +50,10 @@ async function dbPlugin(app, opts) {
     // remember to widen the check — a database with 0001-0004 but not 0005 must already report
     // schema-incomplete. Checked structurally (load-bearing columns + named constraints +
     // trigger), not just to_regclass — a same-named-but-wrong-shape table must not pass.
+    //
+    // 0006 (BD-DRIVER-SHIFT-AUTHORITY-01B) extends this the same way: driver_shift has no live
+    // route yet either, but a database with 0001-0005 and not 0006 must already report
+    // schema-incomplete, not just when 01C eventually wires a route behind it.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -198,6 +202,78 @@ async function dbPlugin(app, opts) {
                    SELECT 1 FROM pg_trigger t
                     WHERE t.tgrelid = c.oid
                       AND t.tgname = 'trg_driver_active_vehicle_updated_at'
+                      AND NOT t.tgisinternal
+                 )
+            )
+            AND EXISTS (
+              SELECT 1 FROM pg_constraint pc
+               JOIN pg_class c ON c.oid = pc.conrelid
+               WHERE c.relname = 'vehicle_driver_assignments'
+                 AND pc.conname = 'vehicle_driver_assignments_id_driver_vehicle_uq'
+                 AND pc.contype = 'u'
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'driver_shift'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*)
+                     FROM pg_attribute a
+                    WHERE a.attrelid = c.oid
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id', 'driver_id', 'vehicle_id', 'assignment_id', 'status',
+                        'opened_at', 'closed_at', 'close_reason', 'updated_at'
+                      )
+                 ) = 9
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_shift_pkey'
+                      AND pc.contype = 'p'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_shift_assignment_driver_vehicle_fkey'
+                      AND pc.contype = 'f'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_shift_lifecycle_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_constraint pc
+                    WHERE pc.conrelid = c.oid
+                      AND pc.conname = 'driver_shift_close_reason_check'
+                      AND pc.contype = 'c'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_shift_one_open_per_driver_uq'
+                      AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_class ci
+                    WHERE ci.relname = 'driver_shift_one_open_per_vehicle_uq'
+                      AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_shift_guard_immutability'
+                      AND NOT t.tgisinternal
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_shift_updated_at'
                       AND NOT t.tgisinternal
                  )
             ) AS ok`,

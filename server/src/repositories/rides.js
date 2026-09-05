@@ -4,6 +4,47 @@
 // the status-keyed timestamp. The DB trg_rides_freeze_terminal trigger is the last-line backstop
 // for the terminal-freeze invariant; the service enforces it first via the domain.
 
+import { RIDE_STATUS, TERMINAL_RIDE_STATUSES } from '../domain/ride-status.js';
+
+// BD-DRIVER-SHIFT-AUTHORITY-01B — the "active ride" boundary reused verbatim from
+// docs/driver-vehicle-assignment-authority-contract.md Invariant 8 / the shift-authority
+// contract's "Active-ride boundary": a shift change (open, or driver-requested close) is
+// blocked exactly while the driver has a ride PAST acceptance and NOT YET terminal. This is
+// NOT a second ride-state machine — it is derived here, once, straight from the existing
+// RIDE_STATUS enum and TERMINAL_RIDE_STATUSES set already owned by domain/ride-status.js.
+// Pre-accept statuses are excluded explicitly by name; every OTHER non-terminal status is
+// included by construction (a `filter`, not an enumerated allow-list), so a FUTURE addition
+// to RIDE_STATUS this file is never updated for fails safe — it is swept INTO the blocking
+// set by default (over-blocking a shift change) rather than silently falling outside it
+// (under-blocking would let a shift close/reopen out from under a live ride).
+const PRE_ACCEPT_RIDE_STATUSES = new Set([
+  RIDE_STATUS.NEW_ORDER, RIDE_STATUS.CONFIRMATION_PENDING,
+  RIDE_STATUS.CONFIRMED, RIDE_STATUS.CHAT_STARTED,
+]);
+const ACTIVE_RIDE_STATUSES = Object.freeze(
+  new Set(Object.values(RIDE_STATUS).filter(
+    (status) => !TERMINAL_RIDE_STATUSES.has(status) && !PRE_ACCEPT_RIDE_STATUSES.has(status),
+  )),
+);
+
+// Find the driver's current ride that blocks a shift change (open, or driver-requested
+// close) — server-authoritative, derived from rides.status alone, never from client state.
+// Plain read, no lock: callers that need this fact INSIDE a coordinated transaction (the
+// shift-open / shift-close sequences) call it after already holding
+// driver_active_vehicle.lockDriverAuthority(driverId), which is what actually serializes a
+// concurrent Ride PATCH against a concurrent shift transaction for the SAME driver (both
+// paths lock disjoint rows — `rides` vs `users` — so this is a read-your-own-lock-order
+// consistency argument, not a row lock on `rides` itself; a driver can only ever hold one
+// non-terminal ride at a time by construction of the matching/select flow, so LIMIT 1 is
+// not a lossy narrowing). Returns null when the driver has no such ride.
+export async function findActiveRideForDriver(db, driverId) {
+  const { rows } = await db.query(
+    `SELECT * FROM rides WHERE driver_user_id = $1 AND status = ANY($2::text[]) LIMIT 1`,
+    [driverId, [...ACTIVE_RIDE_STATUSES]],
+  );
+  return rows[0] ?? null;
+}
+
 export async function findRideByTripId(db, tripId) {
   const { rows } = await db.query(`SELECT * FROM rides WHERE trip_id = $1 LIMIT 1`, [tripId]);
   return rows[0] ?? null;
