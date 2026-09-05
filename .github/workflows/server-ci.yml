@@ -157,6 +157,12 @@ jobs:
             "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_documents' and pc.conname='driver_documents_supersedes_id_fkey'" | grep -qx f
           psql -v ON_ERROR_STOP=1 -tAc \
             "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_documents' and pc.conname='driver_documents_supersedes_id_key'" | grep -qx u
+          # 0007 immutability guards — named BEFORE UPDATE triggers mirroring 0006's own
+          # trg_driver_shift_guard_immutability assertion style (pg_trigger join, not tgisinternal).
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_document_lineages' and t.tgname='trg_driver_document_lineages_guard_immutability' and not t.tgisinternal" | grep -qx 1
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_documents' and t.tgname='trg_driver_documents_guard_immutability' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_documents' and t.tgname='trg_driver_documents_updated_at' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"

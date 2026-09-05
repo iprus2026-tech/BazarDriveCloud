@@ -365,6 +365,12 @@ async function dbPlugin(app, opts) {
                    SELECT 1 FROM pg_class ci
                     WHERE ci.relname = 'driver_document_lineages_medical_check_uq' AND ci.relkind = 'i'
                  )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_document_lineages_guard_immutability'
+                      AND NOT t.tgisinternal
+                 )
             )
             AND EXISTS (
               SELECT 1
@@ -418,6 +424,12 @@ async function dbPlugin(app, opts) {
                  AND EXISTS (
                    SELECT 1 FROM pg_class ci
                     WHERE ci.relname = 'driver_documents_one_open_per_lineage_uq' AND ci.relkind = 'i'
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM pg_trigger t
+                    WHERE t.tgrelid = c.oid
+                      AND t.tgname = 'trg_driver_documents_guard_immutability'
+                      AND NOT t.tgisinternal
                  )
                  AND EXISTS (
                    SELECT 1 FROM pg_trigger t
