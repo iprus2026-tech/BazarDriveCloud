@@ -25,6 +25,13 @@
 //      composite-FK-safe write. The low-level setSelection() / clearSelection() primitives
 //      stay pure SQL — policy lives HERE, never pushed down into them.
 //
+// The SELECTED(A) -> SELECTED(A) no-op (frozen: "a SELECTED(A) -> SELECTED(A) request that
+// changes no state is a no-op") is NOT a mutation: setDriverSelection short-circuits it right
+// after the per-driver lock + a re-read of the current selection UNDER that lock, BEFORE the
+// OPEN-shift guard, the non-terminal-ride guard, and any entitlement/usability check. It
+// succeeds (idempotently) even with an OPEN driver_shift or a non-terminal ride, and writes
+// nothing — no setSelection call, no selected_at / updated_at re-stamp.
+//
 // Global lock order, unchanged (Assignment Authority Invariant 6 / Shift Authority Invariant
 // 2): per-driver authority lock -> assignment -> vehicle/dependent -> mutation. The
 // OPEN-shift guard is checked immediately AFTER the per-driver lock and BEFORE any
@@ -38,7 +45,7 @@
 // post-lock server read inside this transaction (Shift Authority Invariant 3).
 
 import {
-  lockDriverAuthority, setSelection, clearSelection,
+  lockDriverAuthority, readSelection, setSelection, clearSelection,
 } from '../../repositories/driver_active_vehicle.js';
 import { lockAssignmentForEntitlementCheck } from '../../repositories/vehicle_driver_assignments.js';
 import { lockVehicleById } from '../../repositories/vehicles.js';
@@ -50,41 +57,38 @@ export * as vehicleDriverAssignments from '../../repositories/vehicle_driver_ass
 export * as driverActiveVehicle from '../../repositories/driver_active_vehicle.js';
 
 // -----------------------------------------------------------------------------------------
-// guardSelectionMutation — the shared pre-write gate every DRIVER-INITIATED selection
-// mutation (select / switch / clear) runs first, INSIDE the caller's db.tx, against a
-// transaction client. Steps, in the frozen global lock order:
+// guardSelectionMutation — the OPEN-shift + non-terminal-ride blockers shared by every REAL
+// selection mutation (a genuine state transition: NONE -> SELECTED(A), SELECTED(A) ->
+// SELECTED(B), SELECTED(A) -> NONE). Runs INSIDE the caller's db.tx, against a transaction
+// client that ALREADY holds lockDriverAuthority(driverId) — this function takes no lock; it
+// runs only the two authoritative reads under that per-driver lock, in the frozen order:
 //
-//   1. lockDriverAuthority(driverId)  — SELECT ... FROM users WHERE id = $1 FOR UPDATE. The
-//      stable per-driver authority lock (Assignment Authority Invariant 6): it exists even
-//      in the NONE selection state (no driver_active_vehicle row to lock), and it is the
-//      SAME lock openDriverShift / closeDriverShift take FIRST — so a selection mutation and
-//      a shift open/close for one driver can never interleave.
-//   2. re-read the driver's OPEN driver_shift UNDER that lock — findOpenShiftForDriver, the
-//      shift-authority repo's existing plain read. Deliberately the plain read, not
+//   1. re-read the driver's OPEN driver_shift UNDER the per-driver lock — findOpenShiftForDriver,
+//      the shift-authority repo's existing plain read. Deliberately the plain read, not
 //      lockOpenShiftForDriver: the per-driver lock already serialized this against any
 //      concurrent open/close for the SAME driver (the repo primitive's own header says so),
 //      and openDriverShift itself checks "OPEN shift for this driver" the exact same way. It
 //      is NEVER a value cached before the lock or supplied by the client (Shift Authority
-//      Invariant 3).
-//   3. an OPEN shift exists -> { ok: false, code: 'DRIVER_SHIFT_OPEN' }. The caller performs
-//      ZERO writes; the existing selection is left exactly as it was. The shift's pinned
-//      tuple is the working identity now — changing the car mid-shift is closing the shift
-//      and opening a new one, not a selection change.
-//   4. a non-terminal ride exists -> { ok: false, code: 'ACTIVE_RIDE_PRESENT' }. Frozen
-//      Assignment Authority Invariant 8 / Shift Authority Invariant 6: select / switch /
-//      clear are rejected during an active ride exactly as during an OPEN shift.
-//      findActiveRideForDriver derives "active ride" from rides.status alone (past ACCEPTED,
-//      not terminal) — no second ride-state machine.
+//      Invariant 3). An OPEN shift -> { ok: false, code: 'DRIVER_SHIFT_OPEN' }: zero writes,
+//      the existing selection left exactly as it was — the shift's pinned tuple is the
+//      working identity now, and changing the car mid-shift is closing the shift and opening
+//      a new one, not a selection change.
+//   2. a non-terminal ride -> { ok: false, code: 'ACTIVE_RIDE_PRESENT' }. Frozen Assignment
+//      Authority Invariant 8 / Shift Authority Invariant 6: select / switch / clear are
+//      rejected during an active ride exactly as during an OPEN shift. findActiveRideForDriver
+//      derives "active ride" from rides.status alone (past ACCEPTED, not terminal) — no
+//      second ride-state machine.
+//
+// A SELECTED(A) -> SELECTED(A) no-op re-select is NOT a mutation (frozen: "a SELECTED(A) ->
+// SELECTED(A) request that changes no state is a no-op") — setDriverSelection short-circuits
+// it BEFORE this guard, so it never reaches here and none of these blockers apply to it.
 //
 // Returns { ok: true } to proceed, or a terminal { ok: false, code } the caller returns
-// as-is. Every step is a lock or a read — a caller that returns one of these codes has
-// written nothing, so committing the surrounding db.tx on that rejection is harmless
-// (identical posture to openDriverShift's early-return paths).
+// as-is. Every step is a read — a caller that returns one of these codes has written nothing,
+// so committing the surrounding db.tx on that rejection is harmless (identical posture to
+// openDriverShift's early-return paths).
 // -----------------------------------------------------------------------------------------
 async function guardSelectionMutation(client, driverId) {
-  const lockedDriverId = await lockDriverAuthority(client, driverId);
-  if (!lockedDriverId) return { ok: false, code: 'DRIVER_NOT_FOUND' };
-
   const openShift = await findOpenShiftForDriver(client, driverId);
   if (openShift) return { ok: false, code: 'DRIVER_SHIFT_OPEN' };
 
@@ -96,14 +100,23 @@ async function guardSelectionMutation(client, driverId) {
 
 // -----------------------------------------------------------------------------------------
 // setDriverSelection — NONE -> SELECTED(A) (select) and SELECTED(A) -> SELECTED(B) (switch).
-// Mechanically ONE operation: the composite-FK-safe upsert in setSelection(). "select" and
-// "switch" differ only by prior state, exactly as the frozen state machine
-// (docs/driver-vehicle-assignment-authority-contract.md, "Active vehicle selection") lays it
-// out; a SELECTED(A) -> SELECTED(A) request that changes nothing is still a normal success
-// (setSelection re-stamps selected_at, matching the contract's "a switch is a new
-// selection").
+// A real transition is mechanically ONE operation: the composite-FK-safe upsert in
+// setSelection(). "select" and "switch" differ only by prior state, exactly as the frozen
+// state machine (docs/driver-vehicle-assignment-authority-contract.md, "Active vehicle
+// selection") lays it out.
 //
-// After the shared guard, in the frozen lock order: lock the target
+// SELECTED(A) -> SELECTED(A) — a request for the assignment the driver's driver_active_vehicle
+// row ALREADY points at — "changes no state" and the frozen contract classifies it as a
+// no-op, NOT a mutation. It is short-circuited here, immediately after the per-driver lock and
+// a re-read of the current selection UNDER that lock (so the determination is authoritative,
+// never a stale/client value), and BEFORE the OPEN-shift guard, the non-terminal-ride guard,
+// and the assignment/vehicle locks + assignmentUsabilityDecision. It returns an idempotent
+// success ({ ok: true, code: 'ALREADY_SELECTED', selection, idempotent: true } — the
+// openDriverShift ALREADY_OPEN convention) EVEN when an OPEN driver_shift or a non-terminal
+// ride is present, and performs ZERO writes: no setSelection call, no selected_at / updated_at
+// re-stamp, no entitlement/usability re-check.
+//
+// For a real transition, after the shared guard, in the frozen lock order: lock the target
 // vehicle_driver_assignments row (lockAssignmentForEntitlementCheck — computes entitled_now
 // against PostgreSQL's own clock), assert it belongs to this driver, lock its vehicle, and
 // require assignmentUsabilityDecision(serverTime) == USABLE — UNUSABLE and UNKNOWN both
@@ -115,15 +128,27 @@ async function guardSelectionMutation(client, driverId) {
 // answers UNKNOWN today -> this returns ASSIGNMENT_STATE_UNKNOWN, fail-closed, exactly like
 // openDriverShift with no resolver wired in.
 //
-// Result: { ok: true, code: 'SELECTED', selection } on success; otherwise a terminal
-// { ok: false, code[, reason] } — DRIVER_SHIFT_OPEN (the frozen freeze this slice adds),
-// ACTIVE_RIDE_PRESENT, ASSIGNMENT_NOT_FOUND, ASSIGNMENT_DRIVER_MISMATCH, VEHICLE_NOT_FOUND,
-// ASSIGNMENT_STATE_UNKNOWN, or ASSIGNMENT_UNUSABLE(reason). The codes match openDriverShift's
-// own vocabulary for the shared usability decision — not a parallel one.
+// Result: { ok: true, code: 'SELECTED', selection } on a real transition;
+// { ok: true, code: 'ALREADY_SELECTED', selection, idempotent: true } on the no-op; otherwise
+// a terminal { ok: false, code[, reason] } — DRIVER_NOT_FOUND, DRIVER_SHIFT_OPEN (the frozen
+// freeze this slice adds), ACTIVE_RIDE_PRESENT, ASSIGNMENT_NOT_FOUND, ASSIGNMENT_DRIVER_MISMATCH,
+// VEHICLE_NOT_FOUND, ASSIGNMENT_STATE_UNKNOWN, or ASSIGNMENT_UNUSABLE(reason). The codes match
+// openDriverShift's own vocabulary for the shared usability decision — not a parallel one.
 // -----------------------------------------------------------------------------------------
 export async function setDriverSelection(db, driverId, { assignmentId }, opts = {}) {
   const { resolveVehicleBlockState = defaultResolveVehicleBlockState } = opts;
   return db.tx(async (client) => {
+    const lockedDriverId = await lockDriverAuthority(client, driverId);
+    if (!lockedDriverId) return { ok: false, code: 'DRIVER_NOT_FOUND' };
+
+    // SELECTED(A) -> SELECTED(A): re-read the current selection UNDER the per-driver lock; if
+    // it already points at the requested assignment, this request transitions nothing. Return
+    // the idempotent no-op success before any mutation guard or usability check runs.
+    const current = await readSelection(client, driverId);
+    if (current && current.assignment_id === assignmentId) {
+      return { ok: true, code: 'ALREADY_SELECTED', selection: current, idempotent: true };
+    }
+
     const guard = await guardSelectionMutation(client, driverId);
     if (!guard.ok) return guard;
 
@@ -158,11 +183,14 @@ export async function setDriverSelection(db, driverId, { assignmentId }, opts = 
 // selection"). That path must stay unblocked; this one must stay blocked.
 //
 // Result: { ok: true, code: 'CLEARED', cleared } (cleared = the deleted row, or null if the
-// driver was already in the NONE state); otherwise the same terminal { ok: false, code } set
-// as the guard (DRIVER_NOT_FOUND / DRIVER_SHIFT_OPEN / ACTIVE_RIDE_PRESENT).
+// driver was already in the NONE state — a DELETE that matches no row writes nothing); otherwise
+// a terminal { ok: false, code } — DRIVER_NOT_FOUND / DRIVER_SHIFT_OPEN / ACTIVE_RIDE_PRESENT.
 // -----------------------------------------------------------------------------------------
 export async function clearDriverSelection(db, driverId) {
   return db.tx(async (client) => {
+    const lockedDriverId = await lockDriverAuthority(client, driverId);
+    if (!lockedDriverId) return { ok: false, code: 'DRIVER_NOT_FOUND' };
+
     const guard = await guardSelectionMutation(client, driverId);
     if (!guard.ok) return guard;
 

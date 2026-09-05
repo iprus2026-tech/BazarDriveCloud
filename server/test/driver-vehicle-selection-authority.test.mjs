@@ -171,27 +171,34 @@ test('PROOF 3 — clear, no OPEN shift: SELECTED(A) -> NONE succeeds', { skip: S
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// PROOF 4-6 — select / switch / clear while an OPEN shift exists: DRIVER_SHIFT_OPEN, ZERO
-// writes, original selection unchanged.
+// PROOF 4-6 — a real select / switch / clear MUTATION while an OPEN shift exists:
+// DRIVER_SHIFT_OPEN, ZERO writes, original selection unchanged. (A SELECTED(A) -> SELECTED(A)
+// no-op re-select is NOT a mutation and is exempt — covered separately below.)
 // ─────────────────────────────────────────────────────────────────────────────────────────
-test('PROOF 4 — select while OPEN shift: DRIVER_SHIFT_OPEN, zero writes (selected_at untouched)', { skip: SKIP }, async (t) => {
+test('PROOF 4 — SELECTED(A) -> SELECTED(A) no-op re-select while OPEN shift: idempotent SUCCESS (NOT DRIVER_SHIFT_OPEN), zero writes', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
   const { driver, vehicleId, assignment } = await seedSelectable(db);
   await setSelection(db, { driverId: driver, assignmentId: assignment.id });
   await insertOpenShift(db, { driverId: driver, vehicleId, assignmentId: assignment.id });
   const before = await readSelection(db, driver);
 
-  // Even a no-op re-select of the SAME assignment is frozen while the shift is OPEN.
+  // The frozen contract classifies SELECTED(A) -> SELECTED(A) as "not a mutation" — so the
+  // OPEN-shift freeze does not apply to it. It succeeds idempotently and writes nothing.
   const result = await setDriverSelection(db, driver, { assignmentId: assignment.id }, usable);
-  assert.deepEqual(result, { ok: false, code: 'DRIVER_SHIFT_OPEN' });
+  assert.equal(result.ok, true);
+  assert.equal(result.code, 'ALREADY_SELECTED');
+  assert.equal(result.idempotent, true);
+  assert.notEqual(result.code, 'DRIVER_SHIFT_OPEN');
+  assert.equal(result.selection.assignment_id, assignment.id);
 
   const after = await readSelection(db, driver);
-  assert.equal(after.assignment_id, assignment.id);
-  assert.equal(after.selected_at.getTime(), before.selected_at.getTime(), 'selected_at not re-stamped — zero writes');
+  assert.deepEqual(after, before, 'row byte-for-byte unchanged — zero writes');
+  assert.equal(after.selected_at.getTime(), before.selected_at.getTime(), 'selected_at not re-stamped');
+  assert.equal(after.updated_at.getTime(), before.updated_at.getTime(), 'updated_at not re-stamped');
   assert.equal((await db.query(`SELECT count(*) FROM driver_active_vehicle WHERE driver_id = $1`, [driver])).rows[0].count, '1');
 });
 
-test('PROOF 5 — switch while OPEN shift: DRIVER_SHIFT_OPEN, original selection unchanged', { skip: SKIP }, async (t) => {
+test('PROOF 5 — real switch SELECTED(A) -> SELECTED(B) while OPEN shift: DRIVER_SHIFT_OPEN, original selection unchanged', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
   const { owner, driver, vehicleId, assignment: assignA } = await seedSelectable(db);
   const { assignment: assignB } = await addSecondAssignment(db, { owner, driver });
@@ -241,6 +248,63 @@ test('PROOF 7 — after the shift is CLOSED, switch and clear are allowed again'
   assert.equal(cleared.ok, true);
   assert.equal(cleared.code, 'CLEARED');
   assert.equal(await readSelection(db, driver), null);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// SELECTED(A) -> SELECTED(A) no-op — the frozen "a request that changes no state is a no-op":
+// idempotent SUCCESS, ZERO writes, and exempt from EVERY mutation guard (OPEN shift, active
+// ride, entitlement/usability). Determined under the per-driver lock from the server's own
+// re-read, before any guard.
+// ─────────────────────────────────────────────────────────────────────────────────────────
+test('no-op re-select, NO shift: idempotent SUCCESS; selected_at / updated_at byte-for-byte unchanged (zero writes)', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { driver, assignment } = await seedSelectable(db);
+  const first = await setDriverSelection(db, driver, { assignmentId: assignment.id }, usable);
+  assert.equal(first.code, 'SELECTED', 'the first real select transitions NONE -> SELECTED(A)');
+  const before = await readSelection(db, driver);
+
+  const again = await setDriverSelection(db, driver, { assignmentId: assignment.id }, usable);
+  assert.equal(again.ok, true);
+  assert.equal(again.code, 'ALREADY_SELECTED');
+  assert.equal(again.idempotent, true);
+  assert.equal(again.selection.assignment_id, assignment.id);
+
+  const after = await readSelection(db, driver);
+  assert.equal(after.selected_at.getTime(), before.selected_at.getTime(), 'selected_at not re-stamped');
+  assert.equal(after.updated_at.getTime(), before.updated_at.getTime(), 'updated_at not re-stamped');
+  assert.deepEqual(after, before, 'the whole driver_active_vehicle row is byte-for-byte unchanged');
+});
+
+test('no-op re-select while a non-terminal ride exists: still idempotent SUCCESS, zero writes (NOT ACTIVE_RIDE_PRESENT)', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { driver, assignment } = await seedSelectable(db);
+  await setSelection(db, { driverId: driver, assignmentId: assignment.id });
+  await insertRide(db, { driverId: driver, status: 'IN_PROGRESS' });
+  const before = await readSelection(db, driver);
+
+  const result = await setDriverSelection(db, driver, { assignmentId: assignment.id }, usable);
+  assert.equal(result.ok, true);
+  assert.equal(result.code, 'ALREADY_SELECTED');
+  assert.equal(result.idempotent, true);
+  assert.notEqual(result.code, 'ACTIVE_RIDE_PRESENT');
+  assert.deepEqual(await readSelection(db, driver), before, 'zero writes');
+});
+
+test('no-op re-select does not re-run entitlement/usability: succeeds even if the still-current assignment is now REVOKED, zero writes', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { driver, assignment } = await seedSelectable(db);
+  await setSelection(db, { driverId: driver, assignmentId: assignment.id });
+  await revokeAssignment(db, assignment.id); // the row the selection still points at is now confirmed UNUSABLE
+  const before = await readSelection(db, driver);
+
+  // A no-op transitions nothing, so usability is not re-evaluated — the contract's "not a
+  // mutation". (A real switch AWAY would still be a guarded mutation; a stale selection is
+  // reset only by the server-forced cleanup path, never re-validated here.)
+  const result = await setDriverSelection(db, driver, { assignmentId: assignment.id }, usable);
+  assert.equal(result.ok, true);
+  assert.equal(result.code, 'ALREADY_SELECTED');
+  assert.equal(result.idempotent, true);
+  assert.deepEqual(await readSelection(db, driver), before, 'zero writes');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -378,26 +442,37 @@ test('PROOF 9 — concurrent openDriverShift vs clear serialize on the driver lo
 // lock is acquired before it; (c) many-trial openDriverShift/closeDriverShift vs selection
 // mutation — never a 40P01.
 // ─────────────────────────────────────────────────────────────────────────────────────────
-test('PROOF 10a — source order: guard takes per-driver lock -> OPEN-shift read -> ride read; setDriverSelection then assignment -> vehicle -> write', { skip: SKIP }, () => {
+test('PROOF 10a — source order: per-driver lock -> no-op re-read/short-circuit -> OPEN-shift+ride guard -> assignment -> vehicle -> usability -> write; no reverse order', { skip: SKIP }, () => {
   const src = readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'services', 'driver-vehicle-assignment-authority', 'index.js'),
     'utf8',
   );
-  const guardBody = src.slice(src.indexOf('async function guardSelectionMutation'), src.indexOf('async function guardSelectionMutation') + 800);
-  const guardOrder = ['lockDriverAuthority', 'findOpenShiftForDriver', 'findActiveRideForDriver'];
-  const guardIdx = guardOrder.map((name) => guardBody.indexOf(name));
-  for (const i of guardIdx) assert.notEqual(i, -1, 'every guard identifier appears in guardSelectionMutation');
-  for (let i = 1; i < guardIdx.length; i += 1) {
-    assert.ok(guardIdx[i - 1] < guardIdx[i], `${guardOrder[i - 1]} must precede ${guardOrder[i]} in guardSelectionMutation`);
-  }
+  const orderInBody = (body, names, label) => {
+    const idx = names.map((name) => body.indexOf(name));
+    for (let i = 0; i < names.length; i += 1) assert.notEqual(idx[i], -1, `${names[i]} must appear in ${label}`);
+    for (let i = 1; i < names.length; i += 1) {
+      assert.ok(idx[i - 1] < idx[i], `${names[i - 1]} must precede ${names[i]} in ${label}`);
+    }
+  };
 
+  // guardSelectionMutation runs ONLY the two reads, in the frozen order — it takes NO lock
+  // (the caller already holds lockDriverAuthority).
+  const guardBody = src.slice(src.indexOf('async function guardSelectionMutation'), src.indexOf('async function guardSelectionMutation') + 600);
+  orderInBody(guardBody, ['findOpenShiftForDriver', 'findActiveRideForDriver'], 'guardSelectionMutation');
+  assert.ok(!guardBody.includes('lockDriverAuthority'), 'guardSelectionMutation takes no lock itself');
+
+  // setDriverSelection: per-driver lock -> re-read current selection -> SELECTED(A)->SELECTED(A)
+  // idempotent short-circuit (ALREADY_SELECTED) -> the OPEN-shift+ride guard -> assignment lock
+  // -> vehicle lock -> usability -> write. The no-op short-circuit is strictly BEFORE the guard.
   const setBody = src.slice(src.indexOf('export async function setDriverSelection'), src.indexOf('export async function clearDriverSelection'));
-  const setOrder = ['guardSelectionMutation', 'lockAssignmentForEntitlementCheck', 'lockVehicleById', 'decideAssignmentUsability', 'setSelection'];
-  const setIdx = setOrder.map((name) => setBody.indexOf(name));
-  for (const i of setIdx) assert.notEqual(i, -1, 'every setDriverSelection identifier is present');
-  for (let i = 1; i < setIdx.length; i += 1) {
-    assert.ok(setIdx[i - 1] < setIdx[i], `${setOrder[i - 1]} must precede ${setOrder[i]} in setDriverSelection`);
-  }
+  orderInBody(setBody, [
+    'lockDriverAuthority', 'readSelection', 'ALREADY_SELECTED', 'guardSelectionMutation',
+    'lockAssignmentForEntitlementCheck', 'lockVehicleById', 'decideAssignmentUsability', 'setSelection',
+  ], 'setDriverSelection');
+
+  // clearDriverSelection: per-driver lock -> guard -> clear.
+  const clearBody = src.slice(src.indexOf('export async function clearDriverSelection'));
+  orderInBody(clearBody, ['lockDriverAuthority', 'guardSelectionMutation', 'clearSelection'], 'clearDriverSelection');
 });
 
 test('PROOF 10b — while setDriverSelection is blocked on the per-driver lock, the assignment + vehicle rows are still immediately lockable (nothing acquired below the driver lock first)', { skip: SKIP }, async (t) => {
