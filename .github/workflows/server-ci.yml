@@ -130,6 +130,35 @@ jobs:
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_shift' and t.tgname='trg_driver_shift_guard_immutability' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_shift' and t.tgname='trg_driver_shift_updated_at' and not t.tgisinternal" | grep -qx 1
+          # BD-DRIVER-DOCUMENT-COMPLIANCE-01B rebuild (0007) — named objects from the frozen
+          # contract's data model, not just table existence.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_shift' and pc.conname='driver_shift_id_driver_uq'" | grep -qx u
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_shift' and pc.conname='driver_shift_id_driver_vehicle_uq'" | grep -qx u
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('driver_document_lineages','driver_documents')" | grep -qx 2
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_document_lineages' and pc.conname='driver_document_lineages_subject_shape_check'" | grep -qx c
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_document_lineages' and pc.conname='driver_document_lineages_shift_driver_fkey'" | grep -qx f
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_document_lineages' and pc.conname='driver_document_lineages_shift_driver_vehicle_fkey'" | grep -qx f
+          # type-specific partial unique indexes (contype has no row for a plain index; check
+          # pg_class.relkind = 'i' instead).
+          for idx in driver_document_lineages_driver_license_uq driver_document_lineages_taxi_osago_uq \
+                     driver_document_lineages_taxi_registry_uq driver_document_lineages_waybill_uq \
+                     driver_document_lineages_medical_check_uq driver_documents_one_open_per_lineage_uq; do
+            psql -v ON_ERROR_STOP=1 -tAc "select relkind from pg_class where relname='$idx'" | grep -qx i
+          done
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_documents' and pc.conname='driver_documents_lineage_id_fkey'" | grep -qx f
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_documents' and pc.conname='driver_documents_supersedes_id_fkey'" | grep -qx f
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='driver_documents' and pc.conname='driver_documents_supersedes_id_key'" | grep -qx u
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_documents' and t.tgname='trg_driver_documents_updated_at' and not t.tgisinternal" | grep -qx 1
           echo "schema objects OK"
 
   app:
@@ -165,11 +194,11 @@ jobs:
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
       # Prove readiness fails closed on the immediately preceding schema: readiness now also
-      # depends on 0006's working-identity schema (BD-DRIVER-SHIFT-AUTHORITY-01B), so a
-      # database with 0001..0005 but NOT 0006 must not enter service.
-      - name: Apply pre-shift-authority-schema migrations (0001-0005) and assert readiness is incomplete
+      # depends on 0007's document-compliance schema (BD-DRIVER-DOCUMENT-COMPLIANCE-01B
+      # rebuild), so a database with 0001..0006 but NOT 0007 must not enter service.
+      - name: Apply pre-document-compliance-schema migrations (0001-0006) and assert readiness is incomplete
         run: |
-          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql; do
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql migrations/0006_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
           node --input-type=module <<'NODE'
