@@ -86,6 +86,19 @@ function assertRejectsWithPgCode(promise, code, messageMatch) {
   });
 }
 
+// PostgreSQL marks the current transaction aborted after a statement error. SAVEPOINT keeps
+// adversarial UPDATE attempts independent inside one test so we can prove every immutable
+// field without opening a new connection per field.
+async function assertRejectsWithoutAbortingTxn(db, work, code, messageMatch) {
+  await db.query('SAVEPOINT expected_rejection');
+  try {
+    await assertRejectsWithPgCode(work(), code, messageMatch);
+  } finally {
+    await db.query('ROLLBACK TO SAVEPOINT expected_rejection').catch(() => {});
+    await db.query('RELEASE SAVEPOINT expected_rejection').catch(() => {});
+  }
+}
+
 // ── 1. schema: additive composite keys on driver_shift coexist with 0006's own key ─────────
 test('0007: additive composite keys on driver_shift coexist with 0006\'s own composite FK target', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
@@ -99,6 +112,29 @@ test('0007: additive composite keys on driver_shift coexist with 0006\'s own com
     { conname: 'driver_shift_assignment_driver_vehicle_fkey', contype: 'f' },
     { conname: 'driver_shift_id_driver_uq', contype: 'u' },
     { conname: 'driver_shift_id_driver_vehicle_uq', contype: 'u' },
+  ]);
+});
+
+test('0007: immutability guard triggers are installed and document guard orders before updated_at', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { rows } = await db.query(
+    `SELECT c.relname AS table_name, t.tgname
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND NOT t.tgisinternal
+        AND (
+          (c.relname = 'driver_document_lineages' AND t.tgname = 'trg_driver_document_lineages_guard_immutability')
+          OR
+          (c.relname = 'driver_documents' AND t.tgname IN ('trg_driver_documents_guard_immutability', 'trg_driver_documents_updated_at'))
+        )
+      ORDER BY c.relname, t.tgname`,
+  );
+  assert.deepEqual(rows, [
+    { table_name: 'driver_document_lineages', tgname: 'trg_driver_document_lineages_guard_immutability' },
+    { table_name: 'driver_documents', tgname: 'trg_driver_documents_guard_immutability' },
+    { table_name: 'driver_documents', tgname: 'trg_driver_documents_updated_at' },
   ]);
 });
 
@@ -403,7 +439,110 @@ test('multiple documents with a NULL supersedes_id do not collide (NULL is not r
   assert.equal(b.supersedes_id, null);
 });
 
-// ── 8. history RESTRICT: no cascade can erase compliance history ──────────────────────────
+// ── 8. immutable history identity: DB guards, not comments/application discipline ──────────
+test('immutability: lineage identity and created_at cannot be rewritten', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const { driver, owner, vehicleId, shift } = await seedOpenShift(db);
+  const lineage = await insertLineage(db, {
+    documentType: 'WAYBILL', driverId: driver, vehicleId, shiftId: shift.id,
+  });
+  const otherDriver = await insertUser(db);
+  const otherVehicle = await insertVehicle(db, owner, { model: 'Other Car' });
+
+  const attempts = [
+    () => db.query(`UPDATE driver_document_lineages SET id = $2 WHERE id = $1`, [lineage.id, randomUUID()]),
+    () => db.query(`UPDATE driver_document_lineages SET document_type = 'MEDICAL_CHECK' WHERE id = $1`, [lineage.id]),
+    () => db.query(`UPDATE driver_document_lineages SET driver_id = $2 WHERE id = $1`, [lineage.id, otherDriver]),
+    () => db.query(`UPDATE driver_document_lineages SET vehicle_id = $2 WHERE id = $1`, [lineage.id, otherVehicle]),
+    () => db.query(`UPDATE driver_document_lineages SET shift_id = $2 WHERE id = $1`, [lineage.id, randomUUID()]),
+    () => db.query(`UPDATE driver_document_lineages SET created_at = created_at + interval '1 second' WHERE id = $1`, [lineage.id]),
+  ];
+
+  for (const attempt of attempts) {
+    await assertRejectsWithoutAbortingTxn(
+      db, attempt, '23514', /driver_document_lineage .* identity is immutable/,
+    );
+  }
+
+  const after = await findLineageById(db, lineage.id);
+  assert.equal(after.id, lineage.id);
+  assert.equal(after.document_type, lineage.document_type);
+  assert.equal(after.driver_id, lineage.driver_id);
+  assert.equal(after.vehicle_id, lineage.vehicle_id);
+  assert.equal(after.shift_id, lineage.shift_id);
+  assert.deepEqual(after.created_at, lineage.created_at);
+});
+
+test('immutability: submission creation identity cannot be rewritten', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const driverA = await insertUser(db);
+  const driverB = await insertUser(db);
+  const lineageA = await insertLineage(db, { documentType: 'DRIVER_LICENSE', driverId: driverA });
+  const lineageB = await insertLineage(db, { documentType: 'DRIVER_LICENSE', driverId: driverB });
+  const issuedAt = new Date(Date.now() - HOUR);
+  const doc = await insertSubmission(db, {
+    lineageId: lineageA.id, status: 'VALID', objectKey: 'license-a.png', issuedAt,
+  });
+
+  const attempts = [
+    () => db.query(`UPDATE driver_documents SET id = $2 WHERE id = $1`, [doc.id, randomUUID()]),
+    () => db.query(`UPDATE driver_documents SET lineage_id = $2 WHERE id = $1`, [doc.id, lineageB.id]),
+    () => db.query(`UPDATE driver_documents SET object_key = 'license-b.png' WHERE id = $1`, [doc.id]),
+    () => db.query(`UPDATE driver_documents SET issued_at = issued_at + interval '1 day' WHERE id = $1`, [doc.id]),
+    () => db.query(`UPDATE driver_documents SET created_at = created_at + interval '1 second' WHERE id = $1`, [doc.id]),
+  ];
+
+  for (const attempt of attempts) {
+    await assertRejectsWithoutAbortingTxn(
+      db, attempt, '23514', /driver_document .* creation identity is immutable/,
+    );
+  }
+
+  const after = await findSubmissionById(db, doc.id);
+  assert.equal(after.id, doc.id);
+  assert.equal(after.lineage_id, doc.lineage_id);
+  assert.equal(after.object_key, doc.object_key);
+  assert.deepEqual(after.issued_at, doc.issued_at);
+  assert.deepEqual(after.created_at, doc.created_at);
+});
+
+test('immutability: lifecycle fields remain mutable through the guard', { skip: SKIP }, async (t) => {
+  const db = await beginTxn(t);
+  const driver = await insertUser(db);
+  const lineage = await insertLineage(db, { documentType: 'DRIVER_LICENSE', driverId: driver });
+  const issuedAt = new Date(Date.now() - HOUR);
+  const doc = await insertSubmission(db, {
+    lineageId: lineage.id, status: 'VALID', objectKey: 'license.png', issuedAt,
+  });
+  const validFrom = new Date(Date.now() - HOUR);
+  const validUntil = new Date(Date.now() + 100 * HOUR);
+  const verifiedAt = new Date();
+
+  const { rows: [updated] } = await db.query(
+    `UPDATE driver_documents
+        SET status = 'EXPIRING',
+            valid_from = $2,
+            valid_until = $3,
+            verified_at = $4,
+            verification_source = 'MANUAL_OPS',
+            verification_reason = 'still valid, expiring soon'
+      WHERE id = $1
+      RETURNING *`,
+    [doc.id, validFrom, validUntil, verifiedAt],
+  );
+
+  assert.equal(updated.id, doc.id);
+  assert.equal(updated.lineage_id, doc.lineage_id);
+  assert.equal(updated.object_key, doc.object_key);
+  assert.deepEqual(updated.issued_at, doc.issued_at);
+  assert.deepEqual(updated.created_at, doc.created_at);
+  assert.equal(updated.status, 'EXPIRING');
+  assert.equal(updated.verification_source, 'MANUAL_OPS');
+  assert.equal(updated.verification_reason, 'still valid, expiring soon');
+  assert.ok(updated.updated_at);
+});
+
+// ── 9. history RESTRICT: no cascade can erase compliance history ──────────────────────────
 test('history RESTRICT: deleting a lineage referenced by a driver_documents row is rejected', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
   const driver = await insertUser(db);
@@ -450,7 +589,7 @@ test('history RESTRICT: deleting a document referenced as a supersedes_id target
   await assertRejectsWithPgCode(db.query(`DELETE FROM driver_documents WHERE id = $1`, [original.id]), '23503');
 });
 
-// ── 9. THE critical adversarial proof: closing a shift never touches compliance history ────
+// ── 10. THE critical adversarial proof: closing a shift never touches compliance history ───
 test('closing a shift does not delete or orphan any document_lineages/documents row', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
   const { driver, vehicleId, shift } = await seedOpenShift(db);
@@ -492,7 +631,7 @@ test('closing a shift does not delete or orphan any document_lineages/documents 
   assert.equal(medDoc.lineage_id, medLineage.id);
 });
 
-// ── 10. repository primitives round-trip ────────────────────────────────────────────────────
+// ── 11. repository primitives round-trip ───────────────────────────────────────────────────
 test('driver_document_compliance.js primitives: lineage find/lock/list round-trip', { skip: SKIP }, async (t) => {
   const db = await beginTxn(t);
   const driver = await insertUser(db);
@@ -550,18 +689,30 @@ test('driver_document_compliance.js primitives: submission find/lock/list round-
   // Move the first attempt out of the open set so a second attempt is accepted.
   await db.query(`UPDATE driver_documents SET status = 'REJECTED' WHERE id = $1`, [first.id]);
   const second = await insertSubmission(db, { lineageId: lineage.id, status: 'UPLOADED' });
-  // now() is transaction-scoped (stable for the whole ambient BEGIN this test runs in), so
-  // `first` and `second` can share an identical created_at — push `first`'s created_at
-  // genuinely earlier so "latest by (created_at, id)" is exercised deterministically by real
-  // chronological order, not tie-broken by an effectively random UUID comparison.
-  await db.query(`UPDATE driver_documents SET created_at = created_at - interval '1 hour' WHERE id = $1`, [first.id]);
 
   assert.equal((await findOpenSubmissionForLineage(db, lineage.id)).id, second.id, 'only the newer attempt is open');
-  assert.equal((await findLatestSubmissionForLineage(db, lineage.id)).id, second.id, 'latest by (created_at, id), not by status');
+  const { rows: [expectedLatest] } = await db.query(
+    `SELECT id FROM driver_documents WHERE lineage_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [lineage.id],
+  );
+  assert.equal(
+    (await findLatestSubmissionForLineage(db, lineage.id)).id,
+    expectedLatest.id,
+    'latest follows deterministic (created_at, id) ordering without rewriting immutable created_at',
+  );
 
   const all = await listSubmissionsForLineage(db, lineage.id);
+  const { rows: expectedOrder } = await db.query(
+    `SELECT id FROM driver_documents WHERE lineage_id = $1 ORDER BY created_at ASC, id ASC`,
+    [lineage.id],
+  );
   assert.equal(all.length, 2);
-  assert.deepEqual(all.map((r) => r.id), [first.id, second.id], 'full history, oldest first, rejected attempt included');
+  assert.deepEqual(new Set(all.map((r) => r.id)), new Set([first.id, second.id]));
+  assert.deepEqual(
+    all.map((r) => r.id),
+    expectedOrder.map((r) => r.id),
+    'full history uses deterministic oldest-first ordering, rejected attempt included',
+  );
 });
 
 test('driver_document_compliance.js primitives: insertSubmission carries every lifecycle field through', { skip: SKIP }, async (t) => {
