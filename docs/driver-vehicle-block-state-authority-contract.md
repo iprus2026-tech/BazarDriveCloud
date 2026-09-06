@@ -1,27 +1,26 @@
 # BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01A
 
-Status: contract-first / docs-only, audit + draft
+Status: contract-first / docs-only
 
-Issue: none yet — this slice is intentionally pre-Issue (see "Process boundary" below)
+Issue: #973
 
 Architecture: Safety & Compliance / Driver Availability / Backend authority / DB contract —
 prerequisite for: Assignment usability (operational half) → Driver Shift Authority → Live
 Shift API → Presence → Dispatcher
 
-## Process boundary
+## Why this slice exists
 
-This document is the **audit + contract draft** for `BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01A`.
-It is produced entirely inside a local, detached worktree pinned to
-`main@10731609a05bfe099fd1ce92e8eb3b161e1209c2` (re-confirmed identical to `origin/main` —
-no drift). No commit, no push, no branch, no Issue, no PR, no GitHub metadata write, no
-document-registry edit happens as part of producing this draft. The file is written
-**untracked** into `docs/`.
-
-A tracking Issue, branch, and Draft PR are created only in a **separate, later gate**, after
-this draft passes its own independent contract-review round — mirroring exactly how
+This contract was prepared audit-first from exact
+`main@10731609a05bfe099fd1ce92e8eb3b161e1209c2`. An untracked working draft was produced
+first and passed an independent architectural review (`REVIEW_CLEAN — P0=0, P1=0, P2=0`,
+with three P3 hardenings applied before commit); a subsequent freeze gate then created
+tracking **Issue #973**, the branch `docs/bd-driver-vehicle-block-state-authority-01a`, the
+tracked commit of this file, and **Draft PR #974**. Those Git/GitHub actions are **process
+provenance only** — they record how the document was produced and do not change any frozen
+architectural decision in it. This mirrors how
 `BD-DRIVER-VEHICLE-ASSIGNMENT-AUTHORITY-01A` (Issue #959 / PR #960) and
-`BD-DRIVER-SHIFT-AUTHORITY-01A` (Issue #966 / PR #967) were hardened before their Issues
-existed. The freeze/registration gate is separate, later, and not authorized here.
+`BD-DRIVER-SHIFT-AUTHORITY-01A` (Issue #966 / PR #967) were each hardened as an untracked
+draft before their own Issue existed.
 
 This pass is an **independent redo** of an earlier untracked 01A draft
 (`.../BazarDriveCloud-block-state-01a-audit/docs/driver-vehicle-block-state-authority-contract.md`,
@@ -29,8 +28,6 @@ SHA-256 `11a2e4b8…c09c064`) that an independent review returned **REVIEW_BLOCK
 decision below is re-derived from the audited sources; the prior review's **P2-1** and four
 **P3** findings are each resolved in the new text (see "Resolution of the prior review" at
 the end).
-
-## Why this slice exists
 
 `docs/driver-vehicle-assignment-authority-contract.md` (frozen) defines the *operational
 half* of assignment usability as:
@@ -238,24 +235,25 @@ in the database or anywhere else in the repository.
 No existing doc or code requires editing to resolve a direct contradiction — every touch
 point above is either already forward-compatible (the Assignment / Shift contracts
 anticipate exactly this entity) or explicitly client-only / legacy and out of scope.
-**No file other than this new one is created or modified by this gate.**
+**No repository file other than this new contract document was created or modified in the
+01A audit or its freeze gate.**
 
 ### `docs-site` registry validation (CLAUDE.md §B)
 
-`cd docs-site && npm run validate:registry` on `main@10731609a` (ran
-`node scripts/validate-document-registry.mjs` directly — `docs-site/node_modules` is not
-installed in this worktree; the validator is a dependency-free Node script):
+`cd docs-site && npm run validate:registry` was run against `main@10731609a` and again at
+the freeze gate (`node scripts/validate-document-registry.mjs` directly — `docs-site/node_modules`
+is not installed in this worktree; the validator is a dependency-free Node script):
 
-- **Registry structural validation: `✓ Registry OK`, exit 0.**
-- **Registered legacy documents: 8.**
-- **`UNACCOUNTED_DOCUMENT`: 52** (warn-only — does not fail the build). The list already
-  includes all three sibling authority contracts —
-  `docs/driver-vehicle-assignment-authority-contract.md`,
-  `docs/driver-shift-authority-contract.md`, `docs/driver-document-compliance-contract.md` —
-  none registered at draft time; each is registered by its own freeze slice.
-- Adding `docs/driver-vehicle-block-state-authority-contract.md` makes it
-  **53 `UNACCOUNTED_DOCUMENT`** — expected and consistent with the sibling pattern.
-  **The registry is not edited by this gate**; registration is the freeze slice's job.
+- **Registry structural validation: `✓ Registry OK`, exit 0** — warn-only, non-blocking.
+- **Registered legacy documents: 8** (unchanged).
+- **`UNACCOUNTED_DOCUMENT` stayed warn-only and non-blocking.** Adding this standalone
+  `docs/**` contract raises that diagnostic count by exactly one; the absolute number is not
+  pinned here (it also moves with unrelated local build artifacts). Like the sibling
+  authority contracts `docs/driver-vehicle-assignment-authority-contract.md`,
+  `docs/driver-shift-authority-contract.md`, and
+  `docs/driver-document-compliance-contract.md`, this contract is **not** in
+  `docs-site/governance/document-registry.json`, and none of them was added to it.
+- **The document registry was not changed in 01A.**
 
 ## Core separation (frozen — extends the chain, does not restate it)
 
@@ -1023,7 +1021,7 @@ This slice does not add:
   a future ingester
 - identity trust-block / ban (BD-DOCS-037 §4) — a separate, per-user concept
 - any modification of `BD-DRIVER-SHIFT-AUTHORITY-01C-B` (HOLD, `6dba8ff`) or `01C-C`
-- any Project metadata change, Issue, branch, commit, push, PR, or document-registry edit
+- any additional Project metadata change or document-registry edit
 - any edit to `docs/driver-vehicle-assignment-authority-contract.md`,
   `docs/driver-shift-authority-contract.md`, `docs/driver-document-compliance-contract.md`,
   or any `docs-site` ADR / the document registry
