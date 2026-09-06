@@ -180,7 +180,7 @@ quote marked "frozen" is carried forward verbatim, not reinvented.
 - **`docs-site/docs/decisions/presence-heartbeat.md`** (`BD-DOCS-033`, `status: draft`) —
   keys presence to "the active vehicle (the garage vehicle in use)"; a known stale-wording
   docs-sync item already flagged by the Assignment and Shift contracts. Untouched here.
-- **`docs-site/docs/decisions/dispatch-matching.md`** (`BD-DOCS-035`, `status: draft`) —
+- **`docs-site/docs/decisions/dispatch-matching.md`** (`BD-DOCS-034`, `status: draft`) —
   candidate-set + final-assignment gates; a future consumer of this verdict. Untouched here.
 
 ### Confirmed: the production-default resolver is fail-closed `UNKNOWN`, and there is no physical block-state source
@@ -229,7 +229,7 @@ in the database or anywhere else in the repository.
 | Identity trust-block / ban (per-**user**) | none (proposed BD-DOCS-037 §4, `status: draft`, not built), keyed to `users(id)` | **absent** | a **separate** identity-keyed concept — **not** this contract | adjacency only — a *driver/user* block ≠ a *vehicle* operational block; one safety event may trigger both, via different entities / write paths |
 | Ride occupancy (busy / free) | `rides.status` (`RIDE_STATUS`, non-terminal) | Server (existing ride-state chokepoint) | unchanged | none — never a `vehicle_operational_block` field |
 | Presence `ONLINE` / `OFFLINE` | proposed (BD-DOCS-033, `status: draft`, not built) | absent | future Presence slice; **consumes** this verdict, does not own it | none — Presence ADR predates the authority chain; its "active vehicle" wording is a known docs-sync item, untouched here |
-| Matching / dispatch gates | proposed (BD-DOCS-035, `status: draft`, not built) | absent | future consumer of `vehicleBlockState(t)` at the two frozen re-check points | none |
+| Matching / dispatch gates | proposed (BD-DOCS-034, `status: draft`, not built) | absent | future consumer of `vehicleBlockState(t)` at the two frozen re-check points | none |
 | `vehicleBlockState(t)` reachability model | injected resolver, default `'UNKNOWN'` | fail-closed by default | **co-located PostgreSQL read on the caller's txn client** ⇒ `UNKNOWN` becomes a genuine (rare) DB-error condition, not a routine dependency-down state | resolves the "why is everything `UNKNOWN`" live-blocking gap |
 
 No existing doc or code requires editing to resolve a direct contradiction — every touch
@@ -628,7 +628,7 @@ a raw table read hand-rolled per call site.
 | `setDriverSelection` (`select` / `switch`) | merged, `services/driver-vehicle-assignment-authority/index.js` | same seam, same lock; `clearDriverSelection` has no usability check and is unaffected |
 | `reconcileAssignmentUnusableShift` | merged, `services/driver-shift-authority/index.js` | already re-derives usability under the driver→assignment→vehicle locks and acts only on a **confirmed `UNUSABLE`**; a `BLOCKED` pinned vehicle is exactly such a confirmed `UNUSABLE`. **New trigger input for the `01C-C` discovery scan (P3-3):** in addition to "`OPEN driver_shift` whose pinned assignment has since gone `ENDED`/`REVOKED`/elapsed/`archived`", the scan gains "**`OPEN driver_shift` whose pinned `vehicle_id` has an effective `ACTIVE` `vehicle_operational_block` row**". The reconcile primitive itself is unchanged — it still re-derives the fact under lock; only the *what to scan for* set grows. |
 | Live Shift API `POST /api/v1/driver-shift/open` | **HOLD**, `feat/bd-driver-shift-authority-01c-b @ 6dba8ff` (not merged, not touched by this slice) | threads `resolveVehicleBlockState` through `buildApp()`; production passes none ⇒ `defaultResolveVehicleBlockState` ⇒ every `POST /open` currently fails closed. `01B`'s real resolver is what unblocks its happy path. This contract does **not** modify that held branch. |
-| Matching candidate inclusion + dispatch final-assignment re-check | future (BD-DOCS-035, not built) | the frozen "two re-check points" on the `OPEN` shift's pinned assignment; a `false` (`UNUSABLE` **or `UNKNOWN`**) excludes the driver |
+| Matching candidate inclusion + dispatch final-assignment re-check | future (BD-DOCS-034, not built) | the frozen "two re-check points" on the `OPEN` shift's pinned assignment; a `false` (`UNUSABLE` **or `UNKNOWN`**) excludes the driver |
 
 **The resolver contract, frozen (by `decideAssignmentUsability` in code):**
 
@@ -982,7 +982,7 @@ most the `block_reason` category (not `applied_reason_note`).
 ## Audit events (indicative, future)
 
 Names indicative; the sink/outbox is the Monitoring & Audit concern
-(`BD-DRIVER-DOCUMENT-COMPLIANCE-01G` family / `BD-DOCS-039`). No emission or outbox wiring is
+(`BD-DRIVER-DOCUMENT-COMPLIANCE-01G` family / `BD-DOCS-038`). No emission or outbox wiring is
 part of 01A.
 
 - `VEHICLE_OPERATIONAL_BLOCK_APPLIED` — records `vehicle_id`, `block_reason`, `applied_by_*`,
@@ -1049,7 +1049,7 @@ this contract does not fix").
    discovery-scan trigger input named in "Read authority / consumers" (P3-3). Must wait for
    this slice's `01B`.
 5. (Later, separate) identity trust-block / ban per `BD-DOCS-037` §4; matching/dispatch
-   consumption of `vehicleBlockState(t)` per `BD-DOCS-035`; a caching/materialization tier
+   consumption of `vehicleBlockState(t)` per `BD-DOCS-034`; a caching/materialization tier
    for the block read; scheduled/future-effective blocks; a finer block-independence key —
    each its own contract amendment or slice.
 
