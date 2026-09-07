@@ -58,6 +58,11 @@ async function dbPlugin(app, opts) {
     // 0007 (BD-DRIVER-DOCUMENT-COMPLIANCE-01B rebuild) extends this identically once more:
     // driver_document_lineages/driver_documents have no live route yet either, but a database
     // with 0001-0006 and not 0007 must already report schema-incomplete.
+    //
+    // 0009 (BD-MERCHANT-IDENTITY-CONTACT-AUTHORITY-01B) extends schema completeness to the
+    // Merchant Identity/Contact dark authority. 0008 remains reserved by the frozen vehicle
+    // block-state contract and is intentionally untouched/absent in this slice; numbering gaps
+    // do not weaken readiness because the actual load-bearing 0009 objects are checked directly.
     async ready() {
       const { rows } = await pool.query(
         `SELECT to_regclass('public.auth_session') IS NOT NULL
@@ -437,6 +442,136 @@ async function dbPlugin(app, opts) {
                       AND t.tgname = 'trg_driver_documents_updated_at'
                       AND NOT t.tgisinternal
                  )
+            -- 0009 (BD-MERCHANT-IDENTITY-CONTACT-AUTHORITY-01B) — 0008 is intentionally
+            -- reserved by the frozen vehicle block-state contract and may not exist yet.
+            -- Merchant authority is still a readiness dependency once 0009 is present: the
+            -- dark seam must never be wired later against a same-named-but-wrong-shape schema.
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'merchants'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN ('id','display_name','status','created_at','updated_at')
+                 ) = 5
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchants_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchants_display_name_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchants_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM information_schema.columns ic WHERE ic.table_schema='public' AND ic.table_name='merchants' AND ic.column_name='status' AND ic.column_default LIKE '%SUSPENDED%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchants_guard_lifecycle' AND NOT t.tgisinternal AND pg_get_triggerdef(t.oid) LIKE '%BEFORE%' AND pg_get_triggerdef(t.oid) LIKE '%INSERT%' AND pg_get_triggerdef(t.oid) LIKE '%UPDATE%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchants_updated_at' AND NOT t.tgisinternal)
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'merchant_memberships'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id','merchant_id','user_id','membership_role','status',
+                        'granted_at','revoked_at','created_at','updated_at'
+                      )
+                 ) = 9
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_user_id_fkey' AND pc.contype='f' AND pc.confrelid='public.users'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_role_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_lifecycle_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='merchant_memberships_one_active_per_user_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='merchant_id' AND pg_get_indexdef(ci.oid,2,true)='user_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%status%ACTIVE%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_memberships_guard_immutability' AND NOT t.tgisinternal AND pg_get_triggerdef(t.oid) LIKE '%BEFORE%' AND pg_get_triggerdef(t.oid) LIKE '%DELETE%' AND pg_get_triggerdef(t.oid) LIKE '%UPDATE%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_memberships_updated_at' AND NOT t.tgisinternal)
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'merchant_locations'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id','merchant_id','label','address_text','lat','lng','pickup_instructions',
+                        'is_default_pickup','status','created_at','updated_at'
+                      )
+                 ) = 11
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_label_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_address_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_pickup_instructions_length_check' AND pc.contype='c' AND pg_get_constraintdef(pc.oid) LIKE '%length(pickup_instructions) <= 512%')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_coordinates_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='merchant_locations_one_active_default_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='merchant_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%status%ACTIVE%' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%is_default_pickup%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_locations_guard_immutability' AND NOT t.tgisinternal)
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_locations_updated_at' AND NOT t.tgisinternal)
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'external_contact_identities'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id','channel','subject_namespace','canonical_subject_key','phone_e164',
+                        'display_name','status','channel_proof','linked_user_id','linked_at','revoked_at',
+                        'created_at','updated_at'
+                      )
+                 ) = 13
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_linked_user_id_fkey' AND pc.contype='f' AND pc.confrelid='public.users'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_canonical_uq' AND pc.contype='u' AND pg_get_constraintdef(pc.oid)='UNIQUE (channel, subject_namespace, canonical_subject_key)')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_channel_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_namespace_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_subject_key_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_phone_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_channel_proof_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_link_shape_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_lifecycle_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_external_contact_identities_guard_immutability' AND NOT t.tgisinternal)
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_external_contact_identities_updated_at' AND NOT t.tgisinternal)
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relname = 'merchant_contact_bindings'
+                 AND c.relkind = 'r'
+                 AND (
+                   SELECT count(*) FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN (
+                        'id','merchant_id','external_contact_identity_id','relationship','status',
+                        'bound_at','revoked_at','provenance','created_at','updated_at'
+                      )
+                 ) = 10
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_pkey' AND pc.contype='p')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_external_contact_identity_id_fkey' AND pc.contype='f' AND pc.confrelid='public.external_contact_identities'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_relationship_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_status_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_provenance_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_lifecycle_check' AND pc.contype='c')
+                 AND EXISTS (SELECT 1 FROM pg_class ci JOIN pg_namespace ni ON ni.oid=ci.relnamespace JOIN pg_index pi ON pi.indexrelid=ci.oid WHERE ni.nspname='public' AND ci.relname='merchant_contact_bindings_one_active_uq' AND ci.relkind='i' AND pi.indisunique AND pg_get_indexdef(ci.oid,1,true)='merchant_id' AND pg_get_indexdef(ci.oid,2,true)='external_contact_identity_id' AND pg_get_expr(pi.indpred,pi.indrelid) LIKE '%status%ACTIVE%')
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_contact_bindings_guard_immutability' AND NOT t.tgisinternal)
+                 AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='trg_merchant_contact_bindings_updated_at' AND NOT t.tgisinternal)
+            )
             ) AS ok`,
       );
       return rows[0]?.ok === true;

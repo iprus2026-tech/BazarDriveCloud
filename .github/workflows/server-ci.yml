@@ -165,6 +165,86 @@ jobs:
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_documents' and t.tgname='trg_driver_documents_guard_immutability' and not t.tgisinternal" | grep -qx 1
           psql -v ON_ERROR_STOP=1 -tAc \
             "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='driver_documents' and t.tgname='trg_driver_documents_updated_at' and not t.tgisinternal" | grep -qx 1
+          # BD-MERCHANT-IDENTITY-CONTACT-AUTHORITY-01B (0009). 0008 is intentionally
+          # reserved by the frozen vehicle block-state contract and is untouched here.
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name in ('merchants','merchant_memberships','merchant_locations','external_contact_identities','merchant_contact_bindings')" | grep -qx 5
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select column_default from information_schema.columns where table_schema='public' and table_name='merchants' and column_name='status'" | grep -Fq SUSPENDED
+          for spec in \
+            merchants:merchants_display_name_check:c \
+            merchants:merchants_status_check:c \
+            merchant_memberships:merchant_memberships_merchant_id_fkey:f \
+            merchant_memberships:merchant_memberships_user_id_fkey:f \
+            merchant_memberships:merchant_memberships_role_check:c \
+            merchant_memberships:merchant_memberships_status_check:c \
+            merchant_memberships:merchant_memberships_lifecycle_check:c \
+            merchant_locations:merchant_locations_merchant_id_fkey:f \
+            merchant_locations:merchant_locations_label_check:c \
+            merchant_locations:merchant_locations_address_check:c \
+            merchant_locations:merchant_locations_pickup_instructions_length_check:c \
+            merchant_locations:merchant_locations_status_check:c \
+            merchant_locations:merchant_locations_coordinates_check:c \
+            external_contact_identities:external_contact_identities_linked_user_id_fkey:f \
+            external_contact_identities:external_contact_identities_canonical_uq:u \
+            external_contact_identities:external_contact_identities_channel_check:c \
+            external_contact_identities:external_contact_identities_namespace_check:c \
+            external_contact_identities:external_contact_identities_subject_key_check:c \
+            external_contact_identities:external_contact_identities_phone_check:c \
+            external_contact_identities:external_contact_identities_status_check:c \
+            external_contact_identities:external_contact_identities_channel_proof_check:c \
+            external_contact_identities:external_contact_identities_link_shape_check:c \
+            external_contact_identities:external_contact_identities_lifecycle_check:c \
+            merchant_contact_bindings:merchant_contact_bindings_merchant_id_fkey:f \
+            merchant_contact_bindings:merchant_contact_bindings_external_contact_identity_id_fkey:f \
+            merchant_contact_bindings:merchant_contact_bindings_relationship_check:c \
+            merchant_contact_bindings:merchant_contact_bindings_status_check:c \
+            merchant_contact_bindings:merchant_contact_bindings_provenance_check:c \
+            merchant_contact_bindings:merchant_contact_bindings_lifecycle_check:c; do
+            IFS=: read -r table constraint kind <<<"$spec"
+            psql -v ON_ERROR_STOP=1 -tAc \
+              "select pc.contype from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='$table' and pc.conname='$constraint'" | grep -qx "$kind"
+          done
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_class ci join pg_namespace ni on ni.oid=ci.relnamespace join pg_index pi on pi.indexrelid=ci.oid where ni.nspname='public' and ci.relname='merchant_memberships_one_active_per_user_uq' and ci.relkind='i' and pi.indisunique and pg_get_indexdef(ci.oid,1,true)='merchant_id' and pg_get_indexdef(ci.oid,2,true)='user_id' and pg_get_expr(pi.indpred,pi.indrelid) like '%status%ACTIVE%')" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_class ci join pg_namespace ni on ni.oid=ci.relnamespace join pg_index pi on pi.indexrelid=ci.oid where ni.nspname='public' and ci.relname='merchant_locations_one_active_default_uq' and ci.relkind='i' and pi.indisunique and pg_get_indexdef(ci.oid,1,true)='merchant_id' and pg_get_expr(pi.indpred,pi.indrelid) like '%status%ACTIVE%' and pg_get_expr(pi.indpred,pi.indrelid) like '%is_default_pickup%')" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select exists (select 1 from pg_class ci join pg_namespace ni on ni.oid=ci.relnamespace join pg_index pi on pi.indexrelid=ci.oid where ni.nspname='public' and ci.relname='merchant_contact_bindings_one_active_uq' and ci.relkind='i' and pi.indisunique and pg_get_indexdef(ci.oid,1,true)='merchant_id' and pg_get_indexdef(ci.oid,2,true)='external_contact_identity_id' and pg_get_expr(pi.indpred,pi.indrelid) like '%status%ACTIVE%')" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pg_get_constraintdef(pc.oid) from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='merchant_locations' and pc.conname='merchant_locations_pickup_instructions_length_check'" | grep -Fq 'length(pickup_instructions) <= 512'
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pg_get_constraintdef(pc.oid) from pg_constraint pc join pg_class c on c.oid=pc.conrelid where c.relname='external_contact_identities' and pc.conname='external_contact_identities_canonical_uq'" | grep -qx 'UNIQUE (channel, subject_namespace, canonical_subject_key)'
+          for spec in \
+            merchant_memberships:merchant_memberships_merchant_id_fkey:merchants \
+            merchant_memberships:merchant_memberships_user_id_fkey:users \
+            merchant_locations:merchant_locations_merchant_id_fkey:merchants \
+            external_contact_identities:external_contact_identities_linked_user_id_fkey:users \
+            merchant_contact_bindings:merchant_contact_bindings_merchant_id_fkey:merchants \
+            merchant_contact_bindings:merchant_contact_bindings_external_contact_identity_id_fkey:external_contact_identities; do
+            IFS=: read -r table constraint target <<<"$spec"
+            psql -v ON_ERROR_STOP=1 -tAc \
+              "select exists (select 1 from pg_constraint pc join pg_class c on c.oid=pc.conrelid join pg_class target on target.oid=pc.confrelid where c.relname='$table' and pc.conname='$constraint' and pc.contype='f' and pc.confdeltype='r' and target.relname='$target')" | grep -qx t
+          done
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pg_get_triggerdef(t.oid) from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relname='merchants' and t.tgname='trg_merchants_guard_lifecycle' and not t.tgisinternal" | grep -Eq 'BEFORE.*INSERT.*UPDATE|BEFORE.*UPDATE.*INSERT'
+          psql -v ON_ERROR_STOP=1 -tAc \
+            "select pg_get_triggerdef(t.oid) from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relname='merchant_memberships' and t.tgname='trg_merchant_memberships_guard_immutability' and not t.tgisinternal" | grep -Eq 'BEFORE (DELETE OR UPDATE|UPDATE OR DELETE)'
+          for spec in \
+            merchants:trg_merchants_guard_lifecycle \
+            merchants:trg_merchants_updated_at \
+            merchant_memberships:trg_merchant_memberships_guard_immutability \
+            merchant_memberships:trg_merchant_memberships_updated_at \
+            merchant_locations:trg_merchant_locations_guard_immutability \
+            merchant_locations:trg_merchant_locations_updated_at \
+            external_contact_identities:trg_external_contact_identities_guard_immutability \
+            external_contact_identities:trg_external_contact_identities_updated_at \
+            merchant_contact_bindings:trg_merchant_contact_bindings_guard_immutability \
+            merchant_contact_bindings:trg_merchant_contact_bindings_updated_at; do
+            IFS=: read -r table trigger <<<"$spec"
+            psql -v ON_ERROR_STOP=1 -tAc \
+              "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='$table' and t.tgname='$trigger' and not t.tgisinternal" | grep -qx 1
+          done
           echo "schema objects OK"
 
   app:
@@ -199,12 +279,12 @@ jobs:
       - run: npm ci
       # Supply-chain gate (ADR BD-DOCS-041 §Consequences: "npm audit in server-ci.yml").
       - run: npm audit --omit=dev --audit-level=high
-      # Prove readiness fails closed on the immediately preceding schema: readiness now also
-      # depends on 0007's document-compliance schema (BD-DRIVER-DOCUMENT-COMPLIANCE-01B
-      # rebuild), so a database with 0001..0006 but NOT 0007 must not enter service.
-      - name: Apply pre-document-compliance-schema migrations (0001-0006) and assert readiness is incomplete
+      # Prove readiness fails closed on the immediately preceding installed schema. 0008 is
+      # reserved by the frozen vehicle block-state contract but does not exist in this branch;
+      # therefore 0001..0007 are the complete physical pre-0009 schema today.
+      - name: Apply pre-merchant-authority migrations (0001-0007) and assert readiness is incomplete
         run: |
-          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql migrations/0006_*.sql; do
+          for f in migrations/0001_*.sql migrations/0002_*.sql migrations/0003_*.sql migrations/0004_*.sql migrations/0005_*.sql migrations/0006_*.sql migrations/0007_*.sql; do
             psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" -f "$f"
           done
           node --input-type=module <<'NODE'
