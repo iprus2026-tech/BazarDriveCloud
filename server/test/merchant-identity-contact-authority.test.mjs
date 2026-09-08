@@ -317,7 +317,7 @@ test('external canonical tuple is unique and linked_user_id cannot be overwritte
   await assertPgCode(
     db.query(`UPDATE external_contact_identities SET linked_user_id=$2, linked_at=now() WHERE id=$1`, [identity.id, userB]),
     '23514',
-    'linked_user_id',
+    'linked user requires explicit recovery to change',
   );
 });
 
@@ -557,11 +557,25 @@ async function proveSecondInsertWaitsThenUniqueFails(t, { firstSql, firstParams,
   await a.query(firstSql, firstParams);
 
   let settled = false;
-  const second = b.query(secondSql, secondParams).finally(() => { settled = true; });
+  // Capture the second INSERT's outcome into a promise that never rejects, with the
+  // rejection handler attached at creation time. Otherwise the expected 23505 can land in
+  // the window between `a` COMMIT and the assertion below and surface as an
+  // unhandledRejection, which Node's test runner counts as a failure.
+  const second = b.query(secondSql, secondParams).then(
+    () => { settled = true; return { ok: true, error: null }; },
+    (error) => { settled = true; return { ok: false, error }; },
+  );
   await delay(75);
   assert.equal(settled, false, 'second transaction should wait on the uniqueness conflict');
   await a.query('COMMIT');
-  await assertPgCode(second, '23505', constraint);
+
+  const outcome = await second;
+  assert.equal(outcome.ok, false, 'second insert must fail once the first transaction commits');
+  assert.equal(
+    outcome.error.code, '23505',
+    `expected PostgreSQL 23505, got ${outcome.error?.code}: ${outcome.error?.message}`,
+  );
+  assert.match(outcome.error.message, new RegExp(constraint));
   await b.query('ROLLBACK');
 }
 
