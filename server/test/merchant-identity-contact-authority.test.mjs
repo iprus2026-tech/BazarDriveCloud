@@ -695,12 +695,17 @@ test('concurrency: serialized default-location switches leave exactly one final 
     await clearActiveDefaultMerchantLocation(b, merchant.id);
     const selected = await setMerchantLocationDefault(b, { merchantId: merchant.id, locationId: locationA.id });
     return selected;
-  })().finally(() => { settled = true; });
+  })().then(
+    (value) => { settled = true; return { ok: true, value, error: null }; },
+    (error) => { settled = true; return { ok: false, value: null, error }; },
+  );
 
   await delay(75);
   assert.equal(settled, false, 'second default switch must wait on the merchant authority lock');
   await a.query('COMMIT');
-  assert.equal((await switchBack).id, locationA.id);
+  const outcome = await switchBack;
+  assert.equal(outcome.ok, true, `second default switch should succeed once the first commits: ${outcome.error?.stack || outcome.error}`);
+  assert.equal(outcome.value.id, locationA.id);
   await b.query('COMMIT');
 
   const defaults = (await setup.query(
@@ -737,11 +742,16 @@ test('concurrency: VERIFIED channel proof survives a concurrent user-link write'
     `UPDATE external_contact_identities SET linked_user_id=$2, linked_at=now()
       WHERE id=$1 AND status='ACTIVE' AND linked_user_id IS NULL RETURNING id`,
     [identityId, userId],
-  ).finally(() => { settled = true; });
+  ).then(
+    (value) => { settled = true; return { ok: true, value, error: null }; },
+    (error) => { settled = true; return { ok: false, value: null, error }; },
+  );
   await delay(75);
   assert.equal(settled, false, 'concurrent link must serialize on the same identity row');
   await a.query('COMMIT');
-  assert.equal((await link).rowCount, 1);
+  const outcome = await link;
+  assert.equal(outcome.ok, true, `concurrent link should succeed once the first commits: ${outcome.error?.stack || outcome.error}`);
+  assert.equal(outcome.value.rowCount, 1);
   await b.query('COMMIT');
   const row = (await setup.query(
     `SELECT channel_proof, linked_user_id FROM external_contact_identities WHERE id=$1`, [identityId],
@@ -775,11 +785,16 @@ test('concurrency: two different user-link attempts cannot overwrite the first p
                 WHERE id=$1 AND status='ACTIVE' AND linked_user_id IS NULL RETURNING linked_user_id`;
   assert.equal((await a.query(sql, [identityId, userA])).rowCount, 1);
   let settled = false;
-  const second = b.query(sql, [identityId, userB]).finally(() => { settled = true; });
+  const second = b.query(sql, [identityId, userB]).then(
+    (value) => { settled = true; return { ok: true, value, error: null }; },
+    (error) => { settled = true; return { ok: false, value: null, error }; },
+  );
   await delay(75);
   assert.equal(settled, false);
   await a.query('COMMIT');
-  assert.equal((await second).rowCount, 0);
+  const outcome = await second;
+  assert.equal(outcome.ok, true, `second competing link should complete without error: ${outcome.error?.stack || outcome.error}`);
+  assert.equal(outcome.value.rowCount, 0);
   await b.query('COMMIT');
   assert.equal((await setup.query(
     `SELECT linked_user_id FROM external_contact_identities WHERE id=$1`, [identityId],
@@ -823,11 +838,20 @@ test('concurrency: DB backstop serializes two ADMIN revocations and preserves on
   const second = b.query(
     `UPDATE merchant_memberships SET status='REVOKED', revoked_at=now()
       WHERE id=$1 AND status='ACTIVE' RETURNING id`, [membershipB],
-  ).finally(() => { settled = true; });
+  ).then(
+    (value) => { settled = true; return { ok: true, value, error: null }; },
+    (error) => { settled = true; return { ok: false, value: null, error }; },
+  );
   await delay(75);
   assert.equal(settled, false, 'second ADMIN revoke must wait on the merchant authority lock');
   await a.query('COMMIT');
-  await assertPgCode(second, '23514', 'last ACTIVE ADMIN');
+  const outcome = await second;
+  assert.equal(outcome.ok, false, 'second ADMIN revoke must fail once the first revocation commits');
+  assert.equal(
+    outcome.error.code, '23514',
+    `expected PostgreSQL 23514, got ${outcome.error?.code}: ${outcome.error?.message}`,
+  );
+  assert.match(outcome.error.message, /last ACTIVE ADMIN/);
   await b.query('ROLLBACK').catch(() => {});
 
   assert.equal((await setup.query(
