@@ -481,8 +481,8 @@ async function dbPlugin(app, opts) {
                       )
                  ) = 9
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_pkey' AND pc.contype='p')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_user_id_fkey' AND pc.contype='f' AND pc.confrelid='public.users'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.merchants') AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_user_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.users') AND pc.confdeltype='r')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_role_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_status_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_memberships_lifecycle_check' AND pc.contype='c')
@@ -506,7 +506,7 @@ async function dbPlugin(app, opts) {
                       )
                  ) = 11
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_pkey' AND pc.contype='p')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.merchants') AND pc.confdeltype='r')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_label_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_address_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_locations_pickup_instructions_length_check' AND pc.contype='c' AND pg_get_constraintdef(pc.oid) LIKE '%length(pickup_instructions) <= 512%')
@@ -533,7 +533,7 @@ async function dbPlugin(app, opts) {
                       )
                  ) = 13
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_pkey' AND pc.contype='p')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_linked_user_id_fkey' AND pc.contype='f' AND pc.confrelid='public.users'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_linked_user_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.users') AND pc.confdeltype='r')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_canonical_uq' AND pc.contype='u' AND pg_get_constraintdef(pc.oid)='UNIQUE (channel, subject_namespace, canonical_subject_key)')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_channel_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='external_contact_identities_namespace_check' AND pc.contype='c')
@@ -562,8 +562,8 @@ async function dbPlugin(app, opts) {
                       )
                  ) = 10
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_pkey' AND pc.contype='p')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid='public.merchants'::regclass AND pc.confdeltype='r')
-                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_external_contact_identity_id_fkey' AND pc.contype='f' AND pc.confrelid='public.external_contact_identities'::regclass AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_merchant_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.merchants') AND pc.confdeltype='r')
+                 AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_external_contact_identity_id_fkey' AND pc.contype='f' AND pc.confrelid=to_regclass('public.external_contact_identities') AND pc.confdeltype='r')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_relationship_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_status_check' AND pc.contype='c')
                  AND EXISTS (SELECT 1 FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.conname='merchant_contact_bindings_provenance_check' AND pc.contype='c')
