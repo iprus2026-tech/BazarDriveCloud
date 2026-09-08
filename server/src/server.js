@@ -22,6 +22,7 @@ import healthRoutes from './routes/health.js';
 import metricsRoutes from './routes/metrics.js';
 import { SERVICES } from './services/index.js';
 import chatService from './services/chat/index.js';
+import whatsappWebhookRoutes from './routes/webhooks/whatsapp.js';
 
 export async function buildApp(overrides = {}) {
   const config = overrides.config || loadConfig();
@@ -62,6 +63,10 @@ export async function buildApp(overrides = {}) {
   // Chat (#784 R07) — its own route group, NOT one of the 9 Mini-Yonder services. Intentionally
   // not 401-gated (the minimal cross-device proof; see services/chat/index.js).
   await app.register(chatService, { prefix: '/api/v1/chat' });
+
+  // WhatsApp Business Account webhook (BD-DOCS-051) — GET verification live; POST dark 501.
+  // Unauthenticated: Meta calls the verification endpoint with no BazarDrive session.
+  await app.register(whatsappWebhookRoutes, { prefix: '/api/v1/webhooks' });
 
   return app;
 }

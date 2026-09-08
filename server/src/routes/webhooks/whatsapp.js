@@ -1,0 +1,51 @@
+// /server/src/routes/webhooks/whatsapp.js — BD-DOCS-051 WhatsApp Business Account adapter seam.
+//
+// GET  /api/v1/webhooks/whatsapp — Meta webhook subscription verification (live).
+// POST /api/v1/webhooks/whatsapp — Inbound message event (dark, 501 until intake slice ships).
+//
+// The GET handler is intentionally unauthenticated: Meta calls it with no BazarDrive session.
+// The POST handler will require HMAC-SHA256 signature verification (WABA_APP_SECRET) before
+// being promoted to live; accepting unsigned payloads in production is not permitted.
+//
+// subject_namespace for WHATSAPP channel:
+//   "waba:{WABA_ID}:phone:{WABA_PHONE_NUMBER_ID}"
+// canonical_subject_key: sender's WA ID normalized to E.164 via auth/phone.js canonicalization.
+
+export default async function whatsappWebhookRoutes(app) {
+  // GET — Meta subscription verification challenge.
+  app.get('/whatsapp', async (req, reply) => {
+    const mode = req.query['hub.mode'];
+    const verifyToken = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode !== 'subscribe') {
+      return reply.code(400).send({
+        error: 'invalid hub.mode; expected "subscribe"',
+        code: 'INVALID_WEBHOOK_MODE',
+        retryable: false,
+      });
+    }
+
+    const configuredToken = app.config.waba?.webhookVerifyToken || '';
+    if (!configuredToken || verifyToken !== configuredToken) {
+      return reply.code(403).send({
+        error: 'webhook verification failed',
+        code: 'WEBHOOK_VERIFICATION_FAILED',
+        retryable: false,
+      });
+    }
+
+    return reply.code(200).type('text/plain').send(challenge ?? '');
+  });
+
+  // POST — inbound message event (dark until BD-WHATSAPP-INTAKE-01B).
+  app.post('/whatsapp', async (req, reply) => {
+    return reply.code(501).send({
+      error: 'WhatsApp message processing is not implemented yet',
+      code: 'NOT_IMPLEMENTED',
+      retryable: false,
+      service: 'whatsapp-webhook',
+      phase: 'BD-DOCS-051 — intake dark; awaiting BD-WHATSAPP-INTAKE-01B',
+    });
+  });
+}
