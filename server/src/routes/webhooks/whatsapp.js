@@ -13,7 +13,9 @@
 
 export default async function whatsappWebhookRoutes(app) {
   // GET — Meta subscription verification challenge.
-  app.get('/whatsapp', async (req, reply) => {
+  // logLevel:'warn' suppresses Fastify's automatic info-level request log, which would
+  // otherwise emit hub.verify_token as part of req.url in production stdout.
+  app.get('/whatsapp', { logLevel: 'warn' }, async (req, reply) => {
     const mode = req.query['hub.mode'];
     const verifyToken = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
