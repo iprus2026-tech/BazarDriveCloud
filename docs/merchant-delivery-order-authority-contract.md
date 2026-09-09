@@ -579,33 +579,44 @@ The single authoritative record for one approved delivery.
 | `approved_by_user_id` | `NOT NULL` FK to `users(id)`; the actor the write-txn gate resolved, bound to the exact approval membership tuple below. |
 | `approved_membership_id` | `NOT NULL`; composite FK `(approved_membership_id, merchant_id, approved_by_user_id) -> merchant_memberships (id, merchant_id, user_id)` (or equivalent guard), identifying the actual historical membership row that authorized approval. |
 | `approval_channel` | `SESSION | WHATSAPP | SMS`; how the actor was gated. |
+| `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id` | **Both `NULL` for `approval_channel = SESSION`; both `NOT NULL` for `WHATSAPP` / `SMS`** — the exact `external_contact_identities` and `merchant_contact_bindings` rows that passed the channel gate. Composite guards: binding `(approved_merchant_contact_binding_id, merchant_id, approved_external_contact_identity_id) -> merchant_contact_bindings (id, merchant_id, external_contact_identity_id)`; identity constrained so `external_contact_identities.linked_user_id == approved_by_user_id` and `external_contact_identities.channel` matches `approval_channel`. A merchant/user pair or an opaque provenance string alone does not name the identity/binding that authorized a channel approval. |
 | `approval_provenance` | Bounded server-owned provenance (procedure + adapter ref). |
 | `quote_id` | `NOT NULL`; composite FK `(quote_id, draft_id) -> quote (id, draft_id)` (or equivalent guard) to the approved quote row owned by Quote Authority. `quote` here names the future boundary entity, not an existing passenger table. |
 | `quote_amount` / `quote_currency` | Snapshot of the approved quote. |
 | `quote_state` | Snapshot of the quote's approvable state as of approval. |
 | `quote_computed_at` / `quote_expires_at` | Snapshot of the approved quote's validity window. |
-| `pickup_location_id` | FK to `merchant_locations(id)` resolved at approval (ACTIVE); its `merchant_id` **equals this order's `merchant_id`** (invariant 4), enforced by a composite FK / trigger, not a plain cross-table `CHECK`. |
-| `pickup_snapshot` | Canonical content of the resolved pickup at approval — location id, label, address text, **non-null resolved coordinates**, bounded pickup instructions, default flag — not just the id. A null-coordinate pickup never reaches this snapshot (invariant 4). |
+| `pickup_location_id` | **`NOT NULL`** FK to `merchant_locations(id)` resolved at approval (ACTIVE at that time); its `merchant_id` **equals this order's `merchant_id`** (invariant 4), enforced by the composite FK `(pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)` / trigger, not a plain cross-table `CHECK`. A `NULL` here would make PostgreSQL skip that composite FK entirely, so it is disallowed. |
+| `pickup_snapshot` | **`NOT NULL`** canonical content of the resolved pickup at approval — its own `location id` (`== pickup_location_id`), label, address text, **non-null resolved coordinates**, bounded pickup instructions, default flag — not just the id, and never absent. A null-coordinate pickup never reaches this snapshot (invariant 4). |
 | `delivery_input_fingerprint` | Canonical fingerprint over the confirmed delivery inputs the approved quote priced — recipient snapshot, resolved `destination_point`, the cargo lines `{ category, quantity, unit }`, and `pickup_snapshot`; equals the quote's stored fingerprint. |
 | `cargo` | Immutable snapshot of the approved cargo **lines** `{ category_code, quantity, unit }` (every category `DELIVERABLE` at approval). |
 | `cargo_policy_version` | The `resolveCargoDeliveryPolicy` version that cleared this cargo category set. |
 | `status` | `PENDING_DISPATCH | CANCELED | <downstream states>`. |
 | `canceled_at` / `cancel_reason` | Null unless canceled; server-stamped. |
 | `canceled_by_user_id` / `canceled_membership_id` | Null until this slice's direct merchant cancellation; server-derived actor and exact membership row for that action, not copied from the original approver. When present, composite FK `(canceled_membership_id, merchant_id, canceled_by_user_id) -> merchant_memberships (id, merchant_id, user_id)` (or equivalent guard). |
+| `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id` | Null unless the cancellation was gated through a channel (`cancellation_channel in { WHATSAPP, SMS }`), in which case **both `NOT NULL`** — the exact identity/binding rows that passed the cancelling actor's channel gate, composite-guarded the same way as the approval pair (binding ↔ `merchant_id` + identity; identity `linked_user_id == canceled_by_user_id`, `channel == cancellation_channel`). Both null for a `SESSION` cancellation. |
 | `cancellation_channel` / `cancellation_provenance` | Null until direct merchant cancellation; `SESSION | WHATSAPP | SMS` plus bounded server-owned procedure/adapter reference. Recorded atomically with cancellation and immutable thereafter. |
 | `created_at` / `updated_at` | Server timestamps. |
 
 Recipient and destination are **not** columns on `delivery_order` — they are a
 1:1 immutable child row, `delivery_order_recipient_snapshot` (below).
 
-The quote and approval-membership composite links have unconditional referenced
-unique keys: future `quote (id, draft_id)` and additive
-`merchant_memberships (id, merchant_id, user_id)`. All approval tuple fields are
-`NOT NULL`; independent FKs or a merchant/user pair alone do not bind the named
-membership row. The current 01B partial ACTIVE merchant/user index is not a
-replacement for that historical triple. Quote `draft_id` and membership
-merchant/user ownership are immutable, and referenced parents use `RESTRICT`.
-These are future schema dependencies; this docs slice does not modify `0009`.
+The quote, approval-membership, pickup and channel-authority composite links have
+unconditional referenced unique keys: future `quote (id, draft_id)`; additive
+`merchant_memberships (id, merchant_id, user_id)`; the invariant-4 pickup key
+`merchant_locations (id, merchant_id)`; and, for channel approvals/cancellations,
+additive `merchant_contact_bindings (id, merchant_id, external_contact_identity_id)`
+plus an `external_contact_identities` guard that ties the stored identity to the
+approving/cancelling `user_id` and to `approval_channel` / `cancellation_channel`.
+`draft_id`, `merchant_id`, `approved_by_user_id`, `approved_membership_id`,
+`quote_id`, `pickup_location_id` and `pickup_snapshot` are all `NOT NULL`; the
+channel identity/binding pair is `NOT NULL` exactly when its channel is
+`WHATSAPP` / `SMS` and `NULL` for `SESSION`. Independent FKs, a merchant/user pair
+or an opaque provenance string alone do not bind the named membership, pickup or
+identity/binding rows. The current 01B partial ACTIVE indexes are not a
+replacement for these historical tuples. Quote `draft_id`, membership
+merchant/user ownership, pickup `merchant_id` and binding merchant/identity
+ownership are immutable, and referenced parents use `RESTRICT`. These are future
+schema dependencies; this docs slice does not modify `0009`.
 
 Immutability:
 
@@ -621,14 +632,18 @@ Immutability:
   untouched. The child guard rejects every `UPDATE` and every `DELETE`; the row
   lives and dies only with its order (which is never hard-deleted);
 - only `delivery_order` lifecycle fields (`status`, `canceled_at`,
-  `cancel_reason`, the cancellation provenance fields, downstream timestamps)
+  `cancel_reason`, the cancellation provenance fields — actor, membership,
+  channel, the channel identity/binding pair, procedure — downstream timestamps)
   may advance, and only forward. This slice's `PENDING_DISPATCH -> CANCELED`
-  transition must fill all cancellation actor/membership/channel/procedure
-  fields atomically with the timestamp/reason. They are all null beforehand;
-  partial provenance, later changes, erasure, and re-stamping are rejected by
-  the order guard. Rejected/repeated cancellation requests write nothing.
-  Downstream compensation owns its own actor semantics and must not fabricate a
-  merchant-cancellation tuple for a driver/system action;
+  transition must fill the whole cancellation tuple atomically with the
+  timestamp/reason: `canceled_by_user_id`, `canceled_membership_id`,
+  `cancellation_channel`, `cancellation_provenance`, and — for a channel
+  cancellation — `canceled_external_contact_identity_id` /
+  `canceled_merchant_contact_binding_id` (both null for `SESSION`). They are all
+  null beforehand; partial provenance, later changes, erasure, and re-stamping
+  are rejected by the order guard. Rejected/repeated cancellation requests write
+  nothing. Downstream compensation owns its own actor semantics and must not
+  fabricate a merchant-cancellation tuple for a driver/system action;
 - an order is never hard-deleted; provenance is preserved.
 
 Downstream states (`SEARCHING_DRIVER`, `DRIVER_ASSIGNED`, `PICKED_UP`,
@@ -645,9 +660,9 @@ creates the order and immutable thereafter.
 | --- | --- |
 | `delivery_order_id` | PK **and** FK to `delivery_order(id)` enforce at most one child; the deferred existence invariant below additionally requires one child for every order at commit. |
 | `recipient_name` | Bounded string, frozen from the draft at approval. |
-| `recipient_contact` | Bounded normalized recipient phone (auth phone canonicalizer); the recipient is not a `users` row. |
-| `destination_text` | Bounded human destination as stated, frozen from the draft. |
-| `destination_point` | Canonical **resolved** destination — coordinates plus stable provider/place id and provenance — frozen from the draft's `destination_point`; it is part of the `delivery_input_fingerprint`, so downstream routing uses this authoritative point and never re-geocodes into a different one. |
+| `recipient_contact` | **`NOT NULL`**, bounded normalized recipient phone (auth phone canonicalizer), **DB-level shape/format-constrained** (canonical normalized form; not blank/placeholder); the recipient is not a `users` row. |
+| `destination_text` | **`NOT NULL`**, bounded human destination as stated, frozen from the draft; **DB-level length/shape-constrained** (not blank). |
+| `destination_point` | **`NOT NULL`** canonical **resolved** destination — coordinates plus stable provider/place id and provenance — frozen from the draft's `destination_point`, **DB-level shape-constrained** (coordinates present and in range, provenance present); it is part of the `delivery_input_fingerprint`, so downstream routing uses this authoritative point and never re-geocodes into a different one. |
 | `destination_access_note` | Nullable bounded entrance/floor/door note. |
 | `requested_window` | Nullable bounded requested delivery window. |
 | `created_at` | Server timestamp (= order creation time). |
@@ -658,13 +673,18 @@ place a narrow driver-facing projection reads recipient data from (that
 projection never reads merchant identity/contact tables). A recipient address
 book remains an explicit non-goal (01A invariant 3).
 
-**Exactly one at commit is a DB invariant.** A deferred constraint/guard checks
-that each order has one recipient snapshot when its transaction commits. It must
-allow the lawful `INSERT order -> INSERT snapshot` sequence in one transaction;
-an immediate parent-insert check would reject that sequence. Child PK/FK plus
-UPDATE/DELETE immutability alone cannot reject a parent created without a child.
-An order-only secondary write must fail at commit; an existing corrupt order
-with a missing child fails the read-side integrity check below, never recovery.
+**Exactly one well-formed child at commit is a DB invariant.** A deferred
+constraint/guard checks that each order has one recipient snapshot when its
+transaction commits. It must allow the lawful `INSERT order -> INSERT snapshot`
+sequence in one transaction; an immediate parent-insert check would reject that
+sequence. Child PK/FK plus UPDATE/DELETE immutability alone cannot reject a
+parent created without a child. Beyond existence, `recipient_contact`,
+`destination_text` and `destination_point` carry **DB-level `NOT NULL` and
+shape/format constraints** — a partial backfill cannot satisfy the invariant with
+a null or malformed child. An order-only secondary write must fail at commit; an
+existing corrupt order whose child is **missing or malformed** fails the
+read-side **Existing-order integrity** check below (`DELIVERY_ORDER_STATE_INCONSISTENT`,
+zero writes), never recovery.
 
 Immutability is enforced by this table's **own** `BEFORE UPDATE OR DELETE` guard
 trigger, not by the parent `delivery_order` trigger (which does not fire on
@@ -682,26 +702,56 @@ never applied to ORDER ABSENT. For the existing order, require all of:
 
 - its `draft_id` identifies the locked draft, `merchant_id == M`, and that draft
   is `APPROVED`;
-- exactly one `delivery_order_recipient_snapshot` exists for its `id`;
+- exactly one `delivery_order_recipient_snapshot` exists for its `id`, **and that
+  child is well-formed** — `recipient_contact`, `destination_text` and
+  `destination_point` are non-null and shape-valid (a null/malformed historical
+  child is corruption, not a deliverable order);
+- `pickup_location_id` and `pickup_snapshot` are **both non-null**; the composite
+  `(pickup_location_id, merchant_id)` resolves to a `merchant_locations` row whose
+  `merchant_id` is immutably `== order.merchant_id`; `pickup_snapshot` is
+  well-formed — its own `location id == pickup_location_id`, its stored
+  coordinates present and in range, its content shape valid;
 - its stored quote exists and has immutable `quote.draft_id == order.draft_id`;
 - its stored approval membership exists and has immutable
   `(id, merchant_id, user_id) == (approved_membership_id, order.merchant_id,
-  approved_by_user_id)`; none of these required references is null.
+  approved_by_user_id)`;
+- **channel authority tuple** — if `approval_channel in { WHATSAPP, SMS }`, then
+  `approved_external_contact_identity_id` and `approved_merchant_contact_binding_id`
+  are non-null, the binding's immutable `(id, merchant_id,
+  external_contact_identity_id)` matches `(approved_merchant_contact_binding_id,
+  order.merchant_id, approved_external_contact_identity_id)`, and the identity's
+  immutable `linked_user_id == approved_by_user_id` with `channel ==
+  approval_channel`; if `approval_channel = SESSION`, **both are null**. For the
+  cancellation pair: if the order was `CANCELED` through a channel action
+  (`cancellation_channel in { WHATSAPP, SMS }`), the same shape holds for
+  `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id`
+  against `canceled_by_user_id` and `cancellation_channel`; **if the cancellation
+  was `SESSION`, or the order has had no merchant cancellation through this slice
+  (`cancellation_channel` null / not `CANCELED` here), both `canceled_*` fields
+  are `NULL`** — a populated pair in either of those cases is corruption →
+  `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes;
+- none of these required references is null.
 
 Failure is `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes) **before**
 quote-match recovery or a cancellation state transition. The composite FKs,
-deferred snapshot-existence constraint and immutable ownership guards enforce
+deferred well-formed-snapshot constraint and immutable ownership guards enforce
 these relationships against ordinary secondary writes; this read-side check
 also detects pre-existing corruption without normalizing it into success.
 
 These are **historical identity/structure checks**, not present-day eligibility
-checks: the original approval membership may now be `REVOKED`, and the quote may
-now be expired/superseded/non-approvable. Do not re-check their current status,
-pickup, cargo policy or draft fingerprint on recovery. Do not take new late
-`FOR UPDATE` locks on the historical membership or quote: their owner tuples are
-immutable and deletion is restricted. Current-caller authority is separately
-locked/revalidated by the shared authority prefix. A valid canceled order still
-recovers with zero writes; an absent order still follows the absent branch.
+checks: the original approval membership may now be `REVOKED`, the identity or
+binding may now be `REVOKED`, the pickup location may now be non-`ACTIVE` / no
+longer the default / have a different current address or coordinates, and the
+quote may now be expired/superseded/non-approvable. Do **not** re-check their
+current status, do **not** re-resolve or re-lock the pickup location, do **not**
+compare the frozen `pickup_snapshot` against the location's present content, and
+do **not** re-check cargo policy or the draft fingerprint on recovery. Do not
+take new late `FOR UPDATE` locks on the historical membership, identity, binding,
+pickup or quote: their owner tuples are immutable and deletion is restricted.
+Current-caller authority is separately locked/revalidated by the shared authority
+prefix, and always passes it independently of any historical revocation. A valid
+canceled order still recovers with zero writes; an absent order still follows the
+absent branch.
 
 ## Order-creation authority
 
@@ -740,8 +790,10 @@ server transaction that, in order (lock order and tenant binding: see **invarian
    b. **ORDER PRESENT** (exactly one `delivery_order` for `draft_id`), evaluated
       in this exact order — integrity **before** the `quote_id` comparison so
       corruption never returns as a normal client response: (i) any
-      **Existing-order integrity** check fails (draft/merchant/status, recipient
-      snapshot existence, quote ownership, or historical approval membership) →
+      **Existing-order integrity** check fails (draft/merchant/status; well-formed
+      recipient snapshot; non-null merchant-owned pickup ID + `pickup_snapshot`;
+      quote ownership; historical approval-membership tuple; historical channel
+      identity/binding tuple) →
       `DELIVERY_ORDER_STATE_INCONSISTENT` (backfill / trigger-bypass / corruption;
       alert; **zero writes**; never a client-retry outcome) — an exact
       `(draft_id, quote_id)` match does **not** override this; (ii) else
@@ -878,6 +930,19 @@ locked identity. Delivery approval permits `membership_role in { ADMIN, OPERATOR
 may not widen this set and may not accept contact binding or resolved context
 alone.
 
+A **channel** approval (or channel cancellation) persists onto the order the
+**exact** `external_contact_identities` and `merchant_contact_bindings` rows that
+passed its gate — `approved_external_contact_identity_id` /
+`approved_merchant_contact_binding_id` (and the `canceled_*` pair for a channel
+cancellation) — so the immutable order records which channel identity actually
+exercised the right, and **Existing-order integrity** can structurally verify it.
+A user may hold several verified identities or bindings for one merchant; storing
+only user + membership + an opaque provenance string would lose which one it was.
+A `SESSION` approval/cancellation leaves both fields null. This is auditable
+history: a later `REVOKED` identity or binding whose immutable tuple still matches
+does not break a correct recovery — the current caller re-passes the gate
+regardless.
+
 ## Idempotency and recovery
 
 - **`delivery_order` carries an unconditional `UNIQUE (draft_id)`** — a hard
@@ -953,20 +1018,25 @@ order row is the **last** lock, exactly as pickup is last in the creation branch
    from before the transaction is not accepted.
 4. **`FOR UPDATE` the `delivery_order` row (last).** Re-verify
    **Existing-order integrity**, including the locked source draft being
-   `APPROVED`, order/draft merchant ownership, recipient snapshot existence,
-   quote ownership and the historical approval membership tuple. Failure →
+   `APPROVED`, order/draft merchant ownership, well-formed recipient snapshot,
+   non-null pickup ID + snapshot with immutable merchant ownership, quote
+   ownership, the historical approval membership tuple, and the historical
+   channel identity/binding tuple. Failure →
    `DELIVERY_ORDER_STATE_INCONSISTENT`, alert, zero writes, before the status
    gate. A corrupt `PENDING_DISPATCH` order is never normalized to `CANCELED`.
 5. **Status gate.** `order.status == PENDING_DISPATCH` → perform the terminal
    `PENDING_DISPATCH -> CANCELED` transition, server-stamped and
    `cancel_reason`-coded, never a hard delete. In the **same write/transaction**,
-   set `canceled_by_user_id`, `canceled_membership_id`, `cancellation_channel`
-   and bounded `cancellation_provenance` from the step-3 locked actor/procedure,
-   never from the request or original approver. The complete cancellation tuple
-   is write-once under the order guard; no later retry re-stamps or overwrites
-   it. A tuple FK/check uses the already-locked cancelling membership, adding no
-   reverse authority-lock edge. Any other status →
-   `DELIVERY_ORDER_NOT_CANCELABLE`, zero writes.
+   set `canceled_by_user_id`, `canceled_membership_id`, `cancellation_channel`,
+   bounded `cancellation_provenance`, and — for a channel cancellation —
+   `canceled_external_contact_identity_id` /
+   `canceled_merchant_contact_binding_id` (both null for `SESSION`), all from the
+   step-3 locked actor/identity/procedure, never from the request or original
+   approver. The complete cancellation tuple is write-once under the order guard;
+   no later retry re-stamps or overwrites it. A tuple FK/check uses the
+   already-locked cancelling membership and identity/binding, adding no reverse
+   authority-lock edge. Any other status → `DELIVERY_ORDER_NOT_CANCELABLE`, zero
+   writes.
 
 - The instant `BD-MERCHANT-DELIVERY-DISPATCH-01A` atomically moves the order out
   of `PENDING_DISPATCH` (into `SEARCHING_DRIVER`), direct merchant-cancel through
@@ -1157,7 +1227,7 @@ these transactions crosses lock order.
 | 29 | A `QUOTED` draft reaches the creation branch missing `recipient_contact` or `destination_text` (Quote Authority precondition bug / partial intake) | Step 5b re-checks the mandatory recipient fields under the draft lock → `DELIVERY_RECIPIENT_INCOMPLETE` (or `DELIVERY_DESTINATION_UNRESOLVED`); zero writes, no undeliverable authoritative order. |
 | 30 | Exact `(draft_id, quote_id)` order exists, but the locked source `delivery_draft.status` is `OPEN` / `QUOTED` / terminal (partial backfill, trigger-disabled writer, corruption) | Step 3 **ORDER PRESENT** branch — `locked draft.status != APPROVED` is checked **before** the `quote_id` match — returns `DELIVERY_ORDER_STATE_INCONSISTENT` (alert), zero writes. Corruption is never returned as a successful recovery. (When **no** order exists for the `draft_id`, the ORDER ABSENT branch runs instead: a non-`APPROVED` draft simply proceeds to step 4 — see Example R.) |
 | 31 | A cargo category becomes non-deliverable while replicas run different policy constants during a rolling deploy | Not an ordinary deploy: a coordinated **Policy-version activation** halts creation-branch approvals on all writers (`CARGO_POLICY_TRANSITION`, retryable), drains in-flight, confirms no old-constant replica remains, activates, resumes. No approval straddles two constants; if a step is unconfirmed, creation stays blocked. Recovery does not re-check cargo policy. |
-| 32 | An otherwise consistent order has no recipient snapshot | An ordinary order-only INSERT fails the deferred existence constraint at commit; lawful order + child insertion commits. Pre-existing corruption fails **Existing-order integrity** on recovery/cancellation → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. |
+| 32 | An otherwise consistent order has **no recipient snapshot, or a snapshot with a null/malformed `recipient_contact` / `destination_text` / `destination_point`** | An ordinary order-only INSERT fails the deferred well-formed-existence constraint at commit; the field `NOT NULL`/shape constraints reject a malformed child write; lawful order + well-formed child insertion commits. Pre-existing corruption (missing **or malformed** child) fails **Existing-order integrity** on recovery/cancellation → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. |
 | 33 | Merchant cancel of a `PENDING_DISPATCH` order with a non-`APPROVED` source draft | Cancellation step 4 rejects the structural fault before its status gate; no `CANCELED` transition or provenance writes. |
 | 34 | Empty cargo, zero/negative/non-finite/out-of-bounds quantity, or missing/unsupported unit | Quote publication and creation step 5b reject `DELIVERY_CARGO_LINE_INVALID` before fingerprint/policy; no vacuous empty-set approval. Valid canonical 2-KG cargo reaches subsequent checks. |
 | 35 | Order for draft D1 references a quote owned by D2 | The non-null composite quote/draft FK rejects the write. If already corrupt, **Existing-order integrity** rejects even an exact presented quote match; never successful recovery or cancellation. |
@@ -1168,6 +1238,9 @@ these transactions crosses lock order.
 | 40 | Only `destination_text` changes, resolved coordinates stay equal | It remains a confirmed-input edit: quote invalidation/fingerprint input includes the text in every consumer; a stale priced candidate cannot publish and an old approval cannot create an order from the mismatched inputs. |
 | 41 | Operator B cancels an order approved by operator A; the response is retried | The transaction records B's locked user/membership/channel/procedure with timestamp/reason atomically. The retry is zero-write and cannot replace B with A/the retrying actor or re-stamp provenance (Example T). |
 | 42 | Authorized current caller recovers a valid canceled order after original approver revocation and quote expiry | **Existing-order integrity** checks immutable historical links and the child, not current eligibility of the original membership/quote. Exact quote match returns the same canceled order, zero writes (Example S). |
+| 43 | A backfill inserts a structurally plausible order with `pickup_location_id = NULL` (so PostgreSQL skips the composite pickup FK), or with a `pickup_snapshot` that is null / mismatched-id / has out-of-range or missing coordinates, or whose `(pickup_location_id, merchant_id)` names another merchant's location | `pickup_location_id` and `pickup_snapshot` are `NOT NULL`; the composite pickup FK and the `pickup_snapshot` shape constraint reject an ordinary bad write. Pre-existing corruption fails **Existing-order integrity** on recovery/cancellation → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. Recovery does **not** re-resolve/re-lock the location or compare the frozen snapshot to its current ACTIVE/default/address/coordinates. |
+| 44 | The channel identity/binding provenance of an order is corrupt — `approval_channel in { WHATSAPP, SMS }` with a null `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id`, both set for `SESSION`, a binding not owned by `(order.merchant_id, approved_external_contact_identity_id)`, or an identity whose `linked_user_id != approved_by_user_id` / `channel != approval_channel`; **or a populated `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id` on a `SESSION` cancellation, or on an order with no merchant cancellation through this slice** (for a `WHATSAPP`/`SMS` cancellation the mirror non-null/ownership/linkage checks apply to the `canceled_*` pair instead) | The composite binding FK, identity guard and the `NOT NULL`-by-channel / `NULL`-otherwise rule reject an ordinary bad write. Pre-existing corruption fails **Existing-order integrity** on recovery/cancellation → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A since-`REVOKED` identity/binding whose immutable tuple still matches is valid history and still recovers (Example S). |
+| 45 | Order authorized through a channel actor who holds two verified identities/bindings for the same merchant | The authorization step records the **exact** identity + binding that actually passed the gate onto the order, and the order guard makes that pair immutable thereafter — so the stored pair is the one that authorized this order. **Existing-order integrity** verifies null-ness by channel plus ownership/linkage, but cannot by itself distinguish a later swap to *another* structurally-consistent same-merchant/user/channel pair; the exact-choice guarantee rests on the recorded authorization result and subsequent immutability, not on re-detecting a swap. |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -1227,7 +1300,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
 | `DELIVERY_ORDER_ALREADY_EXISTS` | Recovery replay; resolves to the existing order (any state, incl. `CANCELED`). | false |
 | `DELIVERY_APPROVAL_QUOTE_CONFLICT` | Draft is `APPROVED`, `order.merchant_id == M`, but its order is for a different `quote_id` than the one presented. | false |
-| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant, missing recipient snapshot, cross-draft quote, or invalid historical approval membership tuple); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership eligibility is rechecked on recovery. | false |
+| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; or an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility is rechecked on recovery. | false |
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed. | true |
@@ -1469,17 +1542,27 @@ no delivery_order exists for d1
 
 ### Example S: recovery preserves valid historical authority
 
-- Draft d1 is `APPROVED`; o1 has its one recipient snapshot and a quote whose
-  immutable owner is d1. Its historical approval membership belongs to the
-  stored merchant/user but is now `REVOKED`; the quote has expired. o1 is
-  `CANCELED` with its cancellation provenance preserved.
+- Draft d1 is `APPROVED`; o1 has its one **well-formed** recipient snapshot, a
+  non-null pickup ID + `pickup_snapshot` owned by the stored merchant, and a
+  quote whose immutable owner is d1. It was approved through a channel actor, so
+  it also carries the exact `approved_external_contact_identity_id` /
+  `approved_merchant_contact_binding_id`. Its historical approval membership,
+  identity and binding all belong to the stored merchant/user but are now
+  `REVOKED`; the pickup location has since been `ARCHIVED` and its address
+  edited; the quote has expired. o1 is `CANCELED` with its cancellation
+  provenance preserved.
 - A currently authorized caller passes the normal tenant-bound authority gate.
-  ORDER PRESENT passes **Existing-order integrity** and the presented quote
-  matches. Return o1, zero writes, without original-membership status, quote
-  eligibility, pickup, policy or fingerprint re-validation.
-- If the child is missing, quote belongs to d2, or stored approval membership
-  belongs to another user/merchant, the same request returns
-  `DELIVERY_ORDER_STATE_INCONSISTENT` before quote-match recovery; zero writes.
+  ORDER PRESENT passes **Existing-order integrity** (immutable historical links,
+  pickup ownership, well-formed child) and the presented quote matches. Return
+  o1, zero writes, without original-membership/identity/binding status, pickup
+  re-resolution, snapshot-vs-current-location comparison, quote eligibility,
+  policy or fingerprint re-validation.
+- If the child is missing or malformed, `pickup_location_id` / `pickup_snapshot`
+  is null or names another merchant's location, the quote belongs to d2, the
+  stored approval membership belongs to another user/merchant, or the stored
+  channel identity/binding does not belong to the stored merchant/user/channel,
+  the same request returns `DELIVERY_ORDER_STATE_INCONSISTENT` before quote-match
+  recovery; zero writes.
 
 ### Example T: a different operator cancels
 
@@ -1488,8 +1571,9 @@ no delivery_order exists for d1
   integrity passes.
 - B's cancellation locks the common authority prefix and then o1, validates
   **Existing-order integrity**, and changes o1 to `CANCELED` with B's user,
-  exact membership, channel and bounded procedure/reference, together with the
-  server timestamp and reason. A remains the immutable original approver.
+  exact membership, channel, — for a channel cancellation — the exact
+  identity/binding, and bounded procedure/reference, together with the server
+  timestamp and reason. A remains the immutable original approver.
 - Repeating the cancellation returns `DELIVERY_ORDER_NOT_CANCELABLE` and writes
   nothing; changing the retrying actor cannot replace or re-stamp B's record.
   A non-`APPROVED` source draft instead fails integrity before any transition.
@@ -1582,25 +1666,36 @@ freezes all of the following:
 - `delivery_order_recipient_snapshot` immutability is enforced by **its own**
   `BEFORE UPDATE OR DELETE` guard trigger, not the parent `delivery_order`
   trigger (which does not fire on direct child DML); every `UPDATE` / `DELETE`
-  against it is rejected. Its existence for every order is separately enforced
-  at commit by a deferred constraint; parent-only insertion fails, while the
-  lawful parent-plus-child transaction succeeds.
+  against it is rejected. Its **well-formed** existence for every order is
+  separately enforced at commit by a deferred constraint plus DB-level `NOT NULL`
+  and shape/format constraints on `recipient_contact` / `destination_text` /
+  `destination_point`; parent-only or malformed-child insertion fails, while the
+  lawful parent-plus-well-formed-child transaction succeeds. A missing **or
+  malformed** historical child fails **Existing-order integrity** →
+  `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes.
 - `delivery_order.draft_id` and `delivery_order.merchant_id` are both `NOT NULL`
   and bound by a **composite FK `(draft_id, merchant_id) -> delivery_draft (id,
   merchant_id)`** (or guard trigger), so a persisted order's merchant can never
   diverge from its source draft's — not two independent single-column FKs.
-- The order's quote/draft and approval-membership-ID/merchant/user tuples are
-  bound by the non-null composite links in **Target entity: delivery_order**.
+- The order's quote/draft, approval-membership-ID/merchant/user, pickup
+  ID/merchant and — for channel approvals/cancellations — identity/binding tuples
+  are bound by the non-null composite links in **Target entity: delivery_order**
+  (`pickup_location_id`, `pickup_snapshot` and the channel identity/binding pair
+  are `NOT NULL` per their rules; the pair is null for `SESSION`).
   Recovery/cancellation run **Existing-order integrity** before success, checking
-  these historical links and the child without requiring current eligibility of
-  the original approval membership or quote.
+  these historical links, the pickup relationship and the well-formed child
+  without requiring current eligibility of the original approval membership,
+  identity/binding, pickup location or quote, and without re-resolving or
+  re-locking the pickup.
 - Pickup resolves from an ACTIVE `merchant_locations` row **owned by the draft's
   merchant and carrying non-null coordinates** (approval query + composite FK /
   trigger, not a plain cross-table `CHECK`), **locked in the creation branch
   (step 5a) and held through commit**; it is never locked on the recovery path;
   a null-coordinate location is `DELIVERY_PICKUP_UNRESOLVED` (no approval-time
-  geocode); recipient/destination data is never written to merchant identity
-  tables and never used as pickup.
+  geocode); `delivery_order.pickup_location_id` and `pickup_snapshot` are both
+  `NOT NULL` on the persisted order so no order can be recovered/canceled without
+  a merchant-owned pickup; recipient/destination data is never written to
+  merchant identity tables and never used as pickup.
 - The creation branch re-checks the mandatory recipient fields
   (`recipient_contact`, `destination_text`, resolved `destination_point`) under
   the draft lock (step 5b); a partial `QUOTED` draft →
@@ -1701,11 +1796,11 @@ freezes all of the following:
   from the locked draft, then `FOR UPDATE`s the `delivery_order` row **last** and
   validates **Existing-order integrity** before `PENDING_DISPATCH -> CANCELED`.
   That transition atomically records the cancelling actor's exact membership,
-  channel and bounded provenance, timestamp and reason, once; retry/rejection
-  never rewrites it. A read-side actor check or a
-  client-named order id is never trusted. Once Dispatch atomically claims the
-  order (`SEARCHING_DRIVER`), cancellation runs through the Dispatch/Execution
-  compensation flow.
+  channel, — for a channel cancellation — identity/binding, and bounded
+  provenance, timestamp and reason, once; retry/rejection never rewrites it. A
+  read-side actor check or a client-named order id is never trusted. Once
+  Dispatch atomically claims the order (`SEARCHING_DRIVER`), cancellation runs
+  through the Dispatch/Execution compensation flow.
 - The concurrency/race matrix outcomes are fixed.
 - Recipient PII is bounded per-order operational data; operational logs carry
   codes and correlation IDs, not raw payloads.
@@ -1735,10 +1830,12 @@ freezes all of the following:
 The eight items raised during initial drafting are resolved as follows and are
 load-bearing for the contract above. Review refinements remain **proposed,
 pending independent re-audit on the published correction**. At this correction's
-baseline `d55af7c`, **28 threads across three Codex reviews are open**: 16 are
-outdated and 12 non-outdated (11 new comments, including one duplicate, plus
-the carried actor-gate thread). Anchor movement is not resolution; no thread is
-closed by this document or by local verification.
+baseline `4875827` (its predecessor `d55af7c` plus the published `4875827`
+CORRECTED7 commit), **31 threads across four Codex reviews are open**: 22 are
+outdated and 9 non-outdated (4 P1 + 5 P2) — the 6 pre-`4875827` non-outdated
+threads are already covered by CORRECTED7's content, and review `5147978460` on
+`4875827` adds 3 (2 P1 + 1 P2), addressed by this round. Anchor movement is not
+resolution; no thread is closed by this document or by local verification.
 
 1. **Draft persistence.** `delivery_draft` is a **persisted** server-side entity.
    Persisted is not authoritative: WhatsApp/Peach/manual intake may create or
@@ -1761,9 +1858,11 @@ closed by this document or by local verification.
    not a reusable recipient address book. Immutability is enforced by the child
    table's **own** `BEFORE UPDATE OR DELETE` guard trigger, not the parent
    `delivery_order` trigger (which does not fire on direct child DML). A separate
-   deferred existence constraint enforces exactly one child at commit; recovery
-   and cancellation reject missing-child corruption through **Existing-order
-   integrity**.
+   deferred existence constraint enforces exactly one child at commit, and
+   DB-level `NOT NULL` + shape/format constraints on `recipient_contact`,
+   `destination_text` and `destination_point` enforce that it is **well-formed**;
+   recovery and cancellation reject missing-**or-malformed**-child corruption
+   through **Existing-order integrity**.
 4. **Cargo cardinality & detail.** A **list of cargo lines**
    `{ category_code, quantity, unit }` per order. Cooked + live crayfish for one
    recipient at one stop is one order. **Deliverability** is decided over the
@@ -1782,9 +1881,11 @@ closed by this document or by local verification.
    `AUTHORIZED_MERCHANT_ACTOR(U, M)` under those locks, then `FOR UPDATE`s the
    `delivery_order` row **last** — never a separate `order -> authority` chain,
    never a trusted read-side check or client-named order id. It checks
-   **Existing-order integrity**, including an `APPROVED` source draft, before
-   transitioning, and writes the cancelling actor/membership/channel/procedure
-   with the timestamp/reason atomically and once (Cancellation, Example T).
+   **Existing-order integrity**, including an `APPROVED` source draft, well-formed
+   recipient snapshot, non-null merchant-owned pickup, and the historical
+   membership and channel identity/binding tuples, before transitioning, and
+   writes the cancelling actor/membership/channel/identity-binding/procedure with
+   the timestamp/reason atomically and once (Cancellation, Example T).
    Once Dispatch
    atomically claims the order (`SEARCHING_DRIVER`), direct merchant-cancel is
    refused (`DELIVERY_ORDER_NOT_CANCELABLE`); later cancellation runs through the
@@ -1794,7 +1895,13 @@ closed by this document or by local verification.
    allowed role. Channel: VERIFIED external identity → linked user → ACTIVE
    binding → ACTIVE merchant → ACTIVE membership → allowed role. Both normalize to
    one `AUTHORIZED_MERCHANT_ACTOR(U, M)`, re-resolved in the write transaction;
-   allowed `membership_role in { ADMIN, OPERATOR }`.
+   allowed `membership_role in { ADMIN, OPERATOR }`. A **channel** approval (and
+   channel cancellation) persists the **exact** identity + binding row that
+   passed the gate onto the order (`approved_external_contact_identity_id` /
+   `approved_merchant_contact_binding_id`, and the `canceled_*` pair), `NOT NULL`
+   for `WHATSAPP` / `SMS` and null for `SESSION`, so **Existing-order integrity**
+   can structurally verify which identity exercised the right even when a user
+   holds several verified identities/bindings for one merchant.
 7. **Deliverability policy storage.** A **server-owned, versioned constant** in
    the initial runtime, behind `resolveCargoDeliveryPolicy(...)` — not a mutable
    admin-editable table. Initial constant: `COOKED_CRAYFISH` / `LIVE_CRAYFISH`
@@ -2003,6 +2110,29 @@ already reached creation is removed: shared draft locking makes that
 interleaving impossible. Delayed pickup-content propagation remains covered by
 row 8's creation fingerprint check; it is a different case.
 
+## Review-round 4 proposed resolutions (Codex review 5147978460, head `4875827`)
+
+**Status: proposed docs-only correction; all 31 threads remain open** (9
+non-outdated: 4 P1 + 5 P2). The 6 pre-`4875827` non-outdated threads are already
+covered by CORRECTED7's content and are not re-worked here. Review `5147978460`
+adds 3 concerns (2 P1 + 1 P2), all resolved docs-only below. No migration,
+runtime, PR metadata or review-thread change is made by this contract. New
+additive schema-slice dependencies (flagged, not performed here): `NOT NULL` on
+`delivery_order.pickup_location_id` and `pickup_snapshot`; DB `NOT NULL` + shape
+constraints on `delivery_order_recipient_snapshot.recipient_contact` /
+`destination_text` / `destination_point`; `delivery_order`
+`approved_external_contact_identity_id` / `approved_merchant_contact_binding_id`
+(and the `canceled_*` pair), `NOT NULL`-by-channel, with an additive
+unconditional `merchant_contact_bindings (id, merchant_id,
+external_contact_identity_id)` unique key and an `external_contact_identities`
+linked-user/channel guard.
+
+| Finding / comment | Contract correction | Verification case |
+| --- | --- | --- |
+| P1 pickup provenance non-null `3963114283` | `delivery_order.pickup_location_id` + `pickup_snapshot` `NOT NULL`; **Existing-order integrity** adds the pickup relation (non-null, ID match, immutable merchant ownership, well-formed snapshot incl. stored coordinates) and **explicitly does not** re-resolve/re-lock the location or compare the frozen snapshot to its current ACTIVE/default/address/coordinates; no late pickup lock in recovery. invariant 4; `delivery_order` field table; Cancellation step 4; taxonomy; acceptance criteria; schema-slice deps. | Row 43; Example S |
+| P1 recipient snapshot fields `3963114288` | DB `NOT NULL` + shape/format constraints on `recipient_contact` / `destination_text` / `destination_point`; deferred exactly-one-at-commit becomes exactly-one-**well-formed**; **Existing-order integrity** rejects a missing **or malformed** historical child → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes; lawful parent → child INSERT preserved. Recipient-snapshot entity; decision 3; taxonomy; acceptance criteria; schema-slice deps. | Rows 32, 44; Example S |
+| P2 channel authority tuple `3963114295` | `delivery_order` gains `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id` (and `canceled_*`): both null for `SESSION` (and, for the `canceled_*` pair, when there has been no merchant cancellation through this slice), both `NOT NULL` for `WHATSAPP` / `SMS`; a populated pair where it must be null is corruption. Composite guards bind binding ↔ `(merchant_id, identity)` and identity ↔ approving/cancelling `user_id` + channel. The authorization step records the exact pair that passed; Cancellation records the cancelling pair; the order guard makes both immutable; **Existing-order integrity** verifies null-ness-by-channel plus ownership/linkage as immutable history — it does not re-detect a swap to another structurally-consistent same-merchant/user/channel pair; a since-`REVOKED` but tuple-consistent pair still recovers, the current caller re-passes the gate regardless. Approver parity; Cancellation step 5; decisions 5–6; taxonomy; acceptance criteria; schema-slice deps. | Rows 44, 45; Examples S, T |
+
 ## Expected next slices
 
 1. `BD-MERCHANT-QUOTE-AUTHORITY-01A` — server quote, expiry, reprice, merchant
@@ -2020,14 +2150,22 @@ row 8's creation fingerprint check; it is a different case.
    plus the `(draft_id, quote_id)` recovery index; the composite FKs
    `delivery_order (pickup_location_id, merchant_id) -> merchant_locations` and
    `delivery_order (draft_id, merchant_id) -> delivery_draft` with their redundant
-   `UNIQUE (id, merchant_id)` parent keys; the non-null quote/draft composite FK
-   and immutable quote owner; the approval and cancellation membership-ID/
-   merchant/user composite links backed by additive unconditional
-   `merchant_memberships (id, merchant_id, user_id)` uniqueness; deferred
-   recipient-snapshot existence at commit; canonical cargo-shape enforcement;
-   write-once cancellation provenance; non-null pickup coordinates at
-   approval; `resolveCargoDeliveryPolicy` versioned constant **plus the
-   coordinated policy-version activation procedure**; a
-   `lockActiveMerchantContactBinding` primitive; FK `RESTRICT`; readiness /
-   concurrency / privacy tests; dark service seam, no public route unless
-   separately approved.
+   `UNIQUE (id, merchant_id)` parent keys; `NOT NULL` `pickup_location_id` and
+   `pickup_snapshot` with a `pickup_snapshot` shape constraint; the non-null
+   quote/draft composite FK and immutable quote owner; the approval and
+   cancellation membership-ID/merchant/user composite links backed by additive
+   unconditional `merchant_memberships (id, merchant_id, user_id)` uniqueness;
+   the approval and cancellation **channel identity/binding** links
+   (`approved_/canceled_external_contact_identity_id` +
+   `approved_/canceled_merchant_contact_binding_id`, `NOT NULL`-by-channel)
+   backed by an additive unconditional `merchant_contact_bindings (id,
+   merchant_id, external_contact_identity_id)` unique key and an
+   `external_contact_identities` linked-user/channel guard; deferred
+   **well-formed** recipient-snapshot existence at commit plus `NOT NULL` + shape
+   constraints on its `recipient_contact` / `destination_text` /
+   `destination_point`; canonical cargo-shape enforcement; write-once cancellation
+   provenance; non-null pickup coordinates at approval; `resolveCargoDeliveryPolicy`
+   versioned constant **plus the coordinated policy-version activation
+   procedure**; a `lockActiveMerchantContactBinding` primitive; FK `RESTRICT`;
+   readiness / concurrency / privacy tests; dark service seam, no public route
+   unless separately approved.
