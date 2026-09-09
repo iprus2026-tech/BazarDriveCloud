@@ -135,6 +135,14 @@ represent correctly:
     the recovery/cancellation integrity check alone cannot enforce, because
     ordinary dispatch never calls it. The order's point-in-time `quote_state`
     snapshot is likewise a DB-constrained value, not a copied request field.
+15. **Lifecycle and policy guards must be DB-enforced, not just algorithmic.**
+    The deferred coupling above accepts an order in *any* state; separately, a
+    persisted order must be born in `PENDING_DISPATCH`, its cargo set must clear a
+    **recorded historical policy decision** (not merely pass a shape check, and
+    not `resolveCargoDeliveryPolicy` in the canonical quote fingerprint), and a
+    draft must obey a **legal state-transition graph** so a backfill cannot
+    resurrect `ABANDONED` / `EXPIRED`. And a cross-tenant *approval* probe must be
+    externally indistinguishable from an unknown draft, mirroring cancellation.
 
 ## Source of truth
 
@@ -369,9 +377,19 @@ Rules:
   slice, not a reason to split one recipient/stop into multiple orders;
 - order creation re-checks deliverability against the **current** policy — the
   constant active on the replica running the transaction — so a category that
-  becomes non-deliverable between quote and approval blocks the approval; the
-  resolved `policy_version` is recorded on the order **for audit only**, not as
-  the coordination mechanism;
+  becomes non-deliverable between quote and approval blocks the approval;
+- **the order carries the policy decision as immutable data, and a DB validator
+  re-derives and re-checks it at `INSERT`.** `cargo_policy_version` and a new
+  `cargo_policy_decision` are `NOT NULL` and immutable. A **trusted `INSERT`
+  validator** (future schema, from the *same immutable policy definition* the
+  server resolver uses — still a versioned constant, **not** a mutable/admin
+  policy store) derives the category set from the row's actual `NEW.cargo`,
+  evaluates it under the **activated** policy version, and confirms the stored
+  `cargo_policy_version` / `cargo_policy_decision` match that evaluation. A
+  backfilled `DELIVERABLE` decision, or a stored older permissive
+  `cargo_policy_version` that does not actually clear the row's categories, does
+  **not** bypass the check. `resolveCargoDeliveryPolicy` and the policy decision
+  are **not** part of the canonical quote-input fingerprint;
 - the policy vocabulary is extended only by an ordered contract change, like the
   01A channel enum.
 
@@ -385,21 +403,34 @@ constant cleared the cargo *after the fact*; it does not make "current policy"
 fail-closed by itself.
 
 A policy-class or vocabulary change is therefore an **explicitly coordinated
-activation**, not an ordinary deploy:
+activation**, not an ordinary deploy, and it spans **both the application
+resolver and the DB `INSERT` validator** (which read the same immutable policy
+definition) plus **every `delivery_order` writer**:
 
-1. stop admitting new **creation-branch** approvals on **all** writers
-   (`CARGO_POLICY_TRANSITION`, retryable);
-2. drain in-flight approval transactions;
-3. confirm no replica still running the old constant remains;
-4. activate the new constant everywhere;
-5. resume admitting creation-branch approvals.
+1. stop admitting new **creation-branch** approvals — and any other new
+   `delivery_order` `INSERT` — on **all** writers (`CARGO_POLICY_TRANSITION`,
+   retryable);
+2. **drain to COMMIT or ROLLBACK every already-started order-creation
+   transaction** — approval **and** every other `delivery_order` `INSERT` path,
+   including secondary writers and backfill jobs — so that no transaction which
+   evaluated cargo under the old constant is still open;
+3. confirm no replica — application resolver **or** DB validator — still running
+   the old constant remains, **and** that the step-2 drain is complete;
+4. activate the new constant everywhere (resolver and validator together);
+5. resume admitting creation-branch approvals / order inserts.
 
-If any step cannot be confirmed, creation **stays blocked** (fail-closed) — a
-stalled activation never silently falls back to mixed constants. **Recovery**
-does not re-check cargo policy, so an order already approved under the old
-constant stands unchanged. This keeps the versioned-constant model (no mutable
-policy store) while making the cross-replica transition honest; a future move to
-a coordinated policy store is still an ordered follow-up (Explicit non-goals).
+Until steps 2–3 are **confirmed**, the new version is **not** activated and new
+inserts are **not** resumed. If any step cannot be confirmed, creation **stays
+blocked** (fail-closed) and new `delivery_order` inserts are refused — a stalled
+activation never silently falls back to mixed constants, and never switches while
+an old-constant creation transaction is still in flight. **Recovery** does not re-check cargo policy against the
+*current* constant, so an order already approved under the old constant stands
+unchanged; **Existing-order integrity** does re-check the order's *stored*
+`cargo_policy_decision` against its immutable `cargo` and that decision's own
+version (old version definitions are retained). This keeps the versioned-constant
+model (no mutable policy store) while making the cross-replica transition honest;
+a future move to a coordinated policy store is still an ordered follow-up
+(Explicit non-goals).
 
 This is the **BazarDrive merchant-delivery product policy**, not a universal
 legal statement about any category. `ALCOHOL = IN_STORE_ONLY / NOT_DELIVERABLE`
@@ -620,6 +651,19 @@ Rules:
 - `-> APPROVED` happens **only** inside the single transaction that creates the
   `delivery_order` (invariant 6), and only from `QUOTED`;
 - `ABANDONED` / `EXPIRED` are terminal for the draft; a new request is a new draft;
+- **a legal state-transition graph is enforced by an immediate row-local DB
+  guard** (a `BEFORE INSERT OR UPDATE` trigger on `delivery_draft`), **separate
+  from and additional to** the deferred draft/order coupling: a new draft
+  `INSERT` may only be `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`;
+  `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED`, `ABANDONED` and
+  `EXPIRED` are **absorbing** — any transition **out** of them to a different
+  status is rejected. The guard evaluates every `OLD.status -> NEW.status`,
+  including successive UPDATEs inside one transaction (a backfill cannot hop
+  `ABANDONED -> QUOTED` even transiently). A same-status UPDATE is **not**
+  rejected on that basis alone — the existing intent-mutation, repricing and
+  core-immutability rules still decide whether the specific field change is
+  allowed. This guard does not replace actor authority, the expiry worker's
+  `OPEN`/`QUOTED` + no-order + due preconditions, or the deferred coupling;
 - **draft expiry is a bounded deadline swept by a trusted worker.** `expires_at`
   is `created_at + TTL` (fixed constant, set once, immutable; edits/reprices
   never extend it; independent of quote expiry). A trusted cleanup worker, **under
@@ -658,8 +702,9 @@ The single authoritative record for one approved delivery.
 | `pickup_snapshot` | **`NOT NULL`** canonical content of the resolved pickup at approval — its own `location id` (`== pickup_location_id`), label, address text, **non-null resolved coordinates**, bounded pickup instructions, default flag, **and the full `resolved_pickup_point`: coordinates, provider/place id, provenance, and the source-address binding it was resolved from** — not just the id, and never absent. Shape-constrained: the embedded point's coordinates present and in range, its provider/place id and provenance present, its source binding present. A null-coordinate or null / invalid `resolved_pickup_point` pickup never reaches this snapshot (invariant 4). |
 | `delivery_input_fingerprint` | Canonical fingerprint over the confirmed delivery inputs the approved quote priced — the full recipient snapshot (name, contact, `destination_text`, resolved `destination_point`, access note, window), the cargo lines `{ category, quantity, unit }`, and the frozen `pickup_snapshot` (id + content + the full `resolved_pickup_point`). It equals the referenced quote's stored fingerprint **and** a fresh recompute over the order's own immutable snapshots (Existing-order integrity); a divergent backfilled snapshot — including a changed provider/place id, provenance or source binding under an unchanged address — fails that equality. |
 | `cargo` | Immutable snapshot of the approved cargo **lines** `{ category_code, quantity, unit }` (every category `DELIVERABLE` at approval). |
-| `cargo_policy_version` | The `resolveCargoDeliveryPolicy` version that cleared this cargo category set. |
-| `status` | `PENDING_DISPATCH | CANCELED | <downstream states>`. |
+| `cargo_policy_version` | **`NOT NULL`, immutable.** The policy version that actually cleared this cargo category set. Not audit-only: a trusted `INSERT` validator re-derives the category set from `cargo` and confirms this version, under the *same immutable policy definition* the server resolver uses, actually clears it. |
+| `cargo_policy_decision` | **`NOT NULL`, immutable.** The recorded deliverability result (per-category class + overall `DELIVERABLE`) for `cargo` under `cargo_policy_version`. The `INSERT` validator confirms it matches a fresh evaluation; **Existing-order integrity** re-checks it against the immutable `cargo` and that version's retained definition. A backfilled `DELIVERABLE` does not bypass either check. |
+| `status` | `PENDING_DISPATCH | CANCELED | <downstream states>`. **A new `delivery_order` `INSERT` is permitted only with `status = PENDING_DISPATCH`** (`NOT NULL`; a trusted `BEFORE INSERT` DB guard — a column `DEFAULT` is not sufficient, since an explicit value overrides it). It is **not** a permanent `CHECK (status = 'PENDING_DISPATCH')`: lawful downstream `UPDATE`s advance it forward; a **recovery** of an existing order returns that row in **any** state (`PENDING_DISPATCH` / `CANCELED` / `DELIVERED` / …) unchanged, zero writes; and a **merchant-cancellation** request against an order that is not `PENDING_DISPATCH` is **refused with `DELIVERY_ORDER_NOT_CANCELABLE`**, also zero writes — neither is an `INSERT`, so the insert guard never applies to them. The insert guard adds no cross-table lock. |
 | `canceled_at` / `cancel_reason` | Null unless canceled; server-stamped. |
 | `canceled_by_user_id` / `canceled_membership_id` | Null until this slice's direct merchant cancellation; server-derived actor and exact membership row for that action, not copied from the original approver. When present, composite FK `(canceled_membership_id, merchant_id, canceled_by_user_id) -> merchant_memberships (id, merchant_id, user_id)` (or equivalent guard). |
 | `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id` | Null unless the cancellation was gated through a channel (`cancellation_channel in { WHATSAPP, SMS }`), in which case **both `NOT NULL`** — the exact identity/binding rows that passed the cancelling actor's channel gate, composite-guarded the same way as the approval pair (binding ↔ `merchant_id` + identity; identity `linked_user_id == canceled_by_user_id`, `channel == cancellation_channel`). Both null for a `SESSION` cancellation. |
@@ -807,6 +852,15 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   stored value is corruption → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes.
   This validates the **stored historical value only**; it is never compared to
   the quote's current live state;
+- its `cargo_policy_version` and `cargo_policy_decision` are non-null, and the
+  decision matches a re-evaluation of the **immutable `cargo`** category set
+  under **that stored version's own retained definition** — every category
+  `DELIVERABLE`, overall `DELIVERABLE`. A missing version/decision, a decision
+  that its stored version does not actually produce for this `cargo`, or a
+  category set that version marks non-deliverable → `DELIVERY_ORDER_STATE_INCONSISTENT`,
+  zero writes. This uses the order's **stored historical** version, **not** the
+  current active constant (a later policy change never faults a
+  correctly-approved historical order);
 - **the order's immutable snapshots match the approved quote.** A fresh canonical
   fingerprint recomputed over the order's own frozen snapshots — recipient
   snapshot (`recipient_name`, `recipient_contact`, `destination_text`, resolved
@@ -864,7 +918,9 @@ coordinates, and the quote may now be expired/superseded/non-approvable. Do
 pickup location, do **not** compare the frozen `pickup_snapshot` (including its
 resolved point + provenance) against the location's present content or its
 current `resolved_pickup_point`, do **not** re-check cargo policy against the
-current constant, do **not** re-evaluate `quote_expires_at` against the current
+**current** constant (the order's *stored* `cargo_policy_version` /
+`cargo_policy_decision` **is** re-validated, per the bullet above — that is
+historical, not current), do **not** re-evaluate `quote_expires_at` against the current
 clock, do **not** evaluate the **source draft's `expires_at`** against the
 current clock (an `APPROVED` draft never expires, and a valid historical order
 recovers regardless of how long ago its draft was created), do **not** compare
@@ -886,23 +942,32 @@ An approval request names an exact `(draft_id, quote_id)` pair and runs as one
 server transaction that, in order (lock order and tenant binding: see **invariant
 6 → Transaction locking**):
 
-1. **Lock the draft.** `SELECT ... FOR UPDATE` the `delivery_draft`; set
-   `M := delivery_draft.merchant_id`.
+1. **Lock the draft.** `SELECT ... FOR UPDATE` the `delivery_draft` named by
+   `draft_id`; set `M := delivery_draft.merchant_id`. **No row → the external
+   result is `DELIVERY_DRAFT_NOT_FOUND`, zero writes**, before any authority lock.
 2. **Tenant-bound access check (always — recovery and creation).** For a channel
    actor, first do the **non-authoritative discovery** read (canonical identity →
    candidate `U`); a session actor already holds an authoritative `U`. Then take
    the authority-row locks in the fixed order — the actor's `(M, U)`
    `merchant_memberships` row, then `merchants(M)`, then (channel) the identity
-   and binding rows — and re-resolve the actor gate for **this `M`** to a single
-   `AUTHORIZED_MERCHANT_ACTOR(U, M)` (Approver parity, below), re-verifying every
-   discovered fact under its lock. `M` comes from the locked draft, never the
-   request or the actor's independently-resolved merchant; an actor gate that
-   resolves a different merchant, or a channel actor whose locked
-   `linked_user_id` no longer equals the discovery `U`, →
-   `MERCHANT_ACTOR_UNAUTHORIZED`. A result computed before the transaction is not
-   accepted. A caller who cannot pass this gets a `MERCHANT_*` code whether or not
-   an order already exists. Pickup, expiry, fingerprint, and cargo policy are
-   **not** checked here — only on creation (step 5).
+   and binding rows — and re-resolve the actor gate for **`M` = the locked
+   draft's `merchant_id`** to a single `AUTHORIZED_MERCHANT_ACTOR(U, M)` (Approver
+   parity, below), re-verifying every discovered fact under its lock. `M` comes
+   from the locked draft, never the request or the actor's independently-resolved
+   merchant. **Any failure of this locked gate for `M`** — no ACTIVE `(M, U)`
+   membership at all, an allowed-role miss, `merchants(M)` not `ACTIVE`, a
+   channel actor whose locked `linked_user_id` no longer equals the discovery
+   `U`, a revoked/mismatched identity or binding, or the actor gate resolving
+   only some other merchant — yields **the same client-facing code,
+   `DELIVERY_DRAFT_NOT_FOUND`, zero writes**, identical to a nonexistent
+   `draft_id`. The true reason (`MERCHANT_ACTOR_UNAUTHORIZED` /
+   `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` / a `CONTACT_*` code) is
+   **internal only** (logged), so no caller — for `M` or any other merchant — can
+   distinguish "this merchant's draft exists" from "no such draft". The frozen
+   Identity/Contact resolver is unchanged; only the response mapping at this call
+   site is. A result computed before the transaction is not accepted. Pickup,
+   expiry, fingerprint, and cargo policy are **not** checked here — only on
+   creation (step 5).
 3. **Recovery / integrity branch — read the single `delivery_order` for this
    `draft_id`** (`UNIQUE (draft_id)` ⇒ zero or one row), under the locks, then
    split strictly on **whether that order exists**. The existing-order field
@@ -1007,17 +1072,21 @@ server transaction that, in order (lock order and tenant binding: see **invarian
       that same canonical definition;
    e. `resolveCargoDeliveryPolicy` over the whole cargo category set against the
       **replica-active** constant (Policy-version activation); `CARGO_CATEGORY_UNKNOWN`
-      / `CARGO_NOT_DELIVERABLE` fail closed;
-   f. `INSERT` exactly one `delivery_order` (with the step-5c **verified**
-      `quote_state`) and its `delivery_order_recipient_snapshot`, and flip the
-      draft `QUOTED -> APPROVED`, all in this transaction (invariant 6). The
-      order `INSERT`'s implicit `FOR KEY SHARE` FK locks on `delivery_draft` /
+      / `CARGO_NOT_DELIVERABLE` fail closed; the resolved `{ version, decision }`
+      is what will be persisted as `cargo_policy_version` / `cargo_policy_decision`
+      (invariant 5), where the trusted `INSERT` validator re-derives and confirms it;
+   f. `INSERT` exactly one `delivery_order` — `status = PENDING_DISPATCH` (the
+      row-local `BEFORE INSERT` guard admits no other), with the step-5c
+      **verified** `quote_state` and the step-5e `cargo_policy_version` /
+      `cargo_policy_decision` — and its `delivery_order_recipient_snapshot`, and
+      flip the draft `QUOTED -> APPROVED`, all in this transaction (invariant 6).
+      The order `INSERT`'s implicit `FOR KEY SHARE` FK locks on `delivery_draft` /
       `merchants(M)` / `merchant_memberships` / `merchant_locations` are already
       subsumed by the `FOR UPDATE` locks this transaction holds on those same
       rows. The deferred draft/order coupling constraint-trigger pair (invariant
       6 → *The creation transaction*) evaluates the **final committed rows**, so
       this `INSERT order -> INSERT snapshot -> flip draft` ordering commits
-      cleanly.
+      cleanly; the `delivery_draft` transition guard passes `QUOTED -> APPROVED`.
 
 The acting user, membership, grantor, verifier, and provenance are all
 server-resolved. An approval request body never chooses the approver, the
@@ -1068,12 +1137,17 @@ channel actor:
 
 Both normalize to one internal `AUTHORIZED_MERCHANT_ACTOR(U, M)` result and both
 are re-resolved, under the locks, inside the order-creation transaction
-(invariant 6). If the actor gate can only resolve some **other** merchant (e.g.
-the caller's sole operable merchant), that is a mismatch against the locked
-draft's `M` → `MERCHANT_ACTOR_UNAUTHORIZED`, before recovery or creation. A
-channel actor whose **locked** `linked_user_id` differs from the discovery
-candidate `U` fails the same way — the discovery value never stands in for the
-locked identity. Delivery approval permits `membership_role in { ADMIN, OPERATOR
+(invariant 6), against **`M` taken from the locked `delivery_draft`**. **Every
+way this locked gate can fail** — the actor has no ACTIVE `(M, U)` membership at
+all, the gate resolves only some other merchant (e.g. the caller's sole operable
+merchant), an allowed-role miss, `merchants(M)` not `ACTIVE`, a channel actor
+whose **locked** `linked_user_id` differs from the discovery candidate `U`, or a
+revoked/mismatched identity or binding — produces **the same client-facing code,
+`DELIVERY_DRAFT_NOT_FOUND`** (identical to a nonexistent `draft_id`), before
+recovery or creation; the true internal reason
+(`MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED` /
+`MERCHANT_INOPERABLE` / `CONTACT_*`) is logged only. The discovery value never
+stands in for the locked identity. Delivery approval permits `membership_role in { ADMIN, OPERATOR
 }`. A downstream operation contract may require `ADMIN` for a stronger action, but
 may not widen this set and may not accept contact binding or resolved context
 alone.
@@ -1287,15 +1361,20 @@ Authority defines only the boundary it consumes:
      with the immutable candidate used to compute the price. A mismatch
      publishes nothing and requires a fresh computation; never pair an old price
      with a new fingerprint;
-  5. re-read `clock_timestamp()` on the authoritative wall clock **after all the
-     locks above are held**; if `clock_timestamp() >= delivery_draft.expires_at`
-     the draft has aged out while publication waited on a lock →
-     `DELIVERY_DRAFT_EXPIRED`, **zero writes** (neither the quote/fingerprint nor
-     the draft quote state is published);
-  6. only on equality **and** an unexpired deadline publish the
-     quote/fingerprint (over the full canonical input set, `resolved_pickup_point`
-     included) and draft quote state atomically, holding draft, merchant and
-     pickup locks through commit.
+  5. take a single fresh `t := clock_timestamp()` on the authoritative wall clock
+     **after all the locks above are held** — not the transaction-start time —
+     and apply, in order: **(a)** `t >= delivery_draft.expires_at` → the draft
+     aged out while publication waited on a lock → `DELIVERY_DRAFT_EXPIRED`,
+     **zero writes**; **(b)** `t >= candidate_quote.expires_at` → the priced
+     candidate itself expired during the wait → `QUOTE_EXPIRED`, **zero writes**
+     (publishing it would create a `QUOTED` draft whose every immediate approval
+     fails `QUOTE_EXPIRED`). The candidate's timestamps are **never** extended to
+     pass this guard; the fix is a fresh computation. Neither failure publishes
+     the quote/fingerprint or the draft quote state;
+  6. only when **both** (a) and (b) pass **and** the input comparison held,
+     publish the quote/fingerprint (over the full canonical input set,
+     `resolved_pickup_point` included) and draft quote state atomically, holding
+     draft, merchant and pickup locks through commit.
   No external pricing/geocoding call is required while holding those locks. A
   pickup change after publication commits can legitimately stale that quote;
   a change before publication must be caught by the protected comparison.
@@ -1444,7 +1523,7 @@ these transactions crosses lock order.
 | 7 | A confirmed draft input change (recipient/contact/`destination_point`/access note/window/cargo qty/unit) on a `QUOTED` draft, then approval of that quote (no newer quote) | Change drops the draft `QUOTED -> OPEN` and invalidates the quote; approval resolves at **step 4c** → `QUOTE_STALE`, zero writes, draft stays `OPEN`; no order until a fresh quote is approved. |
 | 8 | The resolved pickup location's canonical content edited (same `merchant_location_id`) so close to approval that the draft revert has not propagated | Draft still `QUOTED` → **creation branch** step 5d recomputes the fingerprint over the fresh **locked** `pickup_snapshot`, sees the mismatch → `QUOTE_STALE`; no order. |
 | 9 | **Creation** vs. cargo policy change (category becomes non-deliverable) between quote and approval | Re-check against current policy; `CARGO_NOT_DELIVERABLE`; no order. |
-| 10 | Actor whose gate resolves merchant **A** presents a `(draft_id, quote_id)` whose locked `delivery_draft.merchant_id = B` | `M` is taken from the **locked draft** (`= B`); the gate for `A` mismatches → `MERCHANT_ACTOR_UNAUTHORIZED`, **before recovery**; no read or write of `B`'s order. |
+| 10 | Actor whose gate resolves merchant **A** presents a `(draft_id, quote_id)` whose locked `delivery_draft.merchant_id = B` | `M` is taken from the **locked draft** (`= B`); the gate for `B` fails (internally `MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED`), **before recovery**; the **external code is `DELIVERY_DRAFT_NOT_FOUND`** (same as a missing draft) so `B`'s draft existence is not disclosed; no read or write of `B`'s order (row 58; Example AC). |
 | 11 | Explicit `requested_pickup_location_id` names an ACTIVE location owned by **another** merchant | Step 5a requires `merchant_locations.merchant_id == M` (and a composite FK / trigger backstops); mismatch → `MERCHANT_LOCATION_REQUIRED`; no order, no cross-tenant pickup. |
 | 12 | The same adapter message id arrives through two different provider accounts / namespaces of one merchant | Intake dedupe keys on `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` → **two distinct drafts**; neither delivery is dropped or merged. |
 | 13 | A secondary writer / backfill tries to insert a second `delivery_order` for a `draft_id` | `UNIQUE (draft_id)` rejects it — the one-order-per-draft invariant is a DB constraint, not only a service-path property. |
@@ -1489,6 +1568,11 @@ these transactions crosses lock order.
 | 52 | Intake or a secondary writer creates a `delivery_draft` with `merchant_id = NULL` (any channel), and a duplicate arrives | `delivery_draft.merchant_id` is `NOT NULL REFERENCES merchants(id)` → the tenantless write is rejected; intake that cannot resolve a merchant parks upstream, never as a draft row. Because the intake dedupe key `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` then always has a concrete leading component, the duplicate cannot slip past it via null-distinct comparison. |
 | 53 | A merchant cancellation names a **nonexistent** `order_id`, **or** another tenant's `order_id` the caller has no authority over | **Nonexistent (ORDER ABSENT):** step 1's hint read finds no row → `DELIVERY_ORDER_NOT_FOUND`, **zero writes, without taking any authority lock**. **Cross-tenant (ORDER PRESENT):** step 2 **does** take the shared authority prefix for the hinted `merchant_id`, step 3's re-resolve fails (`MERCHANT_ACTOR_UNAUTHORIZED` internally, logged), and the client-facing code is **masked to the same `DELIVERY_ORDER_NOT_FOUND`** so existence is not disclosed; no transition, zero writes. For an order that exists and whose caller passes the step-3 gate, the post-authorization **Existing-order integrity** check then the status gate are unchanged (row 26, row 33; Example W, Example T). |
 | 54 | An **approval** transaction waits on a blocking lock (e.g. the step-5a pickup row), **or a Quote publication** transaction waits on the `merchants(M)` / selected-pickup lock, until the source draft's `expires_at` deadline passes with the inputs unchanged; separately, the deadline sweep and an approval race | Deadlines are read on the **authoritative wall clock after every blocking lock is held** (like quote expiry): approval's step-4 pre-(a) check and its step-5c re-check, and **publication's post-lock re-read immediately before the atomic publish** (Quote boundary, publication step 5), each yield `DELIVERY_DRAFT_EXPIRED`, zero writes — neither an order nor a published quote/fingerprint/draft-state lands on the aged-out draft. The early step-1 publication check alone is insufficient because the locks are taken after it (Example V). The sweep and approval both take `delivery_draft` `FOR UPDATE`, so they **serialize**: sweep-first → approval sees the `EXPIRED` draft → step 4 pre-(a) → `DELIVERY_DRAFT_EXPIRED`; approval-first → it flips `-> APPROVED` and the sweep then skips it (an `APPROVED` draft never expires). ORDER PRESENT recovery / cancellation never evaluate the deadline against the current clock. |
+| 55 | A secondary writer / backfill inserts an order whose quote, fingerprint and snapshots are all internally consistent but whose `cargo` set contains `ALCOHOL` / another non-deliverable category, with `cargo_policy_version` absent, or set to an older permissive version, or `cargo_policy_decision` backfilled `DELIVERABLE`; **and separately, a backfill / secondary-writer order-creation transaction that read cargo under the old constant is still in flight when a policy activation begins** | The trusted `INSERT` validator re-derives the category set from `NEW.cargo`, evaluates it under the **activated** policy version from the same immutable definition the resolver uses, and rejects a stored version/decision that does not actually clear those categories — a backfilled `DELIVERABLE` or a stale permissive version does not pass. A pre-existing such row fails **Existing-order integrity**'s stored-decision re-check (against that version's retained definition) → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. For the interleaving: activation step 2 **drains every already-started order-creation transaction to COMMIT/ROLLBACK — approval, secondary writers and backfills alike — and step 3 confirms the drain** before the version is switched or inserts resume, so no transaction that evaluated cargo under the old constant can commit against the new one (nor vice-versa). Policy is **not** in the canonical quote fingerprint; a later active-policy change never faults a correctly-approved historical order (row 48-style). |
+| 56 | A repository bug / backfill sets an `ABANDONED` (or `EXPIRED`) draft back to `QUOTED` before its deadline, then an approval creates an order | The row-local `BEFORE INSERT OR UPDATE` transition guard on `delivery_draft` rejects any transition **out of** `APPROVED` / `ABANDONED` / `EXPIRED`, evaluating every `OLD.status -> NEW.status` including successive UPDATEs in one transaction — the `ABANDONED -> QUOTED` hop never commits, so no order is created from an abandoned delivery. This guard is separate from and additional to the deferred coupling (row 49), which would not catch it (final `APPROVED` draft has exactly one order). |
+| 57 | A secondary writer / backfill inserts an otherwise-consistent `delivery_order` directly as `SEARCHING_DRIVER` / `DELIVERED` / another downstream state, with its draft `APPROVED` | The row-local `BEFORE INSERT` guard on `delivery_order` permits a **new** row only with `status = PENDING_DISPATCH` (a `DEFAULT` alone would be overridden by an explicit value). Lawful downstream `UPDATE`s and recovery of existing `CANCELED` / `DELIVERED` rows are unaffected — it is not a permanent `CHECK (status = 'PENDING_DISPATCH')`. No cross-table lock is added. |
+| 58 | An actor for merchant A submits a guessed / leaked `draft_id` owned by merchant B — including the case where A's actor has **no membership for B at all** (the gate does not "resolve some other merchant", it simply finds no ACTIVE `(B, U)` membership) | Step 1 locks `d_B` and sets `M := B` **from the locked draft**; step 2 re-resolves the gate **for `B`** and it fails (any of: no ACTIVE `(B, U)` membership, role miss, `merchants(B)` not `ACTIVE`, gate resolving only `A`, channel identity/binding mismatch). The true reason (`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged; the **external code is `DELIVERY_DRAFT_NOT_FOUND`**, the same a nonexistent `draft_id` returns, so `A` cannot distinguish "B's draft exists" from "no such draft" — no own-merchant exception. Zero writes; `B`'s draft/order is never read or written under `A`'s authority (cf. row 10, and cancellation rows 26 / 53). |
+| 59 | A quote candidate is priced outside the publication transaction, then publication waits on the `merchants(M)` / pickup lock until the **candidate's own `quote.expires_at`** passes while `delivery_draft.expires_at` is still in the future | Publication step 5 takes one post-lock `t := clock_timestamp()` and checks **both**: `t >= draft.expires_at` → `DELIVERY_DRAFT_EXPIRED`; then `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`. Either fails zero-write; the candidate is not published and its timestamps are not extended, so no `QUOTED` draft is left carrying an already-expired quote. Historical recovery still never re-checks quote expiry against the current clock. |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -1532,7 +1616,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 
 | Code | Meaning | Retryable |
 | --- | --- | --- |
-| `DELIVERY_DRAFT_NOT_FOUND` | Referenced draft does not exist. | false |
+| `DELIVERY_DRAFT_NOT_FOUND` | The client-facing code when an approval's `draft_id` **does not exist**, **and also** — deliberately masked to the same value — for **any** failure of the locked actor gate for the locked draft's `M` (no ACTIVE `(M, U)` membership, allowed-role miss, `merchants(M)` not `ACTIVE`, gate resolving another merchant, channel `linked_user_id` mismatch, revoked/mismatched identity or binding). No caller — for `M` or any other merchant — can distinguish "this merchant's draft exists" from "no such draft"; the true reason (`MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged. Mirrors cancellation's `DELIVERY_ORDER_NOT_FOUND` masking. Order-creation steps 1–2. | false |
 | `DELIVERY_ORDER_NOT_FOUND` | The client-facing code for a merchant cancellation that cannot act on the named `order_id`, in **two internally distinct** cases: **(ORDER ABSENT)** no `delivery_order` exists — returned at Cancellation step 1, **before any authority lock**, zero writes; **(ORDER PRESENT, unauthorized)** the order exists but step 3's locked authority gate fails (`MERCHANT_ACTOR_UNAUTHORIZED` internally) — the external code is masked to this same value so cross-tenant existence is not disclosed. The internal reason (absent vs unauthorized) is logged separately. Never a substitute for the post-gate **Existing-order integrity** check, which still runs once the gate passes. | false |
 | `DELIVERY_DRAFT_NOT_APPROVABLE` | Draft is `ABANDONED` — step 4a; or a non-creatable `OPEN` state with no own approvable quote, or a presented `quote_id` that does not exist / is not a quote of this draft — step 4d. | false |
 | `DELIVERY_DRAFT_EXPIRED` | The source draft is `EXPIRED`, or its server-assigned `expires_at` deadline has otherwise passed (`clock_timestamp() >= expires_at`, read after the blocking locks) whether or not the deadline sweep has run. Checked at Order-creation step 4 **before (a)** and before superseded / stale, re-checked at step 5c, and at Quote publication. A fresh draft is required. Never evaluated on ORDER PRESENT recovery / cancellation; an `APPROVED` draft never expires. | false |
@@ -1540,17 +1624,17 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `DELIVERY_DESTINATION_UNRESOLVED` | No canonical `destination_point` (coordinates + provider/place provenance) could be resolved before quoting; a quote cannot attach until it is; re-checked at step 5b. | false |
 | `DELIVERY_PICKUP_UNRESOLVED` | The resolved / explicit pickup `merchant_locations` row is ACTIVE and same-merchant but carries **null coordinates** (`0009` permits this), **or a null / invalid / source-inconsistent `resolved_pickup_point`** (missing coordinates / provider-place id / provenance / source binding, or a stored point that no longer matches the row's current address/coordinates). A delivery pickup needs a routable, provenance-bearing point fixed before pricing; no approval-time geocode, no provenance invented from coordinates. Step 5a and Quote publication. | false |
 | `DELIVERY_CARGO_LINE_INVALID` | Cargo is missing/empty/not a bounded canonical list, or a line's shape/quantity/unit fails invariant 5's shared validation. Checked before quote publication and at creation step 5b, before fingerprint/policy; never revalidated on recovery. | false |
-| `MERCHANT_ACTOR_UNAUTHORIZED` (01A) | Also raised here when the actor gate resolves a merchant other than the locked `delivery_draft.merchant_id` — checked before recovery. | false |
+| `MERCHANT_ACTOR_UNAUTHORIZED` (01A) | On the approval path this is an **internal-only** reason (logged) for a locked-actor-gate failure against the locked `delivery_draft.merchant_id` — the **external** code is always masked to `DELIVERY_DRAFT_NOT_FOUND` (no own-merchant exception). It is still surfaced as itself by the 01A resolver contract in contexts with no tenant-existence disclosure. | false |
 | `MERCHANT_LOCATION_REQUIRED` (01A) | Also raised here when the resolved / explicit pickup is non-ACTIVE, ambiguous, or belongs to a merchant other than the draft's. | false |
 | `QUOTE_REQUIRED` | The approval request named no `quote_id` (request-shape error). | false |
 | `QUOTE_SUPERSEDED` | A newer quote exists for the draft; **approval** must name the current quote. Checked for `OPEN` and `QUOTED` drafts alike, and **before** `QUOTE_STALE` — step 4b. | false |
-| `QUOTE_EXPIRED` | `clock_timestamp() >= quote.expires_at`, read **after** the blocking locks are held; obtain a fresh quote. | false |
+| `QUOTE_EXPIRED` | `clock_timestamp() >= quote.expires_at`, read **after** the blocking locks are held; obtain a fresh quote. Also raised at **Quote publication** (step 5b) when the priced candidate's own `expires_at` passes while publication waits on the merchant/pickup lock — the candidate is not published, its timestamps are not extended. | false |
 | `QUOTE_STALE` | The presented quote for this draft was invalidated by a confirmed-input / destination-point / cargo-quantity / resolved-pickup change after it was priced **and is not superseded** — step 4c, or the creation-branch fingerprint recompute (step 5d). Obtain a fresh quote. | false |
 | `CARGO_CATEGORY_UNKNOWN` | A cargo category code is not in the server policy vocabulary. | false |
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
 | `DELIVERY_ORDER_ALREADY_EXISTS` | Recovery replay; resolves to the existing order (any state, incl. `CANCELED`). | false |
 | `DELIVERY_APPROVAL_QUOTE_CONFLICT` | Draft is `APPROVED`, `order.merchant_id == M`, but its order is for a different `quote_id` than the one presented. | false |
-| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
+| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. (Separately, at INSERT: a new `delivery_order` not in `PENDING_DISPATCH`, and an illegal `delivery_draft` state transition, are rejected by their own row-local DB guards — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed. | true |
@@ -1732,10 +1816,14 @@ U presents a leaked (d_B, q_B) whose delivery_draft.merchant_id = B
 ```
 
 - Step 1 locks `d_B`; `M := d_B.merchant_id = B`. Step 2 takes the authority
-  locks for `B` and re-resolves the gate — `U` has no ACTIVE membership for `B`
-  (the gate would otherwise resolve `A`, U's sole operable merchant) →
-  `MERCHANT_ACTOR_UNAUTHORIZED`, **before recovery**. `B`'s order is never read or
-  written under `A`'s authority.
+  locks for `B` and re-resolves the gate **for `B`** — `U` has no ACTIVE
+  membership for `B` (the gate resolving `A`, U's sole operable merchant, is just
+  one of the ways it can fail for `B`). Internally that is
+  `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED`, **before
+  recovery**; the **client-facing code is `DELIVERY_DRAFT_NOT_FOUND`** (the same a
+  nonexistent `draft_id` returns), so `U` cannot probe whether `B`'s draft
+  exists. `B`'s draft and order are never read or written under `U`'s authority
+  (Example AC; race rows 10, 58).
 
 ### Example O: same message id, two provider accounts
 
@@ -1945,6 +2033,97 @@ L is ACTIVE, merchant_id == M, has lat/lng
   historical order — valid `quote_state`, matching fingerprints and copied quote
   fields — still recovers with zero writes (Example S).
 
+### Example Z: backfilled alcohol order, a mid-activation backfill, and a later policy change
+
+```text
+(1) a writer inserts a consistent order whose cargo set is { COOKED_CRAYFISH, ALCOHOL },
+    cargo_policy_decision = DELIVERABLE, cargo_policy_version = <some activated version>
+(2) a backfill order-creation transaction that evaluated cargo under version vN is still
+    OPEN when an activation to vN+1 begins
+(3) after a correct historical order was approved, the active cargo policy later changes
+```
+
+- **(1)** The trusted `INSERT` validator derives `{ COOKED_CRAYFISH, ALCOHOL }`
+  from `NEW.cargo`, evaluates it under the activated version's definition, gets
+  `NOT_DELIVERABLE`, and rejects the row — the backfilled `DELIVERABLE` decision
+  does not bypass it. A pre-existing such row fails **Existing-order integrity**'s
+  stored-decision re-check → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes.
+  Alcohol never reaches an authoritative order (invariant 5).
+- **(2)** Activation step 1 has already stopped admitting new inserts; step 2
+  **drains that open backfill transaction to COMMIT or ROLLBACK** (backfills are
+  in scope, not just approvals), and step 3 confirms the drain before `vN+1` is
+  switched on and inserts resume. So the backfill either commits fully under
+  `vN` (and is then a normal historical row, re-checkable against `vN`'s retained
+  definition) or rolls back — it can never straddle `vN` / `vN+1`.
+- **(3)** Recovery of the earlier correct order re-checks its **stored**
+  `cargo_policy_version` / `cargo_policy_decision` against that version's retained
+  definition — which still says `DELIVERABLE` — so it recovers unchanged; the
+  new active policy is not applied to it (cf. Example S; race rows 48, 55).
+
+### Example AA: abandoned draft cannot be resurrected
+
+```text
+d1 is ABANDONED (well before its deadline) ; a repository bug UPDATEs d1.status back to QUOTED ;
+an authorized actor then approves (d1, q1)
+```
+
+- The row-local `delivery_draft` transition guard rejects `ABANDONED -> QUOTED`
+  (an absorbing state), evaluating the `OLD -> NEW` pair even mid-transaction, so
+  the resurrecting `UPDATE` never commits and no order is created. The deferred
+  coupling (race row 49) would **not** have caught this — a hypothetical
+  `APPROVED` d1 with its one order satisfies it. A genuinely new delivery is a
+  **new draft**.
+
+### Example AB: order cannot be born past `PENDING_DISPATCH`
+
+```text
+a backfill inserts a consistent delivery_order directly as status = SEARCHING_DRIVER,
+and flips its draft to APPROVED
+```
+
+- The row-local `BEFORE INSERT` guard on `delivery_order` permits a new row only
+  in `PENDING_DISPATCH`, so the insert is rejected. Dispatch's lawful
+  `PENDING_DISPATCH -> SEARCHING_DRIVER` `UPDATE` on an already-created order, and
+  recovery of an existing `CANCELED` / `DELIVERED` order, are unaffected — the
+  guard fires only on `INSERT`, adds no cross-table lock, and is not a permanent
+  `CHECK`.
+
+### Example AC: cross-tenant approval probe is masked
+
+```text
+actor U is an ACTIVE OPERATOR of merchant A only ;
+(1) U approves a random / nonexistent draft_id ;
+(2) U approves a leaked (d_B, q_B) whose delivery_draft.merchant_id = B, and U has
+    no membership for B at all (the gate does not "resolve some other merchant" —
+    it simply finds no ACTIVE (B, U) membership)
+```
+
+- **(1)** Step 1 finds no row → external `DELIVERY_DRAFT_NOT_FOUND`, zero writes,
+  before any authority lock.
+- **(2)** Step 1 locks `d_B` and sets `M := B` **from the locked draft**; step 2
+  re-resolves the actor gate **for `B`** and finds no ACTIVE `(B, U)` membership —
+  the gate fails. Internally that is `MERCHANT_MEMBERSHIP_REQUIRED` (logged); the
+  external code is the **same `DELIVERY_DRAFT_NOT_FOUND`** returned in (1), so `U`
+  cannot tell (1) from (2). Any other locked-gate failure for `B` (role miss,
+  `merchants(B)` not `ACTIVE`, gate resolving only `A`, channel identity/binding
+  mismatch) is masked identically. `B`'s draft and any order are never read or
+  written under `U`'s authority. Mirrors cancellation Example W.
+
+### Example AD: quote expires during the publication lock wait
+
+```text
+candidate quote q priced for d1 with 5 s to q.expires_at ; d1.expires_at is 20 min away ;
+publication blocks ~30 s on the merchants(M) / pickup lock ; inputs unchanged
+```
+
+- Publication acquires the locks, re-resolves pickup + `resolved_pickup_point`,
+  the priced-candidate comparison **passes**. Step 5 then takes one post-lock
+  `t = clock_timestamp()`: `t < d1.expires_at` (draft still valid) but
+  `t >= q.expires_at` → **`QUOTE_EXPIRED`, zero writes** — q is not published, its
+  `expires_at` is not extended. The draft stays `OPEN`/`QUOTED` as it was; a
+  fresh candidate must be priced. Without step 5b, `d1` would go `QUOTED` with an
+  already-expired q and every immediate approval would fail `QUOTE_EXPIRED`.
+
 ### Example H: end-to-end ("Морской Разливной")
 
 ```text
@@ -1959,7 +2138,9 @@ WhatsApp message
                -> ext identity -> binding   (FOR UPDATE, fixed order; M := locked draft.merchant_id)
          tenant-bound access check (recovery + creation): AUTHORIZED_MERCHANT_ACTOR(U, M)
                re-verified under the locks (locked linked_user_id == candidate U)
-               ; gate resolves another merchant / U mismatch -> MERCHANT_ACTOR_UNAUTHORIZED
+               ; ANY locked-gate failure for M (no membership / role / merchants(M) /
+                 another-merchant / identity-binding) -> external DELIVERY_DRAFT_NOT_FOUND
+                 (true MERCHANT_*/CONTACT_* reason internal only); missing draft -> same code
          step 3: read the single order for draft_id (UNIQUE (draft_id)); split on order existence:
            ORDER ABSENT:
              draft.status == APPROVED  -> DELIVERY_ORDER_STATE_INCONSISTENT
@@ -1990,7 +2171,8 @@ WhatsApp message
              5d recompute delivery_input_fingerprint == quote's (recipient + destination_text + destination_point
                 + cargo lines {cat,qty,unit} + locked pickup content incl coords ; else QUOTE_STALE)
              5e cargo policy over category set, replica-active constant (cooked + live crayfish DELIVERABLE)
-             5f draft QUOTED -> APPROVED  +  INSERT delivery_order (+ recipient snapshot)
+                -> persist { cargo_policy_version, cargo_policy_decision }; INSERT validator re-derives + confirms
+             5f draft QUOTED -> APPROVED  +  INSERT delivery_order (status = PENDING_DISPATCH) (+ recipient snapshot)
     -> PENDING_DISPATCH
     -> Dispatch Authority: PENDING_DISPATCH -> SEARCHING_DRIVER -> DRIVER_ASSIGNED
     -> Execution Authority: PICKED_UP -> DELIVERED
@@ -2017,11 +2199,14 @@ freezes all of the following:
   only in the creation branch, step 5a). A channel actor's `U` comes from a
   **non-authoritative pre-lock discovery** read that authorizes nothing and is
   re-verified under the locks. `membership_role in { ADMIN, OPERATOR }`. `M` is
-  taken from the **locked `delivery_draft.merchant_id`**; a gate that resolves any
-  other merchant, or a channel `linked_user_id` that no longer equals the
-  discovery `U`, → `MERCHANT_ACTOR_UNAUTHORIZED`, before recovery. The approval
-  transaction is deadlock-free against every **confirmed single-mutation 01B
-  path**; composite / future mutation callers must adopt the shared
+  taken from the **locked `delivery_draft.merchant_id`**; **any** failure of the
+  gate for that `M` (no ACTIVE `(M, U)` membership, role miss, `merchants(M)` not
+  `ACTIVE`, a gate that resolves any other merchant, a channel `linked_user_id`
+  that no longer equals the discovery `U`, an identity/binding mismatch) yields
+  the external code `DELIVERY_DRAFT_NOT_FOUND` — the same a missing draft returns,
+  the true `MERCHANT_*` / `CONTACT_*` reason internal only — before recovery. The
+  approval transaction is deadlock-free against every **confirmed single-mutation
+  01B path**; composite / future mutation callers must adopt the shared
   *lock-every-affected-membership-in-`id`-order-then-`merchants(M)`* protocol —
   a forward obligation, not a universal deadlock-impossibility claim.
 - `delivery_draft: QUOTED -> APPROVED` and the `delivery_order` (+ its 1:1
@@ -2115,6 +2300,52 @@ freezes all of the following:
   rejects a null/unknown/non-approvable stored value as
   `DELIVERY_ORDER_STATE_INCONSISTENT`; it is never compared to the quote's live
   state.
+- A **legal `delivery_draft` state-transition graph** is enforced by an immediate
+  row-local DB guard (separate from and additional to the deferred coupling):
+  new `INSERT` only `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`;
+  `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED` / `ABANDONED` /
+  `EXPIRED` absorbing. It checks every `OLD -> NEW` including successive
+  in-transaction UPDATEs, so `ABANDONED` / `EXPIRED` cannot be resurrected. It
+  does not replace actor authority, the expiry worker's conditions, or the
+  deferred coupling; a same-status UPDATE is judged by the existing
+  intent/repricing/immutability rules.
+- A **new `delivery_order` is born only in `PENDING_DISPATCH`** — a row-local
+  `BEFORE INSERT` DB guard (`NOT NULL`; a column `DEFAULT` is insufficient). It is
+  **not** a permanent `CHECK (status = 'PENDING_DISPATCH')`: lawful downstream
+  `UPDATE`s and recovery of existing `CANCELED` / `DELIVERED` rows are preserved;
+  no cross-table lock is added.
+- The order carries **immutable, non-null `cargo_policy_version` and
+  `cargo_policy_decision`**, and a **trusted `INSERT` validator** (from the same
+  immutable policy definition the server resolver uses — still a versioned
+  constant, no admin store) re-derives the category set from `NEW.cargo`,
+  evaluates it under the **activated** version, and rejects a stored
+  version/decision that does not actually clear those categories (a backfilled
+  `DELIVERABLE` does not pass). **Existing-order integrity** re-checks the stored
+  decision against that version's **retained** definition — historical, not the
+  current constant. `resolveCargoDeliveryPolicy` / the decision are **not** in
+  the canonical quote-input fingerprint. The coordinated policy-version
+  activation spans resolver **and** validator and all order writers, and its
+  drain step covers **every already-started order-creation transaction —
+  approval, secondary writers and backfills** — to COMMIT/ROLLBACK: the version
+  is not switched, and new inserts are not resumed, until that drain and its
+  confirmation are done.
+- On approval, **any** failure of the step-2 locked actor gate for the locked
+  draft's `M` — no ACTIVE `(M, U)` membership, role miss, `merchants(M)` not
+  `ACTIVE`, gate resolving another merchant, channel identity/binding mismatch —
+  and a **nonexistent `draft_id`** both return the **same external code
+  `DELIVERY_DRAFT_NOT_FOUND`**, zero writes, so no caller (for `M` or any other
+  merchant) can probe draft existence — **no own-merchant exception**. The true
+  reason (`MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED` /
+  `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged. Tenant derivation from
+  the locked draft and the authority locks (run before recovery/creation) are
+  unchanged; the frozen Identity/Contact resolver is not modified — only the
+  response mapping at this call site.
+- **Quote publication** takes one post-lock `t = clock_timestamp()` immediately
+  before the atomic publish and checks **both** `t >= delivery_draft.expires_at`
+  (`DELIVERY_DRAFT_EXPIRED`) **and** `t >= candidate_quote.expires_at`
+  (`QUOTE_EXPIRED`); publication requires both to pass, is zero-write on failure,
+  and never extends the candidate's timestamps. Historical recovery still never
+  re-checks quote expiry against the current clock.
 - Merchant cancellation resolves the named `order_id` in two internally distinct
   cases with **one external code, `DELIVERY_ORDER_NOT_FOUND`, zero writes**:
   **ORDER ABSENT** → returned at step 1 **before any authority lock**;
@@ -2140,11 +2371,19 @@ freezes all of the following:
   claim) and blocks order creation.
 - Cargo deliverability is a **server-owned versioned constant** behind
   `resolveCargoDeliveryPolicy`, evaluated over the whole set against the
-  **replica-active** constant; unknown categories fail closed; `policy_version` is
-  recorded on the order **for audit only**. A policy-class / vocabulary change is
-  a **coordinated activation** (halt creation-branch approvals on all writers —
-  `CARGO_POLICY_TRANSITION` — drain in-flight, confirm no old-constant replica
-  remains, activate, resume); an unconfirmed step leaves creation blocked.
+  **replica-active** constant; unknown categories fail closed. The order records
+  the decision as **immutable, non-null `cargo_policy_version` /
+  `cargo_policy_decision`** (not audit-only), re-derived and re-checked by a
+  trusted `INSERT` validator and re-checked historically by **Existing-order
+  integrity** against that version's retained definition. A policy-class /
+  vocabulary change is a **coordinated activation** spanning the resolver, the DB
+  validator and all order writers (halt creation-branch approvals **and new order
+  inserts** — `CARGO_POLICY_TRANSITION` — **drain every already-started
+  order-creation transaction, approval / secondary-writer / backfill, to
+  COMMIT/ROLLBACK**, confirm the drain and that no old-constant replica remains,
+  only then activate resolver+validator together, resume); until the drain and
+  confirmation are done the version is not switched and inserts are not resumed;
+  an unconfirmed step leaves creation blocked.
 - A quote binds to **all** confirmed delivery inputs — recipient, contact,
   `destination_text`, **resolved `destination_point`**, access note, window,
   **cargo lines `{ category, quantity, unit }`** — **and** the canonical
@@ -2269,16 +2508,17 @@ freezes all of the following:
 The eight items raised during initial drafting are resolved as follows and are
 load-bearing for the contract above. Review refinements remain **proposed,
 pending independent re-audit on the published correction**. At this correction's
-baseline `1e19302` (`35ab6c1`/CORRECTED9 plus the published `1e19302`/CORRECTED11
-commit), **38 threads across six Codex reviews are open**: 25 are outdated and 13
-non-outdated (5 P1 + 8 P2) — the 7 pre-`1e19302` non-outdated threads are already
-covered by earlier corrections' content, and review `5153567112` on `1e19302`
-adds 6 (2 P1 + 4 P2): draft/order state coupling as a DB invariant
-(`3967777206`), stored pickup-point provenance (`3967777246`), historical
-`quote_state` validation (`3967777214`), tenant-bound draft (`3967777226`),
-order-not-found at cancellation (`3967777236`), and bounded draft expiry
-(`3967777252`) — all addressed by this round. Anchor movement is not resolution;
-no thread is closed by this document or by local verification.
+baseline `f539027` (`1e19302`/CORRECTED11 plus CORRECTED12 and the published
+`f539027`/CORRECTED13 commit), **43 threads across seven Codex reviews are open**:
+30 are outdated and 13 non-outdated (7 P1 + 6 P2) — the 8 pre-`f539027`
+non-outdated threads are already covered by earlier corrections' content, and
+review `5156335628` on `f539027` adds 5 (3 P1 + 2 P2): enforce cargo policy on
+persisted orders (`3970113008`), back terminal draft states with a transition
+guard (`3970113024`), require new orders to start `PENDING_DISPATCH`
+(`3970113036`), mask cross-tenant approval lookups as not-found (`3970113014`),
+and reject expired quote candidates before publication (`3970113030`) — all
+addressed by this round. Anchor movement is not resolution; no thread is closed
+by this document or by local verification.
 
 1. **Draft persistence.** `delivery_draft` is a **persisted** server-side entity.
    Persisted is not authoritative: WhatsApp/Peach/manual intake may create or
@@ -2293,6 +2533,13 @@ no thread is closed by this document or by local verification.
    `OPEN`/`QUOTED` drafts with no order to `EXPIRED`; an `APPROVED` draft never
    expires); and `status == APPROVED` holds **iff** exactly one `delivery_order`
    exists (deferred at-commit coupling constraint-trigger pair — see decision 8).
+   Additionally, an immediate **row-local transition guard** confines `status` to
+   a legal graph — new `INSERT` `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`;
+   `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED` / `ABANDONED` /
+   `EXPIRED` absorbing — checked on every `OLD -> NEW` including intra-transaction
+   UPDATEs, so a backfill cannot resurrect a terminal draft. It is separate from
+   the deferred coupling and does not replace actor authority or the expiry
+   worker's preconditions.
 2. **Quote ownership split.** Confirmed. Quote computation, reprice, surge, and
    `expires_at` duration stay entirely in `BD-MERCHANT-QUOTE-AUTHORITY-01A`. This
    contract owns only the **Quote boundary contract**: the `quote_id`, state,
@@ -2371,11 +2618,23 @@ no thread is closed by this document or by local verification.
    deliverable, `ALCOHOL` not deliverable. It is BazarDrive merchant-delivery
    product policy, not a universal legal statement. Because the constant is
    process-local, a policy-class / vocabulary change is a **coordinated
-   activation**, not an ordinary rolling deploy: halt creation-branch approvals on
-   all writers (`CARGO_POLICY_TRANSITION`), drain in-flight approval transactions,
-   confirm no replica still runs the old constant, activate everywhere, resume. An
-   unconfirmed step leaves creation blocked (fail-closed); `cargo_policy_version`
-   on the order is audit, not the coordination mechanism.
+   activation**, not an ordinary rolling deploy: halt creation-branch approvals
+   **and new `delivery_order` inserts** on all writers (`CARGO_POLICY_TRANSITION`),
+   **drain to COMMIT/ROLLBACK every already-started order-creation transaction —
+   approval and every other `INSERT` path, secondary writers and backfills
+   included** — confirm no replica (application resolver **or** DB `INSERT`
+   validator) still runs the old constant **and** the drain is complete, only
+   then activate resolver and validator together everywhere, then resume. Until
+   the drain and confirmation are done the version is **not** switched and
+   inserts are **not** resumed; any unconfirmed step leaves creation blocked
+   (fail-closed). The order records **immutable, non-null
+   `cargo_policy_version` and `cargo_policy_decision`**: a trusted `INSERT`
+   validator (from the same immutable policy definition, still a versioned
+   constant — no admin store) re-derives the category set from `cargo` and
+   confirms them; **Existing-order integrity** re-checks the stored decision
+   against that version's retained definition; a backfilled `DELIVERABLE` does not
+   bypass either. The decision is **not** part of the canonical quote-input
+   fingerprint.
 8. **Idempotency key.** `delivery_order` carries an **unconditional `UNIQUE
    (draft_id)`** — a hard DB invariant that survives `CANCELED` (the row is never
    hard-deleted) and holds against secondary writers and backfills, not only the
@@ -2589,6 +2848,73 @@ Additional load-bearing invariants proposed in review **round 6** (Codex review
   steps 1 & 5; Existing-order integrity; `DELIVERY_DRAFT_EXPIRED` taxonomy; race row 54;
   Examples U, V).
 
+Additional load-bearing invariants proposed in review **round 7** (Codex review
+`5156335628`, head `f539027`; pending independent re-audit):
+
+- **Cargo policy enforced on persisted orders (P1 — `3970113008`).** Immutable,
+  non-null `cargo_policy_version` **and** `cargo_policy_decision`. A trusted
+  `INSERT` validator — from the same immutable policy definition the server
+  resolver uses (still a versioned constant, no admin store) — re-derives the
+  category set from `NEW.cargo`, evaluates it under the **activated** version, and
+  rejects a stored version/decision that does not actually clear those categories
+  (a backfilled `DELIVERABLE`, or a stale permissive version, does not pass).
+  Existing-order integrity re-checks the stored decision against that version's
+  **retained** definition (historical, not the current constant). The coordinated
+  policy-version activation now spans resolver **and** validator and every order
+  writer, and its drain step (2) covers **every already-started order-creation
+  transaction — approval, secondary writers and backfills alike**: the version is
+  not switched, and inserts are not resumed, until that drain to COMMIT/ROLLBACK
+  and its confirmation (step 3) are done, so no transaction that evaluated cargo
+  under the old constant can commit against the new one. The policy decision is
+  **not** part of the canonical quote-input fingerprint (invariant 5;
+  Policy-version activation; `delivery_order` field table; Existing-order
+  integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 7; race row
+  55; Example Z; acceptance criteria; next-slice deps).
+- **Draft state-transition guard (P1 — `3970113024`).** An immediate row-local
+  `BEFORE INSERT OR UPDATE` guard on `delivery_draft` — separate from and
+  additional to the deferred coupling — confines `status` to a legal graph: new
+  `INSERT` `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`;
+  `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED` / `ABANDONED` /
+  `EXPIRED` absorbing. It evaluates every `OLD.status -> NEW.status`, including
+  successive in-transaction UPDATEs, so a repository bug / backfill cannot
+  resurrect a terminal draft. A same-status UPDATE is judged by the existing
+  intent / repricing / immutability rules; the guard does not replace actor
+  authority, the expiry worker's preconditions, or the deferred coupling
+  (`delivery_draft` rules; decision 1; race rows 49, 56; Example AA; acceptance
+  criteria; next-slice deps).
+- **New orders start `PENDING_DISPATCH` (P1 — `3970113036`).** A row-local
+  `BEFORE INSERT` guard on `delivery_order` permits a **new** row only with
+  `status = PENDING_DISPATCH` (`NOT NULL`; a column `DEFAULT` is insufficient
+  since an explicit value overrides it). It is **not** a permanent
+  `CHECK (status = 'PENDING_DISPATCH')`: lawful downstream `UPDATE`s and recovery
+  of existing `CANCELED` / `DELIVERED` rows are preserved; no cross-table lock is
+  added (`delivery_order` field table; invariant 6; race row 57; Example AB;
+  acceptance criteria; next-slice deps).
+- **Approval cross-tenant masking (P2 — `3970113014`).** A nonexistent `draft_id`
+  **and any failure of the locked step-2 actor gate for the locked draft's `M`**
+  (no ACTIVE `(M, U)` membership, role miss, `merchants(M)` not `ACTIVE`, gate
+  resolving another merchant, channel identity/binding mismatch) return the
+  **same external code `DELIVERY_DRAFT_NOT_FOUND`**, zero writes — **no
+  own-merchant exception** — so no caller can probe draft existence, mirroring
+  cancellation's not-found masking. The true reason
+  (`MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED` /
+  `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged. The gate is always
+  resolved for `M` **taken from the locked draft**. Tenant derivation and the
+  authority locks (before recovery/creation) are unchanged; the frozen
+  Identity/Contact resolver is not modified — only the response mapping at this
+  call site (Order-creation steps 1–2; Approver parity;
+  `DELIVERY_DRAFT_NOT_FOUND` / `MERCHANT_ACTOR_UNAUTHORIZED` taxonomy; race rows
+  10, 58; Example AC; acceptance criteria).
+- **Publication rejects an expired candidate quote (P2 — `3970113030`).**
+  Immediately before the atomic publish, after all blocking locks, publication
+  takes one fresh `t = clock_timestamp()` and checks **both**
+  `t >= delivery_draft.expires_at` → `DELIVERY_DRAFT_EXPIRED` **and**
+  `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`; it publishes only if both
+  pass, is zero-write on either failure, and never extends the candidate's
+  timestamps. Historical recovery still never re-checks quote expiry against the
+  current clock (Quote boundary contract — publication step 5; `QUOTE_EXPIRED`
+  taxonomy; race rows 54, 59; Example AD; acceptance criteria).
+
 ## Review-round 1 P1 resolutions (Codex review 5140252744, head `7e58744`)
 
 **Status: proposed docs-only resolutions, pending independent re-audit.** No
@@ -2738,6 +3064,29 @@ worker.
 | P2 unknown order at cancellation `3967777236` | **ORDER ABSENT** → early `DELIVERY_ORDER_NOT_FOUND` at step 1, zero writes, **no authority lock taken**. **ORDER PRESENT, caller unauthorized** → step 2 takes the shared authority prefix for the hinted `merchant_id`, step 3's gate fails (`MERCHANT_ACTOR_UNAUTHORIZED` internally, logged), external code **masked** to the same `DELIVERY_ORDER_NOT_FOUND` (no existence disclosure), zero writes. Gate passed → `Existing-order integrity` then the status gate, unchanged. Cancellation steps 1–5; decision 5; `DELIVERY_ORDER_NOT_FOUND` taxonomy; race rows 26 & 53; acceptance criteria. | Rows 26, 53; Example W |
 | P2 draft expiry `3967777252` | `delivery_draft` gains immutable server `expires_at = created_at + TTL` (positive bounded constant fixed before intake activation; edits/reprices never extend it; independent of quote expiry) + nullable `expired_at`. Trusted sweep worker, under the draft lock, moves a due `OPEN`/`QUOTED` draft with no order to `EXPIRED`, sets `expired_at`, invalidates quote eligibility — never normalizes corruption. Approval step 4 (before superseded/stale), re-checked step 5c, reject a due-but-unswept draft on the post-lock authoritative wall clock → `DELIVERY_DRAFT_EXPIRED`. **Quote publication** keeps its early step-1 check **and re-reads `clock_timestamp()` at publication step 5, after every merchant/pickup lock is held, immediately before the atomic publish** — a lock wait that crosses the deadline with unchanged inputs still yields `DELIVERY_DRAFT_EXPIRED`, zero writes (nothing published). `APPROVED` draft never expires; ORDER PRESENT recovery/cancellation never evaluate the deadline. `delivery_draft` field table + rules; Order-creation steps 4–5; Quote boundary contract (publication steps 1 & 5); Existing-order integrity; `DELIVERY_DRAFT_EXPIRED` taxonomy; decision 1; acceptance criteria; schema-slice deps. | Row 54; Examples U, V (approval + publication) |
 
+## Review-round 7 proposed resolutions (Codex review 5156335628, head `f539027`)
+
+**Status: proposed docs-only correction; all 43 threads remain open** (13
+non-outdated: 7 P1 + 6 P2). The 8 pre-`f539027` non-outdated threads are already
+covered by earlier corrections' content and are not re-worked here. Review
+`5156335628` on `f539027` adds 5 concerns (3 P1 + 2 P2), all resolved docs-only
+below. No migration, runtime, PR metadata or review-thread change is made by this
+contract. New additive schema-slice / writer dependencies (flagged, not performed
+here): immutable non-null `cargo_policy_version` + **`cargo_policy_decision`** and
+a **trusted `INSERT` cargo-policy validator** from the same immutable policy
+definition; a row-local **`delivery_draft` state-transition guard**; a row-local
+**`delivery_order` initial-status guard** (`PENDING_DISPATCH` only on `INSERT`);
+external not-found **masking of cross-tenant approval lookups**; and a
+**candidate-quote expiry re-check** in publication step 5.
+
+| Finding / comment | Contract correction | Verification case |
+| --- | --- | --- |
+| P1 enforce cargo policy on persisted orders `3970113008` | Immutable non-null `cargo_policy_version` + `cargo_policy_decision`; trusted `INSERT` validator re-derives categories from `NEW.cargo` and checks them + the stored decision under the **activated** version (from the same immutable definition as the resolver — versioned constant, no admin store); a backfilled `DELIVERABLE` / stale permissive version does not bypass. Existing-order integrity re-checks the stored decision against that version's **retained** definition (historical, not current). Coordinated activation spans resolver + validator + all order writers, and its drain step (2) covers **every already-started order-creation transaction — approval, secondary writers and backfills** — to COMMIT/ROLLBACK; the version is not switched and inserts do not resume until that drain and its confirmation (3) are done. Policy is **not** in the canonical quote fingerprint. invariant 5; Policy-version activation; `delivery_order` field table; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 7; acceptance criteria; next-slice deps. | Row 55; Example Z |
+| P1 back terminal draft states with a transition guard `3970113024` | Immediate row-local `BEFORE INSERT OR UPDATE` guard on `delivery_draft`: new `INSERT` `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`; `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED` / `ABANDONED` / `EXPIRED` absorbing; every `OLD -> NEW` incl. intra-transaction UPDATEs. Separate from the deferred coupling; does not replace actor authority / expiry-worker conditions; same-status UPDATE judged by existing intent/repricing/immutability rules. `delivery_draft` rules; decision 1; acceptance criteria; next-slice deps. | Rows 49, 56; Example AA |
+| P1 require new orders to start pending dispatch `3970113036` | Row-local `BEFORE INSERT` guard on `delivery_order` permits a **new** row only with `status = PENDING_DISPATCH` (`NOT NULL`; `DEFAULT` insufficient). Not a permanent `CHECK`: lawful downstream `UPDATE`s and recovery of existing `CANCELED` / `DELIVERED` rows preserved; no cross-table lock. `delivery_order` field table; invariant 6; acceptance criteria; next-slice deps. | Row 57; Example AB |
+| P2 mask cross-tenant approval lookups `3970113014` | A nonexistent `draft_id` **and any failure of the locked step-2 actor gate for `M` = the locked draft's merchant** (no ACTIVE `(M, U)` membership, role miss, `merchants(M)` not `ACTIVE`, gate resolving another merchant, identity/binding mismatch) → **the same external `DELIVERY_DRAFT_NOT_FOUND`**, zero writes; **no own-merchant exception**. True `MERCHANT_*` / `CONTACT_*` reason internal, logged. Gate always resolved for `M` from the locked draft. Tenant derivation + authority locks before recovery/creation unchanged; frozen Identity/Contact resolver unchanged — only the response mapping. Mirrors cancellation. Order-creation steps 1–2; Approver parity; `DELIVERY_DRAFT_NOT_FOUND` / `MERCHANT_ACTOR_UNAUTHORIZED` taxonomy; race rows 10, 58; acceptance criteria. | Row 58; Example AC |
+| P2 reject expired quote candidates before publication `3970113030` | Publication step 5, one post-lock `t = clock_timestamp()`: `t >= draft.expires_at` → `DELIVERY_DRAFT_EXPIRED`; then `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`; publish only if both pass; zero-write on failure; no timestamp extension. Historical recovery still never re-checks quote expiry vs the current clock. Quote boundary contract — publication step 5; `QUOTE_EXPIRED` taxonomy; race rows 54, 59; acceptance criteria. | Row 59; Example AD |
+
 ## Expected next slices
 
 1. `BD-MERCHANT-QUOTE-AUTHORITY-01A` — server quote, expiry, reprice, merchant
@@ -2793,6 +3142,17 @@ worker.
    `created_at + TTL`) + nullable `expired_at`**, a positive bounded TTL constant
    fixed before intake activation, and a **trusted deadline-sweep worker**
    (`OPEN`/`QUOTED` + no order + due → `EXPIRED`, under the draft lock, never
-   normalizing corruption); FK `RESTRICT`;
+   normalizing corruption); immutable non-null **`cargo_policy_version` +
+   `cargo_policy_decision`** with a **trusted `INSERT` cargo-policy validator**
+   (same immutable policy definition as the resolver; joined into the coordinated
+   activation) plus the historical re-check in Existing-order integrity; a
+   row-local **`delivery_draft` state-transition guard** (`OPEN` on `INSERT`;
+   `OPEN -> QUOTED/ABANDONED/EXPIRED`; `QUOTED -> OPEN/APPROVED/ABANDONED/EXPIRED`;
+   terminal states absorbing; every `OLD -> NEW`, intra-transaction included); a
+   row-local **`delivery_order` `BEFORE INSERT` guard** admitting a new row only
+   in `PENDING_DISPATCH` (not a permanent `CHECK`, no cross-table lock); external
+   not-found **masking of cross-tenant approval lookups**; and a
+   **candidate-quote `expires_at` re-check** on the post-lock wall clock in
+   publication step 5; FK `RESTRICT`;
    readiness / concurrency / privacy tests; dark service seam, no public route
    unless separately approved.
