@@ -620,13 +620,16 @@ procedure, which holds the invariant-6 lock order
   IDs or a "verified" flag), and re-checks the merchant is `ACTIVE`, the
   `(M, U)` membership is ACTIVE with an allowed role, and (channel) the identity
   `channel_proof = VERIFIED` / `linked_at` / binding are all currently valid.
-  `approved_by_user_id` / `approved_membership_id` / the channel pair /
-  `approval_provenance` are written **from that re-checked result**. A
-  tuple-correct but `REVOKED` membership, or a revoked/unverified channel
-  identity or binding, fails here — so no order becomes authoritative without an
-  actor authorized *at insertion time*. (Later **recovery** is unchanged: it
-  keeps the historical tuple checks and never re-evaluates the original
-  approver's current eligibility.);
+  `approved_by_user_id` / `approved_membership_id` / **`approval_channel`** / the
+  channel identity-binding pair / `approval_provenance` are written **from that
+  re-checked result** — `approval_channel` is the trusted-proof path that
+  actually passed (`SESSION` for a session actor, `WHATSAPP` / `SMS` for the
+  verified channel), `NOT NULL`, never inferred from the pair's null-ness or
+  defaulted. A tuple-correct but `REVOKED` membership, or a revoked/unverified
+  channel identity or binding, fails here — so no order becomes authoritative
+  without an actor authorized *at insertion time*. (Later **recovery** is
+  unchanged: it keeps the historical tuple checks and never re-evaluates the
+  original approver's current eligibility.);
 - **re-proves both deadlines against one fresh server clock** (Finding-1 rule
   below): after the locks it takes a single `t := clock_timestamp()`, requires
   `t < delivery_draft.expires_at` (else `DELIVERY_DRAFT_EXPIRED`, `ROLLBACK`,
@@ -665,11 +668,11 @@ recovery after a lost confirmation response — but only an
 | Field | Meaning |
 | --- | --- |
 | `id` | Server-generated UUID PK. |
-| `merchant_id` | **`NOT NULL`** FK to `merchants(id)`; the resolved merchant context `M`. A concrete merchant is resolved **before** the draft `INSERT`, for **every** `origin_channel` (`WHATSAPP` / `SMS` / `SESSION`) and every draft status. Intake that cannot resolve a merchant is **not** persisted as a tenantless `delivery_draft` — it fails/parks upstream. A tenantless draft would break the tenant-bound actor gate, the `(merchant_id, …)` intake dedupe key (nulls compare distinct), and the per-merchant privacy boundary. |
-| `origin_channel` | **`NOT NULL`**, closed enum `WHATSAPP | SMS | SESSION` (DB `CHECK` / enum type) — provenance of the intake, not authority. `NOT NULL` is required so the intake dedupe `UNIQUE` cannot be evaded through a `NULL` key component. |
-| `origin_namespace` | Bounded adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. **Mandatory whenever `adapter_dedupe_token` is set**, enforced by a DB `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. |
+| `merchant_id` | **`NOT NULL`** FK to `merchants(id)`; the resolved merchant context `M`. A concrete merchant is resolved **before** the draft `INSERT`, for **every** `origin_channel` (`WHATSAPP` / `SMS` / `SESSION`) and every draft status. Intake that cannot resolve a merchant is **not** persisted as a tenantless `delivery_draft` — it fails/parks upstream. A tenantless draft would break the tenant-bound actor gate, the `(merchant_id, …)` intake dedupe key (nulls compare distinct), and the per-merchant privacy boundary. **Immutable after the `INSERT`:** the same immediate row-local `BEFORE UPDATE` guard that confines `status` also rejects **any** `OLD.merchant_id -> NEW.merchant_id` change — in every status, for every writer / backfill, on each successive intra-transaction `UPDATE` — so the tenant boundary, the actor gate and the intake-dedupe key can never be re-pointed at another merchant. The allowed draft-intent edits (recipient / contact / destination / access note / window / cargo) are unaffected. |
+| `origin_channel` | **`NOT NULL`**, closed enum `WHATSAPP | SMS | SESSION` (DB `CHECK` / enum type) — provenance of the intake, not authority. `NOT NULL` is required so the intake dedupe `UNIQUE` cannot be evaded through a `NULL` key component. **Immutable after the `INSERT`** as part of the frozen intake tuple (see `adapter_dedupe_token`). |
+| `origin_namespace` | Bounded adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. **Mandatory whenever `adapter_dedupe_token` is set**, enforced by a DB `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. **Immutable after the `INSERT`** as part of the frozen intake tuple (see `adapter_dedupe_token`). |
 | `origin_ref` | Bounded provider/message/session provenance label. |
-| `adapter_dedupe_token` | Nullable bounded provider/adapter dedupe key for **intake idempotency only** (see Idempotency); part of the immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; never a key for order creation. `NULL` (no token) is allowed and repeats freely — several tokenless manual drafts for one merchant coexist. |
+| `adapter_dedupe_token` | Nullable bounded provider/adapter dedupe key for **intake idempotency only** (see Idempotency); part of the immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; never a key for order creation. `NULL` (no token) is allowed and repeats freely — several tokenless manual drafts for one merchant coexist. **The whole intake tuple `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is immutable after the `INSERT`:** an immediate row-local `BEFORE UPDATE` guard rejects any change to any component under a **null-safe** `OLD`/`NEW` comparison (`IS DISTINCT FROM`), including setting a non-null `adapter_dedupe_token` back to `NULL` — so a token-backed draft's dedupe identity cannot be freed through an `UPDATE`. A **row-local `BEFORE DELETE` guard** additionally rejects a hard-delete of any **token-backed** draft (`adapter_dedupe_token IS NOT NULL`), in **any** status, so the `UNIQUE` row that a later redelivery collides with cannot disappear. Tokenless drafts stay freely creatable by separate repeat `INSERT`s. A future PII-retention / erasure mechanism is **out of scope here** and must, when it lands, preserve this dedupe guarantee (e.g. a redaction that keeps the intake tuple, not a hard delete). |
 | `recipient_name` | Bounded string (mutable draft intent). |
 | `recipient_contact` | Bounded normalized recipient phone (reuses the auth phone canonicalizer); recipient is not a `users` row. |
 | `destination_text` | Bounded human destination as stated (mutable draft intent). |
@@ -735,6 +738,31 @@ Rules:
   does not replace actor authority, the expiry worker's `OPEN`/`QUOTED` +
   no-order + due preconditions and its atomic quote-eligibility invalidation, or
   the deferred coupling, and it adds no cross-table lock;
+- **the tenant is immutable after the `INSERT`.** The same immediate row-local
+  `BEFORE INSERT OR UPDATE` guard rejects **any** `OLD.merchant_id ->
+  NEW.merchant_id` change, in **every** status (`OPEN` / `QUOTED` / `APPROVED` /
+  `ABANDONED` / `EXPIRED`), for **every** writer and backfill, evaluating each
+  successive `OLD -> NEW` inside one transaction. A secondary writer therefore
+  cannot re-tenant an `OPEN` / `QUOTED` draft to another merchant to expose the
+  recipient PII to, or let it be re-priced / approved by, that merchant's actor;
+  a genuinely different tenant's request is a **new draft**. The allowed
+  draft-intent edits are unchanged;
+- **the intake identity is durable.** The whole intake tuple `(merchant_id,
+  origin_channel, origin_namespace, adapter_dedupe_token)` is immutable after the
+  `INSERT` (null-safe `IS DISTINCT FROM` comparison in the same guard — no
+  component may change, and a non-null `adapter_dedupe_token` may not be set back
+  to `NULL`), and a **`BEFORE DELETE` guard** rejects a hard-delete of any
+  **token-backed** draft (`adapter_dedupe_token IS NOT NULL`) in any status. So a
+  cleanup job or secondary writer cannot free a token-backed draft's dedupe row —
+  through `UPDATE` or `DELETE` — and let a later adapter redelivery of the same
+  key insert a fresh `OPEN` draft, reset the deadline, or resurrect an
+  `ABANDONED` / `EXPIRED` request into an order. Redelivery of the original key
+  keeps colliding with, and resolving to, the original draft in its recorded
+  status. Tokenless (`NULL` token) manual drafts stay freely creatable by
+  separate repeat `INSERT`s. Concrete retention duration and any PII
+  redaction/erasure implementation are **out of scope for this slice**; a future
+  erasure mechanism must preserve this dedupe guarantee (retain the intake tuple,
+  never hard-delete a token-backed row);
 - **draft expiry is a bounded deadline swept by a trusted worker.** `expires_at`
   is `created_at + TTL` (fixed constant, set once, immutable; edits/reprices
   never extend it; independent of quote expiry). A trusted cleanup worker, **under
@@ -762,7 +790,7 @@ The single authoritative record for one approved delivery.
 | `merchant_id` | `NOT NULL` FK to `merchants(id)`; **equal to `delivery_draft.merchant_id`**, enforced by the composite FK / trigger above — never two independent single-column FKs. |
 | `approved_by_user_id` | `NOT NULL` FK to `users(id)`; the actor the write-txn gate resolved, bound to the exact approval membership tuple below. |
 | `approved_membership_id` | `NOT NULL`; composite FK `(approved_membership_id, merchant_id, approved_by_user_id) -> merchant_memberships (id, merchant_id, user_id)` (or equivalent guard), identifying the actual historical membership row that authorized approval. |
-| `approval_channel` | `SESSION | WHATSAPP | SMS`; how the actor was gated. |
+| `approval_channel` | **`NOT NULL`, immutable**, closed set `SESSION | WHATSAPP | SMS` — a DB **enum**, or a `CHECK` on the value set **together with** `NOT NULL`. It is the mandatory discriminator for how the actor was gated, written from the trusted actor-proof path the creation transaction actually verified at insert time — **never** inferred from whether the `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id` pair is null, and **never** defaulted to `SESSION`. A pair-only `CHECK` evaluates to unknown (and passes) when the channel itself is `NULL`, so this column's own `NOT NULL` + closed set is what guarantees the discriminator exists; **Existing-order integrity** rejects a null / unknown value before it looks at the identity/binding pair. |
 | `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id` | **Both `NULL` for `approval_channel = SESSION`; both `NOT NULL` for `WHATSAPP` / `SMS`** — the exact `external_contact_identities` and `merchant_contact_bindings` rows that passed the channel gate. Composite guards: binding `(approved_merchant_contact_binding_id, merchant_id, approved_external_contact_identity_id) -> merchant_contact_bindings (id, merchant_id, external_contact_identity_id)`; identity constrained so `external_contact_identities.linked_user_id == approved_by_user_id` and `external_contact_identities.channel` matches `approval_channel`. A merchant/user pair or an opaque provenance string alone does not name the identity/binding that authorized a channel approval. |
 | `approval_provenance` | Bounded server-owned provenance (procedure + adapter ref). |
 | `quote_id` | `NOT NULL`; composite FK `(quote_id, draft_id) -> quote (id, draft_id)` (or equivalent guard) to the approved quote row owned by Quote Authority. `quote` here names the future boundary entity, not an existing passenger table. |
@@ -795,9 +823,11 @@ additive `merchant_contact_bindings (id, merchant_id, external_contact_identity_
 plus an `external_contact_identities` guard that ties the stored identity to the
 approving/cancelling `user_id` and to `approval_channel` / `cancellation_channel`.
 `draft_id`, `merchant_id`, `approved_by_user_id`, `approved_membership_id`,
-`quote_id`, `pickup_location_id` and `pickup_snapshot` are all `NOT NULL`; the
-channel identity/binding pair is `NOT NULL` exactly when its channel is
-`WHATSAPP` / `SMS` and `NULL` for `SESSION`. Independent FKs, a merchant/user pair
+`approval_channel`, `quote_id`, `pickup_location_id` and `pickup_snapshot` are all
+`NOT NULL`; the channel identity/binding pair is `NOT NULL` exactly when
+`approval_channel in { WHATSAPP, SMS }` and `NULL` for `SESSION` — the pair's
+null-ness is *derived from* the mandatory `approval_channel`, not a substitute for
+it. Independent FKs, a merchant/user pair
 or an opaque provenance string alone do not bind the named membership, pickup or
 identity/binding rows. The current 01B partial ACTIVE indexes are not a
 replacement for these historical tuples. Quote `draft_id`, membership
@@ -974,6 +1004,15 @@ never applied to ORDER ABSENT. For the existing order, require all of:
 - its stored approval membership exists and has immutable
   `(id, merchant_id, user_id) == (approved_membership_id, order.merchant_id,
   approved_by_user_id)`;
+- **approval channel present** — `approval_channel` is non-null and one of the
+  closed set `SESSION | WHATSAPP | SMS`. A **null or unknown** value →
+  `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes), **before** the
+  identity/binding-tuple check below — a legacy or trigger-bypassed order whose
+  channel is null must not be recovered without establishing whether session or
+  channel proof authorized it. This runs after the current caller's authorization
+  and before recovery / cancellation; a since-`REVOKED` identity or binding whose
+  channel and immutable tuple still match is valid history and is **not** faulted
+  here;
 - **channel authority tuple** — if `approval_channel in { WHATSAPP, SMS }`, then
   `approved_external_contact_identity_id` and `approved_merchant_contact_binding_id`
   are non-null, the binding's immutable `(id, merchant_id,
@@ -1365,6 +1404,25 @@ regardless.
   `EXPIRED` draft. Different merchant / channel / namespace stay independent.
   This is an intake dedupe key **only**, never a second, competing key for
   authoritative order creation, which keys on the draft as above.
+- **The intake identity is durable — it cannot be freed by `UPDATE` or
+  `DELETE`.** The `UNIQUE` only rejects a *duplicate*; on its own it lets a
+  cleanup job or secondary writer make the recorded key disappear so a later
+  redelivery re-inserts a fresh `OPEN` draft (new deadline, terminal status
+  forgotten). Two immediate row-local guards close that: (i) the full tuple
+  `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is
+  **immutable after the `INSERT`** — the `BEFORE UPDATE` guard rejects any
+  component change under a null-safe `IS DISTINCT FROM` comparison, **including
+  setting a non-null `adapter_dedupe_token` back to `NULL`**; (ii) a
+  `BEFORE DELETE` guard rejects a hard-delete of any **token-backed** draft
+  (`adapter_dedupe_token IS NOT NULL`) in **any** status. So a redelivery of the
+  original key keeps colliding with, and resolving to, the original draft in its
+  recorded status and with its original deadline — an abandoned or expired
+  request is never turned back into an order. Legitimate flows are untouched:
+  tokenless (`NULL` token) manual drafts are still created by separate repeat
+  `INSERT`s, and the allowed intent edits still apply. Concrete retention
+  duration and any PII redaction / erasure implementation are **out of scope for
+  this slice**; a future erasure mechanism must preserve this guarantee — retain
+  the intake tuple (redact PII in place), never hard-delete a token-backed row.
 
 ## Cancellation
 
@@ -1651,8 +1709,8 @@ these transactions crosses lock order.
 | # | Race | Required outcome (both directions) |
 | --- | --- | --- |
 | 1 | Two concurrent **creation** approvals of one `QUOTED` draft | Serialize on the `delivery_draft` lock; `UNIQUE (draft_id)` backstops. Exactly one `delivery_order`; the loser recovers the same row (`DELIVERY_ORDER_ALREADY_EXISTS`). |
-| 2 | Approval vs. merchant `SUSPENDED`/`CLOSED` | **Approval first:** the suspend waits on `merchants(M)` until approval commits/rolls back. **Suspend first:** approval's `lockMerchantById(M)` waits, then reads `SUSPENDED` → `MERCHANT_INOPERABLE`, no order. Applies to recovery and creation. |
-| 3 | Approval vs. membership `REVOKED` (incl. last-ADMIN revoke, whose guard trigger locks `merchants(M)` **after** the membership row) | **Approval first:** the revoke of the actor's own row waits on the step-2 membership lock; any other revoke waits on `merchants(M)`. **Revoke first:** approval's `lockActiveMerchantMembership` finds no ACTIVE row (or re-reads it `REVOKED`) → `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED`, no order. Applies to recovery and creation. |
+| 2 | Approval vs. merchant `SUSPENDED`/`CLOSED` | **Approval first:** the suspend waits on `merchants(M)` until approval commits/rolls back. **Suspend first:** approval's `lockMerchantById(M)` waits, then reads `SUSPENDED`; the locked-gate failure is **`MERCHANT_INOPERABLE` internal only (logged)**, mapped to the **single external `DELIVERY_DRAFT_NOT_FOUND`** (universal masking — rows 10, 58; `DELIVERY_DRAFT_NOT_FOUND` taxonomy). **Zero writes, before recovery or creation** — an existing order is neither read nor transitioned, and no order is created. Applies to recovery and creation; lock order unchanged. |
+| 3 | Approval vs. membership `REVOKED` (incl. last-ADMIN revoke, whose guard trigger locks `merchants(M)` **after** the membership row) | **Approval first:** the revoke of the actor's own row waits on the step-2 membership lock; any other revoke waits on `merchants(M)`. **Revoke first:** approval's `lockActiveMerchantMembership` finds no ACTIVE row (or re-reads it `REVOKED`); the locked-gate failure is **`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED` internal only (logged)**, mapped to the **single external `DELIVERY_DRAFT_NOT_FOUND`** (rows 10, 58). **Zero writes, before recovery or creation.** Applies to recovery and creation; lock order unchanged. |
 | 4 | **Creation** vs. quote `expires_at` crossed while waiting on locks | Expiry is read with `clock_timestamp()` **after** the locks are held (not transaction-start `now()`); `clock_timestamp() >= expires_at` → `QUOTE_EXPIRED`; no order. |
 | 5 | Approval of a quote for which a **newer quote exists** for the draft — draft `OPEN` **or** `QUOTED` | `QUOTE_SUPERSEDED` (step 4b); checked **before** `QUOTE_STALE`; approval must name the current quote. Guaranteed, not timing-dependent: quote publish/supersede takes the `delivery_draft` lock, so it cannot land between step 5c re-confirm and commit (row 23). |
 | 6 | **Creation** vs. pickup `merchant_location` edit / `ARCHIVED` / default switch | The pickup row is locked in step 5a; its merchant-default boundary is already covered by the step-2 `merchants(M)` lock. **Approval first:** the edit waits. **Edit first:** step 5a re-reads under lock — non-ACTIVE / gone → `MERCHANT_LOCATION_REQUIRED`; changed content → step 5d fingerprint mismatch → `QUOTE_STALE`. No order against a stale pickup. |
@@ -1716,6 +1774,10 @@ these transactions crosses lock order.
 | 64 | An adapter concurrently redelivers one full intake key `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; or a token is stored with a null `origin_namespace` / null `origin_channel` | The immediate `UNIQUE` over the four fields, with `origin_channel` `NOT NULL` and `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`, admits exactly **one** draft; the loser reads the existing draft and proceeds from it — no overwrite of intent, no deadline extension, no resurrection of a terminal draft. A null namespace/channel can no longer evade the key. Tokenless (`NULL` token) manual drafts still repeat freely; different merchant / channel / namespace stay independent (row 12; Example O). |
 | 65 | A secondary writer / backfill references a tuple-correct but **currently `REVOKED`** approval membership (or revoked/unverified channel identity + binding) on a new order; separately, a revocation races the creation transaction | The trusted creation procedure re-checks the merchant / membership+role / channel identity-proof / binding are **currently eligible** at insert time under the fixed lock prefix, writing provenance from that re-checked result — a `REVOKED` tuple fails, `ROLLBACK`, no order. Revocation-first: the procedure's locks wait, then it reads the committed negative state (`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` / `MERCHANT_ACTOR_UNAUTHORIZED`, internal; external `DELIVERY_DRAFT_NOT_FOUND` per CORRECTED15 masking). Creation-first: it holds the locks through commit; the revoke waits and then sees the committed order. Later **recovery** keeps the historical tuple checks and never re-evaluates the original approver's current eligibility (Example S). |
 | 66 | A secondary writer sets an order to `CANCELED` with `cancellation_authority` null; or `MERCHANT` with an absent/partial merchant tuple; or `DISPATCH_EXECUTION` with a fabricated merchant tuple or an unverifiable compensation reference | This slice's step 5 sets `cancellation_authority = MERCHANT` atomically with the full verified merchant tuple, write-once. `DISPATCH_EXECUTION` is not a path an ordinary writer can take (the downstream contract + its backstop do not exist yet). Any pre-existing `CANCELED` order failing the **cancellation source** check → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A null `cancellation_channel` no longer implies "legitimate compensation" — the discriminator is checked explicitly (rows 33, 41; Examples T, AE). |
+| 67 | A secondary writer / backfill `UPDATE`s `delivery_draft.merchant_id` to another valid merchant on an `OPEN` / `QUOTED` draft that has no explicit pickup (so the draft-pickup FK, the state-transition guard and the draft/order coupling are all still satisfied) | The immediate row-local `BEFORE INSERT OR UPDATE` guard rejects **any** `OLD.merchant_id -> NEW.merchant_id` change, in every status and on each intra-transaction `UPDATE`. The tenant, the actor-gate boundary and the intake-dedupe key stay fixed, so the other merchant's actor never passes the tenant gate for this draft, never reads its recipient PII, and never re-prices / approves it. A different tenant's request is a **new draft** (`delivery_draft` field table + rules; decision 1; acceptance criteria). |
+| 68 | Cleanup or a secondary writer hard-`DELETE`s a token-backed `OPEN` / `ABANDONED` / `EXPIRED` `delivery_draft` that has no referencing order; the adapter then redelivers the same intake key | The row-local `BEFORE DELETE` guard rejects the hard-delete of any draft with `adapter_dedupe_token IS NOT NULL`, in any status — the `UNIQUE` row cannot vanish. The redelivery's `INSERT` collides with the still-present key and the loser resolves to the **original** draft in its recorded status, with its **original** deadline — an abandoned / expired request is not turned back into a fresh `OPEN` draft or an order. A non-token draft (no dedupe identity to protect) may still be deleted (`delivery_draft` field table + rules; Idempotency and recovery; row 64; Example O). |
+| 69 | A writer `UPDATE`s one component of the intake tuple on an existing draft — a different `origin_namespace`, or **`adapter_dedupe_token` set from a value back to `NULL`** to "free" the key — then a redelivery of the old key arrives | The same guard rejects any change to `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` under a null-safe `IS DISTINCT FROM` comparison, so the token cannot be nulled and no component can be swapped. The old key still resolves to this draft on redelivery. **Legitimate, still allowed:** a separate fresh `INSERT` of a tokenless manual draft for the same merchant (`NULL` token repeats freely), and the ordinary intent edits (recipient / contact / destination / access note / window / cargo) on this draft while `OPEN` (`delivery_draft` field table + rules; Idempotency and recovery; rows 12, 64). |
+| 70 | Recovery / cancellation of an order whose `approval_channel` is `NULL` (legacy row, or a trigger-bypassed backfill) with both `approved_external_contact_identity_id` / `approved_merchant_contact_binding_id` also null | **Existing-order integrity**'s **approval-channel-present** check runs first: a null / unknown `approval_channel` → `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes), **before** the identity/binding-tuple check — the order is not recovered without establishing session-vs-channel proof. Positive controls: a `SESSION` order (`approval_channel = SESSION`, pair `NULL`) and a `WHATSAPP` / `SMS` order (`approval_channel` set, pair `NOT NULL` + owned) both pass, and a since-`REVOKED` identity/binding whose channel + tuple still match is valid history and still recovers (`delivery_order` field table; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; Example S). |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -1777,7 +1839,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
 | `DELIVERY_ORDER_ALREADY_EXISTS` | Recovery replay; resolves to the existing order (any state, incl. `CANCELED`). | false |
 | `DELIVERY_APPROVAL_QUOTE_CONFLICT` | Draft is `APPROVED`, `order.merchant_id == M`, but its order is for a different `quote_id` than the one presented. | false |
-| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); a **`created_at`** that is null or does **not** historically precede both immutable deadlines (`order.quote_expires_at`, `source_draft.expires_at`); a **`CANCELED` order with a null `cancellation_authority`**, or one whose `MERCHANT` / `DISPATCH_EXECUTION` source does not match its references (a `MERCHANT` cancel missing its verified tuple, a `DISPATCH_EXECUTION` with a fabricated merchant tuple or an unverifiable compensation reference); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. (Separately, at INSERT / transition time: a new `delivery_order` not in `PENDING_DISPATCH`, an illegal `delivery_draft` state transition, a premature or mis-stamped `-> EXPIRED`, a backdated `created_at`, an intake-dedupe `UNIQUE` collision, and a cross-tenant `requested_pickup_location_id` are rejected by their own row-local DB guards / constraints — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
+| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); a **`created_at`** that is null or does **not** historically precede both immutable deadlines (`order.quote_expires_at`, `source_draft.expires_at`); a **null / unknown `approval_channel`** (checked **before** the channel identity/binding tuple); a **`CANCELED` order with a null `cancellation_authority`**, or one whose `MERCHANT` / `DISPATCH_EXECUTION` source does not match its references (a `MERCHANT` cancel missing its verified tuple, a `DISPATCH_EXECUTION` with a fabricated merchant tuple or an unverifiable compensation reference); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. (Separately, at INSERT / transition time: a new `delivery_order` not in `PENDING_DISPATCH`, an illegal `delivery_draft` state transition, a premature or mis-stamped `-> EXPIRED`, a backdated `created_at`, an intake-dedupe `UNIQUE` collision, a cross-tenant `requested_pickup_location_id`, a rewrite of `delivery_draft.merchant_id` or of any intake-tuple component (`adapter_dedupe_token` nulling included), and a hard-`DELETE` of a token-backed `delivery_draft` are rejected by their own row-local DB guards / constraints — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed. | true |
@@ -2472,6 +2534,13 @@ freezes all of the following:
   are bound by the non-null composite links in **Target entity: delivery_order**
   (`pickup_location_id`, `pickup_snapshot` and the channel identity/binding pair
   are `NOT NULL` per their rules; the pair is null for `SESSION`).
+  **`approval_channel` is itself `NOT NULL`, immutable, closed to
+  `SESSION | WHATSAPP | SMS`** (DB enum or `CHECK` + `NOT NULL`), written from the
+  trusted proof path actually verified at insert — never inferred from the pair's
+  null-ness, never defaulted. **Existing-order integrity** rejects a null /
+  unknown `approval_channel` as `DELIVERY_ORDER_STATE_INCONSISTENT` **before** it
+  checks the identity/binding tuple; the separate NULL-rules for the
+  `cancellation_channel` / `canceled_*` fields are unchanged.
   Recovery/cancellation run **Existing-order integrity** before success, checking
   these historical links, the pickup relationship, the well-formed child, **and
   that the order's immutable snapshots and copied quote fields match the
@@ -2505,11 +2574,26 @@ freezes all of the following:
   a merchant-owned pickup, and recovery checks only that frozen copy — never the
   location's current `resolved_pickup_point`; recipient/destination data is never
   written to merchant identity tables and never used as pickup.
-- A `delivery_draft` is **always tenant-bound**: `merchant_id` is
-  `NOT NULL REFERENCES merchants(id)`, resolved before the `INSERT` for every
-  channel and state; intake that cannot resolve a merchant is never persisted as
-  a tenantless draft, so the tenant-bound gate and the `(merchant_id, …)` intake
-  dedupe key always have a concrete merchant.
+- A `delivery_draft` is **always tenant-bound and its tenant is immutable**:
+  `merchant_id` is `NOT NULL REFERENCES merchants(id)`, resolved before the
+  `INSERT` for every channel and state; intake that cannot resolve a merchant is
+  never persisted as a tenantless draft, so the tenant-bound gate and the
+  `(merchant_id, …)` intake dedupe key always have a concrete merchant. An
+  immediate row-local `BEFORE INSERT OR UPDATE` guard rejects **any**
+  `OLD.merchant_id -> NEW.merchant_id` change in every status, for every
+  writer/backfill, on each intra-transaction `UPDATE`, so a draft cannot be
+  re-tenanted to expose its recipient PII to, or be approved by, another
+  merchant's actor.
+- The **intake identity of a token-backed `delivery_draft` is durable**: the full
+  tuple `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is
+  immutable after `INSERT` (null-safe guard — no component change, no
+  `adapter_dedupe_token -> NULL`), and a `BEFORE DELETE` guard rejects a
+  hard-delete of any draft with a non-null `adapter_dedupe_token` in any status,
+  so a redelivery of the original key always resolves to the original draft in
+  its recorded status and cannot resurrect an `ABANDONED` / `EXPIRED` request.
+  Tokenless manual drafts stay freely creatable by separate `INSERT`s. Retention
+  duration and PII erasure implementation are out of scope; a future erasure
+  mechanism must preserve this dedupe guarantee.
 - A `delivery_draft` **ages out on a bounded server deadline**: an immutable
   server-assigned `expires_at = created_at + TTL` (a positive bounded constant
   fixed before intake activation; edits/reprices never extend it; independent of
@@ -2797,28 +2881,30 @@ freezes all of the following:
 The eight items raised during initial drafting are resolved as follows and are
 load-bearing for the contract above. Review refinements remain **proposed,
 pending independent re-audit on the published correction**. At this correction's
-baseline `1fc6682` (`f539027`/CORRECTED13 plus CORRECTED14 and the published
-`1fc6682`/CORRECTED15 commit), **52 threads across eight Codex reviews are open**:
-35 are outdated and 17 non-outdated — the 8 pre-`1fc6682` non-outdated threads
-are already covered by earlier corrections' content, and review `5159806482` on
-`1fc6682` adds **9 comments = 6 distinct findings (5 P1 + 1 P2)** (three findings
-were posted twice: `3972970725`/`3972970754`, `3972970734`/`3972970759`,
-`3972970742`/`3972970764`): reject an expired quote in the order-`INSERT`
-boundary (`3972970725`), enforce the deadline + stamp `expired_at` on `-> EXPIRED`
-(`3972970734`), draft-level composite pickup FK (`3972970742`, P2), DB intake
-idempotency `UNIQUE` + `CHECK` (`3972970769`), re-check current actor eligibility
-on every order insert (`3972970775`), and a write-once cancellation-source
-discriminator (`3972970785`) — all addressed by this round. Anchor movement is
-not resolution; no thread is closed by this document or by local verification.
+baseline `c6e9130` (`1fc6682`/CORRECTED15 plus the published `c6e9130`/CORRECTED17
+commit — CORRECTED16's four round-8 fixes and CORRECTED17's worked-example
+alignment), **56 threads across nine Codex reviews are open**: 40 are outdated and
+16 non-outdated, **0 resolved** — the pre-`c6e9130` non-outdated threads are
+already covered by earlier corrections' content, and review `5162786689` on
+`c6e9130` adds **4 inline comments = 4 distinct findings (2 P1 + 2 P2)**, no
+duplicates: make the draft tenant immutable (`3975577838`, P1), preserve the
+intake dedupe key against `DELETE` / `UPDATE` (`3975577846`, P1), align race-matrix
+rows 2–3 with the universal `DELIVERY_DRAFT_NOT_FOUND` masking (`3975577842`, P2),
+and a mandatory `NOT NULL` `approval_channel` discriminator (`3975577858`, P2) —
+all addressed by this round. Anchor movement is not resolution; no thread is
+closed by this document or by local verification.
 
 1. **Draft persistence.** `delivery_draft` is a **persisted** server-side entity.
    Persisted is not authoritative: WhatsApp/Peach/manual intake may create or
    augment it, and it is the durable anchor for quoting, expiry, dedupe, and
    recovery after a lost confirmation response — but only an
    `AUTHORIZED_MERCHANT_ACTOR` approval turns `draft + quote` into a
-   `delivery_order`. Three of its properties are **DB invariants**, not
+   `delivery_order`. Several of its properties are **DB invariants**, not
    service-path habits: `merchant_id` is `NOT NULL` (no tenantless draft, any
-   channel/state); an unapproved draft ages out on an immutable server
+   channel/state) **and immutable after `INSERT`** — an immediate row-local guard
+   rejects any `OLD.merchant_id -> NEW.merchant_id` change in every status, so a
+   draft cannot be re-tenanted to another merchant; an unapproved draft ages out
+   on an immutable server
    `expires_at = created_at + TTL` (bounded constant; edits/reprices never
    extend it; a trusted sweep worker sets `expired_at` and moves due
    `OPEN`/`QUOTED` drafts with no order to `EXPIRED`; an `APPROVED` draft never
@@ -2838,9 +2924,14 @@ not resolution; no thread is closed by this document or by local verification.
    — an immediate `UNIQUE (merchant_id, origin_channel, origin_namespace,
    adapter_dedupe_token)` with `origin_channel` `NOT NULL` and
    `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)` — and
-   `requested_pickup_location_id` carries a draft-level composite FK to
-   `merchant_locations (id, merchant_id)` so a cross-tenant pickup id cannot be
-   stored on a draft.
+   the recorded intake identity is **durable**: the full tuple is immutable after
+   `INSERT` (null-safe guard, `adapter_dedupe_token -> NULL` included) and a
+   `BEFORE DELETE` guard rejects a hard-delete of any token-backed draft in any
+   status, so a redelivery of the original key always resolves to the original
+   draft and cannot resurrect a terminal one (retention/erasure is a separate,
+   later mechanism that must keep this guarantee). `requested_pickup_location_id`
+   carries a draft-level composite FK to `merchant_locations (id, merchant_id)` so
+   a cross-tenant pickup id cannot be stored on a draft.
 2. **Quote ownership split.** Confirmed. Quote computation, reprice, surge, and
    `expires_at` duration stay entirely in `BD-MERCHANT-QUOTE-AUTHORITY-01A`. This
    contract owns only the **Quote boundary contract**: the `quote_id`, state,
@@ -2920,6 +3011,12 @@ not resolution; no thread is closed by this document or by local verification.
    for `WHATSAPP` / `SMS` and null for `SESSION`, so **Existing-order integrity**
    can structurally verify which identity exercised the right even when a user
    holds several verified identities/bindings for one merchant.
+   `delivery_order.approval_channel` is itself the mandatory discriminator —
+   `NOT NULL`, immutable, closed to `SESSION | WHATSAPP | SMS` (DB enum or `CHECK`
+   **with** `NOT NULL`) — written from the proof path actually verified at insert,
+   never inferred from the identity/binding pair's null-ness and never defaulted
+   to `SESSION`. A legacy / trigger-bypassed order with a null channel fails
+   **Existing-order integrity** (checked before the tuple) and is not recovered.
 7. **Deliverability policy storage.** A **server-owned, versioned constant** in
    the initial runtime, behind `resolveCargoDeliveryPolicy(...)` — not a mutable
    admin-editable table. Initial constant: `COOKED_CRAYFISH` / `LIVE_CRAYFISH`
@@ -2956,7 +3053,14 @@ not resolution; no thread is closed by this document or by local verification.
    concurrent redelivery of one full key produces exactly one draft (the loser
    reads it, no overwrite / no deadline extension / no terminal resurrection),
    while tokenless (`NULL`) manual drafts repeat freely — never a competing key
-   for order creation. `draft_id` and `merchant_id` are both `NOT NULL` and bound by a
+   for order creation. The `UNIQUE` only blocks a *duplicate*; the recorded
+   identity is also made **durable** so it cannot be *freed*: the full intake
+   tuple is immutable after `INSERT` (null-safe row-local guard — no component
+   change, `adapter_dedupe_token -> NULL` included) and a `BEFORE DELETE` guard
+   rejects a hard-delete of any token-backed draft in any status, so a later
+   redelivery of that key still collides with, and resolves to, the original
+   draft in its recorded status. A future PII retention / erasure mechanism is
+   out of scope here and must preserve this guarantee. `draft_id` and `merchant_id` are both `NOT NULL` and bound by a
    **composite FK `(draft_id, merchant_id) -> delivery_draft (id, merchant_id)`**
    (or guard trigger), so the persisted order's merchant can never diverge from
    its source draft's. Because `APPROVED` is terminal for the draft, a draft
@@ -3309,6 +3413,59 @@ Additional load-bearing invariants proposed in review **round 8** (Codex review
   `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 5; race rows 33, 66;
   Examples T, AG; acceptance criteria; next-slice deps).
 
+Additional load-bearing invariants proposed in review **round 9** (Codex review
+`5162786689`, head `c6e9130`; pending independent re-audit):
+
+- **Immutable draft tenant (P1 — `3975577838`).** The same immediate row-local
+  `BEFORE INSERT OR UPDATE` guard that confines `delivery_draft.status` also
+  rejects **any** `OLD.merchant_id -> NEW.merchant_id` change — in every status,
+  for every writer / backfill, on each successive intra-transaction `UPDATE`. A
+  secondary writer cannot re-tenant an `OPEN` / `QUOTED` draft (which otherwise
+  passes the pickup FK, the transition guard and the draft/order coupling) to
+  another merchant whose actor would then read the recipient PII or re-price /
+  approve it. The allowed draft-intent edits are unchanged (`delivery_draft`
+  field table + rules; decision 1; race row 67; `DELIVERY_ORDER_STATE_INCONSISTENT`
+  taxonomy (INSERT-time list); acceptance criteria; next-slice deps).
+- **Durable intake identity (P1 — `3975577846`).** The `UNIQUE` blocks a
+  duplicate but not a *freed* key. Two immediate row-local guards close it: the
+  full intake tuple `(merchant_id, origin_channel, origin_namespace,
+  adapter_dedupe_token)` is **immutable after `INSERT`** (null-safe
+  `IS DISTINCT FROM` comparison — no component change, `adapter_dedupe_token ->
+  NULL` included), and a `BEFORE DELETE` guard rejects a hard-delete of any
+  **token-backed** draft (`adapter_dedupe_token IS NOT NULL`) in any status. A
+  redelivery of the original key always resolves to the original draft in its
+  recorded status and deadline; an `ABANDONED` / `EXPIRED` request cannot be
+  turned back into a fresh `OPEN` draft or an order. Tokenless manual drafts stay
+  freely creatable by separate `INSERT`s. Concrete retention duration and PII
+  redaction/erasure are **out of scope here**; a later erasure mechanism must
+  keep this guarantee — retain the intake tuple, never hard-delete a token-backed
+  row (`delivery_draft` field table + rules; Idempotency and recovery; decision 1,
+  decision 8; race rows 68, 69; acceptance criteria; next-slice deps).
+- **Race-matrix masking alignment (P2 — `3975577842`).** Race-matrix rows 2 and 3
+  now separate the **internal, logged** reason (`MERCHANT_INOPERABLE`,
+  `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED`) from the
+  **single external `DELIVERY_DRAFT_NOT_FOUND`** the universal masking rule
+  (rows 10, 58; `DELIVERY_DRAFT_NOT_FOUND` taxonomy) already requires — zero
+  writes, before recovery or creation, both race directions and the lock order
+  unchanged. The matrix no longer reads as licensing the internal code as the
+  client outcome (Concurrency and race matrix rows 2, 3; Order-creation authority
+  step 2; acceptance criteria).
+- **Mandatory approval discriminator (P2 — `3975577858`).**
+  `delivery_order.approval_channel` is **`NOT NULL`, immutable**, closed to
+  `SESSION | WHATSAPP | SMS` (DB enum, or `CHECK` on the value set **with**
+  `NOT NULL` — a pair-only `CHECK` passes on a `NULL` channel), written from the
+  trusted proof path actually verified at insert, never inferred from the
+  identity/binding pair's null-ness and never defaulted to `SESSION`.
+  **Existing-order integrity** rejects a null / unknown `approval_channel` →
+  `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes) **before** the
+  identity/binding-tuple check, after the current caller's authorization and
+  before recovery / cancellation; a since-`REVOKED` identity/binding whose channel
+  and tuple still match is valid history and is not faulted. The separate
+  NULL-rules for the `cancellation_channel` / `canceled_*` fields are unchanged
+  (`delivery_order` field table + the `NOT NULL` list; The creation transaction;
+  Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy;
+  decision 6; race row 70; Example S; acceptance criteria; next-slice deps).
+
 ## Review-round 1 P1 resolutions (Codex review 5140252744, head `7e58744`)
 
 **Status: proposed docs-only resolutions, pending independent re-audit.** No
@@ -3508,6 +3665,30 @@ discriminator.
 | P1 validate actor eligibility on every order insert `3972970775` | All new `delivery_order` rows go through one trusted transactional creation procedure (no ordinary direct `INSERT` — future `GRANT` dep); under the fixed lock prefix held to COMMIT/ROLLBACK it re-checks merchant / membership+role / channel identity-proof / binding are **currently** eligible from a trusted actor context and writes provenance from that result — a `REVOKED` tuple fails, no order. No late reverse authority-lock capture in an `INSERT` trigger. Recovery keeps historical tuple checks, never current eligibility; CORRECTED15 external masking unchanged. invariant 6 → *The creation transaction*; Order-creation authority; Existing-order integrity; race rows 3, 65; acceptance criteria; next-slice deps. | Rows 3, 65; Examples S, AF |
 | P1 distinguish compensation from unaudited merchant cancellation `3972970785` | New write-once `delivery_order.cancellation_authority` (`MERCHANT | DISPATCH_EXECUTION`), `NULL` until cancellation, `NOT NULL` on every transition to `CANCELED`, set atomically with the provenance that source needs (`MERCHANT`: full verified merchant tuple; `DISPATCH_EXECUTION`: verifiable compensation reference, no merchant tuple). This slice admits only `MERCHANT` (step 5); `DISPATCH_EXECUTION` closed until a downstream contract + backstop exist; the enum alone never substitutes for the trusted operation. Existing-order integrity checks source + references; a null `cancellation_channel` no longer implies compensation; transition graph unchanged. `delivery_order` field table + Immutability; Cancellation step 5; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 5; acceptance criteria; next-slice deps. | Rows 33, 66; Examples T, AG |
 
+## Review-round 9 proposed resolutions (Codex review 5162786689, head `c6e9130`)
+
+**Status: proposed docs-only correction; all 56 threads remain open** (baseline
+`c6e9130`: **9 Codex reviews, 56 threads, 40 outdated, 16 non-outdated, 0
+resolved**). The pre-`c6e9130` non-outdated threads are already covered by
+earlier corrections' content and are not re-worked here, and no thread is closed
+by anchor movement alone. Review `5162786689` on `c6e9130` adds **4 inline
+comments = 4 distinct findings (2 P1 + 2 P2)** — no duplicates — all resolved
+docs-only below. No migration, runtime, PR metadata or review-thread change is
+made by this contract. New additive schema / writer dependencies (flagged, not
+performed here): an immediate row-local `delivery_draft` guard extended to reject
+any `merchant_id` change and any intake-tuple change; a `BEFORE DELETE` guard on
+`delivery_draft` rejecting hard-deletion of a token-backed row; and
+`delivery_order.approval_channel` `NOT NULL` + closed enum / `CHECK`. The known
+non-blocking **P3 on the Example AF wording** (independent re-audit of round 8) is
+**not** in this round's scope.
+
+| Finding / comment | Contract correction | Verification case |
+| --- | --- | --- |
+| P1 make the draft tenant immutable `3975577838` | The immediate row-local `BEFORE INSERT OR UPDATE` guard on `delivery_draft` rejects **any** `OLD.merchant_id -> NEW.merchant_id` change — every status, every writer/backfill, each intra-transaction `UPDATE` — so an `OPEN` / `QUOTED` draft (which otherwise satisfies the pickup FK, transition guard and draft/order coupling) cannot be re-tenanted to another merchant whose actor would then read the recipient PII or re-price / approve it. Allowed draft-intent edits unchanged. `delivery_draft` field table + rules; decision 1; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy (INSERT-time list); acceptance criteria; next-slice deps. | Row 67 |
+| P1 preserve the intake dedupe key against `DELETE` / `UPDATE` `3975577846` | The full intake tuple `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is immutable after `INSERT` (null-safe `IS DISTINCT FROM` guard — no component change, `adapter_dedupe_token -> NULL` included); a `BEFORE DELETE` guard rejects a hard-delete of any token-backed draft (`adapter_dedupe_token IS NOT NULL`) in any status. A redelivery of the original key keeps resolving to the original draft in its recorded status / deadline — no abandoned-or-expired resurrection. Tokenless manual drafts still creatable by separate `INSERT`s. No retention duration or PII-erasure implementation here; a future erasure mechanism must keep the dedupe guarantee (retain the tuple, never hard-delete a token-backed row). `delivery_draft` field table + rules; Idempotency and recovery; decision 1, decision 8; acceptance criteria; next-slice deps. | Rows 68, 69; Example O |
+| P2 align the race matrix with the masking rule `3975577842` | Race-matrix rows 2 and 3 now split the **internal, logged** reason (`MERCHANT_INOPERABLE`; `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED`) from the **single external `DELIVERY_DRAFT_NOT_FOUND`** already required by rows 10 / 58 and the `DELIVERY_DRAFT_NOT_FOUND` taxonomy — zero writes, before recovery or creation, both race directions and the lock order preserved, and no "no order" phrasing where an existing order is possible on the recovery path. Concurrency and race matrix rows 2, 3; Order-creation authority step 2; acceptance criteria. | Rows 2, 3 |
+| P2 require a non-null approval channel `3975577858` | `delivery_order.approval_channel` is `NOT NULL`, immutable, closed to `SESSION | WHATSAPP | SMS` (DB enum, or `CHECK` on the value set **with** `NOT NULL` — a pair-only `CHECK` passes on `NULL`), written from the trusted proof path actually verified at insert, never inferred from the identity/binding pair or defaulted. **Existing-order integrity** rejects a null / unknown value → `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes) **before** the identity/binding-tuple check, after current-caller authorization and before recovery / cancellation; historical revocation of a still-matching tuple is not faulted. The separate `cancellation_channel` / `canceled_*` NULL-rules are unchanged. `delivery_order` field table + the `NOT NULL` list; The creation transaction; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 6; acceptance criteria; next-slice deps. | Row 70; Example S |
+
 ## Expected next slices
 
 1. `BD-MERCHANT-QUOTE-AUTHORITY-01A` — server quote, expiry, reprice, merchant
@@ -3591,6 +3772,15 @@ discriminator.
    **write-once `delivery_order.cancellation_authority` (`MERCHANT |
    DISPATCH_EXECUTION`)** discriminator, `NOT NULL` on every `-> CANCELED`, with
    the matching provenance and the `DISPATCH_EXECUTION` path gated on a future
-   downstream contract; FK `RESTRICT`;
+   downstream contract; the row-local `delivery_draft` guard **extended to reject
+   any `merchant_id` change and any change to the intake tuple `(merchant_id,
+   origin_channel, origin_namespace, adapter_dedupe_token)`** (null-safe, token
+   nulling included), plus a **`BEFORE DELETE` guard on `delivery_draft`** that
+   rejects a hard-delete of any token-backed row in any status — the concrete
+   retention window and PII redaction/erasure are a separate later mechanism that
+   must preserve the dedupe guarantee; **`delivery_order.approval_channel`
+   `NOT NULL` + closed `SESSION | WHATSAPP | SMS` enum / `CHECK`** written from the
+   verified proof path, with the null/unknown re-check in Existing-order
+   integrity before the identity/binding tuple; FK `RESTRICT`;
    readiness / concurrency / privacy tests; dark service seam, no public route
    unless separately approved.
