@@ -143,6 +143,22 @@ represent correctly:
     draft must obey a **legal state-transition graph** so a backfill cannot
     resurrect `ABANDONED` / `EXPIRED`. And a cross-tenant *approval* probe must be
     externally indistinguishable from an unknown draft, mirroring cancellation.
+16. **The `INSERT` boundary itself must re-prove time, authority and source, not
+    only structure.** Structural backstops (FKs, fingerprint equality, coupling)
+    accept a row whose referenced quote or draft *deadline* has already passed,
+    whose approval membership / channel gate is *currently* `REVOKED`, or whose
+    `CANCELED` status carries a null merchant-cancellation tuple that
+    `Existing-order integrity` then reads as "legitimate compensation" — because
+    recovery-time checks deliberately never re-evaluate current time or current
+    eligibility. So the trusted creation / transition boundary must, at write
+    time: take one fresh server `clock_timestamp()` and stamp an immutable,
+    non-backdatable `delivery_order.created_at` that precedes both the draft and
+    the quote deadline; verify the actor gate is *currently* eligible for every
+    new order (while later recovery keeps its historical, no-recheck behaviour);
+    require a fresh due-time and stamp `expired_at` on every `-> EXPIRED`; and
+    record an explicit, write-once cancellation *source* discriminator. Intake
+    idempotency and explicit-pickup tenancy must likewise be real DB constraints,
+    not service-path habits.
 
 ## Source of truth
 
@@ -524,11 +540,18 @@ step 5b validates cargo shape before step 5c checks quote state and expiry):
 - the merchant actor — `AUTHORIZED_MERCHANT_ACTOR(U, M)` re-resolved from the
   **locked** authority rows for the **locked draft's** `M`, never carried in from
   a pre-transaction check; a channel actor's candidate `U` from pre-lock
-  discovery is re-verified against the locked `linked_user_id`;
+  discovery is re-verified against the locked `linked_user_id`. The trusted
+  creation procedure verifies this gate is **currently eligible** (merchant
+  `ACTIVE`, membership ACTIVE + allowed role, channel identity `VERIFIED` +
+  binding) at insert time and writes provenance from that re-checked result — for
+  **every** new order, backfills included (see *The creation transaction*);
 - quote ownership (belongs to this draft), state (approvable), and
   `clock_timestamp() < expires_at` — an authoritative wall-clock read taken
   **after** the blocking locks are held, not the transaction-start `now()` /
-  `CURRENT_TIMESTAMP`, which stays fixed while the transaction waits on a lock;
+  `CURRENT_TIMESTAMP`, which stays fixed while the transaction waits on a lock —
+  re-checked once more at step 5f against the single fresh `t` that also stamps
+  the immutable `delivery_order.created_at`, together with the draft's
+  `expires_at`;
 - non-empty canonical cargo-line shape (invariant 5), before fingerprinting;
 - **the quote's `delivery_input_fingerprint`** still equals a fresh canonical
   fingerprint over the current draft inputs (recipient, contact,
@@ -584,6 +607,46 @@ still exactly one order). The `delivery_order`-side trigger performs a
 disturb draft-first serialization. This is a future schema dependency, flagged
 for the slice, not performed here.
 
+**Every new `delivery_order` is created through one trusted transactional
+creation procedure — including secondary writers and backfills.** Ordinary
+writer roles are **not** granted a direct `INSERT` on `delivery_order`
+(the DB `GRANT`s are a future schema dependency); the only path in is the
+procedure, which holds the invariant-6 lock order
+(`draft -> membership -> merchant -> identity -> binding -> pickup`) through
+`COMMIT`/`ROLLBACK` and, at write time:
+
+- **re-proves the actor gate is *currently* eligible** — it derives `M` from the
+  **locked** draft, is handed a *trusted* actor context (never request-supplied
+  IDs or a "verified" flag), and re-checks the merchant is `ACTIVE`, the
+  `(M, U)` membership is ACTIVE with an allowed role, and (channel) the identity
+  `channel_proof = VERIFIED` / `linked_at` / binding are all currently valid.
+  `approved_by_user_id` / `approved_membership_id` / the channel pair /
+  `approval_provenance` are written **from that re-checked result**. A
+  tuple-correct but `REVOKED` membership, or a revoked/unverified channel
+  identity or binding, fails here — so no order becomes authoritative without an
+  actor authorized *at insertion time*. (Later **recovery** is unchanged: it
+  keeps the historical tuple checks and never re-evaluates the original
+  approver's current eligibility.);
+- **re-proves both deadlines against one fresh server clock** (Finding-1 rule
+  below): after the locks it takes a single `t := clock_timestamp()`, requires
+  `t < delivery_draft.expires_at` (else `DELIVERY_DRAFT_EXPIRED`, `ROLLBACK`,
+  no order) then `t < referenced_quote.expires_at` (else `QUOTE_EXPIRED`,
+  `ROLLBACK`, no order), and **stamps `delivery_order.created_at := t`** —
+  `NOT NULL`, immutable, not backdatable. Both checks are mandatory: between
+  step 5c and the `INSERT` either the draft or the quote can lapse. The
+  server-defined creation moment is `t`, not `COMMIT`. This applies to **every**
+  new `INSERT`, backfills included.
+
+No late reverse capture of authority locks is added inside an `INSERT` trigger —
+the locks are the procedure's, taken in the fixed prefix order. **Existing-order
+integrity** verifies only the *historical* relations
+(`created_at < each immutable deadline`, immutable tuple ownership,
+`cancellation_authority` and its references) — never current time or current
+eligibility — so a correctly-created order still recovers after both deadlines
+have long passed and after every original grant has been revoked. The external
+approval-masking of CORRECTED15 (any locked-gate failure → external
+`DELIVERY_DRAFT_NOT_FOUND`) is unchanged.
+
 The **recovery** branch and every **step-4 no-order rejection** are zero-write:
 each returns and leaves the draft in the state it was entered in — recovery
 leaves an `APPROVED` draft as-is (its existing order is the record of record); a
@@ -603,21 +666,21 @@ recovery after a lost confirmation response — but only an
 | --- | --- |
 | `id` | Server-generated UUID PK. |
 | `merchant_id` | **`NOT NULL`** FK to `merchants(id)`; the resolved merchant context `M`. A concrete merchant is resolved **before** the draft `INSERT`, for **every** `origin_channel` (`WHATSAPP` / `SMS` / `SESSION`) and every draft status. Intake that cannot resolve a merchant is **not** persisted as a tenantless `delivery_draft` — it fails/parks upstream. A tenantless draft would break the tenant-bound actor gate, the `(merchant_id, …)` intake dedupe key (nulls compare distinct), and the per-merchant privacy boundary. |
-| `origin_channel` | `WHATSAPP | SMS | SESSION` — provenance of the intake, not authority. |
-| `origin_namespace` | Bounded adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. **Mandatory whenever `adapter_dedupe_token` is set.** |
+| `origin_channel` | **`NOT NULL`**, closed enum `WHATSAPP | SMS | SESSION` (DB `CHECK` / enum type) — provenance of the intake, not authority. `NOT NULL` is required so the intake dedupe `UNIQUE` cannot be evaded through a `NULL` key component. |
+| `origin_namespace` | Bounded adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. **Mandatory whenever `adapter_dedupe_token` is set**, enforced by a DB `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. |
 | `origin_ref` | Bounded provider/message/session provenance label. |
-| `adapter_dedupe_token` | Nullable bounded provider/adapter dedupe key for **intake idempotency only** (see Idempotency); scoped by `(merchant_id, origin_channel, origin_namespace)`; never a key for order creation. |
+| `adapter_dedupe_token` | Nullable bounded provider/adapter dedupe key for **intake idempotency only** (see Idempotency); part of the immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; never a key for order creation. `NULL` (no token) is allowed and repeats freely — several tokenless manual drafts for one merchant coexist. |
 | `recipient_name` | Bounded string (mutable draft intent). |
 | `recipient_contact` | Bounded normalized recipient phone (reuses the auth phone canonicalizer); recipient is not a `users` row. |
 | `destination_text` | Bounded human destination as stated (mutable draft intent). |
 | `destination_point` | Nullable canonical **resolved** destination — coordinates plus a stable provider/place id and provenance — resolved by Quote Authority **before** the quote is computed. Null while unresolved (`DELIVERY_DESTINATION_UNRESOLVED` on approval). |
 | `destination_access_note` | Nullable bounded entrance/floor/door note. |
-| `requested_pickup_location_id` | Nullable FK to `merchant_locations(id)`; explicit selection is persisted here **before quoting**, never supplied/overridden by approval. **When set it must name a location whose `merchant_id` equals this draft's `merchant_id`** (invariant 4); null means "resolve default". The resolved pickup location (explicit or default) must carry both coordinates **and a valid, source-consistent `resolved_pickup_point`** (coordinates + provider/place id + provenance + source binding) before a quote can attach — a null-coordinate or missing / invalid / source-inconsistent `resolved_pickup_point` location is `DELIVERY_PICKUP_UNRESOLVED` (invariant 4). |
+| `requested_pickup_location_id` | Nullable FK to `merchant_locations(id)`; explicit selection is persisted here **before quoting**, never supplied/overridden by approval. **When set it must name a location whose `merchant_id` equals this draft's `merchant_id`** — enforced at `INSERT`/`UPDATE` by a **draft-level composite FK `(requested_pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)`** (reusing the same unconditional `merchant_locations (id, merchant_id)` parent key the order-side pickup FK needs), `ON DELETE RESTRICT`, `MATCH SIMPLE` so a `NULL` `requested_pickup_location_id` ("resolve default") is still allowed. A cross-tenant location id can no longer be stored on the draft even transiently. The resolved pickup location (explicit or default) must carry both coordinates **and a valid, source-consistent `resolved_pickup_point`** (coordinates + provider/place id + provenance + source binding) before a quote can attach — a null-coordinate or missing / invalid / source-inconsistent `resolved_pickup_point` location is `DELIVERY_PICKUP_UNRESOLVED` (invariant 4). The FK enforces **ownership** only; the ACTIVE / default / resolved-point checks at quoting and approval stay separate. |
 | `requested_window` | Nullable bounded requested delivery time window. |
 | `cargo` | Non-empty **list of cargo lines**, each `{ category_code, quantity, unit }`, canonically normalized (fixed `unit` vocabulary, bounded `quantity`). The **category set** drives deliverability (invariant 5); `quantity` / `unit` are carried through the fingerprint and the order snapshot for quote binding, vehicle-capacity selection, handling, and proof of what was approved — capacity and transport-condition checks themselves stay downstream. |
 | `status` | `OPEN | QUOTED | APPROVED | ABANDONED | EXPIRED`. `EXPIRED` is reached only by the deadline sweep below (from `OPEN` / `QUOTED`), never from `APPROVED`. |
 | `expires_at` | **`NOT NULL`**, server-assigned **once at creation** and immutable: `created_at + TTL`, where `TTL` is a positive, bounded draft-expiry constant fixed in the shared definition **before intake activation**. Draft edits and quote reprices **do not** extend it. It is independent of any quote's `expires_at`. |
-| `expired_at` | Nullable server timestamp; set **only** by the deadline sweep when it moves a due draft to `EXPIRED`. Null on every non-`EXPIRED` draft. |
+| `expired_at` | Server timestamp of the `-> EXPIRED` transition. **`NULL` on every non-`EXPIRED` draft; `NOT NULL` on every `EXPIRED` draft**, `>= expires_at`, and **immutable once set** (a further `UPDATE` cannot re-stamp it). It is set **atomically by whatever performs the transition** — the deadline sweep, or the row-local transition guard itself — from a fresh server `clock_timestamp()` taken under the row lock, never from a caller-supplied value; a supplied future timestamp does not license an early transition. Enforced by the row-local guard (see Rules): a non-`EXPIRED` row with a non-null `expired_at`, an `EXPIRED` row with a null `expired_at` or one earlier than `expires_at`, or a re-stamp, is rejected. |
 | `created_at` / `updated_at` | Server timestamps. |
 
 Rules:
@@ -662,8 +725,16 @@ Rules:
   `ABANDONED -> QUOTED` even transiently). A same-status UPDATE is **not**
   rejected on that basis alone — the existing intent-mutation, repricing and
   core-immutability rules still decide whether the specific field change is
-  allowed. This guard does not replace actor authority, the expiry worker's
-  `OPEN`/`QUOTED` + no-order + due preconditions, or the deferred coupling;
+  allowed. **Every `OPEN`/`QUOTED` -> `EXPIRED` transition, whoever performs it,
+  must (under the row lock) take a fresh `t_exp := clock_timestamp()`, require
+  `t_exp >= OLD.expires_at`, and set `NEW.expired_at := t_exp`** — the guard
+  itself refuses a premature `-> EXPIRED` (deadline not yet reached) and refuses
+  a caller-supplied `expired_at` (future or otherwise); a re-`UPDATE` cannot move
+  `expired_at`. It also enforces the field's null-ness rule (non-`EXPIRED` ⇒
+  `expired_at IS NULL`; `EXPIRED` ⇒ `NOT NULL` and `>= expires_at`). This guard
+  does not replace actor authority, the expiry worker's `OPEN`/`QUOTED` +
+  no-order + due preconditions and its atomic quote-eligibility invalidation, or
+  the deferred coupling, and it adds no cross-table lock;
 - **draft expiry is a bounded deadline swept by a trusted worker.** `expires_at`
   is `created_at + TTL` (fixed constant, set once, immutable; edits/reprices
   never extend it; independent of quote expiry). A trusted cleanup worker, **under
@@ -708,8 +779,10 @@ The single authoritative record for one approved delivery.
 | `canceled_at` / `cancel_reason` | Null unless canceled; server-stamped. |
 | `canceled_by_user_id` / `canceled_membership_id` | Null until this slice's direct merchant cancellation; server-derived actor and exact membership row for that action, not copied from the original approver. When present, composite FK `(canceled_membership_id, merchant_id, canceled_by_user_id) -> merchant_memberships (id, merchant_id, user_id)` (or equivalent guard). |
 | `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id` | Null unless the cancellation was gated through a channel (`cancellation_channel in { WHATSAPP, SMS }`), in which case **both `NOT NULL`** — the exact identity/binding rows that passed the cancelling actor's channel gate, composite-guarded the same way as the approval pair (binding ↔ `merchant_id` + identity; identity `linked_user_id == canceled_by_user_id`, `channel == cancellation_channel`). Both null for a `SESSION` cancellation. |
+| `cancellation_authority` | **`NULL` until cancellation; `NOT NULL` on every transition to `CANCELED`.** Write-once, immutable, closed enum `MERCHANT | DISPATCH_EXECUTION` (DB `CHECK` / enum). It names **which trusted operation** performed the cancellation, and the row's other cancellation fields must match it: `MERCHANT` ⇒ this slice's `PENDING_DISPATCH` merchant-cancel path, with the full verified merchant provenance tuple (`canceled_by_user_id` / `canceled_membership_id` / `cancellation_channel` / provenance, and the `canceled_*` channel pair per its channel); `DISPATCH_EXECUTION` ⇒ a verifiable downstream-compensation reference tied to this specific `delivery_order` and an authorized compensation operation, with **no** fabricated merchant tuple. The source is set by the trusted operation, never by a request field; an ordinary writer cannot pick `DISPATCH_EXECUTION` to bypass authorization, and until a separate downstream contract and its backstop exist that path stays closed. |
 | `cancellation_channel` / `cancellation_provenance` | Null until direct merchant cancellation; `SESSION | WHATSAPP | SMS` plus bounded server-owned procedure/adapter reference. Recorded atomically with cancellation and immutable thereafter. |
-| `created_at` / `updated_at` | Server timestamps. |
+| `created_at` | **`NOT NULL`, immutable.** Set by the trusted creation boundary from **one fresh server `clock_timestamp()`** taken after all its locks/checks (step 5f), never a caller-supplied or backdated value — a column `DEFAULT`, or trusting a passed timestamp, is insufficient. By construction `created_at < delivery_draft.expires_at` **and** `created_at < referenced quote.expires_at` at that instant (step 5f re-checks both after the `check-to-INSERT` gap). This is the **server-defined creation moment**, not `COMMIT` time. **Existing-order integrity** checks only the *historical* relation `created_at < each immutable deadline`, never `created_at` against the current clock. |
+| `updated_at` | Server timestamp; advances only with lawful lifecycle `UPDATE`s. |
 
 Recipient and destination are **not** columns on `delivery_order` — they are a
 1:1 immutable child row, `delivery_order_recipient_snapshot` (below).
@@ -762,18 +835,25 @@ Immutability:
   untouched. The child guard rejects every `UPDATE` and every `DELETE`; the row
   lives and dies only with its order (which is never hard-deleted);
 - only `delivery_order` lifecycle fields (`status`, `canceled_at`,
-  `cancel_reason`, the cancellation provenance fields — actor, membership,
-  channel, the channel identity/binding pair, procedure — downstream timestamps)
-  may advance, and only forward. This slice's `PENDING_DISPATCH -> CANCELED`
-  transition must fill the whole cancellation tuple atomically with the
-  timestamp/reason: `canceled_by_user_id`, `canceled_membership_id`,
-  `cancellation_channel`, `cancellation_provenance`, and — for a channel
-  cancellation — `canceled_external_contact_identity_id` /
-  `canceled_merchant_contact_binding_id` (both null for `SESSION`). They are all
-  null beforehand; partial provenance, later changes, erasure, and re-stamping
-  are rejected by the order guard. Rejected/repeated cancellation requests write
-  nothing. Downstream compensation owns its own actor semantics and must not
-  fabricate a merchant-cancellation tuple for a driver/system action;
+  `cancel_reason`, `cancellation_authority`, the cancellation provenance fields —
+  actor, membership, channel, the channel identity/binding pair, procedure —
+  downstream timestamps) may advance, and only forward. **Every** transition to
+  `CANCELED` must set a non-null `cancellation_authority` **atomically** with
+  `status` / `canceled_at` / `cancel_reason` and the provenance that source
+  requires — for `MERCHANT`, the whole verified merchant tuple
+  (`canceled_by_user_id`, `canceled_membership_id`, `cancellation_channel`,
+  `cancellation_provenance`, and — for a channel cancellation —
+  `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id`,
+  both null for `SESSION`); for `DISPATCH_EXECUTION`, the verifiable
+  downstream-compensation reference and **null** merchant tuple. They are all
+  null beforehand; a `CANCELED` row with `cancellation_authority` null, a
+  `MERCHANT` row with a partial/absent merchant tuple, a `DISPATCH_EXECUTION` row
+  with a fabricated merchant tuple or an unverifiable compensation reference, and
+  any later change / erasure / re-stamp are rejected by the order guard.
+  Rejected/repeated cancellation requests write nothing. Downstream compensation
+  owns its own actor semantics, sets `cancellation_authority = DISPATCH_EXECUTION`,
+  and must not fabricate a merchant-cancellation tuple for a driver/system
+  action;
 - an order is never hard-deleted; provenance is preserved.
 
 Downstream states (`SEARCHING_DRIVER`, `DRIVER_ASSIGNED`, `PICKED_UP`,
@@ -847,6 +927,15 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   compared with the location's current value, not re-geocoded, and takes no
   recovery lock;
 - its stored quote exists and has immutable `quote.draft_id == order.draft_id`;
+- its `created_at` is non-null and, **as a historical relation**, precedes both
+  immutable deadlines: `created_at < order.quote_expires_at` (which equals the
+  referenced quote's `expires_at`) **and** `created_at <
+  source_draft.expires_at`. A `created_at` that is null, backdated behind neither
+  deadline, or `>=` either deadline → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero
+  writes. This compares the stored creation moment to the stored/immutable
+  deadlines only — **never** `created_at` (or the deadlines) against the current
+  clock, so a correctly-created order recovers however long after both deadlines
+  have passed;
 - its stored `quote_state` is non-null and one of the closed set of **approvable**
   snapshot values (the DB `CHECK` above); a null, unknown, or non-approvable
   stored value is corruption → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes.
@@ -900,6 +989,20 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   (`cancellation_channel` null / not `CANCELED` here), both `canceled_*` fields
   are `NULL`** — a populated pair in either of those cases is corruption →
   `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes;
+- **cancellation source** — if `status == CANCELED`, `cancellation_authority` is
+  non-null and its references are consistent: `MERCHANT` ⇒ the full merchant
+  provenance tuple present and tuple-valid (membership `(id, merchant_id,
+  user_id)`, the `canceled_*` channel pair per `cancellation_channel`, bounded
+  provenance); `DISPATCH_EXECUTION` ⇒ a present, verifiable compensation
+  reference tied to this `order.id`, and the merchant tuple entirely `NULL`
+  (`canceled_by_user_id` / `canceled_membership_id` / `cancellation_channel` /
+  the `canceled_*` channel pair). A `CANCELED` order with a **null
+  `cancellation_authority`**, or a source whose references do not match (a
+  `MERCHANT` cancel missing its tuple, a `DISPATCH_EXECUTION` with a fabricated
+  merchant tuple or an unverifiable reference), is corruption →
+  `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A null `cancellation_channel`
+  **no longer** implies "legitimate compensation" — the discriminator is checked
+  explicitly. If `status != CANCELED`, `cancellation_authority` is `NULL`;
 - none of these required references is null.
 
 Failure is `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes) **before**
@@ -922,8 +1025,14 @@ current `resolved_pickup_point`, do **not** re-check cargo policy against the
 `cargo_policy_decision` **is** re-validated, per the bullet above — that is
 historical, not current), do **not** re-evaluate `quote_expires_at` against the current
 clock, do **not** evaluate the **source draft's `expires_at`** against the
-current clock (an `APPROVED` draft never expires, and a valid historical order
-recovers regardless of how long ago its draft was created), do **not** compare
+current clock, do **not** compare the order's `created_at` against the current
+clock (an `APPROVED` draft never expires, and a valid historical order recovers
+regardless of how long ago it or its draft was created — only the *historical*
+relation `created_at < each immutable deadline` is checked), do **not**
+re-evaluate the original approver's / channel's **current** eligibility (a since-
+`REVOKED` membership, identity or binding whose immutable tuple still matches is
+valid history — the insertion-time eligibility check is the creation boundary's
+job, not recovery's), do **not** compare
 the stored `quote_state` against the quote's live state, and do **not** re-derive
 the fingerprint from the *current draft* inputs. The mandatory
 fingerprint / quote-payload equality above is the opposite direction — it
@@ -1075,10 +1184,20 @@ server transaction that, in order (lock order and tenant binding: see **invarian
       / `CARGO_NOT_DELIVERABLE` fail closed; the resolved `{ version, decision }`
       is what will be persisted as `cargo_policy_version` / `cargo_policy_decision`
       (invariant 5), where the trusted `INSERT` validator re-derives and confirms it;
-   f. `INSERT` exactly one `delivery_order` — `status = PENDING_DISPATCH` (the
-      row-local `BEFORE INSERT` guard admits no other), with the step-5c
-      **verified** `quote_state` and the step-5e `cargo_policy_version` /
-      `cargo_policy_decision` — and its `delivery_order_recipient_snapshot`, and
+   f. **final time gate, then insert.** Take **one fresh `t := clock_timestamp()`**
+      (the authoritative server clock, after every lock and check above) and
+      require, in order: `t < delivery_draft.expires_at` (else
+      `DELIVERY_DRAFT_EXPIRED`, rollback, no order) then
+      `t < referenced_quote.expires_at` (else `QUOTE_EXPIRED`, rollback, no
+      order) — both are re-checked here because either deadline can lapse in the
+      gap between step 5c and this point; the earlier step-5c checks and the
+      step-4 priority are unchanged. Then `INSERT` exactly one `delivery_order` —
+      `status = PENDING_DISPATCH` (the row-local `BEFORE INSERT` guard admits no
+      other), `created_at := t` (`NOT NULL`, immutable, not backdatable), with
+      the step-5c **verified** `quote_state`, the step-5e `cargo_policy_version` /
+      `cargo_policy_decision`, and the actor/membership/channel provenance
+      written from the *currently re-verified* gate result (invariant 6 → *The
+      creation transaction*) — and its `delivery_order_recipient_snapshot`, and
       flip the draft `QUOTED -> APPROVED`, all in this transaction (invariant 6).
       The order `INSERT`'s implicit `FOR KEY SHARE` FK locks on `delivery_draft` /
       `merchants(M)` / `merchant_memberships` / `merchant_locations` are already
@@ -1227,17 +1346,25 @@ regardless.
 - After a `delivery_order` is `CANCELED`, the draft stays `APPROVED`; a further
   delivery is a **new draft + new quote + new order**, never a re-approval of the
   old draft.
-- **Draft ingestion** is separately idempotent per
-  `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` — the
-  `origin_namespace` (provider account / adapter namespace, from trusted adapter
-  context) is **required** whenever a dedupe token is present, so the same
-  message id arriving through two different provider accounts of one merchant
-  produces **two** drafts, never a silently merged or dropped delivery. This is
-  an intake dedupe key **only**, never a second, competing key for authoritative
-  order creation, which keys on the draft as above. `merchant_id` is `NOT NULL`
-  on every draft (Target entity: `delivery_draft`), so this key never has a null
-  leading component — a would-be tenantless intake is rejected before it can
-  evade the merchant-scoped dedupe (nulls compare distinct).
+- **Draft ingestion idempotency is a DB constraint, not a service-path habit.**
+  `delivery_draft` carries an **immediate (non-deferred) `UNIQUE (merchant_id,
+  origin_channel, origin_namespace, adapter_dedupe_token)`**, with `merchant_id`
+  and **`origin_channel` `NOT NULL`** (closed enum) and a
+  `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)` — so a
+  present token cannot slip past the `UNIQUE` through a `NULL` namespace or
+  channel. `origin_namespace` (provider account / adapter namespace, from trusted
+  adapter context) being mandatory when a token is present means the same message
+  id arriving through two different provider accounts of one merchant produces
+  **two** drafts, never a silently merged or dropped delivery. A **`NULL`
+  `adapter_dedupe_token`** (no token — manual drafts) is allowed and repeats
+  freely: several tokenless drafts for one merchant coexist (`NULL` compares
+  distinct in the `UNIQUE`). On a **concurrent redelivery of one full key** the
+  `UNIQUE` admits exactly **one** draft; the loser, after the constraint
+  violation, reads the existing draft and proceeds from it — it never overwrites
+  the recorded intent, extends a deadline, or resurrects an `ABANDONED` /
+  `EXPIRED` draft. Different merchant / channel / namespace stay independent.
+  This is an intake dedupe key **only**, never a second, competing key for
+  authoritative order creation, which keys on the draft as above.
 
 ## Cancellation
 
@@ -1285,13 +1412,15 @@ order row is the **last** lock, exactly as pickup is last in the creation branch
 5. **Status gate.** `order.status == PENDING_DISPATCH` → perform the terminal
    `PENDING_DISPATCH -> CANCELED` transition, server-stamped and
    `cancel_reason`-coded, never a hard delete. In the **same write/transaction**,
-   set `canceled_by_user_id`, `canceled_membership_id`, `cancellation_channel`,
+   set **`cancellation_authority = MERCHANT`** together with
+   `canceled_by_user_id`, `canceled_membership_id`, `cancellation_channel`,
    bounded `cancellation_provenance`, and — for a channel cancellation —
    `canceled_external_contact_identity_id` /
    `canceled_merchant_contact_binding_id` (both null for `SESSION`), all from the
    step-3 locked actor/identity/procedure, never from the request or original
-   approver. The complete cancellation tuple is write-once under the order guard;
-   no later retry re-stamps or overwrites it. A tuple FK/check uses the
+   approver. The status, source, timestamp/reason and the whole provenance tuple
+   are written **atomically** and are write-once under the order guard; no later
+   retry re-stamps or overwrites any of them. A tuple FK/check uses the
    already-locked cancelling membership and identity/binding, adding no reverse
    authority-lock edge. Any other status → `DELIVERY_ORDER_NOT_CANCELABLE`, zero
    writes.
@@ -1301,7 +1430,14 @@ order row is the **last** lock, exactly as pickup is last in the creation branch
   Order Authority is **forbidden** (`DELIVERY_ORDER_NOT_CANCELABLE`). Any later
   cancellation or abort runs through the Dispatch/Execution **compensation
   flow**, which owns driver/recipient-initiated cancellation, refund/settlement
-  effects, and in-flight-cargo handling.
+  effects, and in-flight-cargo handling. That flow sets
+  `cancellation_authority = DISPATCH_EXECUTION` with a verifiable
+  compensation reference and **no** merchant tuple. Until that separate
+  downstream contract and its own `INSERT`/transition backstop exist, this slice
+  admits **only** `cancellation_authority = MERCHANT` from step 5; a
+  `DISPATCH_EXECUTION` transition is not a path an ordinary writer can take, and
+  the discriminator alone (an enum value) never substitutes for the trusted
+  operation that is authorized to set it.
 - `PENDING_DISPATCH -> CANCELED` and `PENDING_DISPATCH -> SEARCHING_DRIVER`
   serialize on the order row; exactly one wins (race-matrix row 19), the loser
   gets `DELIVERY_ORDER_NOT_CANCELABLE` or a no-op. Because both cancellation and
@@ -1573,6 +1709,13 @@ these transactions crosses lock order.
 | 57 | A secondary writer / backfill inserts an otherwise-consistent `delivery_order` directly as `SEARCHING_DRIVER` / `DELIVERED` / another downstream state, with its draft `APPROVED` | The row-local `BEFORE INSERT` guard on `delivery_order` permits a **new** row only with `status = PENDING_DISPATCH` (a `DEFAULT` alone would be overridden by an explicit value). Lawful downstream `UPDATE`s and recovery of existing `CANCELED` / `DELIVERED` rows are unaffected — it is not a permanent `CHECK (status = 'PENDING_DISPATCH')`. No cross-table lock is added. |
 | 58 | An actor for merchant A submits a guessed / leaked `draft_id` owned by merchant B — including the case where A's actor has **no membership for B at all** (the gate does not "resolve some other merchant", it simply finds no ACTIVE `(B, U)` membership) | Step 1 locks `d_B` and sets `M := B` **from the locked draft**; step 2 re-resolves the gate **for `B`** and it fails (any of: no ACTIVE `(B, U)` membership, role miss, `merchants(B)` not `ACTIVE`, gate resolving only `A`, channel identity/binding mismatch). The true reason (`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged; the **external code is `DELIVERY_DRAFT_NOT_FOUND`**, the same a nonexistent `draft_id` returns, so `A` cannot distinguish "B's draft exists" from "no such draft" — no own-merchant exception. Zero writes; `B`'s draft/order is never read or written under `A`'s authority (cf. row 10, and cancellation rows 26 / 53). |
 | 59 | A quote candidate is priced outside the publication transaction, then publication waits on the `merchants(M)` / pickup lock until the **candidate's own `quote.expires_at`** passes while `delivery_draft.expires_at` is still in the future | Publication step 5 takes one post-lock `t := clock_timestamp()` and checks **both**: `t >= draft.expires_at` → `DELIVERY_DRAFT_EXPIRED`; then `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`. Either fails zero-write; the candidate is not published and its timestamps are not extended, so no `QUOTED` draft is left carrying an already-expired quote. Historical recovery still never re-checks quote expiry against the current clock. |
+| 60 | Between step 5c and the `delivery_order` `INSERT`, the referenced quote's `expires_at`, or the source draft's `expires_at`, passes (slow 5d-5e fingerprint recompute / cargo-policy validation, or a scheduler delay — no new lock is taken after 5c); or a secondary writer / backfill inserts an otherwise-consistent order after either deadline | Step 5f takes **one fresh `t := clock_timestamp()`** after all locks/checks and requires `t < delivery_draft.expires_at` (else `DELIVERY_DRAFT_EXPIRED`) then `t < referenced_quote.expires_at` (else `QUOTE_EXPIRED`), rollback, no order; the same `t` is stamped as `delivery_order.created_at` (`NOT NULL`, immutable, non-backdatable, `< COMMIT`). All new inserts, backfills included, go through this trusted boundary. A pre-existing order whose `created_at` is null / not before both immutable deadlines fails **Existing-order integrity** → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A correctly-created order still recovers after both deadlines have long passed (historical relation only). |
+| 61 | A caller supplies a future `created_at` on the order `INSERT`, or a `DEFAULT` would otherwise apply | The trusted creation boundary sets `created_at` from its own fresh `t` and rejects a caller-supplied value; `created_at` is `NOT NULL` and immutable (order guard). A backdated / future value can neither be inserted nor `UPDATE`d in later. |
+| 62 | A repository bug / backfill performs `OPEN`/`QUOTED -> EXPIRED` **before** `expires_at`, or supplies a future `expired_at`, or re-`UPDATE`s `expired_at` | The row-local transition guard, under the row lock, takes a fresh `t_exp`, requires `t_exp >= OLD.expires_at`, and sets `expired_at := t_exp` itself — a premature `-> EXPIRED` and a caller-supplied `expired_at` are rejected; `EXPIRED` is absorbing and `expired_at` is immutable, so a still-valid draft is never permanently killed and the timestamp is never moved. The trusted sweep (with its no-order + due checks and atomic quote-eligibility invalidation) is unchanged; no cross-table lock is added (rows 49, 56). |
+| 63 | Intake or a secondary writer stores merchant B's `merchant_locations` id in `delivery_draft.requested_pickup_location_id` on merchant A's draft | The draft-level composite FK `(requested_pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)` (`MATCH SIMPLE`, `RESTRICT`) rejects the cross-tenant reference at `INSERT`/`UPDATE` — the tenant-corrupt draft is never persisted, even transiently. `NULL` (resolve default) is still allowed. ACTIVE / default / resolved-point checks at quoting and approval stay separate (rows 11, 50). |
+| 64 | An adapter concurrently redelivers one full intake key `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; or a token is stored with a null `origin_namespace` / null `origin_channel` | The immediate `UNIQUE` over the four fields, with `origin_channel` `NOT NULL` and `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`, admits exactly **one** draft; the loser reads the existing draft and proceeds from it — no overwrite of intent, no deadline extension, no resurrection of a terminal draft. A null namespace/channel can no longer evade the key. Tokenless (`NULL` token) manual drafts still repeat freely; different merchant / channel / namespace stay independent (row 12; Example O). |
+| 65 | A secondary writer / backfill references a tuple-correct but **currently `REVOKED`** approval membership (or revoked/unverified channel identity + binding) on a new order; separately, a revocation races the creation transaction | The trusted creation procedure re-checks the merchant / membership+role / channel identity-proof / binding are **currently eligible** at insert time under the fixed lock prefix, writing provenance from that re-checked result — a `REVOKED` tuple fails, `ROLLBACK`, no order. Revocation-first: the procedure's locks wait, then it reads the committed negative state (`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` / `MERCHANT_ACTOR_UNAUTHORIZED`, internal; external `DELIVERY_DRAFT_NOT_FOUND` per CORRECTED15 masking). Creation-first: it holds the locks through commit; the revoke waits and then sees the committed order. Later **recovery** keeps the historical tuple checks and never re-evaluates the original approver's current eligibility (Example S). |
+| 66 | A secondary writer sets an order to `CANCELED` with `cancellation_authority` null; or `MERCHANT` with an absent/partial merchant tuple; or `DISPATCH_EXECUTION` with a fabricated merchant tuple or an unverifiable compensation reference | This slice's step 5 sets `cancellation_authority = MERCHANT` atomically with the full verified merchant tuple, write-once. `DISPATCH_EXECUTION` is not a path an ordinary writer can take (the downstream contract + its backstop do not exist yet). Any pre-existing `CANCELED` order failing the **cancellation source** check → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A null `cancellation_channel` no longer implies "legitimate compensation" — the discriminator is checked explicitly (rows 33, 41; Examples T, AE). |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -1619,7 +1762,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `DELIVERY_DRAFT_NOT_FOUND` | The client-facing code when an approval's `draft_id` **does not exist**, **and also** — deliberately masked to the same value — for **any** failure of the locked actor gate for the locked draft's `M` (no ACTIVE `(M, U)` membership, allowed-role miss, `merchants(M)` not `ACTIVE`, gate resolving another merchant, channel `linked_user_id` mismatch, revoked/mismatched identity or binding). No caller — for `M` or any other merchant — can distinguish "this merchant's draft exists" from "no such draft"; the true reason (`MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` / `CONTACT_*`) is internal, logged. Mirrors cancellation's `DELIVERY_ORDER_NOT_FOUND` masking. Order-creation steps 1–2. | false |
 | `DELIVERY_ORDER_NOT_FOUND` | The client-facing code for a merchant cancellation that cannot act on the named `order_id`, in **two internally distinct** cases: **(ORDER ABSENT)** no `delivery_order` exists — returned at Cancellation step 1, **before any authority lock**, zero writes; **(ORDER PRESENT, unauthorized)** the order exists but step 3's locked authority gate fails (`MERCHANT_ACTOR_UNAUTHORIZED` internally) — the external code is masked to this same value so cross-tenant existence is not disclosed. The internal reason (absent vs unauthorized) is logged separately. Never a substitute for the post-gate **Existing-order integrity** check, which still runs once the gate passes. | false |
 | `DELIVERY_DRAFT_NOT_APPROVABLE` | Draft is `ABANDONED` — step 4a; or a non-creatable `OPEN` state with no own approvable quote, or a presented `quote_id` that does not exist / is not a quote of this draft — step 4d. | false |
-| `DELIVERY_DRAFT_EXPIRED` | The source draft is `EXPIRED`, or its server-assigned `expires_at` deadline has otherwise passed (`clock_timestamp() >= expires_at`, read after the blocking locks) whether or not the deadline sweep has run. Checked at Order-creation step 4 **before (a)** and before superseded / stale, re-checked at step 5c, and at Quote publication. A fresh draft is required. Never evaluated on ORDER PRESENT recovery / cancellation; an `APPROVED` draft never expires. | false |
+| `DELIVERY_DRAFT_EXPIRED` | The source draft is `EXPIRED`, or its server-assigned `expires_at` deadline has otherwise passed (`clock_timestamp() >= expires_at`, read after the blocking locks) whether or not the deadline sweep has run. Checked at Order-creation step 4 **before (a)** and before superseded / stale, re-checked at step 5c, **again at step 5f against the one fresh `t` that stamps `created_at`** (closing the check-to-INSERT gap), and at Quote publication. A fresh draft is required. Never evaluated on ORDER PRESENT recovery / cancellation; an `APPROVED` draft never expires. | false |
 | `DELIVERY_RECIPIENT_INCOMPLETE` | Missing `recipient_contact` or `destination_text`. A Quote Authority precondition; **re-checked in the creation branch under the draft lock** (step 5b) so a partial `QUOTED` draft cannot become an authoritative order. | false |
 | `DELIVERY_DESTINATION_UNRESOLVED` | No canonical `destination_point` (coordinates + provider/place provenance) could be resolved before quoting; a quote cannot attach until it is; re-checked at step 5b. | false |
 | `DELIVERY_PICKUP_UNRESOLVED` | The resolved / explicit pickup `merchant_locations` row is ACTIVE and same-merchant but carries **null coordinates** (`0009` permits this), **or a null / invalid / source-inconsistent `resolved_pickup_point`** (missing coordinates / provider-place id / provenance / source binding, or a stored point that no longer matches the row's current address/coordinates). A delivery pickup needs a routable, provenance-bearing point fixed before pricing; no approval-time geocode, no provenance invented from coordinates. Step 5a and Quote publication. | false |
@@ -1628,13 +1771,13 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `MERCHANT_LOCATION_REQUIRED` (01A) | Also raised here when the resolved / explicit pickup is non-ACTIVE, ambiguous, or belongs to a merchant other than the draft's. | false |
 | `QUOTE_REQUIRED` | The approval request named no `quote_id` (request-shape error). | false |
 | `QUOTE_SUPERSEDED` | A newer quote exists for the draft; **approval** must name the current quote. Checked for `OPEN` and `QUOTED` drafts alike, and **before** `QUOTE_STALE` — step 4b. | false |
-| `QUOTE_EXPIRED` | `clock_timestamp() >= quote.expires_at`, read **after** the blocking locks are held; obtain a fresh quote. Also raised at **Quote publication** (step 5b) when the priced candidate's own `expires_at` passes while publication waits on the merchant/pickup lock — the candidate is not published, its timestamps are not extended. | false |
+| `QUOTE_EXPIRED` | `clock_timestamp() >= quote.expires_at`, read **after** the blocking locks are held; obtain a fresh quote. Checked at Order-creation step 5c and **again at step 5f against the one fresh `t` that stamps `created_at`** (the quote can lapse in the check-to-INSERT gap). Also raised at **Quote publication** (step 5) when the priced candidate's own `expires_at` passes while publication waits on the merchant/pickup lock — the candidate is not published, its timestamps are not extended. | false |
 | `QUOTE_STALE` | The presented quote for this draft was invalidated by a confirmed-input / destination-point / cargo-quantity / resolved-pickup change after it was priced **and is not superseded** — step 4c, or the creation-branch fingerprint recompute (step 5d). Obtain a fresh quote. | false |
 | `CARGO_CATEGORY_UNKNOWN` | A cargo category code is not in the server policy vocabulary. | false |
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
 | `DELIVERY_ORDER_ALREADY_EXISTS` | Recovery replay; resolves to the existing order (any state, incl. `CANCELED`). | false |
 | `DELIVERY_APPROVAL_QUOTE_CONFLICT` | Draft is `APPROVED`, `order.merchant_id == M`, but its order is for a different `quote_id` than the one presented. | false |
-| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. (Separately, at INSERT: a new `delivery_order` not in `PENDING_DISPATCH`, and an illegal `delivery_draft` state transition, are rejected by their own row-local DB guards — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
+| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; an invalid historical channel identity/binding tuple — the approval or cancellation pair null when its channel requires it, non-null when its channel is `SESSION` or (for the cancellation pair) the order has had no merchant cancellation through this slice, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); a **`created_at`** that is null or does **not** historically precede both immutable deadlines (`order.quote_expires_at`, `source_draft.expires_at`); a **`CANCELED` order with a null `cancellation_authority`**, or one whose `MERCHANT` / `DISPATCH_EXECUTION` source does not match its references (a `MERCHANT` cancel missing its verified tuple, a `DISPATCH_EXECUTION` with a fabricated merchant tuple or an unverifiable compensation reference); or a `QUOTED` draft with a current non-approvable quote at creation step 5c. (Separately, at INSERT / transition time: a new `delivery_order` not in `PENDING_DISPATCH`, an illegal `delivery_draft` state transition, a premature or mis-stamped `-> EXPIRED`, a backdated `created_at`, an intake-dedupe `UNIQUE` collision, and a cross-tenant `requested_pickup_location_id` are rejected by their own row-local DB guards / constraints — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the snapshot ↔ immutable-quote equality above is the historical check and always runs. | false |
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed. | true |
@@ -2124,6 +2267,93 @@ publication blocks ~30 s on the merchants(M) / pickup lock ; inputs unchanged
   fresh candidate must be priced. Without step 5b, `d1` would go `QUOTED` with an
   already-expired q and every immediate approval would fail `QUOTE_EXPIRED`.
 
+### Example AE: creation-time deadline, backdating, and a much later recovery
+
+```text
+d1 QUOTED, q1 its current quote ; at step 5c q1.expires_at is ~10 s away and
+d1.expires_at ~40 s away ; after 5c the creation txn spends ~30 s in fingerprint
+recompute + cargo-policy validation (5d-5e) before the final step-5f clock read ;
+no new lock is taken after 5c ; inputs unchanged
+```
+
+- **Only the quote lapses in the compute gap** (`q1.expires_at` passed, `d1`
+  still in the future): step 5f takes one fresh `t = clock_timestamp()`;
+  `t < d1.expires_at` passes, then `t >= q1.expires_at` → **`QUOTE_EXPIRED`,
+  rollback, no order**. Nothing is written; `q1`'s / `d1`'s timestamps are not
+  extended.
+- **Both deadlines lapse in the compute gap** (variant — `d1.expires_at` also
+  near, or a longer 5d-5e gap): step 5f checks the draft first —
+  `t >= d1.expires_at` → **`DELIVERY_DRAFT_EXPIRED`, rollback, no order** (the
+  draft check precedes the quote check, so it reports first even though `q1` is
+  also past). Nothing is written.
+- **Both deadlines still in the future:** step 5f stamps
+  `o1.created_at := t` (`t < q1.expires_at` and `t < d1.expires_at`), inserts
+  `o1` as `PENDING_DISPATCH`, flips `d1 -> APPROVED`.
+- **Backfill after expiry:** a writer inserts a structurally consistent `o2` for
+  another draft **after** its quote expired, with a plausible `created_at`. If it
+  reaches the DB at all it goes through the trusted boundary and fails the fresh
+  `t < deadline` check; a pre-existing such row fails **Existing-order
+  integrity**'s historical `created_at < each immutable deadline` check →
+  `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A supplied future
+  `created_at` is rejected by the boundary and is immutable thereafter.
+- **Much later recovery of `o1`:** months on, both `q1.expires_at` and
+  `d1.expires_at` are long past and the original approval membership is
+  `REVOKED`. Recovery re-runs Existing-order integrity: the **historical**
+  relation `o1.created_at < each immutable deadline` still holds, the immutable
+  tuples still match — so `o1` recovers with zero writes. Current time and the
+  approver's current eligibility are **not** consulted (Example S).
+
+### Example AF: only the trusted boundary creates an order; revoked actor blocked
+
+```text
+a batch/backfill job has an INSERT-capable connection and tries to write a
+delivery_order directly, referencing a tuple-correct but REVOKED (M, U) membership
+```
+
+- **No direct `INSERT` path.** Ordinary writer roles hold **no** `INSERT` on
+  `delivery_order`; the only path is the trusted transactional creation procedure
+  (a future schema `GRANT` dependency). Called with a *trusted* actor context, it
+  derives `M` from the locked draft and re-checks the merchant `ACTIVE`,
+  `(M, U)` membership ACTIVE + allowed role, and (channel) identity `VERIFIED` +
+  binding, writing provenance from that re-checked result — never from passed IDs
+  or a "verified" flag.
+- **Statically `REVOKED` tuple:** the re-check finds the `(M, U)` membership
+  `REVOKED` (or the channel identity / binding revoked / unverified) →
+  `ROLLBACK`, no order.
+- **Revoke-first race:** the revocation `UPDATE` commits *before* the procedure
+  acquires the prefix locks. The procedure then waits on the membership row lock,
+  and its step-2/3 reads observe the committed negative state → `ROLLBACK`, no
+  order (internal `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_INOPERABLE` /
+  `MERCHANT_ACTOR_UNAUTHORIZED`; external `DELIVERY_DRAFT_NOT_FOUND` per
+  CORRECTED15 masking).
+- **Creation-first race:** the procedure already holds the prefix locks and its
+  re-check still sees the grant valid; it stamps `created_at := t`, inserts the
+  order as `PENDING_DISPATCH`, flips the draft `-> APPROVED`, and commits. The
+  revocation `UPDATE` was blocked on the membership row lock and commits only
+  afterwards, against the now-existing order. That order is authoritative and
+  later recovers on the **historical no-recheck** path — recovery never
+  re-evaluates the original approver's current eligibility (Example S).
+
+### Example AG: cancellation source is explicit
+
+```text
+(1) a secondary writer sets o1.status = CANCELED, leaving the merchant tuple null
+(2) it sets cancellation_authority = DISPATCH_EXECUTION with no verifiable reference
+(3) a legitimate merchant cancel through step 5
+```
+
+- **(1)** `cancellation_authority` is `NULL` on a `CANCELED` row → **Existing-order
+  integrity** cancellation-source check fails → `DELIVERY_ORDER_STATE_INCONSISTENT`,
+  zero writes. A null `cancellation_channel` no longer reads as "legitimate
+  compensation".
+- **(2)** `DISPATCH_EXECUTION` with no present, verifiable compensation reference
+  tied to `o1.id` fails the same check; and this slice offers no path for an
+  ordinary writer to set that source — the downstream contract and its backstop
+  do not exist yet.
+- **(3)** Step 5 sets `cancellation_authority = MERCHANT` atomically with the
+  full verified merchant provenance tuple, write-once; recovery of the `CANCELED`
+  `o1` then passes the source check (Example T).
+
 ### Example H: end-to-end ("Морской Разливной")
 
 ```text
@@ -2172,7 +2402,12 @@ WhatsApp message
                 + cargo lines {cat,qty,unit} + locked pickup content incl coords ; else QUOTE_STALE)
              5e cargo policy over category set, replica-active constant (cooked + live crayfish DELIVERABLE)
                 -> persist { cargo_policy_version, cargo_policy_decision }; INSERT validator re-derives + confirms
-             5f draft QUOTED -> APPROVED  +  INSERT delivery_order (status = PENDING_DISPATCH) (+ recipient snapshot)
+             5f trusted boundary re-checks current actor eligibility on the already-locked prefix rows
+                (merchant ACTIVE / membership ACTIVE + role / identity VERIFIED + binding ; else ROLLBACK, no order)
+                then one fresh t = clock_timestamp():  t < draft.expires_at (else DELIVERY_DRAFT_EXPIRED)
+                                                       t < quote.expires_at (else QUOTE_EXPIRED)
+                draft QUOTED -> APPROVED  +  INSERT delivery_order (status = PENDING_DISPATCH, created_at := t,
+                                                                    provenance from re-checked gate) (+ recipient snapshot)
     -> PENDING_DISPATCH
     -> Dispatch Authority: PENDING_DISPATCH -> SEARCHING_DRIVER -> DRIVER_ASSIGNED
     -> Execution Authority: PICKED_UP -> DELIVERED
@@ -2346,6 +2581,60 @@ freezes all of the following:
   (`QUOTE_EXPIRED`); publication requires both to pass, is zero-write on failure,
   and never extends the candidate's timestamps. Historical recovery still never
   re-checks quote expiry against the current clock.
+- **Order creation stamps an immutable, non-backdatable `created_at` from one
+  fresh server `clock_timestamp()` `t`** (step 5f), and requires
+  `t < delivery_draft.expires_at` (`DELIVERY_DRAFT_EXPIRED`) then
+  `t < referenced_quote.expires_at` (`QUOTE_EXPIRED`) — both re-checked here
+  because either can lapse between step 5c and the `INSERT`. `t` is the
+  server-defined creation moment, not `COMMIT`; the rule applies to every new
+  `INSERT`, backfills included. **Existing-order integrity** checks only the
+  *historical* relation `created_at < each immutable deadline`, never against the
+  current clock, so a correctly-created order recovers however long after both
+  deadlines have passed.
+- **Every new `delivery_order` is created through one trusted transactional
+  creation procedure** (ordinary writer roles get no direct `INSERT` — a future
+  `GRANT` dependency; backfills use the procedure too). Under the fixed lock
+  prefix it **re-checks the actor gate is currently eligible at insert time** —
+  merchant `ACTIVE`, `(M, U)` membership ACTIVE + allowed role, channel identity
+  `VERIFIED` + binding — from a *trusted* actor context (never passed IDs or a
+  "verified" flag), and writes provenance from that re-checked result; a
+  tuple-correct but `REVOKED` membership / identity / binding fails, no order. No
+  late reverse capture of authority locks inside an `INSERT` trigger. Later
+  **recovery** is unchanged: it keeps the historical tuple checks and never
+  re-evaluates the original approver's current eligibility.
+- **`delivery_draft.expired_at` is enforced, not advisory.** Every
+  `OPEN`/`QUOTED` -> `EXPIRED` transition — sweep or otherwise — takes a fresh
+  `t_exp` under the row lock, requires `t_exp >= OLD.expires_at`, and sets
+  `expired_at := t_exp` itself; a premature `-> EXPIRED` and a caller-supplied
+  `expired_at` are rejected, `expired_at` is `NOT NULL` on `EXPIRED` /
+  `NULL` otherwise / `>= expires_at` / immutable. The trusted sweep's no-order +
+  due checks and atomic quote-eligibility invalidation are unchanged; no
+  cross-table lock is added.
+- **`delivery_draft.requested_pickup_location_id` has a draft-level composite FK**
+  `(requested_pickup_location_id, merchant_id) -> merchant_locations (id,
+  merchant_id)` (`MATCH SIMPLE` so `NULL` = resolve-default is allowed;
+  `RESTRICT`), so a cross-tenant location id can never be stored on a draft even
+  transiently. Ownership only — ACTIVE / default / resolved-point checks stay
+  separate.
+- **Intake idempotency is a DB constraint:** an immediate
+  `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`
+  with `origin_channel` `NOT NULL` (closed enum) and
+  `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. A
+  concurrent redelivery of one full key yields exactly one draft (the loser
+  reads the existing draft, no overwrite / no deadline extension / no terminal
+  resurrection); tokenless (`NULL`) manual drafts repeat freely; different
+  merchant / channel / namespace stay independent.
+- **`delivery_order.cancellation_authority` (`MERCHANT | DISPATCH_EXECUTION`)** is
+  `NULL` until cancellation and `NOT NULL`, write-once and immutable on every
+  transition to `CANCELED`, set atomically with `status` / timestamp / reason and
+  the provenance that source requires — `MERCHANT` with the full verified merchant
+  tuple, `DISPATCH_EXECUTION` with a verifiable compensation reference and **no**
+  merchant tuple. This slice admits only `MERCHANT` (step 5); `DISPATCH_EXECUTION`
+  stays closed until a downstream contract + backstop exist, and the enum value
+  alone never substitutes for the trusted operation. **Existing-order integrity**
+  checks the source and its references; a null `cancellation_authority` on a
+  `CANCELED` row is corruption, and a null `cancellation_channel` no longer
+  implies "legitimate compensation". The allowed-transition graph is unchanged.
 - Merchant cancellation resolves the named `order_id` in two internally distinct
   cases with **one external code, `DELIVERY_ORDER_NOT_FOUND`, zero writes**:
   **ORDER ABSENT** → returned at step 1 **before any authority lock**;
@@ -2508,17 +2797,19 @@ freezes all of the following:
 The eight items raised during initial drafting are resolved as follows and are
 load-bearing for the contract above. Review refinements remain **proposed,
 pending independent re-audit on the published correction**. At this correction's
-baseline `f539027` (`1e19302`/CORRECTED11 plus CORRECTED12 and the published
-`f539027`/CORRECTED13 commit), **43 threads across seven Codex reviews are open**:
-30 are outdated and 13 non-outdated (7 P1 + 6 P2) — the 8 pre-`f539027`
-non-outdated threads are already covered by earlier corrections' content, and
-review `5156335628` on `f539027` adds 5 (3 P1 + 2 P2): enforce cargo policy on
-persisted orders (`3970113008`), back terminal draft states with a transition
-guard (`3970113024`), require new orders to start `PENDING_DISPATCH`
-(`3970113036`), mask cross-tenant approval lookups as not-found (`3970113014`),
-and reject expired quote candidates before publication (`3970113030`) — all
-addressed by this round. Anchor movement is not resolution; no thread is closed
-by this document or by local verification.
+baseline `1fc6682` (`f539027`/CORRECTED13 plus CORRECTED14 and the published
+`1fc6682`/CORRECTED15 commit), **52 threads across eight Codex reviews are open**:
+35 are outdated and 17 non-outdated — the 8 pre-`1fc6682` non-outdated threads
+are already covered by earlier corrections' content, and review `5159806482` on
+`1fc6682` adds **9 comments = 6 distinct findings (5 P1 + 1 P2)** (three findings
+were posted twice: `3972970725`/`3972970754`, `3972970734`/`3972970759`,
+`3972970742`/`3972970764`): reject an expired quote in the order-`INSERT`
+boundary (`3972970725`), enforce the deadline + stamp `expired_at` on `-> EXPIRED`
+(`3972970734`), draft-level composite pickup FK (`3972970742`, P2), DB intake
+idempotency `UNIQUE` + `CHECK` (`3972970769`), re-check current actor eligibility
+on every order insert (`3972970775`), and a write-once cancellation-source
+discriminator (`3972970785`) — all addressed by this round. Anchor movement is
+not resolution; no thread is closed by this document or by local verification.
 
 1. **Draft persistence.** `delivery_draft` is a **persisted** server-side entity.
    Persisted is not authoritative: WhatsApp/Peach/manual intake may create or
@@ -2537,9 +2828,19 @@ by this document or by local verification.
    a legal graph — new `INSERT` `OPEN`; `OPEN -> { QUOTED, ABANDONED, EXPIRED }`;
    `QUOTED -> { OPEN, APPROVED, ABANDONED, EXPIRED }`; `APPROVED` / `ABANDONED` /
    `EXPIRED` absorbing — checked on every `OLD -> NEW` including intra-transaction
-   UPDATEs, so a backfill cannot resurrect a terminal draft. It is separate from
-   the deferred coupling and does not replace actor authority or the expiry
-   worker's preconditions.
+   UPDATEs, so a backfill cannot resurrect a terminal draft; and **every**
+   `-> EXPIRED` (sweep or otherwise) must, under the row lock, take a fresh
+   `t_exp`, require `t_exp >= OLD.expires_at`, and stamp `expired_at := t_exp`
+   itself (`NULL` on non-`EXPIRED`, `NOT NULL` `>= expires_at` and immutable on
+   `EXPIRED`) — a premature or mis-stamped `-> EXPIRED` is rejected. It is
+   separate from the deferred coupling and does not replace actor authority or
+   the expiry worker's preconditions. Intake idempotency is a real DB constraint
+   — an immediate `UNIQUE (merchant_id, origin_channel, origin_namespace,
+   adapter_dedupe_token)` with `origin_channel` `NOT NULL` and
+   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)` — and
+   `requested_pickup_location_id` carries a draft-level composite FK to
+   `merchant_locations (id, merchant_id)` so a cross-tenant pickup id cannot be
+   stored on a draft.
 2. **Quote ownership split.** Confirmed. Quote computation, reprice, surge, and
    `expires_at` duration stay entirely in `BD-MERCHANT-QUOTE-AUTHORITY-01A`. This
    contract owns only the **Quote boundary contract**: the `quote_id`, state,
@@ -2594,8 +2895,15 @@ by this document or by local verification.
    recipient snapshot, non-null merchant-owned pickup, the historical
    membership and channel identity/binding tuples, and the snapshot ↔
    approved-quote fingerprint / copied-field equality, before transitioning, and
-   writes the cancelling actor/membership/channel/identity-binding/procedure with
-   the timestamp/reason atomically and once (Cancellation, Example T).
+   writes **`cancellation_authority = MERCHANT`** with the cancelling
+   actor/membership/channel/identity-binding/procedure and the timestamp/reason
+   atomically and once (Cancellation, Example T). Every transition to `CANCELED`
+   carries a non-null write-once `cancellation_authority` (`MERCHANT` |
+   `DISPATCH_EXECUTION`); `DISPATCH_EXECUTION` requires a verifiable downstream
+   compensation reference and no merchant tuple and stays closed until a
+   downstream contract + backstop exist. **Existing-order integrity** checks the
+   source and its references; a null `cancellation_channel` no longer implies
+   "legitimate compensation".
    Once Dispatch
    atomically claims the order (`SEARCHING_DRIVER`), direct merchant-cancel is
    refused (`DELIVERY_ORDER_NOT_CANCELABLE`); later cancellation runs through the
@@ -2641,7 +2949,14 @@ by this document or by local verification.
    service path. `UNIQUE (draft_id, quote_id)` alone is insufficient (it would
    let two rows for one draft with different `quote_id`s coexist); a **separate
    non-unique index on `(draft_id, quote_id)`** serves the exact-pair recovery
-   lookup. `draft_id` and `merchant_id` are both `NOT NULL` and bound by a
+   lookup. **Draft ingestion has its own DB idempotency** — an immediate
+   `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`
+   with `origin_channel` `NOT NULL` (closed enum) and
+   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`: a
+   concurrent redelivery of one full key produces exactly one draft (the loser
+   reads it, no overwrite / no deadline extension / no terminal resurrection),
+   while tokenless (`NULL`) manual drafts repeat freely — never a competing key
+   for order creation. `draft_id` and `merchant_id` are both `NOT NULL` and bound by a
    **composite FK `(draft_id, merchant_id) -> delivery_draft (id, merchant_id)`**
    (or guard trigger), so the persisted order's merchant can never diverge from
    its source draft's. Because `APPROVED` is terminal for the draft, a draft
@@ -2915,6 +3230,85 @@ Additional load-bearing invariants proposed in review **round 7** (Codex review
   current clock (Quote boundary contract — publication step 5; `QUOTE_EXPIRED`
   taxonomy; race rows 54, 59; Example AD; acceptance criteria).
 
+Additional load-bearing invariants proposed in review **round 8** (Codex review
+`5159806482`, head `1fc6682`; pending independent re-audit):
+
+- **Order-creation time gate + non-backdatable `created_at` (P1 — `3972970725` /
+  `3972970754`).** The trusted `INSERT` boundary, after every lock/check, takes
+  **one** fresh server `t := clock_timestamp()` and requires `t <
+  delivery_draft.expires_at` (`DELIVERY_DRAFT_EXPIRED`) then `t <
+  referenced_quote.expires_at` (`QUOTE_EXPIRED`) — both mandatory, since either
+  can lapse in the check-to-`INSERT` gap — then stamps `delivery_order.created_at
+  := t` (`NOT NULL`, immutable, not backdatable; a `DEFAULT` or a trusted-passed
+  timestamp is insufficient). Applies to **every** new `INSERT`, backfills
+  included. `t` is the server-defined creation moment, not `COMMIT`.
+  **Existing-order integrity** checks only the *historical* relation `created_at
+  < each immutable deadline`, never against the current clock; a correct order
+  recovers however long after both deadlines pass (invariant 6 → *The creation
+  transaction*; Order-creation step 5f; `delivery_order` field table;
+  Existing-order integrity; `DELIVERY_DRAFT_EXPIRED` / `QUOTE_EXPIRED` /
+  `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; race rows 60, 61; Example AE;
+  acceptance criteria; next-slice deps).
+- **Deadline-enforced `-> EXPIRED` + stamped `expired_at` (P1 — `3972970734` /
+  `3972970759`).** The row-local `delivery_draft` transition guard — for **every**
+  `OPEN`/`QUOTED` -> `EXPIRED`, sweep or not — takes a fresh `t_exp` under the
+  row lock, requires `t_exp >= OLD.expires_at`, and sets `expired_at := t_exp`
+  itself. `expired_at` is `NULL` on non-`EXPIRED`, `NOT NULL` `>= expires_at` and
+  immutable on `EXPIRED`; a premature `-> EXPIRED`, a caller-supplied future
+  `expired_at`, and a re-stamp are all rejected — a still-valid draft is never
+  permanently killed. The trusted sweep's no-order + due checks and atomic
+  quote-eligibility invalidation are unchanged; no cross-table lock is added
+  (`delivery_draft` field table + rules; decision 1; race rows 56, 62; Example
+  AA; acceptance criteria; next-slice deps).
+- **Draft-level explicit-pickup tenancy FK (P2 — `3972970742` / `3972970764`).**
+  A draft-level composite FK `(requested_pickup_location_id, merchant_id) ->
+  merchant_locations (id, merchant_id)` (`MATCH SIMPLE` so `NULL` = resolve
+  default is allowed; `RESTRICT`), reusing the unconditional
+  `merchant_locations (id, merchant_id)` parent key — so a cross-tenant location
+  id can never be stored on a draft, even transiently. Ownership only; ACTIVE /
+  default / resolved-point checks at quoting/approval stay separate
+  (`delivery_draft` field table; invariant 4; race rows 11, 63; acceptance
+  criteria; next-slice deps).
+- **DB intake idempotency (P1 — `3972970769`).** An immediate `UNIQUE
+  (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`, with
+  `origin_channel` `NOT NULL` (closed enum) and `CHECK (adapter_dedupe_token IS
+  NULL OR origin_namespace IS NOT NULL)` — a present token cannot evade the
+  `UNIQUE` through a null namespace/channel. Concurrent redelivery of one full
+  key → exactly one draft (loser reads it; no overwrite / deadline extension /
+  terminal resurrection); tokenless (`NULL`) manual drafts repeat freely;
+  different merchant/channel/namespace independent (`delivery_draft` field table;
+  Idempotency and recovery; decision 8; race rows 12, 64; Example O; acceptance
+  criteria; next-slice deps).
+- **Current actor eligibility on every order `INSERT` (P1 — `3972970775`).** All
+  new `delivery_order` rows go through one trusted transactional creation
+  procedure (ordinary roles get no direct `INSERT` — a future `GRANT`
+  dependency). Under the fixed lock prefix
+  (`draft -> membership -> merchant -> identity -> binding -> pickup`, held to
+  `COMMIT`/`ROLLBACK`) it re-checks the merchant / membership+role / channel
+  identity-proof / binding are **currently** eligible from a *trusted* actor
+  context (never passed IDs or a "verified" flag) and writes provenance from
+  that re-checked result — a `REVOKED` tuple fails, no order. No late reverse
+  authority-lock capture in an `INSERT` trigger. Later **recovery** keeps its
+  historical tuple checks and never re-evaluates current eligibility; CORRECTED15
+  external masking is unchanged (invariant 6 → *The creation transaction*;
+  Order-creation authority; Existing-order integrity ("do not re-check current");
+  race rows 3, 65; Examples S, AF; acceptance criteria; next-slice deps).
+- **Write-once cancellation-source discriminator (P1 — `3972970785`).** New
+  `delivery_order.cancellation_authority` (`MERCHANT | DISPATCH_EXECUTION`) —
+  `NULL` until cancellation, `NOT NULL`, write-once and immutable on **every**
+  transition to `CANCELED`, set atomically with `status` / timestamp / reason and
+  the provenance the source requires: `MERCHANT` with the full verified merchant
+  tuple, `DISPATCH_EXECUTION` with a verifiable compensation reference tied to
+  the order and **no** merchant tuple. This slice admits only `MERCHANT` (step
+  5); `DISPATCH_EXECUTION` stays closed until a downstream contract + backstop
+  exist, and the enum alone never substitutes for the trusted operation.
+  **Existing-order integrity** checks the source and its references; a null
+  `cancellation_channel` no longer implies "legitimate compensation"; the
+  allowed-transition graph is unchanged (`delivery_order` field table +
+  Immutability; Cancellation step 5; Existing-order integrity;
+  `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 5; race rows 33, 66;
+  Examples T, AG; acceptance criteria; next-slice deps).
+
 ## Review-round 1 P1 resolutions (Codex review 5140252744, head `7e58744`)
 
 **Status: proposed docs-only resolutions, pending independent re-audit.** No
@@ -3087,6 +3481,33 @@ external not-found **masking of cross-tenant approval lookups**; and a
 | P2 mask cross-tenant approval lookups `3970113014` | A nonexistent `draft_id` **and any failure of the locked step-2 actor gate for `M` = the locked draft's merchant** (no ACTIVE `(M, U)` membership, role miss, `merchants(M)` not `ACTIVE`, gate resolving another merchant, identity/binding mismatch) → **the same external `DELIVERY_DRAFT_NOT_FOUND`**, zero writes; **no own-merchant exception**. True `MERCHANT_*` / `CONTACT_*` reason internal, logged. Gate always resolved for `M` from the locked draft. Tenant derivation + authority locks before recovery/creation unchanged; frozen Identity/Contact resolver unchanged — only the response mapping. Mirrors cancellation. Order-creation steps 1–2; Approver parity; `DELIVERY_DRAFT_NOT_FOUND` / `MERCHANT_ACTOR_UNAUTHORIZED` taxonomy; race rows 10, 58; acceptance criteria. | Row 58; Example AC |
 | P2 reject expired quote candidates before publication `3970113030` | Publication step 5, one post-lock `t = clock_timestamp()`: `t >= draft.expires_at` → `DELIVERY_DRAFT_EXPIRED`; then `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`; publish only if both pass; zero-write on failure; no timestamp extension. Historical recovery still never re-checks quote expiry vs the current clock. Quote boundary contract — publication step 5; `QUOTE_EXPIRED` taxonomy; race rows 54, 59; acceptance criteria. | Row 59; Example AD |
 
+## Review-round 8 proposed resolutions (Codex review 5159806482, head `1fc6682`)
+
+**Status: proposed docs-only correction; all 52 threads remain open** (17
+non-outdated). The 8 pre-`1fc6682` non-outdated threads are already covered by
+earlier corrections' content and are not re-worked here. Review `5159806482` on
+`1fc6682` adds **9 inline comments = 6 distinct findings (5 P1 + 1 P2)** — three
+findings were posted twice (`3972970725`/`3972970754`,
+`3972970734`/`3972970759`, `3972970742`/`3972970764`) — all resolved docs-only
+below. No migration, runtime, PR metadata or review-thread change is made by this
+contract. New additive schema / writer dependencies (flagged, not performed
+here): a fresh-`t` two-deadline gate + `NOT NULL` immutable non-backdatable
+`delivery_order.created_at`; a deadline-enforced `-> EXPIRED` guard that stamps
+`expired_at`; a draft-level composite pickup FK; an immediate intake-dedupe
+`UNIQUE` + `CHECK` + `origin_channel NOT NULL`; a trusted transactional creation
+procedure (with restricted direct-`INSERT` `GRANT`s) that re-checks current actor
+eligibility; and a write-once `delivery_order.cancellation_authority`
+discriminator.
+
+| Finding / comment | Contract correction | Verification case |
+| --- | --- | --- |
+| P1 reject expired quotes in the order INSERT guard `3972970725` / `3972970754` | Trusted `INSERT` boundary takes one fresh `t = clock_timestamp()` after all locks/checks: `t < draft.expires_at` (`DELIVERY_DRAFT_EXPIRED`) then `t < referenced_quote.expires_at` (`QUOTE_EXPIRED`), rollback / no order; stamps `created_at := t` (`NOT NULL`, immutable, non-backdatable). All new inserts incl. backfills. Existing-order integrity checks the **historical** relation `created_at < each immutable deadline`, never current time. invariant 6 → *The creation transaction*; Order-creation step 5f; `delivery_order` field table; Existing-order integrity; `DELIVERY_DRAFT_EXPIRED` / `QUOTE_EXPIRED` / `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 8; acceptance criteria; next-slice deps. | Rows 60, 61; Example AE |
+| P1 enforce the deadline on transitions to EXPIRED `3972970734` / `3972970759` | Row-local `delivery_draft` transition guard: every `OPEN`/`QUOTED` -> `EXPIRED` (sweep or not) takes a fresh `t_exp` under the row lock, requires `t_exp >= OLD.expires_at`, sets `expired_at := t_exp`; `expired_at` `NULL`/`NOT NULL` by status, `>= expires_at`, immutable; premature / supplied-future / re-stamp rejected. Sweep's no-order + due + quote-invalidation unchanged; no cross-table lock. `delivery_draft` field table + rules; decision 1; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; acceptance criteria; next-slice deps. | Rows 56, 62; Example AA |
+| P2 bind explicit draft pickups to the draft merchant `3972970742` / `3972970764` | Draft-level composite FK `(requested_pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)` (`MATCH SIMPLE`, `RESTRICT`), reusing the unconditional parent key — cross-tenant pickup id never storable on a draft. Ownership only; ACTIVE / default / resolved-point checks stay separate. `delivery_draft` field table; invariant 4; acceptance criteria; next-slice deps. | Rows 11, 63 |
+| P1 enforce intake idempotency in the database `3972970769` | Immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` + `origin_channel NOT NULL` (closed enum) + `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. Concurrent full-key redelivery → one draft (loser reads it, no overwrite / deadline extension / terminal resurrection); tokenless `NULL` drafts repeat freely; merchant/channel/namespace independent. `delivery_draft` field table; Idempotency and recovery; decision 8; acceptance criteria; next-slice deps. | Rows 12, 64; Example O |
+| P1 validate actor eligibility on every order insert `3972970775` | All new `delivery_order` rows go through one trusted transactional creation procedure (no ordinary direct `INSERT` — future `GRANT` dep); under the fixed lock prefix held to COMMIT/ROLLBACK it re-checks merchant / membership+role / channel identity-proof / binding are **currently** eligible from a trusted actor context and writes provenance from that result — a `REVOKED` tuple fails, no order. No late reverse authority-lock capture in an `INSERT` trigger. Recovery keeps historical tuple checks, never current eligibility; CORRECTED15 external masking unchanged. invariant 6 → *The creation transaction*; Order-creation authority; Existing-order integrity; race rows 3, 65; acceptance criteria; next-slice deps. | Rows 3, 65; Examples S, AF |
+| P1 distinguish compensation from unaudited merchant cancellation `3972970785` | New write-once `delivery_order.cancellation_authority` (`MERCHANT | DISPATCH_EXECUTION`), `NULL` until cancellation, `NOT NULL` on every transition to `CANCELED`, set atomically with the provenance that source needs (`MERCHANT`: full verified merchant tuple; `DISPATCH_EXECUTION`: verifiable compensation reference, no merchant tuple). This slice admits only `MERCHANT` (step 5); `DISPATCH_EXECUTION` closed until a downstream contract + backstop exist; the enum alone never substitutes for the trusted operation. Existing-order integrity checks source + references; a null `cancellation_channel` no longer implies compensation; transition graph unchanged. `delivery_order` field table + Immutability; Cancellation step 5; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 5; acceptance criteria; next-slice deps. | Rows 33, 66; Examples T, AG |
+
 ## Expected next slices
 
 1. `BD-MERCHANT-QUOTE-AUTHORITY-01A` — server quote, expiry, reprice, merchant
@@ -3151,8 +3572,25 @@ external not-found **masking of cross-tenant approval lookups**; and a
    terminal states absorbing; every `OLD -> NEW`, intra-transaction included); a
    row-local **`delivery_order` `BEFORE INSERT` guard** admitting a new row only
    in `PENDING_DISPATCH` (not a permanent `CHECK`, no cross-table lock); external
-   not-found **masking of cross-tenant approval lookups**; and a
+   not-found **masking of cross-tenant approval lookups**; a
    **candidate-quote `expires_at` re-check** on the post-lock wall clock in
-   publication step 5; FK `RESTRICT`;
+   publication step 5; a **fresh-`t` two-deadline gate at order `INSERT` (step 5f)**
+   plus **`delivery_order.created_at` `NOT NULL`, immutable, non-backdatable**
+   (stamped `:= t`) with the historical `created_at < each immutable deadline`
+   re-check in Existing-order integrity; a **deadline-enforced `delivery_draft`
+   `-> EXPIRED` guard** that takes a fresh `t_exp >= expires_at` and stamps
+   `expired_at` (`NULL`/`NOT NULL` by status, `>= expires_at`, immutable); a
+   **draft-level composite FK `(requested_pickup_location_id, merchant_id) ->
+   merchant_locations (id, merchant_id)`** (`MATCH SIMPLE`, `RESTRICT`); an
+   **immediate `UNIQUE (merchant_id, origin_channel, origin_namespace,
+   adapter_dedupe_token)`** with **`origin_channel` `NOT NULL`** (closed enum) and
+   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`; a
+   **trusted transactional order-creation procedure** with restricted
+   direct-`INSERT` `GRANT`s that re-checks **current** merchant / membership+role
+   / channel identity-proof / binding eligibility at insert time; and a
+   **write-once `delivery_order.cancellation_authority` (`MERCHANT |
+   DISPATCH_EXECUTION`)** discriminator, `NOT NULL` on every `-> CANCELED`, with
+   the matching provenance and the `DISPATCH_EXECUTION` path gated on a future
+   downstream contract; FK `RESTRICT`;
    readiness / concurrency / privacy tests; dark service seam, no public route
    unless separately approved.
