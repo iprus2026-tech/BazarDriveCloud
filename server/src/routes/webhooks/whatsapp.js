@@ -11,6 +11,8 @@
 //   "waba:{WABA_ID}:phone:{WABA_PHONE_NUMBER_ID}"
 // canonical_subject_key: sender's WA ID normalized to E.164 via auth/phone.js canonicalization.
 
+import { hashToken, hashesEqual } from '../../services/auth/tokens.js';
+
 export default async function whatsappWebhookRoutes(app) {
   // GET — Meta subscription verification challenge.
   // logLevel:'warn' suppresses Fastify's automatic info-level request log, which would
@@ -29,7 +31,18 @@ export default async function whatsappWebhookRoutes(app) {
     }
 
     const configuredToken = app.config.waba?.webhookVerifyToken || '';
-    if (!configuredToken || verifyToken !== configuredToken) {
+    // Compare SHA-256 digests in constant time: a plain `!==` on the raw strings
+    // leaks, via timing, how many leading characters of the long-lived verify token
+    // an attacker's guess matched. `hub.verify_token` must be a string — reject a
+    // missing value (`undefined`) or a repeated query parameter (parsed as an array)
+    // *before* hashing, because `hashToken()` runs `String(...)` and would otherwise
+    // fold `"undefined"` / `"a,b"` into a valid-looking 64-char digest. The empty
+    // configured-token refusal short-circuits ahead of any hashing.
+    if (
+      !configuredToken ||
+      typeof verifyToken !== 'string' ||
+      !hashesEqual(hashToken(verifyToken), hashToken(configuredToken))
+    ) {
       return reply.code(403).send({
         error: 'webhook verification failed',
         code: 'WEBHOOK_VERIFICATION_FAILED',
