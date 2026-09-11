@@ -4,7 +4,7 @@ docType: decision-record
 title: "WhatsApp Business Account Adapter — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-09-10
+revision: 2026-09-11
 effectiveFrom: 2026-09-08
 reviewAfter: 2027-03-08
 visibleFor: [developer, dispatcher, product]
@@ -74,11 +74,32 @@ external_contact_identities
 (channel=WHATSAPP, subject_namespace=waba:{wabaId}:phone:{phoneNumberId})
         |
         v
-merchant_contact_bindings → merchant context
-        |
-        v
-resolveAuthorizedMerchantActor (01B dark seam)
+merchant_contact_bindings → resolveMerchantContext (01B dark seam)
+        = non-authoritative merchant context for this inbound message
 ```
+
+Authoritative operations (quote approval, a confirmed order, dispatch, merchant
+administration) do **not** continue down this inbound chain. They compose
+`resolveAuthorizedMerchantActor` (01B dark seam) on a **separate branch**,
+required by and owned by that operation's own downstream contract — never
+inline in inbound message handling.
+
+`resolveMerchantContext` requires ACTIVE `external_contact_identity` + ACTIVE
+`merchant_contact_binding` + ACTIVE `merchant`, and is fail-closed on an
+unknown, ambiguous, conflicting, or revoked identity/binding/merchant, exactly
+as the frozen contract's *Contact resolution contract* defines. Its result is
+a read of current state, **never a portable authorization token**: context
+resolution does not authorize quote approval, a confirmed order, money,
+dispatch, or merchant administration. A later mutating operation must
+independently re-derive `AUTHORIZED_MERCHANT_ACTOR(U, M)` — composing ACTIVE
+identity + `channel_proof = VERIFIED` + `linked_user_id` + ACTIVE binding +
+ACTIVE merchant + ACTIVE membership + role — inside its **own**
+transaction/lock boundary, per the frozen contract's *External channel actor
+authorization*; it may not accept a previously-resolved context as proof. A
+future Delivery Draft contract may permit a policy-limited unlinked or merely
+`OBSERVED` contact to contribute input to a non-authoritative draft — **this
+ADR does not activate that policy**; it only names the frozen contract's
+existing shape.
 
 Message processing, contact creation/update, merchant context resolution, and
 delivery draft intake are each a separately authorized downstream slice.
@@ -106,6 +127,18 @@ crashing the process.
 
 Credentials are never logged, never emitted in metrics, never returned in API
 responses, and never written to any database table.
+
+**Future POST activation prerequisite.** This dark/optional configuration is
+correct for the current candidate — no WABA credential is required at
+startup, and none of the five env vars blocks the GET verification handler.
+Before the POST handler is promoted to live, however, **`WABA_ID` and
+`WABA_PHONE_NUMBER_ID` become mandatory, non-empty, valid strings, alongside a
+configured `WABA_APP_SECRET`** (see *Signature verification*, below); a
+missing or invalid namespace ID must block intake activation. The adapter
+must never build a `subject_namespace` with an empty component — a value like
+`waba::phone:` (an empty `WABA_ID` or `WABA_PHONE_NUMBER_ID`) is never
+constructed, guessed, or defaulted. Both IDs are carried as opaque strings; no
+numeric coercion and no synthesized fallback.
 
 ## subject_namespace format
 
@@ -141,6 +174,30 @@ The full canonical triple is therefore:
 This triple is globally unique per sender per business phone number. Two
 business phones on the same WABA are different namespaces. Two WABAs on the
 same phone number are also different namespaces (the WABA ID differs).
+
+### Namespace must match the receiving endpoint (future POST prerequisite)
+
+Meta's webhook payload is a batch: `entry[]` (one per WABA) containing
+`changes[]`, each `value.metadata` naming the **receiving** business phone
+(`value.metadata.phone_number_id`). This deployment is scoped to exactly one
+WABA and one phone number, so **the future intake handler must reconcile both
+namespace components against the configured identity — after signature
+verification and before any contact resolution, upsert, or draft write** —
+never assign the configured `WABA_PHONE_NUMBER_ID` unconditionally:
+
+- the batch entry's `entry.id` (the WABA ID) must equal the configured
+  `WABA_ID`;
+- **for every** processed `changes[].value` (not only the batch's first
+  element), its `metadata.phone_number_id` must equal the configured
+  `WABA_PHONE_NUMBER_ID`.
+
+A missing, malformed, or mismatched value on either check is **not** admitted
+to intake and triggers no contact/identity/draft write — an event for a
+different WABA or a different business phone is rejected, never relabeled
+under this deployment's configured IDs. This is a same-deployment identity
+check only: it does not add multi-WABA or multi-phone-number routing, and it
+does not introduce a new HTTP error taxonomy beyond the POST handler's
+existing dark/live shape.
 
 ## Webhook endpoint surface
 
@@ -196,7 +253,23 @@ X-Hub-Signature-256: sha256=<hex digest>
 
 Signature verification using `WABA_APP_SECRET` is dark in this slice and MUST
 be implemented before the POST handler is promoted to live. Accepting unsigned
-payloads in production is not permitted.
+payloads in production is not permitted. Once implemented, the check must:
+
+- compute the HMAC-SHA256 over the **exact raw request-body bytes captured
+  before JSON parsing** — never over the parsed object, a re-serialization of
+  it, or any whitespace/Unicode-normalized form, any of which can change the
+  byte sequence Meta actually signed and make a legitimate signature fail;
+- complete **before** contact resolution, identity upsert, or any domain
+  write, rejecting a missing, malformed, or mismatched `X-Hub-Signature-256`
+  with no such write;
+- compare two well-formed digests using a **constant-time** comparison
+  primitive, not a plain equality check.
+
+These are **future POST-activation obligations** — the current candidate's
+POST handler is dark (`501`) and implements none of this; it is not covered by
+`server/test/whatsapp-webhook.test.mjs`, whose coverage is limited to the GET
+verification endpoint and the dark POST stub (see *Acceptance criteria*,
+below).
 
 ## Authority invariants
 
@@ -227,10 +300,17 @@ payloads in production is not permitted.
 
 ## Expected next slices
 
-1. **BD-WHATSAPP-INTAKE-01A** — contract for inbound message normalization,
-   contact resolution, and delivery draft creation from WhatsApp payloads.
-2. **BD-WHATSAPP-INTAKE-01B** — live POST handler with HMAC signature
-   verification, contact upsert, and draft intake.
+1. **`BD-MERCHANT-WHATSAPP-INTAKE-01A`** — the established slice name from the
+   frozen Identity/Contact contract's own *Expected next slices* (#4): the
+   provider adapter maps an inbound message into a Delivery Draft without
+   becoming authority. That contract owns 01A's scope and freeze status; this
+   ADR does not (re)freeze it, redefine its scope, or claim it is already
+   frozen — it is named here only for cross-reference.
+2. **`BD-MERCHANT-WHATSAPP-INTAKE-01B`** (proposed) — a live POST handler with
+   HMAC signature verification, contact upsert, and draft intake, **if** a
+   separate implementation slice is needed beyond 01A. Proposed only: it
+   requires its own separate scope/contract agreement before being treated as
+   authorized.
 3. **BD-WHATSAPP-SEND-01A** — outbound message sending via the Cloud API.
 
 ## Acceptance criteria for this ADR (docs-only)
@@ -258,5 +338,21 @@ payloads in production is not permitted.
   changed. **HMAC-SHA256 signature verification with `WABA_APP_SECRET` is a
   mandatory prerequisite for any future POST activation — it is neither
   implemented nor tested in this candidate.**
+- **Design obligations frozen by review round 9** (Codex review
+  `5172646963`, findings `3983839917` / `3983839924` / `3983839927` /
+  `3983839934` / `3983839940`) — all **future POST-activation prerequisites,
+  none implemented or tested in this candidate**: the Authority chain routes
+  inbound context resolution only through `resolveMerchantContext`, never
+  `resolveAuthorizedMerchantActor`, which is reserved for a separate
+  authoritative-operation branch owned by that operation's own downstream
+  contract; the intake follow-up is the established
+  `BD-MERCHANT-WHATSAPP-INTAKE-01A` (not refrozen here), with a proposed
+  `-01B` implementation slice; `WABA_ID` / `WABA_PHONE_NUMBER_ID` /
+  `WABA_APP_SECRET` become mandatory before POST activation, and a namespace
+  is never built with an empty component; every processed webhook
+  entry/change has its WABA ID and receiving phone reconciled against the
+  configured identity before any domain write; and HMAC-SHA256 verification
+  runs over the raw pre-parse request bytes, completes before any domain
+  write, and is compared constant-time.
 - `cd docs-site && npm run check`, `node scripts/check.mjs`, and
   `node scripts/dispatcher.mjs` pass.
