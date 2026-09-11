@@ -4,15 +4,17 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-08-29
+revision: 2026-09-11
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
 sourceOfTruth: docs-site
 related:
-  routes: []
+  routes:
+    - /api/v1/webhooks/whatsapp
   files:
     - "docs-site/docs/processes/backend-spine-inspector.md"
+    - "docs-site/docs/decisions/whatsapp-business-account-adapter.md"
     - "docs-site/static/img/mini-yonder-backend-spine.svg"
     - "docs-site/sidebars.js"
     - "docs-site/package.json"
@@ -22,7 +24,8 @@ related:
     - 820
     - 821
     - 931
-  prs: []
+  prs:
+    - 981
 tags: [process, mini-yonder, backend, database, docs-site]
 slug: /processes/mini-yonder-backend-spine
 ---
@@ -69,6 +72,31 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `ALL /api/v1/notifications/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future notifications track (outside #820 pilot) |
 | `ALL /api/v1/safety/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future safety track (outside #820 pilot) |
 | `GET /metrics` | DARK | Operational policy not frozen | None; returns `501 NOT_IMPLEMENTED` | no activation | observability follow-up |
+
+### WhatsApp Business Account webhook — candidate, not on `main` (BD-DOCS-051)
+
+**Status: verified runtime candidate in the still-open PR #981
+(`000f267f2fc494bc93574e246c05e7f7e2be385a`); NOT on `main`; not merged, not
+deployed, not production-ready.** The design is frozen in ADR BD-DOCS-051
+(`/decisions/whatsapp-business-account-adapter`). This documentation change adds
+no route, server, schema, activation, or deployment change; it records the
+candidate beside `main` so audits do not read the backend surface as complete.
+
+| Baseline | `GET /api/v1/webhooks/whatsapp` | `POST /api/v1/webhooks/whatsapp` |
+|---|---|---|
+| `main@7ddb3971f078da93193b5cf22413ddb3aabf40ae` | **not registered** (no route) | **not registered** (no route) |
+| candidate #981 @ `000f267f2fc494bc93574e246c05e7f7e2be385a` | **LIVE** — Meta subscription verification | **DARK** — `501 NOT_IMPLEMENTED` |
+
+| Field | Candidate #981 @ `000f267f2fc494bc93574e246c05e7f7e2be385a` |
+|---|---|
+| Auth and role boundary | GET is intentionally **unauthenticated** — Meta calls it with no BazarDrive session; it carries no BazarDrive user data. POST is dark. Possessing `WABA_WEBHOOK_VERIFY_TOKEN` grants no merchant, session, or authoritative write access. |
+| Database writes / reads | **None.** Neither handler performs any PostgreSQL I/O; no contact, identity, or draft row is created. |
+| PWA consumer or activation seam | **None.** No PWA cutover and no client seam; the Meta webhook subscription is not configured in the Developer Console until the intake slice ships. |
+| Verification owner | `server/test/whatsapp-webhook.test.mjs` (hermetic, DB-independent) — executed by `server-ci` on Node 22. |
+
+- **GET codes/responses:** `hub.mode != "subscribe"` → `400 INVALID_WEBHOOK_MODE`; `WABA_WEBHOOK_VERIFY_TOKEN` empty **or** the supplied `hub.verify_token` does not match (constant-time SHA-256 digest comparison; a missing or repeated `hub.verify_token` is rejected as a non-string before hashing) → `403 WEBHOOK_VERIFICATION_FAILED`; a match → the raw `hub.challenge` as `text/plain` with `200`. Fastify's automatic request logging is suppressed for this route so the verify token never reaches stdout.
+- **POST:** `501 NOT_IMPLEMENTED` (`service: whatsapp-webhook`). Meta retries failed webhooks; the 501 is acceptable while dark because no live webhook subscription is configured. Before promotion to live — design frozen in ADR BD-DOCS-051, **none of this implemented or tested in this candidate**: `WABA_ID` / `WABA_PHONE_NUMBER_ID` / `WABA_APP_SECRET` become mandatory (no namespace built with an empty component); every processed webhook entry/change must have its WABA ID and receiving phone number reconciled against the configured identity before any contact/identity/draft write; **HMAC-SHA256 verification with `WABA_APP_SECRET` runs over the raw pre-parse request bytes**, completes before any domain write, and uses a constant-time digest comparison — accepting unsigned or unreconciled payloads in production is not permitted; and every admitted message must transactionally claim a persistent, database-unique `(WHATSAPP, subject_namespace, provider_message_id)` key before any contact/identity/draft mutation, that claim and mutation committing or rolling back atomically together, so a retried or re-batched redelivery of the same message never duplicates effects (see ADR BD-DOCS-051, *Idempotent processing*).
+- **Identity namespace (unchanged):** an inbound WhatsApp message maps to `external_contact_identities` with `channel = WHATSAPP` and `subject_namespace = "waba:{WABA_ID}:phone:{WABA_PHONE_NUMBER_ID}"`; the canonical triple `(channel, subject_namespace, canonical_subject_key)` is the only allowed lookup key. WABA is transport, not merchant identity: `BD-MERCHANT-IDENTITY-CONTACT-AUTHORITY-01A/01B` own **canonical merchant/contact identity, merchant context, and the composed actor gate** — and nothing beyond that. **Quote approval, dispatch, and the delivery lifecycle are governed by separate downstream BazarDrive contracts, not by Identity/Contact Authority** (frozen contract, *Authority invariant 4* — a provider carries messages but does not own quote approval, delivery-order lifecycle, or driver assignment). Inbound context resolution ends at `resolveMerchantContext` (fail-closed on an unknown, ambiguous, conflicting, or revoked identity/binding/merchant, per the frozen contract's *Contact resolution contract*) and is **not** a portable authorization token; an authoritative operation composes `resolveAuthorizedMerchantActor` on its own separate branch, under its own transaction/lock boundary, per that contract's *External channel actor authorization*. Message parsing, contact creation/update, merchant context resolution, and delivery draft intake are each a separate, still-unauthorized slice — the intake follow-up is the established `BD-MERCHANT-WHATSAPP-INTAKE-01A` (not refrozen here). Before promotion to live — **none of this implemented or tested in this candidate**: the authoritative sender for each message is `messages[i].from`, read within its own entry/change — never `contacts[0].wa_id` or any other shared/batch-level field — validated by type/provider-form check → `normalizePhone()` → `isValidPhone()` before any canonical lookup or write (see ADR BD-DOCS-051, *Sender identity is derived per message, then validated*).
 
 ## Authority and invariants
 
