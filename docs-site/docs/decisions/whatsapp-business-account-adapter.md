@@ -4,7 +4,7 @@ docType: decision-record
 title: "WhatsApp Business Account Adapter — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-09-11
+revision: 2026-09-12
 effectiveFrom: 2026-09-08
 reviewAfter: 2027-03-08
 visibleFor: [developer, dispatcher, product]
@@ -30,12 +30,21 @@ slug: /decisions/whatsapp-business-account-adapter
 
 > **Contract-first / docs-only (`status: draft`).** This ADR freezes the design
 > of the WhatsApp Business Account (WABA) adapter configuration and webhook seam.
-> The runtime that implements it — the live GET verification challenge and the
-> **dark 501** POST — is a **separate, still-open change: PR #981** (verified
-> candidate `000f267f2fc494bc93574e246c05e7f7e2be385a`), **not merged, not
-> deployed, not production-ready**. This document makes no runtime, migration, or
-> PWA change; see BD-DOCS-042 for the candidate's current-state entry, which
-> distinguishes it from `main`.
+> The GET subscription-verification handler and **dark 501** POST handler are
+> now **merged through PR #981** at
+> `main@5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa`.
+> This establishes repository implementation only; server deployment, a Meta
+> webhook subscription, and production readiness are **not established by this
+> merge**. This documentation update makes no runtime, migration, or PWA change;
+> see BD-DOCS-042 for the current repository-state entry.
+
+The ADR, sidebar, and candidate-route matrix were merged separately in PR #984
+(`579dca7e826c980d2ead25e41511b444802b2d4a`). References to the reviewed
+"candidate" in the unchanged contract obligations and review provenance below
+retain their historical wording; the same four runtime/test file blobs from
+`000f267f2fc494bc93574e246c05e7f7e2be385a` are now on `main` through #981.
+Those references do not imply that the runtime is still unmerged or that any
+future POST obligation was implemented or tested by the merge.
 
 ## Context
 
@@ -255,13 +264,16 @@ GET  /api/v1/webhooks/whatsapp  — Meta subscription verification (live)
 POST /api/v1/webhooks/whatsapp  — Inbound message event (dark, 501)
 ```
 
-> **Where this lives.** On `main@7ddb3971f078da93193b5cf22413ddb3aabf40ae`
-> neither route is registered. The implementation is PR #981's verified candidate
-> `000f267f2fc494bc93574e246c05e7f7e2be385a`: `server/src/config.js` (dark WABA
-> block), `server/src/server.js` (route registration under `/api/v1/webhooks`),
+> **Where this lives.** On
+> `main@5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa`, merged PR #981 registers
+> both routes: **GET LIVE** means registered and implemented subscription
+> verification; **POST DARK** still returns `501 NOT_IMPLEMENTED`.
+> The implementation is in `server/src/config.js` (the existing optional WABA
+> block), `server/src/server.js` (registration under `/api/v1/webhooks`), and
 > `server/src/routes/webhooks/whatsapp.js` (the handlers), verified by
-> `server/test/whatsapp-webhook.test.mjs` (hermetic, DB-independent). The
-> candidate performs **no** database I/O and drives **no** PWA activation.
+> `server/test/whatsapp-webhook.test.mjs` (hermetic, DB-independent).
+> Neither handler performs database I/O or drives PWA activation. LIVE here
+> describes repository code, not an observed server deployment or Meta subscription.
 
 ### GET — subscription verification
 
@@ -454,15 +466,18 @@ current candidate remains GET-verification/POST-501 only:
 
 ## Acceptance criteria for this ADR (docs-only)
 
-- `status: draft`; this document records the WABA adapter **design** only. Its
-  implementation is PR #981's verified candidate
-  `000f267f2fc494bc93574e246c05e7f7e2be385a` — **not merged, not deployed**. No
-  runtime, migration, or PWA change is made in this documentation slice.
-- The BD-DOCS-042 current-state matrix records both webhook routes,
-  distinguishing `main@7ddb3971f078da93193b5cf22413ddb3aabf40ae` (both routes
-  **not registered**) from the candidate #981@`000f267f2fc494bc93574e246c05e7f7e2be385a`
-  (**GET LIVE** subscription verification, **POST DARK 501**), with the candidate
-  SHA recorded beside the statuses.
+- `status: draft` is retained. This document records the WABA adapter design
+  and implementation provenance; only the GET-verification/POST-501 seam is
+  merged through PR #981 at
+  `main@5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa`.
+  This documentation slice changes no runtime, migration, or PWA behavior and
+  asserts no server deployment, Meta subscription, or production readiness.
+- The BD-DOCS-042 current-state matrix records **GET LIVE** subscription
+  verification and **POST DARK 501** at that full `main` SHA, while retaining
+  `7ddb3971f078da93193b5cf22413ddb3aabf40ae` and the pre-merge candidate
+  `000f267f2fc494bc93574e246c05e7f7e2be385a` as explicitly historical snapshots.
+  LIVE means registered and implemented in the repository; it does not assert
+  deployment or activation of inbound processing.
 - **Actually covered by `server/test/whatsapp-webhook.test.mjs`** (hermetic,
   DB-independent): GET returns the raw `hub.challenge` as `text/plain` with 200 on
   a matching token, 400 on a non-`subscribe` `hub.mode`, and 403 on a token

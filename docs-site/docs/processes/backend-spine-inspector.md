@@ -4,7 +4,7 @@ docType: process
 title: Mini Yonder Backend Spine docs build integration
 owner: docs-contract-agent
 status: current
-revision: 2026-09-11
+revision: 2026-09-12
 effectiveFrom: 2026-06-19
 reviewAfter: 2026-12-19
 visibleFor: [developer, dispatcher, product, qa]
@@ -73,21 +73,29 @@ _Historical concept mock: labels inside this image predate the implemented serve
 | `ALL /api/v1/safety/*` | DARK | No pilot contract | None; catch-all returns `501 NOT_IMPLEMENTED` | no activation | future safety track (outside #820 pilot) |
 | `GET /metrics` | DARK | Operational policy not frozen | None; returns `501 NOT_IMPLEMENTED` | no activation | observability follow-up |
 
-### WhatsApp Business Account webhook — candidate, not on `main` (BD-DOCS-051)
+### WhatsApp Business Account webhook — merged on `main` (BD-DOCS-051)
 
-**Status: verified runtime candidate in the still-open PR #981
-(`000f267f2fc494bc93574e246c05e7f7e2be385a`); NOT on `main`; not merged, not
-deployed, not production-ready.** The design is frozen in ADR BD-DOCS-051
-(`/decisions/whatsapp-business-account-adapter`). This documentation change adds
-no route, server, schema, activation, or deployment change; it records the
-candidate beside `main` so audits do not read the backend surface as complete.
+**Status: PR #981 merged at
+`main@5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa`: GET LIVE, POST DARK 501.**
+LIVE uses this page's repository-state definition: registered and implemented.
+The merge does **not** establish server deployment, a Meta webhook subscription,
+or production readiness. The design is frozen in ADR BD-DOCS-051
+(`/decisions/whatsapp-business-account-adapter`), merged separately through
+PR #984 (`579dca7e826c980d2ead25e41511b444802b2d4a`). This documentation
+update makes no route, server, schema, activation, or deployment change.
+
+The older `main` and candidate rows below are historical snapshots. References
+to "this candidate" in the unchanged future-obligation bullets retain that
+historical wording; the same four runtime/test file blobs are now on `main`
+through #981. All future POST-activation obligations remain unimplemented.
 
 | Baseline | `GET /api/v1/webhooks/whatsapp` | `POST /api/v1/webhooks/whatsapp` |
 |---|---|---|
-| `main@7ddb3971f078da93193b5cf22413ddb3aabf40ae` | **not registered** (no route) | **not registered** (no route) |
-| candidate #981 @ `000f267f2fc494bc93574e246c05e7f7e2be385a` | **LIVE** — Meta subscription verification | **DARK** — `501 NOT_IMPLEMENTED` |
+| **Current repository baseline:** `main@5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa` (merged #981) | **LIVE** — Meta subscription verification | **DARK** — `501 NOT_IMPLEMENTED` |
+| Historical `main@7ddb3971f078da93193b5cf22413ddb3aabf40ae` | **not registered** (no route) | **not registered** (no route) |
+| Historical pre-merge candidate #981 @ `000f267f2fc494bc93574e246c05e7f7e2be385a` | **LIVE** — Meta subscription verification | **DARK** — `501 NOT_IMPLEMENTED` |
 
-| Field | Candidate #981 @ `000f267f2fc494bc93574e246c05e7f7e2be385a` |
+| Field | Current repository baseline @ `5633cf61e3633e3f6f0e664f9baf6d09a07ce5aa` (merged #981) |
 |---|---|
 | Auth and role boundary | GET is intentionally **unauthenticated** — Meta calls it with no BazarDrive session; it carries no BazarDrive user data. POST is dark. Possessing `WABA_WEBHOOK_VERIFY_TOKEN` grants no merchant, session, or authoritative write access. |
 | Database writes / reads | **None.** Neither handler performs any PostgreSQL I/O; no contact, identity, or draft row is created. |
