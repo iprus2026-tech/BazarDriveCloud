@@ -46,6 +46,17 @@ export function loadConfig(env = process.env) {
       accessKeyId: env.S3_ACCESS_KEY_ID || '',
       secretAccessKey: env.S3_SECRET_ACCESS_KEY || '',
     },
+
+    // --- WABA (BD-DOCS-051) — structured-but-dark; WABA_WEBHOOK_VERIFY_TOKEN consumed by the
+    // live GET verification handler. All other fields have no Phase-1 consumer. No field is
+    // required at startup; an absent verify token makes the GET handler return 403. ---
+    waba: {
+      id: env.WABA_ID || '',
+      phoneNumberId: env.WABA_PHONE_NUMBER_ID || '',
+      accessToken: env.WABA_ACCESS_TOKEN || '',
+      webhookVerifyToken: env.WABA_WEBHOOK_VERIFY_TOKEN || '',
+      appSecret: env.WABA_APP_SECRET || '',
+    },
   };
 
   const missing = [];
