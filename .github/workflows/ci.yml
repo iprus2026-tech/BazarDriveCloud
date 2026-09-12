@@ -18,6 +18,8 @@ jobs:
           node-version: '20'
       - name: Static checks (CSP guards, JSON, JS syntax)
         run: node scripts/check.mjs
+      - name: Figma/ScreenOps registry drift guard
+        run: node scripts/smoke-figma-screen-registry.mjs
       - name: Precache-drift guard (a precached file changed ⇒ sw.js VERSION must bump)
         if: github.event_name == 'pull_request'
         run: node scripts/check-precache-drift.mjs
