@@ -1375,13 +1375,20 @@ regardless.
     equality is not "current" re-validation and always runs. Else (`order.quote_id`
     differs) → `DELIVERY_APPROVAL_QUOTE_CONFLICT`. Zero writes.
 - **New creation is reached only from a `QUOTED` draft with its current,
-  non-superseded quote and no order.** For any other order-absent state,
-  `## Order-creation authority` step 4 applies a **fixed priority**, all
-  zero-write and entry-state-preserving: terminal draft →
-  `DELIVERY_DRAFT_NOT_APPROVABLE`; presented own quote **superseded** (`OPEN` or
-  `QUOTED`) → `QUOTE_SUPERSEDED`; `OPEN` with the presented own quote
-  **invalidated and not superseded** → `QUOTE_STALE`; any other `OPEN` →
-  `DELIVERY_DRAFT_NOT_APPROVABLE`.
+  non-superseded quote and no order.** On the **ORDER ABSENT** path, after
+  step 3a has rejected `APPROVED` without an order as an integrity fault,
+  `## Order-creation authority` step 4 applies a **fixed priority**. Rejections
+  are zero-write and entry-state-preserving: **first**, a draft already
+  `EXPIRED`, or whose deadline has otherwise passed — post-lock authoritative
+  `clock_timestamp() >= delivery_draft.expires_at`, whether or not the sweep
+  has run — → `DELIVERY_DRAFT_EXPIRED`. This precedes **all** following cases:
+  otherwise `ABANDONED` → `DELIVERY_DRAFT_NOT_APPROVABLE`; presented own quote
+  **superseded** (`OPEN` or `QUOTED`) → `QUOTE_SUPERSEDED`; `OPEN` with the
+  presented own quote **invalidated and not superseded** → `QUOTE_STALE`;
+  any other non-creatable state → `DELIVERY_DRAFT_NOT_APPROVABLE`. Only the
+  remaining `QUOTED` draft with its current, non-superseded quote proceeds to
+  the creation branch and its further checks. Existing-order recovery remains
+  on the separate ORDER PRESENT path above.
 - After a `delivery_order` is `CANCELED`, the draft stays `APPROVED`; a further
   delivery is a **new draft + new quote + new order**, never a re-approval of the
   old draft.
@@ -1713,9 +1720,9 @@ these transactions crosses lock order.
 | 3 | Approval vs. membership `REVOKED` (incl. last-ADMIN revoke, whose guard trigger locks `merchants(M)` **after** the membership row) | **Approval first:** the revoke of the actor's own row waits on the step-2 membership lock; any other revoke waits on `merchants(M)`. **Revoke first:** approval's `lockActiveMerchantMembership` finds no ACTIVE row (or re-reads it `REVOKED`); the locked-gate failure is **`MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED` internal only (logged)**, mapped to the **single external `DELIVERY_DRAFT_NOT_FOUND`** (rows 10, 58). **Zero writes, before recovery or creation.** Applies to recovery and creation; lock order unchanged. |
 | 4 | **Creation** vs. quote `expires_at` crossed while waiting on locks | Expiry is read with `clock_timestamp()` **after** the locks are held (not transaction-start `now()`); `clock_timestamp() >= expires_at` → `QUOTE_EXPIRED`; no order. |
 | 5 | Approval of a quote for which a **newer quote exists** for the draft — draft `OPEN` **or** `QUOTED` | `QUOTE_SUPERSEDED` (step 4b); checked **before** `QUOTE_STALE`; approval must name the current quote. Guaranteed, not timing-dependent: quote publish/supersede takes the `delivery_draft` lock, so it cannot land between step 5c re-confirm and commit (row 23). |
-| 6 | **Creation** vs. pickup `merchant_location` edit / `ARCHIVED` / default switch | The pickup row is locked in step 5a; its merchant-default boundary is already covered by the step-2 `merchants(M)` lock. **Approval first:** the edit waits. **Edit first:** step 5a re-reads under lock — non-ACTIVE / gone → `MERCHANT_LOCATION_REQUIRED`; changed content → step 5d fingerprint mismatch → `QUOTE_STALE`. No order against a stale pickup. |
+| 6 | **Creation** vs. pickup `merchant_location` edit / `ARCHIVED` / default switch | The pickup row is locked in step 5a; its merchant-default boundary is already covered by the step-2 `merchants(M)` lock. **Approval first:** the edit waits. **Edit first:** step 5a re-reads under lock — non-ACTIVE / gone → `MERCHANT_LOCATION_REQUIRED`; null coordinates or a missing / invalid / source-inconsistent `resolved_pickup_point` (including an address/coordinate edit that cleared or invalidated it) → `DELIVERY_PICKUP_UNRESOLVED`. Only if step 5a and the remaining earlier creation checks pass does changed pickup content reach step 5d's fingerprint mismatch → `QUOTE_STALE`. Any required trusted re-resolution must already have been persisted before approval; no approval-time geocode. No order against a stale pickup. |
 | 7 | A confirmed draft input change (recipient/contact/`destination_point`/access note/window/cargo qty/unit) on a `QUOTED` draft, then approval of that quote (no newer quote) | Change drops the draft `QUOTED -> OPEN` and invalidates the quote; approval resolves at **step 4c** → `QUOTE_STALE`, zero writes, draft stays `OPEN`; no order until a fresh quote is approved. |
-| 8 | The resolved pickup location's canonical content edited (same `merchant_location_id`) so close to approval that the draft revert has not propagated | Draft still `QUOTED` → **creation branch** step 5d recomputes the fingerprint over the fresh **locked** `pickup_snapshot`, sees the mismatch → `QUOTE_STALE`; no order. |
+| 8 | The resolved pickup location's canonical content edited (same `merchant_location_id`) so close to approval that the draft revert has not propagated | Draft still `QUOTED` → **creation branch**: step 5a rejects null coordinates or a missing / invalid / source-inconsistent stored `resolved_pickup_point` → `DELIVERY_PICKUP_UNRESOLVED`. If the stored point is already valid for the edited location and all earlier creation checks pass, step 5d recomputes the fingerprint over the fresh **locked** `pickup_snapshot`, sees the mismatch → `QUOTE_STALE`. A needed trusted re-resolution is persisted before approval, never performed during approval; no order in either rejection case. |
 | 9 | **Creation** vs. cargo policy change (category becomes non-deliverable) between quote and approval | Re-check against current policy; `CARGO_NOT_DELIVERABLE`; no order. |
 | 10 | Actor whose gate resolves merchant **A** presents a `(draft_id, quote_id)` whose locked `delivery_draft.merchant_id = B` | `M` is taken from the **locked draft** (`= B`); the gate for `B` fails (internally `MERCHANT_ACTOR_UNAUTHORIZED` / `MERCHANT_MEMBERSHIP_REQUIRED`), **before recovery**; the **external code is `DELIVERY_DRAFT_NOT_FOUND`** (same as a missing draft) so `B`'s draft existence is not disclosed; no read or write of `B`'s order (row 58; Example AC). |
 | 11 | Explicit `requested_pickup_location_id` names an ACTIVE location owned by **another** merchant | Step 5a requires `merchant_locations.merchant_id == M` (and a composite FK / trigger backstops); mismatch → `MERCHANT_LOCATION_REQUIRED`; no order, no cross-tenant pickup. |
@@ -1994,13 +2001,26 @@ q1 priced against pickup location L (address X) ; merchant edits L's address to 
 same merchant_location_id ; approves (d1, q1) before the draft revert propagates
 ```
 
-- The draft is still `QUOTED` with q1 its current, non-superseded quote (step 4e),
-  so the **creation branch** runs. Step 5d recomputes the fingerprint over the
-  freshly-resolved `pickup_snapshot` (address Y) — it no longer equals q1's
-  stored fingerprint (address X) → `QUOTE_STALE`, no order. A fresh quote against
-  address Y is required. (Once the `QUOTED -> OPEN` revert from the pickup edit
-  has propagated, the same approval instead resolves at **step 4c** — same
-  `QUOTE_STALE` outcome, provided no newer quote has appeared.)
+- Assume the actor/tenant and step-4 gates have passed (in particular, the
+  draft is not expired). The draft is still `QUOTED` with q1 its current,
+  non-superseded quote, so the **creation branch** runs. The address edit clears
+  or invalidates the old source-bound `resolved_pickup_point` (invariant 4).
+  **Without a valid point for Y already persisted, step 5a returns
+  `DELIVERY_PICKUP_UNRESOLVED`** before fingerprint comparison; no order.
+- **If a trusted resolver has already persisted a valid, source-consistent
+  point for Y before approval**, and the draft is still `QUOTED` as in the
+  trace, step 5a may pass. With the other earlier creation checks also passing,
+  step 5d recomputes the fingerprint over the **stored, locked**
+  `pickup_snapshot` (address Y + its resolved point) — it no longer equals q1's
+  fingerprint (address X) → `QUOTE_STALE`, no order. Approval never geocodes
+  or invents provenance; the resolver-persist procedure is a separate prior
+  operation under the existing lock protocol. A fresh quote against the valid
+  resolved pickup for Y is required.
+- Once the `QUOTED -> OPEN` revert has propagated, the same approval resolves
+  at **step 4c** → `QUOTE_STALE` without entering step 5a, provided the earlier
+  gates pass and no newer quote has appeared. The expiry pre-gate still wins
+  for a due draft; if the draft is not due but q1 is superseded, step 4b wins.
+  These are the established step-4 priorities, not alternative pickup checks.
 
 ### Example L: order was CANCELED, merchant asks to "redo it"
 
