@@ -205,7 +205,9 @@
 // inbox_02f.css changed (instance-scoped stale-read guard, button-owned Retry
 // progress, inert loaded fixtures and restored read-body spacing). No PRECACHE
 // membership, backend/domain contract, or cache-strategy change.
-const VERSION    = 'v321';
+// v322 (Mapbox R1/R2): precached cloud.css + map.js changed — preserve the live-map box and
+// restore MapShell on initial-load errors, sharing the router-owned resource cleanup.
+const VERSION    = 'v322';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

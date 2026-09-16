@@ -4,6 +4,7 @@
 // the companion error-trigger smoke executes the repaired pure helpers.
 
 import fs from 'node:fs';
+import { parseSwVersion } from './lib/sw-cache-contract.mjs';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const app      = read('../public/src/app.js');
@@ -344,8 +345,11 @@ expect('final audit repair keeps badge geometry in a scoped slot while preservin
   && /flex-direction:\s*column;/.test(inboxReadBodyCss));
 expect('the exact scoped Inbox read-body rule restores 12px vertical spacing',
   /gap:\s*12px;/.test(inboxReadBodyCss));
-expect('02F-R1 bumps the service worker for the two changed precached Inbox assets',
-  /const\s+VERSION\s*=\s*'v321'/.test(sw)
+// Preserve the Inbox revision floor while allowing later service worker bumps.
+let swRevision = 0n;
+try { swRevision = parseSwVersion(sw).number; } catch { /* invalid VERSION fails below */ }
+expect('02F-R1 keeps the service worker at v321+ for the two precached Inbox assets',
+  swRevision >= 321n
   && /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw)
   && /['"]\.\/styles\/inbox_02f\.css['"]/.test(sw));
 expect('BD-INBOX-01 documents fixtures, Retry ownership and stale-settlement boundary',

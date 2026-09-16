@@ -2,8 +2,8 @@
 //
 // map.js must stay DARK by default: with no token, resolveState() returns TOKEN_MISSING (never DEFAULT)
 // and isMapboxEnabled() is false, so no mapboxgl.Map is ever constructed and the MapShell placeholder is
-// unchanged. The live render (DEFAULT + token) is render-then-hydrate, and because router.render() has
-// NO teardown, the GL context must be freed via a document.body.contains watcher. The actual visual
+// unchanged. The live render (DEFAULT + token) is render-then-hydrate; router-owned disposal is the
+// primary cleanup path, with a document.body.contains watcher as a backstop. The actual visual
 // render + CSP completeness are verified on a device with a real token — NOT asserted here.
 //
 // No DOM, no network. Pure Node / static source assertions.
@@ -17,6 +17,7 @@ const expect = (label, cond, detail = '') => {
 };
 
 const src = fs.readFileSync(new URL('../public/src/screens/map.js', import.meta.url), 'utf8');
+const css = fs.readFileSync(new URL('../public/styles/cloud.css', import.meta.url), 'utf8');
 
 // ── The foundation seam is imported ──
 expect('map.js imports isMapboxEnabled + getDefaultCenter + MAPBOX_STYLE from mapbox_config',
@@ -36,10 +37,14 @@ expect('hydrate bails when loadMapboxSdk resolves null (DARK / unavailable) — 
 expect('hydrate re-checks document.body.contains(container) after the async load',
   /if\s*\(!document\.body\.contains\(container\)\)\s*return/.test(src));
 
-// ── Self-clearing GL-context teardown (router.render has no teardown) ──
-expect('a teardown frees the GL context (map.remove) once the container leaves the DOM',
-  /!document\.body\.contains\(container\)[\s\S]{0,80}map\.remove\(\)/.test(src)
-  && /clearInterval\(/.test(src));
+// Behavioral cleanup/error/late-hydration coverage lives in smoke-screen-disposer-exactly-once.mjs.
+expect('detach backstop uses the shared resource cleanup',
+  /if\s*\(!document\.body\.contains\(container\)\)\s*releaseMapResources\(lifecycle\)/.test(src));
+
+// Higher specificity than vendored .mapboxgl-map, independent of declaration order.
+const mountedRule = (css.match(/\.map-home__map\.mapboxgl-map\s*\{([^}]*)\}/) || [])[1] || '';
+expect('mounted map stays absolute/inset:0 despite late vendored CSS',
+  /\bposition\s*:\s*absolute\s*;/.test(mountedRule) && /\binset\s*:\s*0\s*;/.test(mountedRule));
 
 // ── The DARK / non-token path still renders the MapShell placeholder ──
 expect('buildMapPlaceholder still renders the MapShell placeholder (dark path unchanged)',

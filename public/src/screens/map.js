@@ -168,11 +168,22 @@ function buildMapPlaceholder(state) {
 //     document.body.contains(container) check, immediately before `new mapboxgl.Map(...)`, so a late
 //     hydration continuation for an already-disposed screen never creates a new GL resource.
 //   - lifecycle.mapInstance: becomes known the moment the map is actually constructed.
-//   - lifecycle.teardownId: the existing 2s defensive self-poll, kept unchanged as a backstop for any
-//     detachment the router-owned disposer didn't observe. It is idempotent against a disposer that
-//     already ran (checks lifecycle.disposed first) and dispose() is idempotent against a poll that
-//     already ran (checks lifecycle.mapInstance/teardownId before touching them) — whichever fires
-//     first does the real work, the other is a safe no-op.
+//   - lifecycle.teardownId / onLoad / onError: owned resources released by the same cleanup path on
+//     navigation, detachment or initial-load failure. Ownership is cleared before SDK calls so late
+//     callbacks and re-entrant disposal cannot remove the same map twice.
+function releaseMapResources(lifecycle) {
+  const { mapInstance: map, teardownId, onLoad, onError } = lifecycle;
+  lifecycle.mapInstance = null;
+  lifecycle.teardownId = null;
+  lifecycle.onLoad = null;
+  lifecycle.onError = null;
+  if (teardownId !== null) clearInterval(teardownId);
+  if (!map) return;
+  try { if (onLoad) map.off('load', onLoad); } catch { /* already torn down */ }
+  try { if (onError) map.off('error', onError); } catch { /* already torn down */ }
+  try { map.remove(); } catch { /* already torn down */ }
+}
+
 function hydrateRealMap(container, lifecycle) {
   loadMapboxSdk().then((mapboxgl) => {
     if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
@@ -200,23 +211,33 @@ function hydrateRealMap(container, lifecycle) {
         return;
       }
       lifecycle.mapInstance = map;
+      let hasLoaded = false;
+      const ownsMap = () => !lifecycle.disposed && lifecycle.mapInstance === map;
+      lifecycle.onLoad = () => {
+        if (!ownsMap()) return;
+        hasLoaded = true;
+      };
+      lifecycle.onError = () => {
+        if (!ownsMap() || hasLoaded) return;
+        releaseMapResources(lifecycle);
+        // remove() may itself trigger navigation. Recheck after cleanup, including the interval
+        // where the router has disposed this screen but its old DOM is still attached.
+        if (!lifecycle.disposed && document.body.contains(container)) restoreMapPlaceholder(container);
+      };
+      map.on('load', lifecycle.onLoad);
+      map.on('error', lifecycle.onError);
       // Defensive backstop only (BD-SCREEN-LIFECYCLE-01A): the router-owned disposer is now the
       // primary cleanup path and frees the GL context immediately on navigation. This poll only
       // still matters for a detachment the disposer somehow didn't observe.
       lifecycle.teardownId = setInterval(() => {
-        if (lifecycle.disposed) { clearInterval(lifecycle.teardownId); lifecycle.teardownId = null; return; }
-        if (!document.body.contains(container)) {
-          try { map.remove(); } catch { /* already torn down */ }
-          lifecycle.mapInstance = null;
-          clearInterval(lifecycle.teardownId);
-          lifecycle.teardownId = null;
-        }
+        if (!ownsMap()) return;
+        if (!document.body.contains(container)) releaseMapResources(lifecycle);
       }, 2000);
     });
   }).catch(() => { /* load failed — the placeholder stays */ });
 }
 
-// Rebuild the DEFAULT-state placeholder shell after a failed Map construction (Codex #812):
+// Rebuild the DEFAULT-state placeholder after failed construction or a pre-load SDK error:
 // replaceChildren() has already cleared the container, so restore the MapShell rather than a blank card.
 function restoreMapPlaceholder(container) {
   container.setAttribute('aria-label', 'Карта-заглушка');
@@ -414,7 +435,7 @@ export default function mapScreen() {
   stage.appendChild(mapWrap);
   // BD-SCREEN-LIFECYCLE-01A (#919) pilot — shared mutable handle between this closure's returned
   // dispose() and hydrateRealMap()'s async continuation (see the comment on hydrateRealMap).
-  const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null };
+  const mapLifecycle = { disposed: false, mapInstance: null, teardownId: null, onLoad: null, onError: null };
   // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
   // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
   // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
@@ -457,11 +478,7 @@ export default function mapScreen() {
     dispose() {
       if (mapLifecycle.disposed) return;
       mapLifecycle.disposed = true;
-      if (mapLifecycle.teardownId) { clearInterval(mapLifecycle.teardownId); mapLifecycle.teardownId = null; }
-      if (mapLifecycle.mapInstance) {
-        try { mapLifecycle.mapInstance.remove(); } catch { /* already torn down */ }
-        mapLifecycle.mapInstance = null;
-      }
+      releaseMapResources(mapLifecycle);
     },
   };
 }

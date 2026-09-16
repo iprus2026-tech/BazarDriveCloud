@@ -16,7 +16,7 @@
 // actual public/src/router.js against a minimal hand-rolled DOM/location
 // shim (same pattern as scripts/smoke-router-latest-render-wins.mjs), and
 // drives it with hand-resolved deferred loaders. No browser, no network, no
-// timers anywhere in this file — ordering is deterministic via explicit
+// real timers anywhere in this file — ordering is deterministic via explicit
 // microtask-queue flushes only.
 //
 // Scope note: sections 1-15, 15b and 17 exercise the router-owned disposer
@@ -561,12 +561,13 @@ await flush();
       src: '', href: '', rel: '', async: false,
       onload: null, onerror: null,
       children: kids,
+      replaceCount: 0,
       setAttribute(name, value) { attrs[name] = String(value); },
       getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
       removeAttribute(name) { delete attrs[name]; },
       appendChild(child) { kids.push(child); return child; },
       insertAdjacentHTML() { /* content not queried by these scenarios */ },
-      replaceChildren(...nodes) { kids.length = 0; kids.push(...nodes); },
+      replaceChildren(...nodes) { this.replaceCount += 1; kids.length = 0; kids.push(...nodes); },
       addEventListener() {},
       removeEventListener() {},
       querySelector() { return null; },
@@ -609,30 +610,64 @@ await flush();
   // explicitly (MAP-D) rather than waiting.
   let capturedIntervalCallback = null;
   let intervalWasCleared = false;
-  globalThis.setInterval = (cb) => { capturedIntervalCallback = cb; intervalWasCleared = false; return 1; };
-  globalThis.clearInterval = () => { intervalWasCleared = true; };
+  let nextIntervalId = 0;
+  const activeIntervals = new Set();
+  globalThis.setInterval = (cb) => {
+    capturedIntervalCallback = cb;
+    intervalWasCleared = false;
+    activeIntervals.add(++nextIntervalId);
+    return nextIntervalId;
+  };
+  globalThis.clearInterval = (id) => { activeIntervals.delete(id); intervalWasCleared = true; };
 
   // Deterministic Mapbox SDK: the REAL loadMapboxSdk() (unmodified) injects
   // a <link> and a <script> via document.head.appendChild — capture the
   // script's onload so the test controls exactly when the "SDK finished
   // loading" moment happens, instead of a real network fetch.
   let capturedScriptOnload = null;
+  let capturedScriptOnerror = null;
   const realHeadAppendChild = richHead.appendChild.bind(richHead);
   richHead.appendChild = (node) => {
-    if (node && node.tagName === 'script') capturedScriptOnload = node.onload;
+    if (node && node.tagName === 'script') {
+      capturedScriptOnload = node.onload;
+      capturedScriptOnerror = node.onerror;
+    }
     return realHeadAppendChild(node);
   };
 
   let fakeMapCtorCalls = 0;
+  let failNextConstructor = false;
   const fakeMapInstances = [];
   class FakeMapboxMap {
     constructor(opts) {
       fakeMapCtorCalls += 1;
+      if (failNextConstructor) { failNextConstructor = false; throw new Error('synthetic constructor failure'); }
       this.opts = opts;
       this.removeCallCount = 0;
+      this.listeners = new Map();
+      this.onRemove = null;
+      opts.container.appendChild(makeRichElement('canvas'));
       fakeMapInstances.push(this);
     }
-    remove() { this.removeCallCount += 1; }
+    on(type, fn) {
+      const listeners = this.listeners.get(type) || [];
+      listeners.push(fn);
+      this.listeners.set(type, listeners);
+      return this;
+    }
+    off(type, fn) {
+      this.listeners.set(type, (this.listeners.get(type) || []).filter((listener) => listener !== fn));
+      return this;
+    }
+    fire(type) {
+      for (const fn of [...(this.listeners.get(type) || [])]) fn({ type });
+    }
+    listenerCount() { return [...this.listeners.values()].reduce((n, list) => n + list.length, 0); }
+    remove() {
+      this.removeCallCount += 1;
+      this.opts.container.replaceChildren();
+      if (this.onRemove) this.onRemove();
+    }
   }
   function resolveFakeSdkLoad() {
     // Mirrors what the real vendored UMD script does as a side effect of
@@ -732,7 +767,149 @@ await flush();
   expect('MAP-D: the backstop firing after router-owned disposal is a safe no-op — its own disposed-guard returns before touching map.remove() again',
     mapInstance.removeCallCount === 1,
     'GUARD DISCRIMINATOR — fails (removeCallCount would become 2) if the backstop does not check lifecycle.disposed before calling map.remove() again');
-  expect('MAP-D: the backstop clears its own interval when it observes disposal', intervalWasCleared === true);
+  expect('MAP-D: cleanup cleared the interval before the late poll', intervalWasCleared === true && activeIntervals.size === 0);
+
+  // R2 — real app modules with synthetic SDK events, not a WebGL/rendering test.
+  // Retain callback references to model callbacks already queued when cleanup removes listeners.
+  const callbacks = (map) => ({
+    error: (map.listeners.get('error') || [])[0],
+    load: (map.listeners.get('load') || [])[0],
+  });
+  const runLate = ({ error, load }) => { if (error) error(); if (load) load(); if (error) error(); };
+  const hasShell = (container) => container.children.some((node) =>
+    (node.className || '').split(/\s+/).includes('bd-map-shell'));
+  const mapContainer = () => richApp.children[0].children.find((node) =>
+    node.className === 'map-home__stage').children[0];
+  async function mountMap() {
+    go('/lc-map-c?state=default');
+    await flush();
+    flushRaf();
+    await flush();
+    return fakeMapInstances[fakeMapInstances.length - 1];
+  }
+  async function leaveMap() { go('/lc-map-away-3'); await flush(); }
+  const released = (map) => map.removeCallCount === 1 && map.listenerCount() === 0 && activeIntervals.size === 0;
+
+  // Pre-load error → repeated error / late load → navigation → late poll.
+  await flush();
+  const failedMap = await mountMap();
+  const failedContainer = failedMap.opts.container;
+  const lateFailure = callbacks(failedMap);
+  const failedPoll = capturedIntervalCallback;
+  expect('R2 setup: live hydration removed the placeholder', !hasShell(failedContainer));
+  expect('R2 setup: initial load and error handlers are registered',
+    typeof lateFailure.error === 'function' && typeof lateFailure.load === 'function');
+  failedMap.fire('error');
+  expect('R2: pre-load error restores MapShell and its accessible label',
+    hasShell(failedContainer) && failedContainer.getAttribute('aria-label') === 'Карта-заглушка');
+  expect('R2: pre-load error releases the map, listeners and timer', released(failedMap));
+  const restoredWrites = failedContainer.replaceCount;
+  failedMap.fire('error');
+  runLate(lateFailure);
+  failedPoll();
+  expect('R2: repeated error and late load cannot replace the fallback or remove twice',
+    released(failedMap) && hasShell(failedContainer) && failedContainer.replaceCount === restoredWrites);
+  await leaveMap();
+  failedPoll();
+  runLate(lateFailure);
+  expect('R2: fallback → navigation → late poll remains exactly once with no late DOM write',
+    released(failedMap) && failedContainer.replaceCount === restoredWrites);
+
+  // A successful first load changes error policy; an existing map must survive tile errors.
+  const loadedMap = await mountMap();
+  const loadedContainer = loadedMap.opts.container;
+  loadedMap.fire('load');
+  const loadedWrites = loadedContainer.replaceCount;
+  loadedMap.fire('error');
+  loadedMap.fire('error');
+  expect('R2: post-load errors preserve the live map without fallback',
+    loadedMap.removeCallCount === 0 && !hasShell(loadedContainer)
+      && loadedContainer.replaceCount === loadedWrites && activeIntervals.size === 1);
+  await leaveMap();
+  expect('R2: loaded map still releases all owned resources on navigation', released(loadedMap));
+
+  // Navigate before first load, while DOM detachment is deliberately still pending.
+  const disposedMap = await mountMap();
+  const disposedContainer = disposedMap.opts.container;
+  const lateDisposed = callbacks(disposedMap);
+  queueHashChange = true;
+  go('/lc-map-away-3');
+  expect('R2 setup: disposed pre-load map remains DOM-attached', richBody.contains(disposedContainer));
+  const disposedWrites = disposedContainer.replaceCount;
+  runLate(lateDisposed);
+  expect('R2: disposed-but-attached map ignores queued error/load callbacks',
+    released(disposedMap) && !hasShell(disposedContainer) && disposedContainer.replaceCount === disposedWrites);
+  queueHashChange = false;
+  dispatchNextHashChange();
+  await flush();
+
+  // Detachment outside the router: either the poll or an error may observe it first.
+  for (const first of ['poll', 'error']) {
+    const detachedMap = await mountMap();
+    const detachedContainer = detachedMap.opts.container;
+    const lateDetached = callbacks(detachedMap);
+    const detachedPoll = capturedIntervalCallback;
+    richApp.replaceChildren();
+    if (first === 'poll') detachedPoll(); else detachedMap.fire('error');
+    const detachedWrites = detachedContainer.replaceCount;
+    runLate(lateDetached);
+    detachedPoll();
+    await leaveMap();
+    expect(`R2: detached ${first}-first cleanup is exactly once and never restores detached DOM`,
+      released(detachedMap) && !hasShell(detachedContainer) && detachedContainer.replaceCount === detachedWrites);
+  }
+
+  // SDK removal is synchronous and can emit callbacks or trigger navigation re-entrantly.
+  const reentrantMap = await mountMap();
+  const lateReentrant = callbacks(reentrantMap);
+  let removalWrites = null;
+  queueHashChange = true;
+  reentrantMap.onRemove = () => {
+    runLate(lateReentrant);
+    go('/lc-map-away-3');
+    removalWrites = reentrantMap.opts.container.replaceCount;
+  };
+  reentrantMap.fire('error');
+  expect('R2: re-entrant navigation from remove() cannot double-remove or restore the disposed screen',
+    released(reentrantMap) && richBody.contains(reentrantMap.opts.container)
+      && !hasShell(reentrantMap.opts.container) && reentrantMap.opts.container.replaceCount === removalWrites);
+  queueHashChange = false;
+  dispatchNextHashChange();
+  await flush();
+
+  // Preserve fallback gates and retry after SDK-load failure; no actual provider requests.
+  // Also isolate these cases when testing an unfixed implementation that never handled the error.
+  await leaveMap();
+  const ctorBeforeDark = fakeMapCtorCalls;
+  delete globalThis.__BD_MAPBOX_TOKEN__;
+  await mountMap();
+  expect('R2: DARK keeps MapShell and creates no map', hasShell(mapContainer()) && fakeMapCtorCalls === ctorBeforeDark);
+  await leaveMap();
+  globalThis.__BD_MAPBOX_TOKEN__ = 'test-token-bd-screen-lifecycle-01a';
+  unloadMapboxSdk();
+  go('/lc-map-c?state=default');
+  await flush();
+  capturedScriptOnerror();
+  await flush();
+  flushRaf();
+  expect('R2: SDK-load failure keeps MapShell and creates no map',
+    hasShell(mapContainer()) && fakeMapCtorCalls === ctorBeforeDark && activeIntervals.size === 0);
+  await leaveMap();
+  go('/lc-map-c?state=default');
+  await flush();
+  resolveFakeSdkLoad();
+  await flush();
+  failNextConstructor = true;
+  flushRaf();
+  await flush();
+  expect('R2: constructor failure restores MapShell without installing a timer',
+    hasShell(mapContainer()) && fakeMapCtorCalls === ctorBeforeDark + 1 && activeIntervals.size === 0);
+  await leaveMap();
+  const retriedMap = await mountMap();
+  expect('R2: revisit after failure constructs a fresh live map',
+    fakeMapCtorCalls === ctorBeforeDark + 2 && !hasShell(retriedMap.opts.container));
+  await leaveMap();
+  expect('R2: final navigation leaves no owned SDK handlers or timers', released(retriedMap));
 }
 
 // ── 17. SW cache-revision parity — router.js and map.js are both precached ─
