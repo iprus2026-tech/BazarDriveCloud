@@ -13,10 +13,11 @@ import {
   markGarageVehicleActive,
 } from '../state.js';
 import { go } from '../router.js';
+import { readPassengerProfile, loadPassengerHistory, loadPassengerContext, passengerTripRoute } from '../profile_passenger_data.js';
 import { trapFocus } from '../overlay.js';
 import { escapeHtml } from '../util.js';
 import { listMyPostsSync, listDriverReceipts, countCompletedPassengerTrips, listHistoryFromBackend } from '../mock_api.js';
-import { isBackendEnabled } from '../api_config.js';
+import { isBackendEnabled, getSessionToken } from '../api_config.js';
 import { reportAppShellError, dismissAppShellError } from '../app_error_triggers.js';
 import { isDriverMode } from '../ride_actions.js';
 import { getSmokeRole, setSmokeRole, applySmokeRole } from '../smoke_role.js';
@@ -298,155 +299,6 @@ const SVG_CHAT_BUBBLE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="n
 
 const SVG_PHONE_LG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
 
-// ── Passenger mock data ───────────────────────────────────────────────────────
-// Stats shown in the ready-state stats grid. Trip count comes from user state.
-const MOCK_PROFILE_STATS = {
-  savingsRub: 6240,
-  co2Kg: 52,
-};
-
-// Statuses that mark a trip as in-flight on the profile screen.
-// When MOCK_ACTIVE_TRIP.status matches one of these, the "Активная поездка"
-// card is rendered; otherwise the planned-trip card takes its place.
-const ACTIVE_TRIP_STATUSES = ['ACCEPTED', 'ARRIVING', 'ONTRIP'];
-
-// Active trip card (BD-PROFILE-PASSENGER-ACTIVE-TRIP). Visual prototype only.
-// Default status is null so the planned-trip card shows in the current demo
-// state. Flip status to 'ACCEPTED', 'ARRIVING' or 'ONTRIP' to preview the
-// active-trip card locally.
-const MOCK_ACTIVE_TRIP = {
-  status: null,
-  etaMin: 4,
-  fromAddress: 'ул. Тверская, 12',
-  toAddress: 'Аэропорт Внуково',
-  driver: {
-    initials: 'РК',
-    name: 'Рустам К.',
-    vehicleMake: 'Hyundai',
-    vehicleModel: 'Solaris',
-    vehicleColor: 'белый',
-    plate: 'A 482 MP 77',
-  },
-};
-
-// Planned trip card (BD-PROFILE-01). Visual prototype only — no backend.
-const MOCK_PLANNED_TRIP = {
-  fromAddress: 'Дом',
-  toAddress: 'Аэропорт Внуково',
-  when: 'Завтра · 07:00',
-};
-
-function isTripActive(trip) {
-  return !!(trip && ACTIVE_TRIP_STATUSES.includes(trip.status));
-}
-
-// BD-PROFILE-01 follow-up: dev/demo state switch for the trip section.
-// Set localStorage.profileTripDemo to 'active' | 'planned' | 'empty' to
-// preview each of the three states without touching the production mocks.
-// Any other value (or missing key) falls through to the default mocks,
-// preserving the current planned-trip default.
-//
-// Quick reference (paste into the browser console):
-//   localStorage.setItem('profileTripDemo', 'active');   // Активная поездка
-//   localStorage.setItem('profileTripDemo', 'planned');  // Запланированная поездка
-//   localStorage.setItem('profileTripDemo', 'empty');    // CTA "Запланировать поездку"
-//   localStorage.removeItem('profileTripDemo');          // restore default
-function getTripDemoMode() {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    const v = localStorage.getItem('profileTripDemo');
-    return (v === 'active' || v === 'planned' || v === 'empty') ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveTripsForDemo(activeTrip, plannedTrip, forcedMode) {
-  const mode = forcedMode || getTripDemoMode();
-  if (mode === 'active') {
-    const status = isTripActive(activeTrip) ? activeTrip.status : 'ONTRIP';
-    return { active: { ...activeTrip, status }, planned: plannedTrip };
-  }
-  if (mode === 'planned') {
-    return { active: { ...activeTrip, status: null }, planned: plannedTrip };
-  }
-  if (mode === 'empty') {
-    return { active: null, planned: null };
-  }
-  return { active: activeTrip, planned: plannedTrip };
-}
-
-// Mock masked phone string used by the phone-verify banner. Mirrors the
-// Cloud Design reference ("+7 (905) ••• 12-34") when the user has no real
-// phone on file. Accepts the two storage shapes used elsewhere in the app
-// (see onboarding.js#formatPhoneDisplay): 10 digits without the leading
-// country code (the +7 chip is rendered outside the input) or 11 digits
-// with it. Both are normalised to an 11-digit RU form before masking, so
-// the middle three digits get hidden while the country code, area code
-// and last four digits stay visible.
-function maskedPhone(u) {
-  let raw = String(u.phone || '').replace(/\D/g, '');
-  if (raw.length === 10) raw = '7' + raw;
-  if (raw.length !== 11) return '+7 (905) ••• 12-34';
-  const cc   = raw.slice(0, 1);
-  const area = raw.slice(1, 4);
-  const mid  = raw.slice(7, 9);
-  const last = raw.slice(9, 11);
-  return `+${cc} (${area}) ••• ${mid}-${last}`;
-}
-
-function passengerHandle(u) {
-  const raw = String(u.firstName || u.displayName || '').trim().toLowerCase().split(/\s+/)[0];
-  const first = raw.replace(/[^a-zа-яё0-9]+/gi, '');
-  const last = String(u.lastName || '').trim().toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '').slice(0, 1);
-  if (!first) return 'guest';
-  return last ? `${first}_${last}` : first;
-}
-
-function passengerDisplayName(u) {
-  const first = (u.firstName || '').trim();
-  const last  = (u.lastName  || '').trim();
-  if (first && last) return `${first} ${last[0].toUpperCase()}.`;
-  if (first) return first;
-  if (u.displayName) return u.displayName;
-  return 'Пассажир';
-}
-
-function isPassengerReady(u) {
-  return u.profileStatus === 'ready';
-}
-
-// BD-PROFILE-PASSENGER-01 — render-gate preview overlay. Maps the ?state=
-// query param to a NON-PERSISTED user overlay so the documented preview URLs
-// render the matching gate without mutating localStorage or the stored role.
-// Returns the user untouched for an unknown / missing state. The "ready"
-// family seeds sensible mock figures only when the real account has none, so
-// the preview looks complete without clobbering a genuinely populated profile.
-function applyPassengerStatePreview(u, state) {
-  if (!state) return u;
-  if (state === 'needs_phone') {
-    return { ...u, phoneVerified: false };
-  }
-  if (state === 'empty') {
-    return { ...u, profileStatus: 'incomplete', phoneVerified: true, savedAddressCount: 0 };
-  }
-  if (state === 'ready' || state === 'active_trip' || state === 'notifications_on') {
-    const seeded = {
-      ...u,
-      profileStatus: 'ready',
-      phoneVerified: true,
-      tripCount: u.tripCount || 38,
-      savedAddressCount: u.savedAddressCount || 3,
-      paymentLast4: u.paymentLast4 || '4821',
-      promoCount: u.promoCount || 2,
-      trustedContactsCount: u.trustedContactsCount || 2,
-    };
-    if (state === 'notifications_on') seeded.notificationsEnabled = true;
-    return seeded;
-  }
-  return u;
-}
-
 // BD-PROFILE-PASSENGER-01 — drafts entry. The project persists in-progress
 // composer drafts under this key (see screens/composer.js DRAFT_KEY). There
 // is no dedicated "drafts list" route, so the menu row links to the composer
@@ -467,538 +319,166 @@ function hasComposerDraft() {
   }
 }
 
-function currentTripHtml(trip) {
-  if (!isTripActive(trip)) return '';
-  const drv  = trip.driver || {};
-  const ini  = escapeHtml(drv.initials || '?');
-  const name = escapeHtml(drv.name || 'Водитель');
-  const car  = [
-    drv.vehicleMake && drv.vehicleModel ? `${drv.vehicleMake} ${drv.vehicleModel}` : null,
-    drv.vehicleColor || null,
-    drv.plate || null,
-  ].filter(Boolean).map(escapeHtml).join(' · ');
-  const from = escapeHtml(trip.fromAddress || '');
-  const to   = escapeHtml(trip.toAddress || '');
-  const eta  = Number.isFinite(trip.etaMin) ? `${trip.etaMin} мин` : '';
-  return `
-      <!-- 7b. Current trip -->
-      <p class="pfp-section-title">Активная поездка</p>
-      <div class="bd-card pfp-trip-card">
-        <div class="pfp-trip-head">
-          <span class="pfp-trip-badge">
-            <span class="pfp-trip-badge-dot" aria-hidden="true"></span>
-            Активная поездка
-          </span>
-          ${eta ? `<span class="pfp-trip-eta">ETA ${escapeHtml(eta)}</span>` : ''}
-        </div>
-        <div class="pfp-trip-route">
-          <div class="pfp-trip-rail" aria-hidden="true">
-            <span class="pfp-trip-rail-from"></span>
-            <span class="pfp-trip-rail-line"></span>
-            <span class="pfp-trip-rail-to"></span>
-          </div>
-          <div class="pfp-trip-points">
-            <div class="pfp-trip-point">
-              <span class="pfp-trip-point-label">Откуда</span>
-              <span class="pfp-trip-point-addr">${from}</span>
-            </div>
-            <div class="pfp-trip-point">
-              <span class="pfp-trip-point-label">Куда</span>
-              <span class="pfp-trip-point-addr">${to}</span>
-            </div>
-          </div>
-        </div>
-        <div class="pfp-trip-driver">
-          <div class="pfp-trip-driver-avatar" aria-hidden="true">${ini}</div>
-          <div class="pfp-trip-driver-info">
-            <p class="pfp-trip-driver-name">${name}</p>
-            ${car ? `<p class="pfp-trip-driver-car">${car}</p>` : ''}
-          </div>
-          <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-call" aria-label="Позвонить водителю">${SVG_PHONE_LG}</button>
-          <button type="button" class="pfp-trip-iconbtn" id="pfp-trip-chat" aria-label="Чат с водителем">${SVG_CHAT_BUBBLE}</button>
-        </div>
-        <button type="button" class="bd-btn primary pfp-cta pfp-trip-open" id="pfp-trip-open">Открыть поездку</button>
-      </div>
-  `;
+// ── Passenger overview · BD-PROFILE-EXPERIENCE-01B ───────────────────────────
+// Model is per mounted root; delayed backend reads cannot populate another view.
+const passengerModels = new WeakMap();
+
+function passengerContextHtml(context) {
+  const trip = context.trip;
+  if (context.state === 'ready' && trip) return `
+    <div class="bd-card pfp-context-card">
+      <p class="pfp-eyebrow">ВАША ПОЕЗДКА</p>
+      <span class="pfp-context-icon" aria-hidden="true">${SVG_CAR_FRONT}</span>
+      <h2>${escapeHtml(trip.label)}</h2>
+      <div class="pfp-route"><p>${escapeHtml(trip.from || 'Место подачи не указано')}</p><p>${escapeHtml(trip.to || 'Пункт назначения не указан')}</p></div>
+      <button type="button" class="bd-btn primary pfp-cta" id="pfp-trip-open">Открыть поездку ${SVG_CHEVRON}</button>
+    </div>`;
+  const copy = {
+    loading: ['Проверяем поездку', 'Загружаем актуальное состояние.'],
+    error: ['Не удалось обновить поездку', 'Повторите загрузку, чтобы проверить её состояние.'],
+    stale: ['Состояние поездки изменилось', 'Эта поездка уже завершена или отменена. Историю можно открыть ниже.'],
+    unavailable: ['Куда отправимся?', 'Текущую и ближайшую поездку пока нельзя определить из профиля. Ваши заявки доступны в ленте.'],
+  }[context.state];
+  const retry = context.state === 'error' || context.state === 'stale';
+  return `<div class="bd-card pfp-context-card"${context.state === 'loading' ? ' aria-busy="true"' : ''}>
+    <p class="pfp-eyebrow">НАВСТРЕЧУ НОВОМУ</p>
+    <span class="pfp-context-icon" aria-hidden="true">${SVG_PIN}</span>
+    <h2>${copy[0]}</h2><p class="pfp-read-status" role="status">${copy[1]}</p>
+    ${context.state === 'loading' ? '' : `<button type="button" class="bd-btn primary pfp-cta" id="${retry ? 'pfp-context-retry' : 'pfp-quick-where'}">${retry ? 'Повторить загрузку' : 'Открыть ленту'} ${SVG_CHEVRON}</button>`}
+  </div>`;
 }
 
-// Trip section: active trip wins; if absent, fall back to the planned trip;
-// if neither exists, surface a "Запланировать поездку" CTA card.
-function tripSectionHtml(activeTrip, plannedTrip) {
-  if (isTripActive(activeTrip)) return currentTripHtml(activeTrip);
-  if (plannedTrip) return plannedTripHtml(plannedTrip);
-  return `
-      <!-- 7b. No trip — schedule CTA -->
-      <p class="pfp-section-title">Поездки</p>
-      <div class="bd-card pfp-plan-empty-card">
-        <div class="pfp-plan-empty-icon" aria-hidden="true">${SVG_CALENDAR_PO}</div>
-        <p class="pfp-plan-empty-title">Нет запланированных поездок</p>
-        <p class="pfp-plan-empty-text">Запланируйте поездку заранее, чтобы выехать вовремя</p>
-        <button type="button" class="bd-btn primary pfp-cta" id="pfp-plan-cta">Запланировать поездку</button>
-      </div>
-  `;
+function passengerMenuRow(id, icon, title, subtitle, disabled = false) {
+  return `<button type="button" class="pfp-menu-row" id="${id}"${disabled ? ' disabled' : ''}>
+    <span class="pfp-menu-icon" aria-hidden="true">${icon}</span>
+    <span class="pfp-menu-text"><span class="pfp-menu-title">${title}</span><span class="pfp-menu-sub">${subtitle}</span></span>
+    ${disabled ? '' : `<span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>`}
+  </button>`;
 }
 
-function plannedTripHtml(trip) {
-  if (!trip) return '';
-  const from = escapeHtml(trip.fromAddress || '');
-  const to   = escapeHtml(trip.toAddress || '');
-  const when = escapeHtml(trip.when || '');
-  return `
-      <!-- 7b. Planned trip -->
-      <p class="pfp-section-title">Запланированная поездка</p>
-      <div class="bd-card pfp-plan-card">
-        <div class="pfp-plan-head">
-          <span class="pfp-plan-badge">
-            <span class="pfp-plan-badge-icon" aria-hidden="true">${SVG_CALENDAR_PO}</span>
-            Запланировано
-          </span>
-          ${when ? `<span class="pfp-plan-time">${when}</span>` : ''}
-        </div>
-        <div class="pfp-trip-route">
-          <div class="pfp-trip-rail" aria-hidden="true">
-            <span class="pfp-trip-rail-from"></span>
-            <span class="pfp-trip-rail-line"></span>
-            <span class="pfp-trip-rail-to"></span>
-          </div>
-          <div class="pfp-trip-points">
-            <div class="pfp-trip-point">
-              <span class="pfp-trip-point-label">Откуда</span>
-              <span class="pfp-trip-point-addr">${from}</span>
-            </div>
-            <div class="pfp-trip-point">
-              <span class="pfp-trip-point-label">Куда</span>
-              <span class="pfp-trip-point-addr">${to}</span>
-            </div>
-          </div>
-        </div>
-        <div class="pfp-plan-actions">
-          <button type="button" class="bd-btn pfp-plan-btn" id="pfp-plan-edit">Изменить</button>
-          <button type="button" class="bd-btn danger pfp-plan-btn" id="pfp-plan-cancel">Отменить</button>
-        </div>
-      </div>
-  `;
-}
-
-function renderPassenger(root, u, previewState) {
-  const ready  = isPassengerReady(u);
-  const ini    = escapeHtml(initials(u));
-  const name   = escapeHtml(passengerDisplayName(u));
-  const handle = escapeHtml('@' + passengerHandle(u));
-  const notif  = !!u.notificationsEnabled;
-
-  const trips   = Number(u.tripCount) || 0;
-  const addrs   = Number(u.savedAddressCount) || 0;
-  const trusted = Number(u.trustedContactsCount) || 0;
-  const promos  = Number(u.promoCount) || 0;
-  const last4   = u.paymentLast4 ? String(u.paymentLast4) : null;
+function renderPassenger(root, u, model, isCurrent) {
+  root.classList.add('pfp-experience');
+  passengerModels.set(root, model);
   const hasDrafts = hasComposerDraft();
-
-  const phoneVerified = !!u.phoneVerified;
-  const showPhoneVerify = !phoneVerified;
-  const showOnboard = !ready && phoneVerified;
-  const showFirstTrip = !ready && addrs === 0 && phoneVerified;
-  // The "Готов к поездкам / Телефон подтверждён" card contradicts the
-  // verify state, so suppress it whenever phoneVerified is false — the
-  // ТРЕБУЕТСЯ ДЕЙСТВИЕ card takes its slot in that case.
-  const showStatusCard = ready && phoneVerified;
-  // Stats grid stays visible whenever the user is at the "ready" data
-  // bar (38 поездок etc.) — the verify state is overlaid on top of an
-  // otherwise complete passenger profile (see Cloud Design).
-  const showStatsGrid = ready;
-
-  const stateBadge = ready
-    ? `<span class="pfp-meta-badge">★ 4.92 · ${trips} поездок</span>`
-    : `<span class="pfp-meta-badge">Новый пассажир</span>`;
-
-  const phoneMasked = escapeHtml(maskedPhone(u));
-
   root.innerHTML = `
     <div class="bd-topbar pfp-topbar">
-      <div class="bd-topbar__titles">
-        <h1 class="bd-topbar__title">Профиль</h1>
-        <p class="bd-topbar__sub">Пассажир</p>
-      </div>
+      <div class="bd-topbar__titles"><h1 class="bd-topbar__title">Профиль</h1><p class="bd-topbar__sub">Всё, что нужно для поездок</p></div>
       <div class="pfp-topbar-actions">
         <button type="button" class="bd-iconbtn" id="pfp-notif-btn" aria-label="Уведомления">${SVG_BELL}</button>
         <button type="button" class="bd-iconbtn" id="pfp-settings-btn" aria-label="Настройки">${SVG_GEAR}</button>
       </div>
     </div>
-
     <div class="bd-scroll pfp-scroll">
-
-      ${showPhoneVerify ? `
-      <!-- 1b. Phone verify banner -->
-      <div class="bd-card pfp-verify-banner" role="status">
-        <span class="pfp-verify-banner-icon" aria-hidden="true">${SVG_PHONE_LG}</span>
-        <span class="pfp-verify-banner-text">
-          <span class="pfp-verify-banner-title">Подтвердите номер телефона</span>
-          <span class="pfp-verify-banner-sub">${phoneMasked} · отправим SMS-код</span>
-        </span>
-        <button type="button" class="bd-btn primary pfp-verify-banner-btn" id="pfp-verify-getcode">Получить код</button>
-      </div>` : ''}
-
-      <!-- 2. Identity card -->
-      <div class="bd-card pfp-identity-card">
-        <div class="pfp-identity-row">
-          <div class="pfp-avatar" aria-hidden="true">${ini}</div>
-          <div class="pfp-identity-info">
-            <p class="pfp-identity-name">
-              <span class="pfp-identity-name__text">${name}</span>
-              ${phoneVerified ? `<span class="pfp-verify-badge" aria-label="Подтверждённый аккаунт">${SVG_CHECK}</span>` : ''}
-            </p>
-            <p class="pfp-identity-handle">${handle}</p>
-            ${stateBadge}
+      <div class="pfp-layout">
+        <div class="pfp-column">
+          <div class="bd-card pfp-identity-card">
+            <div class="pfp-identity-row">
+              <div class="pfp-avatar" aria-hidden="true">${escapeHtml(initials(u))}</div>
+              <div class="pfp-identity-info"><p class="pfp-eyebrow">ЛИЧНЫЙ ПРОФИЛЬ</p>
+                <p class="pfp-identity-name"><span class="pfp-identity-name__text">${escapeHtml(model.identity.name)}</span></p>
+                <p class="pfp-identity-handle">Пассажир · профиль на этом устройстве</p>
+                <span class="pfp-meta-badge">Рейтинг пока недоступен</span>
+              </div>
+            </div>
           </div>
-          <button type="button" class="pfp-edit-btn" id="pfp-edit-btn" aria-label="Редактировать профиль">${SVG_PENCIL}</button>
+          <p class="pfp-source-note">${model.backend ? 'История и состояние поездки — из подключённого сервиса.' : 'Локальный деморежим · данные этого устройства'}</p>
+          <div class="pfp-context-host">${passengerContextHtml(model.context)}</div>
+          ${myPostsSectionHtml()}
+        </div>
+        <div class="pfp-column">
+          ${historySectionHtml(model.history)}
+          <p class="pfp-section-title">Личное</p>
+          <div class="bd-card pfp-menu-card">
+            ${passengerMenuRow('pfp-menu-history', SVG_CLOCK_SM, 'История поездок', 'Календарь и детали поездок')}
+            ${passengerMenuRow('pfp-account-settings', SVG_GEAR, 'Настройки', 'Параметры приложения')}
+            ${passengerMenuRow('pfp-menu-drafts', SVG_PENCIL, 'Мои черновики', hasDrafts ? 'Продолжить заполнение' : 'Черновиков пока нет', !hasDrafts)}
+            ${passengerMenuRow('pfp-menu-addrs', SVG_PIN, 'Сохранённые адреса', 'Пока недоступны', true)}
+            ${passengerMenuRow('pfp-menu-pay', SVG_CARD, 'Способы оплаты', 'Управление оплатой пока недоступно', true)}
+          </div>
+          <p class="pfp-section-title">Спокойнее в пути</p>
+          <div class="bd-card pfp-safety-card">
+            <span class="pfp-context-icon" aria-hidden="true">${SVG_SHIELD}</span>
+            <h2>Безопасность</h2>
+            <p>Доверенные контакты, передача маршрута и SOS из профиля пока недоступны.</p>
+            <button type="button" class="bd-btn" id="pfp-support">Правила и помощь ${SVG_CHEVRON}</button>
+          </div>
+          <div class="bd-card pfp-support-card">
+            ${passengerMenuRow('pfp-role-switch', SVG_CAR_FRONT, 'Продолжить как водитель', 'Переключить режим этой вкладки')}
+            ${passengerMenuRow('pfp-logout', SVG_LOGOUT, 'Выйти', 'Завершить локальную сессию')}
+          </div>
         </div>
       </div>
-
-      ${showPhoneVerify ? `
-      <!-- 2b. Action-required card (phone not verified) -->
-      <div class="bd-card pfp-verify-action-card">
-        <span class="pfp-verify-action-eyebrow">
-          <span class="pfp-verify-action-dot" aria-hidden="true"></span>
-          ТРЕБУЕТСЯ ДЕЙСТВИЕ
-        </span>
-        <p class="pfp-verify-action-title">Подтвердите телефон</p>
-        <p class="pfp-verify-action-text">Без подтверждения вы не сможете заказать поездку</p>
-        <button type="button" class="bd-btn primary pfp-cta pfp-verify-action-btn" id="pfp-verify-confirm">Подтвердить телефон</button>
-      </div>` : ''}
-
-      ${showOnboard ? `
-      <!-- 3. Onboarding card -->
-      <div class="bd-card pfp-onboard-card">
-        <span class="pfp-onboard-eyebrow">
-          <span class="pfp-onboard-dot" aria-hidden="true"></span>
-          ДОБРО ПОЖАЛОВАТЬ
-        </span>
-        <p class="pfp-onboard-title">Завершите профиль</p>
-        <p class="pfp-onboard-text">Добавьте имя, фото и привяжите способ оплаты</p>
-        <button type="button" class="bd-btn primary pfp-cta" id="pfp-onboard-cta">Заполнить профиль</button>
-      </div>` : ''}
-
-      ${showFirstTrip ? `
-      <!-- 4. Empty first trip card -->
-      <div class="bd-card pfp-firsttrip-card">
-        <div class="pfp-firsttrip-icon" aria-hidden="true">${SVG_PIN}</div>
-        <p class="pfp-firsttrip-title">Первая поездка ждёт</p>
-        <p class="pfp-firsttrip-text">Добавьте адрес «Дом» и «Работа», чтобы заказывать одним касанием</p>
-        <button type="button" class="bd-btn primary pfp-cta" id="pfp-addaddr-cta">Добавить адрес</button>
-      </div>` : ''}
-
-      ${showStatusCard ? `
-      <!-- 5. Ready status card -->
-      <div class="bd-card pfp-status-card">
-        <span class="pfp-status-eyebrow">
-          <span class="pfp-status-dot" aria-hidden="true"></span>
-          АККАУНТ ПАССАЖИРА
-        </span>
-        <p class="pfp-status-title">Готов к поездкам</p>
-        <p class="pfp-status-text">Телефон подтверждён, способ оплаты привязан</p>
-      </div>` : ''}
-
-      ${showStatsGrid ? `
-      <!-- 6. Stats grid -->
-      <div class="pfp-stats-grid" aria-label="Статистика поездок">
-        <div class="pfp-stat">
-          <span class="pfp-stat__num">${trips}</span>
-          <span class="pfp-stat__label">Поездок</span>
-        </div>
-        <div class="pfp-stat">
-          <span class="pfp-stat__num pfp-stat__num--accent">${escapeHtml(fmtRub(MOCK_PROFILE_STATS.savingsRub))}</span>
-          <span class="pfp-stat__label">Сэкономлено</span>
-        </div>
-        <div class="pfp-stat">
-          <span class="pfp-stat__num">${MOCK_PROFILE_STATS.co2Kg} кг</span>
-          <span class="pfp-stat__label">CO₂</span>
-        </div>
-      </div>` : ''}
-
-      <!-- 7. Quick actions -->
-      <p class="pfp-section-title">Быстрые действия</p>
-      <div class="pfp-quick-row" role="list">
-        <button type="button" class="pfp-quick pfp-quick--accent" id="pfp-quick-where" role="listitem">
-          <span class="pfp-quick-icon" aria-hidden="true">${SVG_PIN}</span>
-          <span class="pfp-quick-label">Куда едем?</span>
-        </button>
-        <button type="button" class="pfp-quick" id="pfp-quick-plan" role="listitem">
-          <span class="pfp-quick-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
-          <span class="pfp-quick-label">Запланировать</span>
-        </button>
-        <button type="button" class="pfp-quick" id="pfp-quick-fav" role="listitem">
-          <span class="pfp-quick-icon" aria-hidden="true">${SVG_HEART}</span>
-          <span class="pfp-quick-label">Избранные</span>
-        </button>
-        <button type="button" class="pfp-quick" id="pfp-quick-promo" role="listitem">
-          <span class="pfp-quick-icon" aria-hidden="true">${SVG_TAG_PROMO}</span>
-          <span class="pfp-quick-label">Промокод</span>
-        </button>
-      </div>
-
-      ${ready ? (() => {
-        // state=active_trip forces the active-trip card for the preview URL;
-        // otherwise the localStorage demo switch / default mocks decide.
-        const forced = previewState === 'active_trip' ? 'active' : null;
-        const t = resolveTripsForDemo(MOCK_ACTIVE_TRIP, MOCK_PLANNED_TRIP, forced);
-        return tripSectionHtml(t.active, t.planned);
-      })() : ''}
-
-      <!-- 7c. My publications (BD-PROFILE-MY-POSTS-01) -->
-      ${myPostsSectionHtml()}
-
-      <!-- 7d. Ride history (BD-RIDE-HISTORY-01) -->
-      ${historySectionHtml()}
-
-      <!-- 8. Menu card -->
-      <p class="pfp-section-title">Меню</p>
-      <div class="bd-card pfp-menu-card">
-        <button type="button" class="pfp-menu-row" id="pfp-menu-history">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">История поездок</span>
-            <span class="pfp-menu-sub">${ready ? `${trips} поездок` : 'Поездок пока нет'}</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <button type="button" class="pfp-menu-row" id="pfp-menu-addrs">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_HEART_FILL}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Сохранённые адреса</span>
-            <span class="pfp-menu-sub">${addrs > 0 ? `${addrs} места` : 'Добавьте дом и работу'}</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <button type="button" class="pfp-menu-row" id="pfp-menu-pay">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_CARD}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Способы оплаты</span>
-            <span class="pfp-menu-sub">${last4 ? `Карта •• ${escapeHtml(last4)}` : 'Не привязан'}</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <button type="button" class="pfp-menu-row" id="pfp-menu-promos">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_TAG_PROMO}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Промокоды и бонусы</span>
-            <span class="pfp-menu-sub">${promos > 0 ? `${promos} активных` : 'Нет активных'}</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <button type="button" class="pfp-menu-row" id="pfp-menu-drafts"${hasDrafts ? '' : ' disabled'}>
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_PENCIL}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Мои черновики</span>
-            <span class="pfp-menu-sub">${hasDrafts ? 'Продолжить заполнение' : 'Черновиков пока нет'}</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <div class="pfp-menu-row pfp-menu-row--toggle">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_BELL}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Уведомления</span>
-            <span class="pfp-menu-sub" id="pfp-notif-state">${notif ? 'Включены' : 'Выключены'}</span>
-          </span>
-          <label class="pf-toggle" aria-label="Получать уведомления">
-            <input type="checkbox" class="pf-toggle__input" id="pfp-notif-cb"${notif ? ' checked' : ''}>
-            <span class="pf-toggle__track"></span>
-          </label>
-        </div>
-      </div>
-
-      <!-- 9. Safety section -->
-      <p class="pfp-section-title">Безопасность</p>
-      <div class="bd-card pfp-safety-card">
-        <div class="pfp-safety-head">
-          <span class="pfp-safety-icon" aria-hidden="true">${SVG_SHIELD}</span>
-          <span class="pfp-safety-text">
-            <span class="pfp-safety-title">Центр безопасности</span>
-            <span class="pfp-safety-sub">Контакты, маршрут, SOS</span>
-          </span>
-          <span class="pfp-safety-badge">
-            <span class="pfp-safety-badge-dot" aria-hidden="true"></span>
-            Активно
-          </span>
-        </div>
-        <div class="pfp-safety-actions">
-          <button type="button" class="pfp-safety-tile" id="pfp-safe-contacts">
-            <span class="pfp-safety-tile-head">
-              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_PHONE}</span>
-              <span class="pfp-safety-tile-count">${trusted}</span>
-            </span>
-            <span class="pfp-safety-tile-label">Доверенные контакты</span>
-          </button>
-          <button type="button" class="pfp-safety-tile" id="pfp-safe-share">
-            <span class="pfp-safety-tile-head">
-              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_PAPERPLANE}</span>
-              <span class="pfp-safety-tile-count">Авто</span>
-            </span>
-            <span class="pfp-safety-tile-label">Поделиться поездкой</span>
-          </button>
-          <button type="button" class="pfp-safety-tile pfp-safety-tile--danger" id="pfp-safe-sos">
-            <span class="pfp-safety-tile-head">
-              <span class="pfp-safety-tile-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
-              <span class="pfp-safety-tile-count">112</span>
-            </span>
-            <span class="pfp-safety-tile-label">Кнопка SOS</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 9a. Switch tab mode (BD-ROLE-05) — per-tab role override via
-           sessionStorage. Does NOT mutate persisted user.role and does NOT
-           call performLocalLogout / user.reset; flips only this tab's view. -->
-      <div class="bd-card pfp-support-card">
-        <button type="button" class="pfp-menu-row" id="pfp-role-switch">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_INFO}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Продолжить как водитель</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-      </div>
-
-      <!-- 10. Support / logout -->
-      <div class="bd-card pfp-support-card">
-        <button type="button" class="pfp-menu-row" id="pfp-support">
-          <span class="pfp-menu-icon" aria-hidden="true">${SVG_INFO}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Помощь и поддержка</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-        <button type="button" class="pfp-menu-row pfp-menu-row--danger" id="pfp-logout">
-          <span class="pfp-menu-icon pfp-menu-icon--danger" aria-hidden="true">${SVG_LOGOUT}</span>
-          <span class="pfp-menu-text">
-            <span class="pfp-menu-title">Выйти</span>
-          </span>
-          <span class="pfp-menu-chev" aria-hidden="true">${SVG_CHEVRON}</span>
-        </button>
-      </div>
-
-      <!-- 11. Footer -->
-      <p class="pfp-footer">BazarDrive · v2.4.1</p>
-    </div>
-  `;
-
-  // ── Event wiring ─────────────────────────────────────────────────────────
-  const rerender = () => renderPassenger(root, user.get());
+      <p class="pfp-footer">BAZARDRIVE · ПО ПУТИ С ВАМИ</p>
+    </div>`;
 
   wireMyPostsSection(root);
   wireHistorySection(root);
-
-  root.querySelector('#pfp-onboard-cta')?.addEventListener('click', () => {
-    user.set({
-      profileStatus: 'ready',
-      paymentLast4: '4821',
-      promoCount: 2,
-      trustedContactsCount: 2,
-      tripCount: 38,
-      savedAddressCount: 3,
-    });
-    rerender();
-  });
-
-  root.querySelector('#pfp-addaddr-cta')?.addEventListener('click', () => {
-    user.set({ savedAddressCount: 3 });
-    rerender();
-  });
-
-  // Notifications toggle is functional: it reads the persisted
-  // notificationsEnabled flag (rendered above) and writes the new value back
-  // to state/localStorage, updating the On/Off label in place.
-  root.querySelector('#pfp-notif-cb')?.addEventListener('change', (e) => {
-    const on = e.target.checked;
-    user.set({ notificationsEnabled: on });
-    const stateLabel = root.querySelector('#pfp-notif-state');
-    if (stateLabel) stateLabel.textContent = on ? 'Включены' : 'Выключены';
-  });
-
-  // Phone verification — both CTAs route into the existing onboarding phone
-  // step (the project's phone-verify flow). The query hint targets the phone
-  // step so the flow lands on SMS entry rather than dead-ending in the
-  // profile. No real SMS provider is wired; onboarding owns the mock OTP.
-  const goVerifyPhone = () => go('/onboarding?step=phone');
-  root.querySelector('#pfp-verify-getcode')?.addEventListener('click', goVerifyPhone);
-  root.querySelector('#pfp-verify-confirm')?.addEventListener('click', goVerifyPhone);
-
-  // BD-ROLE-05 — per-tab role view switch. sessionStorage-only via
-  // setSmokeRole; persisted user.role is NOT touched, user.reset is NOT
-  // called, and no other profile data (vehicle, documents, history) is
-  // mutated. go('/profile') re-runs the factory which picks the new
-  // effectiveRole from getSmokeRole() and renders the driver view.
-  root.querySelector('#pfp-role-switch')?.addEventListener('click', () => {
-    setSmokeRole('driver');
-    go('/profile');
-  });
-
-  // BD-NOTIF-01 — passenger notification bell opens the existing /inbox hub
-  // (the shipped notifications surface). Reuses /inbox rather than splitting a
-  // new /notifications route, per the missing-screens entry-point decision.
+  wirePassengerContext(root, model, isCurrent);
+  wirePassengerHistoryRetry(root, model, isCurrent);
   root.querySelector('#pfp-notif-btn')?.addEventListener('click', () => go('/inbox'));
-  // BD-SETTINGS-01 — passenger gear opens the new /settings screen (was inert).
   root.querySelector('#pfp-settings-btn')?.addEventListener('click', () => go('/settings'));
-
-  root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
-  // BD-HISTORY-P-01 — «История поездок» opens the trip-history section that
-  // already renders in this profile (historySectionHtml, id profile-history-section),
-  // not /feed. Mirrors the driver payouts «История» row → scrollIntoView pattern.
+  root.querySelector('#pfp-account-settings')?.addEventListener('click', () => go('/settings'));
   root.querySelector('#pfp-menu-history')?.addEventListener('click', () => {
     root.querySelector('#profile-history-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   root.querySelector('#pfp-support')?.addEventListener('click', () => go('/rules'));
-
-  // Drafts row only navigates when a draft exists; the disabled state above
-  // keeps the dead-end case safe (no listener fires on a disabled button).
-  root.querySelector('#pfp-menu-drafts')?.addEventListener('click', () => {
-    if (hasComposerDraft()) go('/new');
-  });
-
-  // Active trip — call/chat remain visual prototypes (no real API). The
-  // card CTA opens the live ride screen in passenger mode.
-  root.querySelector('#pfp-trip-call')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-trip-chat')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-trip-open')?.addEventListener('click', () => go('/active-ride?role=passenger'));
-
-  // Planned trip — visual prototype only. No backend; the action buttons
-  // just dismiss focus until the planning flow is wired up.
-  root.querySelector('#pfp-plan-edit')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-plan-cancel')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-plan-cta')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-
-  // Safety tiles — demo placeholders. SOS does NOT initiate a real call
-  // (no tel: link); buttons exist only to anchor the visual prototype.
-  root.querySelector('#pfp-safe-contacts')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-safe-share')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-  root.querySelector('#pfp-safe-sos')?.addEventListener('click', (e) => {
-    e.currentTarget.blur();
-  });
-
+  root.querySelector('#pfp-menu-drafts')?.addEventListener('click', () => { if (hasComposerDraft()) go('/new'); });
+  root.querySelector('#pfp-role-switch')?.addEventListener('click', () => { setSmokeRole('driver'); go('/profile'); });
   const logoutBtn = root.querySelector('#pfp-logout');
   logoutBtn?.addEventListener('click', () => {
-    if (logoutBtn.dataset.confirm === 'pending') {
-      // BD-AUTH-BOUNDARY-01 — single mock logout boundary owns trip-demo
-      // cleanup, ride-history cleanup, user.reset() and navigation.
-      performLocalLogout();
-    } else {
-      logoutBtn.dataset.confirm = 'pending';
-      const titleEl = logoutBtn.querySelector('.pfp-menu-title');
-      if (titleEl) titleEl.textContent = 'Нажмите ещё раз для подтверждения';
+    if (logoutBtn.dataset.confirm === 'pending') performLocalLogout();
+    else { logoutBtn.dataset.confirm = 'pending'; logoutBtn.querySelector('.pfp-menu-title').textContent = 'Нажмите ещё раз для подтверждения'; }
+  });
+}
+
+function wirePassengerContext(root, model, isCurrent) {
+  root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
+  root.querySelector('#pfp-context-retry')?.addEventListener('click', () => refreshPassengerContext(root, model, isCurrent, false, true));
+  root.querySelector('#pfp-trip-open')?.addEventListener('click', () => refreshPassengerContext(root, model, isCurrent, true, true));
+}
+
+async function refreshPassengerContext(root, model, isCurrent, navigate = false, restoreFocus = false) {
+  const host = root.querySelector('.pfp-context-host');
+  model.context = { state: 'loading', trip: null };
+  host.innerHTML = passengerContextHtml(model.context);
+  const context = await loadPassengerContext(model);
+  if (!isCurrent()) return;
+  model.context = context;
+  const route = navigate && passengerTripRoute(context);
+  if (route) { go(route); return; }
+  host.innerHTML = passengerContextHtml(context);
+  wirePassengerContext(root, model, isCurrent);
+  if (restoreFocus) host.querySelector('button')?.focus();
+}
+
+function wirePassengerHistoryRetry(root, model, isCurrent) {
+  root.querySelector('#profile-history-error-clear')?.addEventListener('click', () => {
+    if (!isCurrent() || model.backend || isBackendEnabled()) return;
+    const button = root.querySelector('#profile-history-error-clear');
+    // Another tab may have repaired the store since this card was rendered.
+    // Only the confirmed, still-malformed local store may be cleared.
+    const current = readPassengerProfile();
+    if (current.history.reason === 'malformed') {
+      if (button.dataset.confirm !== 'pending') {
+        button.dataset.confirm = 'pending';
+        button.textContent = 'Нажмите ещё раз для подтверждения';
+        return;
+      }
+      clearRideHistory();
     }
+    model.history = readPassengerProfile().history;
+    replaceHistorySection(root);
+    wirePassengerHistoryRetry(root, model, isCurrent);
+    root.querySelector('#profile-history-section')?.focus();
+  });
+  root.querySelector('#pfp-history-retry')?.addEventListener('click', async () => {
+    model.history = { state: 'loading', entries: [] };
+    replaceHistorySection(root);
+    model.history = await loadPassengerHistory(model);
+    if (!isCurrent()) return;
+    replaceHistorySection(root);
+    wirePassengerHistoryRetry(root, model, isCurrent);
+    root.querySelector('#profile-history-section')?.focus();
   });
 }
 
@@ -1971,13 +1451,29 @@ function historyErrorBodyHtml() {
       </div>`;
 }
 
-function historySectionHtml() {
+function historySectionHtml(snapshot = null) {
+  if (snapshot && !['ready', 'empty'].includes(snapshot.state)) {
+    lastHistoryEntries = [];
+    if (snapshot.reason === 'malformed') return `<section class="profile-history" id="profile-history-section" tabindex="-1">
+      ${historyHeaderHtml(0)}${historyErrorBodyHtml()}</section>`;
+    const loading = snapshot.state === 'loading';
+    const error = snapshot.state === 'error';
+    return `<section class="profile-history" id="profile-history-section" tabindex="-1" aria-busy="${loading}">
+      ${historyHeaderHtml(0)}<div class="bd-card profile-history__empty" role="status">
+      <p class="profile-history__empty-title">${loading ? 'Загружаем историю' : error ? 'История временно недоступна' : 'История этого режима недоступна'}</p>
+      <p class="profile-history__empty-text">${loading ? 'Проверяем сохранённые поездки.' : error ? 'Данные не удалось прочитать. Повторите загрузку.' : 'Откройте профиль в своём режиме, чтобы увидеть поездки.'}</p>
+      ${error ? '<button type="button" class="bd-btn" id="pfp-history-retry">Повторить загрузку</button>' : ''}
+      </div></section>`;
+  }
   let status = 'empty';
   let rawEntries = [];
   // #784 CUT-6 — when the backend is on AND the server history has loaded, it is the source
   // (already role-scoped at hydrate). OFF (or before the fetch resolves), fall to the local
   // readRideHistoryStatus path below — byte-identical to the prior behaviour.
-  if (isBackendEnabled() && Array.isArray(serverHistoryEntries)) {
+  if (snapshot) {
+    status = 'ok';
+    rawEntries = snapshot.entries;
+  } else if (isBackendEnabled() && Array.isArray(serverHistoryEntries)) {
     status = 'ok';
     rawEntries = serverHistoryEntries;
   } else {
@@ -1995,7 +1491,7 @@ function historySectionHtml() {
   // render any rows even if some entries happened to slip through.
   if (status === 'malformed') {
     lastHistoryEntries = [];
-    return `<section class="profile-history" id="profile-history-section">
+    return `<section class="profile-history" id="profile-history-section" tabindex="-1">
       ${historyHeaderHtml(0)}
       ${historyErrorBodyHtml()}
     </section>`;
@@ -2008,9 +1504,9 @@ function historySectionHtml() {
   lastHistoryEntries = sorted;
 
   if (sorted.length === 0) {
-    return `<section class="profile-history" id="profile-history-section">
+    return `<section class="profile-history" id="profile-history-section" tabindex="-1">
       ${historyHeaderHtml(0)}
-      ${historyEmptyBodyHtml()}
+      ${snapshot ? `<div class="bd-card profile-history__empty"><p class="profile-history__empty-title">Истории пока нет</p><p class="profile-history__empty-text">Завершённые поездки появятся здесь.</p></div>` : historyEmptyBodyHtml()}
     </section>`;
   }
 
@@ -2035,7 +1531,7 @@ function historySectionHtml() {
   const calendarHtml = renderRideHistoryCalendar(state, byDate);
   const selectedHtml = renderSelectedDayRides(state, byDate, sorted);
 
-  return `<section class="profile-history" id="profile-history-section">
+  return `<section class="profile-history" id="profile-history-section" tabindex="-1">
     ${latestBlock}
     ${historyHeaderHtml(sorted.length)}
     ${calendarHtml}
@@ -2052,7 +1548,7 @@ function replaceHistorySection(root) {
   const current = root.querySelector('#profile-history-section');
   if (!current) return false;
   const wrap = document.createElement('div');
-  wrap.innerHTML = historySectionHtml();
+  wrap.innerHTML = historySectionHtml(passengerModels.get(root)?.history);
   const next = wrap.firstElementChild;
   if (!next) return false;
   current.replaceWith(next);
@@ -2125,7 +1621,8 @@ function wireHistorySection(root) {
     openCardDetail(card);
   });
 
-  const clearBtn = root.querySelector('#profile-history-error-clear');
+  // Passenger recovery re-reads its snapshot and checks mount/account ownership.
+  const clearBtn = passengerModels.has(root) ? null : root.querySelector('#profile-history-error-clear');
   clearBtn?.addEventListener('click', () => {
     if (clearBtn.dataset.confirm === 'pending') {
       clearRideHistory();
@@ -4257,15 +3754,13 @@ function renderDriver(root, u) {
 
 // ── Main factory ──────────────────────────────────────────────────────────────
 
-export default function profile() {
+export default function profile(renderContext) {
   const root = document.createElement('section');
   root.className = 'screen screen--profile';
   const u = user.get();
 
-  // Render-gate preview params. ?role= picks the view without mutating the
-  // stored role; ?state= overlays a passenger sub-state (see
-  // applyPassengerStatePreview). Both are non-destructive — real user actions
-  // still re-render from the persisted user via the in-screen rerender().
+  // ?role= selects a view without changing the persisted role. Passenger data
+  // no longer accepts synthetic ?state= overlays; driver previews stay intact.
   const q = getHashQuery();
   const roleParam = q.get('role');
   const stateParam = q.get('state');
@@ -4300,7 +3795,26 @@ export default function profile() {
     if (stateParam === 'loading') renderDriverSkeleton(root);
     else renderDriver(root, u);
   } else {
-    renderPassenger(root, applyPassengerStatePreview(u, stateParam), stateParam);
+    const model = readPassengerProfile();
+    // Router generation + account identity fence late completions, including
+    // reads that settle before the router attaches this root.
+    const accountSnapshot = JSON.stringify(u);
+    const authSnapshot = getSessionToken();
+    const smokeRole = getSmokeRole();
+    const isCurrent = () => (renderContext ? renderContext.isCurrent() : document.body.contains(root))
+      && JSON.stringify(user.get()) === accountSnapshot
+      && getSmokeRole() === smokeRole && getSessionToken() === authSnapshot
+      && isBackendEnabled() === model.backend;
+    renderPassenger(root, u, model, isCurrent);
+    if (model.backend) {
+      loadPassengerHistory(model).then(history => {
+        if (!isCurrent()) return;
+        model.history = history;
+        replaceHistorySection(root);
+        wirePassengerHistoryRetry(root, model, isCurrent);
+      });
+      refreshPassengerContext(root, model, isCurrent);
+    }
   }
 
   // BD-RIDE-D-09 follow-up — deep-link into the ride history section.
@@ -4317,7 +3831,7 @@ export default function profile() {
   // server history, scope it to the current role (matching readRideHistoryStatus's currentHistoryRole
   // = getSmokeRole() || role), cache it, and re-render the history section in place. A transient/auth
   // failure is caught — the locally-rendered history stays.
-  if (isBackendEnabled() && view !== 'guest') {
+  if (isBackendEnabled() && view === 'driver') {
     const scopeRole = (effectiveRole === 'passenger' || effectiveRole === 'driver') ? effectiveRole : null;
     listHistoryFromBackend()
       .then((items) => {

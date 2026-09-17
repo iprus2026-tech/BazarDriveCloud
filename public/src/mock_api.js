@@ -857,11 +857,14 @@ export function acceptOrder(id) {
 const HANDED_OFF_ORDER_STATUSES = new Set(['ACCEPTED', 'IN_PROGRESS']);
 const TERMINAL_ACTIVE_RIDE_STATUSES = new Set(['COMPLETED', 'CANCELED', 'NO_SHOW']);
 
-export function findLatestHandedOffOrderTripId() {
+export function findLatestHandedOffOrderTripId({ orderFilter = null } = {}) {
   // loadRideOrdersRaw() is newest-first (createRideOrder unshifts), so
   // the first live match is the most recently handed-off active trip.
   for (const o of loadRideOrdersRaw()) {
     if (!o || typeof o.id !== 'string' || !HANDED_OFF_ORDER_STATUSES.has(o.status)) continue;
+    // Optional caller scope is applied before selection, so an unrelated
+    // newer order cannot hide a matching older handoff. Default is unchanged.
+    if (orderFilter && !orderFilter(o)) continue;
     const tripId = `trip_${o.id}`;
     const ride = findActiveRide(tripId);
     // No seeded active-ride record → nothing to show; skip safely.

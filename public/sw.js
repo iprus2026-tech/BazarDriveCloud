@@ -205,7 +205,8 @@
 // inbox_02f.css changed (instance-scoped stale-read guard, button-owned Retry
 // progress, inert loaded fixtures and restored read-body spacing). No PRECACHE
 // membership, backend/domain contract, or cache-strategy change.
-const VERSION    = 'v321';
+// BD-PROFILE-EXPERIENCE-01B: passenger view + read-only presentation adapter.
+const VERSION    = 'v322';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
@@ -250,6 +251,7 @@ const PRECACHE = [
   './src/screens/order_map_draft.js',
   './src/screens/rules.js',
   './src/screens/profile.js',
+  './src/profile_passenger_data.js',
   './src/screens/onboarding.js',
   './src/screens/composer.js',
   './src/screens/respond.js',

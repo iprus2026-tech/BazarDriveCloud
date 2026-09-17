@@ -1284,6 +1284,13 @@ if (exists(profileReceiptsErrorTriggerSmoke)) {
   }
 }
 
+// BD-PROFILE-EXPERIENCE-01B — behavior of the read-only presentation adapter.
+try {
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'smoke-profile-passenger-adapter.mjs')], { stdio: 'pipe' });
+} catch (e) {
+  errors.push(`smoke-profile-passenger-adapter.mjs failed\n${e.stdout ? e.stdout.toString() : e.message}`);
+}
+
 // BD-HISTORY-P-01 — passenger profile history menu row. Asserts #pfp-menu-history
 // opens the inline trip-history section (scrollIntoView #profile-history-section)
 // instead of navigating to /feed.
