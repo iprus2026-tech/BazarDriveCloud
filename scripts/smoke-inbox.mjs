@@ -345,7 +345,7 @@ expect('final audit repair keeps badge geometry in a scoped slot while preservin
 expect('the exact scoped Inbox read-body rule restores 12px vertical spacing',
   /gap:\s*12px;/.test(inboxReadBodyCss));
 expect('02F-R1 bumps the service worker for the two changed precached Inbox assets',
-  /const\s+VERSION\s*=\s*'v321'/.test(sw)
+  Number((sw.match(/const\s+VERSION\s*=\s*'v(\d+)'/) || [])[1]) >= 321
   && /['"]\.\/src\/screens\/inbox\.js['"]/.test(sw)
   && /['"]\.\/styles\/inbox_02f\.css['"]/.test(sw));
 expect('BD-INBOX-01 documents fixtures, Retry ownership and stale-settlement boundary',

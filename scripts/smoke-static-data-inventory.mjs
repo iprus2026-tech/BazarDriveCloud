@@ -190,7 +190,12 @@ expect('no destructured storage methods — they cannot be tied back to a key',
   all.destructured.length === 0, all.destructured.length ? 'destructured: ' + [...new Set(all.destructured)].join(' | ') : '');
 
 // ── 2. No stale: every manifest key is still accessed by an owner module ──────
-const stale = ALL.filter((k) => !owners.keys.has(k));
+// 01B retires the passenger demo override. Keep its legacy logout cleanup
+// tested without pretending the removed UI still owns a live storage key.
+const RETIRED_CLEARED = new Set(['profileTripDemo']);
+expect('retired profile demo key has no live owner and remains cleanup-only',
+  [...RETIRED_CLEARED].every(k => CLEARED.includes(k) && !owners.keys.has(k) && all.keys.has(k)));
+const stale = ALL.filter((k) => !owners.keys.has(k) && !RETIRED_CLEARED.has(k));
 expect('no stale manifest entry — every key is still accessed (via a storage API) by an owner module',
   stale.length === 0, stale.length ? 'stale: ' + stale.join(', ') : '');
 
