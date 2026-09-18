@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 const store = new Map();
 let writes = 0;
 globalThis.localStorage = { getItem: k => store.get(k) ?? null, setItem: (k,v) => { writes++; store.set(k,String(v)); }, removeItem: k => { writes++; store.delete(k); } };
-globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+const sessionStore = new Map();
+globalThis.sessionStorage = { getItem: k => sessionStore.get(k) ?? null, setItem: (k,v) => sessionStore.set(k,String(v)), removeItem: k => sessionStore.delete(k) };
 const { user } = await import('../public/src/state.js');
 const { readPassengerProfile, loadPassengerHistory, loadPassengerContext, passengerTripRoute } = await import('../public/src/profile_passenger_data.js');
 user.set({ onboarded: true, role: 'passenger', firstName: 'Тест', tripCount: 999, paymentLast4: '9999' });
@@ -106,6 +107,7 @@ function element() {
 }
 globalThis.document={createElement:element,querySelector:()=>null,body:{contains:()=>false},addEventListener(){}};
 globalThis.window={location:{hash:'#/profile'},addEventListener(){}};
+globalThis.location=globalThis.window.location;
 const profile=(await import('../public/src/screens/profile.js')).default;
 const tick=()=>new Promise(r=>setTimeout(r,0));
 user.set({role:'passenger'});globalThis.__BD_API_BASE__='https://fixture.invalid';
@@ -221,3 +223,105 @@ await check('R1 backend failure with malformed local data offers retry, never lo
   assert.equal(store.get(historyKey),'broken');assert.equal(writes,before);
 });
 console.log(`\n${tests} checks passed, including R1 regressions.`);
+
+
+// R2 regression gate: opening a visible trip must stay bound to that trip's
+// identity. A newer candidate may refresh the card, but can never inherit the
+// old card's click and navigate without a second explicit user action.
+function seedIdentityPair({ aStatus = 'IN_PROGRESS', bStatus = 'IN_PROGRESS', newest = 'a' } = {}) {
+  const orderA = { id:'identity-a', status:'ACCEPTED', createdByRole:'passenger' };
+  const orderB = { id:'identity-b', status:'ACCEPTED', createdByRole:'passenger' };
+  store.set(ordersKey, JSON.stringify(newest === 'b' ? [orderB, orderA] : [orderA, orderB]));
+  store.set(ridesKey, JSON.stringify({
+    'trip_identity-a': { tripId:'trip_identity-a', status:aStatus, route:{pickupLabel:'Route A',dropoffLabel:'A end'} },
+    'trip_identity-b': { tripId:'trip_identity-b', status:bStatus, route:{pickupLabel:'Route B',dropoffLabel:'B end'} },
+  }));
+}
+
+await check('R2 targeted local read never substitutes rediscovered B for displayed A', async()=>{
+  globalThis.__BD_API_BASE__=''; sessionStore.clear(); user.set({role:'passenger',firstName:'Тест'});
+  seedIdentityPair({newest:'a'}); const model=readPassengerProfile();
+  assert.equal(model.context.trip.id,'trip_identity-a');
+  seedIdentityPair({aStatus:'COMPLETED',newest:'b'});
+  const targeted=await loadPassengerContext(model,'trip_identity-a');
+  assert.equal(targeted.state,'stale'); assert.equal(targeted.trip,null);
+  assert.equal((await loadPassengerContext(model)).trip.id,'trip_identity-b');
+});
+
+await check('R2 targeted backend read asks for displayed A even when discovery now prefers B', async()=>{
+  globalThis.__BD_API_BASE__='https://fixture.invalid'; sessionStore.clear(); user.set({role:'passenger',firstName:'Тест'});
+  seedIdentityPair({newest:'a'}); const model=readPassengerProfile();
+  seedIdentityPair({aStatus:'COMPLETED',newest:'b'}); let requested='';
+  globalThis.fetch=async input=>{ requested=String(input); return ok({ride:{tripId:'trip_identity-a',role:'passenger',status:'COMPLETED'}}); };
+  const targeted=await loadPassengerContext(model,'trip_identity-a');
+  assert.ok(requested.endsWith('/ride-state/rides/trip_identity-a'));
+  assert.equal(targeted.state,'stale'); assert.equal(targeted.trip,null);
+  globalThis.__BD_API_BASE__='';
+});
+
+
+await check('R2 same displayed A remains openable as exactly A', async()=>{
+  globalThis.__BD_API_BASE__=''; sessionStore.clear(); user.set({role:'passenger',firstName:'Тест'});
+  seedIdentityPair({newest:'a'}); globalThis.location.hash='#/profile'; paints=[];
+  const root=profile({isCurrent:()=>true});
+  await root.querySelector('#pfp-trip-open').click();
+  assert.ok(String(globalThis.location.hash).endsWith('trip_identity-a'));
+  assert.ok(!String(globalThis.location.hash).includes('trip_identity-b'));
+});
+
+await check('R2 pinned A missing, mismatched, failed or timed out never yields a route', async()=>{
+  globalThis.__BD_API_BASE__=''; sessionStore.clear(); user.set({role:'passenger',firstName:'Тест'});
+  seedIdentityPair({newest:'a'}); const localModel=readPassengerProfile();
+  seedIdentityPair({newest:'b'});
+  const rides=JSON.parse(store.get(ridesKey)); delete rides['trip_identity-a']; store.set(ridesKey,JSON.stringify(rides));
+  assert.equal(passengerTripRoute(await loadPassengerContext(localModel,'trip_identity-a')),null);
+
+  globalThis.__BD_API_BASE__='https://fixture.invalid'; seedIdentityPair({newest:'b'});
+  const backendModel=readPassengerProfile();
+  globalThis.fetch=async()=>ok({ride:{tripId:'trip_identity-b',role:'passenger',status:'IN_PROGRESS'}});
+  assert.equal(passengerTripRoute(await loadPassengerContext(backendModel,'trip_identity-a')),null);
+  globalThis.fetch=async()=>{throw Error('offline');};
+  assert.equal(passengerTripRoute(await loadPassengerContext(backendModel,'trip_identity-a')),null);
+  const original=globalThis.setTimeout;
+  globalThis.setTimeout=(fn,ms,...args)=>original(fn,ms===12000?5:ms,...args);
+  globalThis.fetch=()=>new Promise(()=>{});
+  try { assert.equal(passengerTripRoute(await loadPassengerContext(backendModel,'trip_identity-a')),null); }
+  finally { globalThis.setTimeout=original; globalThis.__BD_API_BASE__=''; }
+});
+
+await check('R2 old local card A cannot auto-open B; refreshed B needs a new click', async()=>{
+  globalThis.__BD_API_BASE__=''; sessionStore.clear(); user.set({role:'passenger',firstName:'Тест'});
+  seedIdentityPair({newest:'a'}); globalThis.location.hash='#/profile'; paints=[];
+  const rootA=profile({isCurrent:()=>true});
+  const oldButton=rootA.querySelector('#pfp-trip-open');
+  seedIdentityPair({aStatus:'COMPLETED',newest:'b'});
+  await oldButton.click();
+  assert.ok(!String(globalThis.location.hash).includes('trip_identity-b'));
+  assert.ok(paints.some(v=>v.includes('Route B')));
+
+  globalThis.location.hash='#/profile'; paints=[];
+  const rootB=profile({isCurrent:()=>true});
+  await rootB.querySelector('#pfp-trip-open').click();
+  assert.ok(String(globalThis.location.hash).includes('trip_identity-b'));
+});
+
+await check('R2 click-time ownership fences still block navigation after context changes', async()=>{
+  for (const boundary of ['navigation','account','token','role','backend']) {
+    globalThis.__BD_API_BASE__=''; sessionStore.clear();
+    localStorage.removeItem('bazardrive.auth.v1');
+    user.set({role:'passenger',firstName:'Owner'}); seedIdentityPair({newest:'a'});
+    globalThis.location.hash='#/profile'; let current=true;
+    const root=profile({isCurrent:()=>current});
+    const pending=root.querySelector('#pfp-trip-open').click();
+    if (boundary==='navigation') current=false;
+    if (boundary==='account') user.set({firstName:'Changed'});
+    if (boundary==='token') localStorage.setItem('bazardrive.auth.v1',JSON.stringify({token:'changed'}));
+    if (boundary==='role') sessionStore.set('bazardrive.smoke_role.v1','driver');
+    if (boundary==='backend') globalThis.__BD_API_BASE__='https://fixture.invalid';
+    await pending;
+    assert.ok(!String(globalThis.location.hash).includes('trip_identity-a'), boundary);
+  }
+  globalThis.__BD_API_BASE__=''; sessionStore.clear(); localStorage.removeItem('bazardrive.auth.v1');
+});
+
+console.log(`\n${tests} checks passed, including R2 trip-identity regressions.`);

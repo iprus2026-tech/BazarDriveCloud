@@ -434,18 +434,31 @@ function renderPassenger(root, u, model, isCurrent) {
 function wirePassengerContext(root, model, isCurrent) {
   root.querySelector('#pfp-quick-where')?.addEventListener('click', () => go('/feed'));
   root.querySelector('#pfp-context-retry')?.addEventListener('click', () => refreshPassengerContext(root, model, isCurrent, false, true));
-  root.querySelector('#pfp-trip-open')?.addEventListener('click', () => refreshPassengerContext(root, model, isCurrent, true, true));
+  const displayedTripId = model.context.state === 'ready' ? model.context.trip?.id || null : null;
+  root.querySelector('#pfp-trip-open')?.addEventListener('click', () =>
+    refreshPassengerContext(root, model, isCurrent, true, true, displayedTripId));
 }
 
-async function refreshPassengerContext(root, model, isCurrent, navigate = false, restoreFocus = false) {
+async function refreshPassengerContext(root, model, isCurrent, navigate = false, restoreFocus = false, displayedTripId = null) {
   const host = root.querySelector('.pfp-context-host');
   model.context = { state: 'loading', trip: null };
   host.innerHTML = passengerContextHtml(model.context);
-  const context = await loadPassengerContext(model);
+  let context = await loadPassengerContext(model, navigate ? displayedTripId : null);
   if (!isCurrent()) return;
+
+  if (navigate && displayedTripId) {
+    const sameTrip = context.state === 'ready' && context.trip?.id === displayedTripId;
+    const route = sameTrip && passengerTripRoute(context);
+    if (route) { go(route); return; }
+
+    // The visible trip is no longer openable. Refresh discovery for the card,
+    // but never transfer the old click to a newly discovered trip. The user
+    // must click that newly rendered card explicitly.
+    context = await loadPassengerContext(model);
+    if (!isCurrent()) return;
+  }
+
   model.context = context;
-  const route = navigate && passengerTripRoute(context);
-  if (route) { go(route); return; }
   host.innerHTML = passengerContextHtml(context);
   wirePassengerContext(root, model, isCurrent);
   if (restoreFocus) host.querySelector('button')?.focus();

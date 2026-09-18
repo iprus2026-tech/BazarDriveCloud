@@ -91,10 +91,19 @@ export async function loadPassengerHistory(model) {
   } catch { return { state: 'error', entries: [] }; }
 }
 
-export async function loadPassengerContext(model) {
-  if (!model.backend) return readLocalContext(model.localRole);
+export async function loadPassengerContext(model, displayedTripId = null) {
+  if (model.localRole !== 'passenger') return unavailable();
+  const pinnedId = text(displayedTripId);
+  if (!model.backend) {
+    if (!pinnedId) return readLocalContext(model.localRole);
+    try { return tripContext(findActiveRide(pinnedId), pinnedId); }
+    catch { return { state: 'error', trip: null }; }
+  }
   try {
-    const id = candidateTripId(model.localRole);
+    // A click may pin the trip that was actually rendered. Discovery remains
+    // the default for passive refreshes, but must never substitute another
+    // trip identity underneath an existing card action.
+    const id = pinnedId || candidateTripId(model.localRole);
     // No participant-scoped active/planned list adapter exists yet.
     if (!id) return unavailable();
     const ride = await boundedRead(() => getRideFromBackend(id));
