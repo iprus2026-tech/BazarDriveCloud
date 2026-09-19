@@ -15,6 +15,10 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const validId = id => typeof id === 'string' && UUID.test(id);
 const validEpoch = n => typeof n === 'string' && /^[1-9][0-9]{0,18}$/.test(n) && BigInt(n) <= 9223372036854775807n;
 const fail = code => ({ ok: false, code });
+// Only this private error is translated to a refusal, AFTER db.tx rolls back.
+class AuthorityAbort extends Error {
+  constructor(code) { super(code); this.code = code; }
+}
 const requestView = r => ({ requestId: r.id, state: r.state, expiresAt: r.expires_at,
   candidateTelegramId: r.candidate_id, comparisonCode: r.candidate_id ? r.comparison_code : null });
 const linkView = r => ({ linkId: r.id, epoch: String(r.epoch), status: r.status, expiresAt: r.grant_expires_at });
@@ -22,9 +26,20 @@ const linkView = r => ({ linkId: r.id, epoch: String(r.epoch), status: r.status,
 export function createTelegramLinkAuthority(db, namespace) {
   const scope = validateNamespace(namespace);
   if (typeof db?.tx !== 'function') throw new TypeError('A transactional database is required');
-  const tx = fn => db.tx(async client => { await repo.lockNamespace(client, scope); return fn(client); });
-  const actorTx = (actor, fn) => tx(client => isPrivateActor(actor, scope)
-    ? fn(client) : fail('CHANNEL_PROOF_REQUIRED'));
+  const tx = async fn => {
+    try { return await db.tx(async client => { await repo.lockNamespace(client, scope); return fn(client); }); }
+    catch (err) { if (err instanceof AuthorityAbort) return fail(err.code); throw err; }
+  };
+  const requireActor = actor => {
+    if (!isPrivateActor(actor, scope)) throw new AuthorityAbort('CHANNEL_PROOF_REQUIRED');
+  };
+  const actorTx = (actor, fn) => tx(async client => {
+    requireActor(actor);
+    const result = await fn(client);
+    // Later writes/audit can also wait: never commit an operation with expired proof.
+    requireActor(actor);
+    return result;
+  });
 
   async function account(client, bearer, fresh = false) {
     if (typeof bearer !== 'string' || bearer.length < 16 || bearer.length > 512) return null;
@@ -64,6 +79,7 @@ export function createTelegramLinkAuthority(db, namespace) {
         await repo.appendAudit(client, scope, 'CLAIM_ATTEMPT', { actorHash });
         if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) return fail('LINK_REQUEST_INVALID');
         let r = await repo.lockRequestByHash(client, scope, hashToken(nonce));
+        requireActor(actor);
         if (!r || !['PENDING','CLAIMED'].includes(r.state)) return fail('LINK_REQUEST_INVALID');
         if (r.expired) { await repo.expireRequest(client, r.id); return fail('LINK_REQUEST_EXPIRED'); }
         if (r.candidate_id && r.candidate_id !== actor.telegramUserId) return fail('LINK_REQUEST_INVALID');
@@ -99,6 +115,9 @@ export function createTelegramLinkAuthority(db, namespace) {
         const r = await repo.lockRequestById(client, scope, requestId);
         if (!r || r.session_id !== who.session.id || r.account_id !== who.user.id) return fail('LINK_REQUEST_INVALID');
         const candidate = canonicalTelegramId(candidateTelegramId);
+        const now = +await readAuthorizationClock(client);
+        if ((who.session.expires_at && +who.session.expires_at <= now)
+          || +who.session.issued_at < now - 900_000) return fail('AUTH_REQUIRED');
         const matches = candidate === r.candidate_id && typeof comparisonCode === 'string'
           && /^[0-9]{6}$/.test(comparisonCode) && hashesEqual(comparisonCode, r.comparison_code);
         if (r.state === 'CONFIRMED') {
@@ -109,13 +128,16 @@ export function createTelegramLinkAuthority(db, namespace) {
         if (r.state !== 'CLAIMED') return fail('LINK_REQUEST_INVALID');
         if (r.expired) { await repo.expireRequest(client, r.id); return fail('LINK_REQUEST_EXPIRED'); }
         if (!matches) {
-          await repo.rejectConfirm(client, r.id);
+          const canceled = await repo.rejectConfirm(client, r.id);
           await repo.appendAudit(client, scope, 'CONFIRM_REJECTED', { requestId: r.id, sessionId: who.session.id });
+          if (canceled) await repo.appendAudit(client, scope, 'CANCELED', { requestId: r.id, sessionId: who.session.id });
           return fail('CONFIRMATION_MISMATCH');
         }
         if (await repo.activeConflict(client, scope, who.user.id, r.candidate_id)) return fail('LINK_CONFLICT');
         if (!await repo.confirmRequest(client, r.id)) return fail('LINK_REQUEST_EXPIRED');
         const link = await repo.insertLink(client, r.id, who.session.expires_at);
+        // Expiry may cross the boundary even after the preceding clock read.
+        if (!link) throw new AuthorityAbort('AUTH_REQUIRED');
         await repo.appendAudit(client, scope, 'CONFIRMED', { requestId: r.id, linkId: link.id, sessionId: who.session.id });
         await repo.cancelPending(client, scope, who.user.id, r.id);
         return { ok: true, ...linkView(link) };
@@ -132,9 +154,10 @@ export function createTelegramLinkAuthority(db, namespace) {
         const session = await lockLiveSessionById(client, link.session_id);
         if (!session || session.user_id !== link.account_id || !session.phone_verified) return fail('AUTH_REQUIRED');
         const user = await lockUserAuthority(client, session.user_id);
-        if (!user || !user.phone_verified || !user.roles?.includes(role)) return fail('FORBIDDEN');
+        if (!user || !user.phone_verified || role !== session.active_role || !user.roles?.includes(role)) return fail('FORBIDDEN');
         const now = +await readAuthorizationClock(client);
         if (+link.grant_expires_at <= now || (session.expires_at && +session.expires_at <= now)) return fail('AUTH_REQUIRED');
+        requireActor(actor);
         // Narrow current read result, NOT a bearer/delegated credential. No endpoint
         // may reuse this snapshot as authorization for a later mutation or send.
         return { ok: true, ...linkView(link), profile: {
@@ -148,6 +171,7 @@ export function createTelegramLinkAuthority(db, namespace) {
       if (!validId(linkId) || !validEpoch(epoch)) return fail('FORBIDDEN');
       return actorTx(actor, async client => {
         const link = await repo.lockLink(client, scope, linkId);
+        requireActor(actor);
         if (!link || link.telegram_user_id !== actor.telegramUserId || link.private_chat_id !== actor.privateChatId) return fail('FORBIDDEN');
         if (link.status === 'REVOKED') return { ok: true, ...linkView(link) };
         if (String(link.epoch) !== epoch) return fail('STALE_LINK');

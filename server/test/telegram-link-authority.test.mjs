@@ -43,7 +43,7 @@ async function setup(t) {
   return { db, pool, schema, api: createTelegramLinkAuthority(db, scope) };
 }
 
-async function user(db, roles = ['passenger', 'driver']) {
+async function user(db, roles = ['driver', 'passenger']) {
   const { rows: [u] } = await db.query(`INSERT INTO users (roles,active_role,phone_verified) VALUES ($1,$2,true) RETURNING id`, [roles, roles[0] ?? null]);
   const bearer = 'synthetic_' + randomUUID();
   const { rows: [s] } = await db.query(`INSERT INTO auth_session (user_id,token_hash,active_role,phone_verified)
@@ -108,9 +108,11 @@ test('current role removal and phone revocation defeat session snapshots', { ski
   const { api, db } = await setup(t); const u = await user(db); const l = await linked(api,u);
   await db.query("UPDATE users SET roles=ARRAY['passenger'] WHERE id=$1", [u.userId]);
   assert.equal((await read(api,l)).code,'FORBIDDEN');
-  assert.equal((await read(api,l,'passenger')).ok,true);
-  await db.query('UPDATE users SET phone_verified=false WHERE id=$1',[u.userId]);
   assert.equal((await read(api,l,'passenger')).code,'FORBIDDEN');
+  await db.query("UPDATE users SET roles=ARRAY['driver','passenger'] WHERE id=$1", [u.userId]);
+  assert.equal((await read(api,l)).ok,true);
+  await db.query('UPDATE users SET phone_verified=false WHERE id=$1',[u.userId]);
+  assert.equal((await read(api,l)).code,'FORBIDDEN');
 });
 
 test('session logout blocks reads and confirm; actor may still unlink', { skip }, async t => {
@@ -333,4 +335,198 @@ test('R1 readiness: FK validation, delete action and deferral are checked', { sk
       ALTER TABLE telegram_link_requests ADD CONSTRAINT telegram_requests_session_account_fk
       FOREIGN KEY(session_id,account_id) REFERENCES auth_session(id,user_id) ${suffix}`);
   }
+});
+
+test('R2 role: delegated reads retain the session role for dual-role accounts', { skip }, async t => {
+  const { api, db } = await setup(t);
+  for (const [active, other, telegramId] of [['passenger','driver',111], ['driver','passenger',222]]) {
+    const u = await user(db, [active, other]);
+    const l = await linked(api, u, actor(telegramId));
+    assert.equal((await read(api, l, active)).profile.activeRole, active);
+    assert.deepEqual(await read(api, l, other), { ok: false, code: 'FORBIDDEN' });
+    await db.query('UPDATE users SET active_role=$2 WHERE id=$1', [u.userId, other]);
+    assert.equal((await read(api, l, active)).ok, true, 'another UI session cannot switch this session role');
+    await db.query('UPDATE users SET roles=ARRAY[$2::text] WHERE id=$1', [u.userId, other]);
+    assert.equal((await read(api, l, active)).code, 'FORBIDDEN', 'current membership is still required');
+    assert.equal((await read(api, l, other)).code, 'FORBIDDEN', 'no fallback to another granted role');
+  }
+});
+
+test('R2 lockout: fifth rejection emits one terminal cancellation, including concurrent retries', { skip }, async t => {
+  const { api, db } = await setup(t); const r = await claimed(api, await user(db));
+  const wrong = { ...r, comparisonCode: r.comparisonCode === '000000' ? '111111' : '000000' };
+  for (let i=0; i<4; i++) assert.equal((await api.confirmRequest(wrong)).code, 'CONFIRMATION_MISMATCH');
+  const replies = await Promise.all([api.confirmRequest(wrong), api.confirmRequest(wrong)]);
+  assert.deepEqual(replies.map(x => x.code).sort(), ['CONFIRMATION_MISMATCH','LINK_REQUEST_INVALID'].sort());
+  assert.equal((await api.confirmRequest(r)).code, 'LINK_REQUEST_INVALID');
+  const { rows: [request] } = await db.query('SELECT state,failed_confirms FROM telegram_link_requests WHERE id=$1', [r.requestId]);
+  assert.deepEqual(request, { state: 'CANCELED', failed_confirms: 5 });
+  const { rows } = await db.query(`SELECT action,authorizing_session_id FROM telegram_link_audit
+    WHERE request_id=$1 AND action IN ('CONFIRM_REJECTED','CANCELED') ORDER BY id`, [r.requestId]);
+  assert.deepEqual(rows.map(x => x.action), [...Array(5).fill('CONFIRM_REJECTED'), 'CANCELED']);
+  assert.ok(rows.every(x => x.authorizing_session_id === rows[0].authorizing_session_id));
+  assert.ok(rows[0].authorizing_session_id);
+});
+
+test('R2 lockout: cancellation audit failure rolls back the fifth attempt and both audit events', { skip }, async t => {
+  const { api, db } = await setup(t); const r = await claimed(api, await user(db));
+  const wrong = { ...r, comparisonCode: r.comparisonCode === '000000' ? '111111' : '000000' };
+  for (let i=0; i<4; i++) await api.confirmRequest(wrong);
+  await db.query(`CREATE FUNCTION reject_cancel_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.action='CANCELED' THEN RAISE EXCEPTION 'synthetic cancellation audit failure'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER reject_cancel_audit BEFORE INSERT ON telegram_link_audit
+    FOR EACH ROW EXECUTE FUNCTION reject_cancel_audit()`);
+  await assert.rejects(api.confirmRequest(wrong), /synthetic cancellation audit failure/);
+  assert.deepEqual((await db.query('SELECT state,failed_confirms FROM telegram_link_requests WHERE id=$1', [r.requestId])).rows[0],
+    { state: 'CLAIMED', failed_confirms: 4 });
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM telegram_link_audit WHERE action='CONFIRM_REJECTED'")).rows[0].n, 4);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM telegram_link_audit WHERE action='CANCELED'")).rows[0].n, 0);
+  await db.query('DROP TRIGGER reject_cancel_audit ON telegram_link_audit');
+  assert.equal((await api.confirmRequest(wrong)).code, 'CONFIRMATION_MISMATCH');
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM telegram_link_audit WHERE action='CANCELED'")).rows[0].n, 1);
+});
+
+for (const [table, index, third, predicate] of [
+  ['telegram_link_requests','telegram_requests_account_time_idx','account_id',''],
+  ['telegram_link_audit','telegram_audit_claim_rate_idx','actor_hash'," WHERE action='CLAIM_ATTEMPT'"],
+]) test(`R2 readiness: ${index} must retain its complete rate-limit shape`, { skip }, async t => {
+  const { db, schema } = await setup(t);
+  const drop = `DROP INDEX ${index}; `;
+  await rejectsSchemaChange(db, schema, drop);
+  for (const definition of [
+    `ON ${table}(environment,bot_id,${third},created_at DESC)${predicate}`,
+    `ON ${table}(bot_id,environment,${third},created_at ASC)${predicate}`,
+    `ON ${table}(bot_id,environment,${third},created_at DESC NULLS LAST)${predicate}`,
+    `ON ${table}(bot_id,environment,${third}) INCLUDE (created_at)${predicate}`,
+    `ON ${table}(lower(bot_id),environment,${third},created_at DESC)${predicate}`,
+    `ON ${table}(bot_id text_pattern_ops,environment,${third},created_at DESC)${predicate}`,
+    `ON ${table}(bot_id COLLATE "C",environment,${third},created_at DESC)${predicate}`,
+    `ON ${table} USING brin(bot_id,environment,${third},created_at)${predicate}`,
+    `ON ${table}(bot_id,environment,${third},created_at DESC)` + (predicate ? '' : " WHERE state='PENDING'"),
+  ]) await rejectsSchemaChange(db, schema, drop + `CREATE INDEX ${index} ${definition}`);
+  await rejectsSchemaChange(db, schema, drop + `CREATE UNIQUE INDEX ${index}
+    ON ${table}(bot_id,environment,${third},created_at DESC)${predicate}`);
+  await db.query(`CREATE TABLE rate_index_decoy (LIKE ${table})`);
+  await rejectsSchemaChange(db, schema, drop + `CREATE INDEX ${index}
+    ON rate_index_decoy(bot_id,environment,${third},created_at DESC)${predicate}`);
+  if (predicate) await rejectsSchemaChange(db, schema, drop + `CREATE INDEX ${index}
+    ON ${table}(bot_id,environment,${third},created_at DESC) WHERE action='CONFIRM_REJECTED'`);
+});
+
+// Observe a real PostgreSQL lock wait before advancing a clock or releasing a row.
+// The bounded poll uses the monotonic clock, independent of the actor's mocked Date.
+async function blockedOperation(pool, lockSql, params, operation, whileBlocked) {
+  const blocker = await pool.connect();
+  let pending, outcome, settled = false;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query(lockSql, params);
+    const { rows: [{ pid }] } = await blocker.query('SELECT pg_backend_pid() AS pid');
+    pending = Promise.resolve().then(operation).then(value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; });
+    const deadline = performance.now() + 10_000;
+    for (;;) {
+      const { rows: [{ waiting }] } = await pool.query(`SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid))) AS waiting`, [pid]);
+      if (waiting) break;
+      assert.equal(settled, false, 'operation must actually wait on the held lock');
+      assert.ok(performance.now() < deadline, 'timed out waiting for PostgreSQL lock contention');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    await whileBlocked(blocker);
+  } finally {
+    try { await blocker.query('ROLLBACK'); } finally { blocker.release(); }
+    if (pending) outcome = await pending;
+  }
+  if (outcome.error) throw outcome.error;
+  return outcome.value;
+}
+
+for (const target of ['claim-request','read-link','read-session','read-user','revoke-link']) {
+  test(`R2 actor proof: expiry while waiting on ${target} refuses without protected effects`, { skip }, async t => {
+    const { api, db, pool } = await setup(t); const u = await user(db);
+    let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+    const who = actor();
+    const r = target === 'claim-request' ? await api.createRequest(u) : null;
+    const l = r ? null : await linked(api, u, who);
+    const table = r ? 'telegram_link_requests' : target === 'read-session' ? 'auth_session'
+      : target === 'read-user' ? 'users' : 'telegram_account_links';
+    const id = r ? r.requestId : target === 'read-session' ? u.sessionId
+      : target === 'read-user' ? u.userId : l.linkId;
+    const before = (await db.query('SELECT count(*)::int AS n FROM telegram_link_audit')).rows[0].n;
+    const result = await blockedOperation(pool, `SELECT id FROM ${table} WHERE id=$1 FOR UPDATE`, [id],
+      () => r ? api.claimRequest({ actor: who, nonce: r.startParameter.slice(5) })
+        : target === 'revoke-link' ? api.revokeFromTelegram(l) : read(api, l),
+      () => { clock += 60_000; });
+    assert.deepEqual(result, { ok: false, code: 'CHANNEL_PROOF_REQUIRED' });
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM telegram_link_audit')).rows[0].n, before);
+    if (r) {
+      const row = (await db.query('SELECT state,candidate_id FROM telegram_link_requests WHERE id=$1', [r.requestId])).rows[0];
+      assert.deepEqual(row, { state: 'PENDING', candidate_id: null });
+      assert.equal((await api.claimRequest({ actor: actor(), nonce: r.startParameter.slice(5) })).ok, true);
+    } else {
+      const row = (await db.query('SELECT status,epoch::text FROM telegram_account_links WHERE id=$1', [l.linkId])).rows[0];
+      assert.deepEqual(row, { status: 'ACTIVE', epoch: l.epoch });
+      assert.equal((await read(api, { ...l, actor: actor() })).ok, true);
+    }
+  });
+}
+
+test('R2 actor proof: expiry in a late audit wait rolls back an already-claimed request', { skip }, async t => {
+  const { api, db, pool, schema } = await setup(t); const u = await user(db); const r = await api.createRequest(u);
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock); const who = actor();
+  const key = schema + '_late_audit';
+  await db.query(`CREATE FUNCTION wait_claim_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.action='CLAIMED' THEN PERFORM pg_advisory_xact_lock(hashtextextended('${key}',0)); END IF; RETURN NEW; END $$;
+    CREATE TRIGGER wait_claim_audit BEFORE INSERT ON telegram_link_audit
+    FOR EACH ROW EXECUTE FUNCTION wait_claim_audit()`);
+  const result = await blockedOperation(pool, 'SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key],
+    () => api.claimRequest({ actor: who, nonce: r.startParameter.slice(5) }), () => { clock += 60_000; });
+  assert.deepEqual(result, { ok: false, code: 'CHANNEL_PROOF_REQUIRED' });
+  assert.deepEqual((await db.query('SELECT state,candidate_id FROM telegram_link_requests WHERE id=$1', [r.requestId])).rows[0],
+    { state: 'PENDING', candidate_id: null });
+  assert.deepEqual((await db.query('SELECT action FROM telegram_link_audit ORDER BY id')).rows.map(x => x.action), ['REQUESTED']);
+});
+
+async function finiteSession(db, u) {
+  const { rows: [s] } = await db.query(`UPDATE auth_session SET expires_at=clock_timestamp()+interval '5 seconds'
+    WHERE id=$1 RETURNING expires_at`, [u.sessionId]);
+  return s.expires_at;
+}
+async function waitPastExpiry(client, expiresAt) {
+  await client.query(`SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM ($1::timestamptz-clock_timestamp())))+0.02)`, [expiresAt]);
+}
+async function assertConfirmationRolledBack(api, db, u, r) {
+  assert.deepEqual((await db.query('SELECT state,confirmed_at FROM telegram_link_requests WHERE id=$1', [r.requestId])).rows[0],
+    { state: 'CLAIMED', confirmed_at: null });
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM telegram_account_links')).rows[0].n, 0);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM telegram_link_audit WHERE action='CONFIRMED'")).rows[0].n, 0);
+  await db.query("UPDATE auth_session SET expires_at=clock_timestamp()+interval '1 hour' WHERE id=$1", [u.sessionId]);
+  assert.equal((await api.confirmRequest(r)).ok, true, 'a later valid confirmation can still succeed');
+}
+
+test('R2 session: expiry during the request lock wait returns AUTH_REQUIRED without a constraint error', { skip }, async t => {
+  const { api, db, pool } = await setup(t); const u = await user(db); const r = await claimed(api, u);
+  const expiry = await finiteSession(db, u);
+  const result = await blockedOperation(pool, 'SELECT id FROM telegram_link_requests WHERE id=$1 FOR UPDATE', [r.requestId],
+    () => api.confirmRequest(r), client => waitPastExpiry(client, expiry));
+  assert.deepEqual(result, { ok: false, code: 'AUTH_REQUIRED' });
+  await assertConfirmationRolledBack(api, db, u, r);
+});
+
+test('R2 session: expiry immediately before link insertion rolls back confirmation', { skip }, async t => {
+  const { api, db } = await setup(t); const u = await user(db); const r = await claimed(api, u);
+  const expiry = await finiteSession(db, u);
+  let delayed = false;
+  const delayedDb = { ...db, tx: fn => db.tx(client => fn({ query: async (sql, params) => {
+    if (sql.includes('INSERT INTO telegram_account_links')) {
+      delayed = true;
+      await waitPastExpiry(client, expiry);
+    }
+    return client.query(sql, params);
+  } })) };
+  const result = await createTelegramLinkAuthority(delayedDb, scope).confirmRequest(r);
+  assert.equal(delayed, true, 'the test must reach the insertion after initial authorization');
+  assert.deepEqual(result, { ok: false, code: 'AUTH_REQUIRED' });
+  await assertConfirmationRolledBack(api, db, u, r);
 });

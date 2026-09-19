@@ -72,9 +72,10 @@ export async function claimRequest(db, id, candidateId) {
 }
 
 export async function rejectConfirm(db, id) {
-  await db.query(`UPDATE telegram_link_requests SET failed_confirms=failed_confirms+1,
+  const { rows } = await db.query(`UPDATE telegram_link_requests SET failed_confirms=failed_confirms+1,
     state=CASE WHEN failed_confirms >= 4 THEN 'CANCELED' ELSE state END
-    WHERE id=$1 AND state='CLAIMED' AND failed_confirms < 5`, [id]);
+    WHERE id=$1 AND state='CLAIMED' AND failed_confirms < 5 RETURNING state`, [id]);
+  return rows[0]?.state === 'CANCELED';
 }
 
 export async function confirmRequest(db, id) {
@@ -91,12 +92,15 @@ export async function activeConflict(db, scope, accountId, actorId = null) {
 }
 
 export async function insertLink(db, requestId, sessionExpiresAt) {
-  const { rows } = await db.query(`INSERT INTO telegram_account_links
+  const { rows } = await db.query(`WITH t AS MATERIALIZED (SELECT clock_timestamp() AS ts)
+    INSERT INTO telegram_account_links
     (request_id,bot_id,environment,account_id,session_id,telegram_user_id,private_chat_id,confirmed_at,grant_expires_at)
     SELECT id,bot_id,environment,account_id,session_id,candidate_id,candidate_id,confirmed_at,
       LEAST($2::timestamptz, confirmed_at + interval '24 hours')
-      FROM telegram_link_requests WHERE id=$1 AND state='CONFIRMED' RETURNING *`, [requestId, sessionExpiresAt]);
-  return rows[0];
+      FROM telegram_link_requests CROSS JOIN t WHERE id=$1 AND state='CONFIRMED'
+        AND ($2::timestamptz IS NULL OR ($2::timestamptz > t.ts AND $2::timestamptz > confirmed_at))
+      RETURNING *`, [requestId, sessionExpiresAt]);
+  return rows[0] ?? null;
 }
 
 export async function findLinkForRequest(db, scope, requestId) {
@@ -255,6 +259,29 @@ export async function telegramLinkSchemaReady(db, schema = 'public') {
           AND pg_get_indexdef(i.indexrelid,2,true)='environment'
           AND pg_get_indexdef(i.indexrelid,3,true)=wanted.lastkey
           AND pg_get_expr(i.indpred,i.indrelid)='(status = ''ACTIVE''::text)'))
+    -- Rate-limit queries require these non-unique btree indexes, including key order,
+    -- DESC timestamp, default operator classes/collations and the claim predicate.
+    AND NOT EXISTS (
+      SELECT 1 FROM (VALUES
+        ('telegram_link_requests','telegram_requests_account_time_idx','account_id',NULL::text),
+        ('telegram_link_audit','telegram_audit_claim_rate_idx','actor_hash','(action = ''CLAIM_ATTEMPT''::text)')
+      ) wanted(tbl,idx,thirdkey,pred) WHERE NOT EXISTS (
+        SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid
+          JOIN pg_am am ON am.oid=idx.relam
+        WHERE i.indexrelid=to_regclass(format('%I.%I',$1,wanted.idx))
+          AND i.indrelid=to_regclass(format('%I.%I',$1,wanted.tbl)) AND am.amname='btree'
+          AND NOT i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+          AND i.indnkeyatts=4 AND i.indnatts=4 AND i.indexprs IS NULL
+          AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(num,ord)
+            JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num AND NOT a.attisdropped
+            ORDER BY k.ord)=ARRAY['bot_id','environment',wanted.thirdkey,'created_at']
+          AND i.indoption[0]=0 AND i.indoption[1]=0 AND i.indoption[2]=0 AND i.indoption[3]=3
+          AND NOT EXISTS (SELECT 1 FROM unnest(i.indclass) c(oid)
+            JOIN pg_opclass op ON op.oid=c.oid WHERE NOT op.opcdefault)
+          AND NOT EXISTS (SELECT 1 FROM unnest(i.indkey) WITH ORDINALITY k(num,ord)
+            JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num
+            WHERE i.indcollation[(k.ord-1)::int]<>a.attcollation)
+          AND pg_get_expr(i.indpred,i.indrelid) IS NOT DISTINCT FROM wanted.pred))
     AND NOT EXISTS (
       SELECT 1 FROM (VALUES
         ('telegram_link_requests','telegram_requests_guard','telegram_request_guard',19),
