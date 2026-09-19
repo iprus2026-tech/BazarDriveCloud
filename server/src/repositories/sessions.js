@@ -39,3 +39,32 @@ export async function insertSession(db, {
   );
   return rows[0];
 }
+
+// Dark Telegram authority uses these only INSIDE its transaction. FOR SHARE also
+// blocks a concurrent non-key revoke/expiry change until the operation finishes.
+// Session snapshots are not role grants; the caller must lock/read users separately.
+export async function lockLiveSessionByTokenHash(db, tokenHash) {
+  const { rows } = await db.query(
+    `SELECT *, issued_at >= clock_timestamp() - interval '15 minutes' AS recent
+       FROM auth_session WHERE token_hash = $1 AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > clock_timestamp()) FOR SHARE`,
+    [tokenHash],
+  );
+  return rows[0] ?? null;
+}
+
+export async function lockLiveSessionById(db, sessionId) {
+  const { rows } = await db.query(
+    `SELECT * FROM auth_session WHERE id = $1 AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > clock_timestamp()) FOR SHARE`,
+    [sessionId],
+  );
+  return rows[0] ?? null;
+}
+
+// Read after all authorization row locks have been acquired: a lock wait may
+// cross an expiry boundary, and transaction-start now() would then be stale.
+export async function readAuthorizationClock(db) {
+  const { rows } = await db.query('SELECT clock_timestamp() AS current_time');
+  return rows[0].current_time;
+}
