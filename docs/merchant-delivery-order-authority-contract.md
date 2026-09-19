@@ -335,7 +335,9 @@ delivery_order  --1:1-->  delivery_order_recipient_snapshot
   dependency**, flagged for the slice, not performed here.
 - The destination is recipient-supplied per-delivery data. It is never inserted
   into `merchant_locations` and never promoted to merchant identity. Its
-  **resolved point** (coordinates + provider/place provenance) is fixed before
+  **resolved point** is the full destination-specific source-bound shape —
+  coordinates + provider/place provenance + versioned `source_text_binding`
+  matching the canonical `destination_text` it was resolved from — fixed before
   quoting and carried into the order snapshot and the fingerprint.
 - The order stores a pickup **snapshot** (location id + label + address text +
   resolved coordinates + bounded pickup instructions + default flag as they were
@@ -670,13 +672,13 @@ recovery after a lost confirmation response — but only an
 | `id` | Server-generated UUID PK. |
 | `merchant_id` | **`NOT NULL`** FK to `merchants(id)`; the resolved merchant context `M`. A concrete merchant is resolved **before** the draft `INSERT`, for **every** `origin_channel` (`WHATSAPP` / `SMS` / `SESSION`) and every draft status. Intake that cannot resolve a merchant is **not** persisted as a tenantless `delivery_draft` — it fails/parks upstream. A tenantless draft would break the tenant-bound actor gate, the `(merchant_id, …)` intake dedupe key (nulls compare distinct), and the per-merchant privacy boundary. **Immutable after the `INSERT`:** the same immediate row-local `BEFORE UPDATE` guard that confines `status` also rejects **any** `OLD.merchant_id -> NEW.merchant_id` change — in every status, for every writer / backfill, on each successive intra-transaction `UPDATE` — so the tenant boundary, the actor gate and the intake-dedupe key can never be re-pointed at another merchant. The allowed draft-intent edits (recipient / contact / destination / access note / window / cargo) are unaffected. |
 | `origin_channel` | **`NOT NULL`**, closed enum `WHATSAPP | SMS | SESSION` (DB `CHECK` / enum type) — provenance of the intake, not authority. `NOT NULL` is required so the intake dedupe `UNIQUE` cannot be evaded through a `NULL` key component. **Immutable after the `INSERT`** as part of the frozen intake tuple (see `adapter_dedupe_token`). |
-| `origin_namespace` | Bounded adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. **Mandatory whenever `adapter_dedupe_token` is set**, enforced by a DB `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. **Immutable after the `INSERT`** as part of the frozen intake tuple (see `adapter_dedupe_token`). |
+| `origin_namespace` | Nullable bounded **canonical, nonblank** adapter/provider namespace — provider account / business-number scope, mirroring 01A's `subject_namespace` — set **only** from trusted adapter context, never from message content. When non-null it is stored only after the shared namespace canonicalizer and must remain nonblank after canonical whitespace handling; DB length/shape checks include `CHECK (origin_namespace IS NULL OR btrim(origin_namespace) <> '')`. **Mandatory whenever `adapter_dedupe_token` is set**, enforced together with `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. A blank/whitespace namespace is invalid, never a dedupe scope. **Immutable after the `INSERT`** as part of the frozen intake tuple (see `adapter_dedupe_token`). |
 | `origin_ref` | Bounded provider/message/session provenance label. |
-| `adapter_dedupe_token` | Nullable bounded provider/adapter dedupe key for **intake idempotency only** (see Idempotency); part of the immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; never a key for order creation. `NULL` (no token) is allowed and repeats freely — several tokenless manual drafts for one merchant coexist. **The whole intake tuple `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is immutable after the `INSERT`:** an immediate row-local `BEFORE UPDATE` guard rejects any change to any component under a **null-safe** `OLD`/`NEW` comparison (`IS DISTINCT FROM`), including setting a non-null `adapter_dedupe_token` back to `NULL` — so a token-backed draft's dedupe identity cannot be freed through an `UPDATE`. A **row-local `BEFORE DELETE` guard** additionally rejects a hard-delete of any **token-backed** draft (`adapter_dedupe_token IS NOT NULL`), in **any** status, so the `UNIQUE` row that a later redelivery collides with cannot disappear. Tokenless drafts stay freely creatable by separate repeat `INSERT`s. A future PII-retention / erasure mechanism is **out of scope here** and must, when it lands, preserve this dedupe guarantee (e.g. a redaction that keeps the intake tuple, not a hard delete). |
+| `adapter_dedupe_token` | Nullable bounded **canonical, nonblank when present** provider/adapter dedupe key for **intake idempotency only** (see Idempotency); part of the immediate `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`; never a key for order creation. A non-null token is stored only after the shared adapter-token canonicalizer and is rejected if blank/whitespace-only; the DB backstop includes `CHECK (adapter_dedupe_token IS NULL OR btrim(adapter_dedupe_token) <> '')` plus the frozen length/shape bound. `NULL` means **no token** and is preserved as `NULL` — it is not canonicalized into an empty key — so several tokenless manual drafts for one merchant coexist. **The whole intake tuple `(merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)` is immutable after the `INSERT`:** an immediate row-local `BEFORE UPDATE` guard rejects any change to any component under a **null-safe** `OLD`/`NEW` comparison (`IS DISTINCT FROM`), including setting a non-null `adapter_dedupe_token` back to `NULL` — so a token-backed draft's dedupe identity cannot be freed through an `UPDATE`. A **row-local `BEFORE DELETE` guard** additionally rejects a hard-delete of any **token-backed** draft (`adapter_dedupe_token IS NOT NULL`), in **any** status, so the `UNIQUE` row that a later redelivery collides with cannot disappear. Tokenless drafts stay freely creatable by separate repeat `INSERT`s. A future PII-retention / erasure mechanism is **out of scope here** and must, when it lands, preserve this dedupe guarantee (e.g. a redaction that keeps the intake tuple, not a hard delete). |
 | `recipient_name` | Bounded string (mutable draft intent). |
 | `recipient_contact` | Bounded normalized recipient phone (reuses the auth phone canonicalizer); recipient is not a `users` row. |
 | `destination_text` | Bounded human destination as stated (mutable draft intent). |
-| `destination_point` | Nullable canonical **resolved** destination — coordinates plus a stable provider/place id and provenance — resolved by Quote Authority **before** the quote is computed. Null while unresolved (`DELIVERY_DESTINATION_UNRESOLVED` on approval). |
+| `destination_point` | Nullable canonical **resolved** destination — coordinates plus stable provider/place id, provenance, **and a destination-specific `source_text_binding` to the exact canonical `destination_text` that was resolved** — written by the trusted destination-resolver persistence path **before** the quote is computed. The binding is a versioned canonical binding/digest, not a second free-text address copy; Quote Authority freezes its canonicalizer/version before activation. The writer re-reads `destination_text` under the draft lock before persisting the resolver result. A later `destination_text` edit clears/invalidates the stored point; a missing/invalid binding or one that does not match the draft's current canonical `destination_text` is unresolved (`DELIVERY_DESTINATION_UNRESOLVED`), even if coordinates/provider id/provenance look valid. |
 | `destination_access_note` | Nullable bounded entrance/floor/door note. |
 | `requested_pickup_location_id` | Nullable FK to `merchant_locations(id)`; explicit selection is persisted here **before quoting**, never supplied/overridden by approval. **When set it must name a location whose `merchant_id` equals this draft's `merchant_id`** — enforced at `INSERT`/`UPDATE` by a **draft-level composite FK `(requested_pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)`** (reusing the same unconditional `merchant_locations (id, merchant_id)` parent key the order-side pickup FK needs), `ON DELETE RESTRICT`, `MATCH SIMPLE` so a `NULL` `requested_pickup_location_id` ("resolve default") is still allowed. A cross-tenant location id can no longer be stored on the draft even transiently. The resolved pickup location (explicit or default) must carry both coordinates **and a valid, source-consistent `resolved_pickup_point`** (coordinates + provider/place id + provenance + source binding) before a quote can attach — a null-coordinate or missing / invalid / source-inconsistent `resolved_pickup_point` location is `DELIVERY_PICKUP_UNRESOLVED` (invariant 4). The FK enforces **ownership** only; the ACTIVE / default / resolved-point checks at quoting and approval stay separate. |
 | `requested_window` | Nullable bounded requested delivery time window. |
@@ -696,6 +698,14 @@ future schema/procedure/privilege obligation, not an implementation in 01A.
 
 The boundary rejects caller-supplied `created_at`, `updated_at`, `expires_at`,
 `expired_at` or TTL, even a plausible value, as `DELIVERY_DRAFT_INPUT_INVALID`.
+It also canonicalizes and validates the intake-dedupe components **before the
+UNIQUE key can participate in recovery**: every non-null `origin_namespace` and
+`adapter_dedupe_token` must already be the bounded canonical form and nonblank;
+blank/whitespace-only input is `DELIVERY_DRAFT_INPUT_INVALID`, zero writes.
+`adapter_dedupe_token = NULL` remains the distinct tokenless case and does not
+get trimmed/coerced to an empty token. The schema backstops the nonblank/bounds
+rules, while the trusted writer owns canonicalization; no lookup is performed
+under one representation and stored under another.
 For a fresh row, after prerequisite reads/locks and immediately at insertion it
 takes one finite `t_d := clock_timestamp()`, writes `created_at = updated_at =
 t_d`, `expires_at = t_d + TTL`, `expired_at = NULL`, and `status = OPEN`.
@@ -735,8 +745,9 @@ Rules:
   enforces before a quote may attach — the **creation branch re-checks each one
   under the draft lock** (defence in depth): the mandatory recipient fields
   `recipient_contact` and `destination_text` are present
-  (`DELIVERY_RECIPIENT_INCOMPLETE` otherwise); `destination_point` is resolved
-  (`DELIVERY_DESTINATION_UNRESOLVED` otherwise); the resolved pickup location
+  (`DELIVERY_RECIPIENT_INCOMPLETE` otherwise); `destination_point` is present,
+  shape-valid **and its `source_text_binding` matches the current canonical
+  `destination_text`** (`DELIVERY_DESTINATION_UNRESOLVED` otherwise); the resolved pickup location
   carries coordinates **and a valid, source-consistent `resolved_pickup_point`**
   (`DELIVERY_PICKUP_UNRESOLVED` otherwise); cargo lines pass
   the shared canonical shape check (`DELIVERY_CARGO_LINE_INVALID` otherwise).
@@ -834,10 +845,10 @@ The single authoritative record for one approved delivery.
 | `quote_id` | `NOT NULL`; composite FK `(quote_id, draft_id) -> quote (id, draft_id)` (or equivalent guard) to the approved quote row owned by Quote Authority. `quote` here names the future boundary entity, not an existing passenger table. |
 | `quote_amount` / `quote_currency` | **NOT NULL** canonical monetary snapshot, valid under **Quote boundary contract / Canonical monetary boundary**, and exactly equal to the referenced quote's immutable published values. Equality does not excuse an invalid amount or currency. DB shape constraints and **Existing-order integrity** enforce both validity and equality. |
 | `quote_state` | **`NOT NULL`** point-in-time snapshot of the quote's approvable state **as of approval**, written from the state the creation transaction actually verified at step 5c under the draft/quote serialization — never a request-supplied value. A **DB `CHECK`** restricts it to the closed set of **approvable** snapshot values (the exact vocabulary is fixed in the shared definition before the schema activates and only ever extended in a history-preserving way). It is a historical record: **Existing-order integrity** rejects a null / unknown / non-approvable stored value as `DELIVERY_ORDER_STATE_INCONSISTENT`, but it is **never** re-compared against the quote's mutable live state. |
-| `quote_computed_at` / `quote_expires_at` | Snapshot of the approved quote's validity window, **equal to the referenced quote's immutable values**; `quote_expires_at` is never re-evaluated against the current clock on recovery. |
+| `quote_computed_at` / `quote_expires_at` | **`NOT NULL`, finite** snapshot of the approved quote's **server-owned canonical validity window**, equal to the referenced quote's immutable values and valid under **Canonical quote validity-window boundary**. Equality is additional to validity: malformed/future-dated/overlong published windows are corruption even when both copies agree. `quote_expires_at` is never re-evaluated against the current clock on recovery; historical integrity validates only the retained window shape/policy that applied when the quote was published plus copy equality. |
 | `pickup_location_id` | **`NOT NULL`** FK to `merchant_locations(id)` resolved at approval (ACTIVE at that time); its `merchant_id` **equals this order's `merchant_id`** (invariant 4), enforced by the composite FK `(pickup_location_id, merchant_id) -> merchant_locations (id, merchant_id)` / trigger, not a plain cross-table `CHECK`. A `NULL` here would make PostgreSQL skip that composite FK entirely, so it is disallowed. |
 | `pickup_snapshot` | **`NOT NULL`** canonical content of the resolved pickup at approval — its own `location id` (`== pickup_location_id`), label, address text, **non-null resolved coordinates**, bounded pickup instructions, default flag, **and the full `resolved_pickup_point`: coordinates, provider/place id, provenance, and the source-address binding it was resolved from** — not just the id, and never absent. Shape-constrained: the embedded point's coordinates present and in range, its provider/place id and provenance present, its source binding present. A null-coordinate or null / invalid `resolved_pickup_point` pickup never reaches this snapshot (invariant 4). |
-| `delivery_input_fingerprint` | Canonical fingerprint over the confirmed delivery inputs the approved quote priced — the full recipient snapshot (name, contact, `destination_text`, resolved `destination_point`, access note, window), the cargo lines `{ category, quantity, unit }`, and the frozen `pickup_snapshot` (id + content + the full `resolved_pickup_point`). It equals the referenced quote's stored fingerprint **and** a fresh recompute over the order's own immutable snapshots (Existing-order integrity); a divergent backfilled snapshot — including a changed provider/place id, provenance or source binding under an unchanged address — fails that equality. |
+| `delivery_input_fingerprint` | Canonical fingerprint over the confirmed delivery inputs the approved quote priced — the full recipient snapshot (name, contact, `destination_text`, the full resolved `destination_point` **including provider/place id, provenance and `source_text_binding`**, access note, window), the cargo lines `{ category, quantity, unit }`, and the frozen `pickup_snapshot` (id + content + the full `resolved_pickup_point`). It equals the referenced quote's stored fingerprint **and** a fresh recompute over the order's own immutable snapshots (Existing-order integrity); a divergent backfilled snapshot — including a changed destination provider/place id, provenance or source-text binding, or pickup provider/place id/provenance/source binding under otherwise unchanged text — fails that equality. |
 | `cargo` | Immutable snapshot of the approved cargo **lines** `{ category_code, quantity, unit }` (every category `DELIVERABLE` at approval). |
 | `cargo_policy_version` | **`NOT NULL`, immutable.** The policy version that actually cleared this cargo category set. Not audit-only: a trusted `INSERT` validator re-derives the category set from `cargo` and confirms this version, under the *same immutable policy definition* the server resolver uses, actually clears it. |
 | `cargo_policy_decision` | **`NOT NULL`, immutable.** The recorded deliverability result (per-category class + overall `DELIVERABLE`) for `cargo` under `cargo_policy_version`. The `INSERT` validator confirms it matches a fresh evaluation; **Existing-order integrity** re-checks it against the immutable `cargo` and that version's retained definition. A backfilled `DELIVERABLE` does not bypass either check. |
@@ -960,7 +971,7 @@ creates the order and immutable thereafter.
 | `recipient_name` | Bounded string, frozen from the draft at approval. |
 | `recipient_contact` | **`NOT NULL`**, bounded normalized recipient phone (auth phone canonicalizer), **DB-level shape/format-constrained** (canonical normalized form; not blank/placeholder); the recipient is not a `users` row. |
 | `destination_text` | **`NOT NULL`**, bounded human destination as stated, frozen from the draft; **DB-level length/shape-constrained** (not blank). |
-| `destination_point` | **`NOT NULL`** canonical **resolved** destination — coordinates plus stable provider/place id and provenance — frozen from the draft's `destination_point`, **DB-level shape-constrained** (coordinates present and in range, provenance present); it is part of the `delivery_input_fingerprint`, so downstream routing uses this authoritative point and never re-geocodes into a different one. |
+| `destination_point` | **`NOT NULL`** canonical **resolved** destination — coordinates plus stable provider/place id, provenance **and `source_text_binding`** — frozen from the draft's `destination_point`. DB shape constraints require coordinates in range, provider/place id and provenance present, the binding present/canonical, **and the binding to match this same snapshot row's frozen canonical `destination_text`**. It is part of the `delivery_input_fingerprint`, so downstream routing uses this authoritative point and never re-geocodes into a different one. Historical validation compares the frozen binding to the frozen text only, never to today's draft or a fresh geocode. |
 | `destination_access_note` | Nullable bounded entrance/floor/door note. |
 | `requested_window` | Nullable bounded requested delivery window. |
 | `created_at` | Server timestamp (= order creation time). |
@@ -1002,8 +1013,12 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   is `APPROVED`;
 - exactly one `delivery_order_recipient_snapshot` exists for its `id`, **and that
   child is well-formed** — `recipient_contact`, `destination_text` and
-  `destination_point` are non-null and shape-valid (a null/malformed historical
-  child is corruption, not a deliverable order);
+  `destination_point` are non-null and shape-valid; the resolved destination's
+  provider/place id, provenance and `source_text_binding` are present and the
+  binding matches **that same frozen snapshot's canonical `destination_text`**.
+  This is historical frozen-data validation only — no current draft read and no
+  re-geocode. A null/malformed/source-mismatched historical child is corruption,
+  not a deliverable order;
 - `pickup_location_id` and `pickup_snapshot` are **both non-null**; the composite
   `(pickup_location_id, merchant_id)` resolves to a `merchant_locations` row whose
   `merchant_id` is immutably `== order.merchant_id`; `pickup_snapshot` is
@@ -1015,6 +1030,18 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   compared with the location's current value, not re-geocoded, and takes no
   recovery lock;
 - its stored quote exists and has immutable `quote.draft_id == order.draft_id`;
+- the referenced immutable quote's `computed_at` / **`published_at`** /
+  `expires_at` satisfy the **historical Canonical quote validity-window
+  boundary**: all are server-owned, non-null and finite,
+  `computed_at <= published_at < expires_at`, and the stored duration is within
+  the retained bounded rule/version that governed that published quote. The
+  durable `published_at` is the historical evidence that a future-dated candidate
+  did not pass publication. The order's copied `quote_computed_at` /
+  `quote_expires_at` satisfy the same retained shape and equal the quote exactly;
+  `published_at` remains quote-owned and immutable rather than a caller/order
+  field. This check **never compares any historical timestamp with the current
+  clock or today's quote-duration policy**; valid old history remains valid after
+  expiry or a later policy revision;
 - its `created_at` is non-null and, **as a historical relation**, precedes both
   immutable deadlines: `created_at < order.quote_expires_at` (which equals the
   referenced quote's `expires_at`) **and** `created_at <
@@ -1040,8 +1067,9 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   correctly-approved historical order);
 - **the order's immutable snapshots match the approved quote.** A fresh canonical
   fingerprint recomputed over the order's own frozen snapshots — recipient
-  snapshot (`recipient_name`, `recipient_contact`, `destination_text`, resolved
-  `destination_point`, `destination_access_note`, `requested_window`), the cargo
+  snapshot (`recipient_name`, `recipient_contact`, `destination_text`, the full
+  resolved `destination_point` including its provider/place provenance and
+  `source_text_binding`, `destination_access_note`, `requested_window`), the cargo
   lines `{ category_code, quantity, unit }`, and the `pickup_snapshot` (id plus
   its frozen content **plus the full `resolved_pickup_point` — coordinates,
   provider/place id, provenance, source binding**) — equals
@@ -1279,7 +1307,9 @@ retains step 3: integrity first, then exact-pair recovery or quote conflict.
       pickup row is never locked on the recovery path;
    b. **re-check the mandatory delivery inputs under the draft lock** —
       `recipient_contact` and `destination_text` present
-      (`DELIVERY_RECIPIENT_INCOMPLETE`), `destination_point` resolved
+      (`DELIVERY_RECIPIENT_INCOMPLETE`), `destination_point` present,
+      shape-valid and **source-consistent with the current canonical
+      `destination_text` via its `source_text_binding`**
       (`DELIVERY_DESTINATION_UNRESOLVED`), then non-empty canonical cargo lines
       via **invariant 5 → Validate cargo shape before policy**
       (`DELIVERY_CARGO_LINE_INVALID`). These are Quote Authority preconditions
@@ -1301,12 +1331,19 @@ retains step 3: integrity first, then exact-pair recovery or quote conflict.
       approvable quote state resolved here is the value written to
       `delivery_order.quote_state` at step 5f — never a request-supplied one.
       After those checks, validate the stored quote's **Canonical monetary
-      boundary** before step 5d; malformed persisted money is
-      `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes, not a request to copy or
-      repair the bad value. Every rejection is zero-write;
+      boundary** **and Canonical quote validity-window boundary** before step 5d:
+      `computed_at` / immutable `published_at` / `expires_at` are server-owned,
+      non-null and finite; `computed_at <= published_at < expires_at`; the
+      retained bounded duration rule holds; and `computed_at <=` the fresh
+      post-lock wall clock used here. Malformed persisted money or validity shape
+      is `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes, not a request to copy
+      or repair the bad value. A structurally valid window whose `expires_at` is
+      now crossed remains `QUOTE_EXPIRED`. Every rejection is zero-write;
    d. recompute the canonical `delivery_input_fingerprint` over the **current**
-      draft inputs (recipient, contact, `destination_text`, `destination_point`, access note, window,
-      cargo lines `{category, quantity, unit}`) and the freshly-resolved,
+      draft inputs (recipient, contact, `destination_text`, the full
+      `destination_point` **including provider/place id, provenance and
+      `source_text_binding`**, access note, window, cargo lines
+      `{category, quantity, unit}`) and the freshly-resolved,
       **locked** `pickup_snapshot` (incl. its resolved coordinates **and the full
       `resolved_pickup_point` — provider/place id, provenance, source binding**);
       `QUOTE_STALE` if it does not equal the quote's stored fingerprint — this
@@ -1493,10 +1530,16 @@ regardless.
   `delivery_draft` carries an **immediate (non-deferred) `UNIQUE (merchant_id,
   origin_channel, origin_namespace, adapter_dedupe_token)`**, with `merchant_id`
   and **`origin_channel` `NOT NULL`** (closed enum) and a
-  `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)` — so a
-  present token cannot slip past the `UNIQUE` through a `NULL` namespace or
-  channel. `origin_namespace` (provider account / adapter namespace, from trusted
-  adapter context) being mandatory when a token is present means the same message
+  `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`, plus
+  nonblank/bounds checks on both optional text components
+  (`origin_namespace IS NULL OR btrim(origin_namespace) <> ''`;
+  `adapter_dedupe_token IS NULL OR btrim(adapter_dedupe_token) <> ''`) — so a
+  present token cannot slip past the `UNIQUE` through a `NULL`/blank namespace,
+  a blank token cannot become a shared dedupe identity, and channel remains
+  non-null. The trusted intake boundary stores only the shared canonical forms;
+  blank/whitespace input is rejected rather than silently trimmed into a key.
+  `origin_namespace` (provider account / adapter namespace, from trusted adapter
+  context) being mandatory when a token is present means the same message
   id arriving through two different provider accounts of one merchant produces
   **two** drafts, never a silently merged or dropped delivery. A **`NULL`
   `adapter_dedupe_token`** (no token — manual drafts) is allowed and repeats
@@ -1725,6 +1768,45 @@ binding for every published quote; it cannot invalidate valid old orders merely
 because a currency or zero-price offer is no longer commercially available.
 Missing shared rules or inconsistent application/DB validators block activation.
 
+### Canonical quote validity-window boundary
+
+Quote Authority owns the concrete quote-duration policy, but every consumer and
+future schema writer uses one shared validity-window shape. A published quote's
+`computed_at`, **`published_at`**, and `expires_at` are **server-owned, `NOT NULL`,
+finite and immutable**. They are never request timestamps. `published_at` is the
+durable publication instant stamped by the trusted Quote writer from the same
+fresh post-lock `t_publish := clock_timestamp()` that authorizes publication; it
+is not a candidate/request field. Before activation the Quote/schema contract
+freezes a positive bounded duration rule
+(`0 < expires_at - computed_at <= QUOTE_TTL_MAX`, or an equivalent
+history-preserving versioned rule); no replica/environment/caller-selected
+fallback duration is permitted.
+
+Publication validates this independently of money and copy equality. Static
+candidate shape requires finite non-null `computed_at` / `expires_at`,
+`computed_at < expires_at` and a duration within the frozen bound. After all
+publication locks are held it takes one fresh authoritative `t_publish`:
+`computed_at > t_publish` is a malformed/future-dated candidate →
+`QUOTE_VALIDITY_INVALID`, zero writes; a structurally valid candidate with
+`t_publish >= expires_at` is merely expired → `QUOTE_EXPIRED`, zero writes.
+Only after those checks pass does the trusted writer atomically persist
+`published_at := t_publish` with the immutable quote payload/fingerprint and
+draft quote state. Neither failure is repaired by trimming timestamps or
+extending `expires_at`.
+
+The future quote schema/backstop enforces non-null/finite timestamps, the
+historically checkable relation
+`computed_at <= published_at < expires_at`, and the retained bounded-duration
+rule against secondary writers; ordinary writers cannot supply or rewrite
+`published_at`. If that policy evolves, the published quote retains an
+unambiguous validity-rule/version or equivalent history-preserving definition so
+**Existing-order integrity** can validate old windows under the rule that created
+them. Recovery validates the durable historical relation
+`computed_at <= published_at < expires_at`, the retained duration shape and exact
+order↔quote copies only; it never compares an old `expires_at` with today's clock
+and never re-applies today's commercial duration policy. Equality of two
+malformed timestamps is never sufficient.
+
 ### Quote lifecycle and consumption
 
 - **Quote lifecycle writes serialize on the `delivery_draft` lock.** Every Quote
@@ -1753,36 +1835,51 @@ Missing shared rules or inconsistent application/DB validators block activation.
   2. lock `merchants(M)` (the default-selection boundary), then the selected
      pickup row; if the path also authorizes an actor, take the existing full
      authority prefix **before** these locks, never membership after merchant;
-  3. re-resolve explicit/default pickup, same-merchant eligibility, non-null
-     coordinates **and a non-null, valid `resolved_pickup_point`** — its
-     coordinates, provider/place id, provenance and source-address binding
-     present and shape-valid, **and consistent with the location's current
-     address/coordinates** (a trusted resolver-persist procedure fills it before
-     this step, under these same locks, from an external resolver's result —
-     never fabricated from bare coordinates; a missing, invalid or
-     source-inconsistent point → `DELIVERY_PICKUP_UNRESOLVED`, nothing is
-     published), and re-read every canonical delivery input under these locks;
-  4. compare these exact inputs — the full `resolved_pickup_point` included —
-     with the immutable candidate used to compute the price. A mismatch
-     publishes nothing and requires a fresh computation; never pair an old price
-     with a new fingerprint. Then validate the candidate's **Canonical monetary
-     boundary**; `QUOTE_MONETARY_INVALID` publishes nothing and changes no draft
-     state. Do not round or repair the candidate;
-  5. take a single fresh `t := clock_timestamp()` on the authoritative wall clock
-     **after all the locks above are held** — not the transaction-start time —
-     and apply, in order: **(a)** `t >= delivery_draft.expires_at` → the draft
-     aged out while publication waited on a lock → `DELIVERY_DRAFT_EXPIRED`,
-     **zero writes**; **(b)** `t >= candidate_quote.expires_at` → the priced
-     candidate itself expired during the wait → `QUOTE_EXPIRED`, **zero writes**
-     (publishing it would create a `QUOTED` draft whose every immediate approval
-     fails `QUOTE_EXPIRED`). The candidate's timestamps are **never** extended to
-     pass this guard; the fix is a fresh computation. Neither failure publishes
-     the quote/fingerprint or the draft quote state;
-  6. only when **both** (a) and (b) pass **and** the input comparison and
-     canonical monetary validation held,
-     publish the quote/fingerprint (over the full canonical input set,
-     `resolved_pickup_point` included) and draft quote state atomically, holding
-     draft, merchant and pickup locks through commit.
+  3. re-read `destination_text` and its stored `destination_point` under the
+     already-held draft lock and require a non-null, shape-valid resolved point
+     whose provider/place id and provenance are present **and whose
+     `source_text_binding` matches the current canonical `destination_text`**.
+     The trusted destination-resolver persistence path must have stored that
+     binding before pricing; publication never geocodes or fabricates one.
+     Missing/invalid/source-mismatched destination → `DELIVERY_DESTINATION_UNRESOLVED`,
+     nothing published. Then re-resolve explicit/default pickup, same-merchant
+     eligibility, non-null coordinates **and a non-null, valid
+     `resolved_pickup_point`** — its coordinates, provider/place id, provenance
+     and source-address binding present and shape-valid, **and consistent with the
+     location's current address/coordinates** (a trusted resolver-persist
+     procedure fills it before this step, under these same locks, from an
+     external resolver's result — never fabricated from bare coordinates; a
+     missing, invalid or source-inconsistent point →
+     `DELIVERY_PICKUP_UNRESOLVED`, nothing is published), and re-read every
+     canonical delivery input under these locks;
+  4. compare these exact inputs — the full destination point **including
+     `source_text_binding`** and the full `resolved_pickup_point` included — with
+     the immutable candidate used to compute the price. A mismatch publishes
+     nothing and requires a fresh computation; never pair an old price with a
+     new fingerprint. Then validate the candidate's **Canonical monetary
+     boundary** and the static **Canonical quote validity-window boundary**
+     (server-owned finite non-null timestamps, `computed_at < expires_at`,
+     positive bounded duration). `QUOTE_MONETARY_INVALID` or
+     `QUOTE_VALIDITY_INVALID` publishes nothing and changes no draft state. Do
+     not round, repair or extend the candidate;
+  5. take a single fresh `t_publish := clock_timestamp()` on the authoritative
+     wall clock **after all the locks above are held** — not the transaction-start
+     time — and apply, in order: **(a)** `t_publish >=
+     delivery_draft.expires_at` → the draft aged out while publication waited on
+     a lock → `DELIVERY_DRAFT_EXPIRED`, **zero writes**; **(b)**
+     `candidate_quote.computed_at > t_publish` → future-dated malformed candidate
+     → `QUOTE_VALIDITY_INVALID`, **zero writes**; **(c)** `t_publish >=
+     candidate_quote.expires_at` → the otherwise-valid priced candidate expired
+     during the wait → `QUOTE_EXPIRED`, **zero writes**. The candidate's
+     timestamps are **never** extended to pass these guards; malformed windows
+     are corrected/recomputed, expired quotes require a fresh computation.
+     No failure publishes the quote/fingerprint or the draft quote state;
+  6. only when **(a)–(c)** all pass **and** the input comparison, canonical
+     monetary validation and canonical validity-window validation held, atomically
+     persist **`quote.published_at := t_publish`** and publish the
+     quote/fingerprint (over the full canonical input set, destination
+     `source_text_binding` and `resolved_pickup_point` included) plus draft quote
+     state, holding draft, merchant and pickup locks through commit.
   No external pricing/geocoding call is required while holding those locks. A
   pickup change after publication commits can legitimately stale that quote;
   a change before publication must be caught by the protected comparison.
@@ -1791,13 +1888,26 @@ Missing shared rules or inconsistent application/DB validators block activation.
   deterministically, or propagate invalidation in a separate transaction.
   Never hold a location lock while later seeking a draft lock. Existing 01B
   leaf mutations/default switches remain unchanged.
-- **The resolved destination point is fixed before pricing.** Quote Authority
-  resolves `delivery_draft.destination_point` (coordinates + stable
-  provider/place id + provenance) **before** it computes a quote; a quote can
-  only attach to a draft whose `destination_point` is resolved. A later change to
-  `destination_text` / `destination_point` — including a re-geocode that would
-  move the point — invalidates the quote and drops the draft `QUOTED -> OPEN`;
-  approval never silently retargets a confirmed delivery.
+- **The resolved destination point is source-bound before pricing.** A trusted
+  destination-resolver persistence path obtains the external resolver result,
+  then under the `delivery_draft` row lock re-reads the exact
+  `destination_text` and stores `delivery_draft.destination_point` as
+  coordinates + stable provider/place id + provenance + a versioned
+  **`source_text_binding` to that canonical text**. The binding is destination
+  specific (a canonical binding/digest of the recipient-supplied text), not a
+  copy of pickup's merchant-address contract and not a second mutable free-text
+  address. A quote can attach only when the point is present, shape-valid and the
+  binding matches the current canonical `destination_text`; otherwise
+  `DELIVERY_DESTINATION_UNRESOLVED`. A later change to `destination_text`, point
+  coordinates, provider/place id, provenance or source binding clears/invalidates
+  the stored resolved point and, if already `QUOTED`, invalidates the quote and
+  drops the draft `QUOTED -> OPEN`. Publication and creation re-check the binding
+  under the draft lock; neither path geocodes. The full destination point
+  including `source_text_binding` is copied to the immutable recipient snapshot
+  and included in the canonical fingerprint, so approval never silently
+  retargets a confirmed delivery. Recovery checks only the frozen snapshot's
+  binding against its own frozen `destination_text`, never today's draft or a
+  fresh resolver call.
 - **The resolved pickup point is fixed before pricing.** The pickup
   `merchant_locations` row the quote priced against must carry non-null
   coordinates **and a stored `resolved_pickup_point`** — coordinates, a real
@@ -1834,14 +1944,16 @@ Missing shared rules or inconsistent application/DB validators block activation.
   `quote_id`:** the quote stores its source `draft_id` and exposes an
   unconditional unique `(id, draft_id)` key for the order's composite FK
   `(quote_id, draft_id)`. Its published `amount` / `currency` / `computed_at` /
-  `expires_at` and its `delivery_input_fingerprint` (produced by a **named
-  canonical algorithm version**) do not change once published — a reprice is a
-  **new** `quote_id`, never an edit of an existing one. So the order's copied
-  quote fields and fingerprint can be compared to the referenced quote at any
-  later time. Static ownership **and this payload/fingerprint equality** are
-  checked on recovery / cancellation (Existing-order integrity); only *mutable*
-  quote eligibility (approvable state, expiry-vs-now, supersession) is a
-  creation-only check.
+  **`published_at`** / `expires_at` and its `delivery_input_fingerprint`
+  (produced by a **named canonical algorithm version**) do not change once
+  published — a reprice is a **new** `quote_id`, never an edit of an existing
+  one. `published_at` remains quote-owned historical evidence and is not a
+  request/order-supplied field. So the order's copied quote fields and
+  fingerprint can be compared to the referenced quote at any later time while
+  Existing-order integrity also proves `computed_at <= published_at < expires_at`.
+  Static ownership **and this payload/fingerprint equality + validity relation**
+  are checked on recovery / cancellation; only *mutable* quote eligibility
+  (approvable state, expiry-vs-now, supersession) is a creation-only check.
 - **Every quote binds to the exact delivery inputs it priced.** Quote Authority
   stores, on the quote, a canonical `delivery_input_fingerprint` over: the
   recipient snapshot (name, contact, `destination_text`, **resolved
@@ -2002,6 +2114,9 @@ these transactions crosses lock order.
 | 78 | Missing quote_id and malformed pair preflight | Step 0a rejects a non-record; 0b returns QUOTE_REQUIRED for absent/null/blank quote_id even if draft_id is also bad; 0c rejects malformed/present non-string IDs and extra fields. No domain query or lock. A valid pair passes to the existing masked tenant gate: on ORDER ABSENT, a well-shaped missing/foreign quote ID is not QUOTE_REQUIRED and reaches step 4d only after the locked actor gate, step 3a integrity, draft expiry and 4a/4b/4c all permit it. With an authorized caller, a well-shaped nonexistent quote ID and no order: APPROVED returns DELIVERY_ORDER_STATE_INCONSISTENT at 3a; expired OPEN/QUOTED returns DELIVERY_DRAFT_EXPIRED before 4a; unexpired ABANDONED returns DELIVERY_DRAFT_NOT_APPROVABLE at 4a; unexpired OPEN returns DELIVERY_DRAFT_NOT_APPROVABLE at 4d only after the earlier checks pass. ORDER PRESENT uses step 3 integrity then exact quote match/conflict. |
 | 79 | Initial draft timestamps/TTL forged or misconfigured | Caller timestamps or TTL are rejected; no ordinary direct INSERT. Trusted boundary derives one t_d and expires_at = t_d + frozen TTL. DB rejects null/non-finite/mismatched/overflowed values and non-positive/out-of-bound TTL; missing/shared-rule drift blocks activation. |
 | 80 | Fresh draft versus dedupe replay and later updates | Fresh accepted input creates OPEN with created_at = updated_at = t_d and fixed expiry. A duplicate full key returns the original draft without refreshing timestamps; edits/repricing and successive UPDATEs cannot change created_at or expires_at. OBSERVED-contact intent intake is not promoted to order/abandonment authority. |
+| 81 | Destination text changes from A to B while a stale resolver result for A is about to be persisted/published; coordinates/provider id are otherwise valid | Trusted destination persistence re-reads B under the draft lock and rejects/invalidates the A-bound result. Publication and creation require `destination_point.source_text_binding == binding(canonical destination_text)` under the draft lock; mismatch → `DELIVERY_DESTINATION_UNRESOLVED`, zero writes/no order. Positive control: a point resolved from the same canonical text is fingerprinted including the binding, copied to the recipient snapshot, and later recovery validates only the frozen snapshot text↔binding pair. |
+| 82 | Intake supplies `adapter_dedupe_token = ''` / whitespace, or a present token with blank/whitespace `origin_namespace`; separate provider accounts reuse the same message id | Trusted intake canonicalization rejects the blank component as `DELIVERY_DRAFT_INPUT_INVALID` before the UNIQUE key. DB nonblank/bounds checks backstop secondary writers. Positive controls: a canonical nonblank full key dedupes exactly once; `adapter_dedupe_token = NULL` remains tokenless and repeatable; two canonical namespaces remain independent. |
+| 83 | Quote publication receives null/infinite timestamps, `computed_at >= expires_at`, a future-dated `computed_at`, an overlong duration, or a valid window that merely expires while waiting on locks | Malformed/future/overlong candidates fail `QUOTE_VALIDITY_INVALID`; an otherwise valid window crossed by the fresh post-lock clock fails `QUOTE_EXPIRED`. Positive control: server-owned finite non-null timestamps with `computed_at <= t_publish < expires_at` and bounded positive duration publish with immutable **`published_at := t_publish`**. Historical recovery later verifies `computed_at <= published_at < expires_at`, the retained duration rule and exact copy equality only, never expiry against today's clock. |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -2058,14 +2173,15 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `DELIVERY_DRAFT_NOT_APPROVABLE` | Draft is `ABANDONED` — step 4a; or a non-creatable `OPEN` state with no own approvable quote, or a presented `quote_id` that does not exist / is not a quote of this draft — step 4d. | false |
 | `DELIVERY_DRAFT_EXPIRED` | The source draft is `EXPIRED`, or its server-assigned `expires_at` deadline has otherwise passed (`clock_timestamp() >= expires_at`, read after the blocking locks) whether or not the deadline sweep has run. Checked at Order-creation step 4 **before (a)** and before superseded / stale, re-checked at step 5c, **again at step 5f against the one fresh `t` that stamps `created_at`** (closing the check-to-INSERT gap), and at Quote publication. A fresh draft is required. Never evaluated on ORDER PRESENT recovery / cancellation; an `APPROVED` draft never expires. | false |
 | `DELIVERY_RECIPIENT_INCOMPLETE` | Missing `recipient_contact` or `destination_text`. A Quote Authority precondition; **re-checked in the creation branch under the draft lock** (step 5b) so a partial `QUOTED` draft cannot become an authoritative order. | false |
-| `DELIVERY_DESTINATION_UNRESOLVED` | No canonical `destination_point` (coordinates + provider/place provenance) could be resolved before quoting; a quote cannot attach until it is; re-checked at step 5b. | false |
+| `DELIVERY_DESTINATION_UNRESOLVED` | No canonical resolved `destination_point` is available **or** its coordinates/provider-place id/provenance/`source_text_binding` are missing/invalid **or the binding does not match the current canonical `destination_text`**. Quote publication and creation step 5b re-check this under the draft lock; neither path geocodes. A quote cannot attach until a trusted resolver result is persisted against the exact source text. | false |
 | `DELIVERY_PICKUP_UNRESOLVED` | The resolved / explicit pickup `merchant_locations` row is ACTIVE and same-merchant but carries **null coordinates** (`0009` permits this), **or a null / invalid / source-inconsistent `resolved_pickup_point`** (missing coordinates / provider-place id / provenance / source binding, or a stored point that no longer matches the row's current address/coordinates). A delivery pickup needs a routable, provenance-bearing point fixed before pricing; no approval-time geocode, no provenance invented from coordinates. Step 5a and Quote publication. | false |
 | `DELIVERY_CARGO_LINE_INVALID` | Cargo is missing/empty/not a bounded canonical list, or a line's shape/quantity/unit fails invariant 5's shared validation. Checked before quote publication and at creation step 5b, before fingerprint/policy; never revalidated on recovery. | false |
 | `MERCHANT_ACTOR_UNAUTHORIZED` (01A) | On the approval path this is an **internal-only** reason (logged) for a locked-actor-gate failure against the locked `delivery_draft.merchant_id` — the **external** code is always masked to `DELIVERY_DRAFT_NOT_FOUND` (no own-merchant exception). It is still surfaced as itself by the 01A resolver contract in contexts with no tenant-existence disclosure. | false |
 | `MERCHANT_LOCATION_REQUIRED` (01A) | Also raised here when the resolved / explicit pickup is non-ACTIVE, ambiguous, or belongs to a merchant other than the draft's. | false |
 | `QUOTE_REQUIRED` | Approval step 0b: the record payload has an absent, null or blank-string `quote_id`. Returned before any domain transaction/read/lock, including a recovery request. Present malformed/non-string IDs use `DELIVERY_APPROVAL_INPUT_INVALID`; on ORDER ABSENT a well-shaped missing/foreign quote ID is not `QUOTE_REQUIRED` and reaches step 4d only after the locked actor gate, step 3a integrity, draft expiry and steps 4a/4b/4c permit it, with every earlier failure retaining its result, while ORDER PRESENT retains step 3 integrity and quote-match/conflict handling. | false |
 | `QUOTE_SUPERSEDED` | A newer quote exists for the draft; **approval** must name the current quote. Checked for `OPEN` and `QUOTED` drafts alike, and **before** `QUOTE_STALE` — step 4b. | false |
-| `QUOTE_EXPIRED` | `clock_timestamp() >= quote.expires_at`, read **after** the blocking locks are held; obtain a fresh quote. Checked at Order-creation step 5c and **again at step 5f against the one fresh `t` that stamps `created_at`** (the quote can lapse in the check-to-INSERT gap). Also raised at **Quote publication** (step 5) when the priced candidate's own `expires_at` passes while publication waits on the merchant/pickup lock — the candidate is not published, its timestamps are not extended. | false |
+| `QUOTE_VALIDITY_INVALID` | An **unpublished** candidate fails Canonical quote validity-window shape/publication checks: caller-owned/null/infinite timestamps, `computed_at >= expires_at`, non-positive/overlong duration, or `computed_at` later than the fresh publication clock. Nothing is published or repaired. A malformed already-persisted quote/order window is `DELIVERY_ORDER_STATE_INCONSISTENT`, not this candidate-input outcome. | false |
+| `QUOTE_EXPIRED` | A quote with an otherwise valid canonical validity window has crossed `expires_at` on the fresh authoritative wall clock; obtain a fresh quote. Checked at Order-creation step 5c and **again at step 5f against the one fresh `t` that stamps `created_at`** (the quote can lapse in the check-to-INSERT gap). Also raised at **Quote publication** after static/future-window validation when the candidate expires while publication waits on locks. Timestamps are never extended. | false |
 | `QUOTE_STALE` | The presented quote for this draft was invalidated by a confirmed-input / destination-point / cargo-quantity / resolved-pickup change after it was priced **and is not superseded** — step 4c, or the creation-branch fingerprint recompute (step 5d). Obtain a fresh quote. | false |
 | `CARGO_CATEGORY_UNKNOWN` | A cargo category code is not in the server policy vocabulary. | false |
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
@@ -2075,7 +2191,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_APPROVAL_INPUT_INVALID` | Approval preflight 0a/0c: non-record payload, malformed required pair or extra payload fields. Priority is 0a, then missing-quote 0b, then remaining-shape 0c. No domain lookup, lock or writes. | false |
-| `DELIVERY_DRAFT_INPUT_INVALID` | Caller timestamps/TTL at draft insertion, or malformed/extra abandonment payload fields. Rejected before domain writes; no authority is conferred. | false |
+| `DELIVERY_DRAFT_INPUT_INVALID` | Caller timestamps/TTL at draft insertion, **blank/whitespace or non-canonical bounded intake-dedupe components when present**, or malformed/extra abandonment payload fields. Rejected before domain writes; `NULL` dedupe token remains the permitted tokenless case; no authority is conferred. | false |
 | `DELIVERY_DRAFT_NOT_ABANDONABLE` | After the locked actor gate and coupling check, the draft is consistently APPROVED with its order. Abandonment cannot cancel that order. Zero writes. | false |
 | `DELIVERY_CANCEL_INPUT_INVALID` | At an otherwise permitted cancellation, supplied timestamp or invalid requested canonical reason. Zero writes; an already-corrupt stored row instead fails Existing-order integrity. | false |
 | `QUOTE_MONETARY_INVALID` | Unpublished quote candidate fails Canonical monetary boundary. Nothing is published or silently rounded. Malformed already-persisted quote/order money is an integrity fault, not this candidate-input outcome. | false |
@@ -2760,6 +2876,24 @@ freezes all of the following:
     fixed TTL. Supplied values and direct-writer bypass fail; dedupe/edits never
     move created_at or expiry. Intake remains non-authoritative (rows 79-80).
 
+- **Fresh scoped correction acceptance (Codex review on `091a07bb`, comments
+  4052770519 / 4052770524 / 4052770526):** these are future contract/schema
+  verification obligations, not runtime implementation or resolved GitHub threads.
+  - Destination resolution is bound to the exact canonical `destination_text`:
+    stale/mismatched resolver results cannot publish or create an order; the
+    binding is frozen into the recipient snapshot and canonical fingerprint, and
+    historical recovery checks only that frozen text↔binding relation (row 81).
+  - Intake dedupe components are canonical/bounded/nonblank when present;
+    whitespace keys are rejected before uniqueness, secondary writers are DB
+    backstopped, canonical nonblank keys dedupe, and `NULL` token remains the
+    freely-repeatable tokenless case (row 82).
+  - Quote validity windows are server-owned, finite/non-null, positive/bounded
+    and publication-time coherent; successful publication durably stamps immutable
+    `published_at := t_publish`, malformed/future/overlong candidates fail
+    separately from a valid-but-expired quote, and historical recovery verifies
+    `computed_at <= published_at < expires_at` plus retained shape/equality
+    without today's clock/policy re-evaluation (row 83).
+
 - Draft, quote, and order are three distinct concepts; a message/draft is never
   the order; a `delivery_draft` is a persisted **non-authoritative** row.
 - An order is created only by a single `AUTHORIZED_MERCHANT_ACTOR` result
@@ -2786,9 +2920,11 @@ freezes all of the following:
   without an `APPROVED` draft, full rollback on any re-validation failure.
 - A `delivery_order` has exactly one recipient and one destination — including a
   canonical **resolved `destination_point`** (coordinates + provider/place
-  provenance) — held in a 1:1 immutable snapshot child, not columns and not an
-  address book; the point is in the fingerprint, so re-geocoding cannot retarget
-  a confirmed delivery. Multi-stop batching is a separate downstream entity.
+  provenance + destination-specific `source_text_binding`) whose binding matches
+  the frozen canonical `destination_text` — held in a 1:1 immutable snapshot
+  child, not columns and not an address book; the full point is in the
+  fingerprint, so stale resolver output or re-geocoding cannot retarget a
+  confirmed delivery. Multi-stop batching is a separate downstream entity.
 - `delivery_order_recipient_snapshot` immutability is enforced by **its own**
   `BEFORE UPDATE OR DELETE` guard trigger, not the parent `delivery_order`
   trigger (which does not fire on direct child DML); every `UPDATE` / `DELETE`
@@ -2934,12 +3070,17 @@ freezes all of the following:
   the locked draft and the authority locks (run before recovery/creation) are
   unchanged; the frozen Identity/Contact resolver is not modified — only the
   response mapping at this call site.
-- **Quote publication** takes one post-lock `t = clock_timestamp()` immediately
-  before the atomic publish and checks **both** `t >= delivery_draft.expires_at`
-  (`DELIVERY_DRAFT_EXPIRED`) **and** `t >= candidate_quote.expires_at`
-  (`QUOTE_EXPIRED`); publication requires both to pass, is zero-write on failure,
-  and never extends the candidate's timestamps. Historical recovery still never
-  re-checks quote expiry against the current clock.
+- **Quote publication** enforces the full Canonical quote validity-window
+  boundary. After static finite/non-null/order/bounded-duration validation it
+  takes one post-lock `t_publish = clock_timestamp()` immediately before the
+  atomic publish: draft deadline crossed → `DELIVERY_DRAFT_EXPIRED`;
+  `candidate_quote.computed_at > t_publish` → `QUOTE_VALIDITY_INVALID`; otherwise
+  `t_publish >= candidate_quote.expires_at` → `QUOTE_EXPIRED`. Success atomically
+  stamps immutable **`quote.published_at := t_publish`** with the quote payload and
+  draft quote state. Publication is zero-write on failure and never repairs or
+  extends candidate timestamps; historical recovery verifies
+  `computed_at <= published_at < expires_at` under the retained rule/version and
+  never re-checks expiry against the current clock.
 - **Order creation stamps an immutable, non-backdatable `created_at` from one
   fresh server `clock_timestamp()` `t`** (step 5f), and requires
   `t < delivery_draft.expires_at` (`DELIVERY_DRAFT_EXPIRED`) then
@@ -2977,12 +3118,14 @@ freezes all of the following:
   separate.
 - **Intake idempotency is a DB constraint:** an immediate
   `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`
-  with `origin_channel` `NOT NULL` (closed enum) and
-  `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`. A
-  concurrent redelivery of one full key yields exactly one draft (the loser
-  reads the existing draft, no overwrite / no deadline extension / no terminal
-  resurrection); tokenless (`NULL`) manual drafts repeat freely; different
-  merchant / channel / namespace stay independent.
+  with `origin_channel` `NOT NULL` (closed enum), namespace-required-when-token
+  `CHECK`, and DB bounds/nonblank backstops for every non-null
+  `origin_namespace` / `adapter_dedupe_token`. The trusted intake boundary stores
+  only the shared canonical forms and rejects blank/whitespace components before
+  uniqueness. A concurrent redelivery of one canonical full key yields exactly
+  one draft (the loser reads the existing draft, no overwrite / no deadline
+  extension / no terminal resurrection); tokenless (`NULL`) manual drafts repeat
+  freely and distinct canonical namespaces stay independent.
 - **`delivery_order.cancellation_authority` (`MERCHANT | DISPATCH_EXECUTION`)** is
   `NULL` until cancellation and `NOT NULL`, write-once and immutable on every
   transition to `CANCELED`, set atomically with `status` / timestamp / reason and
@@ -3205,9 +3348,11 @@ retained as prior snapshots, not evidence that these new obligations ran.
    separate from the deferred coupling and does not replace actor authority or
    the expiry worker's preconditions. Intake idempotency is a real DB constraint
    — an immediate `UNIQUE (merchant_id, origin_channel, origin_namespace,
-   adapter_dedupe_token)` with `origin_channel` `NOT NULL` and
-   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)` — and
-   the recorded intake identity is **durable**: the full tuple is immutable after
+   adapter_dedupe_token)` with `origin_channel` `NOT NULL`, namespace-required
+   when a token is present, and DB bounded/nonblank checks for every non-null
+   namespace/token; the trusted intake boundary stores only canonical forms and
+   rejects blank/whitespace components before uniqueness — and the recorded
+   intake identity is **durable**: the full tuple is immutable after
    `INSERT` (null-safe guard, `adapter_dedupe_token -> NULL` included) and a
    `BEFORE DELETE` guard rejects a hard-delete of any token-backed draft in any
    status, so a redelivery of the original key always resolves to the original
@@ -3216,20 +3361,26 @@ retained as prior snapshots, not evidence that these new obligations ran.
    carries a draft-level composite FK to `merchant_locations (id, merchant_id)` so
    a cross-tenant pickup id cannot be stored on a draft.
 2. **Quote ownership split.** Confirmed. Quote computation, reprice, surge, and
-   `expires_at` duration stay entirely in `BD-MERCHANT-QUOTE-AUTHORITY-01A`. This
-   contract owns only the **Quote boundary contract**: the `quote_id`, state,
-   expiry check, and the fixed set of immutable snapshot fields the order carries
-   — plus the complete boundary obligations defined there: immutable quote
-   ownership **and an immutable published payload + fingerprint for the life of a
-   `quote_id`** (a reprice is a new `quote_id`); shared draft serialization;
-   locked publication-time comparison of the priced candidate with current
-   draft/pickup inputs; and mandatory recipient, resolved-point and canonical
-   cargo preconditions. Creation explicitly checks *current* quote state and
-   writes the **verified** state into `delivery_order.quote_state` (`NOT NULL`,
-   DB-`CHECK`ed to a closed approvable-value set, never a request field);
-   recovery checks historical ownership, **the order's snapshot ↔ immutable-quote
-   fingerprint / copied-field equality**, and that the **stored** `quote_state`
-   is a valid approvable value — never the quote's live state.
+   concrete validity duration stay entirely in
+   `BD-MERCHANT-QUOTE-AUTHORITY-01A`. This contract owns the **Quote boundary
+   contract**: `quote_id`, state, canonical validity-window consumption and the
+   fixed immutable snapshot fields the order carries — plus immutable quote
+   ownership **and immutable published payload/fingerprint/`published_at` for the
+   life of a `quote_id`** (a reprice is a new `quote_id`), shared draft
+   serialization, locked publication-time comparison of the priced candidate with
+   current draft/pickup inputs, and mandatory recipient/resolved-point/canonical
+   cargo preconditions. Publication validates finite non-null timestamps and the
+   bounded duration, takes one fresh post-lock `t_publish`, rejects future-dated
+   `computed_at` / already-expired windows, then atomically stamps
+   `published_at := t_publish`; future schema guards preserve
+   `computed_at <= published_at < expires_at`. Creation explicitly checks
+   *current* quote state and writes the **verified** state into
+   `delivery_order.quote_state` (`NOT NULL`, DB-`CHECK`ed to a closed
+   approvable-value set, never a request field). Recovery checks historical
+   ownership, **the retained validity relation/rule, the order's snapshot ↔
+   immutable-quote fingerprint / copied-field equality**, and that the **stored**
+   `quote_state` is a valid approvable value — never the quote's live state or
+   today's clock/policy.
 3. **Recipient shape.** Recipient/destination is a **1:1 immutable child row**,
    `delivery_order_recipient_snapshot`, one per `delivery_order`, written in the
    creation transaction and never updated — a per-order PII capsule, explicitly
@@ -3331,11 +3482,13 @@ retained as prior snapshots, not evidence that these new obligations ran.
    non-unique index on `(draft_id, quote_id)`** serves the exact-pair recovery
    lookup. **Draft ingestion has its own DB idempotency** — an immediate
    `UNIQUE (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`
-   with `origin_channel` `NOT NULL` (closed enum) and
-   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`: a
-   concurrent redelivery of one full key produces exactly one draft (the loser
-   reads it, no overwrite / no deadline extension / no terminal resurrection),
-   while tokenless (`NULL`) manual drafts repeat freely — never a competing key
+   with `origin_channel` `NOT NULL` (closed enum), namespace-required-when-token
+   plus DB bounded/nonblank checks for each non-null namespace/token; the trusted
+   intake writer canonicalizes them and rejects blank/whitespace input before
+   uniqueness. A concurrent redelivery of one canonical full key produces exactly
+   one draft (the loser reads it, no overwrite / no deadline extension / no
+   terminal resurrection), while tokenless (`NULL`) manual drafts repeat freely —
+   never a competing key
    for order creation. The `UNIQUE` only blocks a *duplicate*; the recorded
    identity is also made **durable** so it cannot be *freed*: the full intake
    tuple is immutable after `INSERT` (null-safe row-local guard — no component
@@ -3607,15 +3760,25 @@ Additional load-bearing invariants proposed in review **round 7** (Codex review
   call site (Order-creation steps 1–2; Approver parity;
   `DELIVERY_DRAFT_NOT_FOUND` / `MERCHANT_ACTOR_UNAUTHORIZED` taxonomy; race rows
   10, 58; Example AC; acceptance criteria).
-- **Publication rejects an expired candidate quote (P2 — `3970113030`).**
+- **Publication rejects malformed/future/expired quote windows (P2 —
+  `3970113030`, strengthened by fresh review `4052770526`).** Before publication,
+  the candidate must satisfy the shared Canonical quote validity-window shape:
+  server-owned finite non-null `computed_at` / `expires_at`,
+  `computed_at < expires_at`, and the retained positive bounded duration rule.
   Immediately before the atomic publish, after all blocking locks, publication
-  takes one fresh `t = clock_timestamp()` and checks **both**
-  `t >= delivery_draft.expires_at` → `DELIVERY_DRAFT_EXPIRED` **and**
-  `t >= candidate_quote.expires_at` → `QUOTE_EXPIRED`; it publishes only if both
-  pass, is zero-write on either failure, and never extends the candidate's
-  timestamps. Historical recovery still never re-checks quote expiry against the
-  current clock (Quote boundary contract — publication step 5; `QUOTE_EXPIRED`
-  taxonomy; race rows 54, 59; Example AD; acceptance criteria).
+  takes one fresh `t_publish = clock_timestamp()` and applies the full ordered
+  gate: `t_publish >= delivery_draft.expires_at` →
+  `DELIVERY_DRAFT_EXPIRED`; `candidate_quote.computed_at > t_publish` →
+  `QUOTE_VALIDITY_INVALID`; otherwise `t_publish >=
+  candidate_quote.expires_at` → `QUOTE_EXPIRED`. Success atomically stamps the
+  quote-owned immutable `published_at := t_publish` with the quote payload and
+  draft quote state; failure is zero-write and never repairs or extends candidate
+  timestamps. The schema/history backstop preserves
+  `computed_at <= published_at < expires_at` plus the retained duration rule.
+  Historical recovery checks that stored relation and exact quote/order copies
+  only — never expiry against the current clock or today's duration policy
+  (Quote boundary contract; Existing-order integrity; race rows 54, 59, 83;
+  Example AD; acceptance criteria).
 
 Additional load-bearing invariants proposed in review **round 8** (Codex review
 `5159806482`, head `1fc6682`; pending independent re-audit):
@@ -3656,16 +3819,22 @@ Additional load-bearing invariants proposed in review **round 8** (Codex review
   default / resolved-point checks at quoting/approval stay separate
   (`delivery_draft` field table; invariant 4; race rows 11, 63; acceptance
   criteria; next-slice deps).
-- **DB intake idempotency (P1 — `3972970769`).** An immediate `UNIQUE
-  (merchant_id, origin_channel, origin_namespace, adapter_dedupe_token)`, with
-  `origin_channel` `NOT NULL` (closed enum) and `CHECK (adapter_dedupe_token IS
-  NULL OR origin_namespace IS NOT NULL)` — a present token cannot evade the
-  `UNIQUE` through a null namespace/channel. Concurrent redelivery of one full
-  key → exactly one draft (loser reads it; no overwrite / deadline extension /
-  terminal resurrection); tokenless (`NULL`) manual drafts repeat freely;
-  different merchant/channel/namespace independent (`delivery_draft` field table;
-  Idempotency and recovery; decision 8; race rows 12, 64; Example O; acceptance
-  criteria; next-slice deps).
+- **DB intake idempotency (P1 — `3972970769`, strengthened by fresh
+  review `4052770524`).** An immediate `UNIQUE (merchant_id, origin_channel,
+  origin_namespace, adapter_dedupe_token)` is paired with `origin_channel`
+  `NOT NULL` (closed enum), namespace-required-when-token, and DB
+  bounded/nonblank checks for every non-null canonical `origin_namespace` and
+  `adapter_dedupe_token`. The trusted intake boundary canonicalizes these
+  components **before** dedupe lookup/storage and rejects blank/whitespace-only
+  values as `DELIVERY_DRAFT_INPUT_INVALID`; it never trims them into a shared
+  empty key. A present token therefore cannot evade/collapse the key through a
+  null/blank namespace, and an empty token is never a valid immutable dedupe
+  identity. Concurrent redelivery of one canonical full key → exactly one draft
+  (loser reads it; no overwrite / deadline extension / terminal resurrection);
+  tokenless (`NULL`) manual drafts remain freely repeatable, and distinct
+  canonical merchant/channel/namespace scopes remain independent
+  (`delivery_draft` field table; Idempotency and recovery; decision 8; race rows
+  12, 64, 82; Example O; acceptance criteria; next-slice deps).
 - **Current actor eligibility on every order `INSERT` (P1 — `3972970775`).** All
   new `delivery_order` rows go through one trusted transactional creation
   procedure (ordinary roles get no direct `INSERT` — a future `GRANT`
@@ -3972,22 +4141,43 @@ non-blocking **P3 on the Example AF wording** (independent re-audit of round 8) 
 | P2 align the race matrix with the masking rule `3975577842` | Race-matrix rows 2 and 3 now split the **internal, logged** reason (`MERCHANT_INOPERABLE`; `MERCHANT_MEMBERSHIP_REQUIRED` / `MERCHANT_ACTOR_UNAUTHORIZED`) from the **single external `DELIVERY_DRAFT_NOT_FOUND`** already required by rows 10 / 58 and the `DELIVERY_DRAFT_NOT_FOUND` taxonomy — zero writes, before recovery or creation, both race directions and the lock order preserved, and no "no order" phrasing where an existing order is possible on the recovery path. Concurrency and race matrix rows 2, 3; Order-creation authority step 2; acceptance criteria. | Rows 2, 3 |
 | P2 require a non-null approval channel `3975577858` | `delivery_order.approval_channel` is `NOT NULL`, immutable, closed to `SESSION | WHATSAPP | SMS` (DB enum, or `CHECK` on the value set **with** `NOT NULL` — a pair-only `CHECK` passes on `NULL`), written from the trusted proof path actually verified at insert, never inferred from the identity/binding pair or defaulted. **Existing-order integrity** rejects a null / unknown value → `DELIVERY_ORDER_STATE_INCONSISTENT` (alert, zero writes) **before** the identity/binding-tuple check, after current-caller authorization and before recovery / cancellation; historical revocation of a still-matching tuple is not faulted. The separate `cancellation_channel` / `canceled_*` NULL-rules are unchanged. `delivery_order` field table + the `NOT NULL` list; The creation transaction; Existing-order integrity; `DELIVERY_ORDER_STATE_INCONSISTENT` taxonomy; decision 6; acceptance criteria; next-slice deps. | Row 70; Example S |
 
+## Fresh Codex review proposed resolutions (review on `091a07bb`, 2026-09-19)
+
+**Status: proposed docs-only correction; GitHub threads remain unresolved.**
+Fresh review on exact published head `091a07bb155bd416507a721fa763d42e44181944`
+adds **3 distinct findings: 1 P1 + 2 P2**. This correction is additive/forward:
+no migration, runtime, PR metadata, thread resolution, passenger Ride lifecycle,
+pricing implementation, WhatsApp runtime, Dispatch or Execution change is made.
+
+| Finding / comment | Contract correction | Verification case |
+| --- | --- | --- |
+| P1 bind resolved destinations to source text `4052770519` | Destination-specific resolved shape now includes versioned `source_text_binding` to canonical `destination_text`; trusted resolver persistence re-reads the text under the draft lock; publication + creation require shape-valid source-consistency; recipient snapshot + fingerprint carry the binding; historical integrity checks frozen text↔binding only. | Race/acceptance row 81 |
+| P2 reject blank intake dedupe components `4052770524` | Shared canonicalizers + trusted insert reject blank/whitespace non-null namespace/token; DB nonblank/bounds checks backstop the existing UNIQUE; namespace stays mandatory when token is present; `NULL` token retains repeatable tokenless semantics. | Race/acceptance row 82 |
+| P2 validate quote validity window `4052770526` | Canonical validity-window boundary requires server-owned finite non-null immutable `computed_at` / `expires_at` plus durable immutable **`published_at := t_publish`**, positive bounded duration, publication-time coherence and schema/writer backstops; `QUOTE_VALIDITY_INVALID` is distinct from valid-but-expired `QUOTE_EXPIRED`; Existing-order integrity verifies `computed_at <= published_at < expires_at`, retained duration shape + equality without today's clock/policy. | Race/acceptance row 83 |
+
 ## Expected next slices
 
-The same future Quote/Intake/schema slices must also implement the five scoped
-corrections before activation: protected draft INSERT with exact server TTL and
-immutable timestamps; protected draft-first abandonment with actor revalidation
-and atomic quote invalidation; status-bound cancellation-fact constraints and
-historical checks; shared canonical money validation at every specified boundary;
-and step-0 pair validation with consistent errors. The concrete TTL/maximum,
-monetary domain and source-specific reason bounds/vocabularies must be frozen
-first. No fallback values, new endpoints or runtime implementation are authorized
-by this correction; no frozen Identity/Contact contract or runtime is modified.
+The same future Quote/Intake/schema slices must implement the five earlier scoped
+corrections **and the three fresh `091a07bb` review corrections** before
+activation: protected draft INSERT with exact server TTL and immutable
+timestamps; protected draft-first abandonment with actor revalidation and atomic
+quote invalidation; status-bound cancellation-fact constraints and historical
+checks; shared canonical money validation; step-0 pair validation; destination
+source-text binding; canonical/nonblank intake-dedupe components; and canonical
+quote validity-window validation. The concrete TTL/maximum, monetary domain,
+quote-duration bound/version, destination-text binding canonicalizer/version and
+source-specific reason bounds/vocabularies must be frozen first. No fallback
+values, new endpoints or runtime implementation are authorized by this
+correction; no frozen Identity/Contact contract or runtime is modified.
 
 1. `BD-MERCHANT-QUOTE-AUTHORITY-01A` — server quote, expiry, reprice, merchant
-   approval semantics feeding this order gate.
+   approval semantics feeding this order gate; owns the destination-text binding
+   canonicalizer/version and trusted pre-pricing destination resolver persistence,
+   plus the server-owned bounded quote validity-window policy/backstop.
 2. `BD-MERCHANT-WHATSAPP-INTAKE-01A` — provider adapter maps inbound messages
-   into a `delivery_draft` without becoming authority.
+   into a `delivery_draft` without becoming authority; owns canonicalization of
+   provider namespace/dedupe token before the shared DB nonblank/bounds/UNIQUE
+   backstop, preserving `NULL` tokenless semantics.
 3. `BD-MERCHANT-DELIVERY-DISPATCH-01A` — driver eligibility + offer dispatch
    using existing Driver/Vehicle/Shift/Compliance authorities; the multi-stop
    delivery route/batch entity.
@@ -4046,9 +4236,13 @@ by this correction; no frozen Identity/Contact contract or runtime is modified.
    terminal states absorbing; every `OLD -> NEW`, intra-transaction included); a
    row-local **`delivery_order` `BEFORE INSERT` guard** admitting a new row only
    in `PENDING_DISPATCH` (not a permanent `CHECK`, no cross-table lock); external
-   not-found **masking of cross-tenant approval lookups**; a
-   **candidate-quote `expires_at` re-check** on the post-lock wall clock in
-   publication step 5; a **fresh-`t` two-deadline gate at order `INSERT` (step 5f)**
+   not-found **masking of cross-tenant approval lookups**; the full
+   **candidate-quote validity-window backstop** (server-owned finite non-null
+   `computed_at` / `expires_at`, positive bounded duration, immutable
+   `published_at := t_publish`, and historical
+   `computed_at <= published_at < expires_at`) plus its post-lock
+   publication-time checks; a **fresh-`t` two-deadline gate at order `INSERT`
+   (step 5f)**
    plus **`delivery_order.created_at` `NOT NULL`, immutable, non-backdatable**
    (stamped `:= t`) with the historical `created_at < each immutable deadline`
    re-check in Existing-order integrity; a **deadline-enforced `delivery_draft`
@@ -4057,9 +4251,10 @@ by this correction; no frozen Identity/Contact contract or runtime is modified.
    **draft-level composite FK `(requested_pickup_location_id, merchant_id) ->
    merchant_locations (id, merchant_id)`** (`MATCH SIMPLE`, `RESTRICT`); an
    **immediate `UNIQUE (merchant_id, origin_channel, origin_namespace,
-   adapter_dedupe_token)`** with **`origin_channel` `NOT NULL`** (closed enum) and
-   `CHECK (adapter_dedupe_token IS NULL OR origin_namespace IS NOT NULL)`; a
-   **trusted transactional order-creation procedure** with restricted
+   adapter_dedupe_token)`** with **`origin_channel` `NOT NULL`** (closed enum),
+   namespace-required-when-token and bounded/nonblank DB checks for non-null
+   canonical namespace/token values; a **trusted transactional
+   order-creation procedure** with restricted
    direct-`INSERT` `GRANT`s that re-checks **current** merchant / membership+role
    / channel identity-proof / binding eligibility at insert time; and a
    **write-once `delivery_order.cancellation_authority` (`MERCHANT |
@@ -4074,6 +4269,15 @@ by this correction; no frozen Identity/Contact contract or runtime is modified.
    must preserve the dedupe guarantee; **`delivery_order.approval_channel`
    `NOT NULL` + closed `SESSION | WHATSAPP | SMS` enum / `CHECK`** written from the
    verified proof path, with the null/unknown re-check in Existing-order
-   integrity before the identity/binding tuple; FK `RESTRICT`;
+   integrity before the identity/binding tuple; FK `RESTRICT`; a
+   **destination resolved-point shape/backstop with versioned source-text binding**
+   (plus trusted resolver persistence and invalidate-on-`destination_text` edit);
+   **canonical/nonblank bounded checks for non-null `origin_namespace` and
+   `adapter_dedupe_token`** in addition to the existing namespace-required
+   relation + UNIQUE; and **quote validity-window schema/writer backstops** for
+   server-owned finite non-null immutable `computed_at` / `expires_at`, immutable
+   trusted-writer **`published_at := t_publish`**, positive bounded duration,
+   `computed_at <= published_at < expires_at`, and retained historical
+   validation semantics;
    readiness / concurrency / privacy tests; dark service seam, no public route
    unless separately approved.
