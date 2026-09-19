@@ -5,6 +5,7 @@
 // database; the first query (or /readyz) opens a connection.
 import fp from 'fastify-plugin';
 import pg from 'pg';
+import { telegramLinkSchemaReady } from '../repositories/telegram_links.js';
 
 const { Pool } = pg;
 
@@ -574,7 +575,8 @@ async function dbPlugin(app, opts) {
             )
             ) AS ok`,
       );
-      return rows[0]?.ok === true;
+      // 0010 Telegram is dark too; readiness still requires the complete schema.
+      return rows[0]?.ok === true && await telegramLinkSchemaReady(pool);
     },
   };
 
