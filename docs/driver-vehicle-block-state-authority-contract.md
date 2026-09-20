@@ -146,7 +146,8 @@ Rationale:
 (`lift_reason_note IS NULL OR length(lift_reason_note) <= 512`) — the same `<= 512` bound and
 named-`CHECK` shape `0009` uses for `pickup_instructions`. Nullability is unchanged: both
 remain `TEXT NULL` and optional, and `lift_reason_note` stays `NULL` while `ACTIVE` (existing
-lifecycle `CHECK`).
+lifecycle `CHECK`). Both `CHECK`s are load-bearing schema objects: `ready()` and the
+`server-ci` by-name assertions **MUST** verify them (see `01B` scope preview item 4).
 
 ### D4 — Service shape
 
@@ -1076,12 +1077,24 @@ already open cannot be excluded by the reader's transaction-start time.
    wiring belongs to the first live consumer slice that owns composition-root activation.
 4. **Readiness / schema assertions** — `server/src/infra/db.js` `ready()` gains a structural
    check for `vehicle_operational_block` (load-bearing columns + the named actor-XOR and
-   lifecycle `CHECK`s + the `block_reason` `CHECK` + the
-   `vehicle_operational_block_one_active_per_reason_uq` partial index +
+   lifecycle `CHECK`s + the `block_reason` `CHECK` + the two named note-length `CHECK`s
+   (R1 D3) + the `vehicle_operational_block_one_active_per_reason_uq` partial index +
    `trg_vehicle_operational_block_guard_immutability` + `trg_vehicle_operational_block_updated_at`),
    following the exact structural (not `to_regclass`) pattern the sibling tables use.
+   For each of `vehicle_operational_block_applied_reason_note_length_check` and
+   `vehicle_operational_block_lift_reason_note_length_check`, `ready()` **MUST** verify the
+   exact constraint name, that it is a `CHECK` (`contype = 'c'`) on `vehicle_operational_block`,
+   and — via `pg_get_constraintdef` — that its definition contains the frozen bound
+   (`length(applied_reason_note) <= 512` / `length(lift_reason_note) <= 512` respectively),
+   the same strictness `0009` applies to `merchant_locations_pickup_instructions_length_check`.
+   If either `CHECK` is absent, or its definition does not contain that bound, `ready()`
+   **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` / `503`). The
+   `IS NULL OR` clause is deliberately not asserted separately, as for `0009`.
    `server-ci.yml` replays **all** migrations in sorted order twice (`0001`–`0007`, the new
-   `0008`, then the existing `0009`) and adds by-name object assertions; the `app` job
+   `0008`, then the existing `0009`) and adds by-name object assertions, which **MUST**
+   include both note-length `CHECK`s: each by exact name and `contype = 'c'`, and each with its
+   definition (`pg_get_constraintdef`) containing the corresponding `<= 512` fragment, at the
+   same strictness `server-ci` applies to the `0009` pickup-note constraint. The `app` job
    additionally proves that a database with **all migrations except `0008`** already reports
    `{status:'degraded', db:'schema-incomplete'}` / `503` (R1 D5 — replacing the earlier
    `0001`–`0007` assumption, which predates `0009` on `main`).
