@@ -4,6 +4,8 @@ Status: contract-first / docs-only
 
 Issue: #973
 
+Amendment: R1 (docs-only reconciliation before `01B` — see "Amendment R1" below)
+
 Architecture: Safety & Compliance / Driver Availability / Backend authority / DB contract —
 prerequisite for: Assignment usability (operational half) → Driver Shift Authority → Live
 Shift API → Presence → Dispatcher
@@ -66,7 +68,115 @@ This contract fills exactly the storage/authority gap the Assignment Authority c
 deferred. **It extends the frozen contracts — it does not contradict or restate them.** Every
 quote marked "frozen" is carried forward verbatim, not reinvented.
 
+## Amendment R1 — reconciliation before `01B`
+
+Slice names (canonical, unchanged): `BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01A` (this
+contract) and `BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01B` (its implementation slice).
+
+Status: **docs-only amendment of this frozen contract.** It was prepared after a read-only
+`01B` preflight against `main@2996264dd5fa896235cad1bccd45ec2d881e496e`, which found that
+the text below could not be implemented literally: one requirement had no surface on `main`
+to attach to (D1), and one predicate could miss an already-committed block (D2). The
+decisions below reconcile the text. They add **no** persisted lifecycle state, **no**
+`block_reason`, **no** transition, and **no** table; they do not change the frozen
+Assignment / Shift / Compliance contracts. Where a sentence elsewhere in this document
+conflicts with an R1 decision, **the R1 decision governs**; the affected sentences are also
+amended in place and marked `(R1)`.
+
+### D1 — Resolver wiring: dark export, no composition-root activation
+
+1. `01B` **MUST export** the real `resolveVehicleBlockState(vehicleId, client)` (frozen
+   signature and return mapping, see "Read authority / consumers"), from the service module
+   fixed in D4.
+2. `01B` **remains dark**: no HTTP route, no registration in `services/index.js` `SERVICES`,
+   no composition-root activation.
+3. `01B` **MUST NOT edit**:
+   - the `buildApp()` composition root (`server/src/server.js`);
+   - `server/src/domain/assignment-usability.js` (including `defaultResolveVehicleBlockState`);
+   - the `driver-shift-authority` consumer (`server/src/services/driver-shift-authority/index.js`);
+   - the `driver-vehicle-assignment-authority` consumer
+     (`server/src/services/driver-vehicle-assignment-authority/index.js`).
+4. Tests **MAY** inject the real resolver explicitly (the consumers already accept
+   `opts.resolveVehicleBlockState`).
+5. Production / default wiring belongs to the **first live consumer slice that owns
+   composition-root activation**; that slice passes the real resolver from its own
+   composition root. `01B` does not pre-empt it.
+6. The held `BD-DRIVER-SHIFT-AUTHORITY-01C-B` branch (recorded in this document as HOLD at `6dba8ff`) is
+   not merged into `main` and was not listed among the remote branches when R1 was
+   prepared. It is **not a blocker** for a dark `01B`, and `01B` does not depend on it.
+7. **Existing behaviour on `main` is unchanged:** a consumer that receives no resolver keeps
+   resolving `vehicleBlockState(t)` as `'UNKNOWN'` (fail closed), exactly as today.
+
+### D2 — The block read carries no time predicate
+
+`effective_at <= now()` (and its `effective_at <= t` spelling) is **removed** from the
+resolver predicate everywhere in this document. The resolver semantics become:
+
+```text
+BLOCKED    =  EXISTS a row for the vehicle WHERE status = 'ACTIVE'
+UNBLOCKED  =  the read succeeded and no ACTIVE row exists for the vehicle
+UNKNOWN    =  read failure / uncertainty (unchanged; includes an unrecognized value)
+```
+
+Rationale:
+
+- This contract supports **immediate blocks only**; an `ACTIVE` row is itself sufficient
+  authority.
+- `effective_at` **remains an audit timestamp** (DB-stamped once at `INSERT`); the resolver
+  does not read it.
+- PostgreSQL `now()` is **transaction-scoped** (it returns the start time of the current
+  transaction). A reader transaction that began *before* a block-writer transaction began can
+  therefore evaluate `effective_at <= now()` as false for a block that has **already
+  committed** — sequence: reader `BEGIN` → writer `BEGIN`, apply, `COMMIT` → reader takes the
+  `vehicles` row lock and reads. The committed `ACTIVE` row would be invisible to the reader
+  (`effective_at` = the writer's transaction start, later than the reader's `now()`), yielding
+  a false `UNBLOCKED` and defeating the "no TOCTOU" argument in "Concurrency / race note".
+- **Scheduled / future-effective blocks remain explicitly out of scope.** If a later
+  amendment adds them it must define the time semantics of the block read itself; R1 does
+  not pre-decide them, introduces no `clock_timestamp()` workaround, and adds no scheduled
+  state.
+
+### D3 — Reason-note length
+
+`applied_reason_note` and `lift_reason_note` are each **at most 512 characters**
+(PostgreSQL `length()`), enforced by named `CHECK` constraints —
+`vehicle_operational_block_applied_reason_note_length_check`
+(`applied_reason_note IS NULL OR length(applied_reason_note) <= 512`) and
+`vehicle_operational_block_lift_reason_note_length_check`
+(`lift_reason_note IS NULL OR length(lift_reason_note) <= 512`) — the same `<= 512` bound and
+named-`CHECK` shape `0009` uses for `pickup_instructions`. Nullability is unchanged: both
+remain `TEXT NULL` and optional, and `lift_reason_note` stays `NULL` while `ACTIVE` (existing
+lifecycle `CHECK`). Both `CHECK`s are load-bearing schema objects: `ready()` and the
+`server-ci` by-name assertions **MUST** verify them (see `01B` scope preview item 4).
+
+### D4 — Service shape
+
+`01B` ships **exactly one** service module,
+`server/src/services/vehicle-block-state-authority/index.js`, containing three **dark**
+functions: an **apply-block** function, a **lift-block** function (by block `id`), and the
+exported real `resolveVehicleBlockState(vehicleId, client)`. It registers no HTTP route, is
+not listed in `services/index.js` `SERVICES`, and is not wired into any composition root.
+Exact export names for apply / lift are a `01B` implementation choice. SQL stays in
+`server/src/repositories/vehicle_operational_block.js` (already frozen as the single SQL seam,
+no orchestration).
+
+### D5 — Current migration topology
+
+- `main` **already contains `0009`** (`0009_merchant_identity_contact_authority.sql`).
+  **`0008` remains the reserved slot** for this contract
+  (`0008_vehicle_block_state_authority.sql`). Statements in this document about the audited
+  baseline `main@10731609` ("Migrations stop at `0007`", `server-ci` on `0001`–`0006` /
+  `0001`–`0007`) describe that baseline and are superseded by this paragraph.
+- The `server-ci` readiness negative check is **"all migrations except `0008`"** — a database
+  with every existing migration applied except `0008` must report
+  `{status:'degraded', db:'schema-incomplete'}` / `503` — replacing the earlier
+  "`0001`–`0007`" assumption, which predates `0009`.
+
 ## Existing anchors and audit (independent, read-only)
+
+> **R1 note:** the audit statements in this section describe the audited baseline
+> `main@10731609a05bfe099fd1ce92e8eb3b161e1209c2`. Where they differ from `main` today
+> (notably migrations: `0009` now exists), "Amendment R1" governs.
 
 ### Files read in full for this audit
 
@@ -209,7 +319,8 @@ quote marked "frozen" is carried forward verbatim, not reinvented.
   ("blocks/bans … keyed to identity"). **There is no safety-hold, stolen-vehicle, impound,
   ownership-dispute, or vehicle-block entity anywhere** — no table, no column, no
   repository, no route, no service, no migration, no ADR. Migrations stop at `0007`; there
-  is no `0008`.
+  is no `0008`. *(Audited baseline; superseded by Amendment R1 D5 — `main` now also contains
+  `0009`, and `0008` is the reserved slot for this contract.)*
 
 **Conclusion of fact-finding:** the production `vehicleBlockState(t)` seam is, today,
 uniformly fail-closed `UNKNOWN`, and no authoritative operational block-state source exists
@@ -308,7 +419,7 @@ identity trust-block         (future, BD-DOCS-037 §4) keyed to users(id) — ga
 | 2 | entitlement | `vehicle_driver_assignments (id)` | owner / operator / fleet / Ops / server proc | via `assignmentEntitledAt(t)` → the **entitlement half**, not the operational half | `decideAssignmentUsability` step 1 |
 | 3 | selection | `driver_active_vehicle (driver_id)` | the authenticated driver | no | feeds shift-open only |
 | 4 | working / open shift | `driver_shift (id)`, `status='OPEN'` | shift-open transaction | no | is the working-identity authority once open |
-| 5 | **vehicle operational block** | **`vehicle_operational_block (id)`, `status='ACTIVE'`, ≥1 effective row per `vehicle_id`** | **Safety / Ops human or a server safety procedure — never the driver or the owner-as-ordinary-user** | **yes — via `vehicleBlockState(t) == BLOCKED`** | **the resolver call inside `decideAssignmentUsability` step 3** |
+| 5 | **vehicle operational block** | **`vehicle_operational_block (id)`, `status='ACTIVE'`, ≥1 row per `vehicle_id`** | **Safety / Ops human or a server safety procedure — never the driver or the owner-as-ordinary-user** | **yes — via `vehicleBlockState(t) == BLOCKED`** | **the resolver call inside `decideAssignmentUsability` step 3** |
 | 6 | archived | `vehicles.archived` (boolean) | future garage-CRUD slice, on the owner's action | **yes — but as a distinct confirmed-negative** | `decideAssignmentUsability` step 2 (`vehicle.archived` → `UNUSABLE('ARCHIVED')`), **before** the resolver |
 | 7 | `vehicles.is_active` | `vehicles.is_active` (boolean, owner-scoped) | client garage mirror | **no — never read by any backend decision** | nowhere (frozen out) |
 | 8 | presence | future Presence store, keyed to driver identity | future heartbeat service | no (a downstream consumer of this verdict) | future Presence / Dispatcher gates |
@@ -320,7 +431,7 @@ identity trust-block         (future, BD-DOCS-037 §4) keyed to users(id) — ga
 `vehicle_operational_block` records **server-authoritative operational holds on a specific
 vehicle**. One `ACTIVE` row = "this vehicle is currently held from being worked, for this
 reason, applied by this authority, effective from this server time". **The vehicle is
-`BLOCKED` iff at least one such effective `ACTIVE` row exists** — multiple independent holds
+`BLOCKED` iff at least one such `ACTIVE` row exists** — multiple independent holds
 may co-exist (see "Data contract" and "Multiple independent simultaneous blocks"). Absence
 of any `ACTIVE` row for a vehicle = the vehicle is not operationally blocked.
 
@@ -389,8 +500,8 @@ requires a contract amendment first (the same rule the Shift Authority contract 
 | `block_reason` | Canonical vocabulary (see below). `TEXT` + named `CHECK`, not a native enum, so a later scoped slice can extend it. Also the independence dimension — see "Multiple independent simultaneous blocks". |
 | `applied_by_user_id` | `UUID NULL`, FK → `users(id)` `ON DELETE RESTRICT`. Set when a **human** authority (Ops / Safety officer) applied the block. |
 | `applied_by_service_id` | `TEXT NULL`. Set when a **server-owned procedure** (e.g. a stolen-registry ingester, an acute-safety hook) applied it — a service-principal identifier, never a `users` row. |
-| `effective_at` | Server/database clock, stamped once at `INSERT`. **Always non-null.** In 01A a block is **immediate** — `effective_at` is the creation time; there is no future-effective / scheduled block (deferred — see below). |
-| `applied_reason_note` | `TEXT NULL`. Free-text operator context (case id, dispatcher note). Never parsed; never surfaced to the driver verbatim; length-bounded by `01B`. |
+| `effective_at` | Server/database clock, stamped once at `INSERT`. **Always non-null.** In 01A a block is **immediate** — `effective_at` is the creation time; there is no future-effective / scheduled block (deferred — see below). *(R1 D2: `effective_at` is an audit timestamp; the block read never filters on it.)* |
+| `applied_reason_note` | `TEXT NULL`. Free-text operator context (case id, dispatcher note). Never parsed; never surfaced to the driver verbatim; at most **512 characters** (R1 D3: named `CHECK`, `applied_reason_note IS NULL OR length(applied_reason_note) <= 512`). |
 | `created_at` | Row creation (server time). |
 
 Exactly one of `applied_by_user_id` / `applied_by_service_id` is non-null — an actor-XOR
@@ -405,7 +516,7 @@ neither; the acting authority is always server-resolved. **The client can never 
 | `status` | `ACTIVE` \| `LIFTED`. No third value. |
 | `lifted_at` | `NULL` while `ACTIVE`; the exact server transition time on `ACTIVE → LIFTED`. Once set, **must be `>= effective_at`**. |
 | `lifted_by_user_id` / `lifted_by_service_id` | Actor-XOR, same shape as `applied_by_*`. **Mandatory iff `LIFTED`.** Who cleared this specific block. |
-| `lift_reason_note` | `TEXT NULL`. Operator context for the lift; length-bounded by `01B`. |
+| `lift_reason_note` | `TEXT NULL`. Operator context for the lift; at most **512 characters** (R1 D3: named `CHECK`, `lift_reason_note IS NULL OR length(lift_reason_note) <= 512`). |
 | `updated_at` | Last lifecycle write (server time). |
 
 ### Multiple independent simultaneous blocks (the corrected model)
@@ -415,8 +526,8 @@ time**, one per independent authority's hold. Example: police file a `STOLEN_REP
 while a regulator independently orders the vehicle out of service with a `REGULATORY_HOLD` —
 both rows are `ACTIVE`, on the same `vehicle_id`, concurrently.
 
-- **`vehicleBlockState(t) == BLOCKED` iff `≥ 1` effective `ACTIVE` row exists** for the
-  vehicle (`status = 'ACTIVE'` AND `effective_at <= t`). It is a set-membership test, not a
+- **`vehicleBlockState(t) == BLOCKED` iff `≥ 1` `ACTIVE` row exists** for the
+  vehicle (`status = 'ACTIVE'`; R1 D2: no time predicate). It is a set-membership test, not a
   single-row lookup.
 - **Uniqueness (the only uniqueness this contract freezes):** at most **one `ACTIVE` row per
   `(vehicle_id, block_reason)`** — a partial unique index
@@ -455,8 +566,8 @@ both rows are `ACTIVE`, on the same `vehicle_id`, concurrently.
 - **The `vehicleBlockState(t)` seam is unchanged by the multi-row model.** The resolver still
   returns exactly one of `'UNBLOCKED' | 'BLOCKED' | 'UNKNOWN'`; multiple `ACTIVE` rows still
   collapse to the single string `'BLOCKED'`. `server/src/domain/assignment-usability.js` and
-  the two consumer services need **no change** — `01B` only swaps the injected default
-  resolver. The frozen `decideAssignmentUsability` `reason` for the blocked case stays the
+  the two consumer services need **no change** — `01B` only supplies a real resolver
+  implementation (R1 D1: exported, not wired as a default). The frozen `decideAssignmentUsability` `reason` for the blocked case stays the
   fixed string `'BLOCKED'` — it does **not** surface *which* `block_reason` applied; a
   driver-facing reason category is a future `01C` projected-read concern.
 
@@ -511,8 +622,9 @@ Extensible only by a later, explicitly-scoped slice — never invented for UI co
 - **Scheduled / future-effective blocks** (`effective_at` in the future, mirroring
   `vehicle_driver_assignments.starts_at`) — a safety hold, a stolen report, and a dispute are
   all "now" by nature; inventing a scheduling model here is scope creep. A later amendment
-  adds it if a real need appears, and would then also give teeth to the `effective_at <= t`
-  half of the `BLOCKED` predicate that 01A leaves trivially true.
+  adds it if a real need appears, and would then have to define the time semantics of the
+  block read itself (R1 D2 removes the `effective_at <= t` half of the predicate from
+  01A / 01B; it is not pre-decided here).
 - **Any caching / materialization tier** for the block read — 01A is a live co-located read
   every time and owns no staleness contract. A cache is a separate later slice with its own
   invalidation contract.
@@ -535,8 +647,8 @@ BLOCKED  >  UNKNOWN  >  UNBLOCKED
 
 | `vehicleBlockState(t)` | Meaning |
 | --- | --- |
-| **`BLOCKED`** | The authoritative table was queried and **at least one effective, non-lifted** `vehicle_operational_block` row applies at server time `t`: `∃ row. status = 'ACTIVE' AND effective_at <= t`. (In 01A, immediate blocks + terminal `LIFTED` ⇒ this reduces to `∃ ACTIVE row`.) |
-| **`UNBLOCKED`** | The authoritative table was **queried successfully and no effective block row applies at `t`**. "Queried and found nothing" is `UNBLOCKED`, **never** `UNKNOWN`. Absence of a row is never `UNKNOWN`. |
+| **`BLOCKED`** | The authoritative table was queried and **at least one non-lifted** `vehicle_operational_block` row exists for the vehicle: `∃ row. status = 'ACTIVE'`. *(R1 D2: no `effective_at` predicate — immediate blocks + terminal `LIFTED`, so an `ACTIVE` row is itself sufficient.)* |
+| **`UNBLOCKED`** | The authoritative table was **queried successfully and no `ACTIVE` block row exists for the vehicle**. "Queried and found nothing" is `UNBLOCKED`, **never** `UNKNOWN`. Absence of a row is never `UNKNOWN`. |
 | **`UNKNOWN`** | The authoritative read **errored** — the `SELECT` against `vehicle_operational_block` threw (or returned an unrecognized value). It is **not** "found nothing", and **not** a normal state (co-located ⇒ a DB-error incident). An exception must **never** degrade to `UNBLOCKED`. |
 
 **`vehicles.archived` is NOT a value of `vehicleBlockState(t)`.** It is a distinct
@@ -572,14 +684,15 @@ negative, and can never *manufacture* one either (a throw is `UNKNOWN`, not `BLO
 is exactly what the merged `decideAssignmentUsability` already does; this contract adds only
 the real `resolveVehicleBlockState`.
 
-### "Effective at `t`" and freshness semantics (frozen)
+### Evaluation time and freshness semantics (frozen; amended R1)
 
-- **Server clock only.** `t` is always PostgreSQL `now()` inside the evaluating transaction —
-  never a JS `Date`, never a client timestamp. `effective_at` and `lifted_at` are
-  DB-stamped.
-- **Immediate blocks only in 01A** — a block is effective from the instant it is written
-  (`effective_at <= t` is trivially true). Scheduled / future-effective blocks are deferred
-  (above).
+- **Server clock for the stamps; no time predicate on the read (R1 D2).** `effective_at` and
+  `lifted_at` are DB-stamped audit / lifecycle timestamps — never a JS `Date`, never a
+  client timestamp. The block read is a current-committed-state read of `ACTIVE` rows: it
+  applies no `effective_at` filter and no `now()` filter (transaction-scoped `now()` could
+  exclude a block that committed after the reader transaction began — see Amendment R1 D2).
+- **Immediate blocks only in 01A** — a block is effective from the instant it is written.
+  Scheduled / future-effective blocks are deferred (above).
 - **No caching layer** — a live co-located read every time. Any caching / materialization
   tier is a separate later slice and would own its own staleness / invalidation contract; 01A
   explicitly has none.
@@ -624,10 +737,10 @@ a raw table read hand-rolled per call site.
 
 | Consumer | Status | How it reads |
 | --- | --- | --- |
-| `openDriverShift` (shift-open) | merged, `services/driver-shift-authority/index.js` | already calls `decideAssignmentUsability(client, { …, resolveVehicleBlockState })` under `lockVehicleById`; `01B` swaps the default resolver for the real one — **no change to this file** |
+| `openDriverShift` (shift-open) | merged, `services/driver-shift-authority/index.js` | already calls `decideAssignmentUsability(client, { …, resolveVehicleBlockState })` under `lockVehicleById`; **no change to this file** (R1 D1: `01B` swaps no default and wires nothing — the real resolver is passed explicitly by the caller: by tests now, by the first live consumer slice's composition root later) |
 | `setDriverSelection` (`select` / `switch`) | merged, `services/driver-vehicle-assignment-authority/index.js` | same seam, same lock; `clearDriverSelection` has no usability check and is unaffected |
-| `reconcileAssignmentUnusableShift` | merged, `services/driver-shift-authority/index.js` | already re-derives usability under the driver→assignment→vehicle locks and acts only on a **confirmed `UNUSABLE`**; a `BLOCKED` pinned vehicle is exactly such a confirmed `UNUSABLE`. **New trigger input for the `01C-C` discovery scan (P3-3):** in addition to "`OPEN driver_shift` whose pinned assignment has since gone `ENDED`/`REVOKED`/elapsed/`archived`", the scan gains "**`OPEN driver_shift` whose pinned `vehicle_id` has an effective `ACTIVE` `vehicle_operational_block` row**". The reconcile primitive itself is unchanged — it still re-derives the fact under lock; only the *what to scan for* set grows. |
-| Live Shift API `POST /api/v1/driver-shift/open` | **HOLD**, `feat/bd-driver-shift-authority-01c-b @ 6dba8ff` (not merged, not touched by this slice) | threads `resolveVehicleBlockState` through `buildApp()`; production passes none ⇒ `defaultResolveVehicleBlockState` ⇒ every `POST /open` currently fails closed. `01B`'s real resolver is what unblocks its happy path. This contract does **not** modify that held branch. |
+| `reconcileAssignmentUnusableShift` | merged, `services/driver-shift-authority/index.js` | already re-derives usability under the driver→assignment→vehicle locks and acts only on a **confirmed `UNUSABLE`**; a `BLOCKED` pinned vehicle is exactly such a confirmed `UNUSABLE`. **New trigger input for the `01C-C` discovery scan (P3-3):** in addition to "`OPEN driver_shift` whose pinned assignment has since gone `ENDED`/`REVOKED`/elapsed/`archived`", the scan gains "**`OPEN driver_shift` whose pinned `vehicle_id` has an `ACTIVE` `vehicle_operational_block` row**". The reconcile primitive itself is unchanged — it still re-derives the fact under lock; only the *what to scan for* set grows. |
+| Live Shift API `POST /api/v1/driver-shift/open` | **HOLD**, `feat/bd-driver-shift-authority-01c-b @ 6dba8ff` (not merged, not touched by this slice; R1: not listed among the remote branches when R1 was prepared) | threads `resolveVehicleBlockState` through `buildApp()`; production passes none ⇒ `defaultResolveVehicleBlockState` ⇒ every `POST /open` currently fails closed. `01B`'s exported real resolver is what a live consumer can pass to unblock its happy path (R1 D1: production / default wiring belongs to the first live consumer slice that owns composition-root activation; this HOLD branch is **not** a dependency of the dark `01B`). This contract does **not** modify that held branch. |
 | Matching candidate inclusion + dispatch final-assignment re-check | future (BD-DOCS-034, not built) | the frozen "two re-check points" on the `OPEN` shift's pinned assignment; a `false` (`UNUSABLE` **or `UNKNOWN`**) excludes the driver |
 
 **The resolver contract, frozen (by `decideAssignmentUsability` in code):**
@@ -643,16 +756,19 @@ resolveVehicleBlockState(vehicleId, client) : Promise<'UNBLOCKED' | 'BLOCKED' | 
 - **Takes NO lock of its own.** The subject vehicle row is already locked by the caller; that
   is the serialization point (see "Concurrency / race note"). The resolver's read of
   `vehicle_operational_block` is a plain `SELECT EXISTS(… WHERE vehicle_id = $1 AND
-  status = 'ACTIVE' AND effective_at <= now())` under that umbrella.
+  status = 'ACTIVE')` (R1 D2: no `effective_at` / `now()` predicate) under that umbrella.
 - **Return mapping (frozen by `decideAssignmentUsability`):** `EXISTS` true ⇒ `'BLOCKED'`;
   the query succeeded and `EXISTS` false ⇒ `'UNBLOCKED'`; the query **threw** ⇒ let it
   propagate (the caller's `try/catch` maps it to `'UNKNOWN'`), or return `'UNKNOWN'`
   explicitly — the real implementation must **never** swallow a query error into
   `'UNBLOCKED'`.
-- **A real implementation replaces `defaultResolveVehicleBlockState` as the production
-  default** (in `buildApp()` / the service composition root). `defaultResolveVehicleBlockState`
-  (always `'UNKNOWN'`) remains only as the safe fallback when no resolver is injected, and as
-  the test seam.
+- **R1 D1 — the real implementation is exported, not wired.** `01B` exports the real
+  resolver from `server/src/services/vehicle-block-state-authority/index.js`; it does **not**
+  replace `defaultResolveVehicleBlockState` and touches neither `buildApp()`,
+  `assignment-usability.js`, nor the two consumer services. `defaultResolveVehicleBlockState`
+  (always `'UNKNOWN'`) stays the behaviour whenever no resolver is injected, and the test
+  seam; production / default wiring belongs to the first live consumer slice that owns
+  composition-root activation.
 - **The resolver never itself decides policy** — it only reports the three-value fact.
 
 ## Relationship to `vehicles.archived`
@@ -700,8 +816,8 @@ any block. Neither is a substitute for the other.
    UNBLOCKED}` with the strict order `BLOCKED > UNKNOWN > UNBLOCKED` **among those three
    values**. `vehicles.archived` and a confirmed entitlement-negative are **not**
    `vehicleBlockState(t)` values — they short-circuit *ahead of* the resolver in
-   `decideAssignmentUsability` (steps 1–2). `BLOCKED` = queried, ≥ 1 effective `ACTIVE` row;
-   `UNBLOCKED` = queried, none effective; `UNKNOWN` = the read errored (never "queried, none
+   `decideAssignmentUsability` (steps 1–2). `BLOCKED` = queried, ≥ 1 `ACTIVE` row;
+   `UNBLOCKED` = queried, no `ACTIVE` row; `UNKNOWN` = the read errored (never "queried, none
    found"; an exception never degrades to `UNBLOCKED`).
 3. **`UNKNOWN` drives no durable state.** A failed block read refuses forward progress
    (retryable, zero writes) but never closes a shift, sets `OFFLINE`, or resets a selection
@@ -711,7 +827,7 @@ any block. Neither is a substitute for the other.
 4. **Multiple independent simultaneous blocks.** A vehicle may hold more than one `ACTIVE`
    block row at once, at most one per `block_reason` (partial unique index
    `WHERE status = 'ACTIVE'` on `(vehicle_id, block_reason)`). `BLOCKED` is a
-   set-membership test (`≥ 1` effective `ACTIVE` row). A same-reason apply race loser gets an
+   set-membership test (`≥ 1` `ACTIVE` row). A same-reason apply race loser gets an
    idempotent "already blocked for this reason", never a raw constraint error.
 5. **Scoped lift.** A lift transitions **one row, identified by `id`**, `ACTIVE → LIFTED`.
    There is no `vehicle_id`-scoped "clear all" primitive. `vehicleBlockState(t)` recomputes
@@ -720,8 +836,9 @@ any block. Neither is a substitute for the other.
 6. **Append-mostly, no reopen.** `vehicle_id` / `block_reason` / `applied_by_*` /
    `effective_at` / `created_at` are immutable; `LIFTED` is terminal; a re-block is a new
    row. Enforced by a `BEFORE UPDATE` immutability trigger, not application discipline alone.
-7. **Server clock only.** `effective_at`, `lifted_at`, and the evaluation `t` are all
-   PostgreSQL `now()`. No browser timestamp is ever trusted.
+7. **Server clock only (R1 D2).** `effective_at` and `lifted_at` are PostgreSQL-stamped
+   (audit / lifecycle); the block read applies no time predicate. No browser timestamp is
+   ever trusted.
 8. **Client is never an actor.** The client cannot apply, lift, or read
    `vehicle_operational_block` directly; `applied_by_*` / `lifted_by_*` are server-resolved
    and actor-XOR'd. The client may, in a future slice, *see* that its selected/pinned
@@ -763,7 +880,7 @@ NONE ──▶ ACTIVE ──▶ LIFTED
 **Per vehicle (derived, not stored):**
 
 ```
-vehicleBlockState(t) == BLOCKED    iff  COUNT(rows WHERE vehicle_id = v AND status = 'ACTIVE' AND effective_at <= t) >= 1
+vehicleBlockState(t) == BLOCKED    iff  COUNT(rows WHERE vehicle_id = v AND status = 'ACTIVE') >= 1
 vehicleBlockState(t) == UNBLOCKED  iff  that query succeeded AND the count is 0
 vehicleBlockState(t) == UNKNOWN    iff  that query threw
 ```
@@ -826,7 +943,7 @@ enforced side by side, never one through the other**:
 | Block status (`ACTIVE` / `LIFTED`) | PostgreSQL `vehicle_operational_block` | Backend API, transactionally (apply / lift-by-id) | same as above | Server |
 | `block_reason` | PostgreSQL `vehicle_operational_block` | Backend API, at apply, from the canonical vocabulary | Safety & Ops, audit; (future) a driver-facing projected reason category | Server |
 | `applied_by_*` / `lifted_by_*` | PostgreSQL `vehicle_operational_block` | Backend API, server-resolved actor (XOR human / service) | audit, Ops | Server |
-| `effective_at` / `lifted_at` | PostgreSQL `vehicle_operational_block` | Backend API, server clock | Assignment usability (`vehicleBlockState(t)`), audit | Server |
+| `effective_at` / `lifted_at` | PostgreSQL `vehicle_operational_block` | Backend API, server clock | audit (R1 D2: not read by the resolver) | Server |
 | `vehicleBlockState(t)` verdict | derived (not stored) | n/a | `openDriverShift`, `setDriverSelection`, `reconcileAssignmentUnusableShift`, Live Shift API, (future) matching / dispatch | Server, via `resolveVehicleBlockState(vehicleId, client)` |
 | `vehicles.archived` | PostgreSQL `vehicles` (existing, 0001) | future garage-CRUD slice, owner action | Assignment usability (step 2), garage UI, Ops | Server — **separate from this table** |
 | `complianceReady` | future compliance projection (`docs/driver-document-compliance-contract.md`) | future compliance service | Dispatcher, Availability | Server, once built — **a separate AND-term, not this table** |
@@ -859,6 +976,10 @@ the committed block row (or its committed lift). There is no window in which the
 observe the `vehicles` row lock free *and* miss a concurrently-committing block write — the
 `FOR UPDATE` on `vehicles` is the single serialization point, identical to the mechanism the
 Shift Authority contract already relies on for cross-driver shift exclusivity.
+
+**R1 D2 note.** The block read applies **no** `now()`-based filter (see Amendment R1 D2), so
+this visibility argument is complete: a block that committed while the reader transaction was
+already open cannot be excluded by the reader's transaction-start time.
 
 - **block-write commits first** ⇒ the shift-open's subsequent `vehicleBlockState(t)` read
   sees `BLOCKED` ⇒ `UNUSABLE('BLOCKED')`, **zero durable shift writes** (precondition #8).
@@ -897,8 +1018,13 @@ Shift Authority contract already relies on for cross-driver shift exclusivity.
      — named `CHECK` (`vehicle_operational_block_reason_check`), `TEXT` not a native enum so a
      later scoped slice can extend it;
    - `status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LIFTED'))`;
-   - `effective_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `lifted_at TIMESTAMPTZ NULL`,
-     `applied_reason_note` / `lift_reason_note TEXT NULL` (length-bounded),
+   - `effective_at TIMESTAMPTZ NOT NULL DEFAULT now()` (audit timestamp, R1 D2),
+     `lifted_at TIMESTAMPTZ NULL`,
+     `applied_reason_note` / `lift_reason_note TEXT NULL`, each bounded to **512 characters**
+     by named `CHECK`s (R1 D3): `vehicle_operational_block_applied_reason_note_length_check`
+     (`applied_reason_note IS NULL OR length(applied_reason_note) <= 512`) and
+     `vehicle_operational_block_lift_reason_note_length_check`
+     (`lift_reason_note IS NULL OR length(lift_reason_note) <= 512`),
      `created_at` / `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`;
    - the two named lifecycle `CHECK`s (`vehicle_operational_block_lifecycle_check`):
      `ACTIVE ⇒ lifted_at IS NULL AND lifted_by_* IS NULL AND lift_reason_note IS NULL`;
@@ -917,8 +1043,8 @@ Shift Authority contract already relies on for cross-driver shift exclusivity.
 2. **`server/src/repositories/vehicle_operational_block.js`** — the single SQL seam, no
    orchestration:
    - `existsActiveBlockForVehicle(client, vehicleId)` — a plain
-     `SELECT EXISTS(… WHERE vehicle_id = $1 AND status = 'ACTIVE' AND effective_at <= now())`,
-     used by the real resolver;
+     `SELECT EXISTS(… WHERE vehicle_id = $1 AND status = 'ACTIVE')` (R1 D2: no time
+     predicate), used by the real resolver;
    - **no new `vehicles` SQL seam** — the write path's **first** lock **MUST** reuse
      `repositories/vehicles.js::lockVehicleById` (`SELECT * FROM vehicles WHERE id = $1 FOR
      UPDATE`); `01B` adds **no** second module that runs SQL against `vehicles` (see the MUST
@@ -941,19 +1067,37 @@ Shift Authority contract already relies on for cross-driver shift exclusivity.
    `existsActiveBlockForVehicle` on the caller's `client` (already holding the `vehicles` row
    lock), maps `true → 'BLOCKED'`, `false → 'UNBLOCKED'`, and lets any query error propagate
    (⇒ `'UNKNOWN'` via the caller's `catch`) — **never** swallows an error into `'UNBLOCKED'`.
-   Wired as the production default in `buildApp()` / the service composition root;
-   `defaultResolveVehicleBlockState` (always `'UNKNOWN'`) stays as the injection-absent
-   fallback + test seam. **No edit to `server/src/domain/assignment-usability.js` or the two
-   consumer services.**
+   **Exported, dark, not wired (R1 D1, D4):** exported from
+   `server/src/services/vehicle-block-state-authority/index.js`; tests may inject it
+   explicitly. `defaultResolveVehicleBlockState` (always `'UNKNOWN'`) is unchanged and remains
+   the injection-absent behaviour on `main`. **`01B` does not edit `server/src/server.js`
+   (`buildApp()`), `server/src/domain/assignment-usability.js`,
+   `server/src/services/driver-shift-authority/index.js`, or
+   `server/src/services/driver-vehicle-assignment-authority/index.js`.** Production / default
+   wiring belongs to the first live consumer slice that owns composition-root activation.
 4. **Readiness / schema assertions** — `server/src/infra/db.js` `ready()` gains a structural
    check for `vehicle_operational_block` (load-bearing columns + the named actor-XOR and
-   lifecycle `CHECK`s + the `block_reason` `CHECK` + the
-   `vehicle_operational_block_one_active_per_reason_uq` partial index +
+   lifecycle `CHECK`s + the `block_reason` `CHECK` + the two named note-length `CHECK`s
+   (R1 D3) + the `vehicle_operational_block_one_active_per_reason_uq` partial index +
    `trg_vehicle_operational_block_guard_immutability` + `trg_vehicle_operational_block_updated_at`),
    following the exact structural (not `to_regclass`) pattern the sibling tables use.
-   `server-ci.yml` replays `0001`–`0008` twice and adds by-name object assertions; the `app`
-   job additionally proves a database with `0001`–`0007` but not `0008` already reports
-   `{status:'degraded', db:'schema-incomplete'}` / `503`.
+   For each of `vehicle_operational_block_applied_reason_note_length_check` and
+   `vehicle_operational_block_lift_reason_note_length_check`, `ready()` **MUST** verify the
+   exact constraint name, that it is a `CHECK` (`contype = 'c'`) on `vehicle_operational_block`,
+   and — via `pg_get_constraintdef` — that its definition contains the frozen bound
+   (`length(applied_reason_note) <= 512` / `length(lift_reason_note) <= 512` respectively),
+   the same strictness `0009` applies to `merchant_locations_pickup_instructions_length_check`.
+   If either `CHECK` is absent, or its definition does not contain that bound, `ready()`
+   **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` / `503`). The
+   `IS NULL OR` clause is deliberately not asserted separately, as for `0009`.
+   `server-ci.yml` replays **all** migrations in sorted order twice (`0001`–`0007`, the new
+   `0008`, then the existing `0009`) and adds by-name object assertions, which **MUST**
+   include both note-length `CHECK`s: each by exact name and `contype = 'c'`, and each with its
+   definition (`pg_get_constraintdef`) containing the corresponding `<= 512` fragment, at the
+   same strictness `server-ci` applies to the `0009` pickup-note constraint. The `app` job
+   additionally proves that a database with **all migrations except `0008`** already reports
+   `{status:'degraded', db:'schema-incomplete'}` / `503` (R1 D5 — replacing the earlier
+   `0001`–`0007` assumption, which predates `0009` on `main`).
 5. **Real PostgreSQL adversarial / concurrency tests** — apply → `BLOCKED`; lift-by-id →
    recompute (with a second `ACTIVE` row still present, the vehicle stays `BLOCKED`);
    the per-`(vehicle_id, block_reason)` partial-unique race (two applies, same reason →
@@ -964,6 +1108,14 @@ Shift Authority contract already relies on for cross-driver shift exclusivity.
    the `vehicles` row lock, asserting the two deterministic outcomes above with **zero orphan
    `OPEN` `driver_shift` rows** and **zero shift-reconciliation side effects inside the
    block-write transaction** (Invariant 10).
+6. **Service module (R1 D4)** — exactly one:
+   `server/src/services/vehicle-block-state-authority/index.js`, containing three **dark**
+   functions: an **apply-block** function, a **lift-block** function (by block `id`, per
+   "Multiple independent simultaneous blocks"), and the exported real
+   `resolveVehicleBlockState(vehicleId, client)` (item 3). It registers **no** HTTP route, is
+   **not** listed in `services/index.js` `SERVICES`, and is **not** wired into any composition
+   root. Exact export names for apply / lift are a `01B` implementation choice; the SQL stays
+   in `repositories/vehicle_operational_block.js` (item 2), which owns no orchestration.
 
 `01B` ships a **dark seam only** where a route is not yet authorized — mirroring
 `services/driver-vehicle-assignment-authority/index.js`'s own "importable, not wired into
@@ -1003,7 +1155,7 @@ This slice does not add:
 - backend route / runtime / API / resolver implementation
 - any `repositories/*`, `services/*`, `domain/*`, or `infra/db.js` change
 - any edit to `server/src/domain/assignment-usability.js` or the two consumer services (they
-  already consume the seam; `01B` only swaps the injected default resolver)
+  already consume the seam; per R1 D1 `01B` neither edits them nor swaps any default)
 - any change to `vehicles`, `vehicles.archived`, `vehicles.is_active`, or any `vehicles`
   index
 - any `close_reason` value (`OPS_FORCED` / `COMPLIANCE_UNUSABLE` stay deferred as the Shift
@@ -1035,15 +1187,17 @@ this contract does not fix").
 ## Follow-up slices
 
 1. `BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01B` — migration `0008_vehicle_block_state_authority.sql`
-   (`vehicle_operational_block`) + `repositories/vehicle_operational_block.js` + the real
-   `resolveVehicleBlockState` wired as the production default + `infra/db.js` readiness +
-   `server-ci` replay + real PostgreSQL adversarial/concurrency tests incl. the
+   (`vehicle_operational_block`) + `repositories/vehicle_operational_block.js` + the dark
+   service module `services/vehicle-block-state-authority/index.js` (apply / lift / the real
+   `resolveVehicleBlockState`, **exported, not wired** — R1 D1 / D4) + `infra/db.js`
+   readiness + `server-ci` replay + real PostgreSQL adversarial/concurrency tests incl. the
    shift-open-vs-block-apply race. Dark seam only where a route is not yet authorized.
 2. `BD-DRIVER-VEHICLE-BLOCK-STATE-AUTHORITY-01C` — authorized Safety/Ops apply/lift-by-id
    endpoints, live; optional driver-facing projected read (reason category only).
 3. `BD-DRIVER-SHIFT-AUTHORITY-01C-B` (**resume — not part of this slice**) — the held Live
    Shift API; its happy-path `POST …/open` stops failing closed on
-   `ASSIGNMENT_STATE_UNKNOWN` once `01B` supplies the real resolver.
+   `ASSIGNMENT_STATE_UNKNOWN` once `01B` supplies the real resolver **and** that slice's
+   composition root passes it (R1 D1; not a dependency of the dark `01B`).
 4. `BD-DRIVER-SHIFT-AUTHORITY-01C-C` — the assignment-unusable reconciliation worker;
    consumes the same confirmed-`UNUSABLE` signal (incl. `BLOCKED`) and gains the new
    discovery-scan trigger input named in "Read authority / consumers" (P3-3). Must wait for
@@ -1074,10 +1228,10 @@ to this entity):
 
 | Finding | Where it was wrong in the prior draft | Resolution in this contract |
 | --- | --- | --- |
-| **P2-1** — only one `ACTIVE` block per vehicle (partial unique index `WHERE status='ACTIVE'` on `vehicle_id`), per-*tier* lift authority; independent authorities' holds cannot co-exist and lifting one can prematurely unblock. | "Exclusivity: at most **one `ACTIVE` `vehicle_operational_block` per `vehicle_id`**"; lift described per authority tier, not scoped to a row. | **"Multiple independent simultaneous blocks":** uniqueness is now per **`(vehicle_id, block_reason)`** (partial unique index `WHERE status='ACTIVE'`), so e.g. police `STOLEN_REPORTED` + a `REGULATORY_HOLD` co-exist as two `ACTIVE` rows. `vehicleBlockState(t) == BLOCKED` iff **≥ 1** effective `ACTIVE` row. **Lift targets one row by `id`** (`… WHERE id = $blockId AND status = 'ACTIVE'`), never `vehicle_id`-scoped, so it never releases a hold another authority still owns. Same-reason apply race → idempotent "already blocked for this reason". Finer per-authority key (`block_case_ref`) explicitly deferred. Invariants 4–5; "Concurrency / race note". |
+| **P2-1** — only one `ACTIVE` block per vehicle (partial unique index `WHERE status='ACTIVE'` on `vehicle_id`), per-*tier* lift authority; independent authorities' holds cannot co-exist and lifting one can prematurely unblock. | "Exclusivity: at most **one `ACTIVE` `vehicle_operational_block` per `vehicle_id`**"; lift described per authority tier, not scoped to a row. | **"Multiple independent simultaneous blocks":** uniqueness is now per **`(vehicle_id, block_reason)`** (partial unique index `WHERE status='ACTIVE'`), so e.g. police `STOLEN_REPORTED` + a `REGULATORY_HOLD` co-exist as two `ACTIVE` rows. `vehicleBlockState(t) == BLOCKED` iff **≥ 1** `ACTIVE` row. **Lift targets one row by `id`** (`… WHERE id = $blockId AND status = 'ACTIVE'`), never `vehicle_id`-scoped, so it never releases a hold another authority still owns. Same-reason apply race → idempotent "already blocked for this reason". Finer per-authority key (`block_case_ref`) explicitly deferred. Invariants 4–5; "Concurrency / race note". |
 | **P3-1** — precedence wording bundled `vehicles.archived` into the 3-value `vehicleBlockState(t)` order as a peer of `BLOCKED`. | "confirmed `BLOCKED` (and `vehicles.archived`) outrank `UNKNOWN`, which outranks `UNBLOCKED`". | **"The three-value model, precisely":** `vehicleBlockState(t) ∈ {BLOCKED, UNKNOWN, UNBLOCKED}` with `BLOCKED > UNKNOWN > UNBLOCKED` **among those three values only**. `vehicles.archived` (and a confirmed entitlement-negative) are **not** `vehicleBlockState(t)` values — they short-circuit **ahead of** the resolver in `decideAssignmentUsability` steps 1–2, "dominating" only by being checked first. Shown with the exact merged-code step order. Invariant 2; "Relationship to `vehicles.archived`" ("A value of `vehicleBlockState(t)`? — no"). |
 | **P3-2** — "apply/lift acquires `vehicles FOR UPDATE` first" was only in prose. | Stated in the prior draft's "Concurrency / race note" narrative, absent from the `01B` scope list. | **`01B` scope preview item 2** now carries it as an explicit **MUST** checklist item: both the apply and lift paths take `SELECT * FROM vehicles WHERE id = $vehicle_id FOR UPDATE` as their **first** lock, at the `vehicle` position, nothing to its left, no `vehicle → driver` edge; `01B` tests must assert the ordering. Also Invariant 9. |
-| **P3-3** — the `01C-C` reconciliation worker's OPEN-shift discovery scan gains a new trigger input. | The prior draft's consumer row for `reconcileAssignmentUnusableShift` mentioned it only as consuming "the confirmed `UNUSABLE` signal", without naming the scan input. | **"Read authority / consumers"** now names it explicitly: the `01C-C` discovery scan gains "**`OPEN driver_shift` whose pinned `vehicle_id` has an effective `ACTIVE` `vehicle_operational_block` row**" alongside the existing ENDED/REVOKED/elapsed/archived triggers. Also Follow-up slice 4. |
+| **P3-3** — the `01C-C` reconciliation worker's OPEN-shift discovery scan gains a new trigger input. | The prior draft's consumer row for `reconcileAssignmentUnusableShift` mentioned it only as consuming "the confirmed `UNUSABLE` signal", without naming the scan input. | **"Read authority / consumers"** now names it explicitly: the `01C-C` discovery scan gains "**`OPEN driver_shift` whose pinned `vehicle_id` has an `ACTIVE` `vehicle_operational_block` row**" alongside the existing ENDED/REVOKED/elapsed/archived triggers. Also Follow-up slice 4. |
 | **P3-4** — the "no TOCTOU" claim implicitly assumed READ COMMITTED. | "there is **no TOCTOU** between 'is it blocked?' and 'open the shift'" stated with no isolation-level premise. | **"Concurrency / race note"** now states it: `db.tx` issues a bare `BEGIN` ⇒ **READ COMMITTED**; the no-TOCTOU guarantee rests on (1) the reader holding the `vehicles`-row `FOR UPDATE` for the transaction and (2) every block write taking that same row lock first — and **does not require `SERIALIZABLE`**. The exact statement-visibility argument is spelled out. |
 
 The prior review's **CONFIRMED-sound** points are carried forward unchanged: the dedicated
