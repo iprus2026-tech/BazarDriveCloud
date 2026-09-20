@@ -515,7 +515,7 @@ neither; the acting authority is always server-resolved. **The client can never 
 | --- | --- |
 | `status` | `ACTIVE` \| `LIFTED`. No third value. |
 | `lifted_at` | `NULL` while `ACTIVE`; the exact server transition time on `ACTIVE → LIFTED`. Once set, **must be `>= effective_at`**. |
-| `lifted_by_user_id` / `lifted_by_service_id` | Actor-XOR, same shape as `applied_by_*`. **Mandatory iff `LIFTED`.** Who cleared this specific block. |
+| `lifted_by_user_id` / `lifted_by_service_id` | Actor-XOR. `lifted_by_user_id` is `UUID NULL`, FK → `users(id)` `ON DELETE RESTRICT`; `lifted_by_service_id` is `TEXT NULL` (a service-principal identifier, never a `users` row), as `applied_by_service_id`. **Mandatory iff `LIFTED`.** Who cleared this specific block. |
 | `lift_reason_note` | `TEXT NULL`. Operator context for the lift; at most **512 characters** (R1 D3: named `CHECK`, `lift_reason_note IS NULL OR length(lift_reason_note) <= 512`). |
 | `updated_at` | Last lifecycle write (server time). |
 
@@ -571,8 +571,9 @@ both rows are `ACTIVE`, on the same `vehicle_id`, concurrently.
   fixed string `'BLOCKED'` — it does **not** surface *which* `block_reason` applied; a
   driver-facing reason category is a future `01C` projected-read concern.
 
-**Lifecycle state invariants** (for `01B` to express as named `CHECK` constraints, mirroring
-`driver_shift_lifecycle_check`):
+**Lifecycle state invariants** (for `01B` to express as **one** named `CHECK`,
+`vehicle_operational_block_lifecycle_check`, in the OR-form of `driver_shift_lifecycle_check`
+— see `01B` scope preview item 1):
 
 ```text
 status = ACTIVE  =>  effective_at IS NOT NULL
@@ -598,7 +599,8 @@ of `vehicle_driver_assignments` and `driver_shift`.
 
 **Referential integrity:** every FK — `vehicle_id`, `applied_by_user_id`,
 `lifted_by_user_id` — is `ON DELETE RESTRICT`. **No cascade may erase a block record**; it
-is safety / audit history.
+is safety / audit history. The frozen FK constraint names and their structural `ready()` /
+`server-ci` verification requirements are in the `01B` scope preview (items 1 and 4).
 
 ### `block_reason` vocabulary (frozen canonical set for 01A)
 
@@ -1008,16 +1010,22 @@ already open cannot be excluded by the reader's transaction-start time.
 
 1. **Migration `0008_vehicle_block_state_authority.sql`** — `vehicle_operational_block`:
    - `id UUID PK DEFAULT gen_random_uuid()`;
-   - `vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE RESTRICT`;
-   - `applied_by_user_id UUID NULL REFERENCES users(id) ON DELETE RESTRICT`,
+   - `vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE RESTRICT` — the FK
+     constraint is named `vehicle_operational_block_vehicle_id_fkey` (frozen);
+   - `applied_by_user_id UUID NULL REFERENCES users(id) ON DELETE RESTRICT` — FK named
+     `vehicle_operational_block_applied_by_user_id_fkey` (frozen),
      `applied_by_service_id TEXT NULL`, actor-XOR `CHECK`
      (`vehicle_operational_block_applied_actor_xor`);
-   - `lifted_by_user_id` / `lifted_by_service_id` (same shape), enforced by the lifecycle
-     `CHECK`;
+   - `lifted_by_user_id UUID NULL REFERENCES users(id) ON DELETE RESTRICT` — FK named
+     `vehicle_operational_block_lifted_by_user_id_fkey` (frozen),
+     `lifted_by_service_id TEXT NULL` (no FK — a service-principal identifier, as
+     `applied_by_service_id`); the lift actor-XOR is enforced inside the lifecycle `CHECK`
+     below;
    - `block_reason TEXT NOT NULL CHECK (block_reason IN ('SAFETY_HOLD','OWNERSHIP_DISPUTE','STOLEN_REPORTED','REGULATORY_HOLD'))`
      — named `CHECK` (`vehicle_operational_block_reason_check`), `TEXT` not a native enum so a
      later scoped slice can extend it;
-   - `status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LIFTED'))`;
+   - `status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LIFTED'))` — named
+     `CHECK` `vehicle_operational_block_status_check` (frozen); no third value;
    - `effective_at TIMESTAMPTZ NOT NULL DEFAULT now()` (audit timestamp, R1 D2),
      `lifted_at TIMESTAMPTZ NULL`,
      `applied_reason_note` / `lift_reason_note TEXT NULL`, each bounded to **512 characters**
@@ -1026,9 +1034,22 @@ already open cannot be excluded by the reader's transaction-start time.
      `vehicle_operational_block_lift_reason_note_length_check`
      (`lift_reason_note IS NULL OR length(lift_reason_note) <= 512`),
      `created_at` / `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`;
-   - the two named lifecycle `CHECK`s (`vehicle_operational_block_lifecycle_check`):
-     `ACTIVE ⇒ lifted_at IS NULL AND lifted_by_* IS NULL AND lift_reason_note IS NULL`;
-     `LIFTED ⇒ lifted_at IS NOT NULL AND lifted_at >= effective_at AND (lifted_by_user_id IS NOT NULL) <> (lifted_by_service_id IS NOT NULL)`;
+   - **exactly one** named lifecycle `CHECK`, `vehicle_operational_block_lifecycle_check`, in
+     the OR-form of `driver_shift_lifecycle_check` — the two lifecycle invariants above are its
+     two mutually exclusive branches, not two constraints:
+     ```text
+     (status = 'ACTIVE'
+        AND lifted_at IS NULL
+        AND lifted_by_user_id IS NULL AND lifted_by_service_id IS NULL
+        AND lift_reason_note IS NULL)
+     OR
+     (status = 'LIFTED'
+        AND lifted_at IS NOT NULL
+        AND lifted_at >= effective_at
+        AND (lifted_by_user_id IS NOT NULL) <> (lifted_by_service_id IS NOT NULL))
+     ```
+     `effective_at IS NOT NULL` (both invariants) is carried by the `NOT NULL` column and is
+     not repeated. No third state is introduced;
    - **`vehicle_operational_block_one_active_per_reason_uq`** partial unique index
      `ON vehicle_operational_block (vehicle_id, block_reason) WHERE status = 'ACTIVE'` — the
      "one `ACTIVE` hold per `(vehicle, reason)`" backstop and the `23505` race-loser source;
@@ -1076,9 +1097,11 @@ already open cannot be excluded by the reader's transaction-start time.
    `server/src/services/driver-vehicle-assignment-authority/index.js`.** Production / default
    wiring belongs to the first live consumer slice that owns composition-root activation.
 4. **Readiness / schema assertions** — `server/src/infra/db.js` `ready()` gains a structural
-   check for `vehicle_operational_block` (load-bearing columns + the named actor-XOR and
-   lifecycle `CHECK`s + the `block_reason` `CHECK` + the two named note-length `CHECK`s
-   (R1 D3) + the `vehicle_operational_block_one_active_per_reason_uq` partial index +
+   check for `vehicle_operational_block` (load-bearing columns + the named actor-XOR `CHECK`
+   + the single named lifecycle `CHECK` (`vehicle_operational_block_lifecycle_check`, verified
+   by exact name) + the `vehicle_operational_block_status_check` `CHECK` + the `block_reason`
+   `CHECK` + the two named note-length `CHECK`s (R1 D3) + the three named FKs +
+   the `vehicle_operational_block_one_active_per_reason_uq` partial index +
    `trg_vehicle_operational_block_guard_immutability` + `trg_vehicle_operational_block_updated_at`),
    following the exact structural (not `to_regclass`) pattern the sibling tables use.
    For each of `vehicle_operational_block_applied_reason_note_length_check` and
@@ -1090,11 +1113,34 @@ already open cannot be excluded by the reader's transaction-start time.
    If either `CHECK` is absent, or its definition does not contain that bound, `ready()`
    **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` / `503`). The
    `IS NULL OR` clause is deliberately not asserted separately, as for `0009`.
+   For each of the three FKs — `vehicle_operational_block_vehicle_id_fkey` (→ `vehicles`),
+   `vehicle_operational_block_applied_by_user_id_fkey` (→ `users`) and
+   `vehicle_operational_block_lifted_by_user_id_fkey` (→ `users`) — `ready()` **MUST** verify
+   the exact constraint name, `contype = 'f'`, that the source relation is
+   `vehicle_operational_block`, the expected target relation, and `confdeltype = 'r'`
+   (`ON DELETE RESTRICT`) — the same strictness `0009` applies to its FKs (no source / target
+   column check, as for `0009`). A missing FK, a cascading / `SET NULL` action, or a wrong
+   target would let a delete erase or orphan block history. If any of these is absent or
+   differs, `ready()` **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` /
+   `503`).
+   For `vehicle_operational_block_status_check`, `ready()` **MUST** verify the exact
+   constraint name, `contype = 'c'`, that the relation is `vehicle_operational_block`, and — via
+   `pg_get_constraintdef` — that its definition contains both `'ACTIVE'` and `'LIFTED'`. This
+   is **deliberately stricter than the `0009` status-`CHECK` precedent** (name + `contype`
+   only) because `status` is an authority-bearing input: `BLOCKED` reads `status = 'ACTIVE'`
+   and the partial unique index is `WHERE status = 'ACTIVE'`, so a wrong status vocabulary
+   would silently hide a block (fail-open). If the `CHECK` is absent, or its definition lacks
+   either value, `ready()` **MUST** fail closed (same degraded / `503` result).
    `server-ci.yml` replays **all** migrations in sorted order twice (`0001`–`0007`, the new
    `0008`, then the existing `0009`) and adds by-name object assertions, which **MUST**
    include both note-length `CHECK`s: each by exact name and `contype = 'c'`, and each with its
    definition (`pg_get_constraintdef`) containing the corresponding `<= 512` fragment, at the
-   same strictness `server-ci` applies to the `0009` pickup-note constraint. The `app` job
+   same strictness `server-ci` applies to the `0009` pickup-note constraint. They **MUST**
+   also include the three FKs — each by exact name, `contype = 'f'`, the expected target
+   relation and `confdeltype = 'r'`, at the same strictness `server-ci` applies to the `0009`
+   FKs — and `vehicle_operational_block_status_check` (exact name, `contype = 'c'`, definition
+   containing both `'ACTIVE'` and `'LIFTED'`), plus the lifecycle `CHECK`
+   (`vehicle_operational_block_lifecycle_check`) by exact name. The `app` job
    additionally proves that a database with **all migrations except `0008`** already reports
    `{status:'degraded', db:'schema-incomplete'}` / `503` (R1 D5 — replacing the earlier
    `0001`–`0007` assumption, which predates `0009` on `main`).
