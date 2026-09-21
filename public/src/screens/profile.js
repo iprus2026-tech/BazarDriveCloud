@@ -4,6 +4,7 @@ import {
   documentsAttentionCount,
   documentsReviewCount,
   REQUIRED_DOCS,
+  REGISTRATION_DOCS,
   canShowReadyStatus,
   isDriverLineReady,
   appendGarageVehicle,
@@ -175,6 +176,29 @@ function getTaxiReadinessState(u) {
   if (u.driverOnline) return 'online';
   if (reasons.some((r) => r.severity === 'warning')) return 'warning';
   return 'ready';
+}
+
+// Which requirement actually keeps the driver off the line, in the order
+// getDriverStatusSubtitle reports it: profile data (phone → vehicle → plate),
+// then registration documents, then the Taxi/IP checklist rows (waybill /
+// medical / permit), which carry their own row actions. Navigation only — it
+// never changes readiness; isDriverLineReady stays the single rule.
+function isRegistrationDocReady(status) {
+  return status === 'uploaded' || status === 'review_required';
+}
+
+function firstMissingRequirement(u) {
+  if (!u.phone) return { target: 'phone' };
+  if (!(u.vehicleMake && u.vehicleModel)) return { target: 'vehicle' };
+  if (!u.vehiclePlate) return { target: 'plate' };
+  if (u.documentsReady !== true) {
+    const docs = u.driverDocuments || {};
+    const key = REGISTRATION_DOCS.find((k) => !isRegistrationDocReady(docs[k]?.status));
+    // taxiRegistry is the permit row: its existing checklist action opens the
+    // permit panel, so it keeps the checklist route.
+    if (key !== 'taxiRegistry') return { target: 'doc', key: key || null };
+  }
+  return { target: 'checklist' };
 }
 
 function getTaxiStatusTitle(state) {
@@ -3348,6 +3372,55 @@ function renderDriver(root, u) {
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  // Blocked-state CTA: land on the requirement that is actually unmet instead of
+  // always scrolling to the Taxi/IP checklist, which only carries the waybill /
+  // medical / permit rows. Focus moves to an existing control; nothing is
+  // opened, saved or submitted from here.
+  function routeToMissingRequirement(current) {
+    const missing = firstMissingRequirement(current);
+    if (missing.target === 'checklist') {
+      scrollToChecklist();
+      return;
+    }
+    if (missing.target === 'doc') {
+      root.querySelector('.pf2-tab[data-pane="docs"]')?.click();
+      const docsPaneEl = root.querySelector('#pf2-pane-docs');
+      const card = missing.key ? docsPaneEl?.querySelector(`[data-doc-key="${missing.key}"]`) : null;
+      if (!card) {
+        docsPaneEl?.focus({ preventScroll: true });
+        return;
+      }
+      card.scrollIntoView({ block: 'start' });
+      // The license card has no action button; give the card itself a
+      // programmatic focus stop rather than inventing an upload control.
+      let target = card.querySelector('[data-doc-action]');
+      if (!target) {
+        card.setAttribute('tabindex', '-1');
+        target = card;
+      }
+      target.focus({ preventScroll: true });
+      return;
+    }
+    root.querySelector('.pf2-tab[data-pane="overview"]')?.click();
+    if (missing.target === 'phone') {
+      const editBtn = root.querySelector('#pf2-edit');
+      editBtn?.scrollIntoView({ block: 'center' });
+      editBtn?.focus({ preventScroll: true });
+      return;
+    }
+    // vehicle / plate → the existing garage controls.
+    const garage = root.querySelector('#pf2-garage');
+    garage?.scrollIntoView({ block: 'start' });
+    const activeCard = garage?.querySelector('.pf2-garage__car[data-vehicle-status="active"]');
+    let target = null;
+    if (missing.target === 'plate' && activeCard && activeCard.dataset.vehicleSource !== 'legacy') {
+      target = activeCard.querySelector('[data-garage-action="edit"]');
+    } else if (missing.target === 'vehicle' && !activeCard) {
+      target = garage?.querySelector('[data-garage-action="make-active"]');
+    }
+    (target || garage?.querySelector('#pf2-garage-add'))?.focus({ preventScroll: true });
+  }
+
   function maybeShowPermitWarn() {
     if (user.get().taxiPermit) return;
     const warn = ipPane?.querySelector('#pf2-ip-permit-warn');
@@ -3400,7 +3473,7 @@ function renderDriver(root, u) {
     }
 
     if (e.target.closest('#pf2-ip-goto-actions')) {
-      scrollToChecklist();
+      routeToMissingRequirement(user.get());
       return;
     }
 
