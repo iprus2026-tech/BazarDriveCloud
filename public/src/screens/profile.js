@@ -69,8 +69,6 @@ const SVG_CREDIT_CARD_PO = `<svg width="18" height="18" viewBox="0 0 24 24" fill
 
 const SVG_RUBLE_COIN = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9 7h4.5a2.5 2.5 0 0 1 0 5H9v5M8.5 14h5"/></svg>`;
 
-const SVG_CALENDAR_PO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function createIntentRoute(u) {
@@ -179,7 +177,7 @@ function getTaxiReadinessState(u) {
 }
 
 // Which requirement actually keeps the driver off the line, in the order
-// getDriverStatusSubtitle reports it: profile data (phone → vehicle → plate),
+// getDriverStatusSubtitle reports it: profile data (phone / vehicle / plate),
 // then registration documents, then the Taxi/IP checklist rows (waybill /
 // medical / permit), which carry their own row actions. Navigation only — it
 // never changes readiness; isDriverLineReady stays the single rule.
@@ -188,9 +186,10 @@ function isRegistrationDocReady(status) {
 }
 
 function firstMissingRequirement(u) {
-  if (!u.phone) return { target: 'phone' };
-  if (!(u.vehicleMake && u.vehicleModel)) return { target: 'vehicle' };
-  if (!u.vehiclePlate) return { target: 'plate' };
+  // Readiness reads the legacy phone / vehicleMake / vehicleModel / vehiclePlate
+  // fields, and only the profile/onboarding edit action writes them — garage
+  // saves never do (see appendGarageVehicle in state.js).
+  if (!u.phone || !(u.vehicleMake && u.vehicleModel) || !u.vehiclePlate) return { target: 'profile' };
   if (u.documentsReady !== true) {
     const docs = u.driverDocuments || {};
     const key = REGISTRATION_DOCS.find((k) => !isRegistrationDocReady(docs[k]?.status));
@@ -1992,7 +1991,7 @@ function garageReadinessHintHtml(u) {
 function docsPaneHtml(u) {
   const docs = u.driverDocuments || {};
   // Blocking docs prevent going online; review-only is soft / informational.
-  // Splitting the two avoids saying "Заполните локальные отметки для демонстрации. Серверный допуск проверяется отдельно."
+  // Splitting the two avoids saying "Без них вы не сможете выйти на линию"
   // when only review_required documents remain — which is actually allowed
   // by computeDocumentsReady.
   const blocking = documentsAttentionCount(docs);
@@ -2189,7 +2188,7 @@ function driverReceiptPayoutSectionHtml(onRetry) {
       <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
         <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
         <span class="pf2-po-trip-info">
-          <span class="pf2-po-trip-name">Чек поездки</span>
+          <span class="pf2-po-trip-name">Чек поездки № ${escapeHtml(tripId)}</span>
           <span class="pf2-po-trip-meta">
             ${when ? `<span class="pf2-po-trip-sub">${escapeHtml(when)}</span>` : ''}
             ${badge}
@@ -3070,8 +3069,10 @@ function renderDriver(root, u) {
   // Moves the active class, aria-selected, and the roving tabindex (active tab
   // 0, the rest -1), and swaps the visible tabpanel.
   function activateTab(tab) {
+    // Start a newly shown pane at the top, but leave the scroll alone when the
+    // already-active tab is re-activated (deep links / quick actions click it).
     const scroll = root.querySelector('.bd-scroll');
-    if (scroll) scroll.scrollTop = 0;
+    if (scroll && !tab.classList.contains('pf2-tab--active')) scroll.scrollTop = 0;
     tabBtns.forEach((t) => {
       const on = t === tab;
       t.classList.toggle('pf2-tab--active', on);
@@ -3401,24 +3402,12 @@ function renderDriver(root, u) {
       target.focus({ preventScroll: true });
       return;
     }
+    // phone / vehicle / plate → the profile edit action (opens /onboarding, which
+    // writes the fields readiness reads). The garage cannot clear these blockers.
     root.querySelector('.pf2-tab[data-pane="overview"]')?.click();
-    if (missing.target === 'phone') {
-      const editBtn = root.querySelector('#pf2-edit');
-      editBtn?.scrollIntoView({ block: 'center' });
-      editBtn?.focus({ preventScroll: true });
-      return;
-    }
-    // vehicle / plate → the existing garage controls.
-    const garage = root.querySelector('#pf2-garage');
-    garage?.scrollIntoView({ block: 'start' });
-    const activeCard = garage?.querySelector('.pf2-garage__car[data-vehicle-status="active"]');
-    let target = null;
-    if (missing.target === 'plate' && activeCard && activeCard.dataset.vehicleSource !== 'legacy') {
-      target = activeCard.querySelector('[data-garage-action="edit"]');
-    } else if (missing.target === 'vehicle' && !activeCard) {
-      target = garage?.querySelector('[data-garage-action="make-active"]');
-    }
-    (target || garage?.querySelector('#pf2-garage-add'))?.focus({ preventScroll: true });
+    const editBtn = root.querySelector('#pf2-edit');
+    editBtn?.scrollIntoView({ block: 'center' });
+    editBtn?.focus({ preventScroll: true });
   }
 
   function maybeShowPermitWarn() {
@@ -3563,29 +3552,10 @@ function renderDriver(root, u) {
     if (tripId) go(`/receipt?tripId=${encodeURIComponent(tripId)}`);
   });
 
-  root.querySelector('#pf2-po-hist-all-btn')?.addEventListener('click', () => {
-    root.querySelector('#pf2-po-history-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  root.querySelector('#pf2-po-methods-change')?.addEventListener('click', () => {
-    const btn = root.querySelector('#pf2-po-methods-change');
-    const orig = btn.textContent;
-    btn.textContent = 'Скоро здесь';
-    setTimeout(() => { btn.textContent = orig; }, 1500);
-  });
-
-  root.querySelector('#pf2-po-add-card-btn')?.addEventListener('click', () => {
-    const nameEl = root.querySelector('#pf2-po-add-card-btn .pf2-po-method-name');
-    if (!nameEl) return;
-    const orig = nameEl.textContent;
-    nameEl.textContent = 'Скоро здесь';
-    setTimeout(() => { nameEl.textContent = orig; }, 1500);
-  });
-
   // BD-PROFILE-01 (F11) — saved payout-method rows carry a chevron but had no
   // handler (they have no id; only the add-card row does). Delegate on the
   // methods block so every saved row flashes "Скоро здесь" like its siblings;
-  // skip the add-card row, which keeps its own handler above.
+  // skip the add-card row, which is a disabled placeholder.
   root.querySelector('#pf2-po-methods-block')?.addEventListener('click', (e) => {
     const row = e.target.closest('.pf2-po-method-row');
     if (!row || row.id === 'pf2-po-add-card-btn') return;
@@ -3595,13 +3565,6 @@ function renderDriver(root, u) {
     const orig = nameEl.textContent;
     nameEl.textContent = 'Скоро здесь';
     setTimeout(() => { nameEl.textContent = orig; delete nameEl.dataset.busy; }, 1500);
-  });
-
-  root.querySelector('#pf2-po-tax-pay-npd-apr')?.addEventListener('click', () => {
-    const btn = root.querySelector('#pf2-po-tax-pay-npd-apr');
-    const orig = btn.textContent;
-    btn.textContent = 'Откройте «Мой налог» — заглушка';
-    setTimeout(() => { btn.textContent = orig; }, 2000);
   });
 
   // BD-PROFILE-D-03 — empty payouts CTA (state H) routes the driver to nearby
