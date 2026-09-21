@@ -1039,17 +1039,20 @@ already open cannot be excluded by the reader's transaction-start time.
      two mutually exclusive branches, not two constraints:
      ```text
      (status = 'ACTIVE'
+        AND effective_at IS NOT NULL
         AND lifted_at IS NULL
         AND lifted_by_user_id IS NULL AND lifted_by_service_id IS NULL
         AND lift_reason_note IS NULL)
      OR
      (status = 'LIFTED'
+        AND effective_at IS NOT NULL
         AND lifted_at IS NOT NULL
         AND lifted_at >= effective_at
         AND (lifted_by_user_id IS NOT NULL) <> (lifted_by_service_id IS NOT NULL))
      ```
-     `effective_at IS NOT NULL` (both invariants) is carried by the `NOT NULL` column and is
-     not repeated. No third state is introduced;
+     This written form — branches and conjuncts in this order — is the frozen canonical
+     lifecycle predicate that `ready()` and `server-ci` compare against (item 4). No third state
+     is introduced;
    - **`vehicle_operational_block_one_active_per_reason_uq`** partial unique index
      `ON vehicle_operational_block (vehicle_id, block_reason) WHERE status = 'ACTIVE'` — the
      "one `ACTIVE` hold per `(vehicle, reason)`" backstop and the `23505` race-loser source;
@@ -1099,7 +1102,8 @@ already open cannot be excluded by the reader's transaction-start time.
 4. **Readiness / schema assertions** — `server/src/infra/db.js` `ready()` gains a structural
    check for `vehicle_operational_block` (load-bearing columns + the named actor-XOR `CHECK`
    + the single named lifecycle `CHECK` (`vehicle_operational_block_lifecycle_check`, verified
-   by exact name) + the `vehicle_operational_block_status_check` `CHECK` + the `block_reason`
+   by exact name **and full normalized definition**, see below) + the
+   `vehicle_operational_block_status_check` `CHECK` (same) + the `block_reason`
    `CHECK` + the two named note-length `CHECK`s (R1 D3) + the three named FKs +
    the `vehicle_operational_block_one_active_per_reason_uq` partial index +
    `trg_vehicle_operational_block_guard_immutability` + `trg_vehicle_operational_block_updated_at`),
@@ -1113,34 +1117,78 @@ already open cannot be excluded by the reader's transaction-start time.
    If either `CHECK` is absent, or its definition does not contain that bound, `ready()`
    **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` / `503`). The
    `IS NULL OR` clause is deliberately not asserted separately, as for `0009`.
-   For each of the three FKs — `vehicle_operational_block_vehicle_id_fkey` (→ `vehicles`),
-   `vehicle_operational_block_applied_by_user_id_fkey` (→ `users`) and
-   `vehicle_operational_block_lifted_by_user_id_fkey` (→ `users`) — `ready()` **MUST** verify
-   the exact constraint name, `contype = 'f'`, that the source relation is
-   `vehicle_operational_block`, the expected target relation, and `confdeltype = 'r'`
-   (`ON DELETE RESTRICT`) — the same strictness `0009` applies to its FKs (no source / target
-   column check, as for `0009`). A missing FK, a cascading / `SET NULL` action, or a wrong
-   target would let a delete erase or orphan block history. If any of these is absent or
-   differs, `ready()` **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` /
-   `503`).
-   For `vehicle_operational_block_status_check`, `ready()` **MUST** verify the exact
-   constraint name, `contype = 'c'`, that the relation is `vehicle_operational_block`, and — via
-   `pg_get_constraintdef` — that its definition contains both `'ACTIVE'` and `'LIFTED'`. This
-   is **deliberately stricter than the `0009` status-`CHECK` precedent** (name + `contype`
-   only) because `status` is an authority-bearing input: `BLOCKED` reads `status = 'ACTIVE'`
-   and the partial unique index is `WHERE status = 'ACTIVE'`, so a wrong status vocabulary
-   would silently hide a block (fail-open). If the `CHECK` is absent, or its definition lacks
-   either value, `ready()` **MUST** fail closed (same degraded / `503` result).
+   For each of the three FKs — `vehicle_operational_block_vehicle_id_fkey`,
+   `vehicle_operational_block_applied_by_user_id_fkey` and
+   `vehicle_operational_block_lifted_by_user_id_fkey` — `ready()` **MUST** verify the exact
+   constraint name, `contype = 'f'`, that the source relation is `vehicle_operational_block`,
+   the expected target relation, `confdeltype = 'r'` (`ON DELETE RESTRICT`), **and the exact
+   column mapping**: `conkey` and `confkey` each hold exactly **one** element, and, resolved
+   through `pg_attribute` (`attnum` → `attname`) on the source and the referenced relation,
+   they name exactly the frozen pair (or an equivalent complete catalog assertion):
+   `vehicle_operational_block_vehicle_id_fkey` is `vehicle_operational_block.vehicle_id` →
+   `vehicles.id`; `vehicle_operational_block_applied_by_user_id_fkey` is
+   `vehicle_operational_block.applied_by_user_id` → `users.id`;
+   `vehicle_operational_block_lifted_by_user_id_fkey` is
+   `vehicle_operational_block.lifted_by_user_id` → `users.id`. A correctly named FK attached to
+   the wrong column (for example the `applied_by_user_id` name constraining
+   `lifted_by_user_id`) **MUST** fail readiness. `0009` verifies the target relation and
+   `RESTRICT` but not the constrained columns; the vehicle-block check is **deliberately
+   stricter** because these three fields are frozen authority / audit references, and an FK on
+   the wrong column would leave a frozen field free to reference a nonexistent row. A missing
+   FK, a cascading / `SET NULL` action, a wrong target or a wrong column mapping would let a
+   delete erase or orphan block history. If any of these is absent or differs, `ready()`
+   **MUST** fail closed (`{status:'degraded', db:'schema-incomplete'}` / `503`).
+   For `vehicle_operational_block_status_check` and
+   `vehicle_operational_block_lifecycle_check`, `ready()` **MUST** verify the exact constraint
+   name, `contype = 'c'`, that the relation is `vehicle_operational_block`, **and the complete
+   definition**: it fetches the full `pg_get_constraintdef` text, normalizes it, and requires it
+   to equal the frozen canonical predicate below. Normalization may discard **only**
+   representation noise — insignificant whitespace and the `::text` casts PostgreSQL adds to
+   string literals — and **MUST NOT** drop, reorder or rewrite operators, `AND` / `OR` clauses,
+   column names, literal values, array members, parentheses or any additional predicate. A test
+   that merely finds the expected literals or fragments inside the definition (substring or
+   regex presence) is **not** sufficient. The canonical strings are embedded in `ready()` as
+   literals (no DDL and no scratch objects at runtime); `01B` **MUST** capture them from the
+   `pg_get_constraintdef` rendering of the migrated constraints on the PostgreSQL major version
+   CI uses, and a test **MUST** prove that rendering equals the embedded literals. This is
+   **deliberately stricter than the `0009` status-`CHECK` precedent** (name + `contype` only)
+   because both constraints are authority-bearing: `BLOCKED` reads `status = 'ACTIVE'` and the
+   partial unique index is `WHERE status = 'ACTIVE'`, so a wrong status vocabulary or a vacuous
+   lifecycle predicate would let a block silently stop applying (fail-open).
+   For `vehicle_operational_block_status_check` the canonical predicate is exactly
+   `status IN ('ACTIVE','LIFTED')` (indicatively rendered by PostgreSQL 16 as
+   `CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'LIFTED'::text])))`). Therefore
+   `CHECK (status IN ('ACTIVE','LIFTED','DISABLED'))` and
+   `CHECK (status IN ('ACTIVE','LIFTED') OR true)` — and any equivalent predicate that accepts a
+   third status — **MUST** fail readiness; "the definition contains both `'ACTIVE'` and
+   `'LIFTED'`" is **not** the assertion.
+   For `vehicle_operational_block_lifecycle_check` the canonical predicate is exactly the
+   OR-form frozen in item 1 (both branches, every conjunct, in the written order, including
+   `effective_at IS NOT NULL` and the lift-actor XOR
+   `(lifted_by_user_id IS NOT NULL) <> (lifted_by_service_id IS NOT NULL)`). Therefore
+   `CONSTRAINT vehicle_operational_block_lifecycle_check CHECK (true)` — and any definition that
+   omits or weakens one frozen lifecycle predicate — **MUST** fail readiness; the constraint
+   name alone is **not** the assertion. If either `CHECK` is absent or its normalized
+   definition differs from its canonical predicate, `ready()` **MUST** fail closed (same
+   degraded / `503` result).
+   `01B` PostgreSQL tests **MUST** additionally prove behaviourally — as defense-in-depth that
+   does **not** replace the structural assertions above — that `status` accepts `ACTIVE` and
+   `LIFTED` and rejects at least `PAUSED`, `DISABLED` and `active`, and that the lifecycle
+   `CHECK` rejects: `ACTIVE` with `lifted_at` set; `ACTIVE` with `lifted_by_user_id` set;
+   `ACTIVE` with `lifted_by_service_id` set; `ACTIVE` with `lift_reason_note` set; `LIFTED`
+   without `lifted_at`; `LIFTED` with neither lift actor; `LIFTED` with both lift actors; and
+   `LIFTED` with `lifted_at < effective_at`. No new lifecycle rule is introduced.
    `server-ci.yml` replays **all** migrations in sorted order twice (`0001`–`0007`, the new
    `0008`, then the existing `0009`) and adds by-name object assertions, which **MUST**
    include both note-length `CHECK`s: each by exact name and `contype = 'c'`, and each with its
    definition (`pg_get_constraintdef`) containing the corresponding `<= 512` fragment, at the
    same strictness `server-ci` applies to the `0009` pickup-note constraint. They **MUST**
-   also include the three FKs — each by exact name, `contype = 'f'`, the expected target
-   relation and `confdeltype = 'r'`, at the same strictness `server-ci` applies to the `0009`
-   FKs — and `vehicle_operational_block_status_check` (exact name, `contype = 'c'`, definition
-   containing both `'ACTIVE'` and `'LIFTED'`), plus the lifecycle `CHECK`
-   (`vehicle_operational_block_lifecycle_check`) by exact name. The `app` job
+   also include the three FKs — each by exact name, `contype = 'f'`, the expected source and
+   target relation, `confdeltype = 'r'` and the same exact single-column `conkey` / `confkey`
+   mapping `ready()` asserts — and, with the same complete structural assertion `ready()`
+   applies (full normalized `pg_get_constraintdef` equal to the canonical predicate, not
+   literal presence), `vehicle_operational_block_status_check` and
+   `vehicle_operational_block_lifecycle_check`. The `app` job
    additionally proves that a database with **all migrations except `0008`** already reports
    `{status:'degraded', db:'schema-incomplete'}` / `503` (R1 D5 — replacing the earlier
    `0001`–`0007` assumption, which predates `0009` on `main`).
