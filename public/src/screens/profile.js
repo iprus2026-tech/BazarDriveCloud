@@ -101,7 +101,7 @@ function getHashQuery() {
 
 function checklistItems(u) {
   return [
-    { id: 'phone',       label: 'Телефон подтверждён', done: !!u.phone },
+    { id: 'phone',       label: 'Телефон указан', done: !!u.phone },
     { id: 'vehicle',     label: 'Данные автомобиля',   done: !!(u.vehicleMake && u.vehicleModel) },
     { id: 'plate',       label: 'Госномер',            done: !!u.vehiclePlate },
     { id: 'docs',        label: 'Документы и ОСАГО',   done: !!u.documentsReady },
@@ -118,7 +118,8 @@ function getDriverStatusState(u) {
 }
 
 function getDriverStatusTitle(u) {
-  return getDriverStatusState(u) === 'ready' ? 'Готов принимать заказы' : 'Нужно действие';
+  if (!isDriverLineReady(u)) return 'Заполните демопрофиль';
+  return u.driverOnline ? 'Демо: на линии' : 'Демо: не на линии';
 }
 
 function getDriverStatusSubtitle(u) {
@@ -127,30 +128,11 @@ function getDriverStatusSubtitle(u) {
   if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
   if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
   if (!u.waybillOpen) return 'Откройте путевой лист перед выходом на линию';
-  return 'Все требования выполнены';
+  return 'Локальные отметки заполнены. Допуск сервером не подтверждён.';
 }
 
-// ── BD-PROFILE-TAXI-01 readiness state model ─────────────────────────────────
-// Strict 4-state readiness model used by the Taxi / IP pane:
-//   blocked → waybill not open OR medical not passed (hard blockers)
-//   warning → blockers cleared but taxi permit expires soon
-//   ready   → all checks pass, driver not yet on line
-//   online  → ready AND driverOnline = true
-//
-// Mock state quick-reference (for manual testing):
-//   blocked → default state (u.waybillOpen=false, u.medicalCheckPassed=false)
-//   ready   → user.set({ waybillOpen:true, medicalCheckPassed:true })
-//             (also requires documents uploaded — see Documents tab)
-//   online  → ready state + flip the toggle in Taxi/ИП card
-//   warning → ready state + adjust TAXI_PERMIT_EXPIRY_DAYS below to ≤ 60
-
-const TAXI_PERMIT_EXPIRY_DAYS = 47;        // mock: days until permit expiry
-const TAXI_PERMIT_WARNING_THRESHOLD = 60;  // <= N days → warning state
-
-function isPermitExpiringSoon() {
-  return TAXI_PERMIT_EXPIRY_DAYS > 0
-      && TAXI_PERMIT_EXPIRY_DAYS <= TAXI_PERMIT_WARNING_THRESHOLD;
-}
+// Local demonstration readiness only. Server work context, compliance and
+// presence are separate authorities; this UI must not infer their state.
 
 // Structured readiness reasons. Each item has severity = 'blocker' | 'warning'
 // | 'ok' and an optional action id used by the click handler.
@@ -173,47 +155,37 @@ function getTaxiReadinessReasons(u) {
     {
       id: 'selfemployed',
       label: 'Самозанятый',
-      text: 'Активен',
-      severity: 'ok',
+      text: 'Нет данных',
+      severity: 'warning',
       action: null,
     },
     {
       id: 'permit',
       label: 'Разрешение такси',
-      text: isPermitExpiringSoon()
-        ? `Истекает через ${TAXI_PERMIT_EXPIRY_DAYS} дней`
-        : 'Действует',
-      severity: isPermitExpiringSoon() ? 'warning' : 'ok',
-      action: isPermitExpiringSoon() ? 'permit' : null,
+      text: 'Нет серверной проверки',
+      severity: 'warning',
+      action: 'permit',
     },
   ];
 }
 
 function getTaxiReadinessState(u) {
   const reasons = getTaxiReadinessReasons(u);
-  if (reasons.some((r) => r.severity === 'blocker')) return 'blocked';
+  if (!isDriverLineReady(u) || reasons.some((r) => r.severity === 'blocker')) return 'blocked';
   if (u.driverOnline) return 'online';
   if (reasons.some((r) => r.severity === 'warning')) return 'warning';
   return 'ready';
 }
 
 function getTaxiStatusTitle(state) {
-  if (state === 'blocked') return 'Нужно действие';
-  if (state === 'warning') return 'Готов с оговоркой';
-  if (state === 'online')  return 'На линии';
-  return 'Готов выйти на линию';
+  if (state === 'blocked') return 'Заполните демопрофиль';
+  if (state === 'online') return 'Демо: на линии';
+  return 'Демо: не на линии';
 }
 
 function getTaxiStatusSub(u, state) {
-  if (state === 'blocked') {
-    if (!u.medicalCheckPassed && !u.waybillOpen) return 'Загрузите медосмотр и откройте путевой лист';
-    if (!u.medicalCheckPassed) return 'Загрузите медосмотр перед выходом на линию';
-    if (!u.waybillOpen)        return 'Откройте путевой лист перед выходом на линию';
-    return 'Завершите подготовку';
-  }
-  if (state === 'warning') return `Разрешение такси истекает через ${TAXI_PERMIT_EXPIRY_DAYS} дней`;
-  if (state === 'online')  return 'Принимаете заказы';
-  return 'Все обязательные проверки пройдены';
+  return state === 'blocked' ? getDriverStatusSubtitle(u)
+    : 'Это локальный переключатель. Серверная смена не открывается.';
 }
 
 // Syncs both status cards and toggles to the new online value.
@@ -523,25 +495,27 @@ function tabsHtml(activeId = 'overview', { interactive = true } = {}) {
   </div>`;
 }
 
+function driverVehicleText(u) {
+  const { vehicle } = getGarageReadinessState(u);
+  return vehicle ? [vehicle.model, vehicle.plate].filter(Boolean).join(' · ') : 'Автомобиль не выбран';
+}
+
 function driverHeroHtml(u) {
   const ini  = escapeHtml(initials(u));
   const name = escapeHtml(displayName(u));
-  const car  = (u.vehicleMake && u.vehicleModel)
-    ? escapeHtml(`${u.vehicleMake} ${u.vehicleModel}${u.vehiclePlate ? ' · ' + u.vehiclePlate : ''}`)
-    : '';
+  const car = escapeHtml(driverVehicleText(u));
   // #717 — lifetime trip count DERIVED from completed passenger rides, not a literal.
   const trips = countCompletedPassengerTrips().total;
   return `
     <div class="pf2-hero">
       <div class="pf2-avatar" aria-hidden="true">${ini}</div>
+      <span class="pf2-hero__eyebrow">ВАШ ПРОФИЛЬ · ВОДИТЕЛЬ</span>
       <p class="pf2-hero__name">${name}</p>
       <div class="pf2-hero__meta">
-        <span class="pf2-hero__star">${SVG_STAR}</span>
-        <span class="pf2-hero__rating">4.8</span>
-        <span class="pf2-hero__sep">·</span>
         <span class="pf2-hero__trips">${trips} ${pluralRu(trips, 'поездка', 'поездки', 'поездок')}</span>
+        <span class="pf2-hero__rating-note">Рейтинг пока недоступен</span>
       </div>
-      ${car ? `<p class="pf2-hero__car">${car}</p>` : ''}
+      <p class="pf2-hero__car" id="pf2-hero-car">${car}</p>
       <button type="button" class="pf2-edit-btn" id="pf2-edit">${SVG_PENCIL} Изменить</button>
     </div>`;
 }
@@ -558,35 +532,35 @@ function statusCardHtml(u) {
           <p class="pf2-status-title" id="pf2-status-title">${getDriverStatusTitle(u)}</p>
           <p class="pf2-status-sub" id="pf2-status-sub">${getDriverStatusSubtitle(u)}</p>
         </div>
-        <label class="pf2-toggle" aria-label="Статус водителя">
+        <label class="pf2-toggle" aria-label="Демонстрационный онлайн-статус">
           <input type="checkbox" id="pf2-online-toggle"${checked}>
           <span class="pf2-toggle__track"></span>
         </label>
       </div>
       <button type="button" class="pf2-action-cta" id="pf2-goto-actions">Перейти к действиям</button>
       <button type="button" class="bd-btn primary pf2-active-shift-cta" id="pf2-active-shift-cta"${ready ? '' : ' disabled'}>
-        На линии — открыть активную смену
+        Открыть карту заказов
       </button>
     </div>`;
 }
 
 function driverStatsHtml() {
-  // #717 — weekly trips DERIVED from completed passenger rides (last 7 days), not a
-  // literal. Earnings / hours stay demo values until their own rule is defined.
+  // #717 — preserve the existing local completed-order count. Unknown money
+  // and hours are not zero and must never be filled with demonstration amounts.
   const weekTrips = countCompletedPassengerTrips().thisWeek;
   return `
     <div class="pf2-stats-grid">
       <div class="pf2-stat-card">
-        <span class="pf2-stat-val pf2-stat-val--accent">18 420 ₽</span>
-        <span class="pf2-stat-label">За неделю</span>
+        <span class="pf2-stat-val pf2-stat-val--accent">—</span>
+        <span class="pf2-stat-label">Доход · нет данных</span>
       </div>
       <div class="pf2-stat-card">
         <span class="pf2-stat-val">${weekTrips}</span>
-        <span class="pf2-stat-label">Поездок</span>
+        <span class="pf2-stat-label">Поездок за 7 дней</span>
       </div>
       <div class="pf2-stat-card">
-        <span class="pf2-stat-val">38</span>
-        <span class="pf2-stat-label">Часов</span>
+        <span class="pf2-stat-val">—</span>
+        <span class="pf2-stat-label">Часы · нет данных</span>
       </div>
     </div>`;
 }
@@ -613,7 +587,7 @@ function readinessHtml(items) {
   return `
     <div class="pf2-readiness-card">
       <div class="pf2-readiness-header">
-        <span class="pf2-readiness-title">Готовность к смене</span>
+        <span class="pf2-readiness-title">Заполнение демопрофиля</span>
         <span class="pf2-readiness-count">${doneCount} из ${items.length}</span>
       </div>
       <div class="pf2-progress-bar" data-done="${doneCount}">
@@ -706,25 +680,25 @@ function securityPaneHtml() {
         <span class="pf2-safety-icon" aria-hidden="true">${SVG_SHIELD}</span>
         <span class="pf2-safety-headtext">
           <span class="pf2-safety-title">Центр безопасности</span>
-          <span class="pf2-safety-sub">Поддержка, маршрут смены и экстренная связь</span>
+          <span class="pf2-safety-sub">Доступность функций и экстренная связь</span>
         </span>
         <span class="pf2-safety-badge">
           <span class="pf2-safety-badge-dot" aria-hidden="true"></span>
-          Активно
+          Не подключено
         </span>
       </div>
       <div class="pf2-safety-tiles">
-        <button type="button" class="pf2-safety-tile" id="pf2-safety-contacts">
+        <button type="button" class="pf2-safety-tile" id="pf2-safety-contacts" disabled>
           <span class="pf2-safety-tile-head">
             <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_PHONE}</span>
-            <span class="pf2-safety-tile-count">2</span>
+            <span class="pf2-safety-tile-count">Скоро</span>
           </span>
           <span class="pf2-safety-tile-label">Доверенные контакты</span>
         </button>
-        <button type="button" class="pf2-safety-tile" id="pf2-safety-share">
+        <button type="button" class="pf2-safety-tile" id="pf2-safety-share" disabled>
           <span class="pf2-safety-tile-head">
             <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_PAPERPLANE}</span>
-            <span class="pf2-safety-tile-count">Авто</span>
+            <span class="pf2-safety-tile-count">Скоро</span>
           </span>
           <span class="pf2-safety-tile-label">Поделиться сменой</span>
         </button>
@@ -733,32 +707,32 @@ function securityPaneHtml() {
             <span class="pf2-safety-tile-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
             <span class="pf2-safety-tile-count">112</span>
           </span>
-          <span class="pf2-safety-tile-label">Кнопка SOS</span>
+          <span class="pf2-safety-tile-label">Как вызвать помощь</span>
         </button>
       </div>
     </div>
 
     <div class="bd-card pf2-safety-note">
       <span class="pf2-safety-note-icon" aria-hidden="true">${SVG_INFO}</span>
-      <p class="pf2-safety-note-text">Если есть угроза безопасности — сначала свяжитесь с поддержкой. В экстренной ситуации звоните 112. Кнопки на этом экране — демонстрация интерфейса.</p>
+      <p class="pf2-safety-note-text" id="pf2-safety-help" tabindex="-1">Экстренный номер — 112. Наберите его в приложении телефона. Этот экран не вызывает помощь и не передаёт ваше местоположение.</p>
     </div>
 
     <p class="pf2-safety-sect-title">Проверки безопасности</p>
     <div class="bd-card pf2-safety-checks">
       <div class="pf2-safety-check-row">
-        <span class="pf2-safety-check-dot pf2-safety-check-dot--ok" aria-hidden="true"></span>
-        <span class="pf2-safety-check-label">Личность подтверждена</span>
-        <span class="pf2-safety-check-val pf2-safety-check-val--ok">Готово</span>
+        <span class="pf2-safety-check-dot" aria-hidden="true"></span>
+        <span class="pf2-safety-check-label">Проверка личности</span>
+        <span class="pf2-safety-check-val">Нет данных</span>
       </div>
       <div class="pf2-safety-check-row">
-        <span class="pf2-safety-check-dot pf2-safety-check-dot--ok" aria-hidden="true"></span>
-        <span class="pf2-safety-check-label">Поездки записываются в историю</span>
-        <span class="pf2-safety-check-val pf2-safety-check-val--ok">Включено</span>
+        <span class="pf2-safety-check-dot" aria-hidden="true"></span>
+        <span class="pf2-safety-check-label">История поездок</span>
+        <span class="pf2-safety-check-val">На устройстве</span>
       </div>
       <div class="pf2-safety-check-row">
         <span class="pf2-safety-check-dot" aria-hidden="true"></span>
         <span class="pf2-safety-check-label">Автоотправка маршрута контакту</span>
-        <span class="pf2-safety-check-val">Настроить</span>
+        <span class="pf2-safety-check-val">Не подключено</span>
       </div>
     </div>`;
 }
@@ -1834,56 +1808,12 @@ function openHistoryDetail(root, entry) {
 // Overview readiness checklist cannot drift from this tab.
 
 const DOC_META = {
-  driverLicense: { title: 'Водительское удостоверение',     sub: '99 12 345678',          iconColor: 'success' },
-  taxiOsago:     { title: 'ОСАГО для такси',                sub: 'ХХХ 0123456789',        iconColor: 'info'    },
-  taxiRegistry:  { title: 'Разрешение / реестр такси',      sub: '№ 77-456789',           iconColor: 'danger'  },
+  driverLicense: { title: 'Водительское удостоверение',     sub: 'Личная запись',          iconColor: 'success' },
+  taxiOsago:     { title: 'ОСАГО для такси',                sub: 'Запись автомобиля',        iconColor: 'info'    },
+  taxiRegistry:  { title: 'Разрешение / реестр такси',      sub: 'Запись автомобиля',           iconColor: 'danger'  },
   waybill:       { title: 'Путевой лист',                   sub: 'Электронный, на смену', iconColor: 'warning' },
-  medicalCheck:  { title: 'Медосмотр',                      sub: 'Предрейсовый, 24 ч',    iconColor: 'warning' },
+  medicalCheck:  { title: 'Медосмотр',                      sub: 'Локальная отметка',    iconColor: 'warning' },
 };
-
-// ── Payouts mock data ─────────────────────────────────────────────────────────
-
-const MOCK_PAYOUT_SUMMARY = {
-  available:     18420,
-  weekEarned:    21580,
-  commissionPct: 12,
-  commissionAmt: 2590,
-  acquiringPct:  1.5,
-  acquiringAmt:  324,
-  weekPayout:    18666,
-};
-
-const MOCK_PAYOUT_METHODS = [
-  { id: 'card-4821', bank: 'Сбербанк', last4: '4821', isDefault: true },
-];
-
-const MOCK_PAYOUT_HISTORY = [
-  { id: 'ph-1', last4: '4821', date: '24.04', time: '22:10', amount: 12000, status: 'credited' },
-  { id: 'ph-2', last4: '4821', date: '17.04', time: '21:48', amount: 15200, status: 'credited' },
-  { id: 'ph-3', last4: '4821', date: '10.04', time: '20:02', amount:  9800, status: 'pending'  },
-  { id: 'ph-4', last4: '4821', date: '03.04', time: '19:30', amount: 14400, status: 'credited' },
-];
-
-const MOCK_TAX_ITEMS = [
-  {
-    id:        'npd-apr',
-    type:      'npd',
-    title:     'Налог НПД за апрель',
-    deadline:  'До 25 мая',
-    rateLabel: 'самозанятость 4%',
-    amount:    4280,
-    action:    'Оплатить через «Мой налог»',
-  },
-  {
-    id:        'usn-q2',
-    type:      'usn',
-    title:     'Налог УСН · аванс за II квартал',
-    deadline:  'До 28 июля',
-    rateLabel: '~6% от дохода',
-    amount:    null,
-    action:    null,
-  },
-];
 
 function pluralDoc(n) {
   const m10 = n % 10, m100 = n % 100;
@@ -1892,15 +1822,10 @@ function pluralDoc(n) {
   return 'документов';
 }
 
-// BD-PROFILE-D-03 — readiness card labels. The Documents tab is a readiness
-// surface, so each card states its readiness in three words shared with the
-// Cloud Design render gate:
-//   Проверено      — uploaded / verified (state F)
-//   На проверке    — under review (state E · documents pending)
-//   Нужно обновить — expired or never added (state C · checklist missing docs)
+// Local document flags are demonstration states, not verification evidence.
 function docStatusBadgeHtml(status) {
-  if (status === 'uploaded')        return `<span class="bd-badge success">${SVG_CHECK_SM} Проверено</span>`;
-  if (status === 'review_required') return `<span class="bd-badge info">${SVG_CLOCK_SM} На проверке</span>`;
+  if (status === 'uploaded')        return `<span class="bd-badge success">${SVG_CHECK_SM} Добавлено · демо</span>`;
+  if (status === 'review_required') return `<span class="bd-badge info">${SVG_CLOCK_SM} Проверка · демо</span>`;
   if (status === 'expired')         return `<span class="bd-badge danger">${SVG_WARN_TRI} Нужно обновить</span>`;
   if (status === 'missing')         return `<span class="bd-badge warning">${SVG_UPLOAD_SM} Нужно обновить</span>`;
   if (status === 'draft')           return `<span class="bd-badge">${SVG_CLOCK_SM} Черновик</span>`;
@@ -1908,11 +1833,8 @@ function docStatusBadgeHtml(status) {
 }
 
 function docMetaText(key, status) {
-  if (key === 'driverLicense' && status === 'uploaded')        return 'до 2031';
-  if (key === 'taxiOsago'     && status === 'review_required') return 'до 14.08.2026';
-  if (key === 'taxiOsago'     && status === 'uploaded')        return 'до 14.08.2026';
-  if (key === 'taxiRegistry'  && status === 'expired')         return 'истекло 12.04.2026';
-  if (key === 'taxiRegistry'  && status === 'uploaded')        return 'разрешение действует';
+  if (status === 'uploaded') return 'Отметка на устройстве. Подлинность и срок не подтверждены.';
+  if (status === 'review_required') return 'Демосостояние. Реальная проверка не запущена.';
   return '';
 }
 
@@ -1969,7 +1891,7 @@ function docPanelHtml(key, status) {
           <p class="pf2-doc-panel__title" id="pf2-doc-panel-taxiOsago-title">ОСАГО для такси — проверка</p>
           <button type="button" class="pf2-doc-panel__close" data-doc-close="taxiOsago" aria-label="Закрыть">✕</button>
         </div>
-        <p class="pf2-doc-review">Документ ожидает проверки оператором. Demo-flow не блокирует — после проверки статус обновится автоматически.</p>
+        <p class="pf2-doc-review">Это пример состояния проверки. Документ не отправлен оператору; автоматической проверки пока нет.</p>
       </div>`;
   }
   return '';
@@ -2046,7 +1968,7 @@ function garageReadinessHintHtml(u) {
 function docsPaneHtml(u) {
   const docs = u.driverDocuments || {};
   // Blocking docs prevent going online; review-only is soft / informational.
-  // Splitting the two avoids saying "Без них вы не сможете выйти на линию"
+  // Splitting the two avoids saying "Заполните локальные отметки для демонстрации. Серверный допуск проверяется отдельно."
   // when only review_required documents remain — which is actually allowed
   // by computeDocumentsReady.
   const blocking = documentsAttentionCount(docs);
@@ -2058,7 +1980,7 @@ function docsPaneHtml(u) {
       <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
       <div class="pf2-doc-warn-body">
         <p class="pf2-doc-warn-title">${blocking} ${pluralDoc(blocking)} требуют внимания</p>
-        <p class="pf2-doc-warn-sub">Без них вы не сможете выйти на линию</p>
+        <p class="pf2-doc-warn-sub">Заполните локальные отметки для демонстрации. Серверный допуск проверяется отдельно.</p>
       </div>
     </div>`;
   } else if (review > 0) {
@@ -2067,7 +1989,7 @@ function docsPaneHtml(u) {
       <span class="pf2-doc-warn-icon" aria-hidden="true">${SVG_CLOCK_SM}</span>
       <div class="pf2-doc-warn-body">
         <p class="pf2-doc-warn-title">${review} ${pluralDoc(review)} на проверке</p>
-        <p class="pf2-doc-warn-sub">Можно выходить на линию — проверка не блокирует demo</p>
+        <p class="pf2-doc-warn-sub">Локальное демосостояние не подтверждает допуск к заказам</p>
       </div>
     </div>`;
   }
@@ -2105,7 +2027,7 @@ function taxiReadinessListHtml(reasons) {
   }).join('');
   return `
     <div class="pf2-ip-checklist">
-      <p class="pf2-ip-checklist-title">Готовность к линии</p>
+      <p class="pf2-ip-checklist-title">Локальные отметки</p>
       <div class="pf2-ip-checklist-rows">${rows}
       </div>
     </div>`;
@@ -2127,11 +2049,10 @@ function ipPaneHtml(u) {
   // can be intercepted and routed to the readiness checklist.
   const toggleDisabled = isBlocked ? ' aria-disabled="true"' : '';
 
-  // "Выйти на линию" CTA: disabled in blocked, label flips to "Завершить смену"
-  // when online so the action stays meaningful in that state.
+  // This toggles only the existing local demo flag, never a server shift.
   const goLabel = isBlocked
     ? 'Недоступно: нужна готовность'
-    : (isOnline ? 'Завершить смену' : 'Выйти на линию');
+    : (isOnline ? 'Отключить демостатус' : 'Включить демостатус');
   const goDisabled = isBlocked ? ' disabled' : '';
 
   return `
@@ -2139,9 +2060,9 @@ function ipPaneHtml(u) {
       <div class="pf2-ip-scard-top">
         <div class="pf2-ip-scard-lbl-row">
           <span class="pf2-ip-scard-dot" aria-hidden="true"></span>
-          <span class="pf2-ip-driver-lbl">СТАТУС ВОДИТЕЛЯ</span>
+          <span class="pf2-ip-driver-lbl">ДЕМОНСТРАЦИОННЫЙ СТАТУС</span>
         </div>
-        <label class="pf2-toggle pf2-ip-toggle" aria-label="Статус водителя">
+        <label class="pf2-toggle pf2-ip-toggle" aria-label="Демонстрационный онлайн-статус">
           <input type="checkbox" id="pf2-ip-online-toggle"${toggleChecked}${toggleDisabled}>
           <span class="pf2-toggle__track"></span>
         </label>
@@ -2155,54 +2076,39 @@ function ipPaneHtml(u) {
     </div>
 
     <div class="bd-card pf2-ip-shift-card">
-      <p class="pf2-ip-shift-title">Управление сменой</p>
+      <p class="pf2-ip-shift-title">Рабочая смена</p>
       <button type="button" class="bd-btn primary pf2-ip-go-btn" id="pf2-ip-go-online"${goDisabled}>
         ${SVG_CAR_FRONT} ${escapeHtml(goLabel)}
       </button>
       ${goDisabled ? `<p class="pf2-ip-go-reason" id="pf2-ip-go-reason">${escapeHtml(sub)}</p>` : ''}
       <div class="pf2-ip-shift-row">
-        <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-open-shift">
-          ${SVG_CLOCK_SM} Открыть смену
+        <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-open-shift" disabled>
+          ${SVG_CLOCK_SM} Смена не подключена
         </button>
         <button type="button" class="bd-btn pf2-ip-shift-sm" id="pf2-ip-check-ready">
-          ${SVG_CHECK_SM} Проверить готовность
+          ${SVG_CHECK_SM} Проверить отметки
         </button>
       </div>
       <div class="bd-alert warning pf2-ip-permit-warn" id="pf2-ip-permit-warn" role="status" hidden>
         <span class="pf2-ip-warn-icon" aria-hidden="true">${SVG_WARN_TRI}</span>
         <div class="pf2-ip-warn-text">
           <p class="pf2-ip-warn-title">Разрешение такси не добавлено</p>
-          <p class="pf2-ip-warn-body">Это пункт готовности к смене. MVP не блокирует выход на линию — но в проде разрешение обязательно.</p>
+          <p class="pf2-ip-warn-body">Это локальная отметка демопрофиля, она не подтверждает право выполнять заказы.</p>
         </div>
       </div>
     </div>
 
     <p class="pf2-ip-sect-title">Статус самозанятого</p>
     <div class="bd-card pf2-ip-se-card">
-      <div class="pf2-ip-card-hd">
-        <span class="bd-badge success pf2-ip-badge-dot">Активен</span>
-        <span class="pf2-ip-card-date">с 12.03.2023</span>
-      </div>
-      <p class="pf2-ip-inn">ИНН 770312345678</p>
-      <p class="pf2-ip-card-sub">Привязан через ФНС «Мой налог»</p>
-      <div class="pf2-ip-income-bar" data-pct="34">
-        <div class="pf2-ip-income-fill"></div>
-      </div>
-      <div class="pf2-ip-income-row">
-        <span class="pf2-ip-income-label">Лимит дохода в год</span>
-        <span class="pf2-ip-income-val">816 200 ₽ / 2,4 млн</span>
-      </div>
+      <div class="pf2-ip-card-hd"><span class="bd-badge">Нет данных</span></div>
+      <p class="pf2-ip-inn">Статус не подтверждён</p>
+      <p class="pf2-ip-card-sub">Связь с «Мой налог» не подключена. ИНН, доход и налоговые начисления здесь не отображаются.</p>
     </div>
-
     <p class="pf2-ip-sect-title">Разрешение / реестр такси</p>
     <div class="bd-card pf2-ip-permit-card">
-      <div class="pf2-ip-card-hd">
-        <span class="bd-badge warning pf2-ip-badge-dot">Истекает</span>
-        <span class="pf2-ip-card-date">через 47 дней</span>
-      </div>
-      <p class="pf2-ip-inn">№ 77-456789</p>
-      <p class="pf2-ip-card-sub">Действует до 12.06.2026 · реестр Москвы</p>
-      <button type="button" class="bd-btn pf2-ip-permit-btn">Продлить разрешение</button>
+      <div class="pf2-ip-card-hd"><span class="bd-badge">Нет серверной проверки</span></div>
+      <p class="pf2-ip-card-sub">Локальная запись не подтверждает статус в реестре или срок действия.</p>
+      <button type="button" class="bd-btn pf2-ip-permit-btn">Проверка реестра · скоро</button>
     </div>
 
     <p class="pf2-ip-sect-title">Парк / агрегатор</p>
@@ -2211,7 +2117,7 @@ function ipPaneHtml(u) {
         <span class="pf2-ip-park-icon" aria-hidden="true">${SVG_CAR_FRONT}</span>
         <span class="pf2-ip-park-info">
           <span class="pf2-ip-park-name">Самостоятельно</span>
-          <span class="pf2-ip-park-sub">Без привязки к парку</span>
+          <span class="pf2-ip-park-sub">Демонстрация режима работы</span>
         </span>
         <span class="pf2-ip-park-end" aria-hidden="true">${SVG_CHECK_SM}</span>
       </button>
@@ -2220,7 +2126,7 @@ function ipPaneHtml(u) {
         <span class="pf2-ip-park-icon" aria-hidden="true">${SVG_TAG_ICON}</span>
         <span class="pf2-ip-park-info">
           <span class="pf2-ip-park-name">Подключить парк</span>
-          <span class="pf2-ip-park-sub">Доступ к большему числу заказов</span>
+          <span class="pf2-ip-park-sub">Подключение пока недоступно</span>
         </span>
         <span class="pf2-ip-park-end" aria-hidden="true">${SVG_CHEVRON}</span>
       </button>
@@ -2228,24 +2134,21 @@ function ipPaneHtml(u) {
 }
 
 // ── Payouts pane (BD-PROFILE-02) ─────────────────────────────────────────────
-// Supported states:
-//   default          — normal populated view
-//   empty-history    — MOCK_PAYOUT_HISTORY is empty → placeholder card
-//   no-card          — MOCK_PAYOUT_METHODS is empty → add-card CTA only
-//   processing-payout — handled via CSS class on Вывести button
-//   report-generating — handled via CSS class on Сформировать отчёт button
+// No payout provider is connected. Unknown balance is not a zero balance;
+// unavailable transfers and reports must not simulate successful operations.
 
 // BD-RIDE-HISTORY-D-01 — Driver payouts: completed-ride rows sourced from the
 // canonical receipt store. Each row shows net straight from receipt.net (no
-// recalculation) and deep-links to the trip receipt at /receipt?tripId=…. The
-// balance / weekly cards above stay demo/static.
+// recalculation) and deep-links to the trip receipt at /receipt?tripId=….
+// listDriverReceipts also includes a canonical demo seed; label the source
+// honestly until the data adapter carries per-row provenance.
 function driverReceiptPayoutSectionHtml(onRetry) {
   let receipts = [];
   // BD-ERROR-01C-G — route a receipts load failure through the global overlay
   // instead of silently swallowing it. Defensive/dormant: mock listDriverReceipts()
   // does not reject today, so the catch is dormant; a future backend failure
   // surfaces server_error with a guarded retry. The [] fallback preserves the
-  // pane's own static balance/weekly cards (empty receipts → '').
+  // pane's unavailable balance card (empty receipts → '').
   try {
     receipts = listDriverReceipts();
   } catch (err) {
@@ -2262,7 +2165,7 @@ function driverReceiptPayoutSectionHtml(onRetry) {
       <button type="button" class="pf2-po-trip-row" data-receipt-trip="${escapeHtml(tripId)}">
         <span class="pf2-po-trip-icon" aria-hidden="true">${SVG_DOC_LG}</span>
         <span class="pf2-po-trip-info">
-          <span class="pf2-po-trip-name">Поездка № ${escapeHtml(tripId)}</span>
+          <span class="pf2-po-trip-name">Чек поездки</span>
           <span class="pf2-po-trip-meta">
             ${when ? `<span class="pf2-po-trip-sub">${escapeHtml(when)}</span>` : ''}
             ${badge}
@@ -2276,7 +2179,7 @@ function driverReceiptPayoutSectionHtml(onRetry) {
   }).join('');
   return `
     <div class="pf2-po-sect-hdr">
-      <span class="pf2-po-sect-title">Завершённые поездки</span>
+      <span class="pf2-po-sect-title">Локальные и демонстрационные чеки</span>
     </div>
     <div class="pf2-po-trips" id="pf2-po-trips-block">
       ${rows}
@@ -2291,152 +2194,50 @@ function payoutsEmptyPaneHtml() {
   return `
     <div class="pf2-po-balance-card pf2-po-balance-card--empty">
       <p class="pf2-po-balance-lbl">Доступно к выводу</p>
-      <p class="pf2-po-balance-amount">0 ₽</p>
-      <p class="pf2-po-balance-empty-note">Заработок появится после первых поездок</p>
+      <p class="pf2-po-balance-amount">—</p>
+      <p class="pf2-po-balance-empty-note">Сервис выплат не подключён</p>
     </div>
     <div class="pf2-po-empty">
       <span class="pf2-po-empty-icon" aria-hidden="true">${SVG_RUBLE_COIN}</span>
       <p class="pf2-po-empty-title">Выплат пока нет</p>
-      <p class="pf2-po-empty-text">Завершите первую поездку — доход, чеки и выводы на карту появятся в этом разделе.</p>
+      <p class="pf2-po-empty-text">Здесь будут выплаты после подключения сервиса. Локальные чеки не подтверждают зачисление денег.</p>
       <button type="button" class="bd-btn primary pf2-po-empty-cta" id="pf2-po-empty-cta">Найти заказы</button>
     </div>`;
 }
 
 function payoutsPaneHtml(previewEmpty = false) {
   if (previewEmpty) return payoutsEmptyPaneHtml();
-  const s          = MOCK_PAYOUT_SUMMARY;
-  const hasMethods = MOCK_PAYOUT_METHODS.length > 0;
-  const hasHistory = MOCK_PAYOUT_HISTORY.length > 0;
-
-  // ── Methods section ──────────────────────────────────────
-  const methodRows = MOCK_PAYOUT_METHODS.map((m) => `
-      <button type="button" class="pf2-po-method-row">
-        <span class="pf2-po-method-icon">${SVG_CREDIT_CARD_PO}</span>
-        <span class="pf2-po-method-info">
-          <span class="pf2-po-method-name">${escapeHtml(m.bank)}</span>
-          <span class="pf2-po-method-sub">•• ${escapeHtml(m.last4)}${m.isDefault ? ' · по умолчанию' : ''}</span>
-        </span>
-        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
-      </button>`).join('');
-
-  // no-card: "Добавить карту" row gets a subtitle hint when list is empty
-  const addCardRow = `
-      <button type="button" class="pf2-po-method-row" id="pf2-po-add-card-btn">
-        <span class="pf2-po-method-icon pf2-po-method-icon--add">${SVG_PLUS}</span>
-        <span class="pf2-po-method-info">
-          <span class="pf2-po-method-name">Добавить карту</span>
-          ${!hasMethods ? '<span class="pf2-po-method-sub">Добавьте карту для вывода средств</span>' : ''}
-        </span>
-        <span class="pf2-po-method-chevron" aria-hidden="true">${SVG_CHEVRON}</span>
-      </button>`;
-
-  // ── History section ──────────────────────────────────────
-  const histItems = MOCK_PAYOUT_HISTORY.map((h) => {
-    const badgeCls = h.status === 'credited' ? 'bd-badge success' : 'bd-badge';
-    const badgeTxt = h.status === 'credited' ? 'Зачислено' : 'В обработке';
-    return `
-      <div class="pf2-po-hist-item">
-        <span class="pf2-po-hist-icon">${SVG_CREDIT_CARD_PO}</span>
-        <span class="pf2-po-hist-info">
-          <span class="pf2-po-hist-name">Вывод на карту •• ${escapeHtml(h.last4)}</span>
-          <span class="pf2-po-hist-date">${escapeHtml(h.date)} · ${escapeHtml(h.time)}</span>
-        </span>
-        <span class="pf2-po-hist-right">
-          <span class="pf2-po-hist-amount">${fmtRub(h.amount)}</span>
-          <span class="${badgeCls}">${badgeTxt}</span>
-        </span>
-      </div>`;
-  }).join('');
-
-  // empty-history placeholder
-  const histContent = hasHistory
-    ? histItems
-    : `<div class="pf2-po-hist-empty">
-         <p class="pf2-po-hist-empty-title">Выплат пока нет</p>
-         <p class="pf2-po-hist-empty-sub">Здесь появятся выводы на карту</p>
-       </div>`;
-
-  // ── Tax cards ────────────────────────────────────────────
-  const taxCards = MOCK_TAX_ITEMS.map((tax) => {
-    const isNpd  = tax.type === 'npd';
-    const icon   = isNpd
-      ? `<span class="pf2-po-tax-icon">${SVG_RUBLE_COIN}</span>`
-      : `<span class="pf2-po-tax-icon pf2-po-tax-icon--usn">${SVG_CALENDAR_PO}</span>`;
-    const right  = isNpd
-      ? `<span class="pf2-po-tax-amount">${fmtRub(tax.amount)}</span>`
-      : `<span class="bd-badge">План</span>`;
-    const payBtn = isNpd
-      ? `<button type="button" class="bd-btn primary" id="pf2-po-tax-pay-${escapeHtml(tax.id)}">${escapeHtml(tax.action)}</button>`
-      : '';
-    return `
-      <div class="pf2-po-tax-card${isNpd ? ' pf2-po-tax-card--npd' : ''}">
-        <div class="pf2-po-tax-hd">
-          ${icon}
-          <div class="pf2-po-tax-info">
-            <p class="pf2-po-tax-title">${escapeHtml(tax.title)}</p>
-            <p class="pf2-po-tax-sub">${escapeHtml(tax.deadline)} · ${escapeHtml(tax.rateLabel)}</p>
-          </div>
-          ${right}
-        </div>
-        ${payBtn}
-      </div>`;
-  }).join('');
-
   return `
     <div class="pf2-po-balance-card">
       <p class="pf2-po-balance-lbl">Доступно к выводу</p>
-      <p class="pf2-po-balance-amount">${fmtRub(s.available)}</p>
+      <p class="pf2-po-balance-amount">—</p>
+      <p class="pf2-po-balance-empty-note">Сервис выплат не подключён. Баланс пока неизвестен.</p>
       <div class="pf2-po-balance-btns">
-        <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--dark" id="pf2-po-withdraw-btn">Вывести</button>
+        <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--dark" id="pf2-po-withdraw-btn" disabled>Вывод недоступен</button>
         <button type="button" class="pf2-po-balance-btn pf2-po-balance-btn--sec" id="pf2-po-history-btn">История</button>
       </div>
     </div>
-    <div class="pf2-po-weekly">
-      <p class="pf2-po-weekly-title">Расчёт за неделю</p>
-      <div class="pf2-po-weekly-row">
-        <span class="pf2-po-weekly-label">Заработано</span>
-        <span class="pf2-po-weekly-val">${fmtRub(s.weekEarned)}</span>
-      </div>
-      <div class="pf2-po-weekly-row">
-        <span class="pf2-po-weekly-label">Комиссия BazarDrive · ${s.commissionPct}%</span>
-        <span class="pf2-po-weekly-val pf2-po-weekly-val--neg">− ${fmtRub(s.commissionAmt)}</span>
-      </div>
-      <div class="pf2-po-weekly-row">
-        <span class="pf2-po-weekly-label">Эквайринг · ${s.acquiringPct}%</span>
-        <span class="pf2-po-weekly-val pf2-po-weekly-val--neg">− ${fmtRub(s.acquiringAmt)}</span>
-      </div>
-      <div class="pf2-po-weekly-sep" aria-hidden="true"></div>
-      <div class="pf2-po-weekly-total-row">
-        <span class="pf2-po-weekly-total-lbl">К выплате</span>
-        <span class="pf2-po-weekly-total-val">${fmtRub(s.weekPayout)}</span>
-      </div>
-    </div>
+    <p class="pf2-context-note">Здесь локальные чеки и демопримеры. Они не являются балансом или подтверждением выплаты.</p>
     <div id="pf2-po-trips-mount"></div>
-    ${taxCards}
-    <div class="pf2-po-sect-hdr">
-      <span class="pf2-po-sect-title">Способы вывода</span>
-      ${hasMethods ? '<button type="button" class="pf2-po-sect-action" id="pf2-po-methods-change">Изменить</button>' : ''}
-    </div>
+    <div class="pf2-po-sect-hdr"><span class="pf2-po-sect-title">Способы вывода</span></div>
     <div class="pf2-po-methods" id="pf2-po-methods-block">
-      ${methodRows}
-      ${addCardRow}
+      <p class="pf2-context-note">Привязка банковской карты пока недоступна.</p>
+      <button type="button" class="pf2-po-method-row" id="pf2-po-add-card-btn" disabled>
+        <span class="pf2-po-method-icon" aria-hidden="true">${SVG_CREDIT_CARD_PO}</span>
+        <span class="pf2-po-method-name">Добавить карту · скоро</span>
+      </button>
     </div>
-    <div class="pf2-po-sect-hdr">
-      <span class="pf2-po-sect-title">История выплат</span>
-      ${hasHistory ? '<button type="button" class="pf2-po-sect-action" id="pf2-po-hist-all-btn">Все</button>' : ''}
-    </div>
-    <div class="pf2-po-history" id="pf2-po-history-block">
-      ${histContent}
+    <div class="pf2-po-sect-hdr"><span class="pf2-po-sect-title">История выплат</span></div>
+    <div class="pf2-po-history" id="pf2-po-history-block" tabindex="-1">
+      <div class="pf2-po-hist-empty">
+        <p class="pf2-po-hist-empty-title">Данные о выплатах недоступны</p>
+        <p class="pf2-po-hist-empty-sub">Подтверждённые операции появятся после подключения сервиса.</p>
+      </div>
     </div>
     <div class="pf2-po-report">
-      <div class="pf2-po-report-hd">
-        <span class="pf2-po-report-icon">${SVG_DOC_LG}</span>
-        <span class="pf2-po-report-info">
-          <span class="pf2-po-report-title">Отчёт о доходах</span>
-          <span class="pf2-po-report-sub">PDF / Excel · для налоговой и банка</span>
-        </span>
-      </div>
-      <button type="button" class="bd-btn primary" id="pf2-po-report-btn">Сформировать отчёт</button>
+      <p class="pf2-po-report-title">Отчёт о доходах</p>
+      <p class="pf2-context-note">Выгрузка пока недоступна. Налоговые расчёты не выполняются.</p>
+      <button type="button" class="bd-btn" id="pf2-po-report-btn" disabled>Отчёт · скоро</button>
     </div>`;
 }
 
@@ -3128,6 +2929,8 @@ function refreshGarageSection(root) {
   oldSection.replaceWith(newSection);
   wireGarageActions(root, vehicles);
   refreshGarageReadinessHint(root);
+  const heroCar = root.querySelector('#pf2-hero-car');
+  if (heroCar) heroCar.textContent = driverVehicleText(u);
 }
 
 // READY-K Codex P2-2 — Refresh just the Documents pane's read-only
@@ -3205,15 +3008,25 @@ function renderDriver(root, u) {
     <div class="bd-scroll">
       <div class="pf2-pane pf2-pane--active" id="pf2-pane-overview" role="tabpanel" aria-labelledby="pf2-tab-overview" tabindex="0">
         ${driverHeroHtml(u)}
-        ${statusCardHtml(u)}
-        ${driverCreateActionsHtml()}
-        ${driverStatsHtml()}
-        ${readinessHtml(items)}
-        ${garageSectionHtml(u, { force: garageForce, vehicles: garageVehicles })}
-        ${taxiPermitPanelHtml(u)}
-        ${myPostsSectionHtml()}
-        ${historySectionHtml()}
-        ${quickActionsHtml()}
+        <div class="pf2-context-banner">
+          ${SVG_INFO}
+          <div><strong>Демонстрационный режим</strong><p>Профиль хранится на устройстве. Онлайн-статус и допуск к заказам не подтверждены сервером.</p></div>
+        </div>
+        <div class="pf2-dashboard-grid">
+          <div class="pf2-dashboard-main">
+            ${statusCardHtml(u)}
+            ${driverCreateActionsHtml()}
+            ${driverStatsHtml()}
+            ${historySectionHtml()}
+          </div>
+          <div class="pf2-dashboard-side">
+            ${garageSectionHtml(u, { force: garageForce, vehicles: garageVehicles })}
+            ${readinessHtml(items)}
+            ${taxiPermitPanelHtml(u)}
+            ${myPostsSectionHtml()}
+            ${quickActionsHtml()}
+          </div>
+        </div>
       </div>
       <div class="pf2-pane" id="pf2-pane-ip" role="tabpanel" aria-labelledby="pf2-tab-ip" tabindex="0">${ipPaneHtml(u)}</div>
       <div class="pf2-pane" id="pf2-pane-docs" role="tabpanel" aria-labelledby="pf2-tab-docs" tabindex="0">${docsPaneHtml(u)}</div>
@@ -3233,6 +3046,8 @@ function renderDriver(root, u) {
   // Moves the active class, aria-selected, and the roving tabindex (active tab
   // 0, the rest -1), and swaps the visible tabpanel.
   function activateTab(tab) {
+    const scroll = root.querySelector('.bd-scroll');
+    if (scroll) scroll.scrollTop = 0;
     tabBtns.forEach((t) => {
       const on = t === tab;
       t.classList.toggle('pf2-tab--active', on);
@@ -3451,8 +3266,7 @@ function renderDriver(root, u) {
     newRow?.addEventListener('click', openPermitPanel);
   }
 
-  // CTA: open active shift / active ride (driver mode).
-  // Enabled only when line-ready.
+  // Open the existing driver map after the local demo readiness check.
   root.querySelector('#pf2-active-shift-cta')?.addEventListener('click', () => {
     if (!isDriverLineReady(user.get())) return;
     go('/driver-map');
@@ -3480,9 +3294,12 @@ function renderDriver(root, u) {
     }, 1500);
   }
 
-  // Quick action "Мой автомобиль" → switch to Такси / ИП pane (vehicle / shift area).
+  // The car lives in Overview, not in the Taxi/IP pane.
   root.querySelector('#pf2-act-car')?.addEventListener('click', () => {
-    root.querySelector('.pf2-tab[data-pane="ip"]')?.click();
+    root.querySelector('.pf2-tab[data-pane="overview"]')?.click();
+    const garage = root.querySelector('#pf2-garage');
+    garage?.scrollIntoView({ block: 'start' });
+    root.querySelector('#pf2-garage-add')?.focus({ preventScroll: true });
   });
 
   // Quick action "Шаблоны договоров" → stub, no dedicated screen yet.
@@ -3659,24 +3476,6 @@ function renderDriver(root, u) {
 
   // ── Payouts tab interactions ──────────────────────────────────────────────
 
-  // State: processing-payout — class pf2-po-balance-btn--processing added while in flight
-  root.querySelector('#pf2-po-withdraw-btn')?.addEventListener('click', () => {
-    const btn = root.querySelector('#pf2-po-withdraw-btn');
-    if (btn.classList.contains('pf2-po-balance-btn--processing')) return;
-    const orig = btn.textContent;
-    btn.classList.add('pf2-po-balance-btn--processing');
-    btn.disabled = true;
-    btn.textContent = 'Оформляем вывод…';
-    setTimeout(() => {
-      btn.textContent = 'Заявка принята — заглушка';
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.disabled = false;
-        btn.classList.remove('pf2-po-balance-btn--processing');
-      }, 1500);
-    }, 800);
-  });
-
   root.querySelector('#pf2-po-history-btn')?.addEventListener('click', () => {
     root.querySelector('#pf2-po-history-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -3732,36 +3531,13 @@ function renderDriver(root, u) {
     setTimeout(() => { btn.textContent = orig; }, 2000);
   });
 
-  // State: report-generating — class pf2-po-report-btn--generating while in flight,
-  //        pf2-po-report-btn--done briefly on success
-  root.querySelector('#pf2-po-report-btn')?.addEventListener('click', () => {
-    const btn = root.querySelector('#pf2-po-report-btn');
-    if (btn.classList.contains('pf2-po-report-btn--generating')) return;
-    const orig = btn.textContent;
-    btn.classList.add('pf2-po-report-btn--generating');
-    btn.disabled = true;
-    btn.textContent = 'Формируем отчёт…';
-    setTimeout(() => {
-      btn.classList.remove('pf2-po-report-btn--generating');
-      btn.classList.add('pf2-po-report-btn--done');
-      btn.disabled = false;
-      btn.textContent = 'Отчёт готов — заглушка';
-      setTimeout(() => {
-        btn.classList.remove('pf2-po-report-btn--done');
-        btn.textContent = orig;
-      }, 2000);
-    }, 1000);
-  });
-
   // BD-PROFILE-D-03 — empty payouts CTA (state H) routes the driver to nearby
   // orders so the empty state has a single forward action.
   root.querySelector('#pf2-po-empty-cta')?.addEventListener('click', () => go('/driver-map'));
 
-  // BD-PROFILE-D-03 — safety center tiles (state I). Demo placeholders: no real
-  // call, no SOS dispatch — they only dismiss focus, matching the passenger
-  // safety tiles.
-  ['#pf2-safety-contacts', '#pf2-safety-share', '#pf2-safety-sos'].forEach((sel) => {
-    root.querySelector(sel)?.addEventListener('click', (e) => e.currentTarget.blur());
+  // Informational help only; no SOS delivery is implied by a no-op button.
+  root.querySelector('#pf2-safety-sos')?.addEventListener('click', () => {
+    root.querySelector('#pf2-safety-help')?.focus();
   });
 }
 
@@ -3801,6 +3577,7 @@ export default function profile(renderContext) {
   if (view === 'guest') {
     renderGuest(root);
   } else if (view === 'driver') {
+    root.classList.add('pf2-dashboard');
     // BD-PROFILE-D-03 — loading / skeleton preview (state J). ?state=loading
     // renders the non-interactive driver skeleton; any other value falls
     // through to the live dashboard (where ?state=empty drives the payouts
