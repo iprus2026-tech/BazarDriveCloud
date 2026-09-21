@@ -180,7 +180,8 @@ function getTaxiReadinessState(u) {
 // getDriverStatusSubtitle reports it: profile data (phone / vehicle / plate),
 // then registration documents, then the Taxi/IP checklist rows (waybill /
 // medical / permit), which carry their own row actions. Navigation only — it
-// never changes readiness; isDriverLineReady stays the single rule.
+// never changes readiness; isDriverLineReady stays the single rule. Returns
+// 'profile' (the profile edit action) or 'checklist' (the Taxi/IP checklist).
 function isRegistrationDocReady(status) {
   return status === 'uploaded' || status === 'review_required';
 }
@@ -194,8 +195,10 @@ function firstMissingRequirement(u) {
     const docs = u.driverDocuments || {};
     const key = REGISTRATION_DOCS.find((k) => !isRegistrationDocReady(docs[k]?.status));
     // taxiRegistry is the permit row: its existing checklist action opens the
-    // permit panel, so it keeps the checklist route.
-    if (key !== 'taxiRegistry') return { target: 'doc', key: key || null };
+    // permit panel, so it keeps the checklist route. driverLicense / taxiOsago
+    // have no in-pane writer (their Documents cards offer no upload); only the
+    // onboarding docs step writes them, so they go to the profile edit action.
+    if (key !== 'taxiRegistry') return { target: 'profile' };
   }
   return { target: 'checklist' };
 }
@@ -518,9 +521,12 @@ function tabsHtml(activeId = 'overview', { interactive = true } = {}) {
   </div>`;
 }
 
+// The hero describes the same legacy vehicle fields the readiness gate reads
+// (canShowReadyStatus). Garage entries never write them, so a garage car is not
+// presented here as the profile vehicle.
 function driverVehicleText(u) {
-  const { vehicle } = getGarageReadinessState(u);
-  return vehicle ? [vehicle.model, vehicle.plate].filter(Boolean).join(' · ') : 'Автомобиль не выбран';
+  const model = [u.vehicleMake, u.vehicleModel].filter(Boolean).join(' ');
+  return [model, u.vehiclePlate].filter(Boolean).join(' · ') || 'Автомобиль не указан';
 }
 
 function driverHeroHtml(u) {
@@ -2952,8 +2958,6 @@ function refreshGarageSection(root) {
   oldSection.replaceWith(newSection);
   wireGarageActions(root, vehicles);
   refreshGarageReadinessHint(root);
-  const heroCar = root.querySelector('#pf2-hero-car');
-  if (heroCar) heroCar.textContent = driverVehicleText(u);
 }
 
 // READY-K Codex P2-2 — Refresh just the Documents pane's read-only
@@ -3150,8 +3154,16 @@ function renderDriver(root, u) {
     syncDriverStatusDom(root, current, on);
   });
 
+  // Same router as the Taxi/IP CTA, so a waybill / medical / permit blocker is not
+  // answered with an Overview checklist that has no such row. With nothing left to
+  // fix the button keeps its old behaviour (show the readiness card).
   root.querySelector('#pf2-goto-actions').addEventListener('click', () => {
-    root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const current = user.get();
+    if (isDriverLineReady(current)) {
+      root.querySelector('.pf2-readiness-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    routeToMissingRequirement(current);
   });
 
   // BD-ROLE-01 — Driver create/order CTAs. Nearby orders + going online live
@@ -3373,38 +3385,26 @@ function renderDriver(root, u) {
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // Blocked-state CTA: land on the requirement that is actually unmet instead of
-  // always scrolling to the Taxi/IP checklist, which only carries the waybill /
-  // medical / permit rows. Focus moves to an existing control; nothing is
-  // opened, saved or submitted from here.
+  // Switch pane only when it is not already showing — re-clicking the active tab
+  // would replay the pane reveal for nothing.
+  function showPane(paneId) {
+    const tab = root.querySelector(`.pf2-tab[data-pane="${paneId}"]`);
+    if (tab && !tab.classList.contains('pf2-tab--active')) tab.click();
+  }
+
+  // Blocked-state CTA, shared by Overview and Taxi/IP: land on the requirement
+  // that is actually unmet. Profile-data and license / OSAGO blockers go to the
+  // profile edit action (opens /onboarding, the only writer of the fields
+  // readiness reads); waybill / medical / permit go to the Taxi/IP checklist,
+  // which carries their row actions. Focus moves to an existing control; nothing
+  // is opened, saved or submitted from here.
   function routeToMissingRequirement(current) {
-    const missing = firstMissingRequirement(current);
-    if (missing.target === 'checklist') {
+    if (firstMissingRequirement(current).target === 'checklist') {
+      showPane('ip');
       scrollToChecklist();
       return;
     }
-    if (missing.target === 'doc') {
-      root.querySelector('.pf2-tab[data-pane="docs"]')?.click();
-      const docsPaneEl = root.querySelector('#pf2-pane-docs');
-      const card = missing.key ? docsPaneEl?.querySelector(`[data-doc-key="${missing.key}"]`) : null;
-      if (!card) {
-        docsPaneEl?.focus({ preventScroll: true });
-        return;
-      }
-      card.scrollIntoView({ block: 'start' });
-      // The license card has no action button; give the card itself a
-      // programmatic focus stop rather than inventing an upload control.
-      let target = card.querySelector('[data-doc-action]');
-      if (!target) {
-        card.setAttribute('tabindex', '-1');
-        target = card;
-      }
-      target.focus({ preventScroll: true });
-      return;
-    }
-    // phone / vehicle / plate → the profile edit action (opens /onboarding, which
-    // writes the fields readiness reads). The garage cannot clear these blockers.
-    root.querySelector('.pf2-tab[data-pane="overview"]')?.click();
+    showPane('overview');
     const editBtn = root.querySelector('#pf2-edit');
     editBtn?.scrollIntoView({ block: 'center' });
     editBtn?.focus({ preventScroll: true });
