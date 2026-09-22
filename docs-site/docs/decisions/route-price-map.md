@@ -39,13 +39,36 @@ slug: /decisions/route-price-map
 
 ## Context
 
-Today there is no real map, route, or fare. The Mapbox layer under
-`public/src/mapbox/` is a deliberate **stub**: `createMapShell()`
-(`map_shell.js`) returns a pure-DOM placeholder consumed by 8 screens,
-`mapbox_loader.js` resolves to `null` (no SDK, no token, no network), and the
-route picker shows the banner "Mapbox SDK пока не подключён"
-(`route_picker.js`). The service worker is already **tile-safe** — an origin
-guard keeps external tiles uncached.
+There is still no real **route** or **fare** — that part of the Mapbox layer
+under `public/src/mapbox/` remains a deliberate **stub**. But the SDK-load /
+render seam is no longer dark by default: `mapbox_loader.js` resolves to
+`null` only when no token is configured (`isMapboxEnabled()` false); with the
+committed production token (honored only on the GitHub Pages origin —
+`mapbox_config.js`), it lazily loads the real vendored Mapbox GL JS
+(`public/vendor/mapbox-gl/`). `public/src/screens/map.js` is the **only**
+real `mapboxgl.Map` construction in the app — gated behind `state ===
+MAP_STATE.DEFAULT && isMapboxEnabled()` — and owns a router-owned disposer
+(`BD-SCREEN-LIFECYCLE-01A`, tested by `scripts/smoke-screen-disposer-exactly-once.mjs`)
+that frees the GL context; a defensive interval poll is only a backstop for a
+detachment the disposer didn't observe (`BD-MAP-FOUND-01` / `BD-MAP-ACTIVATE`,
+issue #805; `scripts/smoke-mapbox-render-map.mjs`). `createMapShell()`
+(`map_shell.js`) still returns the pure-DOM placeholder consumed by the other
+7 screens unchanged, and remains `/map`'s own fallback when dark (no token, or
+off the Pages origin). No real route drawing exists on the live map.
+`route_picker.js` remains on the placeholder path and still shows its
+"Mapbox SDK пока не подключён" watermark; it does not call `loadMapboxSdk()`.
+Only `/map`'s live hydrated path in `map.js` removes its own placeholder once
+a real `mapboxgl.Map` replaces it. The route picker still computes its own
+local mock `estimateRoute()` (a hash of the
+pickup/dropoff labels), and pickup/dropoff `coords` are **not** `null` — they
+are derived from the label text by a deterministic mock hash
+(`deriveMockCoordsFromLabel()` in `passenger_order_utils.js`), not real
+geocoding. The service worker is already **tile-safe** — an origin guard
+keeps external tiles uncached. The CSP already allows the Mapbox GL SDK and
+its tile/script traffic (`https://*.mapbox.com`, `blob:` for `worker-src` /
+`child-src`, `style-src 'unsafe-inline'` — shipped with `BD-MAP-ACTIVATE`
+#805); a **future** route/price API endpoint's own CSP / same-origin SW-bypass
+need is a separate, still-open item (see Consequences below).
 
 Route, distance, and ETA are a **client-side deterministic mock**.
 `estimateRoute()` in `route_picker.js` hashes the pickup+dropoff label pair into
@@ -105,13 +128,15 @@ stub seams:
 5. **Mapbox is its own track, never mixed with the DB swap.** Per
    `docs/db-mapbox-readiness.md`, the Mapbox track (real SDK / Directions /
    geocoding) and the DB track (Phase 1) ship independently, never in one PR.
-   Calling `api.mapbox.com` and tiles requires a **CSP** allowance, and the
-   **service worker must never cache** map or route/price traffic. Today's
-   `public/sw.js` origin guard only bypasses **cross-origin** tiles while it
-   caches any **same-origin** `200` / `basic` response — so if the route/price
-   service is exposed as **same-origin** endpoints, the SW must be changed to
-   **explicitly bypass those API endpoint paths**, not only `api.mapbox.com` /
-   tiles.
+   The CSP already allows `api.mapbox.com` and tiles for the vendored GL SDK
+   (`BD-MAP-ACTIVATE` #805); the **service worker must never cache** map or
+   route/price traffic. Today's `public/sw.js` origin guard only bypasses
+   **cross-origin** tiles while it caches any **same-origin** `200` / `basic`
+   response — so if the route/price service is exposed as **same-origin**
+   endpoints, the SW must be changed to **explicitly bypass those API
+   endpoint paths**, not only `api.mapbox.com` / tiles. This same-origin SW
+   bypass, and any additional CSP a server-mediated Directions/geocoding call
+   needs, remain open (see Consequences).
 
 This ADR decides **that Route & Price becomes a real server-mediated service
 behind the existing stub seams, with the server as fare authority and geocoded
@@ -139,12 +164,14 @@ are deferred (see Follow-ups; tile/CSP is the readiness doc's **M1**).
   - Geocoded coordinates unlock real "nearby" instead of today's naming-artifact
     "nearby".
 - **Negative / trade-offs:**
-  - **CSP + service worker** changes to allow `api.mapbox.com` / tiles while
-    **never caching** map or fare traffic — including **same-origin** route/price
-    endpoints, which today's SW would cache (its origin guard only skips
-    cross-origin tiles). A safety-boundary touch (`public/index.html` CSP +
-    `public/sw.js`), sw-offline-agent scope, gated behind the readiness doc's
-    **M1**.
+  - **CSP + service worker** work still needed for the *route/price* service
+    itself: the GL SDK / tile CSP allowance already shipped (`BD-MAP-ACTIVATE`
+    #805), but a route/price API needs its **own** CSP allowance if it calls
+    an external provider directly, and — if exposed same-origin — an explicit
+    SW bypass so `public/sw.js` never caches fare traffic (its origin guard
+    only skips cross-origin tiles today). A safety-boundary touch
+    (`public/index.html` CSP + `public/sw.js`), sw-offline-agent scope, gated
+    behind the readiness doc's **M1**.
   - Real routing/geocoding has **per-request cost** and latency; estimates may
     need caching (the Redis geo/ETA cache, BD-DOCS-023 data layer).
   - Privacy: real coordinates and geocoding are a new privacy surface (ties to

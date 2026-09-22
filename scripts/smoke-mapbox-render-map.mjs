@@ -2,9 +2,11 @@
 //
 // map.js must stay DARK by default: with no token, resolveState() returns TOKEN_MISSING (never DEFAULT)
 // and isMapboxEnabled() is false, so no mapboxgl.Map is ever constructed and the MapShell placeholder is
-// unchanged. The live render (DEFAULT + token) is render-then-hydrate, and because router.render() has
-// NO teardown, the GL context must be freed via a document.body.contains watcher. The actual visual
-// render + CSP completeness are verified on a device with a real token — NOT asserted here.
+// unchanged. The live render (DEFAULT + token) is render-then-hydrate. router.js now owns a disposer
+// (BD-SCREEN-LIFECYCLE-01A, #919) that is the primary teardown and frees the GL context; the
+// document.body.contains watcher below is only a defensive backstop for a detachment the disposer
+// somehow didn't observe. The actual visual render + CSP completeness are verified on a device with a
+// real token — NOT asserted here.
 //
 // No DOM, no network. Pure Node / static source assertions.
 
