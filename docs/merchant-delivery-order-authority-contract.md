@@ -157,8 +157,9 @@ represent correctly:
     recovery-time checks deliberately never re-evaluate current time or current
     eligibility. So the trusted creation / transition boundary must, at write
     time: take one fresh server `clock_timestamp()` and stamp an immutable,
-    non-backdatable `delivery_order.created_at` that precedes both the draft and
-    the quote deadline; verify the actor gate is *currently* eligible for every
+    finite, non-backdatable `delivery_order.created_at` at or after the quote's
+    immutable `published_at` and before both the draft and quote deadlines;
+    verify the actor gate is *currently* eligible for every
     new order (while later recovery keeps its historical, no-recheck behaviour);
     require a fresh due-time and stamp `expired_at` on every `-> EXPIRED`; and
     record an explicit, write-once cancellation *source* discriminator. Intake
@@ -648,11 +649,15 @@ procedure, which holds the invariant-6 lock order
   unchanged: it keeps the historical tuple checks and never re-evaluates the
   original approver's current eligibility.);
 - **re-proves both deadlines against one fresh server clock** (Finding-1 rule
-  below): after the locks it takes a single `t := clock_timestamp()`, requires
+  below): after the locks it takes a single finite `t := clock_timestamp()`, requires
   `t < delivery_draft.expires_at` (else `DELIVERY_DRAFT_EXPIRED`, `ROLLBACK`,
   no order) then `t < referenced_quote.expires_at` (else `QUOTE_EXPIRED`,
-  `ROLLBACK`, no order), and **stamps `delivery_order.created_at := t`** —
-  `NOT NULL`, immutable, not backdatable. Both checks are mandatory: between
+  `ROLLBACK`, no order), then requires `referenced_quote.published_at <= t`.
+  A non-finite clock value or `t < published_at` fails closed with
+  `DELIVERY_ORDER_DEPENDENCY_FAILED`, `ROLLBACK`, zero writes; never substitute
+  a caller timestamp or clamp `t` to a bound. On success it **stamps
+  `delivery_order.created_at := t`** — `NOT NULL`, finite, immutable, not
+  backdatable. Both deadline checks are mandatory: between
   step 5c and the `INSERT` either the draft or the quote can lapse. The
   server-defined creation moment is `t`, not `COMMIT`. This applies to **every**
   new `INSERT`, backfills included.
@@ -660,7 +665,7 @@ procedure, which holds the invariant-6 lock order
 No late reverse capture of authority locks is added inside an `INSERT` trigger —
 the locks are the procedure's, taken in the fixed prefix order. **Existing-order
 integrity** verifies only the *historical* relations
-(`created_at < each immutable deadline`, immutable tuple ownership,
+(`created_at` finite, `quote.published_at <= created_at < each immutable deadline`, immutable tuple ownership,
 `cancellation_authority` and its references) — never current time or current
 eligibility — so a correctly-created order still recovers after both deadlines
 have long passed and after every original grant has been revoked. The external
@@ -909,7 +914,7 @@ The single authoritative record for one approved delivery.
 | `canceled_external_contact_identity_id` / `canceled_merchant_contact_binding_id` | Null unless a `MERCHANT` cancellation was gated through a channel (`cancellation_channel in { WHATSAPP, SMS }`), in which case **both `NOT NULL`** — the exact identity/binding rows that passed the cancelling actor's channel gate, composite-guarded the same way as the approval pair (binding ↔ `merchant_id` + identity; identity `linked_user_id == canceled_by_user_id`, `channel == cancellation_channel`). Both null for a `SESSION` cancellation and for every non-`MERCHANT` source. |
 | `cancellation_authority` | **`NULL` until cancellation; `NOT NULL` on every transition to `CANCELED`.** Write-once, immutable, closed enum `MERCHANT | DISPATCH_EXECUTION` (DB `CHECK` / enum). It names **which trusted operation** performed the cancellation, and the row's other cancellation fields must match it: `MERCHANT` ⇒ this slice's `PENDING_DISPATCH` merchant-cancel path, with the full verified merchant provenance tuple (`canceled_by_user_id` / `canceled_membership_id` / `cancellation_channel` / `cancellation_provenance`, and the `canceled_*` channel pair per its channel); `DISPATCH_EXECUTION` ⇒ a verifiable downstream-compensation reference tied to this specific `delivery_order` and an authorized compensation operation, with **every merchant-provenance field, including `cancellation_provenance`, null**. The source is set by the trusted operation, never by a request field; an ordinary writer cannot pick `DISPATCH_EXECUTION` to bypass authorization, and until a separate downstream contract and its backstop exist that path stays closed. |
 | `cancellation_channel` / `cancellation_provenance` | If `status != CANCELED`, both are **`NULL`**. For `cancellation_authority = MERCHANT`, both are **`NOT NULL` and immutable**: `cancellation_channel` is the closed set `SESSION | WHATSAPP | SMS` (DB enum, or `CHECK` **plus the source-dependent non-null constraint**) and `cancellation_provenance` is the bounded server-owned merchant procedure/adapter reference. For `cancellation_authority = DISPATCH_EXECUTION`, both are **`NULL`**, together with the whole merchant tuple; that source instead carries its separate verifiable compensation reference. The channel is written only from the locked proof path actually used, never accepted from the request, inferred from pair nullness, or defaulted to `SESSION`. A total conditional constraint uses explicit `IS NULL` / `IS NOT NULL` branches and an outer `IS TRUE` / equivalent total form so SQL `UNKNOWN` cannot admit a null/unknown merchant channel or provenance. |
-| `created_at` | **`NOT NULL`, immutable.** Set by the trusted creation boundary from **one fresh server `clock_timestamp()`** taken after all its locks/checks (step 5f), never a caller-supplied or backdated value — a column `DEFAULT`, or trusting a passed timestamp, is insufficient. By construction `created_at < delivery_draft.expires_at` **and** `created_at < referenced quote.expires_at` at that instant (step 5f re-checks both after the `check-to-INSERT` gap). This is the **server-defined creation moment**, not `COMMIT` time. **Existing-order integrity** checks only the *historical* relation `created_at < each immutable deadline`, never `created_at` against the current clock. |
+| `created_at` | **`NOT NULL`, finite, immutable.** Set by the trusted creation boundary from **one fresh server `clock_timestamp()`** taken after all its locks/checks (step 5f), never a caller-supplied or backdated value — a column `DEFAULT`, or trusting a passed timestamp, is insufficient. By construction `referenced_quote.published_at <= created_at`, `created_at < delivery_draft.expires_at` **and** `created_at < referenced_quote.expires_at` at that instant (step 5f re-checks the bounds after the `check-to-INSERT` gap). This is the **server-defined creation moment**, not `COMMIT` time. **Existing-order integrity** checks only finite stored time and the *historical* relation `quote.published_at <= created_at < each immutable deadline`, never `created_at` against the current clock. |
 | `updated_at` | Server timestamp; advances only with lawful lifecycle `UPDATE`s. |
 
 Recipient and destination are **not** columns on `delivery_order` — they are a
@@ -988,6 +993,17 @@ trusted eligibility/state transitions remain permitted. So this equality and
 same-draft identity are well-defined at any later time. Until the DB backstop
 lands, **Existing-order integrity** performs the same equality read-side before
 recovery / cancellation.
+
+**Creation chronology (future DB backstop).** Require `created_at NOT NULL`
+and a finite-timestamp constraint. The order validation trigger also reads the
+referenced quote and source draft to require `quote.published_at <= created_at`,
+`created_at < quote.expires_at`, and `created_at < draft.expires_at`. These
+cross-row comparisons belong in the validation trigger, not a row-local `CHECK`.
+The trusted step-5f clock gate still applies to every new order; the stored
+relations alone cannot prove that a supplied timestamp was server-generated.
+**Existing-order integrity** repeats these historical bounds on recovery and
+cancellation, including for legacy/bypassed rows, without consulting today's
+clock or policy.
 
 ### Cancellation facts integrity
 
@@ -1139,13 +1155,15 @@ never applied to ORDER ABSENT. For the existing order, require all of:
   field. This check **never compares any historical timestamp with the current
   clock or today's quote-duration policy**; valid old history remains valid after
   expiry or a later policy revision;
-- its `created_at` is non-null and, **as a historical relation**, precedes both
-  immutable deadlines: `created_at < order.quote_expires_at` (which equals the
-  referenced quote's `expires_at`) **and** `created_at <
-  source_draft.expires_at`. A `created_at` that is null, backdated behind neither
-  deadline, or `>=` either deadline → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero
-  writes. This compares the stored creation moment to the stored/immutable
-  deadlines only — **never** `created_at` (or the deadlines) against the current
+- its `created_at` is **non-null and finite** and, **as a historical relation**,
+  satisfies `referenced_quote.published_at <= created_at`,
+  `created_at < order.quote_expires_at` (which equals the referenced quote's
+  `expires_at`), **and** `created_at < source_draft.expires_at`. Null, either
+  infinity, a value before quote publication, or a value `>=` either deadline
+  → `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. Equality with
+  `published_at` is valid if both strict upper bounds hold. This compares the
+  stored creation moment to immutable publication/expiry evidence only —
+  **never** `created_at` (or the bounds) against the current
   clock, so a correctly-created order recovers however long after both deadlines
   have passed;
 - its stored `quote_state` is non-null and one of the closed set of **approvable**
@@ -1273,7 +1291,8 @@ clock, do **not** evaluate the **source draft's `expires_at`** against the
 current clock, do **not** compare the order's `created_at` against the current
 clock (an `APPROVED` draft never expires, and a valid historical order recovers
 regardless of how long ago it or its draft was created — only the *historical*
-relation `created_at < each immutable deadline` is checked), do **not**
+relation `quote.published_at <= created_at < each immutable deadline` and finite
+stored time are checked), do **not**
 re-evaluate the original approver's / channel's **current** eligibility (a since-
 `REVOKED` membership, identity or binding whose immutable tuple still matches is
 valid history — the insertion-time eligibility check is the creation boundary's
@@ -1477,17 +1496,23 @@ retains step 3: integrity first, then exact-pair recovery or quote conflict.
       is what will be persisted as `cargo_policy_version` / `cargo_policy_decision`
       (invariant 5), where the trusted `INSERT` validator re-derives and confirms it;
    f. **final time gate, then insert.** Take **one fresh `t := clock_timestamp()`**
-      (the authoritative server clock, after every lock and check above) and
-      require, in order: `t < delivery_draft.expires_at` (else
+      (the authoritative server clock, after every lock and check above).
+      Reject a non-finite `t` as `DELIVERY_ORDER_DEPENDENCY_FAILED`, rollback,
+      zero writes. For a finite `t`, require, in order:
+      `t < delivery_draft.expires_at` (else
       `DELIVERY_DRAFT_EXPIRED`, rollback, no order) then
       `t < referenced_quote.expires_at` (else `QUOTE_EXPIRED`, rollback, no
       order) — both are re-checked here because either deadline can lapse in the
-      gap between step 5c and this point; the earlier step-5c checks and the
-      step-4 priority are unchanged. The still-locked draft must also retain
+      gap between step 5c and this point. Then require
+      `referenced_quote.published_at <= t`; a backward clock before publication
+      returns `DELIVERY_ORDER_DEPENDENCY_FAILED`, rollback, zero writes. Never
+      clamp the clock value to publication or accept a caller timestamp. The
+      earlier step-5c checks and the step-4 priority are unchanged.
+      The still-locked draft must also retain
       `latest_published_quote_id == presented quote_id`; that marker is not
       cleared on approval. Then `INSERT` exactly one `delivery_order` —
       `status = PENDING_DISPATCH` (the row-local `BEFORE INSERT` guard admits no
-      other), `created_at := t` (`NOT NULL`, immutable, not backdatable), with
+      other), `created_at := t` (`NOT NULL`, finite, immutable, not backdatable), with
       the step-5c **verified** `quote_state`, the step-5e `cargo_policy_version` /
       `cargo_policy_decision`, and the actor/membership/channel provenance
       written from the *currently re-verified* gate result (invariant 6 → *The
@@ -2293,6 +2318,8 @@ these transactions crosses lock order.
 | 87 | A secondary writer edits confirmed intent while leaving a draft `QUOTED`, or edits intent on an `APPROVED` / `ABANDONED` / `EXPIRED` row; separately, a trusted `QUOTED` edit fails mid-transaction | Null-safe row-guard comparisons reject same-status `QUOTED` and all terminal intent edits. The trusted path commits intent + `QUOTED -> OPEN` + old marker-quote invalidation atomically; its deferred final-state backstop rejects any false quoted state. Failure rolls all effects back. Positive controls: an `OPEN -> OPEN` edit and a later fresh publication with a new marker are allowed. |
 | 88 | Publish q1, then publish q2 for the same active, unexpired, order-free draft; cleanup attempts to hard-delete q1; approval then names q1 | The quote-owned guard rejects q1 deletion. q1 remains a retained same-draft published row, q2 remains `latest_published_quote_id`, and step 4b deterministically returns `QUOTE_SUPERSEDED`, zero writes. An addressable same-draft candidate whose publication never committed (`published_at IS NULL`), a random/missing id, and a foreign id each remain step-4d `DELIVERY_DRAFT_NOT_APPROVABLE` controls. No ledger or tombstone is consulted. |
 | 89 | A writer stores `MERCHANT` with null `cancellation_provenance`, `DISPATCH_EXECUTION` with non-null `cancellation_provenance`, or any non-`CANCELED` row with non-null `cancellation_provenance` | The exhaustive source-shape constraint, expressed with explicit `IS NULL` / `IS NOT NULL` branches and total `IS TRUE` semantics, rejects each write. Positive controls are `MERCHANT` with non-null merchant provenance and no compensation reference; `DISPATCH_EXECUTION` with null merchant provenance/tuple and a verified separate compensation reference; and a non-`CANCELED` row with all cancellation evidence null. |
+| 90 | An otherwise consistent historical order has null/infinite `created_at`, or was created before its quote's immutable `published_at` | The creation-chronology DB backstop rejects the stored relation; legacy/bypassed rows fail Existing-order integrity on recovery and cancellation with `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. Positive controls: finite `created_at == published_at` and later creation strictly before both deadlines pass, including recovery long after expiry under a newer policy. Equality with either deadline still fails. |
+| 91 | The step-5f server clock moves backward before quote publication or yields a non-finite value | `DELIVERY_ORDER_DEPENDENCY_FAILED`, rollback, zero writes; no clock clamping or caller timestamp. With a finite value, the existing draft-then-quote expiry priority is unchanged. A finite value at publication and before both deadlines permits the normal atomic creation. |
 
 Exact indexes, constraints, the shared lock order, and DDL are owned by the
 schema slice that follows this contract; it must implement these outcomes — and
@@ -2363,7 +2390,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `CARGO_NOT_DELIVERABLE` | Cargo category set contains a non-deliverable category (e.g. `ALCOHOL`). | false |
 | `DELIVERY_ORDER_ALREADY_EXISTS` | Recovery replay; resolves to the existing order (any state, incl. `CANCELED`). | false |
 | `DELIVERY_APPROVAL_QUOTE_CONFLICT` | Draft is `APPROVED`, `order.merchant_id == M`, but its order is for a different `quote_id` than the one presented. | false |
-| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; an `APPROVED` draft whose retained `latest_published_quote_id` is null or differs from the order's `quote_id`; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; a null/unknown approval channel; an invalid historical channel identity/binding tuple; a `MERCHANT` cancellation with a null/unknown channel, null `cancellation_provenance`, or a cancellation pair null when its channel requires it, non-null when its channel/source requires null, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); a **`created_at`** that is null or does **not** historically precede both immutable deadlines (`order.quote_expires_at`, `source_draft.expires_at`); a **`CANCELED` order with a null `cancellation_authority`**, or one whose `MERCHANT` / `DISPATCH_EXECUTION` source does not match its references (a `MERCHANT` cancel missing its non-null closed channel, non-null provenance or verified tuple; a `DISPATCH_EXECUTION` with non-null merchant provenance/tuple or an unverifiable compensation reference); or a non-`CANCELED` row with non-null cancellation evidence; or a `QUOTED` draft whose marker quote is non-approvable at creation step 5c. (Separately, at INSERT / transition time: a new `delivery_order` not in `PENDING_DISPATCH`, an illegal `delivery_draft` state transition, a confirmed-intent edit that leaves the draft `QUOTED` on the same marker or changes terminal intent, a premature or mis-stamped `-> EXPIRED`, a backdated `created_at`, an intake-dedupe `UNIQUE` collision, a cross-tenant `requested_pickup_location_id`, a rewrite of `delivery_draft.merchant_id` or of any intake-tuple component (`adapter_dedupe_token` nulling included), a hard-`DELETE` of a token-backed `delivery_draft`, and an update/re-key/hard-delete of a successfully published quote are rejected by their own row-local/deferred DB guards / constraints — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the approved marker/order identity and snapshot ↔ immutable-quote equality above are historical checks and always run. | false |
+| `DELIVERY_ORDER_STATE_INCONSISTENT` | An integrity fault (alert, zero writes): `APPROVED` draft with no order; any **Existing-order integrity** failure on recovery/cancellation (source draft/status/tenant; an `APPROVED` draft whose retained `latest_published_quote_id` is null or differs from the order's `quote_id`; missing **or malformed** recipient snapshot; null/mismatched pickup ID or `pickup_snapshot`, or a pickup not owned by the order's merchant; cross-draft quote; invalid historical approval-membership tuple; a null/unknown approval channel; an invalid historical channel identity/binding tuple; a `MERCHANT` cancellation with a null/unknown channel, null `cancellation_provenance`, or a cancellation pair null when its channel requires it, non-null when its channel/source requires null, or not owned by the stored merchant/user/channel; **or the order's snapshots / copied quote fields not matching the referenced quote — `F(immutable order snapshots) != order.delivery_input_fingerprint`, `order.delivery_input_fingerprint != quote.delivery_input_fingerprint`, a copied `quote_amount` / `quote_currency` / `quote_computed_at` / `quote_expires_at` `!=` the referenced quote's immutable value, or an uncanonicalizable corrupted historical snapshot**); a **null / unknown / non-approvable stored `quote_state`** (a historical-value check, never a live-state comparison); a **missing or mismatched `cargo_policy_version` / `cargo_policy_decision`** — the stored decision not reproducible from the immutable `cargo` under that stored version's own retained definition, or a category set that version marks non-deliverable (a backfilled `DELIVERABLE` does not pass); a **secondary-writer `delivery_order` whose existence contradicts its source draft's status** (`APPROVED` ⇔ exactly one order — rejected at commit by the deferred coupling constraint-trigger pair, and surfaced here if pre-existing); a **`created_at`** that is null/non-finite, predates the referenced quote's immutable `published_at`, or does **not** historically precede both immutable deadlines (`order.quote_expires_at`, `source_draft.expires_at`); a **`CANCELED` order with a null `cancellation_authority`**, or one whose `MERCHANT` / `DISPATCH_EXECUTION` source does not match its references (a `MERCHANT` cancel missing its non-null closed channel, non-null provenance or verified tuple; a `DISPATCH_EXECUTION` with non-null merchant provenance/tuple or an unverifiable compensation reference); or a non-`CANCELED` row with non-null cancellation evidence; or a `QUOTED` draft whose marker quote is non-approvable at creation step 5c. (Separately, at INSERT / transition time: a new `delivery_order` not in `PENDING_DISPATCH`, an illegal `delivery_draft` state transition, a confirmed-intent edit that leaves the draft `QUOTED` on the same marker or changes terminal intent, a premature or mis-stamped `-> EXPIRED`, a backdated `created_at`, an intake-dedupe `UNIQUE` collision, a cross-tenant `requested_pickup_location_id`, a rewrite of `delivery_draft.merchant_id` or of any intake-tuple component (`adapter_dedupe_token` nulling included), a hard-`DELETE` of a token-backed `delivery_draft`, and an update/re-key/hard-delete of a successfully published quote are rejected by their own row-local/deferred DB guards / constraints — not this recovery-time code.) Existing-order field/relationship checks never run against ORDER ABSENT, and no current quote/membership/identity/pickup eligibility — current status, current cargo policy, expiry-vs-now, or live `quote_state` — is rechecked on recovery; the approved marker/order identity and snapshot ↔ immutable-quote equality above are historical checks and always run. | false |
 | `DELIVERY_ORDER_NOT_CANCELABLE` | Order is not `PENDING_DISPATCH` (past the merchant-cancel boundary, or already terminal). | false |
 | `CARGO_POLICY_TRANSITION` | Creation-branch approvals are temporarily halted for a coordinated cargo-policy-version activation (invariant 5). Retry after activation completes. | true |
 | `DELIVERY_APPROVAL_INPUT_INVALID` | Approval preflight 0a/0c: non-record payload, malformed required pair or extra payload fields. Priority is 0a, then missing-quote 0b, then remaining-shape 0c. No domain lookup, lock or writes. | false |
@@ -2371,7 +2398,7 @@ Reuses the 01A `MERCHANT_*` actor-gate codes (`MERCHANT_NOT_FOUND`,
 | `DELIVERY_DRAFT_NOT_ABANDONABLE` | After the locked actor gate and coupling check, the draft is consistently APPROVED with its order. Abandonment cannot cancel that order. Zero writes. | false |
 | `DELIVERY_CANCEL_INPUT_INVALID` | Cancellation step 0: non-record payload; missing/non-string/malformed UUID `order_id`; missing/null/non-string/blank/oversized/unsupported canonical `cancel_reason`; or any extra timestamp/actor/merchant/channel/provenance/source field. Rejected before any domain lookup, lock or write. A well-shaped unknown/foreign UUID retains the opaque `DELIVERY_ORDER_NOT_FOUND` flow; stored-row corruption instead fails Existing-order integrity. | false |
 | `QUOTE_MONETARY_INVALID` | Unpublished quote candidate fails Canonical monetary boundary. Nothing is published or silently rounded. Malformed already-persisted quote/order money is an integrity fault, not this candidate-input outcome. | false |
-| `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed. | true |
+| `DELIVERY_ORDER_DEPENDENCY_FAILED` | Authoritative persistence/dependency failed, including a non-finite step-5f server clock or one before the referenced quote's immutable `published_at`; rollback, zero writes, no timestamp clamping. | true |
 
 Downstream Dispatch/Execution contracts may define stronger operation-specific
 codes; they may not downgrade the order-creation gate to a context lookup.
@@ -2897,8 +2924,9 @@ no new lock is taken after 5c ; inputs unchanged
   `t >= d1.expires_at` → **`DELIVERY_DRAFT_EXPIRED`, rollback, no order** (the
   draft check precedes the quote check, so it reports first even though `q1` is
   also past). Nothing is written.
-- **Both deadlines still in the future:** step 5f stamps
-  `o1.created_at := t` (`t < q1.expires_at` and `t < d1.expires_at`), inserts
+- **Finite clock at/after publication and both deadlines still in the future:**
+  step 5f stamps `o1.created_at := t` (`q1.published_at <= t`,
+  `t < q1.expires_at` and `t < d1.expires_at`), inserts
   `o1` as `PENDING_DISPATCH`, flips `d1 -> APPROVED`.
 - **Backfill after expiry:** a writer inserts a structurally consistent `o2` for
   another draft **after** its quote expired, with a plausible `created_at`. If it
@@ -2907,10 +2935,21 @@ no new lock is taken after 5c ; inputs unchanged
   integrity**'s historical `created_at < each immutable deadline` check →
   `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. A supplied future
   `created_at` is rejected by the boundary and is immutable thereafter.
+- **Impossible historical creation:** an otherwise consistent legacy order
+  with `created_at = NULL`, `-infinity`, `+infinity`, or even one microsecond
+  before `q1.published_at` fails Existing-order integrity on recovery and
+  cancellation: `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes. Finite
+  `created_at == q1.published_at` passes if both deadlines are strictly later;
+  equality with either deadline fails. These are stored-value checks only.
+- **Backward/non-finite creation clock:** if the fresh step-5f clock is before
+  `q1.published_at` or is non-finite, creation fails
+  `DELIVERY_ORDER_DEPENDENCY_FAILED`, rollback, zero writes; it neither invents
+  a timestamp nor creates a row that recovery would reject.
 - **Much later recovery of `o1`:** months on, both `q1.expires_at` and
   `d1.expires_at` are long past and the original approval membership is
   `REVOKED`. Recovery re-runs Existing-order integrity: the **historical**
-  relation `o1.created_at < each immutable deadline` still holds, the immutable
+  finite `o1.created_at` and relation
+  `q1.published_at <= o1.created_at < each immutable deadline` still hold, the immutable
   tuples still match — so `o1` recovers with zero writes. Current time and the
   approver's current eligibility are **not** consulted (Example S).
 
@@ -3318,9 +3357,17 @@ freezes all of the following:
   because either can lapse between step 5c and the `INSERT`. `t` is the
   server-defined creation moment, not `COMMIT`; the rule applies to every new
   `INSERT`, backfills included. **Existing-order integrity** checks only the
-  *historical* relation `created_at < each immutable deadline`, never against the
-  current clock, so a correctly-created order recovers however long after both
-  deadlines have passed.
+  *historical* relation `quote.published_at <= created_at < each immutable
+  deadline`, with finite non-null `created_at`, never against the current clock
+  or current policy. Null/infinite/pre-publication stored time fails recovery
+  and cancellation with `DELIVERY_ORDER_STATE_INCONSISTENT`, zero writes;
+  equality with publication passes when strictly before both deadlines.
+  Step 5f rejects a non-finite clock or a finite clock before publication with
+  `DELIVERY_ORDER_DEPENDENCY_FAILED`, zero writes, without clamping; finite
+  clocks preserve draft-then-quote expiry priority. DB finite/non-null and
+  cross-row chronology backstops enforce the same stored bounds. A correctly
+  created order still recovers however long after both deadlines have passed
+  (race rows 90-91; Example AE).
 - **Every new `delivery_order` is created through one trusted transactional
   creation procedure** (ordinary writer roles get no direct `INSERT` — a future
   `GRANT` dependency; backfills use the procedure too). Under the fixed lock
@@ -4075,8 +4122,12 @@ Additional load-bearing invariants proposed in review **round 8** (Codex review
   := t` (`NOT NULL`, immutable, not backdatable; a `DEFAULT` or a trusted-passed
   timestamp is insufficient). Applies to **every** new `INSERT`, backfills
   included. `t` is the server-defined creation moment, not `COMMIT`.
-  **Existing-order integrity** checks only the *historical* relation `created_at
-  < each immutable deadline`, never against the current clock; a correct order
+  The clock must be finite and `t >= quote.published_at`; an invalid/backward
+  clock fails `DELIVERY_ORDER_DEPENDENCY_FAILED`, zero writes, without clamping
+  (finite clocks retain draft-then-quote expiry priority).
+  **Existing-order integrity** checks finite non-null stored time and only the
+  *historical* relation `quote.published_at <= created_at < each immutable
+  deadline`, never against the current clock; a correct order
   recovers however long after both deadlines pass (invariant 6 → *The creation
   transaction*; Order-creation step 5f; `delivery_order` field table;
   Existing-order integrity; `DELIVERY_DRAFT_EXPIRED` / `QUOTE_EXPIRED` /
@@ -4586,8 +4637,10 @@ correction; no frozen Identity/Contact contract or runtime is modified.
    `computed_at <= published_at < expires_at`) plus its post-lock
    publication-time checks; a **fresh-`t` two-deadline gate at order `INSERT`
    (step 5f)**
-   plus **`delivery_order.created_at` `NOT NULL`, immutable, non-backdatable**
-   (stamped `:= t`) with the historical `created_at < each immutable deadline`
+   plus **`delivery_order.created_at` `NOT NULL`, finite, immutable, non-backdatable**
+   (stamped `:= t`, with `t >= quote.published_at`) and a cross-row chronology
+   validation trigger, with the historical
+   `quote.published_at <= created_at < each immutable deadline`
    re-check in Existing-order integrity; a **deadline-enforced `delivery_draft`
    `-> EXPIRED` guard** that takes a fresh `t_exp >= expires_at` and stamps
    `expired_at` (`NULL`/`NOT NULL` by status, `>= expires_at`, immutable); a
