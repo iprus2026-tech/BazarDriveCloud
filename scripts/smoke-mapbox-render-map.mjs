@@ -47,6 +47,12 @@ expect('a teardown frees the GL context (map.remove) once the container leaves t
 expect('buildMapPlaceholder still renders the MapShell placeholder (dark path unchanged)',
   /function buildMapPlaceholder\(state\)[\s\S]*?createMapShell\(/.test(src));
 
+// ── The live container keeps absolute positioning once mapbox-gl.css (.mapboxgl-map{position:relative},
+//    injected later at equal specificity) lands — otherwise it collapses to 0px and clips the canvas ──
+const css = fs.readFileSync(new URL('../public/styles/cloud.css', import.meta.url), 'utf8');
+expect('cloud.css pins .map-home__map.mapboxgl-map to position:absolute (live map cannot collapse to 0px)',
+  /\.map-home__map\.mapboxgl-map\s*\{[^}]*\bposition:\s*absolute\s*;/.test(css));
+
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')
   : 'ALL PASSED'));

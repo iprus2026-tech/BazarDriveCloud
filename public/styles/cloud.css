@@ -11929,6 +11929,9 @@ button.pfp-menu-row:active { opacity: 0.7; }
   inset: 0;
   display: block;
 }
+.map-home__map.mapboxgl-map {
+  position: absolute;
+}
 .map-home__map .bd-map-shell {
   width: 100%;
   height: 100%;
