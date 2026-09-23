@@ -2075,7 +2075,7 @@ function ipPaneHtml(u) {
   // so the UI cannot show a stale green ON.
   const toggleChecked = isOnline ? ' checked' : '';
   // Mark blocked state via aria-disabled — input stays focusable so a click
-  // can be intercepted and routed to the readiness checklist.
+  // can be intercepted and routed to the missing readiness requirement.
   const toggleDisabled = isBlocked ? ' aria-disabled="true"' : '';
 
   // This toggles only the existing local demo flag, never a server shift.
@@ -3438,7 +3438,7 @@ function renderDriver(root, u) {
     if (state === 'blocked') {
       tog.checked = false;
       if (current.driverOnline) user.set({ driverOnline: false });
-      scrollToChecklist();
+      routeToMissingRequirement(current);
       return;
     }
     const on = tog.checked;
@@ -3453,11 +3453,11 @@ function renderDriver(root, u) {
   });
 
   ipPane?.addEventListener('click', (e) => {
-    // Blocked-state toggle: input is aria-disabled, route click to checklist.
+    // Blocked-state toggle: keep the same missing-requirement route as the CTA.
     const togLabel = e.target.closest('.pf2-ip-toggle');
     if (togLabel && getTaxiReadinessState(user.get()) === 'blocked') {
       e.preventDefault();
-      scrollToChecklist();
+      routeToMissingRequirement(user.get());
       return;
     }
 

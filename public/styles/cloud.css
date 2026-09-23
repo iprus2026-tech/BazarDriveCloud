@@ -16800,6 +16800,8 @@ button.pfp-menu-row:active { opacity: 0.7; }
 .pf2-dashboard .pf2-safety-check-val { color: var(--pf2-muted); }
 .pf2-dashboard button:disabled { opacity: .6; cursor: not-allowed; }
 .pf2-dashboard :is(button, input, [tabindex]):focus-visible { outline: 2px solid #ffac8a; outline-offset: 3px; }
+/* Action rows sit flush inside an overflow-hidden list; keep their ring inset. */
+.pf2-dashboard .pf2-action-row:focus-visible { outline-offset: -2px; }
 @media (max-width: 699px) {
   .pf2-dashboard .pf2-topbar { padding-inline: 16px; }
   .pf2-dashboard .pf2-tabs-row { grid-template-columns: repeat(6, minmax(0,1fr)); padding-inline: 16px; }
