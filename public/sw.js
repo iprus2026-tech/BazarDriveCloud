@@ -206,7 +206,7 @@
 // progress, inert loaded fixtures and restored read-body spacing). No PRECACHE
 // membership, backend/domain contract, or cache-strategy change.
 // BD-PROFILE-EXPERIENCE-01B-R2: trip-card identity correction.
-const VERSION    = 'v323';
+const VERSION    = 'v325';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
