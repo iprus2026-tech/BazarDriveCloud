@@ -207,7 +207,7 @@
 // membership, backend/domain contract, or cache-strategy change.
 // BD-PROFILE-EXPERIENCE-01B-R2: trip-card identity correction.
 // 01B-A: boot session reconciliation; no cache-policy change.
-const VERSION    = 'v326';
+const VERSION    = 'v327';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

@@ -75,6 +75,8 @@ export function requireOnboarding(after) {
 }
 
 function getMapEntryRoute() {
+  // A retained smoke preview cannot turn anonymous Guest navigation into driver mode.
+  if (bootSession.getSnapshot().state === 'ANONYMOUS' && user.get().role === 'guest') return '/map';
   // BD-SMOKE-ROLE-01 — honour the per-tab role override so a passenger tab's
   // Карта tab opens /map, not the driver surface, even when the shared user
   // is a driver.
@@ -82,6 +84,7 @@ function getMapEntryRoute() {
 }
 
 function getCreateEntryRoute() {
+  if (bootSession.getSnapshot().state === 'ANONYMOUS' && user.get().role === 'guest') return '/new';
   const role = resolveRole(user.get());
   if (role === 'driver') return '/driver-map';
   // BD-SMOKE-ROLE-01 — a passenger smoke tab's persisted role may be driver,
@@ -111,7 +114,7 @@ document.getElementById('fab').addEventListener('click', () => {
 const bootSession = createAuthSessionBootstrap();
 let routerStarted = false;
 setAdmissionGuard(
-  (path) => sessionRouteAdmission(bootSession.getSnapshot(), path),
+  (path, policy) => sessionRouteAdmission(bootSession.getSnapshot(), path, policy),
   () => showBootSession(bootSession.getSnapshot()),
 );
 

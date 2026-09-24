@@ -300,13 +300,13 @@ function runCtaAction(spec, post, detailsHref) {
   go(postId ? `/respond?postId=${encodeURIComponent(postId)}` : '/respond');
 }
 
-function renderPost(root, post) {
+function renderPost(root, post, guestReadOnly = false) {
   // BD-SMOKE-ROLE-01 — pick the CTA from the per-tab effective role so a
   // passenger smoke tab never renders the driver "Принять заказ" action.
   const u = applySmokeRole(user.get());
-  const onboarded = !!u.onboarded;
+  const onboarded = !guestReadOnly && !!u.onboarded;
   const detailsHref = `/post?id=${encodeURIComponent(post.id || '')}`;
-  const ctaSpec = pickCtaSpec(post, u);
+  const ctaSpec = guestReadOnly ? { kind: 'none' } : pickCtaSpec(post, u);
 
   const metaLine = [
     post.role ? escapeHtml(post.role) : '',
@@ -360,7 +360,7 @@ function renderPost(root, post) {
   root.querySelector('#pd-cancel').addEventListener('click', () => go('/feed'));
 
   const respondBtn = root.querySelector('#pd-respond');
-  if (respondBtn) {
+  if (respondBtn && !guestReadOnly) {
     respondBtn.addEventListener('click', () => {
       runCtaAction(ctaSpec, post, detailsHref);
     });
@@ -377,7 +377,7 @@ function renderPost(root, post) {
 // overlay is additive). A genuine not-found (load OK, id absent) reports no error
 // — only renderMissing.
 
-export default async function postDetail() {
+export default async function postDetail(renderContext) {
   const root = document.createElement('section');
   root.className = 'screen screen--post-detail';
 
@@ -395,7 +395,7 @@ export default async function postDetail() {
       renderMissing(root);
       return;
     }
-    renderPost(root, post);
+    renderPost(root, post, renderContext?.guestReadOnly === true);
   }
 
   await renderDetail(false);

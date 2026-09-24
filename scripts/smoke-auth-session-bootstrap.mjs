@@ -21,7 +21,7 @@ const userDTO = (id = 'user-a') => ({ userId: id, sessionId: 'session-' + id,
 const response = (payload, status = 200) => ({ ok: status < 400, status,
   text: async () => JSON.stringify(payload) });
 
-function installDOM({ parseIds = false } = {}) {
+function installDOM({ parseIds = false, parseMarkup = false } = {}) {
   class Element {
     constructor(tag = 'div') {
       this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {};
@@ -37,25 +37,88 @@ function installDOM({ parseIds = false } = {}) {
     set innerHTML(html) {
       this.html = html;
       this.children = [];
-      if (parseIds) for (const match of html.matchAll(/\bid="([^"]+)"/g)) {
+      if (parseMarkup) {
+        // Only create nodes present in screen markup. This is a DOM/event shim,
+        // not a browser: no layout, styles, permissions, or network validation.
+        const stack = [this];
+        for (const match of html.matchAll(/<(\/)?([\w-]+)\b([^>]*?)>/g)) {
+          const [, closing, tag, attributes] = match;
+          if (closing) {
+            if (stack.length > 1) stack.pop();
+            continue;
+          }
+          const child = new Element(tag);
+          for (const attr of attributes.matchAll(/([\w:-]+)(?:="([^"]*)"|='([^']*)')?/g)) {
+            child.setAttribute(attr[1], (attr[2] ?? attr[3] ?? '').replaceAll('&amp;', '&'));
+          }
+          stack.at(-1).appendChild(child);
+          if (!/\/$/.test(attributes) && !['input', 'br', 'hr', 'img', 'meta', 'link'].includes(tag)) stack.push(child);
+        }
+      } else if (parseIds) for (const match of html.matchAll(/\bid="([^"]+)"/g)) {
         const child = new Element(); child.id = match[1]; this.appendChild(child);
       }
     }
     get innerHTML() { return this.html; }
+    insertAdjacentHTML(position, html) {
+      assert.equal(position, 'beforeend');
+      const fragment = new Element(); fragment.innerHTML = html;
+      fragment.children.forEach(child => this.appendChild(child));
+      this.html += html;
+    }
     appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
-    replaceChildren(...nodes) { this.children = []; nodes.forEach(n => this.appendChild(n)); }
-    setAttribute(key, value) { this.attrs[key] = String(value); }
+    replaceChildren(...nodes) {
+      this.children.forEach(n => { n.parentNode = null; });
+      this.children = []; nodes.forEach(n => this.appendChild(n));
+    }
+    setAttribute(key, value) {
+      this.attrs[key] = String(value);
+      if (key === 'id') this.id = value;
+      if (key === 'class') this.className = value;
+      if (key === 'disabled') this.disabled = true;
+      if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
     getAttribute(key) { return this.attrs[key] ?? null; }
     removeAttribute(key) { delete this.attrs[key]; }
     addEventListener(type, fn) { (this.handlers[type] ??= []).push(fn); }
     removeEventListener() {}
-    click() { for (const fn of this.handlers.click ?? []) fn({ target: this }); }
-    closest() { return null; }
+    click() {
+      if (this.disabled) return;
+      const event = { target: this, defaultPrevented: false, stopped: false,
+        preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+      for (let node = this; node; node = parseMarkup ? node.parentNode : null) {
+        for (const fn of node.handlers.click ?? []) fn(event);
+        if (event.stopped) break;
+      }
+      const href = this.getAttribute('href');
+      if (parseMarkup && !event.defaultPrevented && href?.startsWith('#/')) location.hash = href;
+    }
+    matches(selector) {
+      if (!parseMarkup) return false;
+      const attrs = [...selector.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+      if (attrs.some(([, key, value]) => !(key in this.attrs) || (value !== undefined && this.attrs[key] !== value))) return false;
+      const plain = selector.replace(/\[[^\]]*\]/g, '');
+      const id = plain.match(/#([\w-]+)/)?.[1];
+      if (id && this.id !== id) return false;
+      if ([...plain.matchAll(/\.([\w-]+)/g)].some(([, c]) => !(this.className || '').split(/\s+/).includes(c))) return false;
+      const tag = plain.match(/^[\w-]+/)?.[0];
+      return !tag || this.tagName === tag.toUpperCase();
+    }
+    closest(selector) { return this.matches(selector) ? this : this.parentNode?.closest(selector) ?? null; }
     focus() {}
     contains(node) { return node === this || this.children.some(c => c.contains?.(node)); }
     find(id) { return this.id === id ? this : this.children.map(c => c.find?.(id)).find(Boolean); }
-    querySelector(selector) { return selector.startsWith('#') ? this.find(selector.slice(1)) ?? null : null; }
-    querySelectorAll() { return []; }
+    querySelector(selector) {
+      return parseMarkup ? this.querySelectorAll(selector)[0] ?? null
+        : selector.startsWith('#') ? this.find(selector.slice(1)) ?? null : null;
+    }
+    querySelectorAll(selector) {
+      if (!parseMarkup) return [];
+      return this.children.flatMap(child => [
+        ...(selector.split(',').some(s => child.matches(s.trim())) ? [child] : []),
+        ...child.querySelectorAll(selector),
+      ]);
+    }
+    get isConnected() { return globalThis.document?.body?.contains(this) ?? false; }
   }
   const elements = Object.fromEntries(['app', 'tabbar', 'fab', 'shell'].map(id => {
     const el = new Element(); el.id = id; return [id, el];
@@ -359,7 +422,189 @@ async function appDevDocsBootCase(name) {
   console.error = oldError; console.warn = oldWarn;
 }
 
-if (process.argv[2] === '--app-dev-docs-case') {
+async function guestPublicCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const { setSmokeRole } = await import('../public/src/smoke_role.js');
+  const negativeRole = name.startsWith('role-');
+  const role = negativeRole ? (name === 'role-null' ? null : name.slice(5)) : 'guest';
+  user.set({ welcomeSeen: true, onboarded: true, phoneVerified: true, role });
+  const originalProfile = localStorage.getItem('bazardrive.user.v1');
+  const off = name === 'off';
+  const pending = name === 'reconciling', unknown = name === 'unknown';
+  const guestReadOnly = !off && !pending && !unknown && name !== 'authenticated' && !negativeRole;
+  globalThis.__BD_API_BASE__ = off ? '' : 'https://api.invalid';
+  const hasBearer = ['user-null', 'authenticated', 'reconciling', 'unknown'].includes(name);
+  if (hasBearer) localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token' }));
+  const authBefore = localStorage.getItem('bazardrive.auth.v1');
+  const session = deferred(), requests = [];
+  const order = { id: 'guest-order', status: 'CREATED', pickup: { label: 'A' },
+    dropoff: { label: 'B' }, estimatedPrice: 250, comment: 'Guest read fixture' };
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/auth/session')) return session.promise;
+    assert.equal(url, 'https://api.invalid/api/v1/orders', 'no private read endpoint');
+    assert.equal(options.method, 'GET', 'Guest never performs a server mutation');
+    return response({ items: [order] });
+  };
+  const errors = [], oldError = console.error, oldWarn = console.warn;
+  console.error = (...args) => errors.push(args.join(' '));
+  console.warn = (...args) => errors.push(args.join(' '));
+  // Real app starts on real ScreenOps even before session settlement. Every
+  // subsequent public navigation uses the app's installed admission callback.
+  location.hash = '#/ops/screens';
+  await import('../public/src/app.js'); await flush();
+  assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
+  if (hasBearer && !pending) {
+    session.resolve(unknown ? response({ code: 'SESSION_LOOKUP_FAILED' }, 503)
+      : response({ user: name === 'authenticated' ? userDTO() : null }));
+    await flush();
+  }
+  const loads = new Map();
+  // Module naming exceptions, not a second public-route allowlist. Every route
+  // comes from router's immutable inventory; loaders call the actual screens.
+  for (const path of router.GUEST_PUBLIC_ROUTES) {
+    const moduleName = path === '/post' ? 'post_detail' : path.slice(1).replaceAll('-', '_');
+    const screen = (await import('../public/src/screens/' + moduleName + '.js')).default;
+    loads.set(path, 0);
+    router.register(path, context => { loads.set(path, loads.get(path) + 1); return screen(context); });
+  }
+  let protectedLoads = 0;
+  const protectedDestinations = ['/new', '/respond', '/chat', '/route-picker', '/route-preview',
+    '/order-map-draft', '/driver-map', '/order/guest-order', '/receipt', '/settings', '/inbox'];
+  for (const path of protectedDestinations) router.register(path, () => {
+    protectedLoads++; return new dom.Element('article');
+  });
+  const postId = off ? 'trip-1' : order.id;
+  const navigate = async path => {
+    router.go(path); await flush(); await new Promise(resolve => setImmediate(resolve));
+    return dom.elements.app.children[0];
+  };
+  const screenNode = selector => {
+    const node = dom.elements.app.querySelector(selector);
+    assert.ok(node, 'actual rendered control exists: ' + selector); return node;
+  };
+  if (guestReadOnly) setSmokeRole('driver'); // retained preview must not grant authority
+  for (const path of router.GUEST_PUBLIC_ROUTES) {
+    const url = path === '/post' ? path + '?id=' + postId : path;
+    const before = loads.get(path);
+    const view = await navigate(url);
+    const allowed = guestReadOnly || off || name === 'authenticated';
+    assert.equal(loads.get(path) - before, allowed ? 1 : 0, name + ' admission: ' + path);
+    if (allowed) {
+      assert.ok(view, 'mounted screen: ' + url + ' / ' + errors.join('; ')); assert.equal(location.hash, '#' + url);
+    } else if (negativeRole) assert.equal(location.hash, '#/onboarding');
+    else assert.equal(view.dataset.authBootState, pending ? 'SESSION_RECONCILING' : 'SESSION_UNKNOWN');
+  }
+
+  if (guestReadOnly) {
+    // Real onboarding Guest choice must terminate at Feed, including retained
+    // local completion flags. No token cleanup/OTP lifecycle is introduced.
+    user.set({ role: null });
+    await navigate('/onboarding');
+    screenNode('[data-role="guest"]').click();
+    screenNode('#ob-next').click(); await flush();
+    assert.equal(user.get().role, 'guest'); assert.equal(location.hash, '#/feed');
+    assert.ok(screenNode('.feed-list').innerHTML.includes('guest-order'));
+    assert.equal(dom.elements.tabbar.hidden, false);
+
+    for (const query of ['', '?role=driver', '?role=passenger', '?smokeRole=passenger']) {
+      await navigate('/profile' + query);
+      assert.equal(dom.elements.app.querySelectorAll('.pf-guest-card').length, 1);
+      assert.equal(dom.elements.app.querySelector('#pfp-settings-btn'), null);
+      assert.equal(dom.elements.app.querySelector('#pf2-act-role-switch'), null);
+      screenNode('#pf-onboard').click(); await flush();
+      assert.equal(location.hash, '#/onboarding');
+    }
+    await navigate('/feed');
+    const feed = dom.elements.app.children[0];
+    const list = screenNode('.feed-list');
+    assert.equal(list.querySelector('[data-action="accept-order"]'), null);
+    // Even an injected accept event cannot reach a mutation through old driver data.
+    const storesBefore = localStorage.getItem('bazardrive.ride_orders.v1');
+    const forged = new dom.Element('button');
+    forged.setAttribute('data-action', 'accept-order'); forged.setAttribute('data-post-id', postId);
+    list.appendChild(forged); forged.click(); await flush();
+    assert.equal(localStorage.getItem('bazardrive.ride_orders.v1'), storesBefore);
+    assert.equal(location.hash, '#/feed');
+    screenNode('[data-cat="marketplace"]').click();
+    assert.ok(list.innerHTML.includes('Ничего не найдено'), 'real filter changes the list');
+    screenNode('[data-cat="all"]').click();
+    const link = screenNode('.feed-card__open');
+    assert.equal(link.getAttribute('href'), '#/post?id=' + postId);
+    link.click(); await flush();
+    assert.equal(location.hash, '#/post?id=' + postId);
+    const detail = dom.elements.app.children[0];
+    assert.ok(detail.innerHTML.includes('post-detail__card'), 'actual post content remains readable');
+    assert.equal(/href="tel:/.test(detail.innerHTML), false);
+    assert.equal(detail.querySelector('#pd-respond'), null);
+    screenNode('#pd-back').click(); await flush();
+    screenNode('.feed-btn-new').click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    await navigate('/feed');
+    screenNode('[data-action="respond"]').click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    // Exercise the real delegated chat handler as well; this backend fixture
+    // is a passenger request, so its ordinary rendered CTA is respond.
+    await navigate('/feed');
+    const chat = new dom.Element('button');
+    chat.setAttribute('data-action', 'chat'); chat.setAttribute('data-post-id', postId);
+    screenNode('.feed-list').appendChild(chat); chat.click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    // Each protected deep link remains blocked from BOTH public entry surfaces.
+    for (const source of ['/feed', '/post?id=' + postId]) {
+      for (const destination of protectedDestinations) {
+        await navigate(source); await navigate(destination);
+        assert.equal(location.hash, '#/onboarding', source + ' -> ' + destination);
+      }
+    }
+    assert.equal(protectedLoads, 0);
+    // Real app tabbar ignores the retained driver preview for Guest Map entry.
+    await navigate('/feed');
+    const tab = new dom.Element('button'); tab.setAttribute('data-route', '/map');
+    dom.elements.tabbar.appendChild(tab); tab.click(); await flush();
+    assert.equal(location.hash, '#/map');
+    await navigate('/map?state=permission');
+    screenNode('[data-action="my-location"]').click(); await flush();
+    assert.equal(location.hash, '#/location-permission');
+    screenNode('[data-action="allow"]').click(); await flush();
+    assert.equal(location.hash, '#/map?state=default');
+    await navigate('/location-permission');
+    screenNode('[data-action="manual"]').click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    await navigate('/map');
+    screenNode('[data-action="route"]').click(); await flush();
+    assert.equal(location.hash, '#/onboarding');
+    await navigate('/rules');
+    const search = screenNode('#rules-search'); search.value = 'unmatched-guest-fixture';
+    for (const listener of search.handlers.input) listener({ target: search });
+    assert.ok(screenNode('#rules-list').innerHTML.includes('Ничего не найдено'));
+    screenNode('[data-rules-reset]').click();
+    assert.equal(search.value, ''); assert.equal(location.hash, '#/rules');
+    assert.equal(protectedLoads, 0);
+    assert.ok(feed !== dom.elements.app.children[0]);
+  } else if (off || name === 'authenticated') {
+    const detail = await navigate('/post?id=' + postId);
+    assert.ok(/href="tel:/.test(detail.innerHTML), 'existing onboarded demo/confirmed contact remains');
+    assert.ok(detail.querySelector('#pd-respond'));
+    await navigate('/new'); assert.equal(protectedLoads, 1);
+  }
+  await navigate('/ops/screens');
+  assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
+  assert.equal(dom.starts(), 1);
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), authBefore, 'credential lifecycle stays out of scope');
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'no authority/cache rewrite');
+  assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, hasBearer ? 1 : 0);
+  if (pending) { session.resolve(response({ user: null })); await flush(); }
+  assert.deepEqual(errors, []);
+  console.error = oldError; console.warn = oldWarn;
+}
+
+if (process.argv[2] === '--guest-public-case') {
+  await guestPublicCase(process.argv[3]);
+  console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
+} else if (process.argv[2] === '--app-dev-docs-case') {
   await appDevDocsBootCase(process.argv[3]);
   console.log('PASS actual app ScreenOps boot — ' + process.argv[3]);
 } else if (process.argv[2] === '--dev-docs-case') {
@@ -514,6 +759,13 @@ if (process.argv[2] === '--app-dev-docs-case') {
     'off', 'leave-pending', 'leave-unknown', 'hash-pending', 'hash-unknown']) {
     await check('actual app ScreenOps boot: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-dev-docs-case', scenario],
+        { stdio: 'pipe', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['no-bearer', 'user-null', 'role-null', 'role-passenger', 'role-driver',
+    'reconciling', 'unknown', 'authenticated', 'off']) {
+    await check('actual app/router/screens Guest boundary: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--guest-public-case', scenario],
         { stdio: 'pipe', timeout: 15000 });
     });
   }

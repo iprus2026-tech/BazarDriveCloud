@@ -105,9 +105,12 @@ export function createAuthSessionBootstrap({
   });
 }
 
-export function sessionRouteAdmission(snapshot, path) {
+export function sessionRouteAdmission(snapshot, path, { guestPublic = false } = {}) {
   if (snapshot.state === 'LOCAL_DEMO_BOOT' || snapshot.state === 'AUTHENTICATED') return true;
   if (snapshot.state !== 'ANONYMOUS') return false;
+  // Classification comes from router. This admits only a read-only Guest view,
+  // never a confirmed identity, grants, readiness, or pending/unknown fallback.
+  if (guestPublic) return { guestReadOnly: true, skipWelcome: true };
   if (path === '/welcome') return true;
   // Keep auth entry reachable with contradictory legacy flags; otherwise
   // Welcome's onboarded auto-skip and the welcomeSeen guard can loop.

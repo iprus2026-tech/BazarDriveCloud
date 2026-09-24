@@ -98,6 +98,20 @@ const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/ord
 // chrome. Product routes keep the welcome guard and chrome policy unchanged.
 const DEV_DOCS_ROUTES = new Set(['/ops/screens']);
 
+// Public reading is a route policy, never a role grant. Export an immutable
+// inventory so behavioral coverage uses the same classification as runtime.
+export const GUEST_PUBLIC_ROUTES = Object.freeze([
+  '/feed', '/profile', '/map', '/rules', '/post', '/location-permission',
+]);
+const GUEST_PUBLIC_ROUTE_SET = new Set(GUEST_PUBLIC_ROUTES);
+
+function routeAdmission(path) {
+  if (DEV_DOCS_ROUTES.has(path) || !admissionGuard) return true;
+  return admissionGuard(path, {
+    guestPublic: user.get().role === 'guest' && GUEST_PUBLIC_ROUTE_SET.has(path),
+  });
+}
+
 // Read-only boot orchestration seam; this set remains the sole classification.
 export function isCurrentDevDocsRoute() {
   const path = (location.hash || '').slice(1).split('?')[0];
@@ -168,7 +182,7 @@ async function render() {
   const path = fullPath.split('?')[0];
   // Dev/docs classification stays router-owned for both admission checks.
   const isDevDocsRoute = DEV_DOCS_ROUTES.has(path);
-  const admission = !isDevDocsRoute && admissionGuard ? admissionGuard(path) : true;
+  const admission = routeAdmission(path);
   if (!renderContext.isCurrent()) return;
   if (admission === false) {
     onAdmissionBlocked?.();
@@ -183,8 +197,9 @@ async function render() {
   // then read the user with that override layered on. The override only
   // affects role context; the persisted bazardrive.user.v1 is never written.
   const qi = fullPath.indexOf('?');
-  bootstrapSmokeRoleFromQuery(qi === -1 ? '' : fullPath.slice(qi + 1));
-  const u = applySmokeRole(user.get());
+  const guestReadOnly = admission?.guestReadOnly === true;
+  if (!guestReadOnly) bootstrapSmokeRoleFromQuery(qi === -1 ? '' : fullPath.slice(qi + 1));
+  const u = guestReadOnly ? user.get() : applySmokeRole(user.get());
 
   if (!admission?.skipWelcome && !u.welcomeSeen && path !== '/welcome' && !isDevDocsRoute) {
     go('/welcome');
@@ -225,7 +240,7 @@ async function render() {
   shell.classList.toggle('has-fab',    hasFab);
 
   root.replaceChildren();
-  const result = await loader(renderContext);
+  const result = await loader(Object.freeze({ ...renderContext, guestReadOnly }));
   const lifecycle = isLifecycleResult(result);
   const view = lifecycle ? result.view : result;
   const dispose = lifecycle && typeof result.dispose === 'function' ? result.dispose : null;
@@ -235,8 +250,9 @@ async function render() {
   // are disposed right now instead, exactly once (BD-SCREEN-LIFECYCLE-01A
   // STALE LIFECYCLE RESULT POLICY, #919) — never stored, never touching
   // whatever the (possibly newer) current disposer is.
-  const finalAdmission = !isDevDocsRoute && admissionGuard ? admissionGuard(path) : true;
-  if (!renderContext.isCurrent() || finalAdmission === false || typeof finalAdmission === 'string') {
+  const finalAdmission = routeAdmission(path);
+  if (!renderContext.isCurrent() || finalAdmission === false || typeof finalAdmission === 'string'
+      || (finalAdmission?.guestReadOnly === true) !== guestReadOnly) {
     disposeSafely(dispose);
     return;
   }
