@@ -144,6 +144,15 @@ if (exists(welcomeLoadingTimerSmoke)) {
   }
 }
 
+// 01B-A — actual boot controller/API/router/app behavior, including retry races.
+const authSessionBootstrapSmoke = path.join(root, 'scripts', 'smoke-auth-session-bootstrap.mjs');
+try {
+  execFileSync(process.execPath, [authSessionBootstrapSmoke], { stdio: 'pipe' });
+} catch (e) {
+  const msg = ((e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : e.message)).slice(-800);
+  errors.push(`smoke-auth-session-bootstrap.mjs failed\n${msg}`);
+}
+
 // BD-SETTINGS-01 — static regression smoke for the new Settings screen
 // (route registration, both profile-gear entry points, gate states, UI-only
 // boundary, SW precache).

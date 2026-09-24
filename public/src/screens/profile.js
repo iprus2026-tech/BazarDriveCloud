@@ -3597,7 +3597,8 @@ export default function profile(renderContext) {
   const effectiveRole = getSmokeRole() || u.role;
 
   let view;
-  if (roleParam === 'driver') view = 'driver';
+  if (renderContext?.guestReadOnly === true) view = 'guest';
+  else if (roleParam === 'driver') view = 'driver';
   else if (roleParam === 'passenger') view = 'passenger';
   else if (!u.onboarded || effectiveRole === 'guest') view = 'guest';
   else if (effectiveRole === 'driver') view = 'driver';

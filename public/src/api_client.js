@@ -97,6 +97,6 @@ async function readBody(res) {
 // Typed helper — the one LIVE server endpoint today: GET /api/v1/auth/session -> { user }
 // (null when anonymous). The canonical example of how product reads get added later: one
 // small helper per resource, all funnelled through apiFetch.
-export function getSession() {
-  return apiFetch('/auth/session');
+export function getSession({ signal } = {}) {
+  return apiFetch('/auth/session', { signal });
 }

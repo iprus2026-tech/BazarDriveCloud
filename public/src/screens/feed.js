@@ -41,7 +41,8 @@ function feedDateLabel(now = new Date()) {
 // only on a successful reload (guarded by onlyIfState), reports server_error
 // with the guarded onRetry on failure, and falls back to [] so the feed's own
 // empty state is preserved (the overlay is additive).
-export default function feed() {
+export default function feed(renderContext) {
+  const guestReadOnly = renderContext?.guestReadOnly === true;
   // BD-FEED-01 — return the screen shell synchronously and load in the
   // background (refreshList) so the feed paints a loading skeleton immediately
   // instead of leaving #app blank while the data resolves (the router clears
@@ -124,7 +125,7 @@ export default function feed() {
       return p.type === activeKey;
     });
     if (items.length) {
-      feedList.innerHTML = items.map(renderCard).join('');
+      feedList.innerHTML = items.map(post => renderCard(post, guestReadOnly)).join('');
       return;
     }
     // Distinguish a genuinely empty / failed feed (no posts at all) from a
@@ -154,6 +155,7 @@ export default function feed() {
   });
 
   root.querySelector('.feed-btn-new').addEventListener('click', () => {
+    if (guestReadOnly) { go('/new'); return; }
     // BD-SMOKE-ROLE-01 — per-tab role override decides where "+" routes. A
     // passenger smoke tab carries passenger intent into the composer; real
     // passengers keep '/new' so an in-progress draft type is preserved.
@@ -188,6 +190,7 @@ export default function feed() {
       }
 
       if (actionBtn.dataset.action === 'accept-order') {
+        if (guestReadOnly) return;
         // BD-SMOKE-ROLE-01 — gate the driver accept on the per-tab effective
         // role so a passenger smoke tab cannot execute the accept flow even if
         // the shared persisted role is driver.
@@ -263,10 +266,10 @@ function cardOpenLink(p) {
   return `<a class="feed-card__open" href="#/post?id=${escapeHtml(p.id || '')}" aria-label="${escapeHtml(cardLabel(p))}"></a>`;
 }
 
-function renderCard(p) {
+function renderCard(p, guestReadOnly = false) {
   switch (p.type) {
     case 'system':       return renderSystemCard(p);
-    case 'trip':         return renderTripCard(p);
+    case 'trip':         return renderTripCard(p, guestReadOnly);
     case 'announcement': return renderAnnouncementCard(p);
     case 'marketplace':  return renderMarketplaceCard(p);
     default:             return '';
@@ -341,7 +344,7 @@ function renderSystemCard(p) {
   `;
 }
 
-function renderTripCard(p) {
+function renderTripCard(p, guestReadOnly = false) {
   const clockIcon = `
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
          stroke-linecap="round" aria-hidden="true" width="12" height="12">
@@ -354,8 +357,8 @@ function renderTripCard(p) {
   // role; a passenger smoke tab never sees "Принять заказ". canManageOwnOrder
   // is identity-based (authorId), so the role override does not affect it.
   const u = applySmokeRole(user.get());
-  const ownPassengerOrder = p.passenger === true && canManageOwnOrder(p, u);
-  const driverCanAccept = canAcceptOrder(p, u);
+  const ownPassengerOrder = !guestReadOnly && p.passenger === true && canManageOwnOrder(p, u);
+  const driverCanAccept = !guestReadOnly && canAcceptOrder(p, u);
   const postId = escapeHtml(p.id || '');
 
   let ctaAttrs;
