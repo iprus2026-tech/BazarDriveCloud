@@ -4,7 +4,7 @@ docType: decision-record
 title: "Auth & Identity — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-09-24
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -14,50 +14,64 @@ related:
   files:
     - public/src/state.js
     - public/src/garage.js
-  issues: []
-  prs: []
+    - public/src/auth_token.js
+    - server/src/services/auth/index.js
+    - docs/first-login-authority-contract.md
+  issues: [585, 824, 829, 830]
+  prs: [788, 799]
 tags: [decision-record, adr, auth, identity, target, phase-1]
 slug: /decisions/auth-identity
 ---
 
 # Auth & Identity — Decision Record
 
-> **Proposed / target decision — not implemented (`status: draft`).** Both
-> [ADR BD-DOCS-030](shared-source-of-truth.md) and the
-> [Data Layer Contract BD-DOCS-031](../design/data-layer-contract.md) deliberately
-> deferred identity/auth to *this* ADR. BazarDrive **today** is a backless vanilla
-> PWA; there is no server, no real authentication. Nothing here is built yet.
+> **Partially implemented; full authority cutover remains target (`status: draft`).**
+> Reconciled against `main@1af6af0a860b117124c1bd63ad88d687f511bb1b`.
+> The in-repo backend has DB-backed OTP and session endpoints (#788); onboarding
+> has a guarded real-OTP/bearer path (#799). The PWA backend path remains OFF by
+> default. Boot reconciliation, pilot session lifecycle and granted-role/readiness
+> enforcement are not established by those merges. See
+> [Backend Spine Inspector, BD-DOCS-042](../processes/backend-spine-inspector.md)
+> for repository implementation status, distinct from deployment readiness.
+
+[First-login authority contract, BD-FIRST-LOGIN-AUTHORITY-01A](https://github.com/iprus2026-tech/BazarDriveCloud/blob/main/docs/first-login-authority-contract.md)
+specializes this ADR with the audited flow, target states, session reconciliation
+and acceptance cases. It is a contract-only draft, not a runtime cutover.
 
 ## Context
 
-Identity today lives entirely in the client `bazardrive.user.v1` store
-(`public/src/state.js`):
+The PWA still holds a local prototype/profile model in `bazardrive.user.v1`
+(`public/src/state.js`), separate from the backend identity:
 
 - **Role** — `role: 'passenger' | 'driver' | 'guest'` (a field, not an account).
 - **Phone** — `phone` and a `phoneVerified` boolean already exist (v9,
   BD-PROFILE-01 phone-verification surface) — but `phoneVerified` is a
-  **client-set flag**, not a server-verified fact.
+  **client-set flag**. The backend also has a verified-phone fact; the local flag
+  is not yet a reconciled projection of it.
 - **Compliance** — driver documents (`driverLicense`, `taxiOsago`,
   `taxiRegistry`, `waybill`, `medicalCheck`) and the derived gates
   `computeDocumentsReady` / `isDriverLineReady`, all computed **client-side**.
 - **Vehicles** — the driver garage collection (v11, BD-PROFILE-D-05F; resolver in
   `public/src/garage.js`) is nested inside `user.v1`.
 
-Because identity is per-client, there is **no durable account**: the same person
-on another device is a different `user.v1`. ADR-030's shared source of truth
-cannot attribute orders, offers, rides or compliance to a real actor without a
-server identity. This is a **prerequisite** for the data-layer migration to be
-meaningful.
+Backend OTP verification now resolves a durable account by phone and issues a
+bearer session. The guarded client path stores it in `bazardrive.auth.v1`.
+However, the local profile is not automatically reconciled on boot, and selecting
+a local role does not grant it on the server. A new OTP account may have empty
+grants while onboarding writes a local passenger/driver role. The target below
+closes that authority split; it is not a description of completed enforcement.
 
 ## Decision
 
-Introduce **server-side identity and authentication**:
+Target **server-side identity and authentication** (partially implemented):
 
 1. **One account, a roles set plus an active role.** A single identity carries
    `roles` (the set of granted roles, e.g. `[passenger, driver]`) plus
-   `activeRole` (the currently selected one). The runtime's **scalar `role`** in
-   `user.v1` (`state.js:46`) maps to `activeRole`, so a passenger who also drives
-   is representable without overwriting. No separate passenger/driver accounts.
+   `activeRole` (the backend session choice, constrained by current grants).
+   The runtime's **scalar `role`** in `user.v1` is intent/cache and must project
+   that confirmed choice; selecting it locally never grants a role. A passenger
+   who also drives uses one account. Legacy account role fields must not compete
+   with the session choice; compatibility policy remains under #830.
    *(This refines the scalar `users.role` sketched in BD-DOCS-031 into
    `roles` + `activeRole`; reconciling that field is a follow-up below.)*
 2. **Phone + OTP is the auth method.** It matches the surface already in the
@@ -73,8 +87,10 @@ Introduce **server-side identity and authentication**:
    server-owned compliance record; the driver garage maps to the server
    **vehicles** entity (BD-DOCS-031), keyed by the driver identity.
 
-This ADR decides **identity model, auth method, and session boundary**. Token
-format, OTP provider, and session lifetime are deferred (see Open questions).
+This ADR decides **identity model, auth method, and session boundary**. Opaque
+bearer issuance and hashed session storage exist. Production OTP delivery/abuse
+controls remain under #824; pilot transport, lifetime, rotation and logout/revoke
+remain under #829; granted-role and readiness enforcement remain under #830.
 
 ## Alternatives considered
 
@@ -100,7 +116,8 @@ format, OTP provider, and session lifetime are deferred (see Open questions).
     safety-boundary change (sw-offline-agent scope).
   - Offline: a cached session must degrade safely when the token is stale.
 - **Follow-ups:**
-  - Token format / OTP provider / session lifetime design.
+  - OTP delivery/hardening (#824), session lifecycle and reconciliation (#829),
+    and server role/readiness policy (#830), per the first-login contract.
   - Vehicles split out of the driver garage into the server **vehicles** entity
     (BD-DOCS-031 follow-up).
   - Phase 2 presence (BD-DOCS-023) keys heartbeat to the authenticated driver
