@@ -1,10 +1,11 @@
-import { register, start, go, setPendingAction } from './router.js';
+import { register, start, go, setPendingAction, setAdmissionGuard, isCurrentDevDocsRoute } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
 import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
+import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -105,7 +106,76 @@ document.getElementById('fab').addEventListener('click', () => {
   requireOnboarding(() => go(getCreateEntryRoute()));
 });
 
-start();
+// 01B-A is boot-only. Credential/profile cleanup and post-login/logout/Guest/
+// account-switch lifecycle safety remain separate work (01B-B).
+const bootSession = createAuthSessionBootstrap();
+let routerStarted = false;
+setAdmissionGuard(
+  (path) => sessionRouteAdmission(bootSession.getSnapshot(), path),
+  () => showBootSession(bootSession.getSnapshot()),
+);
+
+function showBootSession(snapshot) {
+  const unknown = snapshot.state === 'SESSION_UNKNOWN';
+  const view = document.createElement('section');
+  view.className = 'screen screen--ob';
+  view.dataset.authBootState = snapshot.state;
+  const content = document.createElement('div');
+  content.className = 'ob-state';
+  content.dataset.obStep = unknown ? 'error' : 'loading';
+  const message = document.createElement('p');
+  message.className = unknown ? 'ob-retry-state__title' : 'ob-loading-message';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  message.textContent = unknown ? 'Не удалось проверить вход' : 'Проверяем вход…';
+  content.appendChild(message);
+  if (unknown) {
+    const retry = document.createElement('button');
+    retry.id = 'auth-boot-retry';
+    retry.type = 'button';
+    retry.className = 'bd-btn primary';
+    retry.textContent = 'Повторить';
+    retry.addEventListener('click', () => { void bootSession.reconcile(); });
+    content.appendChild(retry);
+  }
+  view.appendChild(content);
+  document.getElementById('tabbar').hidden = true;
+  document.getElementById('fab').hidden = true;
+  const shell = document.getElementById('shell');
+  shell.classList.toggle('no-chrome', true);
+  shell.classList.toggle('has-tabbar', false);
+  shell.classList.toggle('has-fab', false);
+  document.getElementById('app').replaceChildren(view);
+}
+
+function startRouterOnce() {
+  if (routerStarted) return;
+  routerStarted = true;
+  window.removeEventListener('hashchange', onBootHashChange);
+  start();
+}
+
+function onBootHashChange() {
+  if (isCurrentDevDocsRoute()) startRouterOnce();
+}
+
+// Until routing starts, a direct hash navigation can still reach dev/docs.
+window.addEventListener('hashchange', onBootHashChange);
+bootSession.subscribe((snapshot) => {
+  if (isCurrentDevDocsRoute()) {
+    // Reconciliation continues, without replacing or remounting dev/docs.
+    startRouterOnce();
+  } else if (routerStarted) {
+    // Resume a route blocked after leaving dev/docs. The router owns admission,
+    // disposal, and the blocked UI callback; start() is never called again.
+    go((location.hash || '#/welcome').slice(1));
+  } else if (['LOCAL_DEMO_BOOT', 'ANONYMOUS', 'AUTHENTICATED'].includes(snapshot.state)) {
+    startRouterOnce();
+  } else {
+    showBootSession(snapshot);
+  }
+});
+void bootSession.reconcile();
 initSwUpdate();
 initFavoriteRoutes();
 // BD-ERROR-01A — app-shell singleton error/offline overlay. Not a route:

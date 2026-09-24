@@ -4,6 +4,16 @@ import { applySmokeRole, bootstrapSmokeRoleFromQuery } from './smoke_role.js';
 
 const routes = new Map();
 let pendingAction = null;
+let admissionGuard = null;
+let onAdmissionBlocked = null;
+
+// Optional synchronous boot admission, installed before start(): false pauses,
+// a route string redirects, skipWelcome admits auth entry without local UX flags.
+// onBlocked renders the boot UI only after the current screen has been disposed.
+export function setAdmissionGuard(guard, onBlocked = null) {
+  admissionGuard = typeof guard === 'function' ? guard : null;
+  onAdmissionBlocked = typeof onBlocked === 'function' ? onBlocked : null;
+}
 
 // BD-ROUTER-LIFECYCLE-01A (#917) — LATEST_ROUTE_RENDER_WINS. render() is
 // async (screen loaders may await their own data — post_detail.js does),
@@ -88,6 +98,12 @@ const PASSENGER_ORDER_ROUTES = new Set(['/route-picker', '/route-preview', '/ord
 // chrome. Product routes keep the welcome guard and chrome policy unchanged.
 const DEV_DOCS_ROUTES = new Set(['/ops/screens']);
 
+// Read-only boot orchestration seam; this set remains the sole classification.
+export function isCurrentDevDocsRoute() {
+  const path = (location.hash || '').slice(1).split('?')[0];
+  return DEV_DOCS_ROUTES.has(path);
+}
+
 function redirectDriverPassengerOrderFlow(path, u) {
   return isDriverMode(u) && PASSENGER_ORDER_ROUTES.has(path);
 }
@@ -150,6 +166,18 @@ async function render() {
   if (!renderContext.isCurrent()) return;
   const fullPath = (location.hash || '#/welcome').slice(1);
   const path = fullPath.split('?')[0];
+  // Dev/docs classification stays router-owned for both admission checks.
+  const isDevDocsRoute = DEV_DOCS_ROUTES.has(path);
+  const admission = !isDevDocsRoute && admissionGuard ? admissionGuard(path) : true;
+  if (!renderContext.isCurrent()) return;
+  if (admission === false) {
+    onAdmissionBlocked?.();
+    return;
+  }
+  if (typeof admission === 'string') {
+    go(admission);
+    return;
+  }
   // BD-SMOKE-ROLE-01 — capture ?smokeRole= from the hash query (hash-routed,
   // so location.search is empty) into the per-tab sessionStorage override,
   // then read the user with that override layered on. The override only
@@ -157,9 +185,8 @@ async function render() {
   const qi = fullPath.indexOf('?');
   bootstrapSmokeRoleFromQuery(qi === -1 ? '' : fullPath.slice(qi + 1));
   const u = applySmokeRole(user.get());
-  const isDevDocsRoute = DEV_DOCS_ROUTES.has(path);
 
-  if (!u.welcomeSeen && path !== '/welcome' && !isDevDocsRoute) {
+  if (!admission?.skipWelcome && !u.welcomeSeen && path !== '/welcome' && !isDevDocsRoute) {
     go('/welcome');
     return;
   }
@@ -208,7 +235,8 @@ async function render() {
   // are disposed right now instead, exactly once (BD-SCREEN-LIFECYCLE-01A
   // STALE LIFECYCLE RESULT POLICY, #919) — never stored, never touching
   // whatever the (possibly newer) current disposer is.
-  if (!renderContext.isCurrent()) {
+  const finalAdmission = !isDevDocsRoute && admissionGuard ? admissionGuard(path) : true;
+  if (!renderContext.isCurrent() || finalAdmission === false || typeof finalAdmission === 'string') {
     disposeSafely(dispose);
     return;
   }
