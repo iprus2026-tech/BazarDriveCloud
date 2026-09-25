@@ -16,13 +16,13 @@
 // Contract (preserved from the BD-MAP-FOUND-STUB-01 stub):
 //   getMapboxToken()  → string | null   (null = no token configured = DARK)
 //   hasMapboxToken()  → boolean
-//   getDefaultCenter() → { lng, lat, zoom }   (Moscow)
+//   getDefaultCenter() → { lng, lat, zoom }   (Marfino)
 
-const DEFAULT_CENTER = Object.freeze({ lng: 37.6173, lat: 55.7558, zoom: 12 }); // Moscow
+const DEFAULT_CENTER = Object.freeze({ lng: 37.54584, lat: 56.08549, zoom: 12.77 }); // Marfino
 
-// Default map style used once a token activates real rendering (a custom Cloud-Design style is a
-// later refinement). Exposed so the per-surface render slices share one source of truth.
-export const MAPBOX_STYLE = 'mapbox://styles/mapbox/streets-v12';
+// Custom Marfino map style used once a token activates real rendering.
+// Exposed so the per-surface render slices share one source of truth.
+export const MAPBOX_STYLE = 'mapbox://styles/mrzelus607/cmue32kq700kj01qsh50p5zzq';
 
 // Two COMMITTED, CSP-safe token sources (no inline <script>), in precedence order:
 //   1. globalThis.__BD_MAPBOX_TOKEN__  — set by a test / a future build step / a local dev override;

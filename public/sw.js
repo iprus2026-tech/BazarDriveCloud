@@ -208,7 +208,8 @@
 // BD-PROFILE-EXPERIENCE-01B-R2: trip-card identity correction.
 // 01B-A: boot session reconciliation; no cache-policy change.
 // v328 (BD-MAPBOX-CONTAINER-HEIGHT-01A-R1): refresh precached cloud.css for the Mapbox host sizing fix.
-const VERSION    = 'v328';
+// v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
+const VERSION    = 'v329';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
