@@ -49,11 +49,12 @@ const ldr = await import(ldrUrl);
 expect('DARK default: getMapboxToken() is null with no token', cfg.getMapboxToken() === null);
 expect('DARK default: hasMapboxToken() is false', cfg.hasMapboxToken() === false);
 expect('DARK default: isMapboxEnabled() is false', cfg.isMapboxEnabled() === false);
-expect('getDefaultCenter() returns the Moscow center', (() => {
+expect('getDefaultCenter() returns the exact Marfino center and zoom', (() => {
   const c = cfg.getDefaultCenter();
-  return c && typeof c.lng === 'number' && typeof c.lat === 'number' && typeof c.zoom === 'number';
+  return c && c.lng === 37.54584 && c.lat === 56.08549 && c.zoom === 12.77;
 })());
-expect('MAPBOX_STYLE is exported', typeof cfg.MAPBOX_STYLE === 'string' && cfg.MAPBOX_STYLE.length > 0);
+expect('MAPBOX_STYLE matches the production Marfino style',
+  cfg.MAPBOX_STYLE === 'mapbox://styles/mrzelus607/cmue32kq700kj01qsh50p5zzq');
 
 // the __BD_MAPBOX_TOKEN__ override is honoured (the activation path)
 globalThis.__BD_MAPBOX_TOKEN__ = '  pk.test_token  ';
