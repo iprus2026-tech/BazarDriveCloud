@@ -28,7 +28,7 @@ const STATE_QUERY_KEYS = new Map([
 
 const STATE_COPY = {
   [MAP_STATE.DEFAULT]: {
-    badge:   'demo · mock map',
+    badge:   'Марфино · Mapbox',
     title:   'Куда поедем?',
     hint:    'Выберите маршрут или включите «Моё место», чтобы увидеть заказы рядом.',
   },
@@ -45,7 +45,7 @@ const STATE_COPY = {
   [MAP_STATE.NEARBY]: {
     badge:   'demo · заказы рядом',
     title:   'Заказы рядом',
-    hint:    'Реальные заказы появятся, когда подключим Mapbox и данные водителей.',
+    hint:    'Список заказов рядом пока демонстрационный. Реальные данные водителей и заказов ещё не подключены.',
   },
   [MAP_STATE.TOKEN_MISSING]: {
     badge:   'Демо-режим',
