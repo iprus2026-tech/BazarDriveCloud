@@ -26,9 +26,11 @@ const STATE_QUERY_KEYS = new Map([
   ['token_missing', MAP_STATE.TOKEN_MISSING],
 ]);
 
+const LIVE_MAP_BADGE = 'Марфино · Mapbox';
+
 const STATE_COPY = {
   [MAP_STATE.DEFAULT]: {
-    badge:   'demo · mock map',
+    badge:   'Карта района',
     title:   'Куда поедем?',
     hint:    'Выберите маршрут или включите «Моё место», чтобы увидеть заказы рядом.',
   },
@@ -45,7 +47,7 @@ const STATE_COPY = {
   [MAP_STATE.NEARBY]: {
     badge:   'demo · заказы рядом',
     title:   'Заказы рядом',
-    hint:    'Реальные заказы появятся, когда подключим Mapbox и данные водителей.',
+    hint:    'Список заказов рядом пока демонстрационный. Реальные данные водителей и заказов ещё не подключены.',
   },
   [MAP_STATE.TOKEN_MISSING]: {
     badge:   'Демо-режим',
@@ -73,14 +75,17 @@ function getHashQuery() {
 }
 
 // Render-gate decision tree.
-// Priority: explicit ?state= override → token check → geolocation
-// permission state → default. Token check wins over permission, per
-// the BD-MAP-01 render-gate verification notes.
+// Valid explicit ?state= overrides win, except DEFAULT requires a token:
+// without one it resolves to TOKEN_MISSING. With no valid override, priority
+// is token check → geolocation permission state → default.
 function resolveState(query, prefs) {
   const override = query.get('state');
   if (override) {
     const mapped = STATE_QUERY_KEYS.get(override);
-    if (isValidMapState(mapped)) return mapped;
+    if (isValidMapState(mapped)) {
+      if (mapped === MAP_STATE.DEFAULT && !hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
+      return mapped;
+    }
   }
   if (!hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
   const perm = getPermissionStatus();
@@ -173,7 +178,7 @@ function buildMapPlaceholder(state) {
 //     already ran (checks lifecycle.disposed first) and dispose() is idempotent against a poll that
 //     already ran (checks lifecycle.mapInstance/teardownId before touching them) — whichever fires
 //     first does the real work, the other is a safe no-op.
-function hydrateRealMap(container, lifecycle) {
+function hydrateRealMap(container, lifecycle, badge) {
   loadMapboxSdk().then((mapboxgl) => {
     if (!mapboxgl) return;                              // DARK / SDK unavailable → keep the placeholder
     // On a memoized-SDK REVISIT this .then runs as a microtask BEFORE router.js appends the screen
@@ -200,6 +205,13 @@ function hydrateRealMap(container, lifecycle) {
         return;
       }
       lifecycle.mapInstance = map;
+      // A token or constructor success alone does not mean the map has loaded.
+      if (badge) {
+        map.once('load', () => {
+          if (lifecycle.disposed !== false || !document.body.contains(container)) return;
+          badge.textContent = LIVE_MAP_BADGE;
+        });
+      }
       // Defensive backstop only (BD-SCREEN-LIFECYCLE-01A): the router-owned disposer is now the
       // primary cleanup path and frees the GL context immediately on navigation. This poll only
       // still matters for a detachment the disposer somehow didn't observe.
@@ -418,7 +430,7 @@ export default function mapScreen() {
   // BD-MAP-RENDER-MAP (#805): in the live DEFAULT state WITH a token, hydrate a real Mapbox map over the
   // placeholder. DARK (no token) ⇒ resolveState() returns TOKEN_MISSING (never DEFAULT) AND
   // isMapboxEnabled() is false, so this never runs and the placeholder path is byte-for-byte unchanged.
-  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap, mapLifecycle);
+  if (state === MAP_STATE.DEFAULT && isMapboxEnabled()) hydrateRealMap(mapWrap, mapLifecycle, topbar.querySelector('.map-home__sub'));
   const banner = buildBanner(state);
   if (banner) stage.appendChild(banner);
   root.appendChild(stage);
