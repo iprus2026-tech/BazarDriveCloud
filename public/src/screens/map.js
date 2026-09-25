@@ -73,14 +73,17 @@ function getHashQuery() {
 }
 
 // Render-gate decision tree.
-// Priority: explicit ?state= override → token check → geolocation
-// permission state → default. Token check wins over permission, per
-// the BD-MAP-01 render-gate verification notes.
+// Valid explicit ?state= overrides win, except DEFAULT requires a token:
+// without one it resolves to TOKEN_MISSING. With no valid override, priority
+// is token check → geolocation permission state → default.
 function resolveState(query, prefs) {
   const override = query.get('state');
   if (override) {
     const mapped = STATE_QUERY_KEYS.get(override);
-    if (isValidMapState(mapped)) return mapped;
+    if (isValidMapState(mapped)) {
+      if (mapped === MAP_STATE.DEFAULT && !hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
+      return mapped;
+    }
   }
   if (!hasMapboxToken()) return MAP_STATE.TOKEN_MISSING;
   const perm = getPermissionStatus();

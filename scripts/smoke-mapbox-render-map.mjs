@@ -1,4 +1,4 @@
-// BD-MAP-RENDER-MAP (#805) — static smoke for the first per-surface REAL Mapbox render (/map).
+// BD-MAP-RENDER-MAP (#805) — static + behavioural smoke for the first per-surface REAL Mapbox render (/map).
 //
 // map.js must stay DARK by default: with no token, resolveState() returns TOKEN_MISSING (never DEFAULT)
 // and isMapboxEnabled() is false, so no mapboxgl.Map is ever constructed and the MapShell placeholder is
@@ -8,9 +8,12 @@
 // somehow didn't observe. The actual visual render + CSP completeness are verified on a device with a
 // real token — NOT asserted here.
 //
-// No DOM, no network. Pure Node / static source assertions.
+// No DOM, no network. Pure Node / source assertions and isolated state resolution.
 
 import fs from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { MAP_STATE, isValidMapState } from '../public/src/mapbox/mapbox_state.js';
+import { GEO_STATUS } from '../public/src/mapbox/geolocation_service.js';
 
 const issues = [];
 const expect = (label, cond, detail = '') => {
@@ -19,6 +22,35 @@ const expect = (label, cond, detail = '') => {
 };
 
 const src = fs.readFileSync(new URL('../public/src/screens/map.js', import.meta.url), 'utf8');
+
+// Exercise the shipped resolver without importing the screen's DOM/router dependencies.
+const queryKeysSource = src.match(/^const STATE_QUERY_KEYS = new Map\([\s\S]*?^\]\);/m)?.[0];
+const resolveSource = src.match(/^function resolveState\(query, prefs\) \{[\s\S]*?^\}/m)?.[0];
+expect('the shipped state query map and resolver are available for behavioural checks',
+  Boolean(queryKeysSource && resolveSource));
+if (queryKeysSource && resolveSource) {
+  for (const tokenAvailable of [false, true]) {
+    const resolve = runInNewContext(`${queryKeysSource}\n${resolveSource}\nresolveState;`, {
+      MAP_STATE, isValidMapState, GEO_STATUS,
+      hasMapboxToken: () => tokenAvailable,
+      getPermissionStatus: () => GEO_STATUS.UNKNOWN,
+    });
+    const cases = [
+      ['default', tokenAvailable ? MAP_STATE.DEFAULT : MAP_STATE.TOKEN_MISSING],
+      [null, tokenAvailable ? MAP_STATE.DEFAULT : MAP_STATE.TOKEN_MISSING],
+      ['nearby', MAP_STATE.NEARBY],
+      ['permission', MAP_STATE.PERMISSION],
+      ['denied', MAP_STATE.DENIED],
+      ['token-missing', MAP_STATE.TOKEN_MISSING],
+      ['token_missing', MAP_STATE.TOKEN_MISSING],
+    ];
+    for (const [requested, expected] of cases) {
+      const query = new URLSearchParams(requested === null ? '' : `state=${requested}`);
+      expect(`${tokenAvailable ? 'TOKEN' : 'NO TOKEN'} + ${requested === null ? 'no override' : `requested ${requested}`} => ${expected}`,
+        resolve(query, { locationAllowed: true }) === expected);
+    }
+  }
+}
 
 // ── The foundation seam is imported ──
 expect('map.js imports isMapboxEnabled + getDefaultCenter + MAPBOX_STYLE from mapbox_config',
