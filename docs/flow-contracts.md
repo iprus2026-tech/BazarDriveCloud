@@ -1,10 +1,10 @@
 # BD-FLOW-01 - End-to-end passenger to driver ride flow
 
-> **Status:** mock-only flow contract.
+> **Status:** mock-only ride/order flow contract. The one live external surface is the `/map` Mapbox base map on GitHub Pages — a map surface only, carrying no ride/order data (see §2, «`/map` surface — Mapbox reality»).
 >
 > **BD-DOCS-01 note:** refreshed after the routines/storage-boundary audit so this document matches the current registered routes, localStorage ownership, and taxi-flow code.
 >
-> This document does not introduce real Mapbox SDK, backend API, auth, payments, push, APK/TWA, CSP relaxations, inline scripts, or rewrites of active ride screens.
+> This document does not introduce a Mapbox SDK, backend API, auth, payments, push, APK/TWA, CSP relaxations, inline scripts, or rewrites of active ride screens. The live `/map` Mapbox surface it describes shipped separately (BD-MAP-FOUND-01 / BD-MAP-RENDER-MAP / BD-MAP-ACTIVATE, #805).
 
 ---
 
@@ -30,7 +30,7 @@ Active Ride
 Complete / history / feed
 ```
 
-The spine is mock-only. Transitions are driven by hash navigation and `localStorage` stores owned by `state.js`, `mock_api.js`, `ride_state.js`, and the screen modules. No screen performs real geolocation, network requests, payments, or Mapbox tile/API calls.
+The ride/order spine is mock-only. Transitions are driven by hash navigation and `localStorage` stores owned by `state.js`, `mock_api.js`, `ride_state.js`, and the screen modules. No screen performs real geolocation, backend/API requests, or payments. The only external network traffic goes to Mapbox (`*.mapbox.com`): on the GitHub Pages origin `/map` loads its base-map style and tiles from there (§2, «`/map` surface — Mapbox reality»). That traffic carries no ride/order data, and every flow step works unchanged without it.
 
 ---
 
@@ -45,7 +45,7 @@ Registered in `public/src/app.js`.
 | `/profile` | `profile.js` | Passenger profile and driver dashboard/readiness. |
 | `/feed` | `feed.js` | Main hub for posts, requests, CTA handoffs. |
 | `/new` | `composer.js` | Creates local feed posts and passenger/driver trip posts. |
-| `/map` | `map.js` | Passenger/guest map home using MapShell placeholder. |
+| `/map` | `map.js` | Passenger/guest map home. The `DEFAULT` state hydrates a real Mapbox GL base map (custom Marfino style) when the token is active; every other state keeps the MapShell placeholder. See «`/map` surface — Mapbox reality» below. |
 | `/location-permission` | `location_permission.js` | Permission explanation/mock fallback, no native prompt requirement. |
 | `/route-picker` | `route_picker.js` | Writes pickup/dropoff draft to `bazardrive.route_draft.v1`. |
 | `/route-preview` | `route_preview.js` | Reads route draft and shows ETA/price summary. |
@@ -66,6 +66,31 @@ Registered in `public/src/app.js`.
 | `/ops/screens` | `ops_screens.js` | ScreenOps dev/docs tool, outside the ride flow: not in the tabbar, exempt from the welcome guard. |
 
 Unknown routes still fall back through the router to `/feed`. The one dynamic exception is `/order/<id>`: any `/order/<anything>` path without an exact registration resolves to the `/order` loader.
+
+### `/map` surface — Mapbox reality
+
+`/map` is the only screen that loads Mapbox, and it loads a base map only; the ride/order spine stays mock/`localStorage`. Screen contract: `docs/screen-contracts.md` → BD-MAP-01 and the «Real Mapbox» shell invariant. Source of truth: `public/src/screens/map.js`, `public/src/mapbox/mapbox_config.js`, `public/src/mapbox/mapbox_loader.js`, pinned by `scripts/smoke-mapbox-foundation.mjs` and `scripts/smoke-mapbox-render-map.mjs`.
+
+**Current (shipped runtime):**
+
+| Concern | Runtime behavior |
+|---|---|
+| Activation | `isMapboxEnabled()` is true only when a token resolves. The committed URL-restricted public token (`<meta name="bd-mapbox-token">` in `index.html`) is honored only on the GitHub Pages origin `iprus2026-tech.github.io`; local serves and previews stay dark unless a developer sets the `globalThis.__BD_MAPBOX_TOKEN__` override. |
+| SDK | Vendored under `public/vendor/mapbox-gl/` (no CDN, `script-src 'self'` unchanged) and injected by `loadMapboxSdk()` only when enabled. Dark means no script, no DOM change, no network. |
+| State gate | `resolveState()`: no token → `TOKEN_MISSING`, including an explicit `?state=default`. With a token: an explicit `?state=default` or a set `locationAllowed` pref → `DEFAULT`; otherwise `PERMISSION` (the geolocation stub always reports `unknown`). Explicit `?state=permission`, `denied`, `nearby` or `token-missing` render those placeholder states. |
+| Live map | `DEFAULT` with a token only. The MapShell placeholder paints first, then `hydrateRealMap()` replaces it with a `mapboxgl.Map` using the custom Marfino style (`MAPBOX_STYLE`) at the Marfino center (`getDefaultCenter()`). Base map only: no markers, route line, user position, or order/driver data. The router-owned disposer removes the map on navigation. |
+| Badge | «Карта района» until Mapbox fires `load`, then «Марфино · Mapbox». A token or a constructed map alone never shows the live badge. |
+| No token | `TOKEN_MISSING`: badge «Демо-режим», MapShell placeholder with a lock. «Выбрать маршрут» and «Ввести адрес вручную» go to `/route-picker`, so ordering still works. |
+| Fallbacks | `PERMISSION`, `DENIED`, `NEARBY`, `TOKEN_MISSING`, the pre-hydration paint, an SDK load failure and a `Map` constructor failure all keep or restore the MapShell placeholder. `NEARBY`'s clusters and order rows are static demo data. |
+| CSP | `default-src 'self'` stays intact. The pre-existing Mapbox exception adds `https://*.mapbox.com` to `connect-src` and `img-src`, `blob:` to `worker-src` and `child-src`, and `'unsafe-inline'` to `style-src` for mapbox-gl's injected control styles. |
+
+**Not yet implemented** (do not document as live):
+
+- Mapbox on any other screen: `/driver-map`, `/active-ride` (both roles), `/location-permission`, `/route-picker`, `/route-preview` and `/order-map-draft` render the MapShell placeholder only.
+- Real geolocation: nothing calls `navigator.geolocation`. «Моё место» and «Разрешить доступ» only navigate or set the device-level `locationAllowed` pref in `bazardrive.map_prefs.v1`.
+- Backend-driven vehicle/driver layer, passenger or driver realtime positions, Redis geo cache, dispatcher/matching overlay, production ride telemetry.
+- Geocoding, Directions route lines, navigation, live ETA, and authoritative distance/ETA/fare. Route drafts keep deterministic mock coordinates and local mock estimates; `route_service.js` and `price_estimator.js` are unused stubs.
+- `driver_markers.js` and `trip_status_layer.js` remain no-op foundation stubs, not wired to any screen.
 
 ---
 
@@ -223,13 +248,15 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 | `public/src/mock_api.js` | Feed posts, local authored posts, local ride orders, inbox data. |
 | `public/src/ride_state.js` | Ride status enum, active ride persistence, transition helpers. |
 | `public/src/ride_actions.js` | Shared ride/order accept and driver-mode helpers. |
-| `public/src/mapbox/map_shell.js` | Pure DOM map placeholder. No SDK, token or network. |
+| `public/src/mapbox/map_shell.js` | Pure DOM map placeholder. No SDK, token or network. The only map surface on every screen except `/map`, where it is the pre-hydration paint and fallback for the live `DEFAULT` map. |
+| `public/src/mapbox/mapbox_config.js` | Mapbox on/off gate: token resolution (committed token honored only on the Pages origin, dev override), custom Marfino `MAPBOX_STYLE` and center. No Web Storage. |
+| `public/src/mapbox/mapbox_loader.js` | Lazy loader for the vendored mapbox-gl SDK; resolves `null` with no DOM, script or network work when dark. |
 | `public/src/screens/welcome.js` | First-run entry. Start routes straight to `/driver-map` or `/feed` (or runs a pending action) and never opens `/onboarding`; «Войти» opens `/onboarding`. |
 | `public/src/screens/onboarding.js` | Role, phone/OTP mock, profile, vehicle, docs. |
 | `public/src/screens/profile.js` | Guest/passenger profile and driver dashboard (readiness, garage, payouts). |
 | `public/src/screens/feed.js` | Main feed hub and card CTA routing. |
 | `public/src/screens/composer.js` | New publication flow. |
-| `public/src/screens/map.js` | Passenger/guest map home. |
+| `public/src/screens/map.js` | Passenger/guest map home: five-state render gate; the only screen that hydrates a real Mapbox map (§2). |
 | `public/src/screens/location_permission.js` | Location permission explainer: allow → `/map?state=default`, manual → `/route-picker`, back → `/map`. |
 | `public/src/screens/route_picker.js` | Route draft editor. |
 | `public/src/screens/route_preview.js` | Route draft preview. |
@@ -268,6 +295,7 @@ Use local serving or GitHub Pages, then walk:
 #/feed
 #/new
 #/map
+#/map?state=default
 #/location-permission
 #/route-picker
 #/route-preview
@@ -296,7 +324,8 @@ Use local serving or GitHub Pages, then walk:
 Expected invariants:
 
 ```text
-- no native Mapbox/network requirement
+- the spine needs no Mapbox, token or network: off the Pages origin /map resolves to TOKEN_MISSING («Демо-режим») and every step still works
+- on the Pages origin, #/map?state=default loads the live Marfino map; the badge reads «Марфино · Mapbox» only after the map loads
 - no backend/API call
 - tabbar hidden only on chrome-hidden routes
 - FAB visible only on /feed
@@ -309,9 +338,9 @@ Expected invariants:
 ## 10. Constraints
 
 ```text
-no real Mapbox SDK
+no real Mapbox SDK in docs-only or mock-screen work; /map DEFAULT is the only live Mapbox surface (§2)
 no backend/API
-default-src 'self' remains intact
+default-src 'self' remains intact; the only CSP exception is the existing Mapbox one (§2)
 no inline scripts/styles/on* handlers
 no APK/TWA work in this repo phase
 no prototype replacement as index.html
