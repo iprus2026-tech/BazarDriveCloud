@@ -52,3 +52,13 @@ export async function markPhoneVerified(db, userId) {
   );
   return rows[0] ?? null;
 }
+
+// Current grants for a transaction-bound authorization check. In particular, a
+// session's old active_role / phone_verified snapshot must not replace this row.
+export async function lockUserAuthority(db, userId) {
+  const { rows } = await db.query(
+    `SELECT id, active_role, roles, phone_verified FROM users WHERE id = $1 FOR SHARE`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
