@@ -56,11 +56,16 @@ Registered in `public/src/app.js`.
 | `/chat` | `chat.js` | Per-trip or per-response chat thread. |
 | `/trip-confirmation` | `trip_confirmation.js` | Mock confirmation bridge before active ride. |
 | `/active-ride` | `active_ride.js` | Driver active ride plus passenger role dispatch. |
+| `/receipt` | `trip_receipt.js` | Driver completed-ride receipt by `?tripId=`, opened from a completed-trip row in the driver payouts pane of `/profile`. Reads the persisted receipt only. |
 | `/post` | `post_detail.js` | Feed post detail surface. |
+| `/order/<id>` | `order_detail.js` | Order Detail deep link (BD-ORDER-DETAIL-01), role split by `?role=`; registered as the exact `/order` anchor. Primary actions re-render in place. |
 | `/inbox` | `inbox.js` | Inbox hub for responses, messages, rides. |
+| `/daily-communication` | `daily_communication.js` | Operational passenger ↔ driver ↔ support threads (BD-DAILY-COMM-01), opened from the `/inbox` card. Writes communication state only, never order/ride state. Contract: `docs/daily-communication-contract.md`. |
 | `/rules` | `rules.js` | Static rules screen. |
+| `/settings` | `settings.js` | Shared, UI-only settings shell opened from the profile gears; `?role=driver` only steers «Назад». |
+| `/ops/screens` | `ops_screens.js` | ScreenOps dev/docs tool, outside the ride flow: not in the tabbar, exempt from the welcome guard. |
 
-Unknown routes still fall back through the router to `/feed`.
+Unknown routes still fall back through the router to `/feed`. The one dynamic exception is `/order/<id>`: any `/order/<anything>` path without an exact registration resolves to the `/order` loader.
 
 ---
 
@@ -68,7 +73,7 @@ Unknown routes still fall back through the router to `/feed`.
 
 | Concern | Contract |
 |---|---|
-| Chrome hidden | `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation`. |
+| Chrome hidden | `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation` (`HIDE_CHROME`). `/ops/screens` also hides chrome, through the separate dev/docs route policy (`DEV_DOCS_ROUTES`). |
 | FAB | Visible only on `/feed`. |
 | Bottom tabbar | `Лента`, `Карта`, `Правила`, `Профиль`. |
 | Map tab dispatch | Clicking `Карта` calls `getMapEntryRoute()`: driver role goes to `/driver-map`, everyone else to `/map`. |
@@ -96,7 +101,8 @@ Unknown routes still fall back through the router to `/feed`.
 | 9 | `/responses` or `/chat` | Review response / talk to driver | Response/chat stores keep the handoff. |
 | 10 | `/trip-confirmation` | Confirm trip mock | Writes confirmation state and can hand off to active ride. |
 | 11 | `/active-ride?role=passenger` | Track ride | Reads the same `bazardrive.active_ride.v1` tripId as the driver. |
-| 12 | completed passenger ride | Done/new ride | Returns to `/feed`, `/new`, or profile surfaces depending on CTA. |
+| 12 | completed passenger ride (`COMPLETED`) | Rate / return | «В ленту», «На главную» and the rating/report return CTAs go to `/feed`; «В историю поездок» goes to `/profile` (history stub); «Открыть чат» opens `/chat?tripId=<tripId>&role=passenger`. «Посмотреть чек» is a toast only — `/receipt` is the driver receipt. |
+| 13 | canceled passenger ride (`CANCELED`) | New ride / return | «Создать новую поездку» → `/new`; «Вернуться на главную» → `/feed`. The `NO_SHOW` fallback offers only the `/feed` return. |
 
 ---
 
@@ -218,9 +224,13 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 | `public/src/ride_state.js` | Ride status enum, active ride persistence, transition helpers. |
 | `public/src/ride_actions.js` | Shared ride/order accept and driver-mode helpers. |
 | `public/src/mapbox/map_shell.js` | Pure DOM map placeholder. No SDK, token or network. |
+| `public/src/screens/welcome.js` | First-run entry. Start routes straight to `/driver-map` or `/feed` (or runs a pending action) and never opens `/onboarding`; «Войти» opens `/onboarding`. |
+| `public/src/screens/onboarding.js` | Role, phone/OTP mock, profile, vehicle, docs. |
+| `public/src/screens/profile.js` | Guest/passenger profile and driver dashboard (readiness, garage, payouts). |
 | `public/src/screens/feed.js` | Main feed hub and card CTA routing. |
 | `public/src/screens/composer.js` | New publication flow. |
 | `public/src/screens/map.js` | Passenger/guest map home. |
+| `public/src/screens/location_permission.js` | Location permission explainer: allow → `/map?state=default`, manual → `/route-picker`, back → `/map`. |
 | `public/src/screens/route_picker.js` | Route draft editor. |
 | `public/src/screens/route_preview.js` | Route draft preview. |
 | `public/src/screens/order_map_draft.js` | Local passenger order publisher. |
@@ -232,9 +242,18 @@ Do not add a new status just to mirror future backend wording unless the UI and 
 | `public/src/screens/trip_confirmation_handoff.js` | Non-route helper. Seeds `/active-ride` from a confirmed `/trip-confirmation` handoff; cross-role canonical active-ride loader. No DOM/router. |
 | `public/src/screens/driver_handoff_snapshot.js` | Non-route helper. Driver-side confirmed-handoff snapshot store (TTL-bounded) plus overlay onto a ride object. No DOM/router. |
 | `public/src/screens/active_ride.js` | Driver active ride and role dispatch. |
+| `public/src/screens/active_ride_driver_sheets.js` | Non-route helper. Driver cancel / problem / safety sheets and the earnings overlay opener (BD-RIDE-D-SHEETS-01). UI-only: persistence stays in `active_ride.js` callbacks. |
+| `public/src/screens/active_ride_driver_noshow.js` | Non-route helper. Driver no-show sub-flow (BD-RIDE-D-NOSHOW-01) opened from `WAITING_PASSENGER`; its only write is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. |
 | `public/src/screens/active_ride_passenger.js` | Passenger active ride renderer. |
+| `public/src/screens/active_ride_passenger_sheets.js` | Non-route helper. Passenger cancel and safety sheets, imported only by `active_ride_passenger.js`. UI-only: persistence stays in the screen's callbacks. |
+| `public/src/screens/trip_receipt.js` | Driver completed-ride receipt (`/receipt?tripId=`); reads and formats the persisted receipt, never recomputes it. |
 | `public/src/screens/inbox.js` | Cross-flow inbox hub. |
+| `public/src/screens/daily_communication.js` | Daily Communication hub (BD-DAILY-COMM-01); reads and writes communication threads only, through `daily_communication_store.js`. |
 | `public/src/screens/post_detail.js` | Feed detail screen. |
+| `public/src/screens/order_detail.js` | Order Detail (`/order/<id>`, BD-ORDER-DETAIL-01): Model B driver offer → passenger select; primary actions re-render in place. |
+| `public/src/screens/rules.js` | Static rules sections + documents with a client-side search filter. |
+| `public/src/screens/settings.js` | Shared, UI-only settings shell (BD-SETTINGS-01). |
+| `public/src/screens/ops_screens.js` | ScreenOps dev/docs dashboard (BD-OPS-SCREENS-01); not part of the ride flow. |
 
 ---
 
