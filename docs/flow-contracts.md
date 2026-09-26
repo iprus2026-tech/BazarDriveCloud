@@ -30,7 +30,7 @@ Active Ride
 Complete / history / feed
 ```
 
-The ride/order spine is mock-only. Transitions are driven by hash navigation and `localStorage` stores owned by `state.js`, `mock_api.js`, `ride_state.js`, and the screen modules. No screen performs real geolocation, backend/API requests, or payments. The only external network traffic goes to Mapbox (`*.mapbox.com`): on the GitHub Pages origin `/map` loads its base-map style and tiles from there (§2, «`/map` surface — Mapbox reality»). That traffic carries no ride/order data, and every flow step works unchanged without it.
+The ride/order spine is mock-only while the backend seam is dark: `isBackendEnabled() === false`, the published default (no `bd-api-base` meta, no `globalThis.__BD_API_BASE__` override). Transitions are then driven by hash navigation and `localStorage` stores owned by `state.js`, `mock_api.js`, `ride_state.js`, and the screen modules, no screen performs backend/API requests, and the only external network traffic goes to Mapbox (`*.mapbox.com`): on the GitHub Pages origin `/map` loads its base-map style and tiles from there (§2, «`/map` surface — Mapbox reality»). That traffic carries no ride/order data, and every flow step works unchanged without it. With the seam enabled for local QA, the app also calls the `/server` API (auth, orders, matching, ride-state, realtime, history, chat). No screen performs real geolocation or payments in either mode.
 
 ---
 
@@ -69,7 +69,7 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 
 ### `/map` surface — Mapbox reality
 
-`/map` is the only screen that loads Mapbox, and it loads a base map only; the ride/order spine stays mock/`localStorage`. Screen contract: `docs/screen-contracts.md` → BD-MAP-01 and the «Real Mapbox» shell invariant. Source of truth: `public/src/screens/map.js`, `public/src/mapbox/mapbox_config.js`, `public/src/mapbox/mapbox_loader.js`, pinned by `scripts/smoke-mapbox-foundation.mjs` and `scripts/smoke-mapbox-render-map.mjs`.
+`/map` is the only screen that loads Mapbox, and it loads a base map only; the ride/order spine stays mock/`localStorage` while the backend seam is dark (§1). Screen contract: `docs/screen-contracts.md` → BD-MAP-01 and the «Real Mapbox» shell invariant. Source of truth: `public/src/screens/map.js`, `public/src/mapbox/mapbox_config.js`, `public/src/mapbox/mapbox_loader.js`, pinned by `scripts/smoke-mapbox-foundation.mjs` and `scripts/smoke-mapbox-render-map.mjs`.
 
 **Current (shipped runtime):**
 
@@ -77,7 +77,7 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 |---|---|
 | Activation | `isMapboxEnabled()` is true only when a token resolves. The committed URL-restricted public token (`<meta name="bd-mapbox-token">` in `index.html`) is honored only on the GitHub Pages origin `iprus2026-tech.github.io`; local serves and previews stay dark unless a developer sets the `globalThis.__BD_MAPBOX_TOKEN__` override. |
 | SDK | Vendored under `public/vendor/mapbox-gl/` (no CDN, `script-src 'self'` unchanged) and injected by `loadMapboxSdk()` only when enabled. Dark means no script, no DOM change, no network. |
-| State gate | `resolveState()`: no token → `TOKEN_MISSING`, including an explicit `?state=default`. With a token: an explicit `?state=default` or a set `locationAllowed` pref → `DEFAULT`; otherwise `PERMISSION` (the geolocation stub always reports `unknown`). Explicit `?state=permission`, `denied`, `nearby` or `token-missing` render those placeholder states. |
+| State gate | `resolveState()`: an explicit `?state=permission`, `denied`, `nearby` or `token-missing` wins and renders that placeholder state, with or without a token. Otherwise (bare `/map`, an unrecognized `?state=`, or `?state=default`): no token → `TOKEN_MISSING`; with a token, `?state=default` or a set `locationAllowed` pref → `DEFAULT`, else `PERMISSION` (the geolocation stub always reports `unknown`). |
 | Live map | `DEFAULT` with a token only. The MapShell placeholder paints first, then `hydrateRealMap()` replaces it with a `mapboxgl.Map` using the custom Marfino style (`MAPBOX_STYLE`) at the Marfino center (`getDefaultCenter()`). Base map only: no markers, route line, user position, or order/driver data. The router-owned disposer removes the map on navigation. |
 | Badge | «Карта района» until Mapbox fires `load`, then «Марфино · Mapbox». A token or a constructed map alone never shows the live badge. |
 | No token | `TOKEN_MISSING`: badge «Демо-режим», MapShell placeholder with a lock. «Выбрать маршрут» and «Ввести адрес вручную» go to `/route-picker`, so ordering still works. |
@@ -90,7 +90,7 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 - Real geolocation: nothing calls `navigator.geolocation`. «Моё место» and «Разрешить доступ» only navigate or set the device-level `locationAllowed` pref in `bazardrive.map_prefs.v1`.
 - Backend-driven vehicle/driver layer, passenger or driver realtime positions, Redis geo cache, dispatcher/matching overlay, production ride telemetry.
 - Geocoding, Directions route lines, navigation, live ETA, and authoritative distance/ETA/fare. Route drafts keep deterministic mock coordinates and local mock estimates; `route_service.js` and `price_estimator.js` are unused stubs.
-- `driver_markers.js` and `trip_status_layer.js` remain no-op foundation stubs, not wired to any screen.
+- Marker and trip-status layers on any screen: `driver_markers.js` (`renderDriverMarkers()` appends marker elements to a MapShell) and `trip_status_layer.js` (`renderTripStatusLayer()` writes the trip-status modifier onto it) are implemented foundation helpers guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`, but no screen imports them yet and they drive no Mapbox GL layers.
 
 ---
 
@@ -327,7 +327,7 @@ Expected invariants:
 - the spine needs no Mapbox, token or network: off the Pages origin, with no developer token override set, #/map resolves to TOKEN_MISSING («Демо-режим») and every step still works
 - with globalThis.__BD_MAPBOX_TOKEN__ configured for local QA, PERMISSION or DEFAULT are valid outcomes for off-origin #/map
 - on the Pages origin, #/map?state=default loads the live Marfino map; the badge reads «Марфино · Mapbox» only after the map loads
-- no backend/API call
+- no backend/API call while the backend seam is dark (the published default, §1)
 - tabbar hidden only on chrome-hidden routes
 - FAB visible only on /feed
 - driver mode cannot enter passenger route-picker/order-map flow
