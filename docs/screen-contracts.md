@@ -43,7 +43,7 @@ Registered in `public/src/app.js`.
 | `/welcome` | BD-ONBOARDING-01 | `public/src/screens/welcome.js` | implemented |
 | `/onboarding` | BD-ONBOARDING-01 | `public/src/screens/onboarding.js` | implemented |
 | `/feed` | BD-FEED-01 | `public/src/screens/feed.js` | implemented |
-| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL on GitHub Pages when the URL-restricted Pages token activates, MapShell fallback otherwise |
+| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL when a token resolves — the URL-restricted committed token on GitHub Pages, or the any-origin `globalThis.__BD_MAPBOX_TOKEN__` developer override for local/preview QA — MapShell fallback otherwise |
 | `/location-permission` | BD-MAP-02 | `public/src/screens/location_permission.js` | implemented, mock permission UX |
 | `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented, mock orders only; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
 | `/route-picker` | BD-MAP-03 | `public/src/screens/route_picker.js` | implemented, route draft store |
@@ -76,7 +76,7 @@ Not registered: `/driver-navigation?tripId=<id>&leg=pickup|dropoff` (Driver Acti
 | Map tab | Tab button targets `/map`; `app.js` routes drivers to `/driver-map`, passengers/guests to `/map`. |
 | Driver route guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
 | Active ride role split | No `/active-ride-passenger` route. Passenger UI is rendered by `active_ride_passenger.js` inside `/active-ride?role=passenger`. |
-| Real Mapbox | `/map` renders real Mapbox GL when the URL-restricted public token activates on the GitHub Pages origin; `map_shell.js` remains the dark/no-token/failure fallback there and the only surface on every other origin/screen. |
+| Real Mapbox | `/map` renders real Mapbox GL in `DEFAULT` when a token resolves: the committed URL-restricted public token, honored only on the GitHub Pages origin, or the `globalThis.__BD_MAPBOX_TOKEN__` developer override, accepted on any origin for local/preview QA. Without the override, other origins stay dark. `map_shell.js` remains the dark/no-token/failure fallback on `/map` and the only surface on every other screen. |
 
 ---
 
@@ -1314,7 +1314,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/map` |
 | File | `public/src/screens/map.js` |
 | Storage | `bazardrive.map_prefs.v1` as device preference if used. |
-| Map layer | `createMapShell()` renders first; hydrates the real vendored Mapbox GL SDK when the URL-restricted Pages token activates. `createMapShell()` remains the dark/no-token/failure fallback. |
+| Map layer | `createMapShell()` renders first; hydrates the real vendored Mapbox GL SDK when a token resolves — the URL-restricted Pages token, or the any-origin `globalThis.__BD_MAPBOX_TOKEN__` developer override. `createMapShell()` remains the dark/no-token/failure fallback. |
 | Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the map keeps 5 numbered cluster markers while the bottom sheet shows top-3 nearby rows. |
 | Actions | My location mock, choose route, orders nearby, route to driver map for driver role through `app.js`. |
 | Acceptance | Works without token, network, or geolocation permission. |
@@ -1386,7 +1386,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 
 | Field | Contract |
 |---|---|
-| Passenger Map | `/map` (registered). CURRENT: real Mapbox base map with the custom Marfino style, in `DEFAULT` on the GitHub Pages origin only; no real GPS, markers, route geometry, live ETA or driver tracking. PLANNED: current position, pickup/destination markers, nearby vehicles, route line, `fitBounds`, assigned-driver tracking, soft Marfino working area. Never turn-by-turn. |
+| Passenger Map | `/map` (registered). CURRENT: real Mapbox base map with the custom Marfino style in `DEFAULT` when a token resolves — the committed token on the GitHub Pages origin, or the any-origin developer override for local/preview QA; no real GPS, markers, route geometry, live ETA or driver tracking. PLANNED: current position, pickup/destination markers, nearby vehicles, route line, `fitBounds`, assigned-driver tracking, soft Marfino working area. Never turn-by-turn. |
 | Driver Free Drive | `/driver-map` (registered). CURRENT: MapShell placeholder, mock nearby orders, readiness gate; no real Mapbox, GPS or follow camera. PLANNED: real Mapbox, own vehicle position, follow/recenter, optional heading-up, real order-opportunity markers, no hard Marfino bounds. No turn-by-turn before an accepted order. |
 | Driver Active Navigation | `/driver-navigation?tripId=<id>&leg=pickup\|dropoff` — **PLANNED ONLY, not registered**; an unknown path renders the `/feed` fallback today. Turn-by-turn after an accepted ride: the `pickup` leg is driver → pickup, the `dropoff` leg is pickup → destination. The route is registered only by its own slice (09 in the contract's follow-up order). |
 | Status → leg (planned, frozen) | `NEW_ORDER` / `CONFIRMATION_PENDING` / `CONFIRMED` / `CHAT_STARTED` → unavailable; `ACCEPTED` → pickup preview; `DRIVER_EN_ROUTE` → pickup navigation; `DRIVER_APPROACHING_PICKUP` → pickup arrival mode; `WAITING_PASSENGER` → no active guidance; `IN_PROGRESS` → dropoff navigation; `COMPLETED` / `CANCELED` / `NO_SHOW` → closed. `ride.status` is the source of truth; the URL `leg` is a presentation hint and MUST NOT mutate ride status. No new `RIDE_STATUS`. |

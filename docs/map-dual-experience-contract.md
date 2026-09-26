@@ -44,7 +44,7 @@ Purpose: choosing a trip, pickup/dropoff, nearby cars, ETA/price preview, tracki
 
 | Capability | CURRENT | PLANNED |
 | --- | --- | --- |
-| Base map | Real Mapbox GL base map, only in the `DEFAULT` state and only on the GitHub Pages origin: the committed URL-restricted token is honored on `iprus2026-tech.github.io` only (`public/src/mapbox/mapbox_config.js:40-51`); the map is built in `public/src/screens/map.js:181-229`. Every other state and origin keeps the MapShell placeholder. | Same surface, moved onto the shared lifecycle and error fallback (slice 03). |
+| Base map | Real Mapbox GL base map, only in the `DEFAULT` state, built in `public/src/screens/map.js:181-229` whenever a token resolves. Token sources, in precedence order (`public/src/mapbox/mapbox_config.js:27-51`): the developer override `globalThis.__BD_MAPBOX_TOKEN__`, accepted on any origin for local / preview QA; then the committed URL-restricted `<meta name="bd-mapbox-token">` token, honored only on `iprus2026-tech.github.io`. Off the Pages origin without the override, `/map` stays dark on the MapShell placeholder; with the override, the live map can hydrate off-origin. Every non-`DEFAULT` state keeps the placeholder. | Same surface, moved onto the shared lifecycle and error fallback (slice 03). |
 | Style and center | Custom Marfino style `mapbox://styles/mrzelus607/cmue32kq700kj01qsh50p5zzq`, center 56.08549 N / 37.54584 E, zoom 12.77 (`mapbox_config.js:21-25`). | Same style. |
 | Passenger GPS | None. `getPermissionStatus()` always returns `unknown` and `requestPosition()` resolves `null` (`public/src/mapbox/geolocation_service.js:17-23`); nothing calls `navigator.geolocation`. «Разрешить доступ» only sets the `locationAllowed` pref (`public/src/screens/location_permission.js:164-165`). | Current position (slice 04). |
 | Pickup / destination markers | None on the live map; static CSS dots on the placeholder only. | Pickup and destination markers (slice 05). |
@@ -94,7 +94,7 @@ Legs (PLANNED):
 - `pickup` — driver → pickup.
 - `dropoff` — pickup → destination.
 
-Required future UI (PLANNED): route line, navigation camera, next maneuver, maneuver distance, ETA, remaining distance, traffic, reroute state, recenter / overview, voice control, compact ride card.
+Required future UI (PLANNED): route line, navigation camera, next maneuver, maneuver distance, ETA, remaining distance, traffic, reroute state (the PWA requests a new route from the routing authority, §8), recenter / overview, voice control, compact ride card.
 
 No hard Marfino bounds.
 
@@ -168,8 +168,6 @@ GeoPoint {
   lng,
   lat,
   accuracyMeters?,
-  headingDegrees?,
-  speedMps?,
   capturedAt?,
   provenance?              // §7
 }
@@ -206,6 +204,8 @@ NavigationRouteView {
 }
 ```
 
+Motion has a single owner: `headingDegrees` and `speedMps` belong to `VehiclePosition` only. `GeoPoint` is a position fix without motion fields, so a position update can never carry two copies that disagree.
+
 `NavigationRouteView` is presentation / navigation data only. The authoritative route and price contract stays server-owned (§8).
 
 ### Naming: `NavigationRouteView`, not `RouteSnapshot`
@@ -223,10 +223,10 @@ This contract therefore uses a third, distinct name, `NavigationRouteView`, and 
 
 | Concept | Existing carriers | Reusable today | Conceptual only |
 | --- | --- | --- | --- |
-| `GeoPoint` | Five shapes: `{lat, lng}` (`readCoord`, server `toPoint`), `{lng, lat}` (`ride.route.pickup`, the map center), nested `coords: {lat, lng}` (route-draft point), flat `{id, label, lat, lng}` (order point), `[lng, lat]` (Mapbox) | Finite-number validation (`passenger_order_utils.js:15-21`, `public/src/mapbox/driver_markers.js:26-35`); the server `COORDINATE_PROVENANCE` vocabulary | `accuracyMeters`, `headingDegrees`, `speedMps`, `capturedAt`, `provenance` — nothing captures them (no GPS) |
-| `PickupPoint` | Route-draft point, `order.pickup`, `ride.route.pickupLabel` + `ride.route.pickup`, driver handoff snapshot (label only), server `orders.pickup` JSONB, `rides.route_pickup_*` columns | `order.pickup` as the carrier; the route-draft `source` field as a provenance seed | `entrance`, a point-level `note`, provenance |
+| `GeoPoint` | Five shapes: `{lat, lng}` (`readCoord`, server `toPoint`), `{lng, lat}` (`ride.route.pickup`, the map center), nested `coords: {lat, lng}` (route-draft point), flat `{id, label, lat, lng}` (order point), `[lng, lat]` (Mapbox) | Finite-number validation (`passenger_order_utils.js:15-21`, `public/src/mapbox/driver_markers.js:26-35`); the server `COORDINATE_PROVENANCE` vocabulary | `accuracyMeters`, `capturedAt`, `provenance` — nothing captures them (no GPS) |
+| `PickupPoint` | Route-draft point, `order.pickup`, `ride.route.pickupLabel` + `ride.route.pickup`, driver handoff snapshot (label only), server `orders.pickup` JSONB, `rides.route_pickup_*` columns | `order.pickup` as the carrier; the route-draft `source` field records the UI entry path, not coordinate provenance (§7) | `entrance`, a point-level `note`, provenance |
 | `DestinationPoint` | The same carriers under `dropoff` | Same | Naming differs — runtime `dropoff`, server `destination` (`route-computation.js:32`); runtime field names stay as they are until a runtime slice |
-| `VehiclePosition` | None: the car is a CSS dot; `ride_events.type` allows three non-position types only (`server/migrations/0003_ride_status_change.sql:24`); Presence #2 is a dark 501 | — | All fields |
+| `VehiclePosition` | None: the car is a CSS dot; `ride_events.type` allows three non-position types only (`server/migrations/0003_ride_status_change.sql:24`); Presence #2 is a dark 501 | — | All fields, including the only home of the motion fields (`headingDegrees`, `speedMps`) |
 | `NavigationRouteView` | None | Server `RouteComputation` as a normalization base | All fields |
 
 ## 7. Provenance
@@ -239,17 +239,20 @@ Conceptual values:
 | `manual` | A point the user entered by hand (a typed address or a placed pin). |
 | `search` | A point chosen from search or suggestion results. |
 | `backend` | A point returned by a server authority (order, ride, presence or routing). |
-| `mock_hash` | Deterministic coordinates derived from a label hash (`deriveMockCoordsFromLabel()`, `passenger_order_utils.js:23-33`). |
+| `mock_hash` | Only coordinates actually synthesized from a label hash by `deriveMockCoordsFromLabel()` (`passenger_order_utils.js:23-33`). |
 | `simulation` | A point produced by a simulator, a visualization or fixture playback (§12). |
+| `unknown` | Conceptual label for a finite coordinate whose provenance was never recorded. It does not have to become a runtime enum value in this slice. |
 
-CURRENT: no runtime point carries a provenance field, and every route-draft and order coordinate is `mock_hash`. That includes a route-draft point whose `source` is `current` («Моё место»): it is a mock point, not a GPS fix (`route_picker.js:39-44`, `159-167`). The server stores whatever the client sends; its point schema accepts `lat` / `lng` without provenance (`server/src/services/orders/index.js:14-33`).
+CURRENT: no runtime point carries a provenance field. Coordinates synthesized by `deriveMockCoordsFromLabel()` are `mock_hash`: every route-picker point built by `makePoint()` (`route_picker.js:159-167`) and the label-hash fallback of `resolvePointCoords()` (`passenger_order_utils.js:35-39`). Other stored coordinates are not known to be `mock_hash`: `resolvePointCoords()` keeps any finite `coords` value it is given, so a persisted route draft (`route_picker.js:217`) or an order point can carry coordinates of unrecorded origin, and with the backend seam on, `POST /orders` accepts and returns `coords` or flat `lat` / `lng` without provenance (`server/src/services/orders/index.js:14-33`). Such coordinates have `unknown` provenance. The route-draft point whose `source` is `current` («Моё место», `route_picker.js:39-44`) is built by `makePoint()`: its coordinates are `mock_hash` because `deriveMockCoordsFromLabel()` synthesized them, and the word `current` never makes a point GPS. Because nothing stores provenance today, a coordinate read back from storage is `unknown` even if it was originally synthesized; slice 02 records provenance where coordinates are created.
 
 Rules (frozen):
 
+- `mock_hash` applies only to coordinates actually synthesized by `deriveMockCoordsFromLabel()`.
+- An existing finite `lat` / `lng` without provenance has `unknown` provenance. A missing provenance never means `gps`, `manual`, `search`, `backend` or `mock_hash`.
+- Unknown provenance is never guessed from an object's shape or its storage location.
 - `mock_hash` MUST NEVER be presented as real GPS.
 - `simulation` MUST NEVER enter production driver presence.
 - UI MUST NOT silently promote mock/demo coordinates to live ride coordinates.
-- A point without provenance is treated as unknown, never as `gps`.
 
 PLANNED: slice 02 freezes the runtime field and aligns it with the server `COORDINATE_PROVENANCE` vocabulary (`device_fix`, `user_pin`, `geocode_point`, `provider_routable_point`). `mock_hash` and `simulation` have no server equivalent and are never sent as real coordinates.
 
@@ -286,7 +289,11 @@ Explicit non-goals for final PWA navigation:
 - Android Auto;
 - native lane guidance.
 
-FUTURE NATIVE: the Mapbox Navigation SDK may replace only the active-navigation rendering. The same Ride / Geo contract (§§4, 6–8) must remain: a native shell consumes the same authorities and never becomes a second source of truth.
+These are non-goals for the PWA: it does not guarantee them. Listing them here does not mean a native shell already has an agreed contract for them.
+
+FUTURE NATIVE: the Mapbox Navigation SDK may replace only the navigation UI layer — rendering, the navigation camera and voice / lane presentation. Authoritative routing stays server-owned (§8), and `NavigationRouteView` stays a presentation view of it. This contract does not promise offline route computation, offline rerouting or SDK-computed canonical routes. The same Ride / Geo contract (§§4, 6–8) must remain: a native shell consumes the same authorities and never becomes a second source of truth.
+
+**Offline navigation and native reroute reconciliation are OUT OF SCOPE for BD-MAP-DUAL-EXPERIENCE-01A** and must be defined in a future native ADR before any native implementation.
 
 Portrait lock: landscape dashboard mounts are unsupported while the manifest locks portrait. Changing it is a separate, app-wide decision.
 
@@ -323,7 +330,7 @@ CURRENT honest fallback: `/map` keeps or restores the MapShell placeholder on a 
 | Passenger Map | Mapbox GL JS, custom Marfino style | Free camera; `fitBounds` | Soft working area | Pickup / destination, nearby cars, assigned-driver tracking | CURRENT: base map only; the rest is PLANNED |
 | Driver Free Drive | Mapbox GL JS | Follow / recenter; optional heading-up | No `maxBounds` | Own vehicle and order opportunities | PLANNED |
 | Driver Active Navigation — PWA | Mapbox GL JS | Route-following | No hard bounds | Route visualization, maneuver presentation | PLANNED |
-| Driver Active Navigation — native | Mapbox Navigation SDK | Navigation camera | No hard bounds | Voice, rerouting, offline | FUTURE NATIVE |
+| Driver Active Navigation — native | Mapbox Navigation SDK | Navigation camera | No hard bounds | Voice / lane presentation; offline and rerouting authority deferred to a future native ADR | FUTURE NATIVE |
 
 Shared rules (PLANNED):
 
@@ -362,7 +369,7 @@ CURRENT: the repository contains no Blender or Unity code, asset or integration.
 | 07 | Driver Free Drive | 01B, 02, 03, 04, 06 | PLANNED — blocked by 01B |
 | 08 | Server Directions / routing authority | 02; backend pilot gates; BD-DOCS-035 follow-ups | PLANNED |
 | 09 | Driver Navigation PWA; registers `/driver-navigation` | 01B, 03, 06, 07, 08 | PLANNED — blocked by 01B |
-| 10 | Native Navigation SDK | 09; a native-shell governance decision | FUTURE NATIVE — later |
+| 10 | Native Navigation SDK | 09; a native-shell governance decision; a native ADR defining offline navigation and reroute reconciliation | FUTURE NATIVE — later |
 
 The Presence track runs separately (server Presence #2, BD-DOCS-033) and is a prerequisite for real nearby vehicles and assigned-driver tracking.
 
