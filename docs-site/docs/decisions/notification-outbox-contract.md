@@ -4,7 +4,7 @@ docType: decision-record
 title: "Notification Outbox Source Contract — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-09-01
+revision: 2026-09-02
 effectiveFrom: 2026-09-01
 reviewAfter: 2027-03-01
 visibleFor: [developer, dispatcher, product]
@@ -13,40 +13,44 @@ related:
   routes:
     - /api/v1/ride-state/rides/:tripId/status
   files:
+    - server/migrations/0004_notification_outbox.sql
     - server/src/services/ride-state/index.js
     - server/src/repositories/ride_events.js
+    - server/src/repositories/notification_outbox.js
     - server/src/services/notifications/index.js
     - server/src/infra/bus.js
     - public/src/screens/inbox.js
     - public/src/mock_api.js
-  issues: ["#941"]
-  prs: []
+  issues: ["#941", "#943", "#948"]
+  prs: ["#942", "#944"]
 tags: [decision-record, adr, notifications, outbox, transactional, target]
 slug: /decisions/notification-outbox-contract
 ---
 
 # Notification Outbox Source Contract — Decision Record
 
-> **Contract-only target — not implemented (`status: draft`).**
-> `BD-NOTIF-OUTBOX-CONTRACT-01A` freezes the first durable notification-source
-> boundary. It does not add a table, repository, worker, Inbox API, delivery
-> channel, activation flag or deployment. The Notification and Safety services
-> remain `DARK`.
+> **Source runtime shipped; Notification delivery remains dark (`status: draft`).**
+> `BD-NOTIF-OUTBOX-CONTRACT-01A` froze the durable source boundary in #942.
+> `BD-NOTIF-OUTBOX-RUNTIME-01B` then implemented that source boundary in #944:
+> migration `0004_notification_outbox.sql`, one repository, and the same-transaction
+> Ride producer. This still does **not** add a worker, Inbox API, delivery channel,
+> activation flag or deployment. The Notification and Safety service routes remain
+> `DARK`.
 
 ## Context
 
-The repository now has a live server spine, but it does not have a durable
-notification source:
+The repository now has the first durable notification source, but it still does
+not have a Notification delivery runtime:
 
 - `PATCH /api/v1/ride-state/rides/:tripId/status` is the authoritative Ride
   status write path. Inside one `app.db.tx` it locks the Ride row, applies an
-  accepted non-idempotent status transition and appends one immutable
-  `ride_events.type = 'status_change'` row.
+  accepted non-idempotent status transition, appends one immutable
+  `ride_events.type = 'status_change'` row, and inserts the matching durable
+  `notification_outbox` source row before commit.
 - A same-status retry is a true no-op; an invalid, forbidden or terminally
-  blocked transition produces no Ride event.
-- `insertStatusChangeEvent()` returns the new `ride_events.id` and `at`. That
-  row is the existing authoritative source fact from which the first outbox
-  event can be derived.
+  blocked transition produces neither a Ride event nor an outbox source row.
+- The outbox event uses the already-created `ride_events.id` as source identity
+  and preserves the source event's PostgreSQL timestamp precision.
 - `server/src/services/notifications/index.js` is still a dark `501
   NOT_IMPLEMENTED` skeleton. `server/src/infra/bus.js` is an unused in-process
   `EventEmitter`, explicitly marked `DARK`; it is neither durable nor a commit
@@ -63,8 +67,24 @@ transaction that allocates a sequence number before another transaction but
 commits after it.
 
 This ADR is subordinate to the target Notification Service decision
-[BD-DOCS-036](notification-service.md). It freezes the smallest source contract
-needed before any SQL/runtime implementation can be proposed.
+[BD-DOCS-036](notification-service.md). It freezes the source contract that #944
+now implements. The next stateful step is no longer the source producer; it is
+the separately scoped claim/lease/retry contract tracked by #948.
+
+## Implementation status — 2026-09-02
+
+| Slice | State | Evidence / boundary |
+| --- | --- | --- |
+| `BD-NOTIF-OUTBOX-CONTRACT-01A` | **Shipped docs contract** | #942 / BD-DOCS-050 |
+| `BD-NOTIF-OUTBOX-RUNTIME-01B` | **Shipped dark source runtime** | #944: migration 0004, repository, Ride transaction producer, PostgreSQL flow tests |
+| Worker claim/lease/retry | **Not implemented** | Contract-first follow-up #948 |
+| Inbox projection / read state | **Not implemented** | separate future contract/runtime |
+| Push / Telegram / SMS-email | **Not implemented** | separate channel/provider tracks |
+| Notification route activation | **DARK** | `server/src/services/notifications/index.js` remains `501 NOT_IMPLEMENTED` |
+
+The outbox source runtime is a **foundation inside service #6**, not evidence that
+the complete Notification Service is shipped. Project #1 should keep service #6
+at `Designed (ADR)` until real service/fan-out behavior is live.
 
 ## Decision
 
@@ -95,7 +115,7 @@ It is domain time, not a polling cursor or delivery timestamp.
 
 ### 2. One transaction owns Ride, timeline and outbox
 
-The later runtime producer must extend the existing `app.db.tx` boundary:
+The runtime producer extends the existing `app.db.tx` boundary:
 
 1. lock the Ride row;
 2. validate and apply the status transition;
@@ -220,11 +240,13 @@ transition, actor/audience linkage and domain time. It must not contain:
 Operational logs and metrics use normalized outcome/error codes and
 low-cardinality labels; they do not emit the immutable payload or user IDs.
 
-## Explicit non-goals
+## Original 01A non-goals and current boundary
 
-This contract does not authorize:
+The docs-only 01A contract did not itself authorize a migration, table,
+repository, worker or activation. The separately reviewed #944 runtime slice
+implemented only the source-side migration/repository/producer portion.
+Everything else below remains outside the current runtime boundary:
 
-- a migration, table, repository or readiness change;
 - bus publication, publisher loop, worker, claim/lease, retry or dead-letter
   behavior;
 - a server Inbox projection, feed/read API or unread-count ownership;
@@ -252,7 +274,7 @@ PWA Inbox remains mock-backed.
 
 - **Positive:**
   - The first producer, identity, transaction owner and privacy boundary are
-    fixed before schema/runtime work begins.
+    fixed and implemented before channel work begins.
   - Later Inbox, Push, Telegram and Safety consumers can share one immutable
     source event without sharing a global delivery ACK.
   - A crash cannot commit a Ride transition without its durable source event.
@@ -260,21 +282,22 @@ PWA Inbox remains mock-backed.
   - The future worker cannot use a simple forward-only high-water scan.
   - Frozen audience can preserve historical recipient IDs after current Ride
     linkage changes; retention/access policy must account for that.
-  - The first contract covers only Ride status changes; other producers require
-    separate event schemas and authority reviews.
+  - The first contract/runtime covers only Ride status changes; other producers
+    require separate event schemas and authority reviews.
 - **Follow-ups:**
-  - `BD-NOTIF-OUTBOX-RUNTIME-01B` — additive migration, one SQL repository,
-    same-transaction producer and PostgreSQL rollback/late-commit tests.
-  - Worker claim/lease/retry semantics — separate dark runtime slice.
-  - Server Inbox projection and per-consumer ledger — separate contracts and
+  - [x] `BD-NOTIF-OUTBOX-RUNTIME-01B` — migration, repository, same-transaction
+    producer and PostgreSQL rollback/late-commit tests shipped in PR #944.
+  - [ ] `BD-NOTIF-OUTBOX-WORKER-01C-A` (#948) — freeze worker claim/lease/retry,
+    crash recovery, late-commit discovery and observability contract.
+  - [ ] Dark worker runtime — separate implementation slice after #948.
+  - [ ] Server Inbox projection and per-consumer ledger — separate contracts and
     runtime slices before any activation.
-  - Push, Telegram, SMS/email and Safety remain independent channel/consumer
+  - [ ] Push, Telegram, SMS/email and Safety remain independent channel/consumer
     tracks.
 
-## Contract-slice verification
+## Verification boundary
 
-The docs-only change that introduces this ADR must keep the diff to this ADR,
-the parent Notification ADR and governed sidebar navigation, then pass:
+The original docs-only contract slice required:
 
 ```bash
 cd docs-site && npm run check
@@ -283,5 +306,6 @@ node scripts/dispatcher.mjs
 git diff --check
 ```
 
-Server migrations/tests are intentionally not part of this contract-only slice
-because no server or schema file changes.
+The shipped #944 runtime slice additionally carries server migration and
+PostgreSQL transaction-flow coverage. Future worker work must remain separate
+from this source producer and follow the same contract-first discipline.
