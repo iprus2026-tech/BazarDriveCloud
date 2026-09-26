@@ -324,7 +324,8 @@ Use local serving or GitHub Pages, then walk:
 Expected invariants:
 
 ```text
-- the spine needs no Mapbox, token or network: off the Pages origin /map resolves to TOKEN_MISSING («Демо-режим») and every step still works
+- the spine needs no Mapbox, token or network: off the Pages origin, with no developer token override set, #/map resolves to TOKEN_MISSING («Демо-режим») and every step still works
+- with globalThis.__BD_MAPBOX_TOKEN__ configured for local QA, PERMISSION or DEFAULT are valid outcomes for off-origin #/map
 - on the Pages origin, #/map?state=default loads the live Marfino map; the badge reads «Марфино · Mapbox» only after the map loads
 - no backend/API call
 - tabbar hidden only on chrome-hidden routes
