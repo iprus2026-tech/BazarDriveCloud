@@ -43,7 +43,7 @@ Registered in `public/src/app.js`.
 | `/welcome` | BD-ONBOARDING-01 | `public/src/screens/welcome.js` | implemented |
 | `/onboarding` | BD-ONBOARDING-01 | `public/src/screens/onboarding.js` | implemented |
 | `/feed` | BD-FEED-01 | `public/src/screens/feed.js` | implemented |
-| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL on GitHub Pages when the URL-restricted Pages token activates, MapShell fallback otherwise |
+| `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL when a token resolves — the URL-restricted committed token on GitHub Pages, or the any-origin `globalThis.__BD_MAPBOX_TOKEN__` developer override for local/preview QA — MapShell fallback otherwise |
 | `/location-permission` | BD-MAP-02 | `public/src/screens/location_permission.js` | implemented, mock permission UX |
 | `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented, mock orders only; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
 | `/route-picker` | BD-MAP-03 | `public/src/screens/route_picker.js` | implemented, route draft store |
@@ -65,6 +65,8 @@ Registered in `public/src/app.js`.
 | `/settings` | BD-SETTINGS-01 | `public/src/screens/settings.js` | implemented, shared shell, role-aware back via `?role=` |
 | `/ops/screens` | BD-OPS-SCREENS-01 | `public/src/screens/ops_screens.js` | implemented, dev/docs tool — **not** in the product tabbar |
 
+Not registered: `/driver-navigation?tripId=<id>&leg=pickup|dropoff` (Driver Active Navigation) is **PLANNED ONLY** in BD-MAP-DUAL-EXPERIENCE-01A (`docs/map-dual-experience-contract.md`). It is intentionally absent from `public/src/app.js` and from this registry until its own slice.
+
 ### Shell invariants
 
 | Invariant | Current contract |
@@ -74,7 +76,7 @@ Registered in `public/src/app.js`.
 | Map tab | Tab button targets `/map`; `app.js` routes drivers to `/driver-map`, passengers/guests to `/map`. |
 | Driver route guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
 | Active ride role split | No `/active-ride-passenger` route. Passenger UI is rendered by `active_ride_passenger.js` inside `/active-ride?role=passenger`. |
-| Real Mapbox | `/map` renders real Mapbox GL when the URL-restricted public token activates on the GitHub Pages origin; `map_shell.js` remains the dark/no-token/failure fallback there and the only surface on every other origin/screen. |
+| Real Mapbox | `/map` renders real Mapbox GL in `DEFAULT` when a token resolves: the committed URL-restricted public token, honored only on the GitHub Pages origin, or the `globalThis.__BD_MAPBOX_TOKEN__` developer override, accepted on any origin for local/preview QA. Without the override, other origins stay dark. `map_shell.js` remains the dark/no-token/failure fallback on `/map` and the only surface on every other screen. |
 
 ---
 
@@ -1312,10 +1314,11 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Route | `/map` |
 | File | `public/src/screens/map.js` |
 | Storage | `bazardrive.map_prefs.v1` as device preference if used. |
-| Map layer | `createMapShell()` renders first; hydrates the real vendored Mapbox GL SDK when the URL-restricted Pages token activates. `createMapShell()` remains the dark/no-token/failure fallback. |
+| Map layer | `createMapShell()` renders first; hydrates the real vendored Mapbox GL SDK when a token resolves — the URL-restricted Pages token, or the any-origin `globalThis.__BD_MAPBOX_TOKEN__` developer override. `createMapShell()` remains the dark/no-token/failure fallback. |
 | Main states | Home map, location prompt, nearby orders preview, fallback copy. In nearby mode, the map keeps 5 numbered cluster markers while the bottom sheet shows top-3 nearby rows. |
 | Actions | My location mock, choose route, orders nearby, route to driver map for driver role through `app.js`. |
 | Acceptance | Works without token, network, or geolocation permission. |
+| Map experience | Passenger Map (BD-MAP-DUAL-EXPERIENCE-01A). CURRENT: base map only — no real GPS, markers, route geometry, live ETA or driver tracking. The PLANNED capabilities live in `docs/map-dual-experience-contract.md`, not here. Never turn-by-turn. |
 
 ### BD-MAP-02 - LocationPermission
 
@@ -1375,6 +1378,22 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Main states | Order list, empty, accepted handoff, not_ready gate. |
 | Actions | ready: accept order, create test order, open feed/map, go to active ride. not_ready: «Завершить готовность» → `/profile` only — no accept action is rendered. |
 | Acceptance | Uses MapShell placeholder and local ride order store only. Readiness derives from the single `isDriverLineReady()` rule in `state.js` (shared with Profile), so the gate and the Profile readiness card cannot drift. Covered by `scripts/smoke-driver-map-readiness.mjs`. |
+| Map experience | Driver Free Drive (BD-MAP-DUAL-EXPERIENCE-01A). CURRENT: MapShell only — no real Mapbox, GPS or follow camera. The PLANNED capabilities live in `docs/map-dual-experience-contract.md`. No turn-by-turn before an accepted order; the live rollout is blocked by P1-1 / P1-2 (fix: `BD-MAP-DUAL-EXPERIENCE-01B`). |
+
+### BD-MAP-DUAL-EXPERIENCE-01A - Map experiences contract (CURRENT / PLANNED / FUTURE NATIVE)
+
+**Status: contract-only — no runtime is shipped under it. `/driver-navigation` is PLANNED ONLY and is NOT registered in `public/src/app.js`.** Splits map work into three experiences inside the one PWA. Full contract: [`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md). The shipped-behavior rows of BD-MAP-01, BD-DRIVER-01 / BD-DRIVER-02 and BD-RIDE-D-01..09 stay CURRENT-only; a PLANNED item moves into them only in the slice that ships it.
+
+| Field | Contract |
+|---|---|
+| Passenger Map | `/map` (registered). CURRENT: real Mapbox base map with the custom Marfino style in `DEFAULT` when a token resolves — the committed token on the GitHub Pages origin, or the any-origin developer override for local/preview QA; no real GPS, markers, route geometry, live ETA or driver tracking. PLANNED: current position, pickup/destination markers, nearby vehicles, route line, `fitBounds`, assigned-driver tracking, soft Marfino working area. Never turn-by-turn. |
+| Driver Free Drive | `/driver-map` (registered). CURRENT: MapShell placeholder, mock nearby orders, readiness gate; no real Mapbox, GPS or follow camera. PLANNED: real Mapbox, own vehicle position, follow/recenter, optional heading-up, real order-opportunity markers, no hard Marfino bounds. No turn-by-turn before an accepted order. |
+| Driver Active Navigation | `/driver-navigation?tripId=<id>&leg=pickup\|dropoff` — **PLANNED ONLY, not registered**; an unknown path renders the `/feed` fallback today. Turn-by-turn after an accepted ride: the `pickup` leg is driver → pickup, the `dropoff` leg is pickup → destination. The route is registered only by its own slice (09 in the contract's follow-up order). |
+| Status → leg (planned, frozen) | `NEW_ORDER` / `CONFIRMATION_PENDING` / `CONFIRMED` / `CHAT_STARTED` → unavailable; `ACCEPTED` → pickup preview; `DRIVER_EN_ROUTE` → pickup navigation; `DRIVER_APPROACHING_PICKUP` → pickup arrival mode; `WAITING_PASSENGER` → no active guidance; `IN_PROGRESS` → dropoff navigation; `COMPLETED` / `CANCELED` / `NO_SHOW` → closed. `ride.status` is the source of truth; the URL `leg` is a presentation hint and MUST NOT mutate ride status. No new `RIDE_STATUS`. |
+| Known P1 blockers | P1-1: an accepted driver ride inherits demo Moscow route fields (coordinates, maneuver, ETA/distance, labels/tags) through the `createDemoActiveRide()` deep merge. P1-2: passenger and driver pickup coordinates can differ for the same order. Both block the Driver Free Drive live rollout and the Driver Active Navigation runtime. Prerequisite fix: `BD-MAP-DUAL-EXPERIENCE-01B` (runtime, separate slice). |
+| Demo data rule (frozen) | Demo data never appears on a live map without an explicit demo/fixture mode — no silent fallback to Moscow coordinates, demo ETA, demo route instructions, demo vehicle locations or `mock_hash` coordinates shown as GPS. |
+| Geo naming | Map/navigation route data is `NavigationRouteView` (presentation only). `RouteSnapshot` stays the BD-MAPBOX-DATA-02 display contract and the server `RouteComputation` stays the routing normalization. Pricing is server-only. |
+| Out of scope | Runtime code, route registration, service worker, CSP, Mapbox API calls, backend, DB, Blender/Unity. |
 
 ### BD-RIDE-D-01..09 - Active ride driver
 
@@ -1386,6 +1405,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Main states | NEW_ORDER, ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Accept, arrived, start, complete, cancel sheet, problem sheet, earnings sheet, chat/nav/phone stubs. |
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
+| Navigation | CURRENT: none — the MapShell placeholder plus a static navigation card built from `ride.route.currentInstruction` / `currentStreet`; «Навигатор» and «Карта» show a notice only. Driver Active Navigation (`/driver-navigation`) is PLANNED ONLY and unregistered — see BD-MAP-DUAL-EXPERIENCE-01A. |
 | Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. `public/src/screens/active_ride_driver_noshow.js` is the BD-RIDE-D-NOSHOW-01 no-show sub-flow (`openDriverNoShowFlow`), opened from the `WAITING_PASSENGER` no-show action `#ar-no-show` («Не приехал» while waiting, «Пассажир не вышел» once the wait has expired); its only persistence is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. Covered by `scripts/smoke-active-ride-noshow.mjs`. |
 
 ### BD-RIDE-D-ERROR-01 - Driver active-ride error states
@@ -1605,6 +1625,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | ~~`driver_markers.js` and `trip_status_layer.js` stubs~~ | Resolved (BD-MAP-FOUND-03 / BD-MAP-FOUND-04): both foundation stubs now exist in `public/src/mapbox/` as no-op / pure-helper modules (no real Mapbox, no token, no network), precached in `sw.js` and guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
 | ~~DriverMap readiness gate~~ | Resolved (BD-DRIVER-02): `/driver-map` now enforces `isDriverLineReady()` — the shared `state.js` rule — alongside the role guard. |
+| Demo-route inheritance (P1-1) and passenger/driver pickup coordinate drift (P1-2) | Recorded by BD-MAP-DUAL-EXPERIENCE-01A: an accepted driver ride inherits demo Moscow route fields, and the two roles can hold different pickup coordinates for one order. The fix is `BD-MAP-DUAL-EXPERIENCE-01B` (runtime, separate slice); until it lands, the Driver Free Drive live rollout and the Driver Active Navigation runtime stay blocked. |
 | Backend/auth/payments/uploads/push/APK | Out of scope for the current PWA mock spine. |
 | Automated tests | `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt. |
 
