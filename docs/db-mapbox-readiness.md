@@ -58,7 +58,7 @@ Add a client-generated idempotency key per mutation, threaded through the mock n
 
 ## Mapbox track — sequence (after DB, or in parallel; never the same PR)
 
-> **Sequencing cross-reference (BD-MAP-DUAL-EXPERIENCE-01A).** The map program's slice order (01A → 10) now lives in [`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md) §13. The M slices below keep their readiness caveats and map onto it as follows: M1 stays the open CSP/SW decision for a future route/price endpoint; M2 lands through slices 03 (shared map-surface lifecycle), 06 (marker adapter) and 08 (routing authority + `route_picker.js` seam migration); M3 is slice 04 (real passenger geolocation). This file does not duplicate the ordering.
+> **Sequencing cross-reference (BD-MAP-DUAL-EXPERIENCE-01A).** The map program's slice order (01A → 10) now lives in [`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md) §13. The M slices below keep their readiness caveats and map onto it as follows: M1's same-origin service-worker half is already satisfied for the registered `/api/v1/route-price` seam, and only the provider / direct-browser CSP decision stays open; M2 lands through slices 03 (shared map-surface lifecycle), 06 (marker adapter) and 08 (routing authority + `route_picker.js` seam migration); M3 is slice 04 (real passenger geolocation). This file does not duplicate the ordering.
 
 ### Slice M1 — CSP/SW decision (safety task) — partially shipped
 The GL-SDK/tile half is **done**: `public/index.html`'s CSP already carries
@@ -66,13 +66,25 @@ The GL-SDK/tile half is **done**: `public/index.html`'s CSP already carries
 `style-src 'self' 'unsafe-inline'`, and `worker-src 'self' blob:` / `child-src
 blob:` (landed with `BD-MAP-ACTIVATE` #805, for the vendored GL SDK the
 committed token now activates on `/map`). `script-src` stays `'self'` — the
-SDK is vendored, not loaded from a CDN. What remains **open**: a *future*
-route/price API's own CSP allowance (if it calls an external provider
-directly instead of through a same-origin server route) and, since that
-service may be exposed as a **same-origin** endpoint, an explicit `public/sw.js`
-bypass so it is never cached (the SW needs no rewrite for the GL SDK/tiles —
-its origin guard already prevents cross-origin tile caching; only the
-same-origin fare-endpoint case is unresolved).
+SDK is vendored, not loaded from a CDN.
+
+The same-origin service-worker half is **done** too. The Route & Price
+service is already registered at the same-origin path `/api/v1/route-price` —
+every service plugin is mounted at `/api/v1/<name>` (`server/src/server.js:58-60`)
+— although the service itself is still a dark `501` stub
+(`server/src/services/route-price/index.js`, `darkService`). `public/sw.js`
+ignores every non-GET request (`:349`) and returns early for any same-origin
+GET whose pathname starts with `/api/` (`:357`, BD-API-SEAM-01), so a
+route/price call on that seam is never cached and needs **no** new SW bypass;
+do not plan a protected SW change just for `/api/v1/route-price`. (The SW
+needs no rewrite for the GL SDK/tiles either — its origin guard already
+prevents cross-origin tile caching.)
+
+What remains **open**: the routing / geocoding **provider** choice; a CSP
+`connect-src` decision, needed only if the browser would call an external
+Directions / provider endpoint directly instead of the same-origin seam; and
+a fresh SW / CSP review only if a future architecture deliberately moves off
+the existing same-origin `/api/` seam to another path or origin.
 
 ### Slice M2 — keep the stub contract as the single swap seam — planned
 Already largely true. The real-SDK swap must stay isolated to the **existing seams**, not pushed into screens:
