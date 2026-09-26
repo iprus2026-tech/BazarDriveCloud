@@ -91,10 +91,10 @@ Purpose: turn-by-turn navigation after an accepted ride.
 
 Legs (PLANNED):
 
-- `pickup` — driver → pickup.
-- `dropoff` — pickup → destination.
+- `pickup` — current vehicle position → pickup.
+- `dropoff` — current vehicle position → destination. The first dropoff route usually starts at the pickup because the car is still there, but the pickup is never the fixed origin (§6).
 
-Required future UI (PLANNED): route line, navigation camera, next maneuver, maneuver distance, ETA, remaining distance, traffic, reroute state (the PWA requests a new route from the routing authority, §8), recenter / overview, voice control, compact ride card.
+Required future UI (PLANNED): route line, navigation camera, next maneuver, maneuver distance, ETA, remaining distance, traffic, reroute state (the PWA asks the routing authority, §8, for a new route from the current vehicle position, §6), recenter / overview, voice control, compact ride card.
 
 No hard Marfino bounds.
 
@@ -129,7 +129,7 @@ Rules:
 
 Both were reproduced in the 00A preflight by running the shipped modules from a scratch script outside the repository.
 
-### P1-1 — an accepted driver ride inherits demo Moscow route fields
+### P1-1 — real rides inherit demo Moscow route fields
 
 `seedActiveRideFromAcceptedOrder()` (`public/src/ride_actions.js:313-377`), the canonical accept seed behind the `/driver-map`, `/feed` and `/post` accept paths, builds the ride with `createDemoActiveRide()` and passes only labels and the destination ETA for `route` (`:326-330`). `createDemoActiveRide()` deep-merges that patch over `buildDemoRide()` (`public/src/ride_state.js:136-147`, `168-190`, `235-247`), so every route/order field the patch omits survives from the demo:
 
@@ -144,6 +144,13 @@ Both were reproduced in the 00A preflight by running the shipped modules from a 
 
 The same inheritance exists in `buildRideFromPost()` (`ride_actions.js:66-98`), which `acceptPassengerRequestFromPost()` uses for plain-post accepts from `/feed` and `/post`. The passenger seed `buildPassengerRideSeed()` (`public/src/ride_seed.js`) copies the order coordinates but inherits the same maneuver, distance-to-pickup and label/tag fields.
 
+Backend hydration keeps the same residue. With the backend seam on, opening a valid real `tripId` that has no local canonical record makes each active-ride screen first build a temporary `createDemoActiveRide({ tripId, … })` placeholder — driver `active_ride.js:449-461`, passenger `active_ride_passenger.js:407-421` — and then merge the authoritative server ride onto it (driver `runInitialDriverRead()`, `active_ride.js:1327-1340`; passenger `runInitialRead()`, `active_ride_passenger.js:3446`, merge at `:3558-3580`). The server `serializeRide()` (`server/src/serialize.js:90-132`) returns only `pickupLabel`, `dropoffLabel`, `etaToPickup` and `etaToDestination` in `route` and only `offerPrice` in `order` — no coordinates, maneuver, distance or tags. Both `mergeServerRide()` functions overlay only the non-null server keys onto the local object, `keep(local, server)`-style:
+
+- driver (`active_ride.js:541-560`): `route` goes through `keep()` and the local `order` is carried whole;
+- passenger (`active_ride_passenger.js:2651-2788`): route labels and ETAs, the fare and the order ETAs/distance are already server-or-neutral (`:2717-2723`, `:2772-2778`), but every other route and order key is still `keep()`-preserved.
+
+So after an authoritative read of a non-terminal ride both screens still hold the demo `route.pickup`, `route.dropoff`, `route.currentInstruction`, `route.currentStreet`, the demo distance-to-pickup and the demo order labels/tags; the driver screen also keeps the demo order ETAs and any route label or ETA the server returns as null. An authoritative server read can therefore leave the Moscow demo route in place.
+
 ### P1-2 — passenger and driver pickup coordinates can differ for the same order
 
 - The passenger seed copies the order points into the ride (`public/src/ride_seed.js:82-83`). Those points carry label-hash mock coordinates (`public/src/passenger_order_utils.js:23-53`, attached at publish in `public/src/screens/order_map_draft.js:838-839`).
@@ -155,7 +162,18 @@ The same inheritance exists in `buildRideFromPost()` (`ride_actions.js:66-98`), 
 - The Driver Free Drive live rollout (slice 07).
 - The Driver Active Navigation runtime (slice 09).
 
-Prerequisite: **`BD-MAP-DUAL-EXPERIENCE-01B` — remove demo-route inheritance and preserve canonical order coordinates.** It is a runtime slice and is not fixed in this docs slice. It covers every real-ride construction site that builds on `createDemoActiveRide()` (the three seeds above). PLANNED acceptance: an accepted ride's pickup/destination labels and coordinates equal the order's; the demo maneuver, ETA/distance and label/tag fields are absent and the UI hides empty values; a smoke pin guards both.
+Prerequisite: **`BD-MAP-DUAL-EXPERIENCE-01B` — remove demo-route inheritance and preserve canonical order coordinates.** It is a runtime slice and is not fixed in this docs slice. Scope:
+
+- A. every real-ride constructor or seed built on `createDemoActiveRide()`, starting with the three seeds above (explicit `?fixture=` builders stay demo by design, §10);
+- B. the driver backend-hydration merge, `active_ride.js` `mergeServerRide()`;
+- C. the passenger backend-hydration merge, `active_ride_passenger.js` `mergeServerRide()`;
+- D. direct entry: a valid backend trip with no local canonical record.
+
+PLANNED acceptance:
+
+- An accepted ride's pickup/destination labels and coordinates equal the order's.
+- After a successful authoritative hydration, no route field the server omits is inherited from the demo ride. Unless the server supplies a real value, `route.pickup`, `route.dropoff`, `route.currentInstruction`, `route.currentStreet`, the demo distance/ETA and the demo route labels/tags are absent or null, and the UI hides empty values. Real server-provided labels and ETAs may stay.
+- Smoke pins guard the seeds and the direct-entry / no-local-record hydration on both the driver and the passenger screen: after server hydration, neither carries demo Moscow route residue.
 
 ## 6. Shared geo authority — conceptual contracts
 
@@ -163,10 +181,12 @@ State: conceptual only. No runtime module, wire format or DB schema is defined h
 
 Coordinates are WGS84 decimal degrees with named `lng` / `lat` fields. A positional `[lng, lat]` array is a Mapbox-boundary adapter detail, never a contract shape.
 
+Validity (frozen): a `GeoPoint` is valid if and only if `lng` and `lat` are both finite numbers and `-180 <= lng <= 180` and `-90 <= lat <= 90`. The shared geo seam MUST reject an invalid point before it reaches a Mapbox Marker, a GeoJSON source, `fitBounds`, a route request or a presence / public overlay. It never clamps, wraps or silently normalizes a value: `lat = 100` or `lng = 500` is invalid, not corrected. The vendored Mapbox GL `LngLat` throws on a latitude outside [-90, 90] and does not range-check longitude (`public/vendor/mapbox-gl/mapbox-gl.js`), so an unvalidated latitude can abort an overlay render and an out-of-range longitude is not rejected by the SDK at all. CURRENT: no end-to-end guard exists (see the carriers table below); slice 02 MUST create the single bounded validator that every map, route and presence consumer goes through.
+
 ```text
 GeoPoint {
-  lng,
-  lat,
+  lng,                     // finite, -180 <= lng <= 180
+  lat,                     // finite, -90 <= lat <= 90
   accuracyMeters?,
   capturedAt?,
   provenance?              // §7
@@ -193,7 +213,7 @@ VehiclePosition {
 }
 
 NavigationRouteView {
-  origin,                  // leg start: driver position (pickup leg) or pickup point (dropoff leg)
+  origin,                  // current VehiclePosition used for this computation, on both legs
   destination,             // leg end: pickup point (pickup leg) or destination point (dropoff leg)
   geometry,                // ordered route line; encoding is frozen in slice 08
   distanceMeters,
@@ -205,6 +225,13 @@ NavigationRouteView {
 ```
 
 Motion has a single owner: `headingDegrees` and `speedMps` belong to `VehiclePosition` only. `GeoPoint` is a position fix without motion fields, so a position update can never carry two copies that disagree.
+
+Route origin (frozen): `NavigationRouteView.origin` is the current `VehiclePosition` — the driver's position that this specific route computation used — on both legs:
+
+- pickup leg: current vehicle position → pickup;
+- dropoff leg: current vehicle position → destination.
+
+On the first dropoff computation the car is usually still at the pickup, but the pickup never becomes a permanent origin. A reroute MUST use the freshest valid current vehicle position as `origin`; once the driver has left the pickup, the remaining route is never recomputed from the historical pickup to the destination. The pickup stays a canonical ride waypoint owned by the Ride / Order authority (§8), not the fixed origin of an active reroute. A reroute updates only the navigation / routing view: it never mutates the pickup, the destination or the ride status.
 
 `NavigationRouteView` is presentation / navigation data only. The authoritative route and price contract stays server-owned (§8).
 
@@ -223,7 +250,7 @@ This contract therefore uses a third, distinct name, `NavigationRouteView`, and 
 
 | Concept | Existing carriers | Reusable today | Conceptual only |
 | --- | --- | --- | --- |
-| `GeoPoint` | Five shapes: `{lat, lng}` (`readCoord`, server `toPoint`), `{lng, lat}` (`ride.route.pickup`, the map center), nested `coords: {lat, lng}` (route-draft point), flat `{id, label, lat, lng}` (order point), `[lng, lat]` (Mapbox) | Finite-number validation (`passenger_order_utils.js:15-21`, `public/src/mapbox/driver_markers.js:26-35`); the server `COORDINATE_PROVENANCE` vocabulary | `accuracyMeters`, `capturedAt`, `provenance` — nothing captures them (no GPS) |
+| `GeoPoint` | Five shapes: `{lat, lng}` (`readCoord`, server `toPoint`), `{lng, lat}` (`ride.route.pickup`, the map center), nested `coords: {lat, lng}` (route-draft point), flat `{id, label, lat, lng}` (order point), `[lng, lat]` (Mapbox) | Finite-number checks only (`readCoord`, `passenger_order_utils.js:15-21`; `public/src/mapbox/driver_markers.js:26-35`) — not enough, since they accept `lat: 100` or `lng: 500`; the server top-level `lat` / `lng` bounds (`server/src/services/orders/index.js:30-31`), which the opaque nested `coords` (`:29`) and persisted local drafts bypass; the server `COORDINATE_PROVENANCE` vocabulary | `accuracyMeters`, `capturedAt`, `provenance` — nothing captures them (no GPS) |
 | `PickupPoint` | Route-draft point, `order.pickup`, `ride.route.pickupLabel` + `ride.route.pickup`, driver handoff snapshot (label only), server `orders.pickup` JSONB, `rides.route_pickup_*` columns | `order.pickup` as the carrier; the route-draft `source` field records the UI entry path, not coordinate provenance (§7) | `entrance`, a point-level `note`, provenance |
 | `DestinationPoint` | The same carriers under `dropoff` | Same | Naming differs — runtime `dropoff`, server `destination` (`route-computation.js:32`); runtime field names stay as they are until a runtime slice |
 | `VehiclePosition` | None: the car is a CSS dot; `ride_events.type` allows three non-position types only (`server/migrations/0003_ride_status_change.sql:24`); Presence #2 is a dark 501 | — | All fields, including the only home of the motion fields (`headingDegrees`, `speedMps`) |
@@ -231,30 +258,35 @@ This contract therefore uses a third, distinct name, `NavigationRouteView`, and 
 
 ## 7. Provenance
 
-Conceptual values:
+Provenance records where a coordinate came from — its origin — never how it travelled. Conceptual values:
 
 | Value | Meaning |
 | --- | --- |
-| `gps` | A device position fix (Geolocation API) with its capture time. |
-| `manual` | A point the user entered by hand (a typed address or a placed pin). |
-| `search` | A point chosen from search or suggestion results. |
-| `backend` | A point returned by a server authority (order, ride, presence or routing). |
+| `device_fix` | A position the device actually measured (Geolocation API), with its capture time. |
+| `user_pin` | A point the user placed by hand. |
+| `geocode_point` | A point produced by geocoding an address or a search result. |
+| `provider_routable_point` | A routable point supplied by the geo provider (a road-network access point for an address). |
 | `mock_hash` | Only coordinates actually synthesized from a label hash by `deriveMockCoordsFromLabel()` (`passenger_order_utils.js:23-33`). |
 | `simulation` | A point produced by a simulator, a visualization or fixture playback (§12). |
-| `unknown` | Conceptual label for a finite coordinate whose provenance was never recorded. It does not have to become a runtime enum value in this slice. |
+| `unknown` | A coordinate exists but its origin was never recorded. Conceptual label; it does not have to become a runtime enum value in this slice. |
 
-CURRENT: no runtime point carries a provenance field. Coordinates synthesized by `deriveMockCoordsFromLabel()` are `mock_hash`: every route-picker point built by `makePoint()` (`route_picker.js:159-167`) and the label-hash fallback of `resolvePointCoords()` (`passenger_order_utils.js:35-39`). Other stored coordinates are not known to be `mock_hash`: `resolvePointCoords()` keeps any finite `coords` value it is given, so a persisted route draft (`route_picker.js:217`) or an order point can carry coordinates of unrecorded origin, and with the backend seam on, `POST /orders` accepts and returns `coords` or flat `lat` / `lng` without provenance (`server/src/services/orders/index.js:14-33`). Such coordinates have `unknown` provenance. The route-draft point whose `source` is `current` («Моё место», `route_picker.js:39-44`) is built by `makePoint()`: its coordinates are `mock_hash` because `deriveMockCoordsFromLabel()` synthesized them, and the word `current` never makes a point GPS. Because nothing stores provenance today, a coordinate read back from storage is `unknown` even if it was originally synthesized; slice 02 records provenance where coordinates are created.
+The first four values are exactly the server `COORDINATE_PROVENANCE` vocabulary (`server/src/domain/route-computation.js:95-100`). `mock_hash`, `simulation` and `unknown` cover coordinates with no real origin, or none recorded.
+
+Transport is not provenance. Sending a point to the backend and reading it back never changes its provenance: a device GPS fix relayed through the server to the passenger stays `device_fix`, and a server-side geocoder result delivered to the client stays `geocode_point`. There is no `backend` provenance value, and no transport field is required now; if transport or authority metadata is ever needed, it is separate, orthogonal metadata, never coordinate provenance.
+
+CURRENT: no runtime point carries a provenance field. Coordinates synthesized by `deriveMockCoordsFromLabel()` are `mock_hash`: every route-picker point built by `makePoint()` (`route_picker.js:159-167`) and the label-hash fallback of `resolvePointCoords()` (`passenger_order_utils.js:35-39`). Other stored coordinates are not known to be `mock_hash`: `resolvePointCoords()` keeps any finite `coords` value it is given, so a persisted route draft (`route_picker.js:217`) or an order point can carry coordinates of unrecorded origin, and with the backend seam on, `POST /orders` accepts and returns `coords` or flat `lat` / `lng` without provenance (`server/src/services/orders/index.js:14-33`). Such coordinates have `unknown` provenance. The route-draft point whose `source` is `current` («Моё место», `route_picker.js:39-44`) is built by `makePoint()`: its coordinates are `mock_hash` because `deriveMockCoordsFromLabel()` synthesized them, and the word `current` never makes a point a `device_fix`. Because nothing stores provenance today, a coordinate read back from storage is `unknown` even if it was originally synthesized; slice 02 records provenance where coordinates are created.
 
 Rules (frozen):
 
 - `mock_hash` applies only to coordinates actually synthesized by `deriveMockCoordsFromLabel()`.
-- An existing finite `lat` / `lng` without provenance has `unknown` provenance. A missing provenance never means `gps`, `manual`, `search`, `backend` or `mock_hash`.
+- An existing finite `lat` / `lng` without provenance has `unknown` provenance. A missing provenance never means any recorded value — not `device_fix`, `user_pin`, `geocode_point`, `provider_routable_point`, `mock_hash` or `simulation`.
 - Unknown provenance is never guessed from an object's shape or its storage location.
-- `mock_hash` MUST NEVER be presented as real GPS.
+- A round trip through the backend keeps the provenance a point was created with; transport never assigns or replaces provenance.
+- `mock_hash` MUST NEVER be presented as a real GPS / `device_fix` position.
 - `simulation` MUST NEVER enter production driver presence.
 - UI MUST NOT silently promote mock/demo coordinates to live ride coordinates.
 
-PLANNED: slice 02 freezes the runtime field and aligns it with the server `COORDINATE_PROVENANCE` vocabulary (`device_fix`, `user_pin`, `geocode_point`, `provider_routable_point`). `mock_hash` and `simulation` have no server equivalent and are never sent as real coordinates.
+PLANNED: slice 02 freezes the runtime field with this single origin-based vocabulary — the server `COORDINATE_PROVENANCE` values plus `mock_hash`, `simulation` and `unknown` — so the client and the server never map between two competing sets. `mock_hash` and `simulation` have no server equivalent and are never sent as real coordinates.
 
 ## 8. Authority
 
@@ -315,7 +347,7 @@ No silent fallback from a live failure to a fake live state: an SDK, token, GPS 
 
 CURRENT demo sources that must stay behind an explicit mode, or be removed, before any live overlay ships:
 
-- the demo route inherited by accepted rides (P1-1);
+- the demo route inherited by accepted rides and kept through backend hydration (P1-1);
 - `buildDemoRide()` / `DEMO_ACTIVE_RIDE_ID` (`trip_moscow_sheremetyevo_demo`, `ride_state.js:69`) and the simulation fallback of `/active-ride` without a real trip (`active_ride.js:449-480`);
 - the `/driver-map` fixtures (`?fixture=`, `driver_map.js:37-40`) and the `/map` `NEARBY` demo rows and clusters;
 - the MapShell default route (`public/src/mapbox/map_shell.js:4-7`) and the route-picker suggestion lists (`route_picker.js:50-95`) — central Moscow, Sheremetyevo, Vnukovo;
@@ -360,8 +392,8 @@ CURRENT: the repository contains no Blender or Unity code, asset or integration.
 | Slice | Scope | Depends on | Status |
 | --- | --- | --- | --- |
 | 01A | This docs contract | — | This slice (docs only) |
-| 01B | Remove demo-route inheritance; preserve canonical pickup/dropoff | 01A | PLANNED — prerequisite for 07 and 09 |
-| 02 | Shared `GeoPoint` + provenance contract / runtime seam | 01A | PLANNED |
+| 01B | Remove demo-route inheritance (seeds, both backend-hydration merges, direct entry); preserve canonical pickup/dropoff (§5) | 01A | PLANNED — prerequisite for 07 and 09 |
+| 02 | Shared `GeoPoint` + origin-based provenance + bounded WGS84 validator (runtime seam) | 01A | PLANNED |
 | 03 | Shared `map_surface` lifecycle + Mapbox error fallback | 01A | PLANNED |
 | 04 | Real passenger geolocation | 02, 03 | PLANNED |
 | 05 | Passenger pickup/dropoff overlays | 02, 03, 04 | PLANNED |
