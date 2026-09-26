@@ -58,6 +58,8 @@ Add a client-generated idempotency key per mutation, threaded through the mock n
 
 ## Mapbox track — sequence (after DB, or in parallel; never the same PR)
 
+> **Sequencing cross-reference (BD-MAP-DUAL-EXPERIENCE-01A).** The map program's slice order (01A → 10) now lives in [`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md) §13. The M slices below keep their readiness caveats and map onto it as follows: M1 stays the open CSP/SW decision for a future route/price endpoint; M2 lands through slices 03 (shared map-surface lifecycle), 06 (marker adapter) and 08 (routing authority + `route_picker.js` seam migration); M3 is slice 04 (real passenger geolocation). This file does not duplicate the ordering.
+
 ### Slice M1 — CSP/SW decision (safety task) — partially shipped
 The GL-SDK/tile half is **done**: `public/index.html`'s CSP already carries
 `img-src … blob: https://*.mapbox.com`, `connect-src … https://*.mapbox.com`,
