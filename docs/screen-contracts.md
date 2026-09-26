@@ -59,7 +59,9 @@ Registered in `public/src/app.js`.
 | `/trip-confirmation` | BD-CONFIRM-01 | `public/src/screens/trip_confirmation.js` | implemented |
 | `/post` | BD-POST-01 | `public/src/screens/post_detail.js` | implemented |
 | `/inbox` | BD-INBOX-01 | `public/src/screens/inbox.js` | implemented |
+| `/daily-communication` | BD-DAILY-COMM-01 | `public/src/screens/daily_communication.js` | implemented, local PWA prototype (no backend), opened from the `/inbox` card; full contract in `docs/daily-communication-contract.md` |
 | `/receipt` | BD-RIDE-HISTORY-D-01 | `public/src/screens/trip_receipt.js` | implemented, driver completed-ride receipt by `?tripId=` |
+| `/order/<id>` | BD-ORDER-DETAIL-01 | `public/src/screens/order_detail.js` | implemented, deep link only; registered as the exact `/order` anchor and the router resolves `/order/<id>` to it; role split via `?role=` |
 | `/settings` | BD-SETTINGS-01 | `public/src/screens/settings.js` | implemented, shared shell, role-aware back via `?role=` |
 | `/ops/screens` | BD-OPS-SCREENS-01 | `public/src/screens/ops_screens.js` | implemented, dev/docs tool — **not** in the product tabbar |
 
@@ -67,7 +69,7 @@ Registered in `public/src/app.js`.
 
 | Invariant | Current contract |
 |---|---|
-| Hidden chrome | `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation` hide tabbar and FAB. |
+| Hidden chrome | `/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation` hide tabbar and FAB. `/ops/screens` also hides them, through the separate dev/docs route policy (`DEV_DOCS_ROUTES` in `router.js`), not through `HIDE_CHROME`. |
 | FAB | Visible only on `/feed`. |
 | Map tab | Tab button targets `/map`; `app.js` routes drivers to `/driver-map`, passengers/guests to `/map`. |
 | Driver route guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
@@ -874,6 +876,20 @@ Static guards: `scripts/smoke-chat-bridge.mjs` section **F2** pins the legacy-`d
 | Domain boundary | This repair changes only Inbox presentation and read lifecycle. Inbox item schema, unread meaning, normal targets/actions, push-prompt behavior, Daily Communication and backend/domain persistence remain unchanged. |
 | Acceptance | Registered-route links remain internal; canonical fixtures are deterministic and inert; initial, Retry, background-refresh and obsolete-render paths preserve the request-state and accessibility rules above. |
 
+### BD-DAILY-COMM-01 - Daily Communication
+
+| Field | Contract |
+|---|---|
+| Route | `/daily-communication`; optional `?tab=all\|ride\|passenger\|driver\|support` and `?thread=<id>`, which the screen keeps in sync through `history.replaceState` (no router navigation). |
+| File | `public/src/screens/daily_communication.js` (UI); `public/src/daily_communication_store.js` is the only writer. |
+| Source of truth | `docs/daily-communication-contract.md` owns the target backend shape (`communication_threads` / `communication_messages`) and the thread state machine. This entry indexes the route and the runtime slice only; the state machine is not restated here. |
+| Entry / exit | `/inbox` Daily Communication card (`[data-inbox-daily-communication]`) → `/daily-communication`; «Назад» (`[data-dc-back]`) → `/inbox`; «Открыть канал» / «К связанному экрану» → the thread's `primaryHref` / `secondaryHref` via `go(href)` (existing screens only). |
+| Storage | No new key: threads live in the audited `bazardrive.chat.v1` under the reserved `__daily_communication_threads__` namespace, cleared on local logout/reset by `clearDailyCommunicationStore()` inside `clearUserScopedStorage()`. |
+| Main states | Tabs Все / Поездки / Пассажиры / Водители / Поддержка; thread list + selected-thread detail; per-tab empty state; thread statuses `OPEN`, `ACK_REQUIRED`, `NEEDS_ACTION`, `ACKNOWLEDGED`, `RESOLVED`. |
+| Actions | Select a thread; «Принять» (acknowledge — rendered only for `ACK_REQUIRED` / `NEEDS_ACTION`); «Закрыть» (resolve); quick-reply templates; composer «Отправить» (disabled while empty, max 500 chars). |
+| Boundary | Writes communication state only — never orders, active rides, driver assignment/availability, route/price, receipts, ride history or ratings. No backend, no real push/SMS/Telegram. |
+| Acceptance | Pinned by `scripts/smoke-inbox.mjs` §J/§K (route registration, store exports and statuses, no ride/order mutation, back → `/inbox`, `go(href)` CTAs, CSS link, SW precache). |
+
 ### BD-POST-01 - Post detail
 
 | Field | Contract |
@@ -1370,7 +1386,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Main states | NEW_ORDER, ACCEPTED, DRIVER_EN_ROUTE, DRIVER_APPROACHING_PICKUP, WAITING_PASSENGER, IN_PROGRESS, COMPLETED, CANCELED, NO_SHOW. |
 | Actions | Accept, arrived, start, complete, cancel sheet, problem sheet, earnings sheet, chat/nav/phone stubs. |
 | Acceptance | Driver state changes go through `ride_state.js`; passenger renderer is not duplicated here. |
-| Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. |
+| Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. `public/src/screens/active_ride_driver_noshow.js` is the BD-RIDE-D-NOSHOW-01 no-show sub-flow (`openDriverNoShowFlow`), opened from the `WAITING_PASSENGER` no-show action `#ar-no-show` («Не приехал» while waiting, «Пассажир не вышел» once the wait has expired); its only persistence is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. Covered by `scripts/smoke-active-ride-noshow.mjs`. |
 
 ### BD-RIDE-D-ERROR-01 - Driver active-ride error states
 
