@@ -75,9 +75,12 @@ Production runs on **two origins** ([BD-DOCS-041](backend-home-and-stack.md)):
 the PWA on GitHub Pages and `/server` on a separate API origin, which the PWA
 reaches through its configured API base (`public/src/api_config.js`). A
 production route/price request is therefore cross-origin and is passed through
-by the origin guard untouched; the same-origin `/api/` pathname guard
-additionally covers local / test-stand and future same-origin proxy setups.
-Neither case needs a new service-worker change. The CSP already allows the
+by the origin guard untouched. Independently, any same-origin BazarDrive API
+request whose pathname starts with `/api/` is passed through by the already
+shipped pathname guard. As reconciled in BD-DOCS-041, neither placement needs
+a new service-worker caching rule or VERSION bump merely for API traffic.
+That same-origin guarantee is deliberately limited to `/api/`; a future proxy
+that exposes backend traffic under another path needs its own SW review. The CSP already allows the
 Mapbox GL SDK and its tile/script traffic (`https://*.mapbox.com`, `blob:` for
 `worker-src` / `child-src`, `style-src 'unsafe-inline'` — shipped with
 `BD-MAP-ACTIVATE` #805), but its `connect-src 'self' https://*.mapbox.com`
