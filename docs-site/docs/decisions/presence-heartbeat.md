@@ -4,7 +4,7 @@ docType: decision-record
 title: "Phase 2: Presence & Heartbeat — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-09-27
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -75,10 +75,16 @@ Introduce a **server-side presence service driven by client heartbeats**:
    the existing ride state machine rather than a second flag.
 5. **A cache tier holds the available-driver set** (Redis, per BD-DOCS-023) so
    Phase 3 matching can query "nearby free drivers" cheaply.
+6. **Raw Presence is server authority data, not the passenger-map payload.** Passenger consumers use two deliberately separate projections:
+   - **Nearby discovery:** authenticated passenger only, as privacy-coarsened/quantized `NearbyVehicleMarker { markerId, point }` data. Guest receives no production nearby positions. `markerId` is ephemeral/projection-scoped and MUST NOT expose/equal stable `vehicleId`, `driverId`, `assignmentId` or `shiftId`, nor become a durable cross-session fleet identifier. The nearby response contains no raw `VehiclePosition` and has no demo fallback.
+   - **Assigned-driver tracking:** passenger active ride only, through participant authorization → explicit active ride-status allowlist → immutable server `RideTrackingBinding { tripId, assignedDriverId, trackingVehicleId }` → that exact vehicle's fresh Presence position. The binding is established in the ride assignment/bootstrap context, is never client-supplied, and an old trip never re-resolves to the nearest/first Presence row, a display-field match, "whatever vehicle the driver uses now", a later shift vehicle or a later ride.
+7. **Assigned-driver tracking is status-bounded.** Live position may be projected only for `ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, or `IN_PROGRESS`. The terminal check occurs before Presence lookup. `COMPLETED`, `CANCELED` and `NO_SHOW` return no live position, and an old `tripId` cannot follow later Presence/vehicle/shift/ride state. Nearby discovery and assigned-driver tracking MUST NOT be collapsed into one projection.
 
-This ADR decides **what presence is, what it is keyed to, and that it is
-heartbeat/TTL-driven**. Transport, heartbeat interval, and location accuracy are
-deferred (see Open questions).
+This ADR decides **what Presence is, what it is keyed to, that it is
+heartbeat/TTL-driven, and the privacy boundaries of its passenger projections**.
+Still deferred are the concrete transport, heartbeat interval, TTL numeric value,
+nearby coarsening precision/radius/count policy and detailed battery/location
+policy (see Open questions).
 
 ## Alternatives considered
 
@@ -108,7 +114,7 @@ deferred (see Open questions).
     **client→server** channel to carry liveness/location and refresh the TTL, so
     plain SSE (server→client only) would require a separate upstream channel.
     Plus heartbeat interval and TTL.
-  - Location accuracy / privacy / battery policy (with Phase 4 maps).
+  - Exact nearby coarsening precision, radius/count limits, and detailed battery/location policy (with Phase 4 maps). Guest denial, ephemeral/coarse nearby projection, separate ride-bound assigned tracking, and active-status cutoff are already decided above.
   - Phase 3 matching consumes the available-driver set this defines.
 
 See [Mini-Yonder Background Services](../governance/mini-yonder-background-services.md)
