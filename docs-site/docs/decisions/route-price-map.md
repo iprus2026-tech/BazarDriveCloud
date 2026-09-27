@@ -107,7 +107,7 @@ already exist for the swap: `route_service.js` (`estimate → null`) and
 is either this mock duration or hardcoded demo strings (`'3 мин'`, `'28 мин'`)
 in `ride_state.js`.
 
-The current backend write boundaries are not yet financially authoritative: authenticated `POST /orders` still stores client-supplied `distanceKm`, `durationMin`, `estimatedPrice` and `estimatedPriceLabel`, while the completed-ride receipt write stores driver-supplied `fare`, `commission`, `tip` and `net` verbatim before applying its write-once behavior. These are explicit migration gaps for the Route & Price cutover. Server-owned preview alone is insufficient if later mutation paths can replace the amounts.
+The current backend write boundaries are not yet financially authoritative: authenticated `POST /orders` still stores client-supplied `distanceKm`, `durationMin`, `estimatedPrice` and `estimatedPriceLabel`; `POST /matching/offers` accepts driver-authored `price`, and passenger selection / `buildRideSeed()` currently promotes that selected bid into `orderOfferPrice` and `ridePrice`; the completed-ride receipt write stores driver-supplied `fare`, `commission`, `tip` and `net` verbatim before applying write-once behavior. These are explicit migration gaps for the Route & Price cutover. Server-owned preview alone is insufficient if order creation, matching selection/Ride bootstrap or completion can replace/promote client-authored amounts.
 
 Phase 3 (BD-DOCS-034) explicitly deferred **real ETA/price ranking** to "Phase 4
 maps". Until route, distance, and fare are real and authoritative, matching can
@@ -156,8 +156,15 @@ stub seams:
    an authoritative quote/recomputation bound to the authenticated passenger and
    canonical route context; production order creation persists distance/duration/
    fare from that server fact, not from client `distanceKm`, `durationMin`,
-   `estimatedPrice` or label fields. The passenger's manual adjustment is a
-   distinct bid/offer intent, not fare truth. At completion, fare/commission/net
+   `estimatedPrice` or label fields. Passenger adjustment and driver-authored
+   `offer.price` are distinct bid/offer intents, not fare truth. Passenger
+   selection selects driver + bid intent; production matching selection/Ride
+   bootstrap MUST NOT make that client bid the payable fare merely by copying it
+   into `orderOfferPrice` / `ridePrice`. If negotiated pricing is supported, the
+   server Route & Price authority validates/derives the selected bid against its
+   authoritative quote/tariff/negotiation policy (exact formula/schema deferred),
+   or retains the bid only as offer metadata until another authoritative pricing
+   transition. At completion, fare/commission/net
    are derived from authoritative server ride/order/payment/tariff facts before
    receipt creation; driver-supplied totals are not trusted, and any production
    tip must come from its own server-authorized payment/tip fact. A receipt may
@@ -211,7 +218,7 @@ conditional CSP concern.
 
 Production routing is not an open provider proxy. The same server-owned cost boundary that protects provider-backed geocoding also applies to both routing modes before any paid provider call.
 
-**Waypoint Route & Price:** verified authenticated session → finite positive server budget scoped at least to the authenticated principal → canonical waypoint validation → paid routing provider → server route/fare estimate. Guest/anonymous callers receive no production route, ETA or server fare and trigger no paid provider call. Over-budget or invalid requests also stop before the provider. There is no direct-browser provider fallback.
+**Waypoint Route & Price:** verified authenticated session → finite positive server budget scoped at least to the authenticated principal → canonical waypoint validation → paid routing provider → server route/fare estimate. Every waypoint request carries REQUIRED race-only `requestId`, which the server echoes. The route-picker applies only the latest mounted preview generation and only when response origin/destination still exactly match the current canonical eligible waypoints; older/out-of-order responses are ignored and cannot replace geometry, distance, ETA, fare or quote for a newer pair. `requestId` is not auth or waypoint authority, and waypoint mode has no `guidanceRevision`. Guest/anonymous callers receive no production route, ETA or server fare and trigger no paid provider call. Over-budget or invalid requests also stop before the provider. There is no direct-browser provider fallback.
 
 **Driver active guidance:** authenticate caller → resolve participant-gated Ride / Assignment → require the exact authoritative assigned driver → derive guidance leg from authoritative `ride.status` → derive the canonical endpoint from Ride / Order authority → finite positive server cost/rate budget scoped at least to principal + active trip/guidance context → validate the fresh/accurate serialized origin → paid routing provider → **post-provider authoritative Ride/Assignment recheck**. Before releasing the result, the server re-resolves authority and rejects/discards the provider result if assignment, current status, derived leg or canonical endpoint no longer matches the computation. A successful active response carries an opaque `guidanceRevision` for the authoritative snapshot accepted by that recheck and echoes the request `requestId` for correlation. The same budget gate applies to the initial route and **every reroute**; a fresh `NavigationOriginFix` never grants unlimited provider use.
 
@@ -219,7 +226,7 @@ After provider return, a failed authority recheck means no stale geometry/maneuv
 
 Any authentication, authorization, status/endpoint, budget, waypoint or origin failure before the provider means **no paid provider call**. IP/service-wide limits, provider quota, caching, debounce and request coalescing may supplement these budgets but never replace the required server principal-scoped gates. Exact positive numeric limits/windows remain runtime-owned and are not frozen by this ADR.
 
-Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live. Before assignment, even an authenticated eligible driver receives only the coarse/privacy-safe opportunity projection; exact pickup/destination/entrance/detail/free text is released only through the participant-gated Ride projection after authoritative passenger selection + Assignment, and rejected/non-selected drivers never cross that boundary.
+Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live. Public/anonymous and authenticated pre-assignment driver projections MUST NOT expose exact route geometry, exact distance, exact duration/ETA or exact route-derived fare/quote when those values can disclose or materially narrow the endpoint pair; product-required summaries are separately derived/privacy-reviewed coarse buckets, with bucket sizes/ranges deferred. Before assignment, even an authenticated eligible driver receives only that coarse/privacy-safe opportunity projection; exact pickup/destination/entrance/detail/free text and exact route-derived metrics are released only through the appropriate authorized participant boundary after authoritative selection/Assignment, and rejected/non-selected drivers never cross that boundary.
 ## Alternatives considered
 
 | Option | Pros | Cons | Rejected because |
