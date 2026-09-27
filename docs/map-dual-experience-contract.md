@@ -76,7 +76,7 @@ Purpose: the driver's working map before accepting an order.
 | Capability | CURRENT | PLANNED |
 | --- | --- | --- |
 | Map | MapShell placeholder only, watermark «Mapbox SDK пока не подключён» (`driver_map.js:101-163`); no real Mapbox. | Real Mapbox GL (slice 07). |
-| Orders | Mock nearby orders: local `CREATED` orders (at most 20), or `GET /orders` when the backend seam is on, with no distance filter (`public/src/mock_api.js:590-604`). Driver test orders carry no coordinates (`driver_map.js:784-785`). | Real order-opportunity markers whose precise position — and any exact address label shown with them — comes only from the server-authorized protected projection that slice 05G introduces; today's anonymous `GET /orders` is never their source of precise coordinates or exact canonical address labels (§5 P1-3). The markers then pass live map eligibility: a valid bounded `GeoPoint` with trusted real-origin provenance (§7). Legacy orders without recorded provenance stay list-only (slices 02, 05G, 06 and 07). |
+| Orders | Mock nearby orders: local `CREATED` orders (at most 20), or `GET /orders` when the backend seam is on, with no distance filter (`public/src/mock_api.js:590-604`). CURRENT backend-only rows can be listed, but the driver-map accept handler cannot accept them: `acceptCanonicalRideOrder()` mutates only the local store, and `driver_map.js:743-750` shows the honest «Приём заказов с сервера появится в следующем обновлении» notice. | Slice 07 owns the complete backend opportunity interaction: protected marker/card data only from 05G, plus the driver-side cutover into the authenticated server matching/offer seam. A server-owned order MUST NOT use local `acceptCanonicalRideOrder()` as authority. An opportunity is actionable only when the real server transition is wired; until then it is explicitly read-only/unavailable, never a production-looking dead-end. |
 | Readiness | `isDriverLineReady()` gate plus the role guard (`driver_map.js:424-433`, `652-672`) — a UI gate, not an HTTP security boundary (§5 P1-3). | Unchanged. |
 | Own position | None; the car is a static CSS dot. | Own vehicle position, from a fresh `device_fix` only (§6 vehicle position; slices 04 and 07). |
 | Camera | None. | Follow / recenter; optional heading-up. |
@@ -84,11 +84,16 @@ Purpose: the driver's working map before accepting an order.
 
 Rules:
 
-- No turn-by-turn before an accepted order. Routing starts only after accept, in Driver Active Navigation.
-- The accept handoff stays `/driver-map` → `/active-ride?role=driver&tripId=<id>&status=ACCEPTED` (`driver_map.js:803-808`).
-- The live rollout is blocked by P1-1 and P1-2 (§5, fixed by 01B), and its backend order markers also by P1-3 (§5, fixed by 05G).
+- No turn-by-turn before an accepted order.
+- CURRENT local accept keeps the existing local handoff `/driver-map` → `/active-ride?role=driver&tripId=<id>&status=ACCEPTED` for local-only orders. CURRENT backend-only rows do **not** have that accept handoff; they show the existing notice instead.
+- PLANNED slice 07 owns the backend opportunity action cutover. A protected backend opportunity uses an authenticated, server-authorized driver action through the matching/offer seam, never `acceptCanonicalRideOrder()` or another local mutation as authority.
+- The current backend assignment model remains intact: driver offer → passenger selects driver → authoritative server assignment → ride bootstrap. A driver offer by itself does **not** create an accepted ride and does not enter Driver Active Ride.
+- Slice 07 must keep backend opportunities non-actionable/read-only until the corresponding server driver-eligibility + matching/offer transition is actually available. CURRENT `POST /matching/offers` authenticates the caller but still defers granted-driver role gating, so production slice-07 actionability requires that server-side eligibility boundary rather than relying on `isDriverLineReady()` alone.
+- After passenger selection creates the authoritative assignment/ride, slice 07 owns the driver-side handoff needed to discover that assigned trip and enter `/active-ride?role=driver&tripId=<id>`. The exact notification/poll/read transport is not frozen in 01A, but it MUST resolve server-authoritative assignment/ride state, survive reload/cross-device, and never fabricate a local/demo ride.
+- Slice 09 later enters Driver Active Navigation from that authoritative active ride.
+- The live rollout is blocked by P1-1 and P1-2 (§5, fixed by 01B), and its backend order markers/actions also by P1-3 / 05G and the server eligibility/action cutover above.
 
-### 3.3 Driver Active Navigation — `/driver-navigation` (PLANNED ONLY)
+### 3.3 Driver Active Navigation### 3.3 Driver Active Navigation — `/driver-navigation` (PLANNED ONLY)
 
 Status: **PLANNED ONLY.** The route MUST remain unregistered in this slice, and stays unregistered until its own slice (09, §13).
 
@@ -113,7 +118,7 @@ Route rules (PLANNED, for slice 09):
 - `tripId` is required, but possession of a `tripId` is never authorization. A missing or unknown trip never falls back to a demo ride.
 - Before any precise pickup / destination, route geometry, maneuver or trip-derived ETA is returned for driver navigation, the server authenticates the caller, resolves the trip through the authoritative participant-gated Ride seam, resolves the authoritative assigned driver from Ride / Assignment authority, and requires the authenticated user to be that exact assigned driver. A passenger participant, another authenticated driver, an unauthenticated caller, or an ambiguous / unverified Ride ↔ Assignment linkage fails closed. Driver role alone is not sufficient. The future slice-09 client admission check is defense in depth; the server-owned trip-bound Route & Price boundary is the security boundary (§8).
 - Slice 09 owns the normal navigation entry path as well as route registration. Accept still lands on `/active-ride?role=driver&tripId=<id>`; slice 09 rewires the existing driver active-ride «Навигатор» / relevant map-navigation action from its current notice-only behavior into `/driver-navigation?tripId=<id>&leg=<derived>`. There is no direct accept → navigation shortcut.
-- The entry leg is derived from authoritative `ride.status`: `ACCEPTED` → pickup preview, `DRIVER_EN_ROUTE` → pickup, `DRIVER_APPROACHING_PICKUP` → pickup / arrival mode, `IN_PROGRESS` → dropoff; `WAITING_PASSENGER` has no active guidance and terminal status has no navigation entry. The URL `leg` remains only a presentation hint and the destination screen revalidates `ride.status`.
+- The client entry hint is derived from the current authoritative `ride.status`: `ACCEPTED` → pickup preview, `DRIVER_EN_ROUTE` → pickup, `DRIVER_APPROACHING_PICKUP` → pickup / arrival mode, `IN_PROGRESS` → dropoff; `WAITING_PASSENGER` has no active guidance and terminal status has no navigation entry. The URL `leg` remains presentation-only. On every initial route and reroute, the slice-08 server independently reloads authoritative Ride state and derives the actual leg + canonical endpoint itself; client `leg`, client destination, cached endpoint and UI state are never routing authority.
 - The driver role is never read from the URL.
 - Status transitions still go through the Ride authority (`public/src/ride_state.js` locally, the ride-state PATCH on a backend ride). The navigation screen does not own the state machine.
 - Each route / reroute begins with a fresh client-local trusted `NavigationOriginFix` (§6), minted only by the direct geolocation acquisition seam on the navigating driver's device. The request adapter consumes that capability and serializes only its plain `GeoPoint` snapshot; the opaque capability never crosses the network. A hydrated `NavigationRouteView.origin` is response data only and MUST NOT be reused as reroute trust proof.
@@ -134,7 +139,7 @@ Route rules (PLANNED, for slice 09):
 Rules:
 
 - `ride.status` is the source of truth.
-- The URL `leg` is only a presentation hint. When it disagrees with `ride.status`, the status wins.
+- The URL `leg` is only a presentation hint. It is never sent as authoritative Route & Price input. For trip-bound guidance, slice 08 resolves the participant-gated Ride, derives the active guidance phase from authoritative `ride.status`, derives the exact canonical endpoint from Ride / Order authority, and returns that server-derived `leg` / endpoint in `NavigationRouteView`. A stale/crafted client leg or destination cannot override them.
 - The URL MUST NOT mutate ride status. The planned route accepts no `status=` override, unlike the `/active-ride` simulation override (`active_ride.js:254-297`).
 - No new status is introduced: `RIDE_STATUS` and the transitions in `public/src/ride_state.js` are unchanged. Arrival stays the existing `DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER` transition, which stamps `arrivedAt` (`ride_state.js:113`). The waiting timer and the no-show flow stay on `/active-ride`.
 
@@ -271,14 +276,14 @@ WaypointRouteRequest {
 
 NavigationRouteRequest {
   tripId,
-  leg,
-  origin: GeoPoint,        // plain serialized snapshot consumed from a fresh NavigationOriginFix by the trusted request adapter
-  destination: GeoPoint
+  origin: GeoPoint         // plain serialized snapshot consumed from a fresh NavigationOriginFix by the trusted request adapter
+                           // client does NOT author authoritative leg or destination
 }
 
 NavigationRouteView {
+  leg,                     // server-derived from authoritative ride.status
   origin: GeoPoint,        // plain serializable point actually used by the server; never a NavigationOriginFix
-  destination: GeoPoint,
+  destination: GeoPoint,   // server-derived canonical pickup or destination from Ride / Order authority
   geometry,
   distanceMeters,
   durationSeconds,
@@ -319,7 +324,7 @@ Vehicle position (frozen): a production `VehiclePosition.point` MUST have `prove
 
 Route origin (frozen): the opaque `NavigationOriginFix` is request-side / client-local only. It exists between direct driver-device geolocation and the navigation request adapter; it is never persisted, sent as a trusted type, returned by the server, hydrated from JSON or reconstructed from a route response.
 
-For active guidance, the trusted client request adapter accepts a fresh `NavigationOriginFix`, checks the direct-acquisition capability, then serializes its current `GeoPoint` snapshot into `NavigationRouteRequest.origin`. The server receives only the plain point and validates every machine-visible rule: bounded coordinates, `provenance = device_fix`, valid `capturedAt`, freshness, finite `accuracyMeters`, the shared accuracy maximum, and exact assigned-driver authorization. The opaque acquisition capability is an official-client acquisition invariant, not a server authentication credential, and the server never claims to recreate it from JSON.
+For active guidance, the trusted client request adapter accepts a fresh `NavigationOriginFix`, checks the direct-acquisition capability, then serializes only `{ tripId, origin: GeoPoint }`. The client does not author an authoritative leg or destination. The server receives the plain origin, authenticates the caller, resolves participant-gated Ride / Assignment authority, derives the active leg from `ride.status`, derives the exact canonical endpoint from Ride / Order authority, and validates bounded coordinates, `provenance = device_fix`, valid `capturedAt`, freshness, finite `accuracyMeters`, the shared accuracy maximum, and exact assigned-driver authorization. The opaque acquisition capability is an official-client acquisition invariant, not a server authentication credential, and the server never claims to recreate it from JSON.
 
 `NavigationRouteView.origin` is also a plain serializable `GeoPoint`: the point the server actually used for the returned route. A hydrated response origin is presentation / audit data only. It MUST NOT mint or restore `NavigationOriginFix` and MUST NOT be fed back as trusted reroute input. Every reroute requires a current/new client-local `NavigationOriginFix`.
 
@@ -353,25 +358,61 @@ The server independently validates the serialized origin's machine-visible coord
 
 Routing modes and Route & Price ownership (frozen): slice 08 owns two distinct server routing request modes behind the Route & Price authority.
 
-**A. Passenger waypoint route.** `WaypointRouteRequest` computes canonical passenger pickup → canonical destination. Both points are ordinary bounded `GeoPoint` waypoints owned by Ride / Order authority and must pass the generic trusted-waypoint allowlist. An adopted passenger pickup may originate from a fresh `device_fix`; pickup/destination may otherwise use `user_pin`, `geocode_point` or `provider_routable_point` as already allowed by §§6–7. `mock_hash`, `simulation`, `unknown` or missing provenance are rejected. This mode does NOT require `NavigationOriginFix`.
+**A. Passenger waypoint route.** `WaypointRouteRequest` computes canonical passenger pickup → canonical destination. Production provider-backed waypoint routing requires a **verified authenticated session**. Guest / anonymous callers may use the base map UI but MUST NOT invoke production Route & Price provider work and receive no production waypoint route, ETA or server fare estimate; the UI shows an honest sign-in-required / routing-unavailable state with no direct-browser provider fallback and no demo route presented as real.
 
-**B. Driver active guidance.** `NavigationRouteRequest` represents exactly one leg: current serialized navigation origin → pickup, or current serialized navigation origin → destination. Before sending it, slice 09 consumes a fresh client-local `NavigationOriginFix`. The server authorizes the exact assigned driver and validates the serialized origin's bounded/fresh/accuracy fields. A returned `NavigationRouteView` is ordinary serializable presentation data.
+Before any paid provider call, slice 08 MUST enforce a server-side finite abuse / cost budget scoped at least to the authenticated principal. The production limit/window MUST be explicit, finite and positive before provider-backed traffic is enabled; its numeric value is deliberately not frozen in 01A. IP/service-wide controls may exist as defense in depth, but never replace the principal-scoped server gate. Over-budget requests perform **no provider call** and return honest retry/unavailable behavior. Authentication failure, budget failure and waypoint validation failure all fail before provider invocation.
+
+Conceptual order:
+
+```text
+verified authentication
+→ finite server abuse / cost budget
+→ validate canonical waypoint eligibility
+→ paid routing provider
+→ server fare estimate
+```
+
+Both waypoint points are ordinary bounded `GeoPoint` values owned by the passenger's canonical route state / Ride-Order authority and must pass the generic trusted-waypoint allowlist. An adopted pickup may originate from a fresh `device_fix`; pickup/destination may otherwise use `user_pin`, `geocode_point` or `provider_routable_point`. `mock_hash`, `simulation`, `unknown` or missing provenance are rejected. This mode does NOT require `NavigationOriginFix`.
+
+**B. Driver active guidance.** `NavigationRouteRequest` contains only `tripId` plus the current serialized origin snapshot consumed from a fresh client-local `NavigationOriginFix`. It does **not** accept an authoritative client `leg` or `destination`.
+
+Before provider work, the server:
+
+1. authenticates the caller;
+2. resolves the participant-gated authoritative Ride / Assignment;
+3. requires caller == exact authoritative assigned driver;
+4. reads authoritative `ride.status`;
+5. derives the guidance phase and canonical endpoint from Ride / Order authority:
+   - `ACCEPTED` → pickup preview / canonical pickup;
+   - `DRIVER_EN_ROUTE` → pickup guidance / canonical pickup;
+   - `DRIVER_APPROACHING_PICKUP` → pickup arrival mode / canonical pickup;
+   - `IN_PROGRESS` → dropoff guidance / canonical destination;
+   - `WAITING_PASSENGER`, all pre-accept statuses, `COMPLETED`, `CANCELED`, `NO_SHOW` → no active guidance;
+6. validates the serialized origin's bounded/fresh/accuracy fields;
+7. only then calls the routing provider.
+
+If the ride is missing/unauthorized, assignment or Ride/Order linkage is ambiguous, the status has no active guidance, or the required canonical endpoint is unavailable, there is **no provider call, no route geometry and no protected endpoint disclosure**. Exact HTTP status is not frozen. `NavigationRouteView.leg` and `.destination` are server-derived response/presentation data. Every reroute repeats this full authoritative derivation; a returned destination or URL `leg` is never reused as authority.
 
 CURRENT: existing server `RouteComputation` is a fixed 3-stop / 2-leg normalizer — driver → pickup → destination — and rejects a raw one-leg active-guidance result with `unexpected_leg_count`. It remains a useful baseline but is not sufficient for the two request modes above.
 
 PLANNED slice 08 acceptance:
 
+- waypoint mode requires a verified authenticated session plus the finite server abuse/cost budget before paid provider work;
+- Guest / anonymous callers receive no production waypoint route, ETA or server fare estimate and cannot trigger a paid provider call;
+- over-budget, unauthenticated or invalid-waypoint requests perform no provider call;
 - waypoint mode supports canonical pickup → destination and returns geometry, distance, duration / ETA and optional traffic duration without requiring `NavigationOriginFix`;
-- active-guidance mode supports current vehicle → pickup and current vehicle → destination as 2-stop / 1-leg computations;
+- active-guidance requests contain no authoritative client leg/destination; the server derives both from participant-gated Ride / Order authority on every route/reroute;
+- active-guidance mode supports current vehicle → canonical pickup or current vehicle → canonical destination only when current `ride.status` allows it;
+- `WAITING_PASSENGER`, pre-accept and terminal states produce no active route/provider call;
 - a one-leg active-guidance result is not rejected with `unexpected_leg_count`;
 - a dropoff reroute never routes back through historical pickup;
 - `mock_hash`, `simulation`, `unknown` and missing-provenance waypoints never become production passenger route endpoints;
 - active-guidance serialized origin fails closed on missing/invalid `capturedAt`, stale fix, missing/non-finite/excessive `accuracyMeters`, or failed exact-assigned-driver authorization;
 - slice 08 freezes the single finite positive numeric `navigationOriginMaxAccuracyMeters`;
-- `NavigationRouteView.origin` is a plain `GeoPoint`, and a returned/hydrated origin can never be reused as trusted reroute acquisition;
+- `NavigationRouteView.origin` is a plain `GeoPoint`; returned leg/origin/destination are response data and can never be reused as reroute authority;
 - passenger canonical pickup / destination are never mutated by route computation.
 
-**Route & Price cutover owned by slice 08.** In the same numbered follow-up, production `route_service` and `price_estimator` move behind the server Route & Price authority and the production `route_picker` call site stops using its local hash / `80 + 35·km` formula as route/fare truth. The server returns the authoritative route estimate and fare estimate; the passenger renders that estimate, while any manual passenger adjustment is an explicit bid/offer value rather than authoritative fare. Final/completion fare remains server-owned. Slice 08 does not invent tariff coefficients, surge/zones/minimums or a geocoding-provider choice; those stay under BD-DOCS-035 follow-ups.
+**Route & Price cutover owned by slice 08.** Production `route_service` and `price_estimator` move behind the server Route & Price authority and the production `route_picker` call site stops using its local hash / `80 + 35·km` formula as route/fare truth. The server returns the authoritative route estimate and fare estimate; the passenger renders that estimate, while any manual passenger adjustment is an explicit bid/offer value rather than authoritative fare. Final/completion fare remains server-owned. Authentication + abuse-budget gating apply before any paid provider-backed waypoint route/fare work. Slice 08 does not invent tariff coefficients, rate-limit numbers, surge/zones/minimums or a geocoding-provider choice; those are runtime/follow-up decisions under this contract and BD-DOCS-035.
 
 ### Naming: `NavigationRouteView`, not `RouteSnapshot`
 
@@ -444,7 +485,7 @@ PLANNED: slice 02 freezes the runtime field with this single origin-based vocabu
 | --- | --- | --- | --- |
 | Ride / Order | Pickup, destination, selected driver, trip id, ride status | Conditional on the backend seam (see below): the local stores while it is off; the server for the flows already cut over while it is on. | The server ride/order authority end-to-end (BD-DOCS-030, BD-DOCS-034) |
 | Location | Driver and passenger current position, vehicle heading/speed, freshness timestamps | Nobody: no geolocation; Presence is dark | Device capture through the `geolocation_service` seam; server Presence #2 for the shared driver position (heartbeat + TTL, coarse location — BD-DOCS-033) |
-| Routing | Geometry, distance, ETA, traffic estimate, maneuvers | Client label-hash estimates; server `RouteComputation` has no caller and `route-price` is dark | **Slice 08 Server Route & Price authority**: waypoint routing plus authorized active guidance behind `route_service`, with serializable `NavigationRouteView` output |
+| Routing | Geometry, distance, ETA, traffic estimate, maneuvers | Client label-hash estimates; server `RouteComputation` has no caller and `route-price` is dark | **Slice 08 Server Route & Price authority**: authenticated/budget-gated passenger waypoint routing plus exact-assigned-driver active guidance; server derives active leg/endpoint from authoritative Ride state and returns serializable `NavigationRouteView` |
 | Pricing | The fare | Client formula `80 + 35·km` with passenger override (mock) | **Slice 08 Server Route & Price authority** (BD-DOCS-035): production `price_estimator` / route-picker cutover; server estimate is authoritative and passenger adjustment is a bid, not fare truth |
 
 Ride / Order CURRENT holder, by backend seam state (`isBackendEnabled()`, `public/src/api_config.js:47-50`, off unless an API base is configured):
@@ -560,10 +601,24 @@ CURRENT: the repository contains no Blender or Unity code, asset or integration.
 | 05G | Order Geo Privacy / protected opportunity projection: public `/orders` exposes neither precise coordinates / exact canonical labels / point details nor passenger free-text `comment`; exact location data and exact free text only through server-authorized projections (§5 P1-3; details below) | 02; the server order seam (backend track) | PLANNED — prerequisite for publishing trusted precise points / labels / comments and for 07's backend order markers |
 | 06 | Real Mapbox marker adapter and live pickup/destination marker rendering from slice 05's already-acquired canonical trusted points | 02, 03, 05 | PLANNED |
 | 06P | Passenger Presence / Tracking integration: authenticated privacy-scoped `NearbyVehicleMarker`s on `/map`; assigned-driver tracking on passenger `/active-ride` uses an immutable ride-bound `RideTrackingBinding` plus non-terminal status allowlist before querying Presence (§3.1; details below) | 02, 03, 06; Presence track; nearby privacy projection; RideTrackingBinding backend prerequisite | PLANNED — assigned-driver tracking does NOT require current `OPEN driver_shift` lookup |
-| 07 | Driver Free Drive; backend order markers only from 05G's protected projection (§3.2) | 01B, 02, 03, 04, 05G, 06 | PLANNED — blocked by 01B and 05G |
-| 08 | **Server Route & Price authority**: passenger `WaypointRouteRequest`; authorized driver `NavigationRouteRequest`; 2-stop/1-leg active guidance; `route_service` + `price_estimator` production cutover; route-picker call-site migration; server fare estimate; one shared `navigationOriginMaxAccuracyMeters` (§§3.3, 6, 8) | 02; backend pilot gates; BD-DOCS-035 follow-ups | PLANNED |
+| 07 | Driver Free Drive: protected backend opportunity markers/cards only from 05G, plus the driver-side backend matching/offer action cutover and authoritative assignment→ride handoff. Server-owned orders never use local `acceptCanonicalRideOrder()`; offers do not create rides until passenger selection/assignment/ride bootstrap (§3.2) | 01B, 02, 03, 04, 05G, 06; server driver-eligibility/matching boundary | PLANNED — blocked by 01B, 05G and actionable backend matching eligibility |
+| 08 | **Server Route & Price authority**: authenticated + abuse-budget-gated passenger `WaypointRouteRequest`; driver `NavigationRouteRequest {tripId, origin}` with server-derived leg/canonical endpoint; route_service + price_estimator + route-picker cutover; server fare estimate; one shared `navigationOriginMaxAccuracyMeters` (§§3.3, 6, 8) | 02; backend pilot gates; BD-DOCS-035 follow-ups | PLANNED |
 | 09 | Driver Navigation PWA: register `/driver-navigation`; direct client-local `NavigationOriginFix` acquisition; wire existing driver `/active-ride` navigation action into the new route with status-derived leg; fresh fix per reroute; exact-assigned-driver UI admission as defense in depth | 01B, 03, 06, 07, 08 | PLANNED — server authorization remains slice 08 |
 | 10 | Native Navigation SDK | 09; a native-shell governance decision; a native ADR defining offline navigation and reroute reconciliation | FUTURE NATIVE — later |
+
+**Slice 07 backend opportunity action (PLANNED).** CURRENT `/driver-map` may list backend `CREATED` orders but cannot accept them: its local `acceptCanonicalRideOrder()` path has no server-owned row to mutate and the backend-only branch shows the existing "next update" notice. Slice 07 closes that interaction gap together with the real Driver Free Drive map.
+
+For a protected backend opportunity:
+
+1. marker/card data comes only from 05G's protected opportunity projection;
+2. an actionable production control is rendered only when the authenticated server-side driver eligibility + matching/offer transition is available; otherwise the opportunity is explicitly read-only/unavailable;
+3. driver action uses the real server matching/offer seam, never local `acceptCanonicalRideOrder()` as authority;
+4. submitting an offer does **not** create an accepted ride;
+5. the passenger-owner selection remains authoritative: passenger select → server assignment → ride bootstrap;
+6. after authoritative assignment/ride creation, slice 07 owns the driver-side handoff/read needed to discover that assigned `tripId` and enter `/active-ride?role=driver&tripId=<id>`; exact push/poll/read transport is not frozen, but reload/cross-device must resolve from server state;
+7. rejection/expiry/failure keeps the opportunity state honest and never seeds a local/demo active ride as fallback.
+
+Slice 09 remains the later active-ride → navigation transition. Slice 07 does not bypass passenger selection or invent a direct server "accept order" operation that the current matching model does not have.
 
 Slice 05G — Order Geo Privacy / protected opportunity projection (PLANNED) closes P1-3 (§5). Invariants:
 
