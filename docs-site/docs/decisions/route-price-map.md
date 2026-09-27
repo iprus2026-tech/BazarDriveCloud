@@ -107,6 +107,8 @@ already exist for the swap: `route_service.js` (`estimate → null`) and
 is either this mock duration or hardcoded demo strings (`'3 мин'`, `'28 мин'`)
 in `ride_state.js`.
 
+The current backend write boundaries are not yet financially authoritative: authenticated `POST /orders` still stores client-supplied `distanceKm`, `durationMin`, `estimatedPrice` and `estimatedPriceLabel`, while the completed-ride receipt write stores driver-supplied `fare`, `commission`, `tip` and `net` verbatim before applying its write-once behavior. These are explicit migration gaps for the Route & Price cutover. Server-owned preview alone is insufficient if later mutation paths can replace the amounts.
+
 Phase 3 (BD-DOCS-034) explicitly deferred **real ETA/price ranking** to "Phase 4
 maps". Until route, distance, and fare are real and authoritative, matching can
 only rank by coarse proximity, and the fare a passenger sees is a number the
@@ -128,21 +130,33 @@ stub seams:
    stay on the hash formula even after the server lands. (This is exactly the
    **M2** warning in `docs/db-mapbox-readiness.md`: updating the seams alone
    changes nothing live until the call site moves.)
-2. **Route, distance, and ETA become real and server-computed.** The hash-based
+2. **Route, distance, ETA and provider-backed geo acquisition become server-mediated.** The hash-based
    `estimateRoute()` is replaced by a real Directions/route service (Mapbox or a
-   server proxy). `distanceKm` / `durationMin` come from real geometry, and
-   pickup/dropoff `coords` are filled by **real geocoding** instead of the
-   hardcoded place lists. The user's **saved/recent places stay client-only** —
-   BD-DOCS-030/031 classify `favorite_routes.v1`, `repeat_route.v1`, and
-   `route_draft.v1` as local-only, and cross-device sync of route preferences is
-   a **separate decision, out of scope here**. Phase 4 adds geocoding and
-   authoritative route geometry, not preference sync.
-3. **Price becomes a server-owned fare, not a client formula.** Today's
-   `80 + 35 × km` literal moves server-side as an authoritative tariff (base +
-   per-km + per-time; surge/zones deferred). The client renders an **estimate**;
-   the **server is the fare authority** at order and completion time — a client
-   must never be trusted to set the fare. The passenger's manual adjustment
-   becomes an explicit **bid on top of** the estimate, not the fare itself.
+   server proxy). `distanceKm` / `durationMin` come from real geometry. Slice 05's
+   map-pin/current-location acquisition remains provider-free; production address
+   search/autocomplete/geocoding/provider-routable lookup is owned by the protected
+   Route & Price/geo-provider boundary and requires a verified authenticated session
+   plus a finite server-side principal-scoped provider budget before each paid
+   provider call. Guest cannot invoke that paid production path, and no direct-browser
+   provider or demo/mock coordinate is a fallback. The exact quota is runtime scope.
+   The user's **saved/recent places stay client-only** — BD-DOCS-030/031 classify
+   `favorite_routes.v1`, `repeat_route.v1`, and `route_draft.v1` as local-only,
+   and cross-device sync of route preferences is a separate decision, out of scope
+   here. Phase 4 adds protected provider geocoding and authoritative route geometry,
+   not preference sync.
+3. **Price becomes server-owned through preview, mutation and persistence.** Today's
+   `80 + 35 × km` literal stops being production authority. The server creates
+   an authoritative quote/recomputation bound to the authenticated passenger and
+   canonical route context; production order creation persists distance/duration/
+   fare from that server fact, not from client `distanceKm`, `durationMin`,
+   `estimatedPrice` or label fields. The passenger's manual adjustment is a
+   distinct bid/offer intent, not fare truth. At completion, fare/commission/net
+   are derived from authoritative server ride/order/payment/tariff facts before
+   receipt creation; driver-supplied totals are not trusted, and any production
+   tip must come from its own server-authorized payment/tip fact. A receipt may
+   remain write-once only **after** authoritative derivation — write-once is not
+   validation. Exact quote storage, tariff/commission numbers, tip workflow and
+   payment provider remain deferred.
 4. **This feeds Phase 3 the real ETA/price it deferred.** Geocoded coordinates
    and real ETA turn the Phase 2 coarse-location available-driver set into
    distance/ETA-ranked matching (the BD-DOCS-034 follow-up). Route & Price is the
@@ -218,7 +232,7 @@ conditional CSP concern.
   - Privacy: real coordinates and geocoding are a new privacy surface (ties to
     the Phase 2 location policy).
 - **Follow-ups:**
-  - Routing/geocoding provider — Mapbox Directions vs self-hosted; tile strategy.
+  - Routing/geocoding provider — Mapbox Directions vs self-hosted; tile strategy; protected provider geocoding/search requires authenticated + finite server-budgeted access before paid calls.
   - Tariff model — base / per-km / per-time, surge, zones, minimum fare; where
     the passenger bid fits.
   - CSP for Route & Price — the open part of the readiness doc's **M1**: the
