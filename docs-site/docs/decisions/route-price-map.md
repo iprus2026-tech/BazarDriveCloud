@@ -66,17 +66,27 @@ are derived from the label text by a deterministic mock hash
 (`deriveMockCoordsFromLabel()` in `passenger_order_utils.js`), not real
 geocoding. The service worker is already **tile-safe and API-safe**: its fetch
 handler ignores every non-`GET` request and returns before any cache handling
-for cross-origin requests and for same-origin paths that start with `/api/`
-(`public/sw.js:348-357`). The registered Route & Price seam,
-`/api/v1/route-price` (every service mounts under `/api/v1/<name>`,
-`server/src/server.js:58-60`), already sits inside that bypass, so it needs no
-new service-worker change; the service itself is still a registered **dark
-`501`** stub (`server/src/services/route-price/index.js`). The CSP already
-allows the Mapbox GL SDK and its tile/script traffic (`https://*.mapbox.com`,
-`blob:` for `worker-src` / `child-src`, `style-src 'unsafe-inline'` — shipped
-with `BD-MAP-ACTIVATE` #805); only a **direct-browser** call to an external
-routing/geocoding provider would need its own CSP allowance, a still-open item
-(see Consequences below).
+for every cross-origin request (the origin guard) and for same-origin paths
+that start with `/api/` (the pathname guard; `public/sw.js:348-357`). The
+Route & Price server path is `/api/v1/route-price` (every service mounts under
+`/api/v1/<name>`, `server/src/server.js:58-60`); the service itself is still a
+registered **dark `501`** stub (`server/src/services/route-price/index.js`).
+Production runs on **two origins** ([BD-DOCS-041](backend-home-and-stack.md)):
+the PWA on GitHub Pages and `/server` on a separate API origin, which the PWA
+reaches through its configured API base (`public/src/api_config.js`). A
+production route/price request is therefore cross-origin and is passed through
+by the origin guard untouched; the same-origin `/api/` pathname guard
+additionally covers local / test-stand and future same-origin proxy setups.
+Neither case needs a new service-worker change. The CSP already allows the
+Mapbox GL SDK and its tile/script traffic (`https://*.mapbox.com`, `blob:` for
+`worker-src` / `child-src`, `style-src 'unsafe-inline'` — shipped with
+`BD-MAP-ACTIVATE` #805), but its `connect-src 'self' https://*.mapbox.com`
+does not yet include the future backend API origin: before the Pages PWA
+enables the production backend, `connect-src` must gain that exact API origin
+(the PWA → BazarDrive API gate, which `public/src/api_config.js` records as
+well). Separately, a **direct-browser** call to an external routing/geocoding
+provider, if a future design chose one, would need that provider's origin
+allowed too (see Consequences below).
 
 Route, distance, and ETA are a **client-side deterministic mock**.
 `estimateRoute()` in `route_picker.js` hashes the pickup+dropoff label pair into
@@ -140,23 +150,31 @@ stub seams:
    The CSP already allows `api.mapbox.com` and tiles for the vendored GL SDK
    (`BD-MAP-ACTIVATE` #805); the **service worker must never cache** map or
    route/price traffic — and today it does not: `public/sw.js` ignores
-   non-`GET` requests and returns before cache handling for cross-origin
-   requests and for every same-origin `/api/` path (`public/sw.js:348-357`).
-   The existing same-origin `/api/v1/route-price` endpoint therefore needs
-   **no** new protected SW change. What remains open is the routing/geocoding
-   provider choice and its server integration; a CSP `connect-src` allowance
-   only if the architecture deliberately introduces a **direct-browser** call
-   to an external provider; and a fresh SW / CSP re-audit only if a future
-   implementation deliberately moves away from the same-origin `/api/` path
-   or origin (see Consequences).
+   non-`GET` requests and returns before cache handling for every cross-origin
+   request and for every same-origin `/api/` path (`public/sw.js:348-357`).
+   In production the PWA reaches the `/api/v1/route-price` path on the
+   configured separate backend origin (BD-DOCS-041), so that request is
+   cross-origin and already bypassed by the origin guard; the `/api/`
+   pathname guard additionally protects local / proxy configurations. Route &
+   Price therefore needs **no** new protected SW change. Two CSP concerns stay
+   distinct: (a) **mandatory** — before the Pages PWA enables the production
+   backend, `connect-src` must gain the exact configured API origin, even
+   though Route & Price stays fully server-mediated and the browser never
+   calls Mapbox Directions or another routing provider directly; (b)
+   **conditional** — only if a future design introduces a **direct-browser**
+   call to an external routing/geocoding provider does that provider origin
+   also need its own `connect-src` allowance. The routing/geocoding provider
+   choice and its server integration also stay open (see Consequences).
 
 This ADR decides **that Route & Price becomes a real server-mediated service
 behind the existing stub seams, with the server as fare authority and geocoded
 real coordinates feeding Phase 3 ranking**. The routing provider (Mapbox vs
-self-hosted), the exact tariff model (surge/zones), and the provider /
-direct-browser CSP decision are deferred (see Follow-ups; that decision is the
-open half of the readiness doc's **M1**, whose same-origin SW half is already
-satisfied).
+self-hosted), the exact tariff model (surge/zones), and the concrete CSP change
+are deferred (see Follow-ups). In the readiness doc's **M1** terms: SW safety
+is already satisfied for both the production cross-origin API and same-origin
+`/api/` local / proxy traffic; the mandatory PWA → API-origin `connect-src`
+gate is still open, and a direct-browser provider origin is an additional,
+conditional CSP concern.
 
 ## Alternatives considered
 
@@ -165,7 +183,7 @@ satisfied).
 | Status quo — client hash + price formula | No backend; deterministic | Fake distance/ETA; client-set fare; no geocoding | Matching can't rank; fares untrustworthy |
 | Mapbox SDK directly in the client, no server | Real map/route quickly | Token exposure; client-authored fare; per-client API cost | Fare must be server-authoritative; cost/security |
 | Real route, but keep the client price formula | Real ETA | Fare still client-set and forgeable | Money must be a server decision |
-| **Server-mediated Route & Price behind stub seams (chosen)** | Real route/ETA; server fare authority; one swap seam | Needs a routing/geocoding provider and server integration; CSP work only for a direct-browser provider call | — |
+| **Server-mediated Route & Price behind stub seams (chosen)** | Real route/ETA; server fare authority; one swap seam | Needs a routing/geocoding provider and server integration; the exact backend API origin in the PWA's `connect-src` (plus a provider origin only for a direct-browser call) | — |
 
 ## Consequences
 
@@ -180,14 +198,18 @@ satisfied).
 - **Negative / trade-offs:**
   - **Provider / CSP** work still needed for the *route/price* service
     itself: the GL SDK / tile CSP allowance already shipped (`BD-MAP-ACTIVATE`
-    #805), and `public/sw.js` already bypasses the same-origin `/api/` path
-    that the registered `/api/v1/route-price` seam uses, so no new protected
-    SW change is needed for it. A route/price design that calls an external
-    provider **directly from the browser** needs its own CSP `connect-src`
-    allowance (a `public/index.html` safety-boundary touch), and moving the
-    endpoint off the same-origin `/api/` path or origin would need a fresh
-    SW / CSP re-audit (sw-offline-agent scope) — the open half of the
-    readiness doc's **M1**.
+    #805), and `public/sw.js` already bypasses the production cross-origin API
+    request (origin guard) as well as same-origin `/api/` local / proxy
+    requests (pathname guard), so no new protected SW change is needed for it.
+    Enabling the production backend from the Pages PWA requires adding the
+    exact configured API origin to `connect-src` — a reviewed
+    `public/index.html` safety-boundary change, required even for a fully
+    server-mediated Route & Price. A design that calls an external provider
+    **directly from the browser** would additionally need that provider's
+    origin in `connect-src`, and a hypothetical same-origin deployment that
+    served the API outside `/api/` would need a fresh SW review
+    (sw-offline-agent scope) — the open CSP part of the readiness doc's
+    **M1**.
   - Real routing/geocoding has **per-request cost** and latency; estimates may
     need caching (the Redis geo/ETA cache, BD-DOCS-023 data layer).
   - Privacy: real coordinates and geocoding are a new privacy surface (ties to
@@ -196,10 +218,12 @@ satisfied).
   - Routing/geocoding provider — Mapbox Directions vs self-hosted; tile strategy.
   - Tariff model — base / per-km / per-time, surge, zones, minimum fare; where
     the passenger bid fits.
-  - Provider / direct-browser CSP decision — the open half of the readiness
-    doc's **M1** (its same-origin SW half is already satisfied for
-    `/api/v1/route-price`); a SW / CSP re-audit only if the endpoint
-    deliberately leaves the same-origin `/api/` path or origin.
+  - CSP for Route & Price — the open part of the readiness doc's **M1**: the
+    mandatory exact backend API origin in the PWA's `connect-src` before
+    production backend enablement, plus a provider origin only if a
+    direct-browser provider call is ever chosen (SW safety is already
+    satisfied for both the cross-origin production API and same-origin `/api/`
+    local / proxy traffic).
   - ETA/geo caching in the Redis tier for fleet-scale matching.
 
 See [Mini-Yonder Background Services](../governance/mini-yonder-background-services.md)
