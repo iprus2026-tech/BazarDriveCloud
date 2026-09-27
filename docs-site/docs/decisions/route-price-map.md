@@ -144,6 +144,13 @@ stub seams:
    and cross-device sync of route preferences is a separate decision, out of scope
    here. Phase 4 adds protected provider geocoding and authoritative route geometry,
    not preference sync.
+   Route geometry is a separate server/provider authority from endpoint
+   provenance: the server normalizes the successful provider route into
+   `ProviderRouteGeometry` (exact encoded-polyline vs point-array representation
+   remains runtime-owned), validates every decoded coordinate as finite/bounded
+   WGS84, and returns it as route-response presentation data. Polyline vertices
+   are not independent provenance-bearing waypoints and MUST NOT be relabelled
+   `provider_routable_point`; arbitrary client geometry is never authoritative.
 3. **Price becomes server-owned through preview, mutation and persistence.** Today's
    `80 + 35 × km` literal stops being production authority. The server creates
    an authoritative quote/recomputation bound to the authenticated passenger and
@@ -157,6 +164,13 @@ stub seams:
    remain write-once only **after** authoritative derivation — write-once is not
    validation. Exact quote storage, tariff/commission numbers, tip workflow and
    payment provider remain deferred.
+   Any server quote that may later be referenced by order creation has a
+   finite server-defined freshness bound: valid `createdAt` + REQUIRED
+   `expiresAt > createdAt`. The exact TTL is runtime-owned. A missing/invalid
+   expiry never creates a timeless quote; expired, invalidated, wrong-context or
+   otherwise stale/unverifiable references are freshly recomputed/re-quoted or
+   rejected. Matching waypoints alone do not preserve validity across tariff or
+   time-dependent pricing changes.
 4. **This feeds Phase 3 the real ETA/price it deferred.** Geocoded coordinates
    and real ETA turn the Phase 2 coarse-location available-driver set into
    distance/ETA-ranked matching (the BD-DOCS-034 follow-up). Route & Price is the
@@ -203,7 +217,7 @@ Production routing is not an open provider proxy. The same server-owned cost bou
 
 Any authentication, authorization, status/endpoint, budget, waypoint or origin failure before the provider means **no paid provider call**. IP/service-wide limits, provider quota, caching, debounce and request coalescing may supplement these budgets but never replace the required server principal-scoped gates. Exact positive numeric limits/windows remain runtime-owned and are not frozen by this ADR.
 
-Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live.
+Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live. Before assignment, even an authenticated eligible driver receives only the coarse/privacy-safe opportunity projection; exact pickup/destination/entrance/detail/free text is released only through the participant-gated Ride projection after authoritative passenger selection + Assignment, and rejected/non-selected drivers never cross that boundary.
 ## Alternatives considered
 
 | Option | Pros | Cons | Rejected because |

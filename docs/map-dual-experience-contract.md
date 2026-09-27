@@ -280,12 +280,21 @@ NavigationRouteRequest {
                            // client does NOT author authoritative leg or destination
 }
 
+RouteGeometryPoint {
+  lng,
+  lat
+}
+
+ProviderRouteGeometry {
+  points: RouteGeometryPoint[]
+}
+
 NavigationRouteView {
   mode: "waypoint" | "active_guidance",
   leg?,                    // absent for waypoint; REQUIRED and server-derived for active_guidance
   origin: GeoPoint,        // waypoint: validated request origin; active_guidance: point actually used by server
   destination: GeoPoint,   // waypoint: validated request destination; active_guidance: server-derived canonical endpoint
-  geometry,
+  geometry: ProviderRouteGeometry,
   distanceMeters,
   durationSeconds,
   trafficDurationSeconds?,
@@ -301,9 +310,13 @@ RoutePriceQuote {
   durationSeconds,
   fareEstimate,
   createdAt,
-  expiresAt?
+  expiresAt              // REQUIRED for any quote that may later be referenced by order creation
 }
 ```
+
+Referenced quote freshness (frozen): a `RoutePriceQuote` that may later be referenced by order creation is never timeless. It MUST carry valid server timestamps `createdAt` and `expiresAt`, with `expiresAt > createdAt` and a finite server-defined lifetime. Slice 08 runtime owns the exact TTL; 01A deliberately freezes no numeric duration.
+
+Before consuming a quote reference at order mutation, the server validates at least: quote existence, authenticated-passenger ownership, canonical waypoint/context match, valid `createdAt`, valid `expiresAt`, current time not past `expiresAt`, no explicit invalidation, and continued verifiability under the current Route & Price authority. Missing/invalid `expiresAt` never means unlimited validity. An expired, missing-expiry, invalidated or otherwise stale/unverifiable quote is either replaced by a fresh server recomputation/re-quote or rejected so the client obtains a new quote; the exact HTTP behavior is runtime scope. Waypoint equality alone never revives a quote after tariff, time-dependent pricing or other authoritative pricing context has made it stale. Runtime may combine TTL with pricing/tariff versioning or explicit invalidation, but finite freshness is mandatory.
 
 `NavigationRouteView.mode` is the response discriminator. In `mode = "waypoint"`, the response is pre-order-capable: no Ride, `tripId` or `ride.status` is required, `leg` MUST be absent, and `origin` / `destination` are the validated canonical passenger waypoints from the authorized request. The response carries route geometry/metrics only and does not acquire Driver Active Navigation semantics merely because provider steps exist.
 
@@ -434,10 +447,14 @@ PLANNED slice 08 acceptance:
 - active-guidance serialized origin fails closed on missing/invalid `capturedAt`, stale fix, missing/non-finite/excessive `accuracyMeters`, or failed exact-assigned-driver authorization;
 - slice 08 freezes the single finite positive numeric `navigationOriginMaxAccuracyMeters`;
 - `NavigationRouteView.origin` is a plain `GeoPoint`; returned leg/origin/destination are response data and can never be reused as reroute authority;
+- `NavigationRouteView.geometry` is server-owned `ProviderRouteGeometry`; all decoded vertices are finite/bounded WGS84 and malformed/out-of-bounds geometry is rejected;
+- provider route vertices need no fabricated per-vertex provenance and MUST NOT be relabelled `provider_routable_point`; arbitrary client-authored geometry is not trusted;
+- a successful active reroute supersedes the previous active route geometry, while a terminal/no-guidance state removes the active route line;
+- route geometry remains presentation data and never mutates canonical pickup/destination or mints provenance;
 - passenger canonical pickup / destination are never mutated by route computation.
 - production `RoutePriceQuote` (or equivalent server-owned quote/recompute proof) is bound to the authenticated passenger and canonical waypoint/context; exact endpoint/table/ID format is runtime scope;
 - production order creation does not trust client `distanceKm`, `durationMin`, `estimatedPrice` or `estimatedPriceLabel` as authority: persisted route/fare values come from a validated server quote or fresh server recomputation;
-- a quote id never authorizes an arbitrary client amount override; expired/wrong-actor/wrong-waypoint/unverifiable quote state fails closed or is re-quoted server-side;
+- a quote id never authorizes an arbitrary client amount override; every referenceable quote has a finite server freshness bound, and expired/missing-or-invalid-expiry/wrong-actor/wrong-waypoint/invalidated/unverifiable quote state fails closed or is freshly recomputed/re-quoted server-side;
 - passenger manual adjustment is a distinct bid/offer intent, never overloaded as the authoritative server fare estimate;
 - completion `fare`, `commission` and `net` are derived from authoritative server ride/order/payment/tariff facts before receipt creation; the driver does not author financial totals;
 - `tip` may affect production receipt/net only when it comes from its own server-authorized tip/payment fact, never because the driver submitted a number;
@@ -503,13 +520,19 @@ Rules (frozen):
 - `simulation` MUST NEVER enter production driver presence.
 - UI MUST NOT silently promote mock/demo coordinates to live ride coordinates.
 
-Live map eligibility (frozen): a coordinate may be drawn as a live map position — a marker, overlay or route endpoint on the live Mapbox surface — only if ALL of these hold:
+Live semantic-point eligibility (frozen): a semantic map position — for example a pickup/destination endpoint, vehicle marker, order/opportunity point or navigation origin — may be drawn on the live Mapbox surface only if ALL of these hold. This rule applies to provenance-bearing semantic `GeoPoint`s, not independently to the vertices inside `ProviderRouteGeometry`:
 
 1. it is a valid bounded `GeoPoint` (§6);
 2. its provenance is one of the trusted real-origin values `device_fix`, `user_pin`, `geocode_point` or `provider_routable_point`;
 3. for a `device_fix` only: it carries a valid `capturedAt` and is not expired under the consumer's freshness budget (§6 device-fix freshness) — checked at use for a live position, or at adoption for a canonical waypoint (§6 adopted waypoints).
 
 Trusted provenance alone is not enough for a `device_fix`: without a valid `capturedAt`, or outside the consumer's freshness budget, it is not live-eligible. The sensor freshness rule does not apply automatically to `user_pin`, `geocode_point` and `provider_routable_point`, because they are not moving sensor fixes. `mock_hash`, `simulation`, `unknown` and a missing provenance are never eligible for a live position. Eligibility is a positive allowlist, never the rule `provenance != mock_hash`. A legacy coordinate without recorded provenance is `unknown` and is not drawn live; it becomes eligible only through a path that records real provenance — a re-geocode, a new user pin, a fresh device fix where that is semantically valid (for example the passenger's own current pickup), or an explicit migration that records real provenance. Until then the point may remain text / list data, never a live map position. Mock or simulation data appears on a map only inside an explicit demo / fixture mode (§10), never as a live position. Slice 02 provides one shared trusted-live eligibility helper / seam that checks the bounds, the provenance eligibility, the conditional `device_fix` `capturedAt` requirement, device-fix freshness against an explicit caller / consumer budget and the stricter vehicle-position rule (§6), so slices 05, 06, 06P and 07 never invent their own filters and routing (slices 08 and 09) applies the same rule, plus the stricter navigation-origin rule (§6), to route origins.
+
+Provider route geometry eligibility (frozen) is a separate positive rule from `GeoPoint` provenance. `ProviderRouteGeometry` is server Route & Price response data produced/normalized only from a successful authorized, budget-gated provider route computation and associated with its current `NavigationRouteView`. Every decoded/rendered `RouteGeometryPoint` must have finite bounded WGS84 `lng`/`lat`; malformed/out-of-bounds geometry fails closed.
+
+Polyline/route-shape vertices are not semantic waypoints and carry no independent `GeoPoint.provenance`. They MUST NOT be relabelled `provider_routable_point` merely because they came from a routing provider, and this contract adds no `route_geometry` provenance value. An arbitrary client-created array/encoded polyline does not become trusted geometry by matching the shape. A live route line is render-eligible only when it is the geometry of the current trusted server Route & Price response and passes provider/server geometry validation.
+
+Geometry lifetime is response-scoped: waypoint-preview geometry belongs to that preview response; each active-guidance reroute supersedes the previous active route geometry; when authoritative state has no active guidance, including terminal/no-guidance transitions, the active route line is removed rather than silently reused. Returned geometry is presentation data only: it never mutates canonical pickup/destination, never mints point provenance, never becomes a `NavigationOriginFix`, and never becomes reroute authority.
 
 Generic point eligibility and vehicle-position eligibility are not the same (frozen). Waypoints — a pickup, a destination, an order opportunity — may be `user_pin`, `geocode_point` or `provider_routable_point`. A moving vehicle's current position is a fresh `device_fix` only (§6 vehicle position): passing the generic allowlist above is never enough for it, and a `user_pin`, `geocode_point` or `provider_routable_point` is never a vehicle's current location.
 
@@ -660,25 +683,29 @@ This specifically covers future 06P integration on passenger `/active-ride`: tod
 
 For a protected backend opportunity:
 
-1. marker/card data comes only from 05G's protected opportunity projection;
+1. marker/card/list geography comes only from 05G's **pre-assignment coarse/privacy-safe** opportunity projection; "protected" does not mean exact;
+
 2. an actionable production control is rendered only when the authenticated server-side driver eligibility + matching/offer transition is available; otherwise the opportunity is explicitly read-only/unavailable;
 3. driver action uses the real server matching/offer seam, never local `acceptCanonicalRideOrder()` as authority;
-4. submitting an offer does **not** create an accepted ride;
+4. submitting an offer does **not** create an accepted ride and does **not** unlock exact passenger location;
 5. the passenger-owner selection remains authoritative: passenger select → server assignment → ride bootstrap;
-6. after authoritative assignment/ride creation, slice 07 owns the driver-side handoff/read needed to discover that assigned `tripId` and enter `/active-ride?role=driver&tripId=<id>`; exact push/poll/read transport is not frozen, but reload/cross-device must resolve from server state;
-7. rejection/expiry/failure keeps the opportunity state honest and never seeds a local/demo active ride as fallback.
+6. only after authoritative assignment/ride creation may the exact selected driver cross from the coarse opportunity projection into the participant-gated Ride projection needed to perform the trip;
+7. rejected/non-selected drivers never receive exact pickup/dropoff coordinates, exact address/POI/entrance detail or raw passenger free text from that opportunity;
+8. after authoritative assignment/ride creation, slice 07 owns the driver-side handoff/read needed to discover that assigned `tripId` and enter `/active-ride?role=driver&tripId=<id>`; exact push/poll/read transport is not frozen, but reload/cross-device must resolve from server state;
+9. rejection/expiry/failure keeps the opportunity state honest and never seeds a local/demo active ride as fallback.
 
 Slice 09 remains the later active-ride → navigation transition. Slice 07 does not bypass passenger selection or invent a direct server "accept order" operation that the current matching model does not have.
 
-Slice 05G — Order Geo Privacy / protected opportunity projection (PLANNED) closes P1-3 (§5). Invariants:
+Slice 05G — Order Geo Privacy / protected opportunity projection (PLANNED) closes P1-3 (§5). It freezes three actor/privacy levels:
 
-1. Public `/orders` MUST NOT expose precise pickup/dropoff coordinates, exact canonical labels / point details such as `entrance`, or passenger-supplied free-text `comment`.
-2. Public discovery may expose only non-location metadata plus an explicitly coarse/privacy-safe area and coarse presentation label created specifically for the public projection. Arbitrary passenger free text is not non-location metadata and is omitted entirely; no keyword/heuristic redaction of raw comment is accepted by this contract.
-3. A public coarse label is a separate projection value. Removing coordinates never makes a canonical exact label or passenger comment safe by itself.
-4. Exact coordinates, exact labels/point details and exact passenger free text are served only through authenticated server-authorized projections to allowed actors. UI readiness is never the HTTP security boundary.
-5. Ride participants may receive accepted-trip exact data only through participant-authorized server boundaries; future fields require deliberate projection decisions rather than inheriting public `serializeOrder()`.
-6. Future public tags, if any, must be separately generated/privacy-reviewed structured metadata, never raw passenger `comment`.
-7. Endpoint shape is not frozen in 01A.
+1. **Public / anonymous discovery:** `/orders` MUST NOT expose precise pickup/dropoff coordinates, exact canonical labels / point details such as `entrance`, or passenger-supplied free-text `comment`. Public discovery may expose only non-location metadata plus an explicitly coarse/privacy-safe area and coarse presentation label created specifically for the public projection. Arbitrary passenger free text is omitted entirely; no keyword/heuristic redaction of raw comment is accepted.
+2. **Authenticated pre-assignment driver opportunity:** authentication, eligibility and offer submission are still insufficient for exact trip location. The server may expose only a coarse/privacy-safe opportunity projection, conceptually `DriverOpportunityGeoProjection { pickupArea?, destinationArea?, coarsePickupLabel?, coarseDestinationLabel?, markerPoint? }`. Exact field names are not frozen. This projection MUST NOT expose or permit client reconstruction of exact pickup/destination `GeoPoint`, street+house/POI/entrance detail, `entrance`, point notes, raw passenger `comment`, exact passenger free text or precise provider-routable detail through marker, card, list row, offer/matching payload, URL/query or client cache.
+3. A public/pre-assignment coarse label or marker is a separate projection value. Removing coordinates never makes a canonical exact label, entrance, note or passenger comment safe by itself.
+4. Submitting an offer does not change the driver's privacy class. Rejected/non-selected drivers remain pre-assignment actors and never receive the exact Ride projection.
+5. **Authoritative assigned ride participant:** only after passenger selection → authoritative Assignment → Ride bootstrap, and only after the caller is verified as the exact assigned participant for that trip, may a participant-gated Ride boundary expose the exact canonical pickup/destination, exact labels/details and the deliberately allowed passenger note/comment needed to perform the ride. Participant status and later ride/status privacy rules still apply; historical participation is not a perpetual location grant.
+6. The passenger owner retains their own exact canonical points through the passenger-authorized path.
+7. Future public/pre-assignment tags, if any, must be separately generated/privacy-reviewed structured metadata, never raw passenger `comment`.
+8. Endpoint shape is not frozen in 01A.
 
 Until 05G ships, precise trusted points, exact labels/point details and passenger free-text comments stay local to the passenger (slice 05, §3.1) or otherwise out of anonymous discovery, and slice 07 draws no backend order marker (§3.2).
 
