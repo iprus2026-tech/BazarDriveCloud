@@ -4,7 +4,7 @@ docType: decision-record
 title: "Backend Home & Stack — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-20
+revision: 2026-09-27
 effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-20
 visibleFor: [developer, dispatcher, product]

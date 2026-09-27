@@ -4,7 +4,7 @@ docType: decision-record
 title: "Phase 4: Route & Price (Map) — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-09-27
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -193,6 +193,17 @@ is already satisfied for both the production cross-origin API and same-origin
 gate is still open, and a direct-browser provider origin is an additional,
 conditional CSP concern.
 
+### Paid routing-provider gates
+
+Production routing is not an open provider proxy. The same server-owned cost boundary that protects provider-backed geocoding also applies to both routing modes before any paid provider call.
+
+**Waypoint Route & Price:** verified authenticated session → finite positive server budget scoped at least to the authenticated principal → canonical waypoint validation → paid routing provider → server route/fare estimate. Guest/anonymous callers receive no production route, ETA or server fare and trigger no paid provider call. Over-budget or invalid requests also stop before the provider. There is no direct-browser provider fallback.
+
+**Driver active guidance:** authenticate caller → resolve participant-gated Ride / Assignment → require the exact authoritative assigned driver → derive guidance leg from authoritative `ride.status` → derive the canonical endpoint from Ride / Order authority → finite positive server cost/rate budget scoped at least to principal + active trip/guidance context → validate the fresh/accurate serialized origin → paid routing provider. The same budget gate applies to the initial route and **every reroute**; a fresh `NavigationOriginFix` never grants unlimited provider use.
+
+Any authentication, authorization, status/endpoint, budget, waypoint or origin failure before the provider means **no paid provider call**. IP/service-wide limits, provider quota, caching, debounce and request coalescing may supplement these budgets but never replace the required server principal-scoped gates. Exact positive numeric limits/windows remain runtime-owned and are not frozen by this ADR.
+
+Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live.
 ## Alternatives considered
 
 | Option | Pros | Cons | Rejected because |

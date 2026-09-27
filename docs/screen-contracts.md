@@ -45,7 +45,7 @@ Registered in `public/src/app.js`.
 | `/feed` | BD-FEED-01 | `public/src/screens/feed.js` | implemented |
 | `/map` | BD-MAP-01 | `public/src/screens/map.js` | implemented; real Mapbox GL when a token resolves — the URL-restricted committed token on GitHub Pages, or the any-origin `globalThis.__BD_MAPBOX_TOKEN__` developer override for local/preview QA — MapShell fallback otherwise |
 | `/location-permission` | BD-MAP-02 | `public/src/screens/location_permission.js` | implemented, mock permission UX |
-| `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented, mock orders only; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
+| `/driver-map` | BD-DRIVER-01 / BD-DRIVER-02 | `public/src/screens/driver_map.js` | implemented; seam OFF uses local `CREATED` orders and local accept, while seam ON may list server `CREATED` orders via `GET /orders`; backend-only rows are CURRENT read/display only and the local accept path shows the existing next-update notice; `isDriverLineReady()` readiness gate (BD-DRIVER-02) |
 | `/route-picker` | BD-MAP-03 | `public/src/screens/route_picker.js` | implemented, route draft store |
 | `/route-preview` | BD-MAP-04 | `public/src/screens/route_preview.js` | implemented, route preview mock |
 | `/order-map-draft` | BD-MAP-05 | `public/src/screens/order_map_draft.js` | implemented, creates local ride order |
@@ -1372,12 +1372,12 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 |---|---|
 | Route | `/driver-map` |
 | File | `public/src/screens/driver_map.js` |
-| Data | `listNearbyOrders()` and `acceptCanonicalRideOrder()` mock flow. |
+| Data | CURRENT split by backend seam: seam OFF, `listNearbyOrders()` reads the local ride-order store and local `acceptCanonicalRideOrder()` owns local accept; seam ON, `listNearbyOrders()` may read server `CREATED` opportunities through `GET /orders`, but `acceptCanonicalRideOrder()` remains local-only and cannot authorize a backend-owned order. |
 | Guard | Two gates. Role gate (BD-ROLE-01): non-driver roles see a safe passenger fallback. Readiness gate (BD-DRIVER-02): a `role=driver` who is not `isDriverLineReady()` sees the readiness gate, not the working surface. |
 | Variants | `ready` (working order list) \| `not_ready` (readiness banner + read-only checklist + LOCKED orders) \| `non_driver` (existing passenger guard). |
 | Main states | Order list, empty, accepted handoff, not_ready gate. |
-| Actions | ready: accept order, create test order, open feed/map, go to active ride. not_ready: «Завершить готовность» → `/profile` only — no accept action is rendered. |
-| Acceptance | Uses MapShell placeholder and local ride order store only. Readiness derives from the single `isDriverLineReady()` rule in `state.js` (shared with Profile), so the gate and the Profile readiness card cannot drift. Covered by `scripts/smoke-driver-map-readiness.mjs`. |
+| Actions | ready: a local order may use the existing local accept → active-ride handoff; for a backend-only server row, CURRENT code cannot perform the server matching/offer transition and shows the existing honest next-update notice instead. Also create test order, open feed/map and go to active ride where applicable. not_ready: «Завершить готовность» → `/profile` only — no accept action is rendered. |
+| Acceptance | Uses MapShell placeholder. Seam OFF uses the local ride-order store; seam ON may populate the list from server `GET /orders`. The current accept mutation remains local-only, so a backend-only row never becomes a fake local accepted ride and instead remains read/display-only with the existing notice. Readiness derives from the single `isDriverLineReady()` rule in `state.js` (shared with Profile), so the gate and the Profile readiness card cannot drift. Covered by `scripts/smoke-driver-map-readiness.mjs`. |
 | Map experience | Driver Free Drive (BD-MAP-DUAL-EXPERIENCE-01A). CURRENT: MapShell only — no real Mapbox, GPS or follow camera. PLANNED: the real Mapbox rollout and its capabilities follow `docs/map-dual-experience-contract.md`. No turn-by-turn before an accepted order. Blockers: P1-1 / P1-2 block canonical, demo-free coordinates for the live driver-map program until `BD-MAP-DUAL-EXPERIENCE-01B` fixes them; P1-3 additionally blocks only precise backend-driven order-opportunity markers until map slice 05G (Order Geo Privacy / protected opportunity projection) ships — the current anonymous `GET /orders` is never an allowed source of precise trusted pickup / dropoff coordinates or exact canonical address labels for those markers. |
 
 ### BD-MAP-DUAL-EXPERIENCE-01A - Map experiences contract (CURRENT / PLANNED / FUTURE NATIVE)
