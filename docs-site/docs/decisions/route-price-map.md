@@ -4,7 +4,7 @@ docType: decision-record
 title: "Phase 4: Route & Price (Map) — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-18
+revision: 2026-09-27
 effectiveFrom: 2026-06-18
 reviewAfter: 2026-12-18
 visibleFor: [developer, dispatcher, product]
@@ -35,7 +35,8 @@ slug: /decisions/route-price-map
 > [Phase 3 Dispatch & Matching (BD-DOCS-034)](dispatch-matching.md) — which
 > explicitly deferred real ETA/price ranking to "Phase 4 maps". The Mapbox
 > integration tracks are planned in `docs/db-mapbox-readiness.md` (issue #105).
-> BazarDrive **today** is a backless PWA; nothing here is built.
+> Nothing here is built: the registered `/api/v1/route-price` server seam is
+> still a dark `501` stub.
 
 ## Context
 
@@ -63,17 +64,38 @@ local mock `estimateRoute()` (a hash of the
 pickup/dropoff labels), and pickup/dropoff `coords` are **not** `null` — they
 are derived from the label text by a deterministic mock hash
 (`deriveMockCoordsFromLabel()` in `passenger_order_utils.js`), not real
-geocoding. The service worker is already **tile-safe** — an origin guard
-keeps external tiles uncached. The CSP already allows the Mapbox GL SDK and
-its tile/script traffic (`https://*.mapbox.com`, `blob:` for `worker-src` /
-`child-src`, `style-src 'unsafe-inline'` — shipped with `BD-MAP-ACTIVATE`
-#805); a **future** route/price API endpoint's own CSP / same-origin SW-bypass
-need is a separate, still-open item (see Consequences below).
+geocoding. The service worker is already **tile-safe and API-safe**: its fetch
+handler ignores every non-`GET` request and returns before any cache handling
+for every cross-origin request (the origin guard) and for same-origin paths
+that start with `/api/` (the pathname guard; `public/sw.js:348-357`). The
+Route & Price server path is `/api/v1/route-price` (every service mounts under
+`/api/v1/<name>`, `server/src/server.js:58-60`); the service itself is still a
+registered **dark `501`** stub (`server/src/services/route-price/index.js`).
+Production runs on **two origins** ([BD-DOCS-041](backend-home-and-stack.md)):
+the PWA on GitHub Pages and `/server` on a separate API origin, which the PWA
+reaches through its configured API base (`public/src/api_config.js`). A
+production route/price request is therefore cross-origin and is passed through
+by the origin guard untouched. Independently, any same-origin BazarDrive API
+request whose pathname starts with `/api/` is passed through by the already
+shipped pathname guard. As reconciled in BD-DOCS-041, neither placement needs
+a new service-worker caching rule or VERSION bump merely for API traffic.
+That same-origin guarantee is deliberately limited to `/api/`; a future proxy
+that exposes backend traffic under another path needs its own SW review. The CSP already allows the
+Mapbox GL SDK and its tile/script traffic (`https://*.mapbox.com`, `blob:` for
+`worker-src` / `child-src`, `style-src 'unsafe-inline'` — shipped with
+`BD-MAP-ACTIVATE` #805), but its `connect-src 'self' https://*.mapbox.com`
+does not yet include the future backend API origin: before the Pages PWA
+enables the production backend, `connect-src` must gain that exact API origin
+(the PWA → BazarDrive API gate, which `public/src/api_config.js` records as
+well). Separately, a **direct-browser** call to an external routing/geocoding
+provider, if a future design chose one, would need that provider's origin
+allowed too (see Consequences below).
 
 Route, distance, and ETA are a **client-side deterministic mock**.
 `estimateRoute()` in `route_picker.js` hashes the pickup+dropoff label pair into
 `distanceKm` (~3–23 km) and `durationMin` (`8 + km × 2.4`), persisted in
-`bazardrive.route_draft.v1`. Pickup/dropoff `coords` are always `null`;
+`bazardrive.route_draft.v1`. Pickup/dropoff `coords` are label-hash mock values
+(see above), never real geocoded points;
 addresses come from **hardcoded place lists** (saved / recent / search
 suggestions), with manual entry captured verbatim — there is **no geocoding**.
 
@@ -84,6 +106,8 @@ already exist for the swap: `route_service.js` (`estimate → null`) and
 `price_estimator.js` (`estimatePrice → null`). ETA in offers and the active ride
 is either this mock duration or hardcoded demo strings (`'3 мин'`, `'28 мин'`)
 in `ride_state.js`.
+
+The current backend write boundaries are not yet financially authoritative: authenticated `POST /orders` still stores client-supplied `distanceKm`, `durationMin`, `estimatedPrice` and `estimatedPriceLabel`; `POST /matching/offers` accepts driver-authored `price`, and passenger selection / `buildRideSeed()` currently promotes that selected bid into `orderOfferPrice` and `ridePrice`; the completed-ride receipt write stores driver-supplied `fare`, `commission`, `tip` and `net` verbatim before applying write-once behavior. These are explicit migration gaps for the Route & Price cutover. Server-owned preview alone is insufficient if order creation, matching selection/Ride bootstrap or completion can replace/promote client-authored amounts.
 
 Phase 3 (BD-DOCS-034) explicitly deferred **real ETA/price ranking** to "Phase 4
 maps". Until route, distance, and fare are real and authoritative, matching can
@@ -106,21 +130,54 @@ stub seams:
    stay on the hash formula even after the server lands. (This is exactly the
    **M2** warning in `docs/db-mapbox-readiness.md`: updating the seams alone
    changes nothing live until the call site moves.)
-2. **Route, distance, and ETA become real and server-computed.** The hash-based
+2. **Route, distance, ETA and provider-backed geo acquisition become server-mediated.** The hash-based
    `estimateRoute()` is replaced by a real Directions/route service (Mapbox or a
-   server proxy). `distanceKm` / `durationMin` come from real geometry, and
-   pickup/dropoff `coords` are filled by **real geocoding** instead of the
-   hardcoded place lists. The user's **saved/recent places stay client-only** —
-   BD-DOCS-030/031 classify `favorite_routes.v1`, `repeat_route.v1`, and
-   `route_draft.v1` as local-only, and cross-device sync of route preferences is
-   a **separate decision, out of scope here**. Phase 4 adds geocoding and
-   authoritative route geometry, not preference sync.
-3. **Price becomes a server-owned fare, not a client formula.** Today's
-   `80 + 35 × km` literal moves server-side as an authoritative tariff (base +
-   per-km + per-time; surge/zones deferred). The client renders an **estimate**;
-   the **server is the fare authority** at order and completion time — a client
-   must never be trusted to set the fare. The passenger's manual adjustment
-   becomes an explicit **bid on top of** the estimate, not the fare itself.
+   server proxy). `distanceKm` / `durationMin` come from real geometry. Slice 05's
+   map-pin/current-location acquisition remains provider-free; production address
+   search/autocomplete/geocoding/provider-routable lookup is owned by the protected
+   Route & Price/geo-provider boundary and requires a verified authenticated session
+   plus a finite server-side principal-scoped provider budget before each paid
+   provider call. Guest cannot invoke that paid production path, and no direct-browser
+   provider or demo/mock coordinate is a fallback. The exact quota is runtime scope.
+   The user's **saved/recent places stay client-only** — BD-DOCS-030/031 classify
+   `favorite_routes.v1`, `repeat_route.v1`, and `route_draft.v1` as local-only,
+   and cross-device sync of route preferences is a separate decision, out of scope
+   here. Phase 4 adds protected provider geocoding and authoritative route geometry,
+   not preference sync.
+   Route geometry is a separate server/provider authority from endpoint
+   provenance: the server normalizes the successful provider route into
+   `ProviderRouteGeometry` (exact encoded-polyline vs point-array representation
+   remains runtime-owned), validates every decoded coordinate as finite/bounded
+   WGS84, and returns it as route-response presentation data. Polyline vertices
+   are not independent provenance-bearing waypoints and MUST NOT be relabelled
+   `provider_routable_point`; arbitrary client geometry is never authoritative.
+3. **Price becomes server-owned through preview, mutation and persistence.** Today's
+   `80 + 35 × km` literal stops being production authority. The server creates
+   an authoritative quote/recomputation bound to the authenticated passenger and
+   canonical route context; production order creation persists distance/duration/
+   fare from that server fact, not from client `distanceKm`, `durationMin`,
+   `estimatedPrice` or label fields. Passenger adjustment and driver-authored
+   `offer.price` are distinct bid/offer intents, not fare truth. Passenger
+   selection selects driver + bid intent; production matching selection/Ride
+   bootstrap MUST NOT make that client bid the payable fare merely by copying it
+   into `orderOfferPrice` / `ridePrice`. If negotiated pricing is supported, the
+   server Route & Price authority validates/derives the selected bid against its
+   authoritative quote/tariff/negotiation policy (exact formula/schema deferred),
+   or retains the bid only as offer metadata until another authoritative pricing
+   transition. At completion, fare/commission/net
+   are derived from authoritative server ride/order/payment/tariff facts before
+   receipt creation; driver-supplied totals are not trusted, and any production
+   tip must come from its own server-authorized payment/tip fact. A receipt may
+   remain write-once only **after** authoritative derivation — write-once is not
+   validation. Exact quote storage, tariff/commission numbers, tip workflow and
+   payment provider remain deferred.
+   Any server quote that may later be referenced by order creation has a
+   finite server-defined freshness bound: valid `createdAt` + REQUIRED
+   `expiresAt > createdAt`. The exact TTL is runtime-owned. A missing/invalid
+   expiry never creates a timeless quote; expired, invalidated, wrong-context or
+   otherwise stale/unverifiable references are freshly recomputed/re-quoted or
+   rejected. Matching waypoints alone do not preserve validity across tariff or
+   time-dependent pricing changes.
 4. **This feeds Phase 3 the real ETA/price it deferred.** Geocoded coordinates
    and real ETA turn the Phase 2 coarse-location available-driver set into
    distance/ETA-ranked matching (the BD-DOCS-034 follow-up). Route & Price is the
@@ -130,20 +187,46 @@ stub seams:
    geocoding) and the DB track (Phase 1) ship independently, never in one PR.
    The CSP already allows `api.mapbox.com` and tiles for the vendored GL SDK
    (`BD-MAP-ACTIVATE` #805); the **service worker must never cache** map or
-   route/price traffic. Today's `public/sw.js` origin guard only bypasses
-   **cross-origin** tiles while it caches any **same-origin** `200` / `basic`
-   response — so if the route/price service is exposed as **same-origin**
-   endpoints, the SW must be changed to **explicitly bypass those API
-   endpoint paths**, not only `api.mapbox.com` / tiles. This same-origin SW
-   bypass, and any additional CSP a server-mediated Directions/geocoding call
-   needs, remain open (see Consequences).
+   route/price traffic — and today it does not: `public/sw.js` ignores
+   non-`GET` requests and returns before cache handling for every cross-origin
+   request and for every same-origin `/api/` path (`public/sw.js:348-357`).
+   In production the PWA reaches the `/api/v1/route-price` path on the
+   configured separate backend origin (BD-DOCS-041), so that request is
+   cross-origin and already bypassed by the origin guard; the `/api/`
+   pathname guard additionally protects local / proxy configurations. Route &
+   Price therefore needs **no** new protected SW change. Two CSP concerns stay
+   distinct: (a) **mandatory** — before the Pages PWA enables the production
+   backend, `connect-src` must gain the exact configured API origin, even
+   though Route & Price stays fully server-mediated and the browser never
+   calls Mapbox Directions or another routing provider directly; (b)
+   **conditional** — only if a future design introduces a **direct-browser**
+   call to an external routing/geocoding provider does that provider origin
+   also need its own `connect-src` allowance. The routing/geocoding provider
+   choice and its server integration also stay open (see Consequences).
 
 This ADR decides **that Route & Price becomes a real server-mediated service
 behind the existing stub seams, with the server as fare authority and geocoded
 real coordinates feeding Phase 3 ranking**. The routing provider (Mapbox vs
-self-hosted), the exact tariff model (surge/zones), and the tile/CSP specifics
-are deferred (see Follow-ups; tile/CSP is the readiness doc's **M1**).
+self-hosted), the exact tariff model (surge/zones), and the concrete CSP change
+are deferred (see Follow-ups). In the readiness doc's **M1** terms: SW safety
+is already satisfied for both the production cross-origin API and same-origin
+`/api/` local / proxy traffic; the mandatory PWA → API-origin `connect-src`
+gate is still open, and a direct-browser provider origin is an additional,
+conditional CSP concern.
 
+### Paid routing-provider gates
+
+Production routing is not an open provider proxy. The same server-owned cost boundary that protects provider-backed geocoding also applies to both routing modes before any paid provider call.
+
+**Waypoint Route & Price:** verified authenticated session → finite positive server budget scoped at least to the authenticated principal → canonical waypoint validation → paid routing provider → server route/fare estimate. Every waypoint request carries REQUIRED race-only `requestId`, which the server echoes. The route-picker applies only the latest mounted preview generation and only when response origin/destination still exactly match the current canonical eligible waypoints; older/out-of-order responses are ignored and cannot replace geometry, distance, ETA, fare or quote for a newer pair. `requestId` is not auth or waypoint authority, and waypoint mode has no `guidanceRevision`. Guest/anonymous callers receive no production route, ETA or server fare and trigger no paid provider call. Over-budget or invalid requests also stop before the provider. There is no direct-browser provider fallback.
+
+**Driver active guidance:** authenticate caller → resolve participant-gated Ride / Assignment → require the exact authoritative assigned driver → derive guidance leg from authoritative `ride.status` → derive the canonical endpoint from Ride / Order authority → finite positive server cost/rate budget scoped at least to principal + active trip/guidance context → validate the fresh/accurate serialized origin → paid routing provider → **post-provider authoritative Ride/Assignment recheck**. Before releasing the result, the server re-resolves authority and rejects/discards the provider result if assignment, current status, derived leg or canonical endpoint no longer matches the computation. A successful active response carries an opaque `guidanceRevision` for the authoritative snapshot accepted by that recheck and echoes the request `requestId` for correlation. The same budget gate applies to the initial route and **every reroute**; a fresh `NavigationOriginFix` never grants unlimited provider use.
+
+After provider return, a failed authority recheck means no stale geometry/maneuver/ETA is released as current guidance. The navigation client also keeps a latest-request/generation guard: it applies only the response for the current mounted trip/request, ignores late/out-of-order responses, invalidates older generations when authoritative status changes the guidance leg or removes guidance, and clears route geometry on terminal/no-guidance. `requestId` is race/correlation metadata only, never authentication; the server recheck remains the authority.
+
+Any authentication, authorization, status/endpoint, budget, waypoint or origin failure before the provider means **no paid provider call**. IP/service-wide limits, provider quota, caching, debounce and request coalescing may supplement these budgets but never replace the required server principal-scoped gates. Exact positive numeric limits/windows remain runtime-owned and are not frozen by this ADR.
+
+Privacy remains a separate hard gate: protected preview/quote/provider work may be developed before Order Geo Privacy (05G), but production persistence/publication of trusted precise route context into orders must remain disabled until 05G's privacy-safe public and authorized protected projections are live. Public/anonymous and authenticated pre-assignment driver projections MUST NOT expose exact route geometry, exact distance, exact duration/ETA or exact route-derived fare/quote when those values can disclose or materially narrow the endpoint pair; product-required summaries are separately derived/privacy-reviewed coarse buckets, with bucket sizes/ranges deferred. Before assignment, even an authenticated eligible driver receives only that coarse/privacy-safe opportunity projection; exact pickup/destination/entrance/detail/free text and exact route-derived metrics are released only through the appropriate authorized participant boundary after authoritative selection/Assignment, and rejected/non-selected drivers never cross that boundary.
 ## Alternatives considered
 
 | Option | Pros | Cons | Rejected because |
@@ -151,7 +234,7 @@ are deferred (see Follow-ups; tile/CSP is the readiness doc's **M1**).
 | Status quo — client hash + price formula | No backend; deterministic | Fake distance/ETA; client-set fare; no geocoding | Matching can't rank; fares untrustworthy |
 | Mapbox SDK directly in the client, no server | Real map/route quickly | Token exposure; client-authored fare; per-client API cost | Fare must be server-authoritative; cost/security |
 | Real route, but keep the client price formula | Real ETA | Fare still client-set and forgeable | Money must be a server decision |
-| **Server-mediated Route & Price behind stub seams (chosen)** | Real route/ETA; server fare authority; one swap seam | Needs routing/geocoding provider + CSP/SW work | — |
+| **Server-mediated Route & Price behind stub seams (chosen)** | Real route/ETA; server fare authority; one swap seam | Needs a routing/geocoding provider and server integration; the exact backend API origin in the PWA's `connect-src` (plus a provider origin only for a direct-browser call) | — |
 
 ## Consequences
 
@@ -164,23 +247,34 @@ are deferred (see Follow-ups; tile/CSP is the readiness doc's **M1**).
   - Geocoded coordinates unlock real "nearby" instead of today's naming-artifact
     "nearby".
 - **Negative / trade-offs:**
-  - **CSP + service worker** work still needed for the *route/price* service
+  - **Provider / CSP** work still needed for the *route/price* service
     itself: the GL SDK / tile CSP allowance already shipped (`BD-MAP-ACTIVATE`
-    #805), but a route/price API needs its **own** CSP allowance if it calls
-    an external provider directly, and — if exposed same-origin — an explicit
-    SW bypass so `public/sw.js` never caches fare traffic (its origin guard
-    only skips cross-origin tiles today). A safety-boundary touch
-    (`public/index.html` CSP + `public/sw.js`), sw-offline-agent scope, gated
-    behind the readiness doc's **M1**.
+    #805), and `public/sw.js` already bypasses the production cross-origin API
+    request (origin guard) as well as same-origin `/api/` local / proxy
+    requests (pathname guard), so no new protected SW change is needed for it.
+    Enabling the production backend from the Pages PWA requires adding the
+    exact configured API origin to `connect-src` — a reviewed
+    `public/index.html` safety-boundary change, required even for a fully
+    server-mediated Route & Price. A design that calls an external provider
+    **directly from the browser** would additionally need that provider's
+    origin in `connect-src`, and a hypothetical same-origin deployment that
+    served the API outside `/api/` would need a fresh SW review
+    (sw-offline-agent scope) — the open CSP part of the readiness doc's
+    **M1**.
   - Real routing/geocoding has **per-request cost** and latency; estimates may
     need caching (the Redis geo/ETA cache, BD-DOCS-023 data layer).
   - Privacy: real coordinates and geocoding are a new privacy surface (ties to
     the Phase 2 location policy).
 - **Follow-ups:**
-  - Routing/geocoding provider — Mapbox Directions vs self-hosted; tile strategy.
+  - Routing/geocoding provider — Mapbox Directions vs self-hosted; tile strategy; protected provider geocoding/search requires authenticated + finite server-budgeted access before paid calls.
   - Tariff model — base / per-km / per-time, surge, zones, minimum fare; where
     the passenger bid fits.
-  - Tile / CSP / SW specifics — the readiness doc's **M1** decision.
+  - CSP for Route & Price — the open part of the readiness doc's **M1**: the
+    mandatory exact backend API origin in the PWA's `connect-src` before
+    production backend enablement, plus a provider origin only if a
+    direct-browser provider call is ever chosen (SW safety is already
+    satisfied for both the cross-origin production API and same-origin `/api/`
+    local / proxy traffic).
   - ETA/geo caching in the Redis tier for fleet-scale matching.
 
 See [Mini-Yonder Background Services](../governance/mini-yonder-background-services.md)

@@ -58,19 +58,42 @@ Add a client-generated idempotency key per mutation, threaded through the mock n
 
 ## Mapbox track — sequence (after DB, or in parallel; never the same PR)
 
+> **Sequencing cross-reference (BD-MAP-DUAL-EXPERIENCE-01A).** The map program's slice order (01A → 10) now lives in [`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md) §13. The M slices below keep their readiness caveats and map onto it as follows: M1's service-worker safety is already satisfied — for the production cross-origin API and for same-origin `/api/` local / proxy traffic — while its mandatory CSP gate (the exact backend API origin in `connect-src` before the Pages PWA enables the production backend) stays open, with a direct-browser provider origin as an additional, conditional concern; M2 lands through slices 03 (shared map-surface lifecycle), 06 (marker adapter) and 08 (routing authority + `route_picker.js` seam migration); M3 is slice 04 (real passenger geolocation). This file does not duplicate the ordering.
+
 ### Slice M1 — CSP/SW decision (safety task) — partially shipped
 The GL-SDK/tile half is **done**: `public/index.html`'s CSP already carries
 `img-src … blob: https://*.mapbox.com`, `connect-src … https://*.mapbox.com`,
 `style-src 'self' 'unsafe-inline'`, and `worker-src 'self' blob:` / `child-src
 blob:` (landed with `BD-MAP-ACTIVATE` #805, for the vendored GL SDK the
 committed token now activates on `/map`). `script-src` stays `'self'` — the
-SDK is vendored, not loaded from a CDN. What remains **open**: a *future*
-route/price API's own CSP allowance (if it calls an external provider
-directly instead of through a same-origin server route) and, since that
-service may be exposed as a **same-origin** endpoint, an explicit `public/sw.js`
-bypass so it is never cached (the SW needs no rewrite for the GL SDK/tiles —
-its origin guard already prevents cross-origin tile caching; only the
-same-origin fare-endpoint case is unresolved).
+SDK is vendored, not loaded from a CDN.
+
+The service-worker safety half is **done** too. Production runs on two
+origins (BD-DOCS-041, `docs-site/docs/decisions/backend-home-and-stack.md`):
+the PWA on GitHub Pages and `/server` on a separate API origin, which the PWA
+reaches through its configured API base (`public/src/api_config.js`). The
+Route & Price server path is `/api/v1/route-price` — every service plugin is
+mounted at `/api/v1/<name>` (`server/src/server.js:58-60`) — although the
+service itself is still a dark `501` stub
+(`server/src/services/route-price/index.js`, `darkService`). `public/sw.js`
+ignores every non-GET request (`:349`) and returns early for every
+cross-origin request (`:351`, the origin guard), so production API traffic is
+never intercepted or cached; it also returns early for any same-origin GET
+whose pathname starts with `/api/` (`:357`, BD-API-SEAM-01), which covers
+local / test-stand and future same-origin proxy setups. Do not plan a
+protected SW change for `/api/v1/route-price`. (The SW needs no rewrite for
+the GL SDK/tiles either — the same origin guard prevents cross-origin tile
+caching.)
+
+What remains **open**: a **mandatory** CSP gate — before the Pages PWA
+enables the separate production backend, `connect-src` (today `'self'
+https://*.mapbox.com`) must gain the exact configured API origin
+(`public/src/api_config.js` records the same prerequisite); this applies even
+though Route & Price stays fully server-mediated. **Conditionally**, if a
+future design lets the browser call an external Directions / geocoding
+provider directly, that provider origin needs its own `connect-src` allowance
+as well. The routing / geocoding **provider** choice also stays open. The CSP
+change itself is a separate, reviewed safety-boundary PR.
 
 ### Slice M2 — keep the stub contract as the single swap seam — planned
 Already largely true. The real-SDK swap must stay isolated to the **existing seams**, not pushed into screens:

@@ -91,6 +91,9 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 - Backend-driven vehicle/driver layer, passenger or driver realtime positions, Redis geo cache, dispatcher/matching overlay, production ride telemetry.
 - Geocoding, Directions route lines, navigation, live ETA, and authoritative distance/ETA/fare. Route drafts keep deterministic mock coordinates and local mock estimates; `route_service.js` and `price_estimator.js` are unused stubs.
 - Marker and trip-status layers on any screen: `driver_markers.js` (`renderDriverMarkers()` appends marker elements to a MapShell) and `trip_status_layer.js` (`renderTripStatusLayer()` writes the trip-status modifier onto it) are implemented foundation helpers guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`, but no screen imports them yet and they drive no Mapbox GL layers.
+- Driver Free Drive map and Driver Active Navigation. `/driver-navigation?tripId=<id>&leg=pickup|dropoff` is planned only and not registered — an unknown path still falls back to `/feed` — and the driver active ride's «Навигатор» / «Карта» buttons only show a notice.
+
+**Map experiences contract.** BD-MAP-DUAL-EXPERIENCE-01A ([`docs/map-dual-experience-contract.md`](map-dual-experience-contract.md)) splits map work into Passenger Map (`/map`), Driver Free Drive (`/driver-map`) and Driver Active Navigation (`/driver-navigation`, planned only), and freezes the shared rules: the planned status → navigation-leg mapping, geo authority and provenance, the PWA/native boundary and the demo-data rule. Everything beyond the `/map` base map above is PLANNED.
 
 ---
 
@@ -144,6 +147,8 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 | 7 | `/chat` | Coordinate pickup | Same chat store can be opened from feed, inbox, active ride. |
 | 8 | completed driver ride | Close/earnings/history | Ride history and earnings surfaces are mock-only. |
 
+> **Known P1 (BD-MAP-DUAL-EXPERIENCE-01A):** the accept paths (steps 4–5) seed the active ride through `createDemoActiveRide()`, so demo route fields — Moscow coordinates, maneuver text, pickup ETA/distance, demo labels/tags — survive into a real accepted ride (P1-1), and the driver's pickup coordinates can differ from the passenger's for the same order (P1-2). The fix is `BD-MAP-DUAL-EXPERIENCE-01B`, a separate runtime slice; see `docs/map-dual-experience-contract.md` §5.
+
 ---
 
 ## 6. Ride state transition table
@@ -183,6 +188,8 @@ NO_SHOW
 `ACCEPTED` is a current persisted mock status between `NEW_ORDER` and `DRIVER_EN_ROUTE`. It is not just a conceptual backend alias.
 
 `CONFIRMATION_PENDING`, `CONFIRMED`, and `CHAT_STARTED` are reserved/legacy enum members only. They are not wired into the active-ride driver state machine in `public/src/ride_state.js`: they have no `STATUS_TIMESTAMP_FIELD` entry and no `NEXT_DRIVER_STATUS` transition. They are kept as enum constants and are candidates for cleanup. The active driver transition spine is `NEW_ORDER → ACCEPTED → DRIVER_EN_ROUTE → DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER → IN_PROGRESS → COMPLETED`, plus the terminal states `CANCELED` and `NO_SHOW`.
+
+Planned navigation mapping (BD-MAP-DUAL-EXPERIENCE-01A, contract §4): each status maps to a navigation leg for the planned `/driver-navigation` route, with `ride.status` as the source of truth and the URL `leg` as a presentation hint only. It adds no status and changes no transition.
 
 ### Follow-up notes (deferred to future code PRs)
 
@@ -345,4 +352,6 @@ default-src 'self' remains intact; the only CSP exception is the existing Mapbox
 no inline scripts/styles/on* handlers
 no APK/TWA work in this repo phase
 no prototype replacement as index.html
+no demo data on a live map without an explicit demo/fixture mode (BD-MAP-DUAL-EXPERIENCE-01A)
+no /driver-navigation registration before its own slice (BD-MAP-DUAL-EXPERIENCE-01A follow-up order)
 ```

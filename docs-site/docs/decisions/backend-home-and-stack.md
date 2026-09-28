@@ -4,7 +4,7 @@ docType: decision-record
 title: "Backend Home & Stack — Decision Record"
 owner: docs-contract-agent
 status: draft
-revision: 2026-06-20
+revision: 2026-09-27
 effectiveFrom: 2026-06-20
 reviewAfter: 2026-12-20
 visibleFor: [developer, dispatcher, product]
@@ -151,7 +151,7 @@ Each owner module keeps its exported function signatures; only the body swaps fr
 - `public/src/config.js` — a single `API_ORIGIN` constant (empty = same-origin/mock mode, so the static site still works with no server).
 - `public/src/api_client.js` — a thin `fetch` wrapper (base URL, JSON, error normalization to the overlay shape, optional session header) the owners call, so the cross-origin URL + auth header live in one place.
 
-`localStorage` is demoted to an optimistic/offline read-through cache (BD-DOCS-030 §4) until a key drops from the inventory. **CSP:** `connect-src 'self'` in `public/index.html` must gain the exact API origin (and the realtime origin once BD-DOCS-033/036 picks a transport) — one conscious, reviewed safety-boundary PR, never a wildcard. **CORS:** `@fastify/cors` allow-lists exactly the GitHub Pages origin — the mirror of the CSP change. **SW:** under the two-origin model the service worker **already** excludes the API — `public/sw.js` early-returns on cross-origin requests (`url.origin !== self.location.origin`), so `/api` is never intercepted or cached and **no SW change is needed in Phase 1**; only a later *same-origin* reverse-proxy would need a network-first `/api` rule (its own scoped sw-offline-agent change + VERSION bump). Auth responses are never cached regardless (BD-DOCS-032).
+`localStorage` is demoted to an optimistic/offline read-through cache (BD-DOCS-030 §4) until a key drops from the inventory. **CSP:** `connect-src 'self'` in `public/index.html` must gain the exact API origin (and the realtime origin once BD-DOCS-033/036 picks a transport) — one conscious, reviewed safety-boundary PR, never a wildcard. **CORS:** `@fastify/cors` allow-lists exactly the GitHub Pages origin — the mirror of the CSP change. **SW:** current runtime already bypasses BazarDrive API traffic in both supported placements: cross-origin requests return before cache handling through the origin guard, and same-origin requests whose pathname starts with `/api/` return through the explicit pathname guard (`public/sw.js:348-357`). Therefore switching the BazarDrive API itself between the separate API origin and a same-origin `/api/...` proxy does **not** by itself require a network-first rule, cache-strategy change or VERSION bump. This guarantee is path-specific: a future same-origin backend/realtime proxy outside `/api/` still requires a separate SW review. Auth responses remain uncached under the API bypass (BD-DOCS-032).
 
 ### CI / dev
 
@@ -181,7 +181,7 @@ The three reviewed proposals agreed on Fastify + ESM + REST `/api/v1` + deferred
 
 **Negative / trade-offs**
 - Introduces a backend to own: hosting, Postgres ops, auth/session, API versioning.
-- CSP `connect-src` and the SW caching strategy are safety-boundary changes requiring their own scoped, reviewed PRs.
+- CSP `connect-src` remains a safety-boundary change for the two-origin production API. The BazarDrive `/api/` SW bypass is already shipped for both cross-origin and same-origin `/api/` traffic, so API placement alone needs no SW change; only future backend/realtime traffic outside that covered path/origin behavior requires separate SW review.
 - Offline shifts from "localStorage is truth" to "cache + reconcile"; conflict handling and offline-create IDs must be designed (deferred).
 - A second Node toolchain (server Node 22 vs repo CI Node 20) and a Fastify dependency tree (mitigated: first-party `@fastify/*` only, lockfile committed, `npm audit` in `server-ci.yml`).
 
@@ -191,7 +191,7 @@ The three reviewed proposals agreed on Fastify + ESM + REST `/api/v1` + deferred
 
 ## Migration path (module-by-module, gated by #636)
 
-Pre-requisite safety-boundary PRs (their own scope, before any module swap): land `config.js` (`API_ORIGIN`) + `api_client.js`; the CSP `connect-src` exact-origin change (no SW change needed — the two-origin SW already excludes `/api` via its cross-origin early-return). Then, lowest-risk first, **one module per scoped PR** — stand up the entity + endpoint with verbatim BD-DOCS-031 fields, swap the owner body, `await` callers, then update the `smoke-static-data-inventory.mjs` manifest in the *same* PR so the gate stays honest; `localStorage` stays as cache until the key drops from the inventory:
+Pre-requisite safety-boundary PRs (their own scope, before any module swap): land `config.js` (`API_ORIGIN`) + `api_client.js`; the CSP `connect-src` exact-origin change. No SW change is needed for BazarDrive API traffic under the current routes: cross-origin API requests bypass through the origin guard, while same-origin `/api/...` requests bypass through the existing pathname guard. A future same-origin proxy outside `/api/` is not covered by that statement and needs its own SW review. Then, lowest-risk first, **one module per scoped PR** — stand up the entity + endpoint with verbatim BD-DOCS-031 fields, swap the owner body, `await` callers, then update the `smoke-static-data-inventory.mjs` manifest in the *same* PR so the gate stays honest; `localStorage` stays as cache until the key drops from the inventory:
 
 0. **Scaffold** `/server` + Phase-1 migrations + **auth** (BD-DOCS-032 phone+OTP) — `user.v1` becomes a session cache, `phoneVerified` a server fact, OTP endpoints land before any write endpoint needs an authenticated actor. No client cutover yet.
 1. **posts** (`mock_api.js`) — read-side then write-side; lowest coupling, proves the seam end-to-end.
