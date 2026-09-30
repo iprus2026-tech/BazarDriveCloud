@@ -210,7 +210,8 @@
 // v328 (BD-MAPBOX-CONTAINER-HEIGHT-01A-R1): refresh precached cloud.css for the Mapbox host sizing fix.
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
-const VERSION    = 'v330';
+// v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
+const VERSION    = 'v331';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

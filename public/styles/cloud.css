@@ -15767,6 +15767,31 @@ button.pfp-menu-row:active { opacity: 0.7; }
 }
 .bd-error-overlay[hidden] { display: none; }
 
+/* Reserve a shell row for connection banners so screen headers stay visible.
+   The overlay is appended after #app; order places just these passive states
+   before it without changing DOM ownership or the blocking sheet/toast layer. */
+#shell > .bd-error-overlay.offline,
+#shell > .bd-error-overlay.retrying {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  order: -1;
+}
+#shell > .bd-error-overlay.offline .bd-error-banner,
+#shell > .bd-error-overlay.retrying .bd-error-banner {
+  position: relative;
+}
+
+/* Full-viewport screens must fit the remaining shell height too. Welcome
+   keeps a scrollable body so its bottom actions remain reachable when short. */
+#shell:has(> .bd-error-overlay:is(.offline, .retrying):not([hidden])) #app > :is(.screen--welcome, .screen--ob, .screen--trip-confirmation) {
+  min-height: 0;
+}
+#shell:has(> .bd-error-overlay:is(.offline, .retrying):not([hidden])) .ob-state {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* ── Scrim — blocking states only; traps interaction ── */
 .bd-error-scrim {
   position: absolute;
@@ -15788,9 +15813,8 @@ button.pfp-menu-row:active { opacity: 0.7; }
   align-items: center;
   gap: 10px;
   padding: calc(12px + env(safe-area-inset-top, 0px)) 18px 12px;
-  /* Passive informational banner — no actions. Inherit the root overlay's
-     pointer-events: none so taps fall through to the screen's topbar controls
-     underneath (offline / retrying are non-blocking). */
+  /* Passive informational banner — no actions. The shell reserves its space;
+     pointer-events: none keeps offline / retrying states non-blocking. */
   z-index: 2;
   animation: bd-error-slide-down 0.22s ease both;
 }
