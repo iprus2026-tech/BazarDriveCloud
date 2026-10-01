@@ -1002,14 +1002,14 @@ if (process.argv[2] === '--repair-handoff-case') {
   for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure', 'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['phone-switch', 'back-only', 'same-phone-request', 'late-session',
     'retry-match', 'retry-mismatch', 'retry-credential-before', 'retry-credential-during']) {
     await check('actual app OTP/retry repair: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--repair-handoff-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
 
@@ -1138,27 +1138,27 @@ if (process.argv[2] === '--repair-handoff-case') {
   for (const scenario of ['off', 'no-token', 'valid', 'anonymous', 'retry-503', 'retry-network', 'retry-malformed']) {
     await check('actual app/router integration: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['no-bearer', 'user-null', 'reconciling', 'unknown', 'off']) {
     await check('real router dev/docs exemption and product admission: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--dev-docs-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['valid', 'user-null', '503', 'network', 'malformed', 'no-bearer',
     'off', 'leave-pending', 'leave-unknown', 'hash-pending', 'hash-unknown']) {
     await check('actual app ScreenOps boot: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-dev-docs-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['no-bearer', 'user-null', 'role-null', 'role-passenger', 'role-driver',
     'reconciling', 'unknown', 'authenticated', 'off']) {
     await check('actual app/router/screens Guest boundary: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--guest-public-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   console.log('auth-session-bootstrap: ' + count + ' behavioral checks PASS');
