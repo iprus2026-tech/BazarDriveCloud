@@ -9,6 +9,7 @@ import { escapeHtml } from '../util.js';
 import { go } from '../router.js';
 import {
   createDemoActiveRide,
+  createActiveRideSeed,
   updateActiveRideStatus,
   saveActiveRide,
   findActiveRide,
@@ -418,7 +419,11 @@ function loadPassengerRideView(tripId, statusQuery) {
     const snapshot = loadDriverHandoffSnapshot(tripId);
     const useSimOverrides = Boolean(statusQuery) || Boolean(snapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
-    ride = createDemoActiveRide({ tripId, ...overrides });
+    // A confirmed handoff is a real seed even without a canonical record.
+    // Its snapshot supplies labels/ETA; it cannot supply demo coordinates.
+    ride = snapshot?.provenance === 'confirmed_handoff'
+      ? createActiveRideSeed({ tripId, ...overrides, route: {}, order: {} })
+      : createDemoActiveRide({ tripId, ...overrides });
     if (snapshot) {
       ride = applyDriverHandoffSnapshotToRide(ride, snapshot);
     } else {
@@ -555,21 +560,40 @@ function paymentInfo(ride) {
   };
 }
 
+// Presentation provenance only; local accepted rides are not demo merely because
+// they have not been read from the backend. Explicit fixture/sim builders omit it.
+function hasRealRouteContext(ride) {
+  return Boolean(ride && (ride.authoritative || ride.orderId || ride.acceptedSource));
+}
+
+function passengerRouteText(value) {
+  const text = value == null ? '' : String(value).trim();
+  return text === '—' ? '' : text;
+}
+
+function passengerRouteLabels(ride) {
+  const demo = !hasRealRouteContext(ride);
+  return {
+    pickup: passengerRouteText(ride?.route?.pickupLabel) || (demo ? 'ул. Малая Бронная, 28' : ''),
+    dropoff: passengerRouteText(ride?.route?.dropoffLabel) || (demo ? 'Аэропорт Шереметьево, терминал В' : ''),
+  };
+}
+
+function passengerRoutePointsHtml(ride) {
+  const { pickup, dropoff } = passengerRouteLabels(ride);
+  return [
+    ['pickup', 'ОТКУДА', pickup],
+    ['dropoff', 'КУДА', dropoff],
+  ].map(([kind, label, value]) => value
+    ? `<li class="active-ride-passenger__route-point active-ride-passenger__route-point--${kind}"><div class="active-ride-passenger__route-label">${label}</div><div class="active-ride-passenger__route-main">${escapeHtml(value)}</div></li>`
+    : '').join('');
+}
+
 function etaText(ride) {
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — order.pickupEta has no
-  // server contract field behind it at all: serializeRide()'s `order`
-  // sub-object carries only `offerPrice` (see server/src/serialize.js).
-  // round 7 — mergeServerRide now resolves order.pickupEta directly from
-  // `srv.order.pickupEta` (server-or-neutral: real server value if the
-  // backend ever adds one, neutral null otherwise) instead of leaving it
-  // to keep()'s local-preserving spread, which a fourth independent audit
-  // found silently carried the fabricated '4 мин' forward indefinitely. An
-  // authoritative ride with no server order data shows the neutral '—'
-  // instead of the fabricated '4 мин'; local/backend-off keeps the exact
-  // prior fallback.
-  const authoritative = !!(ride && ride.authoritative);
-  const eta = (ride && ride.order && ride.order.pickupEta) || (authoritative ? '—' : '4 мин');
-  return String(eta).replace(/\s*мин(уты?|у)?$/i, ' мин');
+  const eta = hasRealRouteContext(ride)
+    ? (passengerRouteText(ride?.order?.pickupEta) || passengerRouteText(ride?.route?.etaToPickup))
+    : (ride?.order?.pickupEta || '4 мин');
+  return String(eta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
 }
 
 // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit round
@@ -649,41 +673,10 @@ export function deriveWaitCountdown(arrivedAtMs, freeLimitSec, nowMs) {
 function inProgressInfo(ride) {
   const r = (ride && ride.ride) || {};
   const route = (ride && ride.route) || {};
-  const authoritative = !!(ride && ride.authoritative);
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
-  // round 4 — arrivalTime lives on `ride.ride`, the same sub-object
-  // r.etaToDestination used to read from below: serializeRide() never
-  // emits a top-level `ride:` key at all (see mergeServerRide's plain
-  // keep(ride.ride, srv.ride), a pure local pass-through), so r.arrivalTime
-  // is always whatever the local/demo record has, with no server contract
-  // field behind it whatsoever — unlike route.etaToDestination, there is no
-  // "genuinely absent on the server" case to distinguish from "the server
-  // said so"; there is only "a local value exists" or "it doesn't". An
-  // authoritative ride with no local value shows the neutral '—' instead
-  // of the fabricated '14:32'; local/backend-off keeps the exact prior
-  // fallback.
-  const arrivalTime = r.arrivalTime || (authoritative ? '—' : '14:32');
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) review-fix round 2 — same
-  // authoritative-or-demo policy as the merge/render fixes above. Pre-audit
-  // this fell through to `r.etaToDestination` (ride.ride, a DIFFERENT
-  // sub-object still merged via plain keep() — see mergeServerRide) and
-  // then to the hardcoded '17 мин' regardless of authoritative state, even
-  // though `route.etaToDestination` is a real serializeRide() contract
-  // field. An authoritative ride now consults ONLY route.etaToDestination —
-  // never the stale ride.ride.etaToDestination, never the demo literal.
-  //
-  // round 7 — mergeServerRide now resolves route.etaToDestination directly
-  // from `srv.route.etaToDestination` (server-or-neutral), after three
-  // successive rounds (4/5/6) of trying and failing to prove a LOCAL value
-  // real instead (see mergeServerRide's own top-of-body comment for the
-  // full history). For this authoritative branch the effect is simple:
-  // route.etaToDestination is real server truth or null, so
-  // `route.etaToDestination || '—'` already means exactly what it says.
-  // Local/backend-off keeps the exact prior three-step chain unchanged —
-  // this branch reads the pre-merge, non-authoritative `ride.route`
-  // directly and was never touched by any of these merge-side changes.
-  const rawEta = authoritative
-    ? (route.etaToDestination || '—')
+  const real = hasRealRouteContext(ride);
+  const arrivalTime = passengerRouteText(r.arrivalTime) || (real ? '' : '14:32');
+  const rawEta = real
+    ? passengerRouteText(route.etaToDestination)
     : (route.etaToDestination || r.etaToDestination || '17 мин');
   const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
   return { arrivalTime, eta };
@@ -692,41 +685,9 @@ function inProgressInfo(ride) {
 function arrivingDropoffInfo(ride) {
   const r = (ride && ride.ride) || {};
   const route = (ride && ride.route) || {};
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
-  // round 4 — arrivingDropoffInfo is inProgressInfo's exact sibling: both
-  // feed the SAME 'до места' top-card ETA slot via topDriverCardEta (this
-  // one only for the ARRIVING_DROPOFF phase). Pre-audit this read
-  // `route.etaToDropoff` / `r.etaToDropoff` — a field name that appears
-  // NOWHERE else in this file or in ride_seed.js; no local, demo, or
-  // server payload has ever populated it, so this always silently fell
-  // through to the hardcoded '1 мин', for every ride, authoritative or
-  // not. The real serializeRide() contract field for "ETA to
-  // destination" is `route.etaToDestination` — the same field
-  // inProgressInfo consults; there is no separate dropoff-specific ETA
-  // column on either side.
-  //
-  // round 5 update, per a second independent audit round — the
-  // authoritative branch stays ONLY `route.etaToDestination || '—'`: no
-  // `ride.ride` reference, no demo literal, so it can never show a
-  // fabricated value on a server-confirmed ride. (round 7 — this is even
-  // simpler now: mergeServerRide resolves route.etaToDestination directly
-  // from srv, server-or-neutral, so it is always real server truth or
-  // null — see mergeServerRide's own top-of-body comment.) The
-  // non-authoritative/backend-off branch is reverted BYTE-FOR-BYTE to the
-  // pre-round-4 baseline (`route.etaToDropoff || r.etaToDropoff || '1
-  // мин'`) — round 4's swap to route.etaToDestination there was a real,
-  // unintended shipped-behavior change for local/demo rides (ARRIVING_DROPOFF
-  // is reachable only via an explicit `?phase=` deep link — see the TODO
-  // near PASSENGER_IN_PROGRESS_PHASE above — so this was a demo/QA-path
-  // regression, not a normal user-facing one, but still a real deviation
-  // from "preserve local/backend-off behavior exactly"). Yes, this means
-  // `route.etaToDropoff` is a field name that provably does not exist
-  // anywhere in this codebase, so the non-authoritative branch always
-  // resolves to the literal '1 мин' — that is the exact, deliberately
-  // unchanged baseline behavior, not a bug to "fix" again.
-  const authoritative = !!(ride && ride.authoritative);
-  const rawEta = authoritative
-    ? (route.etaToDestination || '—')
+  // Keep explicit demo/sim presentation; real rides use the destination field.
+  const rawEta = hasRealRouteContext(ride)
+    ? passengerRouteText(route.etaToDestination)
     : (route.etaToDropoff || r.etaToDropoff || '1 мин');
   const eta = String(rawEta).replace(/\s*мин(уты?|у)?$/i, ' мин').trim();
   return { eta };
@@ -983,9 +944,11 @@ function topDriverCardHtml(ride, options = {}) {
           </div>
           <div class="active-ride-passenger__driver-sub">${escapeHtml(carLine(ride))}</div>
         </div>
-        <div class="active-ride-passenger__top-card-eta" aria-label="${escapeHtml(`${eta.value} ${eta.label}`)}">
-          <div class="active-ride-passenger__top-card-eta-value" aria-hidden="true">${escapeHtml(eta.value)}</div>
-          <div class="active-ride-passenger__top-card-eta-label" aria-hidden="true">${escapeHtml(eta.label)}</div>
+        <div data-arp-eta-slot${eta.value ? '' : ' hidden'}>
+          <div class="active-ride-passenger__top-card-eta"${eta.value ? ` aria-label="${escapeHtml(`${eta.value} ${eta.label}`)}"` : ''}>
+            <div class="active-ride-passenger__top-card-eta-value" aria-hidden="true">${escapeHtml(eta.value)}</div>
+            <div class="active-ride-passenger__top-card-eta-label" aria-hidden="true">${escapeHtml(eta.label)}</div>
+          </div>
         </div>
       </div>
       <div class="active-ride-passenger__top-card-actions">
@@ -1006,13 +969,7 @@ function topDriverCardHtml(ride, options = {}) {
 }
 
 function routeBlockHtml(ride, options = {}) {
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
-  // authoritative-or-demo policy as driver identity above: a server-
-  // confirmed ride with genuinely null pickup/dropoff labels shows the
-  // neutral '—', never the fabricated demo addresses.
-  const authoritative = !!(ride && ride.authoritative);
-  const pickup = (ride.route && ride.route.pickupLabel) || (authoritative ? '—' : 'ул. Малая Бронная, 28');
-  const dropoff = (ride.route && ride.route.dropoffLabel) || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
+  const pointsHtml = passengerRoutePointsHtml(ride);
   const editable = options.editable !== false;
   const modifier = editable ? '' : ' active-ride-passenger__route--locked';
   const editBtn = editable
@@ -1020,18 +977,10 @@ function routeBlockHtml(ride, options = {}) {
         ${PENCIL_SVG}
       </button>`
     : '';
+  // Keep the control node stable for in-place recovery; only point markup changes.
   return `
-    <div class="active-ride-passenger__route${modifier}">
-      <ul class="active-ride-passenger__route-list" role="list">
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--pickup">
-          <div class="active-ride-passenger__route-label">ОТКУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(pickup)}</div>
-        </li>
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--dropoff">
-          <div class="active-ride-passenger__route-label">КУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(dropoff)}</div>
-        </li>
-      </ul>
+    <div class="active-ride-passenger__route${modifier}"${pointsHtml ? '' : ' hidden'}>
+      <ul class="active-ride-passenger__route-list" role="list">${pointsHtml}</ul>
       ${editBtn}
     </div>
   `;
@@ -1177,7 +1126,7 @@ function renderInProgressSheet(sheet, ride) {
     <div class="active-ride-passenger__header">
       <div class="active-ride-passenger__header-main">
         <div class="active-ride-passenger__title">В пути</div>
-        <div class="active-ride-passenger__sub">Расчётное время прибытия ${escapeHtml(info.arrivalTime)}</div>
+        <div class="active-ride-passenger__sub"${info.arrivalTime ? '' : ' hidden'}>${info.arrivalTime ? `Расчётное время прибытия ${escapeHtml(info.arrivalTime)}` : ''}</div>
       </div>
     </div>
 
@@ -1263,25 +1212,10 @@ function formatCompletedAt(ride) {
 
 function completedStats(ride) {
   const order = (ride && ride.order) || {};
-  const route = (ride && ride.route) || {};
   const r = (ride && ride.ride) || {};
-  // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) — r.duration/r.distance live
-  // on `ride.ride`, which the server never populates at all (plain keep()
-  // pass-through) and has no consumer path to a real value either way.
-  // round 7 — order.destinationEta/destinationDistance now get the same
-  // server-or-neutral treatment as pickupEta (see mergeServerRide's own
-  // top-of-body comment): resolved directly from srv.order, never left to
-  // keep()'s local-preserving spread, which a fourth independent audit
-  // found silently carried the fabricated '42 мин'/'38 км' forward
-  // indefinitely (serializeRide()'s real `order` shape has never carried
-  // either field — order only ever carries offerPrice — so this was
-  // always real server truth or null in principle, just never actually
-  // wired that way until now). An authoritative ride with nothing real in
-  // either slot shows the neutral '—' instead of the fabricated '42 мин'/
-  // '38 км'; local/backend-off keeps the exact prior two fallbacks.
-  const authoritative = !!(ride && ride.authoritative);
-  const time = r.duration || order.destinationEta || (authoritative ? '—' : '42 мин');
-  const distance = r.distance || order.destinationDistance || (authoritative ? '—' : '38 км');
+  const real = hasRealRouteContext(ride);
+  const time = passengerRouteText(r.duration) || passengerRouteText(order.destinationEta) || (real ? '' : '42 мин');
+  const distance = passengerRouteText(r.distance) || passengerRouteText(order.destinationDistance) || (real ? '' : '38 км');
   const completedAt = formatCompletedAt(ride);
   return { time, distance, completedAt };
 }
@@ -1411,9 +1345,7 @@ function renderPassengerRideComplete(ride, deps) {
   // positional `||` fallbacks — inside the non-authoritative branch on
   // purpose, per the same seed-smoke pin as topDriverCardHtml.
   const authoritative = !!(ride && ride.authoritative);
-  const route = (ride && ride.route) || {};
-  const pickup = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');
-  const dropoff = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
+  const routePointsHtml = passengerRoutePointsHtml(ride);
   const driverName = authoritative
     ? ((ride.driver && ride.driver.name) || '—')
     : ((ride.driver && ride.driver.name) || 'Рустам К.');
@@ -1545,31 +1477,22 @@ function renderPassengerRideComplete(ride, deps) {
     </div>
 
     <div class="passenger-complete__stats" role="group" aria-label="Статистика поездки">
-      <div class="passenger-complete__stat">
+      ${stats.time ? `<div class="passenger-complete__stat">
         <div class="passenger-complete__stat-label">Время</div>
         <div class="passenger-complete__stat-value">${escapeHtml(stats.time)}</div>
-      </div>
-      <div class="passenger-complete__stat">
+      </div>` : ''}
+      ${stats.distance ? `<div class="passenger-complete__stat">
         <div class="passenger-complete__stat-label">Расстояние</div>
         <div class="passenger-complete__stat-value">${escapeHtml(stats.distance)}</div>
-      </div>
+      </div>` : ''}
       <div class="passenger-complete__stat">
         <div class="passenger-complete__stat-label">Завершено</div>
         <div class="passenger-complete__stat-value">${escapeHtml(stats.completedAt)}</div>
       </div>
     </div>
 
-    <div class="passenger-complete__card passenger-complete__route">
-      <ul class="active-ride-passenger__route-list" role="list">
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--pickup">
-          <div class="active-ride-passenger__route-label">ОТКУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(pickup)}</div>
-        </li>
-        <li class="active-ride-passenger__route-point active-ride-passenger__route-point--dropoff">
-          <div class="active-ride-passenger__route-label">КУДА</div>
-          <div class="active-ride-passenger__route-main">${escapeHtml(dropoff)}</div>
-        </li>
-      </ul>
+    <div class="passenger-complete__card passenger-complete__route"${routePointsHtml ? '' : ' hidden'}>
+      <ul class="active-ride-passenger__route-list" role="list">${routePointsHtml}</ul>
     </div>
 
     <div class="passenger-complete__driver-section">
@@ -2204,18 +2127,18 @@ export default function activeRidePassenger(options = {}) {
   function renderMapForReadState(nextState) {
     const hasRideData = nextState === PASSENGER_RIDE_READ_STATE.LOADED;
     const route = hasRideData ? ride.route : null;
-    const pickupLabel = route && route.pickupLabel ? route.pickupLabel : '';
-    const dropoffLabel = route && route.dropoffLabel ? route.dropoffLabel : '';
+    const pickupLabel = passengerRouteText(route?.pickupLabel);
+    const dropoffLabel = passengerRouteText(route?.dropoffLabel);
     const key = hasRideData ? `ride:${ride.status}|${pickupLabel}|${dropoffLabel}` : 'unavailable';
     if (mapEl && mapRenderKey === key) return;
     const nextMap = createMapShell({
       variant: 'passenger',
       status: hasRideData ? ride.status : '',
-      route,
-      showRoute: hasRideData,
+      route: { ...route, pickupLabel, dropoffLabel },
+      showRoute: hasRideData && Boolean(pickupLabel && dropoffLabel),
       showCar: hasRideData,
-      showPickup: hasRideData,
-      showDropoff: hasRideData,
+      showPickup: hasRideData && Boolean(pickupLabel),
+      showDropoff: hasRideData && Boolean(dropoffLabel),
       showLabels: hasRideData,
     });
     if (mapEl) mapEl.replaceWith(nextMap);
@@ -2715,7 +2638,8 @@ export default function activeRidePassenger(options = {}) {
     // and stays overwritten unconditionally, `?? null` — a genuinely null
     // value here IS real, current server truth.
     const mergedRoute = {
-      ...keep(ride.route, srv.route),
+      // Server-or-neutral for the entire route, including points/guidance.
+      ...(srv.route || {}),
       pickupLabel: (srv.route && srv.route.pickupLabel) ?? null,
       dropoffLabel: (srv.route && srv.route.dropoffLabel) ?? null,
       etaToPickup: (srv.route && srv.route.etaToPickup) ?? null,
@@ -2770,7 +2694,7 @@ export default function activeRidePassenger(options = {}) {
       // now explicitly resolved from `srv.order` alone; none are left to
       // keep()'s local-preserving spread.
       order: {
-        ...keep(ride.order, srv.order),
+        ...(srv.order || {}),
         offerPrice: (srv.order && srv.order.offerPrice) || null,
         pickupEta: (srv.order && srv.order.pickupEta) ?? null,
         destinationEta: (srv.order && srv.order.destinationEta) ?? null,
@@ -2809,29 +2733,17 @@ export default function activeRidePassenger(options = {}) {
     return mergedRide;
   }
 
-  // Codex follow-up — mergeServerRide's cleanup only ever lives in the
-  // in-memory `ride` closure variable. If a record already exists in
-  // storage for this tripId (a pre-existing, unmarked, backend-derived
-  // trip_* record still carrying the raw demo waiting), nothing here ever
-  // pushed that cleanup back into storage — an offline reload, or one
-  // whose GET fails, would keep reading the stale 2:30/14:18. Mirrors
-  // active_ride.js's persistServerConfirmedWaitingProjection: repair the
-  // EXISTING stored record's waiting projection the moment the server has
-  // proven the trip real, narrowly — never a full overwrite. Base the
-  // repair on the STORED record (never on `ride` or the raw server
-  // projection) so status, timestamps, tripId, orderId, acceptedSource,
-  // passenger, driver, vehicle, route, payment, ride, chat, cancel and
-  // every other stored field survive untouched — including a terminal
-  // stored status, which this never thaws (saveActiveRide's own
-  // terminal-freeze guard still applies unchanged). No-op when nothing is
-  // stored yet — that case is covered by the first-save path (see the
-  // boarding fix below for the one path that lacked one).
-  function persistPassengerServerConfirmedWaitingProjection(cleanedWaiting) {
+  // Repair only the existing stored route/order/waiting projections after a
+  // successful read, including reads that remount before mergeServerRide.
+  // Stored identity, lifecycle and terminal status remain unchanged.
+  function persistPassengerServerConfirmedWaitingProjection(cleanedWaiting, srv) {
     const storedRide = findActiveRide(ride.tripId);
     if (!storedRide) return;
     const repaired = {
       ...storedRide,
       waiting: { ...(cleanedWaiting || {}) },
+      route: { ...(srv.route || {}) },
+      order: { ...(srv.order || {}) },
     };
     delete repaired.localProvenance;
     saveActiveRide(repaired);
@@ -3189,7 +3101,12 @@ export default function activeRidePassenger(options = {}) {
     const waitingSnapshot = ride.status === RIDE_STATUS.WAITING_PASSENGER ? waitingInfo(ride) : null;
     const eta = topDriverCardEta(ride, phaseQuery, waitingSnapshot);
     const etaBox = topCard.querySelector('.active-ride-passenger__top-card-eta');
-    if (etaBox) etaBox.setAttribute('aria-label', eta.value + ' ' + eta.label);
+    const etaSlot = topCard.querySelector('[data-arp-eta-slot]');
+    if (etaSlot) etaSlot.hidden = !eta.value;
+    if (etaBox) {
+      if (eta.value) etaBox.setAttribute('aria-label', eta.value + ' ' + eta.label);
+      else etaBox.removeAttribute('aria-label');
+    }
     const topCardBody = topCard.querySelector('.active-ride-passenger__top-card');
     if (topCardBody) topCardBody.dataset.tone = eta.tone;
     updatePassengerText(topCard, '.active-ride-passenger__top-card-eta-value', eta.value);
@@ -3215,10 +3132,13 @@ export default function activeRidePassenger(options = {}) {
 
     // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) Codex review-fix #2 — same
     // authoritative-or-demo policy as routeBlockHtml.
-    const route = (ride && ride.route) || {};
-    const routeFields = sheet.querySelectorAll('.active-ride-passenger__route-main');
-    if (routeFields[0]) routeFields[0].textContent = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');
-    if (routeFields[1]) routeFields[1].textContent = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');
+    const routeBlock = sheet.querySelector('.active-ride-passenger__route');
+    const routeList = routeBlock?.querySelector('.active-ride-passenger__route-list');
+    if (routeBlock && routeList) {
+      const pointsHtml = passengerRoutePointsHtml(ride);
+      routeList.innerHTML = pointsHtml;
+      routeBlock.hidden = !pointsHtml;
+    }
 
     const pay = paymentInfo(ride);
     const amount = ride.status === RIDE_STATUS.IN_PROGRESS
@@ -3261,7 +3181,9 @@ export default function activeRidePassenger(options = {}) {
     } else if (ride.status === RIDE_STATUS.IN_PROGRESS
       && phaseQuery !== PASSENGER_IN_PROGRESS_PHASE.ARRIVING_DROPOFF) {
       const info = inProgressInfo(ride);
-      updatePassengerText(sheet, '.active-ride-passenger__sub', 'Расчётное время прибытия ' + info.arrivalTime);
+      updatePassengerText(sheet, '.active-ride-passenger__sub', info.arrivalTime ? 'Расчётное время прибытия ' + info.arrivalTime : '');
+      const arrivalSub = sheet.querySelector('.active-ride-passenger__sub');
+      if (arrivalSub) arrivalSub.hidden = !info.arrivalTime;
     } else {
       updatePassengerText(sheet, '.active-ride-passenger__car', carLine(ride));
     }
@@ -3526,7 +3448,7 @@ export default function activeRidePassenger(options = {}) {
       // record's waiting projection right here, before any such early
       // return, so every successful server read — including one that
       // immediately remounts on a forward status — reaches storage.
-      persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));
+      persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting), srv);
       // BD-RIDE-SELECT-ACK-AUTHORITY-01B-A (#939) focused pre-commit audit
       // round 8 — a fourth independent audit (Codex, PR #940 review thread
       // E): the bare `recovery` boolean below used to gate

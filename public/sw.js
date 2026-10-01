@@ -1,3 +1,4 @@
+// v332 (BD-MAP-DUAL-EXPERIENCE-01B): source-only real ride routes and empty ETA presentation.
 // v249 (R06 of #784): the precached ./src/ride_state.js changed (additive STATUS_TIMESTAMP_FIELD
 // export), so installed clients must refresh it (Codex #792). R06 merges before R13's reserved tail,
 // so it takes the next monotonic version; R14/R15/R16 re-sequence to v250/v251/v252.
@@ -211,7 +212,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v331';
+const VERSION    = 'v332';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

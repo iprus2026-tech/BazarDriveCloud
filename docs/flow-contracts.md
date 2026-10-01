@@ -6,6 +6,8 @@
 >
 > This document does not introduce a Mapbox SDK, backend API, auth, payments, push, APK/TWA, CSP relaxations, inline scripts, or rewrites of active ride screens. The live `/map` Mapbox surface it describes shipped separately (BD-MAP-FOUND-01 / BD-MAP-RENDER-MAP / BD-MAP-ACTIVATE, #805).
 
+> **BD-MAP-DUAL-EXPERIENCE-01B:** real order/feed acceptance, passenger selection and confirmed handoff fallback entries seed route/order display data from their source only, preserving pickup/dropoff coordinates and provenance. Successful active-ride GETs replace those projections on both roles, including direct entry, and repair an existing stored projection before a later status update can restore stale values. Missing route/ETA values stay absent in the UI. The seven-field client `RouteSnapshot`, lifecycle and server route/fare authority are unchanged; this does not activate live map navigation.
+
 ---
 
 ## 1. Goal

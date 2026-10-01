@@ -17,6 +17,7 @@ import { resolveRole } from '../smoke_role.js';
 import {
   updateActiveRideStatus,
   createDemoActiveRide,
+  createActiveRideSeed,
   SIM_AUDIT_RIDE_OVERRIDES,
   RIDE_STATUS,
   DEMO_ACTIVE_RIDE_ID,
@@ -458,7 +459,11 @@ export default function activeRide() {
     if (!hasValidStatusQuery && !driverSnapshot && !hasExplicitTripId && !hasLatestHandedOffTripId) return renderDriverEmpty();
     const useSimOverrides = hasValidStatusQuery || Boolean(driverSnapshot);
     const overrides = useSimOverrides ? SIM_AUDIT_RIDE_OVERRIDES : {};
-    ride = createDemoActiveRide({ tripId, ...overrides });
+    // A confirmed handoff is a real seed even without a canonical record.
+    // Its snapshot supplies labels/ETA; it cannot supply demo coordinates.
+    ride = driverSnapshot?.provenance === 'confirmed_handoff'
+      ? createActiveRideSeed({ tripId, ...overrides, route: {}, order: {} })
+      : createDemoActiveRide({ tripId, ...overrides });
     if (driverSnapshot) {
       ride = applyDriverHandoffSnapshotToRide(ride, driverSnapshot);
       if (!hasValidStatusQuery && DRIVER_SIMULATION_STATUSES.has(driverSnapshot.status)) {
@@ -550,7 +555,14 @@ export default function activeRide() {
       status: (pendingStatus != null && srv.status !== pendingStatus) ? ride.status : (srv.status || ride.status),
       passenger: keep(ride.passenger, srv.passenger),
       driver: keep(ride.driver, srv.driver),
-      route: keep(ride.route, srv.route),
+      // A successful server read replaces route/order display projections.
+      // Omitted fields must not survive from an old seed or direct-entry demo.
+      route: { ...(srv.route || {}) },
+      order: {
+        ...(srv.order || {}),
+        pickupEta: srv.order?.pickupEta ?? srv.route?.etaToPickup ?? null,
+        destinationEta: srv.order?.destinationEta ?? srv.route?.etaToDestination ?? null,
+      },
       waiting: mergeServerWaiting(ride.waiting, srv.waiting),
       timestamps: keep(ride.timestamps, srv.timestamps),
       cancel: (srv.cancel && srv.cancel.by) ? srv.cancel : ride.cancel,
@@ -559,31 +571,17 @@ export default function activeRide() {
     return merged;
   }
 
-  // Codex follow-up — mergeServerRide's cleanup (mergeServerWaiting +
-  // deleted localProvenance) only ever lives in the in-memory `ride`
-  // closure variable. If a record already exists in storage for this
-  // tripId (a pre-existing, unmarked, backend-derived trip_* record still
-  // carrying the raw demo waiting), persistDriverRideStatus's lazy save
-  // (`if (!findActiveRide(...)) saveActiveRide(ride)`) never fires — that
-  // guard only covers the true first-save case — and the very next status
-  // transition's updateActiveRideStatus does its own independent
-  // findActiveRide(tripId) read straight from storage, silently
-  // re-persisting the stale 2:30/14:18 pair. A successful server read is
-  // authoritative proof the trip is real, so once mergeServerRide has run,
-  // repair the EXISTING stored record's waiting projection immediately —
-  // narrowly, not a full overwrite. Base the repair on the STORED record
-  // (never on the in-memory `ride`/server projection) so status,
-  // timestamps, tripId, orderId, acceptedSource, passenger, driver, route,
-  // cancel and every other stored field survive untouched — including a
-  // terminal stored status, which this never thaws (saveActiveRide's own
-  // terminal-freeze guard still applies unchanged). No-op when nothing is
-  // stored yet — that case is already covered by the first-save path.
+  // Successful reads repair only existing stored display/waiting projections.
+  // Otherwise the next updateActiveRideStatus would resurrect old demo route
+  // fields. Keep stored identity, lifecycle and terminal state untouched.
   function persistServerConfirmedWaitingProjection() {
     const storedRide = findActiveRide(ride.tripId);
     if (!storedRide) return;
     const repaired = {
       ...storedRide,
       waiting: { ...(ride.waiting || {}) },
+      route: { ...(ride.route || {}) },
+      order: { ...(ride.order || {}) },
     };
     delete repaired.localProvenance;
     saveActiveRide(repaired);
@@ -832,15 +830,23 @@ export default function activeRide() {
   }
 
   function setDriverMapReadVisibility(visible) {
-    for (const selector of [
-      '.bd-map-shell__route',
-      '.bd-map-shell__marker--pickup',
-      '.bd-map-shell__marker--dropoff',
-      '.bd-map-shell__marker--car',
-      '.bd-map-shell__label',
-    ]) {
-      for (const el of mapShell.querySelectorAll(selector)) el.hidden = !visible;
+    // The shell survives hydration: refresh its labels from the current ride,
+    // not the temporary seed used when the DOM was first constructed.
+    const pickup = routeText(ride.route?.pickupLabel);
+    const dropoff = routeText(ride.route?.dropoffLabel);
+    for (const [kind, label] of [['pickup', pickup], ['dropoff', dropoff]]) {
+      const labelEl = mapShell.querySelector(`.bd-map-shell__label--${kind}`);
+      if (labelEl) {
+        labelEl.textContent = label;
+        labelEl.hidden = !visible || !label;
+      }
+      const marker = mapShell.querySelector(`.bd-map-shell__marker--${kind}`);
+      if (marker) marker.hidden = !visible || !label;
     }
+    const routeLine = mapShell.querySelector('.bd-map-shell__route');
+    if (routeLine) routeLine.hidden = !visible || !pickup || !dropoff;
+    const car = mapShell.querySelector('.bd-map-shell__marker--car');
+    if (car) car.hidden = !visible;
   }
 
   top.querySelector('#ar-gear').addEventListener('click', () => showNotice('Настройки смены будут добавлены позже'));
@@ -954,24 +960,55 @@ export default function activeRide() {
     else renderSheet(preserveFocus);
   }
 
+  // Presentation only: absent route values must not leave empty badges or separators.
+  function routeText(value) {
+    const text = value == null ? '' : String(value).trim();
+    return text === '—' ? '' : text;
+  }
+  function routeParts(...values) {
+    return values.map(routeText).filter(Boolean).join(' · ');
+  }
+  function optionalRouteText(className, value) {
+    const text = routeText(value);
+    return text ? `<div class="${className}">${escapeHtml(text)}</div>` : '';
+  }
+  function pickupEtaHtml(value, progress = false) {
+    const eta = routeText(value);
+    if (!eta) return '';
+    return `<div class="active-ride__pickup-eta${progress ? ' active-ride__pickup-eta--progress' : ''}"><div class="active-ride__pickup-eta-value">${escapeHtml(eta)}</div><div class="active-ride__pickup-eta-label">${progress ? 'до места' : 'до подачи'}</div></div>`;
+  }
   function routeRows() {
-    return `<ul class="active-ride__route-list" role="list"><li class="active-ride__route-point active-ride__route-point--pickup"><div class="active-ride__route-time">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__route-body"><div class="active-ride__route-main">${escapeHtml(ride.route?.pickupLabel || '')}</div><div class="active-ride__route-sub">${escapeHtml(ride.order?.pickupDistance || '')} до пассажира</div></div></li><li class="active-ride__route-point active-ride__route-point--dropoff"><div class="active-ride__route-time">${escapeHtml(ride.order?.destinationEta || '')}</div><div class="active-ride__route-body"><div class="active-ride__route-main">${escapeHtml(ride.route?.dropoffLabel || '')}</div><div class="active-ride__route-sub">${escapeHtml(ride.order?.destinationDistance || '')} · ${escapeHtml(ride.order?.destinationNote || '')}</div></div></li></ul>`;
+    const pickupDistance = routeText(ride.order?.pickupDistance);
+    const points = [
+      { kind: 'pickup', eta: ride.order?.pickupEta || ride.route?.etaToPickup, label: ride.route?.pickupLabel, sub: pickupDistance ? `${pickupDistance} до пассажира` : '' },
+      { kind: 'dropoff', eta: ride.order?.destinationEta || ride.route?.etaToDestination, label: ride.route?.dropoffLabel, sub: routeParts(ride.order?.destinationDistance, ride.order?.destinationNote) },
+    ];
+    const rows = points.map(({ kind, eta, label, sub }) => {
+      if (![eta, label, sub].some((value) => routeText(value))) return '';
+      return `<li class="active-ride__route-point active-ride__route-point--${kind}"><div class="active-ride__route-time">${escapeHtml(routeText(eta))}</div><div class="active-ride__route-body">${optionalRouteText('active-ride__route-main', label)}${optionalRouteText('active-ride__route-sub', sub)}</div></li>`;
+    }).join('');
+    return rows ? `<ul class="active-ride__route-list" role="list">${rows}</ul>` : '';
   }
 
   function renderNewOrder() {
-    const tagsHtml = (ride.order?.tags || []).map((t) => `<span class="active-ride__tag">${escapeHtml(t)}</span>`).join('');
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title"><span class="active-ride__sheet-bullet" aria-hidden="true">${arDot()}</span>НОВЫЙ ЗАКАЗ</div><div class="active-ride__timer">${escapeHtml(String(ride.order?.acceptTimerSec ?? 14))}</div></div><div class="active-ride__price-row"><div class="active-ride__price-col"><div class="active-ride__price">${escapeHtml(ride.order?.offerPrice || '')}</div><div class="active-ride__meta">${escapeHtml(ride.order?.rate || '')} · комиссия ${escapeHtml(ride.order?.commission || '')}</div></div><button type="button" class="active-ride__map-btn" id="ar-map-btn">Карта</button></div>${routeRows()}${tagsHtml ? `<div class="active-ride__tags" role="list">${tagsHtml}</div>` : ''}<div class="active-ride__actions"><button type="button" class="bd-btn ghost active-ride__btn-skip" id="ar-skip">Пропустить</button><button type="button" class="bd-btn primary active-ride__btn-accept" id="ar-accept">Принять заказ</button></div>`;
+    const tagsHtml = (Array.isArray(ride.order?.tags) ? ride.order.tags : []).map(routeText).filter(Boolean).map((t) => `<span class="active-ride__tag">${escapeHtml(t)}</span>`).join('');
+    const commission = routeText(ride.order?.commission);
+    const meta = routeParts(ride.order?.rate, commission ? `комиссия ${commission}` : '');
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-title"><span class="active-ride__sheet-bullet" aria-hidden="true">${arDot()}</span>НОВЫЙ ЗАКАЗ</div><div class="active-ride__timer">${escapeHtml(String(ride.order?.acceptTimerSec ?? 14))}</div></div><div class="active-ride__price-row"><div class="active-ride__price-col"><div class="active-ride__price">${escapeHtml(ride.order?.offerPrice || '')}</div>${optionalRouteText('active-ride__meta', meta)}</div><button type="button" class="active-ride__map-btn" id="ar-map-btn">Карта</button></div>${routeRows()}${tagsHtml ? `<div class="active-ride__tags" role="list">${tagsHtml}</div>` : ''}<div class="active-ride__actions"><button type="button" class="bd-btn ghost active-ride__btn-skip" id="ar-skip">Пропустить</button><button type="button" class="bd-btn primary active-ride__btn-accept" id="ar-accept">Принять заказ</button></div>`;
     sheet.querySelector('#ar-map-btn').addEventListener('click', () => showNotice('Детальная карта будет доступна после Mapbox integration'));
     sheet.querySelector('#ar-accept').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-skip').addEventListener('click', () => showNotice('Заказ пропущен. Полный idle-flow будет добавлен позже.'));
   }
 
   function navCard() {
-    return `<div class="active-ride__nav-card"><div class="active-ride__nav-icon" aria-hidden="true">${arIcon('nav', 20)}</div><div class="active-ride__nav-body"><div class="active-ride__nav-main">${escapeHtml(ride.route?.currentInstruction || '')}</div><div class="active-ride__nav-sub">${escapeHtml(ride.route?.currentStreet || '')}</div></div><button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button></div>`;
+    const instruction = routeText(ride.route?.currentInstruction);
+    const street = routeText(ride.route?.currentStreet);
+    if (!instruction && !street) return '';
+    return `<div class="active-ride__nav-card"><div class="active-ride__nav-icon" aria-hidden="true">${arIcon('nav', 20)}</div><div class="active-ride__nav-body">${optionalRouteText('active-ride__nav-main', instruction)}${optionalRouteText('active-ride__nav-sub', street)}</div><button type="button" class="active-ride__map-btn" id="ar-nav-btn">Навигатор</button></div>`;
   }
 
   function renderAccepted() {
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.pickupLabel || 'Точка подачи')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Заказ принят</div>${optionalRouteText('active-ride__sheet-sub', ride.route?.pickupLabel)}</div>${pickupEtaHtml(ride.order?.pickupEta || ride.route?.etaToPickup)}</div>${routeRows()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-start-pickup">Поехать к пассажиру</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-accepted">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel-accepted">Отменить</button></div></div>`;
     sheet.querySelector('#ar-start-pickup').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_EN_ROUTE); renderSheet(); });
     sheet.querySelector('#ar-open-chat-accepted').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=driver`));
     sheet.querySelector('#ar-cancel-accepted').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
@@ -979,8 +1016,8 @@ export default function activeRide() {
   }
 
   function renderEnRoute() {
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-approaching">Подъезжаю</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-enroute">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
-    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Едете к пассажиру</div>${optionalRouteText('active-ride__sheet-sub', routeParts(ride.order?.pickupDistance, ride.route?.pickupLabel))}</div>${pickupEtaHtml(ride.order?.pickupEta || ride.route?.etaToPickup)}</div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-approaching">Подъезжаю</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-enroute">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
+    sheet.querySelector('#ar-nav-btn')?.addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-approaching').addEventListener('click', () => {
       appendDriverChatMessage(ride.tripId, 'Подъезжаю к точке подачи');
       ride = persistDriverRideStatus(RIDE_STATUS.DRIVER_APPROACHING_PICKUP);
@@ -993,8 +1030,8 @@ export default function activeRide() {
   }
 
   function renderApproaching() {
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Почти у пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.order?.pickupDistance || '')} · ${escapeHtml(ride.route?.pickupLabel || '')}</div></div><div class="active-ride__pickup-eta"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.order?.pickupEta || '')}</div><div class="active-ride__pickup-eta-label">до подачи</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-approaching">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
-    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Почти у пассажира</div>${optionalRouteText('active-ride__sheet-sub', routeParts(ride.order?.pickupDistance, ride.route?.pickupLabel))}</div>${pickupEtaHtml(ride.order?.pickupEta || ride.route?.etaToPickup)}</div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-arrived">Я на месте</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-open-chat-approaching">Чат с пассажиром</button><button type="button" class="bd-btn ghost active-ride__btn-cancel" id="ar-cancel">Отменить</button></div></div>`;
+    sheet.querySelector('#ar-nav-btn')?.addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-arrived').addEventListener('click', () => { ride = persistDriverRideStatus(RIDE_STATUS.WAITING_PASSENGER); renderSheet(); });
     sheet.querySelector('#ar-open-chat-approaching').addEventListener('click', () => go(`/chat?tripId=${encodeURIComponent(ride.tripId)}&role=driver`));
     sheet.querySelector('#ar-cancel').addEventListener('click', () => openDriverCancelSheet(root, { onConfirm: (code) => { ride = persistDriverCancel(RIDE_STATUS.CANCELED, code); }, onClose: () => renderSheet() }));
@@ -1219,8 +1256,8 @@ export default function activeRide() {
 
   function renderInProgress() {
     const finishPrice = ride.ride?.price || '';
-    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div><div class="active-ride__sheet-sub">${escapeHtml(ride.route?.dropoffLabel || '')}</div></div><div class="active-ride__pickup-eta active-ride__pickup-eta--progress"><div class="active-ride__pickup-eta-value">${escapeHtml(ride.route?.etaToDestination || '')}</div><div class="active-ride__pickup-eta-label">до места</div></div></div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
-    sheet.querySelector('#ar-nav-btn').addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
+    sheet.innerHTML = `<div class="active-ride__sheet-head"><div class="active-ride__sheet-head-main"><div class="active-ride__sheet-title">Везёте пассажира</div>${optionalRouteText('active-ride__sheet-sub', ride.route?.dropoffLabel)}</div>${pickupEtaHtml(ride.route?.etaToDestination, true)}</div>${navCard()}${passengerRowHtml(ride.passenger || {})}<div class="active-ride__actions active-ride__actions--stack"><button type="button" class="bd-btn primary active-ride__btn-primary" id="ar-finish">Завершить${finishPrice ? ` · ${escapeHtml(finishPrice)}` : ''}</button><div class="active-ride__secondary-actions"><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-stop">+ Остановка</button><button type="button" class="bd-btn ghost active-ride__btn-sec" id="ar-issue">Проблема</button></div></div>`;
+    sheet.querySelector('#ar-nav-btn')?.addEventListener('click', () => showNotice('Навигатор будет доступен после Mapbox integration'));
     sheet.querySelector('#ar-finish').addEventListener('click', () => commitDriverCompletion());
     sheet.querySelector('#ar-stop').addEventListener('click', () => showNotice('Добавление остановки будет доступно позже'));
     sheet.querySelector('#ar-issue').addEventListener('click', () => openDriverProblemSheet(root, { onAction: showNotice }));

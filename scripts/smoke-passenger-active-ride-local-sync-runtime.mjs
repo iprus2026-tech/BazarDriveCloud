@@ -125,6 +125,9 @@ class BDElement {
   set className(v) { this._classes = new Set(String(v || '').split(/\s+/).filter(Boolean)); }
   get id() { return this._attrs.get('id') || ''; }
   set id(v) { this._attrs.set('id', String(v)); }
+  // Reflect the boolean attribute like the browser, including parsed markup.
+  get hidden() { return this._attrs.has('hidden'); }
+  set hidden(value) { if (value) this._attrs.set('hidden', ''); else this._attrs.delete('hidden'); }
   getAttribute(name) { return this._attrs.has(name) ? this._attrs.get(name) : null; }
   setAttribute(name, value) {
     this._attrs.set(name, String(value));
@@ -1584,9 +1587,9 @@ await tick(12);
       && !completeText23.includes('Шереметьево'));
   expect('S23: the terminal COMPLETE renderer shows the neutral "—" for driver NAME',
     (app.querySelector('.active-ride-passenger--complete .active-ride-passenger__driver-name')?.textContent || '').includes('—'));
-  expect('S23: the terminal COMPLETE renderer shows the neutral "—" for both pickup and dropoff',
-    Array.from(app.querySelectorAll('.active-ride-passenger--complete .active-ride-passenger__route-main')).length === 2
-      && Array.from(app.querySelectorAll('.active-ride-passenger--complete .active-ride-passenger__route-main')).every((n) => (n.textContent || '').trim() === '—'));
+  expect('S23: the terminal COMPLETE renderer hides unknown pickup and dropoff',
+    app.querySelectorAll('.active-ride-passenger--complete .active-ride-passenger__route-main').length === 0
+      && app.querySelector('.passenger-complete__route')?.hidden === true);
   // #939 focused pre-commit audit round 5 — same fix as S22: driver.initials
   // is now derived from the confirmed (here: null) srv.driver.name, so the
   // terminal renderer's avatar must also show the neutral '—', never the
@@ -1699,8 +1702,8 @@ resolveFetch24({
 await tick(12);
 {
   const etaValueText24 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
-  expect('S24: an authoritative IN_PROGRESS ride with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("99 мин", real orderId/tripId, consistent) and the server genuinely null STILL shows the neutral "—" — local is never consulted at all, no matter how real it looks',
-    etaValueText24 === '—',
+  expect('S24: an authoritative IN_PROGRESS ride with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("99 мин", real orderId/tripId, consistent) and the server genuinely null hides unknown ETA — local is never consulted at all, no matter how real it looks',
+    etaValueText24 === '' && app.querySelector('[data-arp-eta-slot]')?.hidden === true,
     etaValueText24);
 }
 delete globalThis.__BD_API_BASE__;
@@ -1800,8 +1803,8 @@ await tick(12);
 {
   const etaValueText24c = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
   const avatarText24c = app.querySelector('.active-ride-passenger__avatar')?.textContent || '';
-  expect('S24c: no canonical record + a statusQuery-triggered SIM_AUDIT fallback (whose route.etaToDestination/order.destinationEta happen to genuinely agree, "28 мин") shows the neutral "—" ETA on an authoritative GET — the historical hardest-to-catch case, now trivially correct since local is never consulted',
-    etaValueText24c === '—',
+  expect('S24c: no canonical record + a statusQuery-triggered SIM_AUDIT fallback (whose route.etaToDestination/order.destinationEta happen to genuinely agree, "28 мин") hides unknown ETA on an authoritative GET — the historical hardest-to-catch case, now trivially correct since local is never consulted',
+    etaValueText24c === '' && app.querySelector('[data-arp-eta-slot]')?.hidden === true,
     etaValueText24c);
   expect('S24c: the same SIM_AUDIT fallback\'s avatar shows the neutral "—", never the built-in demo "РК"',
     avatarText24c === '—' || avatarText24c.includes('—'),
@@ -1884,8 +1887,8 @@ resolveFetch26({
 await tick(12);
 {
   const etaValueText26 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
-  expect('S26: an authoritative DRIVER_EN_ROUTE ride with a REAL-looking local order.pickupEta ("99 мин") but the server genuinely null shows the neutral "—" ETA — local is never consulted, never the "4 мин" demo fallback either',
-    etaValueText26 === '—',
+  expect('S26: an authoritative DRIVER_EN_ROUTE ride with a REAL-looking local order.pickupEta ("99 мин") but the server genuinely null hides unknown ETA — local is never consulted, never the "4 мин" demo fallback either',
+    etaValueText26 === '' && app.querySelector('[data-arp-eta-slot]')?.hidden === true,
     etaValueText26);
 }
 delete globalThis.__BD_API_BASE__;
@@ -1977,15 +1980,11 @@ resolveFetch27({
 });
 await tick(12);
 {
-  // .passenger-complete__stat-value renders THREE stats in template order:
-  // time, distance, completedAt (the last from formatCompletedAt, a
-  // separate function with its own out-of-scope fallback — see the
-  // scenario comment above). Only the first two (time/distance) are
-  // completedStats' own fields under test here.
+  // Unknown time/distance rows are omitted; only completedAt remains.
   const statValues27 = Array.from(app.querySelectorAll('.active-ride-passenger--complete .passenger-complete__stat-value'))
     .map((n) => (n.textContent || '').trim());
-  expect('S27: an authoritative COMPLETED ride with REAL-looking local order.destinationEta/destinationDistance ("99 мин"/"77 км") but the server genuinely null shows the neutral "—" for both completedStats fields — local is never consulted, never "42 мин"/"38 км" either',
-    statValues27.length === 3 && statValues27[0] === '—' && statValues27[1] === '—',
+  expect('S27: an authoritative COMPLETED ride with REAL-looking local order.destinationEta/destinationDistance ("99 мин"/"77 км") but the server genuinely null hides both unknown completedStats fields — local is never consulted, never "42 мин"/"38 км" either',
+    statValues27.length === 1 && !statValues27.includes('99 мин') && !statValues27.includes('77 км'),
     statValues27);
 }
 delete globalThis.__BD_API_BASE__;
@@ -2095,8 +2094,8 @@ resolveFetch29({
 await tick(12);
 {
   const etaValueText29 = app.querySelector('.active-ride-passenger__top-card-eta-value')?.textContent || '';
-  expect('S29: authoritative IN_PROGRESS+ARRIVING_DROPOFF with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("2 мин") and the server genuinely null STILL shows the neutral "—" — local is never consulted, never the "1 мин" backend-off fallback either',
-    etaValueText29 === '—',
+  expect('S29: authoritative IN_PROGRESS+ARRIVING_DROPOFF with the MOST realistic-looking local route.etaToDestination/order.destinationEta ("2 мин") and the server genuinely null hides unknown ETA — local is never consulted, never the "1 мин" backend-off fallback either',
+    etaValueText29 === '' && app.querySelector('[data-arp-eta-slot]')?.hidden === true,
     etaValueText29);
 }
 delete globalThis.__BD_API_BASE__;

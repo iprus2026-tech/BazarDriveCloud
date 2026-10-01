@@ -1,6 +1,6 @@
 # BD-MAP-DUAL-EXPERIENCE-01A — Map experiences contract
 
-Status: contract-only / draft. Only items labelled **CURRENT** describe shipped runtime; **PLANNED** and **FUTURE NATIVE** items are targets, not shipped behavior.
+Status: map architecture contract / draft, with the 01B route-source correction implemented in this revision. Only items labelled **CURRENT** describe shipped runtime; **PLANNED** and **FUTURE NATIVE** items are targets, not shipped behavior.
 
 Gate: `BD-MAP-DUAL-EXPERIENCE-01A-CONTRACT`.
 
@@ -91,7 +91,7 @@ Rules:
 - Slice 07 must keep backend opportunities non-actionable/read-only until the corresponding server driver-eligibility + matching/offer transition is actually available. CURRENT `POST /matching/offers` authenticates the caller but still defers granted-driver role gating, so production slice-07 actionability requires that server-side eligibility boundary rather than relying on `isDriverLineReady()` alone.
 - After passenger selection creates the authoritative assignment/ride, slice 07 owns the driver-side handoff needed to discover that assigned trip and enter `/active-ride?role=driver&tripId=<id>`. The exact notification/poll/read transport is not frozen in 01A, but it MUST resolve server-authoritative assignment/ride state, survive reload/cross-device, and never fabricate a local/demo ride.
 - Slice 09 later enters Driver Active Navigation from that authoritative active ride.
-- The live rollout is blocked by P1-1 and P1-2 (§5, fixed by 01B), and its backend order markers/actions also by P1-3 / 05G and the server eligibility/action cutover above.
+- The live rollout requires the 01B correction of P1-1/P1-2 (§5), and its backend order markers/actions also by P1-3 / 05G and the server eligibility/action cutover above.
 
 ### 3.3 Driver Active Navigation — `/driver-navigation` (PLANNED ONLY)
 
@@ -143,7 +143,9 @@ Rules:
 - The URL MUST NOT mutate ride status. The planned route accepts no `status=` override, unlike the `/active-ride` simulation override (`active_ride.js:254-297`).
 - No new status is introduced: `RIDE_STATUS` and the transitions in `public/src/ride_state.js` are unchanged. Arrival stays the existing `DRIVER_APPROACHING_PICKUP → WAITING_PASSENGER` transition, which stamps `arrivedAt` (`ride_state.js:113`). The waiting timer and the no-show flow stay on `/active-ride`.
 
-## 5. Known P1 blockers
+## 5. P1 findings and prerequisite fixes
+
+The P1-1/P1-2 descriptions below record the **pre-01B baseline**; the current correction is specified after their acceptance list. P1-3 remains open.
 
 P1-1 and P1-2 were reproduced in the 00A preflight by running the shipped modules from a scratch script outside the repository. P1-3 comes from the 01A review of the current server order seam.
 
@@ -180,18 +182,26 @@ So after an authoritative read of a non-terminal ride both screens still hold th
 - The Driver Free Drive live rollout (slice 07).
 - The Driver Active Navigation runtime (slice 09).
 
-Prerequisite: **`BD-MAP-DUAL-EXPERIENCE-01B` — remove demo-route inheritance and preserve canonical order coordinates.** It is a runtime slice and is not fixed in this docs slice. Scope:
+Prerequisite: **`BD-MAP-DUAL-EXPERIENCE-01B` — remove demo-route inheritance and preserve canonical order coordinates.** Its implemented runtime scope is:
 
 - A. every real-ride constructor or seed built on `createDemoActiveRide()`, starting with the three seeds above (explicit `?fixture=` builders stay demo by design, §10);
 - B. the driver backend-hydration merge, `active_ride.js` `mergeServerRide()`;
 - C. the passenger backend-hydration merge, `active_ride_passenger.js` `mergeServerRide()`;
 - D. direct entry: a valid backend trip with no local canonical record.
 
-PLANNED acceptance:
+01B acceptance:
 
 - An accepted ride's pickup/destination labels and coordinates equal the order's.
 - After a successful authoritative hydration, no route field the server omits is inherited from the demo ride. Unless the server supplies a real value, `route.pickup`, `route.dropoff`, `route.currentInstruction`, `route.currentStreet`, the demo distance/ETA and the demo route labels/tags are absent or null, and the UI hides empty values. Real server-provided labels and ETAs may stay.
 - Smoke pins guard the seeds and the direct-entry / no-local-record hydration on both the driver and the passenger screen: after server hydration, neither carries demo Moscow route residue.
+
+### 01B runtime correction
+
+- `createActiveRideSeed()` replaces the demo `route` and `order` blocks before applying real seed data. Accepted canonical orders, plain feed posts, passenger seeds and confirmed handoff fallback entries preserve the supplied pickup/dropoff objects, including coordinates and provenance. Missing points remain missing; zero/unknown duration no longer invents a 28-minute ETA.
+- Both active-ride hydration mergers replace the full route/order projection with server data. Omitted/null fields do not inherit demo or previously cached values, including on direct entry without a stored ride. Successful reads also repair these projections on an existing stored ride so a later local status update cannot restore stale route data; stored identity, timestamps and terminal status stay intact.
+- Driver route rows/navigation/ETA and passenger route/ETA/completed-distance presentation hide unknown values. Known source labels and estimates remain visible. The driver placeholder map refreshes its labels after hydration; both roles omit missing endpoint labels/markers instead of showing MapShell defaults. Explicit fixture/simulation presentation remains available.
+- `scripts/smoke-ride-route-source.mjs` covers all three seed paths, sparse/empty server projections for both roles, source-point equality, storage repair followed by status update, terminal freeze and real-versus-demo presentation. Existing passenger DOM recovery tests also cover hidden empty route/ETA fields.
+- This corrects inheritance, not coordinate trust: mock-hash points stay mock-hash. The seven-field client `RouteSnapshot`, Ride State Machine, server routing/fare authority and live Mapbox rollout are unchanged. Slices 02/03/05G/08 and the other release prerequisites remain separate gates.
 
 ### P1-3 — the public order feed can expose precise passenger location through multiple carriers
 
@@ -678,7 +688,7 @@ CURRENT: the repository contains no Blender or Unity code, asset or integration.
 | Slice | Scope | Depends on | Status |
 | --- | --- | --- | --- |
 | 01A | This docs contract | — | This slice (docs only) |
-| 01B | Remove demo-route inheritance (seeds, both backend-hydration merges, direct entry); preserve canonical pickup/dropoff (§5) | 01A | PLANNED — prerequisite for 07 and 09 |
+| 01B | Remove demo-route inheritance (seeds, both backend-hydration merges, direct entry); preserve canonical pickup/dropoff (§5) | 01A | IMPLEMENTED — source-only seeds/hydration; prerequisite for 07 and 09 |
 | 02 | Shared `GeoPoint` + origin-based provenance + bounded WGS84 validator + trusted-live eligibility helper, including the conditional `device_fix` `capturedAt` requirement and device-fix freshness against an explicit caller budget (runtime seam; §§6–7) | 01A | PLANNED |
 | 03 | Shared `map_surface` lifecycle + Mapbox error fallback, including one screen-owned live-map handle and idempotent disposal/reuse for both router exits and in-place screen remount/replacement | 01A | PLANNED |
 | 04 | Real passenger geolocation; every captured `device_fix` records its sensor capture timestamp in `capturedAt` (§6) | 02, 03 | PLANNED |
@@ -686,7 +696,7 @@ CURRENT: the repository contains no Blender or Unity code, asset or integration.
 | 05G | Order Geo Privacy / protected opportunity projection: public `/orders` exposes neither precise coordinates / exact canonical labels / point details nor passenger free-text `comment`; exact location data and exact free text only through server-authorized projections (§5 P1-3; details below) | 02; the server order seam (backend track) | PLANNED — prerequisite for publishing trusted precise points / labels / comments and for 07's backend order markers |
 | 06 | Real Mapbox marker adapter and live pickup/destination marker rendering from slice 05's already-acquired canonical trusted points | 02, 03, 05 | PLANNED |
 | 06P | Passenger Presence / Tracking integration: authenticated privacy-scoped `NearbyVehicleMarker`s on `/map`; assigned-driver tracking on passenger `/active-ride` uses immutable RideTrackingBinding/status gating and consumes slice 03 lifecycle for internal map/root remounts | 02, 03, 06; Presence track; nearby privacy projection; RideTrackingBinding backend prerequisite | PLANNED — assigned-driver tracking does NOT require current `OPEN driver_shift` lookup |
-| 07 | Driver Free Drive: protected backend opportunity markers/cards only from 05G, plus the driver-side backend matching/offer action cutover and authoritative assignment→ride handoff. Server-owned orders never use local `acceptCanonicalRideOrder()`; offers do not create rides until passenger selection/assignment/ride bootstrap (§3.2) | 01B, 02, 03, 04, 05G, 06; server driver-eligibility/matching boundary | PLANNED — blocked by 01B, 05G and actionable backend matching eligibility |
+| 07 | Driver Free Drive: protected backend opportunity markers/cards only from 05G, plus the driver-side backend matching/offer action cutover and authoritative assignment→ride handoff. Server-owned orders never use local `acceptCanonicalRideOrder()`; offers do not create rides until passenger selection/assignment/ride bootstrap (§3.2) | 01B, 02, 03, 04, 05G, 06; server driver-eligibility/matching boundary | PLANNED — requires merged 01B, 05G and actionable backend matching eligibility |
 | 08 | **Server Route & Price authority**: protected provider-backed geo acquisition; authenticated + finite-budget waypoint routing; active guidance with server-derived leg/endpoint and finite reroute budget; mode-discriminated NavigationRouteView; route_service + price_estimator + route-picker cutover; server quote/recompute binding at order persistence; server-derived completion receipt totals; one shared navigationOriginMaxAccuracyMeters (§§3.3, 6, 8) | 02; **05 before passenger waypoint / route-picker product cutover**; backend pilot gates; BD-DOCS-035 follow-ups; **05G before production order persistence/publication of trusted precise route context** | PLANNED — server/provider/quote and active-guidance work may proceed where inputs permit, but passenger waypoint cutover waits on 05 and precise order persistence additionally waits on 05G |
 | 09 | Driver Navigation PWA: register `/driver-navigation`; direct client-local `NavigationOriginFix` acquisition; wire existing driver `/active-ride` navigation action into the new route with status-derived leg; fresh fix per reroute; latest-request/generation guard for out-of-order responses; terminal/no-guidance invalidation/geometry clear; exact-assigned-driver UI admission as defense in depth | 01B, 03, 06, 07, 08 | PLANNED — server authorization and post-provider authority recheck remain slice 08 |
 | 10 | Native Navigation SDK | 09; a native-shell governance decision; a native ADR defining offline navigation and reroute reconciliation | FUTURE NATIVE — later |

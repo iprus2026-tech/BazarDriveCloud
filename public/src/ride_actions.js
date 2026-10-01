@@ -4,7 +4,7 @@
 // the accept-order side effect. No UI here, no router, no DOM.
 
 import {
-  createDemoActiveRide,
+  createActiveRideSeed,
   saveActiveRide,
   RIDE_STATUS,
 } from './ride_state.js';
@@ -67,7 +67,7 @@ export function buildRideFromPost(post) {
   const p = post || {};
   const tripId = `feed-${p.id || Date.now()}`;
   const passengerName = p.passenger ? (p.author || 'Пассажир') : 'Пассажир';
-  return createDemoActiveRide({
+  return createActiveRideSeed({
     tripId,
     status: RIDE_STATUS.NEW_ORDER,
     passenger: {
@@ -80,6 +80,8 @@ export function buildRideFromPost(post) {
     route: {
       pickupLabel: p.from || '',
       dropoffLabel: p.to || '',
+      pickup: p.pickup || null,
+      dropoff: p.dropoff || null,
     },
     // BD-RIDE-WAITING-01E final repair — this is the marketplace/plain-post
     // accept path (post.canonical !== 'ride_order'), a real Ride construction
@@ -314,7 +316,7 @@ export function seedActiveRideFromAcceptedOrder(order, options = {}) {
   const snapshot = buildRouteSnapshotFromOrder(order);
   if (!snapshot) return null;
   const acceptedSource = pickStr(options.acceptedSource) || 'canonical_accept';
-  const ride = createDemoActiveRide({
+  const ride = createActiveRideSeed({
     tripId: snapshot.tripId,
     role: 'driver',
     status: RIDE_STATUS.ACCEPTED,
@@ -327,6 +329,8 @@ export function seedActiveRideFromAcceptedOrder(order, options = {}) {
       pickupLabel: snapshot.pickupLabel,
       dropoffLabel: snapshot.dropoffLabel,
       etaToDestination: snapshot.etaLabel,
+      pickup: order.pickup || null,
+      dropoff: order.dropoff || null,
     },
     ride: {
       price: snapshot.priceLabel,

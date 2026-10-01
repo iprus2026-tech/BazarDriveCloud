@@ -212,9 +212,9 @@ expect('renderer reads `(ride.driver && ride.driver.rating)`',
 expect('renderer reads `ride.vehicle` via the carLine helper',
   /carLine\(ride\)/.test(passengerSrc) && /ride\s*&&\s*ride\.vehicle/.test(passengerSrc));
 expect('renderer reads `ride.route.pickupLabel`',
-  /ride\.route\s*&&\s*ride\.route\.pickupLabel/.test(passengerSrc));
+  /ride\?\.route\?\.pickupLabel/.test(passengerSrc));
 expect('renderer reads `ride.route.dropoffLabel`',
-  /ride\.route\s*&&\s*ride\.route\.dropoffLabel/.test(passengerSrc));
+  /ride\?\.route\?\.dropoffLabel/.test(passengerSrc));
 
 // ── D. Banned demo strings are POSITIONAL `||` fallbacks only ───────
 // Live code (no comments) is the scan target. Three banned strings —

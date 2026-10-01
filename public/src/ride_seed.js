@@ -21,7 +21,7 @@
 // lifecycle write). `request` is the shape requestFromOrder() produces.
 // `driver` is the shape mapResponseToDriverCard() produces.
 
-import { createDemoActiveRide, RIDE_STATUS } from './ride_state.js';
+import { createActiveRideSeed, RIDE_STATUS } from './ride_state.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from './ride_waiting_policy.js';
 
 function driverInitials(driver) {
@@ -50,7 +50,7 @@ export function buildPassengerRideSeed(order, request, driver) {
   const orderId = String(order.id);
   const tripId = `trip_${orderId}`;
   const now = new Date().toISOString();
-  const ride = createDemoActiveRide({
+  const ride = createActiveRideSeed({
     tripId,
     role: 'passenger',
     status: RIDE_STATUS.DRIVER_EN_ROUTE,
@@ -70,7 +70,7 @@ export function buildPassengerRideSeed(order, request, driver) {
     order: {
       offerPrice: driver.price || request.price,
       pickupEta: driver.eta,
-      destinationEta: order?.durationMin ? `${order.durationMin} мин` : '28 мин',
+      destinationEta: order?.durationMin ? `${order.durationMin} мин` : null,
       destinationDistance: order?.distanceKm ? `${order.distanceKm} км` : '—',
       passengerComment: request.note,
     },
@@ -78,7 +78,7 @@ export function buildPassengerRideSeed(order, request, driver) {
       pickupLabel: request.pickupLabel,
       dropoffLabel: request.dropoffLabel,
       etaToPickup: driver.eta,
-      etaToDestination: order?.durationMin ? `${order.durationMin} мин` : '28 мин',
+      etaToDestination: order?.durationMin ? `${order.durationMin} мин` : null,
       pickup: order?.pickup || null,
       dropoff: order?.dropoff || null,
     },

@@ -246,6 +246,17 @@ export function createDemoActiveRide(overrides = {}) {
   return merged;
 }
 
+// BD-MAP-DUAL-EXPERIENCE-01B — real order/post seeds supply their own route
+// and order display data. Replace those blocks before merging so partial
+// points, omitted estimates and absent guidance cannot inherit demo values.
+// Other legacy defaults and lifecycle/timestamp rules stay unchanged.
+export function createActiveRideSeed(overrides = {}) {
+  const ride = createDemoActiveRide({ ...overrides, route: null, order: null });
+  ride.route = isPlainObject(overrides.route) ? { ...overrides.route } : {};
+  ride.order = isPlainObject(overrides.order) ? { ...overrides.order } : {};
+  return ride;
+}
+
 function nonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
