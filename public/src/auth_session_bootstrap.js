@@ -166,6 +166,9 @@ export function createAuthSessionBootstrap({
   }
 
   function abandonLogin() {
+    // Preserve the baseline anonymous Guest path: there is nothing to abandon
+    // until a credential/handoff actually exists.
+    if (!handoff && !readToken()) return false;
     ++loginSequence;
     ++sequence;
     active?.cancel();
