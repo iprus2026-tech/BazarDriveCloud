@@ -613,7 +613,8 @@ async function guestPublicCase(name) {
   assert.equal(dom.starts(), 1);
   assert.equal(localStorage.getItem('bazardrive.auth.v1'), guestReadOnly ? null : authBefore,
     'explicit Guest selection clears any retained bearer');
-  assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'no authority/cache rewrite');
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), guestReadOnly ? localStorage.getItem('bazardrive.user.v1') : originalProfile,
+    'non-Guest paths preserve the profile cache');
   assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, hasBearer ? 1 : 0);
   if (pending) { session.resolve(response({ user: null })); await flush(); }
   assert.deepEqual(errors, []);
@@ -723,6 +724,9 @@ async function loginHandoffCase(name) {
     }
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
     if (name === 'guest-after-verify') {
+      // Seed account-scoped data that must not survive entering Guest.
+      localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify([{ id: 'private-order' }]));
+      user.set({ firstName: 'Private Name' });
       await click('ob-back'); // profile -> otp
       await click('ob-back'); // otp -> phone, invalidates attempt
       await click('ob-back'); // phone -> role
@@ -730,8 +734,20 @@ async function loginHandoffCase(name) {
       assert.ok(guest); guest.click(); await flush();
       await click('ob-next');
       assert.equal(localStorage.getItem('bazardrive.auth.v1'), null, 'Guest cannot retain the minted bearer');
+      assert.equal(localStorage.getItem('bazardrive.ride_orders.v1'), null, 'Guest clears account-scoped ride data');
+      assert.equal(user.get().firstName, null, 'Guest clears the prior profile');
       assert.equal(user.get().role, 'guest');
       assert.equal(products, 1, 'Guest enters the public feed only after auth is abandoned');
+      return;
+    }
+    if (name === 'back-exit-after-verify') {
+      await click('ob-back'); // profile -> otp
+      await click('ob-back'); // otp -> phone
+      await click('ob-back'); // phone -> role
+      await click('ob-back'); // role -> welcome, abandons auth
+      assert.equal(location.hash, '#/welcome');
+      assert.equal(localStorage.getItem('bazardrive.auth.v1'), null, 'back-exit clears the bearer');
+      assert.equal(products, 0);
       return;
     }
     input('ob-firstname', 'QA');
@@ -1070,7 +1086,8 @@ if (process.argv[2] === '--repair-handoff-case') {
     });
   }
   for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure',
-    'authority-loss-finish', 'verify-switch-reonboard', 'guest-after-verify', 'off-demo']) {
+    'authority-loss-finish', 'verify-switch-reonboard', 'guest-after-verify', 'back-exit-after-verify',
+    'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });

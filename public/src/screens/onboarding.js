@@ -707,6 +707,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
+      if (isBackendEnabled() && !verifyPhoneOnly) auth?.abandonLogin?.();
       go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
       return;
     }
@@ -834,11 +835,12 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           nextBtn.addEventListener('click', () => {
             if (!draft.role) return;
             if (draft.role === 'guest') {
-              // Explicitly abandoning a verified flow must drop its bearer/handoff;
-              // otherwise the "Guest" surface would still be an authenticated actor.
+              // Guest is a clean anonymous boundary. Drop any authenticated handoff
+              // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
                 auth?.abandonLogin?.();
                 invalidateOtpAttempt();
+                resetLocalSession();
               }
               user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();
