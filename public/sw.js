@@ -1,3 +1,4 @@
+// v345 (BD-PASSENGER-AUTHORITY-04B-B-R7): replacement-handoff ownership, cross-tab abandon, Guest snapshot fixes.
 // v344 (BD-PASSENGER-AUTHORITY-04B-B-R6): preserve pre-existing session when onboarding edit is canceled.
 // v343 (BD-PASSENGER-AUTHORITY-04B-B-R5): abandon auth on onboarding exit and clear Guest account state.
 // v342 (BD-PASSENGER-AUTHORITY-04B-B-R4): preserve baseline Guest profile flags after auth abandon.
@@ -223,7 +224,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v344';
+const VERSION    = 'v345';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

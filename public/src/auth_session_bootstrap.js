@@ -29,6 +29,7 @@ export function createAuthSessionBootstrap({
   const listeners = new Set();
   let snapshot = makeSnapshot('BOOT');
   let loginSequence = 0;
+  let loginAttemptSequence = 0;
   let handoff = null;
 
   function makeSnapshot(state, user = null, error = null) {
@@ -49,14 +50,16 @@ export function createAuthSessionBootstrap({
   // Router ownership + generation defeat A->B->A and competing login responses.
   function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger' } = {}) {
     const authorityRole = ['passenger', 'driver'].includes(expectedRole) ? expectedRole : null;
-    const generation = ++loginSequence;
+    const attemptGeneration = ++loginAttemptSequence;
     ++sequence;
     active?.cancel();
     active = null;
-    handoff = null;
+    // Keep the currently committed handoff until this replacement OTP has
+    // actually been accepted and persisted. A failed request must not orphan
+    // the bearer that an eventual Back/Guest boundary still owns.
     const priorToken = readToken();
     const priorUserId = readUserId();
-    const owns = () => generation === loginSequence && isCurrent();
+    const owns = () => attemptGeneration === loginAttemptSequence && isCurrent();
     return async (payload, phone) => {
       if (!owns() || readToken() !== priorToken || readUserId() !== priorUserId) {
         return { ok: false, code: 'AUTH_STALE' };
@@ -95,6 +98,7 @@ export function createAuthSessionBootstrap({
         fail('AUTH_STORAGE_FAILED');
         return { ok: false, code: 'AUTH_STORAGE_FAILED' };
       }
+      const generation = ++loginSequence;
       handoff = { token: payload.token, userId: u.userId, generation, ownsUI: owns,
         expectedRole: authorityRole, authority: true };
       return resumeLogin();
@@ -166,10 +170,33 @@ export function createAuthSessionBootstrap({
   }
 
   function abandonLogin() {
-    // Only credentials installed by THIS login handoff may be abandoned here.
-    // An already-authenticated actor can open onboarding/profile edit and Back
-    // out before beginLogin(); that pre-existing session must survive.
-    if (!handoff) return false;
+    // Only the credential still owned by THIS committed handoff may be removed.
+    // If another tab replaced the token/user, discard our stale handoff but
+    // never delete the unrelated actor's credential.
+    const expected = handoff;
+    if (!expected) return false;
+    const credentialOwned = expected.generation === loginSequence
+      && readToken() === expected.token && readUserId() === expected.userId;
+    ++loginAttemptSequence;
+    ++loginSequence;
+    ++sequence;
+    active?.cancel();
+    active = null;
+    handoff = null;
+    if (!credentialOwned) {
+      fail('AUTH_IDENTITY_MISMATCH');
+      return false;
+    }
+    dropAuth();
+    publish('ANONYMOUS');
+    return true;
+  }
+
+  function enterGuest() {
+    // Explicit Guest selection is an actor-detach boundary, not merely a
+    // handoff cancellation. It must clear persisted auth AND in-memory boot
+    // authority even when no replacement handoff was started.
+    ++loginAttemptSequence;
     ++loginSequence;
     ++sequence;
     active?.cancel();
@@ -263,7 +290,7 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale, abandonLogin,
+    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale, abandonLogin, enterGuest,
   });
 }
 

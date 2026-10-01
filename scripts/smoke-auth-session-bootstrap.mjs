@@ -994,6 +994,41 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(drops, 0);
     assert.equal(c.getSnapshot().state, 'BOOT');
   });
+  await check('failed replacement attempt retains prior handoff ownership for Back exit', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.record().userId, 'b');
+    // Starting a second OTP attempt must not erase the committed handoff before
+    // that replacement verify returns successfully.
+    f.begin();
+    assert.equal(f.c.abandonLogin(), true);
+    assert.equal(f.record(), null);
+    assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('stale handoff cannot delete a credential replaced by another tab', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin()(verified())).ok, true);
+    record = { token: 'token-c', userId: 'c' }; // another tab/account won
+    c.markLoginStale();
+    assert.equal(c.abandonLogin(), false);
+    assert.deepEqual(record, { token: 'token-c', userId: 'c' });
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+  });
+  await check('explicit Guest transition clears stored auth and publishes ANONYMOUS without a handoff', async () => {
+    let record = { token: 'driver-token', userId: 'driver-a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      dropAuth: () => { record = null; },
+      requestSession: async () => sessionFor('driver-a', 'driver') });
+    assert.equal(c.enterGuest(), true);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
   await check('first login reset is distinguished from an A-to-B account switch', async () => {
     let record = null, reset = null;
     const c = create({ backendEnabled: () => true,

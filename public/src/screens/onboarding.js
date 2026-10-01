@@ -838,7 +838,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               // Guest is a clean anonymous boundary. Drop any authenticated handoff
               // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
-                auth?.abandonLogin?.();
+                auth?.enterGuest?.();
                 invalidateOtpAttempt();
                 resetLocalSession();
               }
