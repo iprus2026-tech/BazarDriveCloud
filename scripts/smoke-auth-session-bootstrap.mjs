@@ -899,7 +899,8 @@ if (process.argv[2] === '--repair-handoff-case') {
       count++;
       console.log('PASS — ' + name);
     } catch (error) {
-      throw new Error('FAIL — ' + name + ': ' + (error?.message || error));
+      const summary = String(error?.message || error).split('\n')[0];
+      throw new Error('FAIL — ' + name + ': ' + summary);
     }
   }
   const fixture = overrides => create({ backendEnabled: () => true,
