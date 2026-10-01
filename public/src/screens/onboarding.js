@@ -731,6 +731,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
     user.set({
       onboarded: true,
+      welcomeSeen: true,
       role,
       phone,
       firstName: draft.firstName,
