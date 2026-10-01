@@ -750,7 +750,19 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
-      if (isBackendEnabled() && !verifyPhoneOnly) auth?.abandonLogin?.();
+      if (isBackendEnabled() && !verifyPhoneOnly) {
+        const hadHandoff = auth?.hasUncommittedLogin?.() === true;
+        if (hadHandoff) {
+          if (auth?.abandonLogin?.() !== true) {
+            setStepError('Не удалось безопасно завершить вход. Повторите попытку.');
+            return;
+          }
+          if (resetLocalSession() === false) {
+            setStepError('Не удалось очистить локальную сессию. Повторите попытку.');
+            return;
+          }
+        }
+      }
       go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
       return;
     }
@@ -881,9 +893,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               // Guest is a clean anonymous boundary. Drop any authenticated handoff
               // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
-                auth?.enterGuest?.();
+                if (auth?.enterGuest?.() !== true || resetLocalSession() === false) {
+                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
+                  return;
+                }
                 invalidateOtpAttempt();
-                resetLocalSession();
               }
               user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();

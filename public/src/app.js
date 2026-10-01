@@ -56,6 +56,7 @@ register('/onboarding', (context) => onboarding(context, {
   markLoginStale: () => bootSession.markLoginStale(),
   abandonLogin: () => bootSession.abandonLogin(),
   enterGuest: () => bootSession.enterGuest(),
+  hasUncommittedLogin: () => bootSession.hasUncommittedLogin(),
 }));
 register('/new',         composer);
 register('/respond',     respond);

@@ -117,6 +117,10 @@ function clearTripDemoMode() {
 // localStorage access) so partial storage failures cannot leave the
 // boundary half-applied.
 export function clearUserScopedStorage() {
+  // Credential removal is the gate for the whole detach boundary. If the
+  // bearer cannot be proven gone, preserve the rest of the account cache and
+  // let the caller stay fail-closed instead of pretending logout succeeded.
+  if (clearAuth() === false) return false;
   clearRideHistory();
   clearFavoriteRoutes();
   clearActiveRideStore();
@@ -134,6 +138,6 @@ export function clearUserScopedStorage() {
   clearDriverReceiptsStore();
   clearMyPostsStore();
   clearDriverOfferStore();
-  clearAuth();
   clearTripDemoMode();
+  return true;
 }

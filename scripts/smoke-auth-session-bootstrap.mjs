@@ -1071,6 +1071,31 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(record, null);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
+  await check('logout/Guest stay fail-closed when credential removal cannot be confirmed', async () => {
+    let record = { token: 'token-b', userId: 'b' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => false,
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin()(verified())).ok, true);
+    assert.equal(c.abandonLogin(), false);
+    assert.deepEqual(record, { token: 'token-b', userId: 'b' });
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+
+    const guest = create({ backendEnabled: () => true,
+      readToken: () => 'driver-token', readUserId: () => 'driver-a',
+      dropAuth: () => false });
+    assert.equal(guest.enterGuest(), false);
+    assert.equal(guest.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(guest.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+  });
+  await check('verified Back abandonment clears the complete local-session boundary', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /const hadHandoff = auth\?\.hasUncommittedLogin\?\.\(\) === true/);
+    assert.match(source, /if \(resetLocalSession\(\) === false\)/);
+  });
   await check('uncommitted handoff sentinel remains true until finishLogin commits', async () => {
     const f = loginFixture();
     assert.equal((await f.begin()(verified())).ok, true);
@@ -1157,6 +1182,21 @@ if (process.argv[2] === '--repair-handoff-case') {
     const f = loginFixture();
     assert.equal((await f.begin()({ token: 'incomplete', user: {} })).ok, false);
     assert.equal(f.record().userId, 'a'); assert.equal(f.clears(), 0);
+  });
+  await check('real clearAuth reports a retained credential instead of completing logout', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    const sticky = storage();
+    globalThis.localStorage = sticky;
+    assert.equal(auth.setAuth({ token: 'sticky-token', userId: 'sticky-user' }), true);
+    const originalRemove = localStorage.removeItem;
+    localStorage.removeItem = key => {
+      if (key === 'bazardrive.auth.v1') return;
+      originalRemove(key);
+    };
+    assert.equal(auth.clearAuth(), false);
+    assert.ok(sticky.getItem('bazardrive.auth.v1'));
+    globalThis.localStorage = storage();
+    auth.clearAuth();
   });
   for (const failure of ['write', 'readback', 'wrong-user']) {
     await check('real auth_token storage failure blocks handoff: ' + failure, async () => {

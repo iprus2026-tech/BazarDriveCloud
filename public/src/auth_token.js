@@ -60,7 +60,8 @@ export function clearAuth() {
   try {
     localStorage.removeItem(STORAGE_KEY);
     blocked = localStorage.getItem(STORAGE_KEY) !== null;
+    return !blocked;
   } catch {
-    // ignore
+    return false;
   }
 }

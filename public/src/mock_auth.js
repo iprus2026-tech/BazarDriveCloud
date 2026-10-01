@@ -27,15 +27,17 @@ import { go } from './router.js';
 // BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
 // value cannot outlive the user that set it.
 export function resetLocalSession() {
-  clearUserScopedStorage();
+  if (clearUserScopedStorage() === false) return false;
   clearSmokeRole();
   user.reset();
+  return true;
 }
 
 // Full mock logout: clears local user-scoped state and navigates to the
 // welcome screen. This is the single boundary that passenger and driver
 // logout handlers should call.
 export function performLocalLogout() {
-  resetLocalSession();
+  if (!resetLocalSession()) return false;
   go('/welcome');
+  return true;
 }

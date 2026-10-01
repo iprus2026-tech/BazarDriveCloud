@@ -199,7 +199,10 @@ export function createAuthSessionBootstrap({
       fail('AUTH_IDENTITY_MISMATCH');
       return false;
     }
-    dropAuth();
+    if (dropAuth() === false) {
+      fail('AUTH_STORAGE_FAILED');
+      return false;
+    }
     publish('ANONYMOUS');
     return true;
   }
@@ -214,7 +217,10 @@ export function createAuthSessionBootstrap({
     active?.cancel();
     active = null;
     handoff = null;
-    dropAuth();
+    if (dropAuth() === false) {
+      fail('AUTH_STORAGE_FAILED');
+      return false;
+    }
     publish('ANONYMOUS');
     return true;
   }
