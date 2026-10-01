@@ -74,6 +74,11 @@ export function createAuthSessionBootstrap({
         fail('SESSION_PROTOCOL');
         return { ok: false, code: 'SESSION_PROTOCOL' };
       }
+      const verifiedAuthority = u.phoneVerified === true && u.activeRole === authorityRole
+        && u.roles.includes(authorityRole);
+      // A structurally valid OTP response is not enough to replace the current actor.
+      // Validate the selected authority BEFORE clearing the old credential/profile.
+      if (!verifiedAuthority) return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED' };
       // Never restore the old bearer if replacement fails.
       dropAuth();
       if (!priorUserId || priorUserId !== u.userId) {
@@ -91,9 +96,7 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'AUTH_STORAGE_FAILED' };
       }
       handoff = { token: payload.token, userId: u.userId, generation, ownsUI: owns,
-        expectedRole: authorityRole,
-        authority: u.phoneVerified === true && u.activeRole === authorityRole
-          && u.roles.includes(authorityRole) };
+        expectedRole: authorityRole, authority: true };
       return resumeLogin();
     };
   }
@@ -160,6 +163,17 @@ export function createAuthSessionBootstrap({
     active?.cancel();
     active = null;
     return fail('AUTH_IDENTITY_MISMATCH');
+  }
+
+  function abandonLogin() {
+    ++loginSequence;
+    ++sequence;
+    active?.cancel();
+    active = null;
+    handoff = null;
+    dropAuth();
+    publish('ANONYMOUS');
+    return true;
   }
 
   async function reconcile({ uiContinuation = false } = {}) {
@@ -245,7 +259,7 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale,
+    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale, abandonLogin,
   });
 }
 

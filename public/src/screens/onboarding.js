@@ -520,6 +520,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let otpGeneration = 0;
   let otpAttempt = null;
   let confirmedAttempt = null;
+  let accountSwitchedDuringLogin = false;
 
   const ownsScreen = () => renderContext.isCurrent();
   const expectedAuthRole = () => verifyPhoneOnly ? (knownRole ?? 'passenger') : draft.role;
@@ -590,6 +591,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           isCurrent: () => ownsAttempt(attempt),
           expectedRole: expectedAuthRole(),
           resetAccount: ({ accountSwitch } = {}) => {
+            accountSwitchedDuringLogin = accountSwitch === true;
             resetLocalSession();
             if (accountSwitch) consumePendingAction();
           },
@@ -674,6 +676,14 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   function completePhoneVerification() {
     if (!canFinishAuth()) return;
     if (isBackendEnabled()) {
+      if (accountSwitchedDuringLogin) {
+        // The old account-scoped profile was intentionally cleared. Do not mark
+        // the new identity complete with empty names/profile data; rebuild it.
+        user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
+          phone: confirmedAttempt.phone, onboarded: false, welcomeSeen: true });
+        if (auth.finishLogin()) go('/onboarding');
+        return;
+      }
       user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
         phone: confirmedAttempt.phone, onboarded: true, welcomeSeen: true });
       if (auth.finishLogin()) go(verifyReturnRoute());
@@ -824,8 +834,13 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           nextBtn.addEventListener('click', () => {
             if (!draft.role) return;
             if (draft.role === 'guest') {
-              // Guest path: record role, clear any pending create-post action, go to feed
-              user.set({ welcomeSeen: true, role: 'guest' });
+              // Explicitly abandoning a verified flow must drop its bearer/handoff;
+              // otherwise the "Guest" surface would still be an authenticated actor.
+              if (isBackendEnabled()) {
+                auth?.abandonLogin?.();
+                invalidateOtpAttempt();
+              }
+              user.set({ welcomeSeen: true, onboarded: false, role: 'guest' });
               consumePendingAction();
               go('/feed');
               return;

@@ -54,6 +54,7 @@ register('/onboarding', (context) => onboarding(context, {
   passengerConfirmed: () => bootSession.passengerConfirmed(),
   finishLogin: () => bootSession.finishLogin(),
   markLoginStale: () => bootSession.markLoginStale(),
+  abandonLogin: () => bootSession.abandonLogin(),
 }));
 register('/new',         composer);
 register('/respond',     respond);

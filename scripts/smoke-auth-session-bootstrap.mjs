@@ -623,8 +623,9 @@ async function loginHandoffCase(name) {
   const dom = installDOM({ parseMarkup: true });
   const router = await import('../public/src/router.js');
   const { user } = await import('../public/src/state.js');
-  user.set({ welcomeSeen: true, onboarded: false, role: 'passenger', firstName: 'Old account' });
-  if (name === 'account-switch') localStorage.setItem('bazardrive.auth.v1',
+  const verifySwitch = name === 'verify-switch-reonboard';
+  user.set({ welcomeSeen: true, onboarded: verifySwitch, role: 'passenger', firstName: 'Old account' });
+  if (name === 'account-switch' || verifySwitch) localStorage.setItem('bazardrive.auth.v1',
     JSON.stringify({ token: 'old-token', userId: 'old-user' }));
   globalThis.__BD_API_BASE__ = name === 'off-demo' ? '' : 'https://api.invalid';
   location.hash = '#/onboarding?step=phone';
@@ -637,7 +638,7 @@ async function loginHandoffCase(name) {
     if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
       userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
     assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
-    if (name === 'account-switch' && options.headers.Authorization === 'Bearer old-token') {
+    if ((name === 'account-switch' || verifySwitch) && options.headers.Authorization === 'Bearer old-token') {
       return response({ user: { userId: 'old-user', sessionId: 'old-session',
         activeRole: 'passenger', phoneVerified: true } });
     }
@@ -647,10 +648,12 @@ async function loginHandoffCase(name) {
     return pending.promise;
   };
   await import('../public/src/app.js'); await flush();
-  if (name === 'account-switch') {
+  if (name === 'account-switch' || verifySwitch) {
     const { setSmokeRole } = await import('../public/src/smoke_role.js');
     setSmokeRole('driver');
-    router.setPendingAction(() => assert.fail('old account pending action must not run'));
+    if (name === 'account-switch') {
+      router.setPendingAction(() => assert.fail('old account pending action must not run'));
+    }
   }
   let products = 0;
   router.register('/feed', () => { products++; return new dom.Element(); });
@@ -709,7 +712,26 @@ async function loginHandoffCase(name) {
     assert.ok(node('ob-err').textContent.includes('не совпала'));
     assert.equal(products, 0);
   } else {
+    if (verifySwitch) {
+      assert.equal(location.hash, '#/onboarding');
+      assert.equal(user.get().onboarded, false, 'switched identity must rebuild its local profile');
+      assert.equal(user.get().firstName, '', 'old account profile data cannot survive the switch');
+      assert.equal(auth.getAuthUserId(), 'new-user');
+      return;
+    }
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
+    if (name === 'guest-after-verify') {
+      await click('ob-back'); // profile -> otp
+      await click('ob-back'); // otp -> phone, invalidates attempt
+      await click('ob-back'); // phone -> role
+      const guest = dom.elements.app.querySelector('[data-role="guest"]');
+      assert.ok(guest); guest.click(); await flush();
+      await click('ob-next');
+      assert.equal(auth.getAuthToken(), null, 'Guest cannot retain the minted bearer');
+      assert.equal(user.get().role, 'guest');
+      assert.equal(products, 1, 'Guest enters the public feed only after auth is abandoned');
+      return;
+    }
     input('ob-firstname', 'QA');
     node('ob-next').click(); await flush();
     if (name === 'authority-loss-finish') {
@@ -909,6 +931,24 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.c.roleConfirmed('driver'), true);
     assert.equal(f.c.passengerConfirmed(), false);
   });
+  await check('authority mismatch never clears the current account before replacement is authorized', async () => {
+    const f = loginFixture();
+    const wrongRole = verified('b', 'driver');
+    const result = await f.begin({ expectedRole: 'passenger' })(wrongRole);
+    assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(f.record().userId, 'a');
+    assert.equal(f.record().token, 'token-a');
+    assert.equal(f.clears(), 0);
+  });
+  await check('explicit abandon clears the minted bearer and handoff', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.c.passengerConfirmed(), true);
+    assert.equal(f.c.abandonLogin(), true);
+    assert.equal(f.record(), null);
+    assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
   await check('first login reset is distinguished from an A-to-B account switch', async () => {
     let record = null, reset = null;
     const c = create({ backendEnabled: () => true,
@@ -1010,7 +1050,7 @@ if (process.argv[2] === '--repair-handoff-case') {
     });
   }
   for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure',
-    'authority-loss-finish', 'off-demo']) {
+    'authority-loss-finish', 'verify-switch-reonboard', 'guest-after-verify', 'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
