@@ -961,17 +961,19 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(reset.priorUserId, null);
     assert.equal(reset.nextUserId, 'b');
   });
-  await check('detached recovery cannot finish without the expected role authority', async () => {
+  await check('ungranted verify is rejected before credential persistence or detached recovery', async () => {
     let current = true;
     const rolelessVerify = { token: 'token-b', user: {
       userId: 'b', activeRole: null, phoneVerified: true, roles: [] } };
-    const rolelessSession = { user: { ...userDTO('b'), activeRole: null, phoneVerified: true } };
-    const f = loginFixture({ requestSession: async () => rolelessSession });
-    assert.equal((await f.begin({ isCurrent: () => current })(rolelessVerify)).ok, false);
+    const f = loginFixture();
+    const result = await f.begin({ isCurrent: () => current })(rolelessVerify);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(f.record().userId, 'a', 'current credential remains intact');
     current = false;
     assert.equal(f.c.recoveryConfirmed(), false);
     assert.equal(f.c.finishRecovery(), false);
-    assert.equal(f.c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(f.c.getSnapshot().state, 'BOOT', 'no rejected handoff was installed');
   });
   await check('session retry uses stored identity without repeating verify or account cleanup', async () => {
     let requests = 0;
