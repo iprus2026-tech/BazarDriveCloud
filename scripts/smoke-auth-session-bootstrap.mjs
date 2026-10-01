@@ -540,7 +540,9 @@ async function guestPublicCase(name) {
     assert.equal(/href="tel:/.test(detail.innerHTML), false);
     assert.equal(detail.querySelector('#pd-respond'), null);
     screenNode('#pd-back').click(); await flush();
-    screenNode('.feed-btn-new').click(); await flush();
+    assert.equal(dom.elements.app.querySelector('.feed-btn-new'), null, 'feed has no duplicate creation button');
+    assert.equal(dom.elements.fab.hidden, false, 'the shell creation CTA remains available');
+    dom.elements.fab.click(); await flush();
     assert.equal(location.hash, '#/onboarding');
     await navigate('/feed');
     screenNode('[data-action="respond"]').click(); await flush();
