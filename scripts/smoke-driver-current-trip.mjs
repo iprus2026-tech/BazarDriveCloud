@@ -1,5 +1,6 @@
 // Driver resume invariants. Real read adapter, synthetic storage/API only.
 import assert from 'node:assert/strict';
+import { serializeRide, serializeRecoveredRide } from '../server/src/serialize.js';
 const store = new Map(), session = new Map();
 let writes = 0;
 globalThis.localStorage = {
@@ -28,6 +29,19 @@ const ride = (overrides = {}) => ({
 });
 const seed = (...rides) => store.set(key, JSON.stringify(Object.fromEntries(rides.map(r => [r.tripId, r]))));
 const response = (payload, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(payload) });
+// Match the actual API projections, including passenger-select's stored role.
+// Participant IDs and local order/accept markers are intentionally not on wire.
+function serverViews(status = 'IN_PROGRESS') {
+  const row = { trip_id: id, role: 'passenger', status,
+    driver_user_id: 'driver-fixture', passenger_user_id: 'passenger-fixture',
+    route_pickup_label: 'Серверная подача', route_dropoff_label: 'Серверное назначение',
+    accepted_at: new Date('2026-10-01T12:00:00Z'), arrived_at: new Date('2026-10-01T12:03:00Z') };
+  return [serializeRide(row), serializeRecoveredRide(row, {
+    order: { pickup: { label: row.route_pickup_label }, dropoff: { label: row.route_dropoff_label },
+      passenger_snapshot: { name: 'Пассажир API' } },
+    acceptedOffer: { driver_id: 'driver-fixture', driver_name: 'Водитель API', price: 900 },
+  })];
+}
 let checks = 0;
 async function check(name, run) { await run(); checks++; console.log('PASS — ' + name); }
 user.set({ onboarded: true, role: 'driver', phone: '+70000000000' });
@@ -88,27 +102,69 @@ await check('backend reads use the authenticated participant snapshot, not the l
   globalThis.__BD_API_BASE__ = 'https://fixture.invalid';
   assert.equal(driverTripScope(), null);
   setAuth({ token: 'fixture-token', userId: 'driver-fixture' });
-  globalThis.fetch = async (url, options) => {
-    assert.equal(url, 'https://fixture.invalid/api/v1/ride-state/rides/' + id);
-    assert.equal(options.method, 'GET'); assert.equal(options.headers.Authorization, 'Bearer fixture-token');
-    return response({ ride: ride({ role: 'driver', status: 'IN_PROGRESS' }) });
-  };
   const before = writes;
-  assert.equal((await loadDriverTrip()).trip.status, 'IN_PROGRESS');
+  for (const serverRide of serverViews()) {
+    assert.equal(serverRide.role, 'passenger', 'wire role is a stored projection, not the requesting actor');
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'https://fixture.invalid/api/v1/ride-state/rides/' + id);
+      assert.equal(options.method, 'GET'); assert.equal(options.headers.Authorization, 'Bearer fixture-token');
+      return response({ ride: serverRide });
+    };
+    const value = await loadDriverTrip();
+    assert.equal(value.state, 'ready');
+    assert.equal(value.trip.status, 'IN_PROGRESS'); assert.equal(value.trip.from, 'Серверная подача');
+  }
   assert.equal(writes, before);
+});
+await check('server-hydrated records without local markers remain backend discovery hints', async () => {
+  for (const serverRide of serverViews()) {
+    assert.equal(serverRide.orderId, undefined); assert.equal(serverRide.acceptedSource, undefined);
+    // active_ride keeps its driver-view role when merging a server fallback.
+    const persisted = { ...serverRide, role: 'driver' };
+    seed(persisted); const before = store.get(key), count = writes;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return response({ ride: serverRide }); };
+    const value = await loadDriverTrip();
+    assert.equal(value.state, 'ready'); assert.equal(calls, 1, 'hint must receive participant-gated validation');
+    assert.equal(driverTripRoute(value), '/active-ride?role=driver&tripId=' + id);
+    assert.equal(store.get(key), before); assert.equal(writes, count);
+    globalThis.__BD_API_BASE__ = '';
+    assert.equal((await loadDriverTrip()).state, 'empty', 'unmarked hints do not widen local-demo discovery');
+    globalThis.__BD_API_BASE__ = 'https://fixture.invalid';
+    for (const excluded of [
+      { ...persisted, localProvenance: 'sim_audit' },
+      { ...persisted, tripId: 'trip_moscow_sheremetyevo_demo' },
+      { ...persisted, status: 'COMPLETED' },
+    ]) {
+      seed(excluded); assert.equal((await loadDriverTrip()).state, 'empty');
+      assert.equal(calls, 1, 'demo/simulation/terminal hints never trigger a server lookup');
+    }
+  }
+  seed({ ...serverViews()[0], role: 'driver' });
 });
 await check('forbidden, missing, terminal or mismatched server rides never fall back to local success', async () => {
   for (const status of [401, 403, 404]) {
     globalThis.fetch = async () => response({ code: 'FIXTURE' }, status);
     assert.equal((await loadDriverTrip()).state, 'empty');
   }
-  for (const value of [ride({ role: 'passenger' }), ride({ role: 'driver', tripId: 'wrong' }),
-    ...['COMPLETED', 'CANCELED', 'NO_SHOW'].map(status => ride({ role: 'driver', status }))]) {
+  for (const value of [{ ...serverViews()[0], tripId: 'wrong' },
+    ...['COMPLETED', 'CANCELED', 'NO_SHOW'].map(status => serverViews(status)[0])]) {
     globalThis.fetch = async () => response({ ride: value });
     assert.equal((await loadDriverTrip()).state, 'empty');
   }
   globalThis.fetch = async () => { throw new Error('offline fixture'); };
   assert.equal((await loadDriverTrip()).state, 'error');
+});
+await check('passenger and Guest sessions cannot use a backend discovery hint', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return response({ ride: serverViews()[0] }); };
+  for (const role of ['passenger', 'guest']) {
+    user.set({ role }); setSmokeRole('driver');
+    assert.equal((await loadDriverTrip()).state, 'empty'); clearSmokeRole();
+  }
+  user.set({ role: 'driver' }); setSmokeRole('passenger');
+  assert.equal((await loadDriverTrip()).state, 'empty'); clearSmokeRole();
+  assert.equal(calls, 0);
 });
 await check('late backend responses cannot survive a role/token change or abort', async () => {
   for (const change of ['role', 'token', 'abort']) {
@@ -120,7 +176,7 @@ await check('late backend responses cannot survive a role/token change or abort'
     if (change === 'role') setSmokeRole('passenger');
     if (change === 'token') setAuth({ token: 'different-token' });
     if (change === 'abort') controller.abort();
-    finish(response({ ride: ride({ role: 'driver' }) }));
+    finish(response({ ride: serverViews()[0] }));
     assert.equal((await pending).state, 'empty'); clearSmokeRole();
   }
   clearAuth(); assert.equal(driverTripScope(), null);

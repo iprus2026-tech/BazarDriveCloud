@@ -34,12 +34,15 @@ function resumable(ride) {
 // Both the driver accept path and passenger selection persist this same store.
 // The latter has role=passenger in the local mock: role is a view there, not a
 // separate account. Explicit simulation/default seeds must never create a CTA.
+// Server-hydrated rides lack local accept markers. While the backend is ON,
+// any remaining active record is only an ID hint for the authorized GET below.
 export function driverTripCandidates() {
   if (!driverTripScope()) return [];
+  const backend = isBackendEnabled();
   return Object.entries(loadActiveRideStore())
     .filter(([id, ride]) => ride?.tripId === id && text(id) && id !== DEMO_ACTIVE_RIDE_ID
       && resumable(ride) && ride.localProvenance !== 'sim_audit'
-      && (text(ride.orderId) || ['driver_map', 'post_detail', 'feed'].includes(ride.acceptedSource)
+      && (backend || text(ride.orderId) || ['driver_map', 'post_detail', 'feed'].includes(ride.acceptedSource)
         || (ride.role === 'driver' && id.startsWith('feed-'))))
     .map(([, ride]) => ride)
     .sort((a, b) => {
@@ -68,7 +71,10 @@ export async function loadDriverTrip({ tripId = null, signal } = {}) {
   if (!isBackendEnabled()) return context(candidate, candidate.tripId);
   try {
     const ride = await getRideFromBackend(candidate.tripId, { signal });
-    if (signal?.aborted || driverTripScope() !== scope || ride?.role !== 'driver') {
+    // The API's role is the stored seed view (passenger after selection),
+    // not the requester. Access is checked by the participant-gated GET;
+    // the driver's current UI/account scope must still own this response.
+    if (signal?.aborted || driverTripScope() !== scope) {
       return { state: 'empty', trip: null };
     }
     return context(ride, candidate.tripId);

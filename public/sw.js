@@ -1,3 +1,4 @@
+// v337 (BD-DRIVER-ACTIVE-RETURN-01-R1): resume passenger-selected server rides without local accept markers.
 // v336 (BD-DRIVER-ACTIVE-RETURN-01): restore the driver's active order from menus and profile.
 // v335 (BD-FEED-RESPONSIVE-01-R1): make the sole create action early in keyboard order and clarify its accessible name.
 // v334 (BD-FEED-RESPONSIVE-01): responsive feed layout and one guarded creation CTA.
@@ -216,7 +217,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v336';
+const VERSION    = 'v337';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
