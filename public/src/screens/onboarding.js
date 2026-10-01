@@ -840,7 +840,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
                 auth?.abandonLogin?.();
                 invalidateOtpAttempt();
               }
-              user.set({ welcomeSeen: true, onboarded: false, role: 'guest' });
+              user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();
               go('/feed');
               return;
