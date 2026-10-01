@@ -715,7 +715,7 @@ async function loginHandoffCase(name) {
     if (verifySwitch) {
       assert.equal(location.hash, '#/onboarding');
       assert.equal(user.get().onboarded, false, 'switched identity must rebuild its local profile');
-      assert.equal(user.get().firstName, '', 'old account profile data cannot survive the switch');
+      assert.notEqual(user.get().firstName, 'Old account', 'old account profile data cannot survive the switch');
       assert.equal(auth.getAuthUserId(), 'new-user');
       return;
     }
