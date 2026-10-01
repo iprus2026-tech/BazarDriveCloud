@@ -716,7 +716,7 @@ async function loginHandoffCase(name) {
       assert.equal(location.hash, '#/onboarding');
       assert.equal(user.get().onboarded, false, 'switched identity must rebuild its local profile');
       assert.notEqual(user.get().firstName, 'Old account', 'old account profile data cannot survive the switch');
-      assert.equal(auth.getAuthUserId(), 'new-user');
+      assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user');
       return;
     }
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
@@ -727,7 +727,7 @@ async function loginHandoffCase(name) {
       const guest = dom.elements.app.querySelector('[data-role="guest"]');
       assert.ok(guest); guest.click(); await flush();
       await click('ob-next');
-      assert.equal(auth.getAuthToken(), null, 'Guest cannot retain the minted bearer');
+      assert.equal(localStorage.getItem('bazardrive.auth.v1'), null, 'Guest cannot retain the minted bearer');
       assert.equal(user.get().role, 'guest');
       assert.equal(products, 1, 'Guest enters the public feed only after auth is abandoned');
       return;
