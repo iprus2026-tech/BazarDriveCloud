@@ -993,7 +993,8 @@ if (process.argv[2] === '--repair-handoff-case') {
       const f = loginFixture(), payload = verified(); change(payload);
       assert.equal((await f.begin()(payload)).ok, false);
       assert.equal(f.c.passengerConfirmed(), false);
-      assert.equal(f.record(), null, 'role-authority failure cannot leave a reloadable bearer');
+      assert.equal(f.record().userId, 'a', 'rejected replacement keeps the current account');
+      assert.equal(f.record().token, 'token-a');
     }
     for (const change of [p => { p.user.activeRole = null; }, p => { p.user.phoneVerified = false; }]) {
       const session = passenger('b'); change(session);
