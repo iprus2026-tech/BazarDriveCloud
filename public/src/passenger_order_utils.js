@@ -1,3 +1,5 @@
+import { COORDINATE_PROVENANCE, readGeoPoint } from './geo_point.js';
+
 function hashText(text) {
   const input = String(text || '').trim().toLowerCase();
   if (!input) return 0;
@@ -12,14 +14,6 @@ function toFixedCoordinate(value) {
   return Math.round(value * 1000000) / 1000000;
 }
 
-function readCoord(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const lat = Number(raw.lat);
-  const lng = Number(raw.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return { lat, lng };
-}
-
 export function deriveMockCoordsFromLabel(label) {
   const text = String(label || '').trim();
   if (!text) return null;
@@ -29,12 +23,20 @@ export function deriveMockCoordsFromLabel(label) {
   return {
     lat: toFixedCoordinate(55.7558 + latOffset),
     lng: toFixedCoordinate(37.6176 + lngOffset),
+    provenance: COORDINATE_PROVENANCE.MOCK_HASH,
   };
 }
 
 export function resolvePointCoords(point, fallbackLabel = '') {
-  const direct = readCoord(point?.coords);
-  if (direct) return direct;
+  // Keep nested drafts and flat order points on the same bounded seam. An
+  // existing invalid coordinate is rejected, not replaced by a label hash.
+  if (point && typeof point === 'object') {
+    // A null from draft sanitization is still an explicit rejected/absent point.
+    // Keep it absent on later hydration instead of synthesizing a replacement.
+    if ('coords' in point) return readGeoPoint(point.coords);
+    if ('lat' in point || 'lng' in point) return readGeoPoint(point);
+  }
+  // This is the existing local prototype fallback, not a geocoder/GPS result.
   return deriveMockCoordsFromLabel(point?.label || fallbackLabel);
 }
 
@@ -47,8 +49,9 @@ export function enrichOrderPointWithCoords(point, fallbackLabel = '') {
   return {
     id: point?.id ?? null,
     label,
-    lat: coords?.lat ?? null,
-    lng: coords?.lng ?? null,
+    // Preserve provenance, capture time and accuracy through order/ride storage.
+    // Rejected coordinates leave a text-only point, not nulls coerced to (0, 0).
+    ...(coords || {}),
   };
 }
 
