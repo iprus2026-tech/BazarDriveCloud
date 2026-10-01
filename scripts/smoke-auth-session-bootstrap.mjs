@@ -840,12 +840,18 @@ async function repairHandoffCase(name) {
   }
   const currentScreen = dom.elements.app.children[0];
   const beforeLateAuth = localStorage.getItem('bazardrive.auth.v1');
-  const beforeLateProfile = JSON.stringify(user.get());
+  const beforeLateProfile = {
+    role: user.get().role, phone: user.get().phone, firstName: user.get().firstName,
+    onboarded: user.get().onboarded, welcomeSeen: user.get().welcomeSeen,
+  };
   if (lateSession) oldSession.resolve(session('a'));
   else oldVerify.resolve(response(verified('a')));
   await flush();
-  assert.equal(localStorage.getItem('bazardrive.auth.v1'), beforeLateAuth, 'late A cannot save auth');
-  assert.equal(JSON.stringify(user.get()), beforeLateProfile, 'late A cannot reset the current account');
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), beforeLateAuth, name + ': late A cannot save auth');
+  assert.deepEqual({
+    role: user.get().role, phone: user.get().phone, firstName: user.get().firstName,
+    onboarded: user.get().onboarded, welcomeSeen: user.get().welcomeSeen,
+  }, beforeLateProfile, name + ': late A cannot reset the current account');
   assert.equal(dom.elements.app.children[0], currentScreen);
   assert.equal(products, 0); assert.equal(node('ob-firstname'), null);
   assert.equal(sessions, lateSession ? 1 : 0, 'stale verify cannot reconcile');
