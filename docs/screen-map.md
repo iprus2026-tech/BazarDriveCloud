@@ -55,7 +55,7 @@ Status: `implemented` (рабочий экран) / `partial` (есть, но с
 | BD-FEED-01 | Feed V2 | `/feed` | `public/src/screens/feed.js` | common | implemented | Единственный экран с FAB. Категории; per-card CTA: respond/chat/accept/own-order (own-order → `/responses?orderId=...`); card-body tap → `/post`. |
 | BD-COMPOSER-01 | Composer V2 | `/new` | `public/src/screens/composer.js` | common | implemented | 5 типов публикаций, автосохранение `bazardrive.draft.v2`. |
 | BD-PROFILE-01 | Profile (passenger) | `/profile` | `public/src/screens/profile.js` | passenger / guest | implemented | Дашборд пассажира, верификация телефона (mock). Bell `#pfp-notif-btn` → `/inbox`; история `#pfp-menu-history` → секция (не `/feed`). |
-| BD-PROFILE-02 | Profile (driver) | `/profile` | `public/src/screens/profile.js` | driver | implemented | Overview / Taxi IP / Documents / Payouts / Safety; readiness через `isDriverLineReady()`. Уведомления `#pf2-act-notif` → `/inbox` (бывший toggle). |
+| BD-PROFILE-02 | Profile (driver) | `/profile` | `public/src/screens/profile.js` | driver | implemented | Overview / Taxi IP / Documents / Payouts / Safety; readiness через `isDriverLineReady()`. Уведомления `#pf2-act-notif` → `/inbox` (бывший toggle). Карточка активного заказа (#1015) возвращает в `/active-ride?role=driver&tripId=…` после повторной проверки, без параметра `status`; требует локальную запись-подсказку поездки. |
 | BD-RULES-01 | Rules | `/rules` | `public/src/screens/rules.js` | common | implemented | Статический контент. |
 | BD-MAP-01 | MapHome | `/map` | `public/src/screens/map.js` | passenger / common | placeholder | Mock map surface, **только** `createMapShell()`. Без Mapbox SDK. |
 | BD-MAP-02 | LocationPermission | `/location-permission` | `public/src/screens/location_permission.js` | common | partial | Mock permission UX, не вызывает native prompt. |
@@ -80,6 +80,7 @@ Status: `implemented` (рабочий экран) / `partial` (есть, но с
 | BD-CONFIRM-01 (helper) | Trip confirmation handoff loader | `public/src/screens/trip_confirmation_handoff.js` | common | implemented | Seed `/active-ride` из подтверждённого handoff. Без DOM/router. |
 | BD-CONFIRM-01 (helper) | Driver handoff snapshot | `public/src/screens/driver_handoff_snapshot.js` | driver | implemented | TTL-снимок driver-side handoff + overlay на ride. Без DOM/router. |
 | BD-RIDE-F-01 | Ride state contract | `public/src/ride_state.js` | common | implemented | Не экран: enum статусов + storage активной поездки. |
+| BD-DRIVER-ACTIVE-RETURN-01 | Driver active-order return | `public/src/driver_current_trip.js`, `public/src/driver_ride_return.js` | driver | implemented (#1015) | Read adapter + router-owned панель над tabbar и карточка профиля. Локальный tripId перепроверяется через API при backend ON. Нового маршрута и серверного поиска активных поездок нет. [Контракт](screen-contracts.md#bd-driver-active-return-01---return-to-the-drivers-active-order). |
 
 **Sheets / sub-states (не отдельный route, открываются внутри Active Ride):**
 

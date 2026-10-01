@@ -38,6 +38,22 @@ These screens **ship in runtime and have a `docs/screen-contracts.md` contract**
 
 These flows already have runtime coverage but retain dedicated future follow-ups. They are NOT missing screens and NOT audit gates — only the explicitly listed remaining gaps should become new wiring work.
 
+### Driver active-order discovery — remaining follow-up after #1015
+
+The menu return strip and Profile Overview card are **shipped** as
+[BD-DRIVER-ACTIVE-RETURN-01](screen-contracts.md#bd-driver-active-return-01---return-to-the-drivers-active-order).
+They resume an eligible stored trip after revalidation and preserve its status
+and waiting timestamps. There is no missing return screen to build.
+
+**Still unshipped:** server discovery of the current driver's active ride without
+a local ride hint. A fresh device, cleared local ride storage, or a server-read
+ride not yet persisted locally cannot be recovered by these controls. The current
+adapter validates only the selected local candidate; it does not enumerate server
+rides after a rejected candidate. A future discovery slice needs a separately
+defined server-owned read and participant/role rules. Automatic navigation after
+passenger selection is also outside the shipped return control. This is a
+discovery/handoff follow-up, not a new route or a claim of live multi-device QA.
+
 ### BD-RIDE-D-NOSHOW-01 — Driver No-Show Flow (7/7 runtime representation; follow-ups remain)
 
 **Status: Runtime-covered cross-gate — all 7 render-gate states have runtime representation.**
