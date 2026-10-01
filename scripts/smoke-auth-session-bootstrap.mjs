@@ -1071,6 +1071,21 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(record, null);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
+  await check('uncommitted handoff sentinel remains true until finishLogin commits', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.c.hasUncommittedLogin(), true);
+    assert.equal(f.c.finishLogin(), true);
+    assert.equal(f.c.hasUncommittedLogin(), false);
+  });
+  await check('app pins product navigation and verifies recovery before profile mutation', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /hasUncommittedLogin\(\) && path !== '\/onboarding'/);
+    const ownership = source.indexOf('if (!bootSession.finishRecovery())');
+    const mutation = source.indexOf('user.set({', ownership);
+    assert.ok(ownership >= 0 && mutation > ownership,
+      'recovery ownership check must precede account-scoped user.set');
+  });
   await check('first login reset is distinguished from an A-to-B account switch', async () => {
     let record = null, reset = null;
     const c = create({ backendEnabled: () => true,

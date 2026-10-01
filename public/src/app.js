@@ -128,7 +128,11 @@ const bootSession = createAuthSessionBootstrap();
 setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(
-  (path, policy) => sessionRouteAdmission(bootSession.getSnapshot(), path, policy),
+  (path, policy) => {
+    const admission = sessionRouteAdmission(bootSession.getSnapshot(), path, policy);
+    if (bootSession.hasUncommittedLogin() && path !== '/onboarding') return '/onboarding';
+    return admission;
+  },
   () => showBootSession(bootSession.getSnapshot()),
 );
 
@@ -166,6 +170,12 @@ function showBootSession(snapshot) {
     proceed.addEventListener('click', () => {
       const recoveredUser = bootSession.getSnapshot().user;
       const incomplete = user.get().onboarded !== true;
+      // Ownership must be rechecked BEFORE mutating any account-scoped cache.
+      // Another tab may have replaced the credential while this button was visible.
+      if (!bootSession.finishRecovery()) {
+        void bootSession.reconcile();
+        return;
+      }
       if (incomplete && recoveredUser) {
         user.set({
           welcomeSeen: true,
@@ -174,9 +184,7 @@ function showBootSession(snapshot) {
           phoneVerified: recoveredUser.phoneVerified,
         });
       }
-      if (bootSession.finishRecovery()) {
-        go(incomplete ? '/onboarding' : (location.hash || '#/welcome').slice(1));
-      }
+      go(incomplete ? '/onboarding' : (location.hash || '#/welcome').slice(1));
     });
     content.appendChild(proceed);
   }

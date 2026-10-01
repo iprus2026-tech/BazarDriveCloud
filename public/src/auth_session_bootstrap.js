@@ -303,6 +303,7 @@ export function createAuthSessionBootstrap({
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
     isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale, abandonLogin, enterGuest,
+    hasUncommittedLogin: () => handoff !== null,
   });
 }
 
