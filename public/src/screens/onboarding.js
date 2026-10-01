@@ -522,6 +522,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let confirmedAttempt = null;
 
   const ownsScreen = () => renderContext.isCurrent();
+  const expectedAuthRole = () => verifyPhoneOnly ? (knownRole ?? 'passenger') : draft.role;
   const normalizedPhone = () => '+7' + (draft.phone || '').slice(-10);
   const ownsAttempt = attempt => ownsScreen() && attempt !== null
     && attempt === otpAttempt && attempt.generation === otpGeneration
@@ -537,8 +538,10 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     clearOtpAdvanceTimer();
   }
 
-  function canContinuePassenger() {
-    return ownsAttempt(confirmedAttempt) && auth?.passengerConfirmed() === true;
+  function canContinueAuthority() {
+    const role = expectedAuthRole();
+    return ['passenger', 'driver'].includes(role) && ownsAttempt(confirmedAttempt)
+      && auth?.roleConfirmed?.(role) === true;
   }
 
   function clearOtpAdvanceTimer() {
@@ -583,10 +586,14 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       if (verifiedResponseReceived) {
         result = await auth.resumeLogin();
       } else {
-        const accept = auth.beginLogin({ isCurrent: () => ownsAttempt(attempt), resetAccount: () => {
-          resetLocalSession();
-          consumePendingAction();
-        } });
+        const accept = auth.beginLogin({
+          isCurrent: () => ownsAttempt(attempt),
+          expectedRole: expectedAuthRole(),
+          resetAccount: ({ accountSwitch } = {}) => {
+            resetLocalSession();
+            if (accountSwitch) consumePendingAction();
+          },
+        });
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
         if (!ownsAttempt(attempt)) return;
         verifiedResponseReceived = true;
@@ -597,7 +604,6 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       passengerIdentity = result.user;
       confirmedAttempt = attempt;
       clearSmokeRole();
-      draft.role = 'passenger';
       if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
     } catch (err) {
       if (!ownsAttempt(attempt)) return;
@@ -607,7 +613,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       const ecode = err && err.code;
       setStepError(
         verifiedResponseReceived ? (
-          ecode === 'PASSENGER_AUTHORITY_REQUIRED' ? 'Сервер не подтвердил роль пассажира.'
+          ['PASSENGER_AUTHORITY_REQUIRED', 'ROLE_AUTHORITY_REQUIRED'].includes(ecode)
+            ? 'Сервер не подтвердил выбранную роль.'
           : ecode === 'AUTH_STORAGE_FAILED' ? 'Не удалось сохранить вход. Проверьте доступ к хранилищу и запросите новый код.'
           : ecode === 'AUTH_IDENTITY_MISMATCH' ? 'Учётная запись не совпала. Повторите проверку входа.'
           : 'Не удалось подтвердить вход. Повторите проверку сессии.'
@@ -650,7 +657,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
   // Recheck at each UI commit; the bearer was persisted immediately after verify.
   function canFinishAuth() {
-    if (!isBackendEnabled() || canContinuePassenger()) return true;
+    if (!isBackendEnabled() || canContinueAuthority()) return true;
     setStepError('Учётная запись изменилась. Вернитесь к проверке входа.');
     return false;
   }
@@ -660,7 +667,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (isBackendEnabled()) {
       user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
         phone: confirmedAttempt.phone, onboarded: true, welcomeSeen: true });
-      if (auth.finishLogin()) go('/profile?role=passenger');
+      if (auth.finishLogin()) go(verifyReturnRoute());
       return;
     }
     const patch = { phoneVerified: true };
@@ -690,31 +697,17 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
   function finish() {
     if (!canFinishAuth()) return;
-    if (isBackendEnabled()) {
-      // Local descriptive fields cannot select the authenticated actor or grant a role.
-      user.set({ onboarded: true, welcomeSeen: true, role: passengerIdentity.activeRole,
-        phoneVerified: passengerIdentity.phoneVerified, phone: confirmedAttempt.phone,
-        firstName: draft.firstName, lastName: draft.lastName,
-        displayName: [draft.firstName, draft.lastName].filter(Boolean).join(' ') || 'Пользователь' });
-      consumePendingAction(); // Never replay another account's/domain mutation callback.
-      if (auth.finishLogin()) go('/feed');
-      return;
-    }
+    const backend = isBackendEnabled();
+    const role = backend ? passengerIdentity.activeRole : draft.role;
+    if (backend && !auth.finishLogin()) return;
+
     const displayName = [draft.firstName, draft.lastName].filter(Boolean).join(' ')
       || draft.phone
       || 'Пользователь';
     const requiredDocIds = DOCS.filter((d) => d.required).map((d) => d.id);
-    const documentsReady = draft.role === 'driver'
+    const documentsReady = role === 'driver'
       && requiredDocIds.every((id) => draft.docs.has(id));
 
-    // Build a complete driverDocuments patch so state.js doesn't have to
-    // guess the user's intent from a single boolean. Ticking carries over
-    // `uploaded` and `review_required` (the doc already exists in a valid
-    // form). Ticking after `expired` / `missing` / `draft` or with no prior
-    // record marks the doc as freshly uploaded — `expired` deliberately
-    // does NOT carry over, otherwise a fresh driver who ticks every
-    // required checkbox would still get documentsReady=false because the
-    // default seed marks taxiRegistry expired. Un-ticking marks missing.
     const idToKey = DOC_ID_TO_KEY;
     const prevDocs = currentUser.driverDocuments || {};
     const driverDocuments = {};
@@ -731,17 +724,15 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       }
     }
 
-    // finish() is only reachable by passenger/driver (the guest path bails out
-    // at the role step), i.e. after the phone→otp flow. Mark the phone verified
-    // when a number was confirmed in this run, and keep an already-verified
-    // status if the user re-edited onboarding without retyping their phone —
-    // so completing onboarding never drops the user back into the gate.
-    const phoneVerified = currentUser.phoneVerified || !!draft.phone;
+    const phoneVerified = backend
+      ? passengerIdentity.phoneVerified
+      : currentUser.phoneVerified || !!draft.phone;
+    const phone = backend ? confirmedAttempt.phone : draft.phone;
 
     user.set({
       onboarded: true,
-      role: draft.role,
-      phone: draft.phone,
+      role,
+      phone,
       firstName: draft.firstName,
       lastName: draft.lastName,
       displayName,
@@ -757,11 +748,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       driverDocuments,
     });
     const pending = consumePendingAction();
-    if (pending) {
-      pending();
-    } else {
-      go(draft.role === 'driver' ? '/profile' : '/feed');
-    }
+    if (pending) pending();
+    else go(role === 'driver' ? '/profile' : '/feed');
   }
 
   function render() {

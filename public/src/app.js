@@ -50,6 +50,7 @@ register('/onboarding', (context) => onboarding(context, {
     return bootSession.beginLogin(options);
   },
   resumeLogin: () => bootSession.resumeLogin(),
+  roleConfirmed: role => bootSession.roleConfirmed(role),
   passengerConfirmed: () => bootSession.passengerConfirmed(),
   finishLogin: () => bootSession.finishLogin(),
 }));
@@ -130,7 +131,7 @@ setAdmissionGuard(
 
 function showBootSession(snapshot) {
   const unknown = snapshot.state === 'SESSION_UNKNOWN';
-  const recovered = snapshot.state === 'AUTHENTICATED' && bootSession.isLoginDetached();
+  const recovered = snapshot.state === 'AUTHENTICATED' && bootSession.recoveryConfirmed();
   const view = document.createElement('section');
   view.className = 'screen screen--ob';
   view.dataset.authBootState = snapshot.state;

@@ -47,7 +47,8 @@ export function createAuthSessionBootstrap({
   }
 
   // Router ownership + generation defeat A->B->A and competing login responses.
-  function beginLogin({ isCurrent = () => true, resetAccount = () => {} } = {}) {
+  function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger' } = {}) {
+    const authorityRole = ['passenger', 'driver'].includes(expectedRole) ? expectedRole : null;
     const generation = ++loginSequence;
     ++sequence;
     active?.cancel();
@@ -61,6 +62,10 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'AUTH_STALE' };
       }
       const u = payload?.user;
+      if (!authorityRole) {
+        fail('SESSION_PROTOCOL');
+        return { ok: false, code: 'SESSION_PROTOCOL' };
+      }
       if (!payload || typeof payload.token !== 'string' || !payload.token.trim()
           || !u || typeof u.userId !== 'string' || !u.userId.trim()
           || ![null, 'passenger', 'driver'].includes(u.activeRole)
@@ -71,7 +76,13 @@ export function createAuthSessionBootstrap({
       }
       // Never restore the old bearer if replacement fails.
       dropAuth();
-      if (!priorUserId || priorUserId !== u.userId) resetAccount();
+      if (!priorUserId || priorUserId !== u.userId) {
+        resetAccount({
+          accountSwitch: Boolean(priorUserId && priorUserId !== u.userId),
+          priorUserId,
+          nextUserId: u.userId,
+        });
+      }
       if (!owns()) return { ok: false, code: 'AUTH_STALE' };
       if (!writeAuth({ token: payload.token, userId: u.userId, phone })
           || readToken() !== payload.token || readUserId() !== u.userId) {
@@ -80,8 +91,9 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'AUTH_STORAGE_FAILED' };
       }
       handoff = { token: payload.token, userId: u.userId, generation, ownsUI: owns,
-        passenger: u.phoneVerified === true && u.activeRole === 'passenger'
-          && u.roles.includes('passenger') };
+        expectedRole: authorityRole,
+        authority: u.phoneVerified === true && u.activeRole === authorityRole
+          && u.roles.includes(authorityRole) };
       return resumeLogin();
     };
   }
@@ -91,22 +103,29 @@ export function createAuthSessionBootstrap({
     if (!expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
     const result = await reconcile({ uiContinuation: true });
     if (handoff !== expected || !expected.ownsUI()) return { ok: false, code: 'AUTH_STALE' };
-    const ok = result.state === 'AUTHENTICATED' && result.user?.userId === expected.userId
-      && result.user.activeRole === 'passenger' && result.user.phoneVerified === true
-      && expected.passenger && readToken() === expected.token && readUserId() === expected.userId;
+    const ok = authorityConfirmed(expected, { requireUI: true });
     return { ok, user: ok ? result.user : null,
-      code: ok ? null : result.error?.code || 'PASSENGER_AUTHORITY_REQUIRED' };
+      code: ok ? null : result.error?.code || 'ROLE_AUTHORITY_REQUIRED' };
+  }
+
+  function authorityConfirmed(expected, { requireUI = true } = {}) {
+    return !!expected && expected === handoff && (!requireUI || expected.ownsUI())
+      && expected.authority && readToken() === expected.token && readUserId() === expected.userId
+      && snapshot.state === 'AUTHENTICATED' && snapshot.user?.userId === expected.userId
+      && snapshot.user.activeRole === expected.expectedRole && snapshot.user.phoneVerified === true;
+  }
+
+  function roleConfirmed(role) {
+    return !!handoff && handoff.expectedRole === role
+      && authorityConfirmed(handoff, { requireUI: true });
   }
 
   function passengerConfirmed() {
-    return !!handoff && handoff.ownsUI() && handoff.passenger
-      && readToken() === handoff.token && readUserId() === handoff.userId
-      && snapshot.state === 'AUTHENTICATED' && snapshot.user?.userId === handoff.userId
-      && snapshot.user.activeRole === 'passenger' && snapshot.user.phoneVerified === true;
+    return roleConfirmed('passenger');
   }
 
   function finishLogin() {
-    if (!passengerConfirmed()) return false;
+    if (!handoff || !authorityConfirmed(handoff, { requireUI: true })) return false;
     handoff = null;
     return true;
   }
@@ -121,9 +140,13 @@ export function createAuthSessionBootstrap({
     return !!handoff && !handoff.ownsUI();
   }
 
+  function recoveryConfirmed() {
+    return !!handoff && !handoff.ownsUI()
+      && authorityConfirmed(handoff, { requireUI: false });
+  }
+
   function finishRecovery() {
-    if (!handoff || !ownsCredential(handoff) || snapshot.state !== 'AUTHENTICATED'
-        || snapshot.user?.userId !== handoff.userId) return false;
+    if (!recoveryConfirmed()) return false;
     handoff = null;
     return true;
   }
@@ -182,8 +205,14 @@ export function createAuthSessionBootstrap({
         }
         else {
           const user = confirmedUser(result.payload);
-          if (user && expected && user.userId !== expected.userId) fail('AUTH_IDENTITY_MISMATCH');
-          else if (user) publish('AUTHENTICATED', user);
+          if (user && expected && user.userId !== expected.userId) {
+            dropAuth();
+            fail('AUTH_IDENTITY_MISMATCH');
+          } else if (user && expected
+              && (!expected.authority || user.activeRole !== expected.expectedRole
+                || user.phoneVerified !== true)) {
+            fail('ROLE_AUTHORITY_REQUIRED');
+          } else if (user) publish('AUTHENTICATED', user);
           else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
         }
       } else {
@@ -203,8 +232,8 @@ export function createAuthSessionBootstrap({
   return Object.freeze({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    reconcile, beginLogin, resumeLogin, passengerConfirmed, finishLogin,
-    isLoginDetached, finishRecovery,
+    reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
+    isLoginDetached, recoveryConfirmed, finishRecovery,
   });
 }
 

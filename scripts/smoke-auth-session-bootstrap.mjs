@@ -859,9 +859,12 @@ if (process.argv[2] === '--repair-handoff-case') {
   const fixture = overrides => create({ backendEnabled: () => true,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
 
-  const verified = (id = 'b') => ({ token: 'token-' + id,
-    user: { userId: id, activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
-  const passenger = id => ({ user: { ...userDTO(id), activeRole: 'passenger' } });
+  const verified = (id = 'b', role = 'passenger') => ({ token: 'token-' + id,
+    user: { userId: id, activeRole: role, phoneVerified: true, roles: [role] } });
+  const sessionFor = (id, role = 'passenger') => ({
+    user: { ...userDTO(id), activeRole: role, phoneVerified: true },
+  });
+  const passenger = id => sessionFor(id, 'passenger');
   function loginFixture(overrides = {}) {
     let record = { token: 'token-a', userId: 'a' }, clears = 0;
     const c = create({ backendEnabled: () => true,
@@ -882,13 +885,44 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.deepEqual(states, ['SESSION_RECONCILING', 'AUTHENTICATED']);
     assert.equal(f.c.passengerConfirmed(), true);
   });
-  await check('mismatched identity never publishes AUTHENTICATED, including retry', async () => {
+  await check('mismatched identity drops the credential and never authenticates after reload/retry', async () => {
     const f = loginFixture({ requestSession: async () => passenger('other') });
     const states = []; f.c.subscribe(s => states.push(s.state));
     assert.equal((await f.begin()(verified())).code, 'AUTH_IDENTITY_MISMATCH');
+    assert.equal(f.record(), null, 'terminal identity mismatch drops the persisted bearer');
     assert.equal((await f.c.resumeLogin()).ok, false);
     assert.equal(states.includes('AUTHENTICATED'), false);
     assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('role-aware handoff accepts an existing granted driver without granting passenger', async () => {
+    const f = loginFixture({ requestSession: async () => sessionFor('b', 'driver') });
+    assert.equal((await f.begin({ expectedRole: 'driver' })(verified('b', 'driver'))).ok, true);
+    assert.equal(f.c.roleConfirmed('driver'), true);
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('first login reset is distinguished from an A-to-B account switch', async () => {
+    let record = null, reset = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; }, dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b') });
+    const result = await c.beginLogin({ resetAccount: info => { reset = info; } })(verified(), '+15550000001');
+    assert.equal(result.ok, true);
+    assert.equal(reset.accountSwitch, false);
+    assert.equal(reset.priorUserId, null);
+    assert.equal(reset.nextUserId, 'b');
+  });
+  await check('detached recovery cannot finish without the expected role authority', async () => {
+    let current = true;
+    const rolelessVerify = { token: 'token-b', user: {
+      userId: 'b', activeRole: null, phoneVerified: true, roles: [] } };
+    const rolelessSession = { user: { ...userDTO('b'), activeRole: null, phoneVerified: true } };
+    const f = loginFixture({ requestSession: async () => rolelessSession });
+    assert.equal((await f.begin({ isCurrent: () => current })(rolelessVerify)).ok, false);
+    current = false;
+    assert.equal(f.c.recoveryConfirmed(), false);
+    assert.equal(f.c.finishRecovery(), false);
+    assert.equal(f.c.getSnapshot().state, 'SESSION_UNKNOWN');
   });
   await check('session retry uses stored identity without repeating verify or account cleanup', async () => {
     let requests = 0;
