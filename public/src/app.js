@@ -53,6 +53,7 @@ register('/onboarding', (context) => onboarding(context, {
   roleConfirmed: role => bootSession.roleConfirmed(role),
   passengerConfirmed: () => bootSession.passengerConfirmed(),
   finishLogin: () => bootSession.finishLogin(),
+  markLoginStale: () => bootSession.markLoginStale(),
 }));
 register('/new',         composer);
 register('/respond',     respond);

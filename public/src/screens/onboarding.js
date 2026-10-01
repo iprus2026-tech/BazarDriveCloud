@@ -655,10 +655,19 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (phoneIdx >= 0) step = phoneIdx;
   }
 
+  function returnToAuthVerification() {
+    auth?.markLoginStale?.();
+    invalidateOtpAttempt();
+    const phoneIdx = steps().indexOf('phone');
+    if (phoneIdx >= 0) step = phoneIdx;
+    render();
+    setStepError('Учётная запись изменилась. Подтвердите номер ещё раз.');
+  }
+
   // Recheck at each UI commit; the bearer was persisted immediately after verify.
   function canFinishAuth() {
     if (!isBackendEnabled() || canContinueAuthority()) return true;
-    setStepError('Учётная запись изменилась. Вернитесь к проверке входа.');
+    returnToAuthVerification();
     return false;
   }
 

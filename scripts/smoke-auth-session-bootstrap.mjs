@@ -712,6 +712,15 @@ async function loginHandoffCase(name) {
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
     input('ob-firstname', 'QA');
     node('ob-next').click(); await flush();
+    if (name === 'authority-loss-finish') {
+      localStorage.setItem('bazardrive.auth.v1',
+        JSON.stringify({ token: 'other-token', userId: 'other-user', phone: '+79990000999' }));
+      node('ob-finish').click(); await flush();
+      assert.ok(node('ob-phone-input'), 'authority loss returns to phone verification');
+      assert.ok(node('ob-err').textContent.includes('Подтвердите номер'));
+      assert.equal(products, 0, 'authority loss cannot enter product routes');
+      return;
+    }
     node('ob-finish').click(); await flush();
     assert.equal(products, 1, 'AUTHENTICATED admits passenger without reload');
     assert.equal(user.get().role, 'passenger');
@@ -942,6 +951,7 @@ if (process.argv[2] === '--repair-handoff-case') {
       const f = loginFixture(), payload = verified(); change(payload);
       assert.equal((await f.begin()(payload)).ok, false);
       assert.equal(f.c.passengerConfirmed(), false);
+      assert.equal(f.record(), null, 'role-authority failure cannot leave a reloadable bearer');
     }
     for (const change of [p => { p.user.activeRole = null; }, p => { p.user.phoneVerified = false; }]) {
       const session = passenger('b'); change(session);
@@ -999,7 +1009,8 @@ if (process.argv[2] === '--repair-handoff-case') {
       globalThis.localStorage = storage(); auth.clearAuth();
     });
   }
-  for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure', 'off-demo']) {
+  for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure',
+    'authority-loss-finish', 'off-demo']) {
     await check('actual app/onboarding handoff: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });

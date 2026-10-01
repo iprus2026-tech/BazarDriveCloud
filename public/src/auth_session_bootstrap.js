@@ -151,6 +151,17 @@ export function createAuthSessionBootstrap({
     return true;
   }
 
+  // A mounted onboarding screen can discover that its saved credential no longer
+  // matches the confirmed handoff (for example another tab replaced localStorage).
+  // Keep the handoff pin so app-level retry cannot adopt that unrelated actor;
+  // the next explicit OTP beginLogin() supersedes it.
+  function markLoginStale() {
+    if (!handoff) return snapshot;
+    active?.cancel();
+    active = null;
+    return fail('AUTH_IDENTITY_MISMATCH');
+  }
+
   async function reconcile({ uiContinuation = false } = {}) {
     const ownSequence = ++sequence;
     // Settle even a transport that ignores AbortSignal. Ownership, not abort
@@ -211,6 +222,7 @@ export function createAuthSessionBootstrap({
           } else if (user && expected
               && (!expected.authority || user.activeRole !== expected.expectedRole
                 || user.phoneVerified !== true)) {
+            dropAuth();
             fail('ROLE_AUTHORITY_REQUIRED');
           } else if (user) publish('AUTHENTICATED', user);
           else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
@@ -233,7 +245,7 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, finishRecovery,
+    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale,
   });
 }
 
