@@ -153,6 +153,13 @@ try {
   errors.push(`smoke-auth-session-bootstrap.mjs failed\n${msg}`);
 }
 
+// Driver resume: identity, terminal status, timer preservation and auth races.
+try {
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'smoke-driver-current-trip.mjs')], { stdio: 'pipe' });
+} catch (e) {
+  errors.push(`smoke-driver-current-trip.mjs failed\n${e.stderr ? e.stderr.toString() : e.message}`);
+}
+
 // BD-SETTINGS-01 — static regression smoke for the new Settings screen
 // (route registration, both profile-gear entry points, gate states, UI-only
 // boundary, SW precache).

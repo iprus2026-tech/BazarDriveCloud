@@ -66,6 +66,18 @@ function installDOM({ parseIds = false, parseMarkup = false } = {}) {
       this.html += html;
     }
     appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
+    insertBefore(node, before) {
+      if (before == null) return this.appendChild(node);
+      const index = this.children.indexOf(before);
+      assert.notEqual(index, -1, 'insertBefore reference must be a child');
+      node.parentNode = this; this.children.splice(index, 0, node); return node;
+    }
+    remove() {
+      if (!this.parentNode) return;
+      const parent = this.parentNode;
+      parent.children = parent.children.filter(node => node !== this);
+      this.parentNode = null;
+    }
     replaceChildren(...nodes) {
       this.children.forEach(n => { n.parentNode = null; });
       this.children = []; nodes.forEach(n => this.appendChild(n));
@@ -168,8 +180,8 @@ function installDOM({ parseIds = false, parseMarkup = false } = {}) {
 }
 
 async function appCase(name) {
-  const dom = installDOM();
-  const { register, go } = await import('../public/src/router.js');
+  const dom = installDOM({ parseMarkup: true });
+  const { register, go, setScreenChromeMount } = await import('../public/src/router.js');
   const { user } = await import('../public/src/state.js');
   // Contradictory legacy flags must not grant authentication or cause a
   // welcome/onboarding redirect loop. OFF/confirmed retain existing UX guards.
@@ -245,6 +257,10 @@ async function appCase(name) {
   assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'R1 never migrates/deletes user.v1');
   assert.deepEqual(errors, [], 'app smoke emits no console errors/warnings');
   console.error = originalError; console.warn = originalWarn;
+  // Dispose product-screen readers/timers through the real router lifecycle.
+  setScreenChromeMount(null);
+  register('/boot-cleanup', () => new dom.Element());
+  go('/boot-cleanup'); await flush();
 }
 
 async function devDocsRouteCase(name) {

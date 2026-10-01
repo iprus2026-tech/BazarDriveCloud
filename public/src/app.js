@@ -1,4 +1,4 @@
-import { register, start, go, setPendingAction, setAdmissionGuard, isCurrentDevDocsRoute } from './router.js';
+import { register, start, go, setPendingAction, setAdmissionGuard, isCurrentDevDocsRoute, setScreenChromeMount } from './router.js';
 import { user } from './state.js';
 import { initSwUpdate } from './sw-update.js';
 import { initFavoriteRoutes } from './favorite_routes.js';
@@ -6,6 +6,7 @@ import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
+import { mountDriverRideReturn } from './driver_ride_return.js';
 
 import welcome    from './screens/welcome.js';
 import feed       from './screens/feed.js';
@@ -112,6 +113,7 @@ document.getElementById('fab').addEventListener('click', () => {
 // 01B-A is boot-only. Credential/profile cleanup and post-login/logout/Guest/
 // account-switch lifecycle safety remain separate work (01B-B).
 const bootSession = createAuthSessionBootstrap();
+setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(
   (path, policy) => sessionRouteAdmission(bootSession.getSnapshot(), path, policy),

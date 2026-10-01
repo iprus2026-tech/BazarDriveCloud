@@ -3041,6 +3041,7 @@ function renderDriver(root, u) {
         </div>
         <div class="pf2-dashboard-grid">
           <div class="pf2-dashboard-main">
+            <section class="bd-card pf2-current-order" id="pf2-current-order" aria-label="Активный заказ" hidden></section>
             ${statusCardHtml(u)}
             ${driverCreateActionsHtml()}
             ${driverStatsHtml()}
