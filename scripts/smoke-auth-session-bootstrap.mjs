@@ -663,6 +663,7 @@ async function loginHandoffCase(name) {
     element.value = value;
     for (const fn of element.handlers.input ?? []) fn({ target: element });
   }
+  async function click(id) { assert.ok(node(id), id); node(id).click(); await flush(); }
   input('ob-phone-input', '9990000001');
   node('ob-next').click(); await flush();
   const otpScreen = dom.elements.app.children[0];
