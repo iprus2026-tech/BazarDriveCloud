@@ -1109,13 +1109,19 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.c.finishLogin(), true);
     assert.equal(f.c.hasUncommittedLogin(), false);
   });
-  await check('app pins product navigation and verifies recovery before profile mutation', async () => {
+  await check('app pins incomplete authority and verifies recovery before profile mutation', async () => {
     const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
-    assert.match(source, /hasUncommittedLogin\(\) && path !== '\/onboarding'/);
-    const ownership = source.indexOf('if (!bootSession.finishRecovery())');
-    const mutation = source.indexOf('user.set({', ownership);
-    assert.ok(ownership >= 0 && mutation > ownership,
-      'recovery ownership check must precede account-scoped user.set');
+    assert.match(source, /hasUncommittedLogin\(\) \|\| authenticatedIncomplete/);
+    assert.match(source, /authenticatedIncomplete[\s\S]*path !== '\/onboarding'/);
+    const incomplete = source.indexOf('if (incomplete) {');
+    const ownership = source.indexOf('bootSession.recoveryConfirmed()', incomplete);
+    const mutation = source.indexOf('user.set({', incomplete);
+    const route = source.indexOf("go('/onboarding')", incomplete);
+    assert.ok(incomplete >= 0 && ownership > incomplete && mutation > ownership && route > mutation,
+      'incomplete recovery must recheck ownership before account mutation and route');
+    const incompleteBlock = source.slice(incomplete, route);
+    assert.equal(incompleteBlock.includes('finishRecovery()'), false,
+      'incomplete recovery must retain handoff ownership until onboarding commits or abandons');
   });
   await check('first login reset is distinguished from an A-to-B account switch', async () => {
     let record = null, reset = null;
