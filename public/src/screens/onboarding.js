@@ -617,6 +617,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
         if (!ownsAttempt(attempt)) return;
         result = await accept(r, phone);
+        if (!ownsAttempt(attempt)) return;
         verifiedResponseReceived = result.handoffInstalled === true;
       }
       if (!ownsAttempt(attempt)) return;

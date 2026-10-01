@@ -164,7 +164,19 @@ function showBootSession(snapshot) {
     proceed.className = 'bd-btn primary';
     proceed.textContent = 'Продолжить';
     proceed.addEventListener('click', () => {
-      if (bootSession.finishRecovery()) go((location.hash || '#/welcome').slice(1));
+      const recoveredUser = bootSession.getSnapshot().user;
+      const incomplete = user.get().onboarded !== true;
+      if (incomplete && recoveredUser) {
+        user.set({
+          welcomeSeen: true,
+          onboarded: false,
+          role: recoveredUser.activeRole,
+          phoneVerified: recoveredUser.phoneVerified,
+        });
+      }
+      if (bootSession.finishRecovery()) {
+        go(incomplete ? '/onboarding' : (location.hash || '#/welcome').slice(1));
+      }
     });
     content.appendChild(proceed);
   }

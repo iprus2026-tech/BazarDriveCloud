@@ -693,7 +693,8 @@ async function loginHandoffCase(name) {
     assert.equal(sessions, 0);
     assert.equal(products, 0);
     assert.ok(node('ob-err').textContent.includes('сохранить'));
-    assert.ok(node('ob-otp-input'));
+    assert.ok(node('ob-phone-input'), 'storage failure returns to phone verification');
+    assert.equal(node('ob-otp-input'), null);
     return;
   }
   assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user',
@@ -847,7 +848,12 @@ async function repairHandoffCase(name) {
       assert.equal(dom.elements.app.children[0].dataset.authBootState, 'AUTHENTICATED');
       assert.equal(welcomeEntries, 0);
       await click('auth-boot-continue');
-      assert.equal(welcomeEntries, 1, 'explicit navigation uses the existing fresh-account welcome guard');
+      assert.equal(location.hash, '#/onboarding',
+        'authenticated-incomplete recovery returns to authoritative onboarding');
+      assert.equal(welcomeEntries, 0, 'recovery never enters unauthenticated Welcome Start');
+      assert.equal(user.get().welcomeSeen, true);
+      assert.equal(user.get().onboarded, false);
+      assert.equal(user.get().role, 'passenger');
       assert.equal(products, 0, 'recovery does not fabricate a completed local profile');
     } else {
       assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
