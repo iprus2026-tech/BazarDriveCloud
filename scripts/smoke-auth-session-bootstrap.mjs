@@ -893,7 +893,15 @@ if (process.argv[2] === '--repair-handoff-case') {
   const { createAuthSessionBootstrap: create, sessionRouteAdmission: admit } =
     await import('../public/src/auth_session_bootstrap.js');
   let count = 0;
-  async function check(name, fn) { await fn(); count++; console.log('PASS — ' + name); }
+  async function check(name, fn) {
+    try {
+      await fn();
+      count++;
+      console.log('PASS — ' + name);
+    } catch (error) {
+      throw new Error('FAIL — ' + name + ': ' + (error?.message || error));
+    }
+  }
   const fixture = overrides => create({ backendEnabled: () => true,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
 
