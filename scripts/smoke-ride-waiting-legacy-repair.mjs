@@ -289,7 +289,7 @@ expect('the repair helper reads the existing stored ride via findActiveRide(ride
   /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(persistRepairBody));
 expect('the repair helper returns without saving when nothing is stored yet (no eager materialization)',
   /if\s*\(!storedRide\)\s*return;/.test(persistRepairBody));
-expect('the repaired object is based on storedRide (not on ride / the server projection) — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, route, cancel all survive from storage untouched',
+expect('the repaired object is based on storedRide (not on ride / the server projection) — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, cancel all survive from storage untouched',
   /\{\s*\.\.\.storedRide\s*,/.test(persistRepairBody));
 expect('only waiting crosses from the cleaned in-memory ride into the repaired stored copy',
   /waiting:\s*\{\s*\.\.\.\(ride\.waiting\s*\|\|\s*\{\}\)\s*\}/.test(persistRepairBody));

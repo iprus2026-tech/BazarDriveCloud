@@ -193,11 +193,11 @@ expect('hasConfirmedServerRide is declared false and is set true ONLY at the two
     && (initialRead.match(/markPassengerRideAuthoritative\(ride\);\s*\n\s*hasConfirmedServerRide = true;/g) || []).length === 2);
 expect('successful recovery refreshes mutable driver, route, fare and ETA fields in place',
   inPlaceRefresh.includes('.active-ride-passenger__driver-sub')
-    && inPlaceRefresh.includes('.active-ride-passenger__route-main')
+    && inPlaceRefresh.includes('passengerRoutePointsHtml(ride)')
     && inPlaceRefresh.includes('.active-ride-passenger__payment-amount')
     && inPlaceRefresh.includes('.active-ride-passenger__top-card-eta-value')
     && inPlaceRefresh.includes('.active-ride-passenger__waiting-card-value')
-    && !inPlaceRefresh.includes('innerHTML')
+    && !inPlaceRefresh.includes('sheet.innerHTML') && !inPlaceRefresh.includes('topCard.innerHTML')
     && !inPlaceRefresh.includes('renderTopCard()')
     && !inPlaceRefresh.includes('renderSheet()'));
 const mergeServer = functionBody(passenger, 'mergeServerRide');
@@ -322,10 +322,8 @@ expect('mergeServerRide round 7: route.etaToPickup and route.etaToDestination ar
     && !mergeServer.includes('localProvenanceIsSimAudit')
     && !mergeServer.includes('localTripOrderLinkageProven')
     && !mergeServer.includes('localOrderIdReal'));
-expect('mergeServerRide round 7: route is still built from keep(ride.route, srv.route) underneath (mergedRoute) for the fields that are NOT explicitly overridden — same spread-then-override shape as passenger/driver, just assigned via a named variable instead of an inline object literal',
-  mergeServer.includes('const mergedRoute = {')
-    && mergeServer.includes('...keep(ride.route, srv.route)')
-    && mergeServer.includes('route: mergedRoute,'));
+expect("01B: entire authoritative route replaces stale local points and guidance",
+  mergeServer.includes('const mergedRoute = {') && mergeServer.includes('...(srv.route || {})') && !mergeServer.includes('keep(ride.route, srv.route)') && mergeServer.includes('route: mergedRoute,'));
 expect('mergeServerRide round 7: order.pickupEta/destinationEta/destinationDistance are ALSO resolved directly from srv.order now — the one part of `order` a fourth audit found was still silently keep()-preserving local/demo literals indefinitely',
   mergeServer.includes('pickupEta: (srv.order && srv.order.pickupEta) ?? null,')
     && mergeServer.includes('destinationEta: (srv.order && srv.order.destinationEta) ?? null,')
@@ -422,19 +420,17 @@ expect('topDriverCardHtml/renderPassengerRideComplete: driver name/initials show
 // exact substring counts (no interpretive regex) so a specific shape going
 // missing fails this check instead of silently passing on the other one.
 const countOccurrences = (haystack, needle) => haystack.split(needle).length - 1;
-expect('routeBlockHtml: pickup/dropoff labels show the neutral "—" for an authoritative ride with no real route data, keeping the exact demo fallback for a non-authoritative one',
-  passenger.includes("const pickup = (ride.route && ride.route.pickupLabel) || (authoritative ? '—' : 'ул. Малая Бронная, 28');")
-    && passenger.includes("const dropoff = (ride.route && ride.route.dropoffLabel) || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');"));
-expect('renderPassengerRideComplete/refreshPassengerRideFieldsInPlace: pickup/dropoff labels show the neutral "—" for an authoritative ride with no real route data, keeping the exact demo fallback for a non-authoritative one',
-  countOccurrences(passenger, "route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28')") === 2
-    && countOccurrences(passenger, "route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В')") === 2);
+expect("01B: route labels use the shared real-or-demo helper",
+  passenger.includes('const demo = !hasRealRouteContext(ride)') && passenger.includes("passengerRouteText(ride?.route?.pickupLabel) || (demo ? 'ул. Малая Бронная, 28' : '')") && passenger.includes("passengerRouteText(ride?.route?.dropoffLabel) || (demo ? 'Аэропорт Шереметьево, терминал В' : '')"));
+expect("01B: initial, terminal and refresh use the same source-only route point renderer",
+  countOccurrences(passenger, 'passengerRoutePointsHtml(ride);') === 3);
 const refreshInPlaceBody = functionBody(passenger, 'refreshPassengerRideFieldsInPlace');
 expect('refreshPassengerRideFieldsInPlace mirrors the same authoritative-or-demo policy for driver identity and route labels in the in-place update path',
   refreshInPlaceBody.includes('const authoritative = !!(ride && ride.authoritative)')
     && refreshInPlaceBody.includes("const driverName = authoritative ? (driver.name || '—') : (driver.name || 'Рустам К.');")
     && refreshInPlaceBody.includes("const driverInitials = authoritative ? (driver.initials || '—') : (driver.initials || 'РК');")
-    && refreshInPlaceBody.includes("routeFields[0].textContent = route.pickupLabel || (authoritative ? '—' : 'ул. Малая Бронная, 28');")
-    && refreshInPlaceBody.includes("routeFields[1].textContent = route.dropoffLabel || (authoritative ? '—' : 'Аэропорт Шереметьево, терминал В');"));
+    && refreshInPlaceBody.includes('const pointsHtml = passengerRoutePointsHtml(ride);')
+    && refreshInPlaceBody.includes('routeBlock.hidden = !pointsHtml;'));
 const rideCompleteBodyEarly = functionBody(passenger, 'renderPassengerRideComplete');
 // #939 focused pre-commit audit round 4 — indexOf() returns -1 when a
 // substring is absent, and -1 is numerically less than any real
@@ -485,10 +481,8 @@ expect('swapToTerminalPassengerScreen syncs the URL BEFORE tearing down/swapping
 // with the neutral '—' when genuinely absent; local/backend-off keeps the
 // exact prior three-step chain.
 const inProgressInfoBody = functionBody(passenger, 'inProgressInfo');
-expect('inProgressInfo: an authoritative ride consults ONLY route.etaToDestination (never the stale ride.ride.etaToDestination), neutral "—" when absent, local/backend-off chain unchanged',
-  inProgressInfoBody.includes('const authoritative = !!(ride && ride.authoritative)')
-    && inProgressInfoBody.includes("? (route.etaToDestination || '—')")
-    && inProgressInfoBody.includes(": (route.etaToDestination || r.etaToDestination || '17 мин')"));
+expect("01B: real in-progress ETA uses only the route source; demo keeps its fallback",
+  inProgressInfoBody.includes('const real = hasRealRouteContext(ride)') && inProgressInfoBody.includes('? passengerRouteText(route.etaToDestination)') && inProgressInfoBody.includes(": (route.etaToDestination || r.etaToDestination || '17 мин')"));
 // #939 focused pre-commit audit round 4 — arrivalTime (ride.ride.arrivalTime)
 // has no server contract field behind it at all (serializeRide() never
 // emits a top-level `ride:` key — mergeServerRide's own keep(ride.ride,
@@ -496,10 +490,8 @@ expect('inProgressInfo: an authoritative ride consults ONLY route.etaToDestinati
 // alongside the etaToDestination fix above: an authoritative ride with no
 // local record fell through to the fabricated '14:32' regardless of
 // confirmation state.
-expect('inProgressInfo: arrivalTime shows the neutral "—" for an authoritative ride with no local record, keeping the exact prior "14:32" fallback for a non-authoritative one',
-  inProgressInfoBody.includes("const arrivalTime = r.arrivalTime || (authoritative ? '—' : '14:32')")
-    && inProgressInfoBody.indexOf('const authoritative = !!(ride && ride.authoritative)')
-      < inProgressInfoBody.indexOf('const arrivalTime ='));
+expect("01B: unknown arrival clock is empty for real rides",
+  inProgressInfoBody.includes("const arrivalTime = passengerRouteText(r.arrivalTime) || (real ? '' : '14:32')"));
 // #939 focused pre-commit audit round 4 — arrivingDropoffInfo is
 // inProgressInfo's exact sibling (both feed the SAME 'до места' top-card
 // ETA slot via topDriverCardEta, this one only for the ARRIVING_DROPOFF
@@ -522,9 +514,8 @@ const arrivingDropoffInfoBody = functionBody(passenger, 'arrivingDropoffInfo');
 // neutral '—' fallback (no ride.ride reference, no demo literal); the
 // non-authoritative branch is reverted BYTE-FOR-BYTE to the pre-round-4
 // baseline.
-expect('arrivingDropoffInfo authoritative branch: ONLY route.etaToDestination || \'—\' — no ride.ride reference, no demo literal',
-  arrivingDropoffInfoBody.includes('const authoritative = !!(ride && ride.authoritative)')
-    && arrivingDropoffInfoBody.includes("? (route.etaToDestination || '—')"));
+expect("01B: real arriving-dropoff ETA uses only destination source",
+  arrivingDropoffInfoBody.includes('hasRealRouteContext(ride)') && arrivingDropoffInfoBody.includes('? passengerRouteText(route.etaToDestination)'));
 expect('arrivingDropoffInfo non-authoritative/backend-off branch: reverted byte-for-byte to the pre-round-4 baseline (route.etaToDropoff || r.etaToDropoff || \'1 мин\') — round 4\'s route.etaToDestination swap there is gone',
   arrivingDropoffInfoBody.includes(": (route.etaToDropoff || r.etaToDropoff || '1 мин')")
     && !arrivingDropoffInfoBody.includes(": (route.etaToDestination || r.etaToDropoff || '1 мин')"));
@@ -535,19 +526,16 @@ expect('arrivingDropoffInfo non-authoritative/backend-off branch: reverted byte-
 // pickupEta key from the server — it is a pure local/demo pass-through,
 // same situation as arrivalTime above.
 const etaTextBody = functionBody(passenger, 'etaText');
-expect('etaText: shows the neutral "—" for an authoritative ride with no local order.pickupEta, keeping the exact prior "4 мин" fallback for a non-authoritative one',
-  etaTextBody.includes('const authoritative = !!(ride && ride.authoritative)')
-    && etaTextBody.includes("(ride && ride.order && ride.order.pickupEta) || (authoritative ? '—' : '4 мин')"));
+expect("01B: real pickup ETA has no invented fallback",
+  etaTextBody.includes('hasRealRouteContext(ride)') && etaTextBody.includes('passengerRouteText(ride?.order?.pickupEta) || passengerRouteText(ride?.route?.etaToPickup)') && etaTextBody.includes(": (ride?.order?.pickupEta || '4 мин')"));
 // #939 focused pre-commit audit round 4 — completedStats' r.duration/
 // r.distance live on `ride.ride` (never server-populated, same as
 // arrivalTime) and order.destinationEta/destinationDistance have no
 // serializeRide() contract field either (order only ever carries
 // offerPrice) — visibly present, ungated, in S23's own COMPLETE DOM today.
 const completedStatsBody = functionBody(passenger, 'completedStats');
-expect('completedStats: duration/distance show the neutral "—" for an authoritative ride with nothing real in either slot, keeping the exact prior "42 мин"/"38 км" fallbacks for a non-authoritative one',
-  completedStatsBody.includes('const authoritative = !!(ride && ride.authoritative)')
-    && completedStatsBody.includes("r.duration || order.destinationEta || (authoritative ? '—' : '42 мин')")
-    && completedStatsBody.includes("r.distance || order.destinationDistance || (authoritative ? '—' : '38 км')"));
+expect("01B: unknown real duration and distance are empty; demo values remain fixture-only",
+  completedStatsBody.includes('const real = hasRealRouteContext(ride)') && completedStatsBody.includes("passengerRouteText(order.destinationEta) || (real ? '' : '42 мин')") && completedStatsBody.includes("passengerRouteText(order.destinationDistance) || (real ? '' : '38 км')"));
 // #939 focused pre-commit audit round 4 — a truthy `srv` with no `status`
 // field at all is a malformed 2xx, not a valid confirmation (every real
 // serializeRide() shape always carries `status`). Left unguarded,
@@ -700,9 +688,9 @@ expect('the repair helper reads the existing stored ride via findActiveRide(ride
   /const\s+storedRide\s*=\s*findActiveRide\(ride\.tripId\)/.test(passengerRepair));
 expect('the repair helper returns without saving when nothing is stored yet (no eager materialization)',
   /if\s*\(!storedRide\)\s*return;/.test(passengerRepair));
-expect('the repaired object is based on storedRide — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, vehicle, route, payment, ride, chat, cancel all survive from storage untouched',
+expect('the repaired object is based on storedRide — status, timestamps, tripId, orderId, acceptedSource, passenger, driver, vehicle, payment, ride, chat, cancel all survive from storage untouched',
   /\{\s*\.\.\.storedRide\s*,/.test(passengerRepair));
-expect('only the cleaned waiting projection crosses into the repaired stored copy',
+expect('the cleaned waiting projection crosses into the repaired stored copy',
   /waiting:\s*\{\s*\.\.\.\(cleanedWaiting\s*\|\|\s*\{\}\)\s*\}/.test(passengerRepair));
 expect('the repair helper deletes localProvenance from the repaired copy',
   /delete\s+repaired\.localProvenance;/.test(passengerRepair));
@@ -711,13 +699,13 @@ expect('the repair helper persists through the existing saveActiveRide (so the t
 expect('runInitialRead computes the cleaned waiting and invokes the repair right after srv is known non-null, BEFORE maybeReMount can navigate/defer away',
   (() => {
     const callIdx = initialRead.indexOf(
-      'persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));');
+      'persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting), srv);');
     const remountIdx = initialRead.indexOf('maybeReMount(srv.status)');
     return callIdx !== -1 && remountIdx !== -1 && callIdx < remountIdx;
   })());
 expect('the repair call sits after the !srv early return (srv is proven non-null before it can run)',
   initialRead.indexOf('if (!srv) {') <
-    initialRead.indexOf('persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting));'));
+    initialRead.indexOf('persistPassengerServerConfirmedWaitingProjection(mergeServerWaiting(ride.waiting, srv.waiting), srv);'));
 expect('the !srv branch does not invoke the server-confirmed repair (no server proof, no repair)',
   (() => {
     const notSrvBlock = initialRead.slice(initialRead.indexOf('if (!srv) {'), initialRead.indexOf('backendRide = true;'));

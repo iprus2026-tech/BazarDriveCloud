@@ -780,6 +780,17 @@ if (exists(rideSeedPureBuilderSmoke)) {
   }
 }
 
+// BD-MAP-DUAL-EXPERIENCE-01B — source-only seed/hydration route projections.
+const rideRouteSourceSmoke = path.join(root, 'scripts', 'smoke-ride-route-source.mjs');
+if (exists(rideRouteSourceSmoke)) {
+  try {
+    execFileSync(process.execPath, [rideRouteSourceSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-ride-route-source.mjs failed\n${msg}`);
+  }
+}
+
 // BD-RIDE-SELECTED-RESPONSE-IDENTITY-01B — /responses select-click identity
 // gate: exact one-candidate driverId+responseId match (no stale/ambiguous
 // fallback), local real-response resolveResponseById+orderId validation,

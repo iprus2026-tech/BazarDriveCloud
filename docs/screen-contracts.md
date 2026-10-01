@@ -1409,6 +1409,16 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Navigation | CURRENT: none — the MapShell placeholder plus a static navigation card built from `ride.route.currentInstruction` / `currentStreet`; «Навигатор» and «Карта» show a notice only. Driver Active Navigation (`/driver-navigation`) is PLANNED ONLY and unregistered — see BD-MAP-DUAL-EXPERIENCE-01A. |
 | Helper modules (no route) | `public/src/screens/active_ride_driver_sheets.js` (BD-RIDE-D-SHEETS-01 cancel + problem bottom sheets, plus the driver earnings overlay opener `openDriverEarningsSheet`) and `public/src/screens/active_ride_passenger_sheets.js` (passenger sheets, imported only by the passenger screen). The earnings sheet uses `driver-sheet__*` / `styles/driver_sheets.css`. `public/src/screens/active_ride_driver_noshow.js` is the BD-RIDE-D-NOSHOW-01 no-show sub-flow (`openDriverNoShowFlow`), opened from the `WAITING_PASSENGER` no-show action `#ar-no-show` («Не приехал» while waiting, «Пассажир не вышел» once the wait has expired); its only persistence is the existing `NO_SHOW` transition through the screen's `onConfirmNoShow` callback. Covered by `scripts/smoke-active-ride-noshow.mjs`. |
 
+### BD-MAP-DUAL-EXPERIENCE-01B — active-ride route sources
+
+| Contract | Behavior |
+| --- | --- |
+| Real seeds | Canonical accepted orders, feed-post accepts, passenger seeds and confirmed handoff fallback entries keep their source pickup/dropoff points; missing route/order fields never inherit Moscow demo data. Unknown duration has no fabricated ETA. |
+| Server hydration | Both roles replace the entire route/order projection from the successful response, including direct entry without local data. Existing stored projections are repaired before subsequent status actions; identity/lifecycle/terminal freeze are preserved. |
+| Empty display | Unknown navigation, ETA, address rows, route metadata/tags and passenger completed time/distance are omitted. Known source values remain visible. Passenger initial rendering and recovery use the same presentation helpers. |
+| Map placeholder | Driver labels refresh with the hydrated ride; absent endpoint labels/markers and route lines are hidden in both roles. No live Mapbox activation or coordinate-trust upgrade. |
+| Verification | `smoke-ride-route-source.mjs`, passenger loading/local-sync runtime checks; explicit fixture/sim behavior remains available. |
+
 ### BD-RIDE-D-ERROR-01 - Driver active-ride error states
 
 **Status: Planned / contract-only — none of the four states are wired in runtime.** `retry status sync` is **deferred until a backend ride-events / async mutation contract** exists. The **support fallback (state 4) stays Cloud Design render-needed** — `BD-RIDE-D-DISPUTE-01` renders only the **no-show-compensation** support/dispute path (a different entry point), so it does **not** provide a render frame for support escalation out of active-ride **error states**; that frame (or a separate error-state support gate) is still needed. Error/offline handling for the live driver ride. Distinct from BD-ERROR-01A (the app-shell overlay) and from BD-RIDE-D-NOSHOW-01 (the terminal no-show flow). No own route — these states would layer onto `/active-ride?role=driver`.
@@ -1626,7 +1636,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | ~~`driver_markers.js` and `trip_status_layer.js` stubs~~ | Resolved (BD-MAP-FOUND-03 / BD-MAP-FOUND-04): both foundation stubs now exist in `public/src/mapbox/` as no-op / pure-helper modules (no real Mapbox, no token, no network), precached in `sw.js` and guarded by `scripts/smoke-mapbox-foundation-stubs.mjs`. |
 | Driver no-show full flow | The no-show action exists as a stub/toast path and needs a dedicated issue before becoming a full state flow. |
 | ~~DriverMap readiness gate~~ | Resolved (BD-DRIVER-02): `/driver-map` now enforces `isDriverLineReady()` — the shared `state.js` rule — alongside the role guard. |
-| Demo-route inheritance (P1-1) and passenger/driver pickup coordinate drift (P1-2) | Recorded by BD-MAP-DUAL-EXPERIENCE-01A: an accepted driver ride inherits demo Moscow route fields, and the two roles can hold different pickup coordinates for one order. The fix is `BD-MAP-DUAL-EXPERIENCE-01B` (runtime, separate slice); until it lands, the Driver Free Drive live rollout and the Driver Active Navigation runtime stay blocked. |
+| Demo-route inheritance (P1-1) and passenger/driver pickup coordinate drift (P1-2) | Corrected by `BD-MAP-DUAL-EXPERIENCE-01B` in this revision: seeds preserve source points and both hydration paths replace route/order projections. Live rollout still requires merged 01B and the remaining Geo/provenance, privacy, lifecycle and server-routing slices from the map contract. |
 | Backend/auth/payments/uploads/push/APK | Out of scope for the current PWA mock spine. |
 | Automated tests | `node scripts/check.mjs` is the current guard; node:test coverage remains technical debt. |
 
