@@ -10,8 +10,11 @@
 // behaviourally asserts that). Bare `localStorage` access with the literal key keeps the gate able to
 // resolve it.
 const STORAGE_KEY = 'bazardrive.auth.v1';
+// Fail closed in this tab when storage cannot replace/remove an old credential.
+let blocked = false;
 
 function load() {
+  if (blocked) return {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) || {}) : {};
@@ -34,21 +37,29 @@ export function getAuthUserId() {
 
 // Persist the minted session (called by the onboarding otp-verify success path).
 export function setAuth({ token, userId, phone } = {}) {
+  blocked = true;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       token: token || null,
       userId: userId || null,
       phone: phone || null,
     }));
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (!token || !userId || saved?.token !== token || saved?.userId !== userId
+        || saved?.phone !== (phone || null)) return false;
+    blocked = false;
+    return true;
   } catch {
-    // storage full / unavailable — the token is simply not persisted (next call falls back to OFF).
+    return false;
   }
 }
 
 // Drop the session (logout boundary).
 export function clearAuth() {
+  blocked = true;
   try {
     localStorage.removeItem(STORAGE_KEY);
+    blocked = localStorage.getItem(STORAGE_KEY) !== null;
   } catch {
     // ignore
   }

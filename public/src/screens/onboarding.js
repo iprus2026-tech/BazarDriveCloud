@@ -3,7 +3,8 @@ import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
-import { setAuth } from '../auth_token.js';
+import { resetLocalSession } from '../mock_auth.js';
+import { clearSmokeRole } from '../smoke_role.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
 const SVG_BACK = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -463,7 +464,7 @@ function renderDone(draft) {
 }
 
 // ── Main screen factory ───────────────────────────────────────────────────────
-export default function onboarding() {
+export default function onboarding(renderContext = { isCurrent: () => true }, auth = null) {
   const root = document.createElement('section');
   root.className = 'screen screen--onboarding';
 
@@ -514,6 +515,31 @@ export default function onboarding() {
   let step = 0;
   let otpAdvanceTimer = null;
   let otpSubmitting = false;
+  let verifiedResponseReceived = false;
+  let passengerIdentity = null;
+  let otpGeneration = 0;
+  let otpAttempt = null;
+  let confirmedAttempt = null;
+
+  const ownsScreen = () => renderContext.isCurrent();
+  const normalizedPhone = () => '+7' + (draft.phone || '').slice(-10);
+  const ownsAttempt = attempt => ownsScreen() && attempt !== null
+    && attempt === otpAttempt && attempt.generation === otpGeneration
+    && attempt.phone === normalizedPhone();
+
+  function invalidateOtpAttempt() {
+    ++otpGeneration;
+    otpAttempt = null;
+    confirmedAttempt = null;
+    passengerIdentity = null;
+    verifiedResponseReceived = false;
+    otpSubmitting = false;
+    clearOtpAdvanceTimer();
+  }
+
+  function canContinuePassenger() {
+    return ownsAttempt(confirmedAttempt) && auth?.passengerConfirmed() === true;
+  }
 
   function clearOtpAdvanceTimer() {
     if (otpAdvanceTimer !== null) {
@@ -525,7 +551,13 @@ export default function onboarding() {
   // Inline error under the current step's footer (#ob-err exists on the phone + otp steps). Empty
   // string clears it. Only used on the live-backend path; the mock path never errors.
   function setStepError(msg) {
-    const el = root.querySelector('#ob-err');
+    let el = root.querySelector('#ob-err');
+    if (!el && msg) {
+      el = document.createElement('p');
+      el.id = 'ob-err';
+      el.setAttribute('role', 'alert');
+      root.appendChild(el);
+    }
     if (!el) return;
     el.textContent = msg || '';
     el.hidden = !msg;
@@ -535,28 +567,52 @@ export default function onboarding() {
   // (auth_token.setAuth), then run the existing success path. On failure show an inline error and let
   // the user retry. The mock path (backend OFF) is unchanged below.
   async function verifyOtpWithBackend() {
+    const attempt = otpAttempt;
+    if (!ownsAttempt(attempt) || !attempt.requested) return;
     const otpInput = root.querySelector('#ob-otp-input');
     const nextBtn  = root.querySelector('#ob-next');
     const code = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, draft.otpLen || 6) : '';
-    const phone = draft.authPhone || ('+7' + (draft.phone || '').slice(-10));
+    const phone = attempt.phone;
     // Disable the field + button while the verify is in flight so an edit can't reset the
     // re-entrancy guard and fire a DUPLICATE verify (which would burn a server attempt).
     if (otpInput) otpInput.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
     try {
-      const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
-      // Stash the minted session on the draft; PERSIST it only at a commit point
-      // (completePhoneVerification / finish) so an abandoned or Guest flow never leaves a token behind.
-      draft.authToken = r.token;
-      draft.authUserId = r.user && r.user.userId;
+      if (!auth) throw Object.assign(new Error('handoff unavailable'), { code: 'SESSION_PROTOCOL' });
+      let result;
+      if (verifiedResponseReceived) {
+        result = await auth.resumeLogin();
+      } else {
+        const accept = auth.beginLogin({ isCurrent: () => ownsAttempt(attempt), resetAccount: () => {
+          resetLocalSession();
+          consumePendingAction();
+        } });
+        const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
+        if (!ownsAttempt(attempt)) return;
+        verifiedResponseReceived = true;
+        result = await accept(r, phone);
+      }
+      if (!ownsAttempt(attempt)) return;
+      if (!result.ok) throw Object.assign(new Error('handoff failed'), { code: result.code });
+      passengerIdentity = result.user;
+      confirmedAttempt = attempt;
+      clearSmokeRole();
+      draft.role = 'passenger';
       if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
     } catch (err) {
+      if (!ownsAttempt(attempt)) return;
       otpSubmitting = false;
       if (otpInput) otpInput.disabled = false;
       if (nextBtn) nextBtn.disabled = false;
       const ecode = err && err.code;
       setStepError(
-        (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
+        verifiedResponseReceived ? (
+          ecode === 'PASSENGER_AUTHORITY_REQUIRED' ? 'Сервер не подтвердил роль пассажира.'
+          : ecode === 'AUTH_STORAGE_FAILED' ? 'Не удалось сохранить вход. Проверьте доступ к хранилищу и запросите новый код.'
+          : ecode === 'AUTH_IDENTITY_MISMATCH' ? 'Учётная запись не совпала. Повторите проверку входа.'
+          : 'Не удалось подтвердить вход. Повторите проверку сессии.'
+        )
+        : (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
         : (err && err.status === 0) || ecode === 'NETWORK' ? 'Не удалось связаться с сервером. Попробуйте ещё раз.'
         : 'Неверный код. Попробуйте ещё раз.',
       );
@@ -564,6 +620,7 @@ export default function onboarding() {
   }
 
   function advanceFromOtpOnce() {
+    if (!ownsScreen()) return;
     if (otpSubmitting) return;
     if (currentStep() !== 'otp') return;
     otpSubmitting = true;
@@ -591,31 +648,37 @@ export default function onboarding() {
     if (phoneIdx >= 0) step = phoneIdx;
   }
 
-  // Verify-only completion: persist phoneVerified (and the confirmed phone)
-  // while preserving every other field, then return to the profile so the
-  // needs-phone gate is gone. No full profile rebuild, no role mutation.
-  // Persist the bearer minted during this run, but ONLY at a commit point — so an abandoned or Guest
-  // flow never leaves a token on an anonymous/guest local session. phone = the normalized requested
-  // number used for the OTP (draft.authPhone).
-  function persistAuthIfMinted() {
-    if (draft.authToken) setAuth({ token: draft.authToken, userId: draft.authUserId, phone: draft.authPhone });
+  // Recheck at each UI commit; the bearer was persisted immediately after verify.
+  function canFinishAuth() {
+    if (!isBackendEnabled() || canContinuePassenger()) return true;
+    setStepError('Учётная запись изменилась. Вернитесь к проверке входа.');
+    return false;
   }
 
   function completePhoneVerification() {
+    if (!canFinishAuth()) return;
+    if (isBackendEnabled()) {
+      user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
+        phone: confirmedAttempt.phone, onboarded: true, welcomeSeen: true });
+      if (auth.finishLogin()) go('/profile?role=passenger');
+      return;
+    }
     const patch = { phoneVerified: true };
     if (draft.phone) patch.phone = draft.phone;
     user.set(patch);
-    persistAuthIfMinted();
     go(verifyReturnRoute());
   }
 
   function next() {
+    if (!ownsScreen()) return;
     clearOtpAdvanceTimer();
     step = Math.min(step + 1, totalSteps() - 1);
     render();
   }
 
   function back() {
+    if (!ownsScreen()) return;
+    if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
       go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
@@ -626,6 +689,17 @@ export default function onboarding() {
   }
 
   function finish() {
+    if (!canFinishAuth()) return;
+    if (isBackendEnabled()) {
+      // Local descriptive fields cannot select the authenticated actor or grant a role.
+      user.set({ onboarded: true, welcomeSeen: true, role: passengerIdentity.activeRole,
+        phoneVerified: passengerIdentity.phoneVerified, phone: confirmedAttempt.phone,
+        firstName: draft.firstName, lastName: draft.lastName,
+        displayName: [draft.firstName, draft.lastName].filter(Boolean).join(' ') || 'Пользователь' });
+      consumePendingAction(); // Never replay another account's/domain mutation callback.
+      if (auth.finishLogin()) go('/feed');
+      return;
+    }
     const displayName = [draft.firstName, draft.lastName].filter(Boolean).join(' ')
       || draft.phone
       || 'Пользователь';
@@ -682,7 +756,6 @@ export default function onboarding() {
       documentsReady,
       driverDocuments,
     });
-    persistAuthIfMinted();
     const pending = consumePendingAction();
     if (pending) {
       pending();
@@ -768,7 +841,9 @@ export default function onboarding() {
         const phoneInput = root.querySelector('#ob-phone-input');
         if (phoneInput) {
           phoneInput.addEventListener('input', () => {
+            const previousPhone = normalizedPhone();
             draft.phone = phoneInput.value.replace(/\D/g, '');
+            if (isBackendEnabled() && normalizedPhone() !== previousPhone) invalidateOtpAttempt();
             setStepError('');
           });
         }
@@ -779,17 +854,22 @@ export default function onboarding() {
           // Normalize to E.164 ONCE (last 10 digits handles a 10-digit input AND an 11-digit
           // 7…/8…-prefixed one), and FREEZE the field + button while the request is in flight so the
           // requested number can't diverge from the one used to verify/persist.
-          const phone = '+7' + (draft.phone || '').slice(-10);
+          invalidateOtpAttempt();
+          const attempt = { generation: otpGeneration, phone: normalizedPhone(), requested: false };
+          otpAttempt = attempt;
+          const phone = attempt.phone;
           setStepError('');
           nextBtn.disabled = true;
           if (phoneInput) phoneInput.disabled = true;
           try {
             const resp = await apiFetch('/auth/otp/request', { method: 'POST', body: { phone } });
-            draft.authPhone = phone;
+            if (!ownsAttempt(attempt)) return;
+            attempt.requested = true;
             // Match the UI to the server's code length (dev echoes devCode; prod default is 4).
             draft.otpLen = ((resp && resp.devCode) || '').length || 4;
             next();
           } catch (err) {
+            if (!ownsAttempt(attempt)) return;
             nextBtn.disabled = false;
             if (phoneInput) phoneInput.disabled = false;
             setStepError(err && err.code === 'INVALID_PHONE'

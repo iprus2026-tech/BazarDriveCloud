@@ -43,7 +43,16 @@ register('/route-preview', routePreview);
 register('/order-map-draft', orderMapDraft);
 register('/rules',       rules);
 register('/profile',     profile);
-register('/onboarding',  onboarding);
+let onboardingHandoffOwner = null;
+register('/onboarding', (context) => onboarding(context, {
+  beginLogin(options) {
+    onboardingHandoffOwner = context;
+    return bootSession.beginLogin(options);
+  },
+  resumeLogin: () => bootSession.resumeLogin(),
+  passengerConfirmed: () => bootSession.passengerConfirmed(),
+  finishLogin: () => bootSession.finishLogin(),
+}));
 register('/new',         composer);
 register('/respond',     respond);
 register('/chat',        chat);
@@ -110,8 +119,7 @@ document.getElementById('fab').addEventListener('click', () => {
   requireOnboarding(() => go(getCreateEntryRoute()));
 });
 
-// 01B-A is boot-only. Credential/profile cleanup and post-login/logout/Guest/
-// account-switch lifecycle safety remain separate work (01B-B).
+// One controller owns both boot and post-verify reconciliation.
 const bootSession = createAuthSessionBootstrap();
 setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
@@ -122,6 +130,7 @@ setAdmissionGuard(
 
 function showBootSession(snapshot) {
   const unknown = snapshot.state === 'SESSION_UNKNOWN';
+  const recovered = snapshot.state === 'AUTHENTICATED' && bootSession.isLoginDetached();
   const view = document.createElement('section');
   view.className = 'screen screen--ob';
   view.dataset.authBootState = snapshot.state;
@@ -132,7 +141,8 @@ function showBootSession(snapshot) {
   message.className = unknown ? 'ob-retry-state__title' : 'ob-loading-message';
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
-  message.textContent = unknown ? 'Не удалось проверить вход' : 'Проверяем вход…';
+  message.textContent = recovered ? 'Вход подтверждён. Можно продолжить.'
+    : unknown ? 'Не удалось проверить вход' : 'Проверяем вход…';
   content.appendChild(message);
   if (unknown) {
     const retry = document.createElement('button');
@@ -142,6 +152,17 @@ function showBootSession(snapshot) {
     retry.textContent = 'Повторить';
     retry.addEventListener('click', () => { void bootSession.reconcile(); });
     content.appendChild(retry);
+  }
+  if (recovered) {
+    const proceed = document.createElement('button');
+    proceed.id = 'auth-boot-continue';
+    proceed.type = 'button';
+    proceed.className = 'bd-btn primary';
+    proceed.textContent = 'Продолжить';
+    proceed.addEventListener('click', () => {
+      if (bootSession.finishRecovery()) go((location.hash || '#/welcome').slice(1));
+    });
+    content.appendChild(proceed);
   }
   view.appendChild(content);
   document.getElementById('tabbar').hidden = true;
@@ -167,9 +188,16 @@ function onBootHashChange() {
 // Until routing starts, a direct hash navigation can still reach dev/docs.
 window.addEventListener('hashchange', onBootHashChange);
 bootSession.subscribe((snapshot) => {
+  // Keep the current OTP/profile draft mounted while its owner awaits handoff.
+  // A later route generation cannot suppress the normal boot/admission UI.
+  if (onboardingHandoffOwner?.isCurrent()) return;
   if (isCurrentDevDocsRoute()) {
     // Reconciliation continues, without replacing or remounting dev/docs.
     startRouterOnce();
+  } else if (snapshot.state === 'AUTHENTICATED' && bootSession.isLoginDetached()) {
+    // App-level retry confirms identity only. The disposed onboarding cannot
+    // resume navigation; the user explicitly chooses a new route entry.
+    showBootSession(snapshot);
   } else if (routerStarted) {
     // Resume a route blocked after leaving dev/docs. The router owns admission,
     // disposal, and the blocked UI callback; start() is never called again.

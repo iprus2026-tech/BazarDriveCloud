@@ -619,7 +619,227 @@ async function guestPublicCase(name) {
   console.error = oldError; console.warn = oldWarn;
 }
 
-if (process.argv[2] === '--guest-public-case') {
+async function loginHandoffCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  user.set({ welcomeSeen: true, onboarded: false, role: 'passenger', firstName: 'Old account' });
+  if (name === 'account-switch') localStorage.setItem('bazardrive.auth.v1',
+    JSON.stringify({ token: 'old-token', userId: 'old-user' }));
+  globalThis.__BD_API_BASE__ = name === 'off-demo' ? '' : 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const pending = deferred();
+  const requests = [];
+  let sessions = 0;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
+      userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+    assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
+    if (name === 'account-switch' && options.headers.Authorization === 'Bearer old-token') {
+      return response({ user: { userId: 'old-user', sessionId: 'old-session',
+        activeRole: 'passenger', phoneVerified: true } });
+    }
+    assert.equal(options.headers.Authorization, 'Bearer new-token');
+    sessions++;
+    if (name === 'retry' && sessions === 1) return response({ code: 'SESSION_LOOKUP_FAILED' }, 503);
+    return pending.promise;
+  };
+  await import('../public/src/app.js'); await flush();
+  if (name === 'account-switch') {
+    const { setSmokeRole } = await import('../public/src/smoke_role.js');
+    setSmokeRole('driver');
+    router.setPendingAction(() => assert.fail('old account pending action must not run'));
+  }
+  let products = 0;
+  router.register('/feed', () => { products++; return new dom.Element(); });
+  const node = id => document.getElementById(id);
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  input('ob-phone-input', '9990000001');
+  node('ob-next').click(); await flush();
+  const otpScreen = dom.elements.app.children[0];
+  if (name === 'storage-failure') {
+    const originalSet = localStorage.setItem;
+    localStorage.setItem = (key, value) => {
+      if (key === 'bazardrive.auth.v1') throw new Error('fixture storage denied');
+      originalSet(key, value);
+    };
+  }
+  input('ob-otp-input', name === 'off-demo' ? '123456' : '1234');
+  node('ob-next').click(); await flush();
+  if (name === 'off-demo') {
+    assert.ok(node('ob-firstname'));
+    input('ob-firstname', 'Demo');
+    node('ob-next').click(); await flush();
+    node('ob-finish').click(); await flush();
+    assert.equal(products, 1);
+    assert.equal(requests.length, 0);
+    assert.equal(localStorage.getItem('bazardrive.auth.v1'), null);
+    return;
+  }
+  if (name === 'storage-failure') {
+    assert.equal(sessions, 0);
+    assert.equal(products, 0);
+    assert.ok(node('ob-err').textContent.includes('сохранить'));
+    assert.ok(node('ob-otp-input'));
+    return;
+  }
+  assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user',
+    'verify persists before profile completion');
+  assert.equal(dom.elements.app.children[0], otpScreen, 'reconciliation cannot remount draft');
+  assert.equal(products, 0);
+  assert.notEqual(user.get().firstName, 'Old account', 'unowned local profile detached');
+  if (name === 'retry') {
+    assert.ok(node('ob-err').textContent);
+    node('ob-next').click(); await flush();
+    assert.equal(sessions, 2);
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
+  }
+  pending.resolve(response({ user: { userId: name === 'mismatch' ? 'other-user' : 'new-user',
+    sessionId: 'new-session', activeRole: 'passenger', phoneVerified: true } }));
+  await flush();
+  assert.equal(dom.starts(), 1, 'handoff never restarts router or reloads page');
+  if (name === 'mismatch') {
+    assert.ok(node('ob-otp-input'));
+    assert.ok(node('ob-err').textContent.includes('не совпала'));
+    assert.equal(products, 0);
+  } else {
+    assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
+    input('ob-firstname', 'QA');
+    node('ob-next').click(); await flush();
+    node('ob-finish').click(); await flush();
+    assert.equal(products, 1, 'AUTHENTICATED admits passenger without reload');
+    assert.equal(user.get().role, 'passenger');
+    assert.equal(user.get().phoneVerified, true);
+    if (name === 'account-switch') {
+      const { getSmokeRole } = await import('../public/src/smoke_role.js');
+      assert.equal(getSmokeRole(), null);
+    }
+  }
+}
+
+async function repairHandoffCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: false, role: 'passenger', firstName: 'Untouched draft' });
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const oldVerify = deferred(), oldSession = deferred(), retrySession = deferred();
+  const routeCase = name.startsWith('retry-');
+  const lateSession = name === 'late-session';
+  const requests = [];
+  let verifies = 0, sessions = 0, products = 0, welcomeEntries = 0;
+  const verified = id => ({ token: 'fixture-token-' + id, user: {
+    userId: id, roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+  const session = id => response({ user: { userId: id, sessionId: 'fixture-session',
+    activeRole: 'passenger', phoneVerified: true } });
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) {
+      verifies++;
+      if (verifies === 1) return routeCase || lateSession ? response(verified('a')) : oldVerify.promise;
+      return response(verified(name === 'same-phone-request' ? 'a' : 'b'));
+    }
+    assert.ok(url.endsWith('/auth/session'), 'repair only exercises auth endpoints');
+    sessions++;
+    if (routeCase) return sessions === 1 ? oldSession.promise : retrySession.promise;
+    if (lateSession && sessions === 1) return oldSession.promise;
+    return session(name === 'same-phone-request' ? 'a' : 'b');
+  };
+  await import('../public/src/app.js'); await flush();
+  router.register('/feed', () => { products++; return new dom.Element(); });
+  router.register('/welcome', () => { welcomeEntries++; return new dom.Element(); });
+  const node = id => document.getElementById(id);
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  async function click(id) { assert.ok(node(id), id); node(id).click(); await flush(); }
+  input('ob-phone-input', '9990000001'); await click('ob-next');
+  input('ob-otp-input', '1234'); await click('ob-next');
+
+  if (routeCase) {
+    assert.equal(auth.getAuthUserId(), 'a'); assert.equal(sessions, 1);
+    router.go('/feed'); await flush();
+    oldSession.resolve(session('a')); await flush();
+    assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
+    assert.equal(products, 0); assert.equal(node('ob-firstname'), null);
+    if (name === 'retry-credential-before') auth.setAuth({ token: 'fixture-token-c', userId: 'c' });
+    await click('auth-boot-retry');
+    if (name === 'retry-credential-before') {
+      assert.equal(sessions, 1, 'obsolete credential ownership cannot send a retry');
+    } else {
+      assert.equal(sessions, 2, 'exactly one new session GET');
+      if (name === 'retry-credential-during') auth.setAuth({ token: 'fixture-token-c', userId: 'c' });
+      retrySession.resolve(session(name === 'retry-mismatch' ? 'other' : 'a'));
+      await flush();
+    }
+    assert.equal(verifies, 1);
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/request')).length, 1);
+    assert.equal(products, 0, 'retry cannot automatically enter passenger UI');
+    assert.equal(node('ob-firstname'), null, 'disposed onboarding cannot resume');
+    if (name === 'retry-match') {
+      assert.equal(dom.elements.app.children[0].dataset.authBootState, 'AUTHENTICATED');
+      assert.equal(welcomeEntries, 0);
+      await click('auth-boot-continue');
+      assert.equal(welcomeEntries, 1, 'explicit navigation uses the existing fresh-account welcome guard');
+      assert.equal(products, 0, 'recovery does not fabricate a completed local profile');
+    } else {
+      assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
+      assert.equal(node('auth-boot-continue'), null);
+    }
+    assert.equal(dom.starts(), 1);
+    return;
+  }
+
+  await click('ob-back');
+  if (name !== 'back-only') {
+    if (name !== 'same-phone-request') input('ob-phone-input', '9990000002');
+    await click('ob-next');
+  }
+  const currentScreen = dom.elements.app.children[0];
+  const beforeLateAuth = localStorage.getItem('bazardrive.auth.v1');
+  const beforeLateProfile = JSON.stringify(user.get());
+  if (lateSession) oldSession.resolve(session('a'));
+  else oldVerify.resolve(response(verified('a')));
+  await flush();
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), beforeLateAuth, 'late A cannot save auth');
+  assert.equal(JSON.stringify(user.get()), beforeLateProfile, 'late A cannot reset the current account');
+  assert.equal(dom.elements.app.children[0], currentScreen);
+  assert.equal(products, 0); assert.equal(node('ob-firstname'), null);
+  assert.equal(sessions, lateSession ? 1 : 0, 'stale verify cannot reconcile');
+  if (name === 'back-only') {
+    assert.ok(node('ob-phone-input')); assert.equal(auth.getAuthToken(), null);
+    return;
+  }
+  assert.ok(node('ob-otp-input'), 'the new OTP attempt remains mounted');
+  input('ob-otp-input', '1234'); await click('ob-next');
+  assert.ok(node('ob-firstname'), 'the current generation still works');
+  const expectedId = name === 'same-phone-request' ? 'a' : 'b';
+  const expectedPhone = name === 'same-phone-request' ? '+79990000001' : '+79990000002';
+  assert.equal(auth.getAuthUserId(), expectedId);
+  assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).phone, expectedPhone);
+  input('ob-firstname', 'QA'); await click('ob-next'); await click('ob-finish');
+  assert.equal(user.get().phone, expectedPhone, 'profile phone comes from the confirmed attempt');
+  assert.equal(products, 1); assert.equal(dom.starts(), 1);
+}
+
+if (process.argv[2] === '--repair-handoff-case') {
+  await repairHandoffCase(process.argv[3]);
+  console.log('PASS actual app OTP/retry repair: ' + process.argv[3]);
+} else if (process.argv[2] === '--login-handoff-case') {
+  await loginHandoffCase(process.argv[3]);
+  console.log('PASS actual app/onboarding handoff — ' + process.argv[3]);
+} else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
 } else if (process.argv[2] === '--app-dev-docs-case') {
@@ -638,6 +858,126 @@ if (process.argv[2] === '--guest-public-case') {
   async function check(name, fn) { await fn(); count++; console.log('PASS — ' + name); }
   const fixture = overrides => create({ backendEnabled: () => true,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
+
+  const verified = (id = 'b') => ({ token: 'token-' + id,
+    user: { userId: id, activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
+  const passenger = id => ({ user: { ...userDTO(id), activeRole: 'passenger' } });
+  function loginFixture(overrides = {}) {
+    let record = { token: 'token-a', userId: 'a' }, clears = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b'), ...overrides });
+    return { c, record: () => record, clears: () => clears,
+      begin: options => c.beginLogin({ resetAccount: () => clears++, ...options }) };
+  }
+  await check('handoff A->B persists B, clears old profile boundary, authenticates without reload', async () => {
+    const f = loginFixture();
+    const states = [];
+    f.c.subscribe(s => states.push(s.state));
+    assert.equal((await f.begin()(verified(), '+15550000001')).ok, true);
+    assert.equal(f.record().userId, 'b'); assert.equal(f.record().token, 'token-b');
+    assert.equal(f.clears(), 1);
+    assert.deepEqual(states, ['SESSION_RECONCILING', 'AUTHENTICATED']);
+    assert.equal(f.c.passengerConfirmed(), true);
+  });
+  await check('mismatched identity never publishes AUTHENTICATED, including retry', async () => {
+    const f = loginFixture({ requestSession: async () => passenger('other') });
+    const states = []; f.c.subscribe(s => states.push(s.state));
+    assert.equal((await f.begin()(verified())).code, 'AUTH_IDENTITY_MISMATCH');
+    assert.equal((await f.c.resumeLogin()).ok, false);
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('session retry uses stored identity without repeating verify or account cleanup', async () => {
+    let requests = 0;
+    const f = loginFixture({ requestSession: async () => {
+      if (++requests === 1) throw Object.assign(new Error('fixture'), { code: 'SESSION_LOOKUP_FAILED' });
+      return passenger('b');
+    } });
+    assert.equal((await f.begin()(verified())).ok, false);
+    assert.equal((await f.c.resumeLogin()).ok, true);
+    assert.equal(requests, 2); assert.equal(f.clears(), 1);
+  });
+  await check('grant, role and phone must agree in BOTH responses', async () => {
+    for (const change of [
+      p => { p.user.roles = []; }, p => { p.user.activeRole = null; },
+      p => { p.user.activeRole = 'driver'; }, p => { p.user.phoneVerified = false; },
+    ]) {
+      const f = loginFixture(), payload = verified(); change(payload);
+      assert.equal((await f.begin()(payload)).ok, false);
+      assert.equal(f.c.passengerConfirmed(), false);
+    }
+    for (const change of [p => { p.user.activeRole = null; }, p => { p.user.phoneVerified = false; }]) {
+      const session = passenger('b'); change(session);
+      const f = loginFixture({ requestSession: async () => session });
+      assert.equal((await f.begin()(verified())).ok, false);
+    }
+  });
+  await check('stale OTP completion and late session cannot install an older actor', async () => {
+    const f = loginFixture();
+    const old = f.begin(), latest = f.begin();
+    assert.equal((await old(verified('old'))).code, 'AUTH_STALE');
+    assert.equal(f.record().userId, 'a');
+    assert.equal((await latest(verified())).ok, true);
+    const late = deferred(); let current = true;
+    const g = loginFixture({ requestSession: () => late.promise });
+    const task = g.begin({ isCurrent: () => current })(verified());
+    await flush(); current = false;
+    late.resolve(passenger('b'));
+    assert.equal((await task).ok, false);
+    assert.notEqual(g.c.getSnapshot().state, 'AUTHENTICATED');
+  });
+  await check('malformed verify never persists or clears another account', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()({ token: 'incomplete', user: {} })).ok, false);
+    assert.equal(f.record().userId, 'a'); assert.equal(f.clears(), 0);
+  });
+  for (const failure of ['write', 'readback', 'wrong-user']) {
+    await check('real auth_token storage failure blocks handoff: ' + failure, async () => {
+      const auth = await import('../public/src/auth_token.js');
+      globalThis.localStorage = storage();
+      auth.clearAuth();
+      assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+      const originalSet = localStorage.setItem;
+      localStorage.setItem = (key, value) => {
+        if (failure === 'write') throw new Error('fixture storage denied');
+        originalSet(key, failure === 'wrong-user'
+          ? JSON.stringify({ ...JSON.parse(value), userId: 'wrong' }) : value);
+      };
+      if (failure === 'readback') {
+        const originalGet = localStorage.getItem;
+        localStorage.getItem = key => {
+          const value = originalGet(key);
+          if (value?.includes('token-b')) throw new Error('fixture read denied');
+          return value;
+        };
+      }
+      let requests = 0;
+      const c = create({ backendEnabled: () => true,
+        requestSession: async () => { requests++; return passenger('b'); } });
+      const result = await c.beginLogin()(verified());
+      assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+      assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+      assert.equal(c.passengerConfirmed(), false); assert.equal(requests, 0);
+      assert.equal(auth.getAuthToken(), null);
+      globalThis.localStorage = storage(); auth.clearAuth();
+    });
+  }
+  for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure', 'off-demo']) {
+    await check('actual app/onboarding handoff: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
+        { stdio: 'pipe', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['phone-switch', 'back-only', 'same-phone-request', 'late-session',
+    'retry-match', 'retry-mismatch', 'retry-credential-before', 'retry-credential-during']) {
+    await check('actual app OTP/retry repair: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--repair-handoff-case', scenario],
+        { stdio: 'pipe', timeout: 15000 });
+    });
+  }
 
   await check('A: backend OFF skips token lookup and all session requests', async () => {
     const c = fixture({ backendEnabled: () => false,

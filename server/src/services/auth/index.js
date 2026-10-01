@@ -19,7 +19,7 @@
 import { generateToken, generateOtpCode, hashOtpCode, hashToken, hashesEqual } from './tokens.js';
 import { normalizePhone, isValidPhone } from './phone.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../../repositories/otps.js';
-import { upsertUserByPhone, markPhoneVerified } from '../../repositories/users.js';
+import { resolveVerifiedLoginUser } from '../../repositories/users.js';
 import { insertSession } from '../../repositories/sessions.js';
 
 // Uniform problem shape { error, code, retryable } — matches plugins/error-handler.js so the
@@ -29,7 +29,11 @@ const problem = (reply, status, code, error, retryable = false) =>
 
 // auth_session.active_role is constrained to passenger|driver|NULL (migration 0002); a
 // 'guest'/unset role maps to NULL — only a granted role rides on the session.
-const sessionRole = (role) => (role === 'passenger' || role === 'driver' ? role : null);
+const sessionRole = (user) => (
+  ['passenger', 'driver'].includes(user.active_role)
+  && Array.isArray(user.roles) && user.roles.includes(user.active_role)
+    ? user.active_role : null
+);
 
 export default async function authService(app) {
   const { config } = app;
@@ -146,7 +150,7 @@ export default async function authService(app) {
             token: { type: 'string' },
             user: {
               type: 'object',
-              required: ['userId', 'phoneVerified'],
+              required: ['userId', 'phoneVerified', 'activeRole', 'roles'],
               properties: {
                 userId: { type: 'string' },
                 activeRole: { type: ['string', 'null'] },
@@ -205,12 +209,11 @@ export default async function authService(app) {
     const result = await app.db.tx(async (client) => {
       const consumed = await markOtpConsumed(client, otp.id);
       if (!consumed) return null;
-      const user = await upsertUserByPhone(client, { phone });
-      const verified = await markPhoneVerified(client, user.id);
+      const verified = await resolveVerifiedLoginUser(client, { phone });
       const session = await insertSession(client, {
-        userId: user.id,
+        userId: verified.id,
         tokenHash: hashToken(token),
-        activeRole: sessionRole(verified.active_role),
+        activeRole: sessionRole(verified),
         phoneVerified: true,
         otpId: otp.id,
         expiresAt,
