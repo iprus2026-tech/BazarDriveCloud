@@ -10,7 +10,7 @@ import {
   acceptPassengerRequestFromPost,
   acceptCanonicalRideOrder,
 } from '../ride_actions.js';
-import { applySmokeRole, getSmokeRole, resolveRole } from '../smoke_role.js';
+import { applySmokeRole } from '../smoke_role.js';
 
 const CATS = [
   { key: 'all',          label: 'Всё' },
@@ -69,13 +69,6 @@ export default function feed(renderContext) {
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20">
             <circle cx="11" cy="11" r="8"/>
             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-        </button>
-        <button class="bd-iconbtn bd-iconbtn--accent feed-btn-new" type="button" aria-label="Создать публикацию">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-               stroke-linecap="round" aria-hidden="true" width="22" height="22">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
       </div>
@@ -154,15 +147,8 @@ export default function feed(renderContext) {
     renderList();
   });
 
-  root.querySelector('.feed-btn-new').addEventListener('click', () => {
-    if (guestReadOnly) { go('/new'); return; }
-    // BD-SMOKE-ROLE-01 — per-tab role override decides where "+" routes. A
-    // passenger smoke tab carries passenger intent into the composer; real
-    // passengers keep '/new' so an in-progress draft type is preserved.
-    const role = resolveRole(user.get());
-    if (role === 'driver') { go('/driver-map'); return; }
-    go(getSmokeRole() === 'passenger' ? '/new?type=passenger_request' : '/new');
-  });
+  // Creation has one owner: the shell FAB in app.js preserves requireOnboarding
+  // and the role-aware getCreateEntryRoute, including passenger smoke intent.
 
   feedList.addEventListener('click', (e) => {
     const actionBtn = e.target.closest('[data-action]');

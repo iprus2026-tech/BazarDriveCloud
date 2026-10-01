@@ -1,3 +1,5 @@
+// v335 (BD-FEED-RESPONSIVE-01-R1): make the sole create action early in keyboard order and clarify its accessible name.
+// v334 (BD-FEED-RESPONSIVE-01): responsive feed layout and one guarded creation CTA.
 // v333 (BD-MAP-DUAL-EXPERIENCE-02): shared bounded geo/provenance seam and carrier preservation.
 // v332 (BD-MAP-DUAL-EXPERIENCE-01B): source-only real ride routes and empty ETA presentation.
 // v249 (R06 of #784): the precached ./src/ride_state.js changed (additive STATUS_TIMESTAMP_FIELD
@@ -213,7 +215,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v333';
+const VERSION    = 'v335';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

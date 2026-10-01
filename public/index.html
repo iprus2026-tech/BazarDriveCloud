@@ -32,6 +32,13 @@
 </head>
 <body>
   <div id="shell">
+    <button id="fab" class="fab" type="button" hidden aria-label="Создать публикацию">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>
+
     <main id="app" role="main"></main>
 
     <nav id="tabbar" class="tabbar" aria-label="Основная навигация" hidden>
@@ -74,13 +81,6 @@
       <span class="sw-update-banner__text">Доступна новая версия BazarDrive</span>
       <button id="sw-update-btn" class="bd-btn primary sm sw-update-banner__btn" type="button">Обновить</button>
     </div>
-
-    <button id="fab" class="fab" type="button" hidden aria-label="Новое объявление">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-        <line x1="12" y1="5" x2="12" y2="19"/>
-        <line x1="5" y1="12" x2="19" y2="12"/>
-      </svg>
-    </button>
   </div>
 
   <script type="module" src="./src/app.js"></script>

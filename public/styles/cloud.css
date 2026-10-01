@@ -1291,6 +1291,40 @@ body {
   margin-top: 8px;
 }
 
+/* BD-FEED-RESPONSIVE-01 — widen only the feed shell. Keep one readable
+   column for cards, loading and empty states, with shared header/filter edges. */
+#shell:has(.screen--feed) {
+  --feed-content-width: 720px;
+  --feed-gutter: var(--pad);
+}
+.screen--feed > :is(.bd-topbar, .feed-chip-row, .feed-list) {
+  width: 100%;
+  max-width: var(--feed-content-width);
+  margin-inline: auto;
+  padding-inline: var(--feed-gutter);
+}
+.screen--feed .feed-topbar-actions .bd-iconbtn {
+  width: 44px;
+  height: 44px;
+}
+.screen--feed > .feed-list {
+  /* Keep the shell's existing bottom padding for the last card; also keep
+     focused controls above the 56px FAB and its 16px bottom gap. */
+  scroll-padding-bottom: 88px;
+}
+@media (min-width: 431px) {
+  #shell:has(.screen--feed) {
+    max-width: 760px;
+    --feed-gutter: 24px;
+  }
+  #shell:has(.screen--feed) > #fab {
+    right: max(var(--feed-gutter), calc((100% - var(--feed-content-width)) / 2 + var(--feed-gutter)));
+  }
+}
+@media (min-width: 900px) {
+  #shell:has(.screen--feed) { max-width: 1120px; }
+}
+
 /* ═══════════════════════════════════════════════════════════
    COMPOSER V2  (BD-COMPOSER-01)
 ═══════════════════════════════════════════════════════════ */
