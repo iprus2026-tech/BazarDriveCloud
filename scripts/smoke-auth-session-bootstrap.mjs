@@ -611,7 +611,8 @@ async function guestPublicCase(name) {
   await navigate('/ops/screens');
   assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
   assert.equal(dom.starts(), 1);
-  assert.equal(localStorage.getItem('bazardrive.auth.v1'), authBefore, 'credential lifecycle stays out of scope');
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), guestReadOnly ? null : authBefore,
+    'explicit Guest selection clears any retained bearer');
   assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'no authority/cache rewrite');
   assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, hasBearer ? 1 : 0);
   if (pending) { session.resolve(response({ user: null })); await flush(); }
