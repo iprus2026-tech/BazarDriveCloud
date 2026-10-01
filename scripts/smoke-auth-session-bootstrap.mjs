@@ -1019,6 +1019,25 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.deepEqual(record, { token: 'token-c', userId: 'c' });
     assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
   });
+  await check('terminal handoff with an already-removed bearer can exit ANONYMOUS', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => ({ user: null }) });
+    const result = await c.beginLogin()(verified());
+    assert.equal(result.ok, false);
+    assert.equal(record, null, 'terminal reconciliation removed its bearer');
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('full-flow account switch cannot reuse previous driver draft data', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /function clearAccountDerivedDraft\(\)/);
+    assert.match(source, /draft\.docs\.clear\(\)/);
+    assert.match(source, /accountSwitchedDuringLogin \? \{\} : \(currentUser\.driverDocuments \|\| \{\}\)/);
+  });
   await check('explicit Guest transition clears stored auth and publishes ANONYMOUS without a handoff', async () => {
     let record = { token: 'driver-token', userId: 'driver-a' };
     const c = create({ backendEnabled: () => true,

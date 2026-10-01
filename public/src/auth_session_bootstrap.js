@@ -175,15 +175,26 @@ export function createAuthSessionBootstrap({
     // never delete the unrelated actor's credential.
     const expected = handoff;
     if (!expected) return false;
+    const currentToken = readToken();
+    const currentUserId = readUserId();
     const credentialOwned = expected.generation === loginSequence
-      && readToken() === expected.token && readUserId() === expected.userId;
+      && currentToken === expected.token && currentUserId === expected.userId;
+    const credentialMissing = currentToken === null && currentUserId === null;
     ++loginAttemptSequence;
     ++loginSequence;
     ++sequence;
     active?.cancel();
     active = null;
     handoff = null;
+    if (credentialMissing) {
+      // Reconciliation already removed this handoff's terminal credential
+      // (user:null / identity mismatch / authority rejection). Back/exit must
+      // finish as anonymous instead of stranding the router in UNKNOWN.
+      publish('ANONYMOUS');
+      return true;
+    }
     if (!credentialOwned) {
+      // A different credential now belongs to another tab/account. Never drop it.
       fail('AUTH_IDENTITY_MISMATCH');
       return false;
     }

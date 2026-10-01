@@ -539,6 +539,18 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     clearOtpAdvanceTimer();
   }
 
+  function clearAccountDerivedDraft() {
+    draft.firstName = '';
+    draft.lastName = '';
+    draft.vehicleMake = '';
+    draft.vehicleModel = '';
+    draft.vehicleYear = '';
+    draft.vehiclePlate = '';
+    draft.vehicleColor = '';
+    draft.vehicleBody = 'Седан';
+    draft.docs.clear();
+  }
+
   function canContinueAuthority() {
     const role = expectedAuthRole();
     return ['passenger', 'driver'].includes(role) && ownsAttempt(confirmedAttempt)
@@ -593,7 +605,13 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           resetAccount: ({ accountSwitch } = {}) => {
             accountSwitchedDuringLogin = accountSwitch === true;
             resetLocalSession();
-            if (accountSwitch) consumePendingAction();
+            if (accountSwitch) {
+              // The mounted onboarding instance captured A's profile before OTP.
+              // Drop every account-derived draft value so B cannot inherit A's
+              // documents, vehicle or identity fields.
+              clearAccountDerivedDraft();
+              consumePendingAction();
+            }
           },
         });
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
@@ -729,7 +747,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       && requiredDocIds.every((id) => draft.docs.has(id));
 
     const idToKey = DOC_ID_TO_KEY;
-    const prevDocs = currentUser.driverDocuments || {};
+    const prevDocs = accountSwitchedDuringLogin ? {} : (currentUser.driverDocuments || {});
     const driverDocuments = {};
     for (const key of REQUIRED_DOCS) {
       const onboardingId = Object.keys(idToKey).find((id) => idToKey[id] === key);
