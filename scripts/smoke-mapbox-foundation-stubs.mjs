@@ -199,17 +199,12 @@ if (existsRel(DRIVER_MARKERS)) {
   expect('driver_markers.js no longer uses loose != null price check',
     !/order\[field\]\s*!=\s*null/.test(markerSrc));
 
-  // BD-MAP-FOUND-05E — hasCoords must reject NaN / Infinity coordinates so
-  // withCoords in getDriverMarkerSummary is not inflated. The bare Number.isFinite
-  // substring is already asserted by the 05D price guard, so 05E proves the
-  // delegation from hasCoords to hasCoordinateValue and the removal of the old
-  // typeof-only lng/lat checks (which let NaN through, since typeof NaN === 'number').
-  expect('driver_markers.js defines hasCoordinateValue helper',
-    /function\s+hasCoordinateValue\s*\(/.test(markerSrc));
-  expect('driver_markers.js hasCoords delegates lng to hasCoordinateValue',
-    /hasCoordinateValue\s*\(\s*order\.pickup\.lng\s*\)/.test(markerSrc));
-  expect('driver_markers.js hasCoords delegates lat to hasCoordinateValue',
-    /hasCoordinateValue\s*\(\s*order\.pickup\.lat\s*\)/.test(markerSrc));
+  // BD-MAP-DUAL-EXPERIENCE-02 supersedes the finite-only 05E helper.
+  // Malformed numbers AND bounds are exercised by smoke-geo-point.mjs.
+  expect('driver_markers.js imports the shared bounded coordinate validator',
+    /import\s*\{[^}]*\bisBoundedGeoPoint\b[^}]*\}\s*from\s*['"]\.\.\/geo_point\.js['"]/.test(markerSrc));
+  expect('driver_markers.js hasCoords delegates to the shared geo seam',
+    /isBoundedGeoPoint\s*\(\s*order\.pickup\s*\)/.test(markerSrc));
   expect('driver_markers.js no longer uses typeof-only lng coordinate check',
     !/typeof\s+order\.pickup\.lng\s*===?\s*'number'/.test(markerSrc));
   expect('driver_markers.js no longer uses typeof-only lat coordinate check',

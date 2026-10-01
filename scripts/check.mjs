@@ -1038,6 +1038,18 @@ if (exists(chatRideConfirmBehavioralSmoke)) {
   }
 }
 
+// BD-MAP-DUAL-EXPERIENCE-02 — executable geo bounds, origin/freshness gates
+// and metadata round trips through the current draft/order/ride carriers.
+const geoPointSmoke = path.join(root, 'scripts', 'smoke-geo-point.mjs');
+if (exists(geoPointSmoke)) {
+  try {
+    execFileSync(process.execPath, [geoPointSmoke], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e.stdout ? e.stdout.toString() : e.message).slice(-400);
+    errors.push(`smoke-geo-point.mjs failed\n${msg}`);
+  }
+}
+
 // BD-MAP-FOUND-03 / BD-MAP-FOUND-04 — static regression smoke for the Mapbox
 // foundation stubs (driver_markers + trip_status_layer): export contract,
 // no real Mapbox SDK / network / CDN / dynamic import, RIDE_STATUS coverage,

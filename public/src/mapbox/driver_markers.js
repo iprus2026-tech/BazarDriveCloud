@@ -11,6 +11,7 @@
 //   getDriverMarkerSummary(orders)           → { total, withCoords, withPrice }
 
 import { isPlainObject, safeArray } from './foundation_utils.js';
+import { isBoundedGeoPoint } from '../geo_point.js';
 
 const LAYER_TYPE = 'driver-markers';
 const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'price'];
@@ -20,18 +21,11 @@ const PRICE_FIELDS = ['estimatedPrice', 'estimatedPriceLabel', 'offerPrice', 'pr
 // real off-center anchor instead of stacking on the center (50%/50%) fallback.
 const MARKER_ANCHOR_COUNT = 12;
 
-// BD-MAP-FOUND-05E — coordinate detection must reject NaN / Infinity values so
-// withCoords in getDriverMarkerSummary cannot be inflated by malformed numbers.
-// Number.isFinite does not coerce, so string/null/undefined coords stay rejected.
-function hasCoordinateValue(value) {
-  return Number.isFinite(value);
-}
-
+// Placeholder summary only, not permission to draw a live semantic marker.
+// Future live adapters also require isTrustedLiveGeoPoint and their authority gate.
 function hasCoords(order) {
   return isPlainObject(order)
-    && isPlainObject(order.pickup)
-    && hasCoordinateValue(order.pickup.lng)
-    && hasCoordinateValue(order.pickup.lat);
+    && isBoundedGeoPoint(order.pickup);
 }
 
 // BD-MAP-FOUND-05D — price detection must reject NaN / Infinity / blank and
