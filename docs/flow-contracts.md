@@ -110,11 +110,34 @@ Unknown routes still fall back through the router to `/feed`. The one dynamic ex
 | Create dispatch | FAB calls `requireOnboarding()` and then `getCreateEntryRoute()`: `/driver-map` for driver mode, `/new?type=passenger_request` for passenger smoke intent, `/new` otherwise. Anonymous Guest creation goes through onboarding. No duplicate topbar creation control. |
 | Driver guard | Driver mode redirects passenger order routes `/route-picker`, `/route-preview`, `/order-map-draft` to `/driver-map`. |
 | Active ride role | One route, `/active-ride`; `?role=driver` uses driver UI, `?role=passenger` delegates to `active_ride_passenger.js`. |
+| Driver active-order return (BD-DRIVER-ACTIVE-RETURN-01, #1015) | Eligible driver views with product chrome get a return strip above the tabbar; driver Profile Overview also gets an active-order card. Both revalidate the displayed trip and open `/active-ride?role=driver&tripId=<encoded-id>` without a status override. See the return flow below and its detailed screen contract. |
 | Latest-render ownership (BD-ROUTER-LIFECYCLE-01A, #917) | `render()` is async (a screen loader may await its own data — e.g. `post_detail.js`). Every call stamps a monotonically increasing generation before awaiting its loader; if a newer render has started by the time the loader settles, the result is discarded — no mount, no tab-active/chrome sync. Guarantees `LATEST_ROUTE_RENDER_WINS`: an overlapping slow navigation can never land its view after a faster, later one already owns `#app`. Guarded by `scripts/smoke-router-latest-render-wins.mjs`. |
 | Loader renderContext (BD-ROUTER-LIFECYCLE-01A P2, PR #918 review, ABA fix) | `render()` passes every loader a frozen `renderContext` (`{ isCurrent }`) bound to the generation it was minted for; unrecognized loaders ignore the extra argument. Lets a loader guard its own pre-return side effects (navigation, global-overlay calls) against staleness — router.js's own mount guard cannot see those. A hash-equality staleness check is not equivalent: it reads "current" again on an A→B→A round trip back to the same URL, even though a new generation has since run; `isCurrent()` derived from the generation counter does not. `respond.js` consumes this (optional argument, falls back to always-current for a direct caller that passes none) to guard its `go('/chat?...')` call and the `loadResource` `isActive` option. Guarded by `scripts/smoke-router-latest-render-wins.mjs` and `scripts/smoke-respond-stale-navigation-guard.mjs`. |
 | Screen disposer (SCREEN_DISPOSER_EXACTLY_ONCE, BD-SCREEN-LIFECYCLE-01A, Issue #919) | A loader may optionally return `{ view, dispose }` instead of a bare DOM node; a bare view stays fully compatible (`dispose` absent). The router owns the mounted-lifecycle transition; the screen owns its own cleanup details. The previously mounted screen's `dispose` is drained (cleared from the slot, then invoked) exactly once, at the very start of the next `render()` call, before any guard check — a guard redirect can `return` before ever reaching `root.replaceChildren()`, so disposal cannot wait until then. This remains the drain point for a direct `render()` call, a same-hash re-render, `start()`, and every guard path. `render()` also re-checks generation ownership immediately after draining the outgoing disposer, before it ever reads `location.hash` — the disposer just drained may itself have re-entrantly started a newer navigation, in which case this call is already stale and backs off there instead of running guards/chrome mutations and invoking the wrong route's loader ahead of the real hashchange. A **different-hash `go()` call drains synchronously, right there in `go()` itself**, instead of waiting for the later hashchange-triggered `render()` — different-hash navigation already invalidates the render generation synchronously (below), and without a synchronous drain the previously mounted screen's disposer would otherwise sit undrained for that whole (asynchronous) hashchange-delivery gap even though it has already lost ownership; the drain re-checks the generation immediately afterward and backs off if a disposer that re-entrantly called `go()`/`render()` from inside itself already claimed a newer one, so it cannot clobber a newer navigation. The later hashchange-triggered `render()` call then finds an already-empty slot and does not double-dispose. `dispose` is only written to the current slot after a loader result has been accepted as still-current for mounting — this happens deliberately before `root.appendChild(view)`, not after a successful mount, so the disposer is still registered even if `appendChild` itself throws. A stale loader result (superseded before or while resolving) is never mounted (`LATEST_ROUTE_RENDER_WINS` above, unchanged) and its `dispose` never becomes the current disposer — but is invoked immediately, exactly once, at the point staleness is detected, so its resources don't leak. A disposer that throws is contained locally (logged, never rethrown) and never blocks the render() call it runs inside from mounting its own screen. Guarded by `scripts/smoke-screen-disposer-exactly-once.mjs`. |
 
 ---
+
+### Driver return after leaving Active Ride
+
+1. An existing local ride hint is active: `ACCEPTED`, `DRIVER_EN_ROUTE`,
+   `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER` or `IN_PROGRESS`.
+2. The onboarded driver opens a product menu screen with visible chrome. The
+   return strip appears after a successful read; Profile Overview also shows the
+   active-order card. Passenger/Guest views and screens with hidden chrome do not
+   mount these controls.
+3. With backend OFF, the adapter reads the eligible local record. With backend ON,
+   it uses that record only to select an ID and revalidates it through the
+   participant-authorized Ride GET. HTTP 401/403/404, terminal status or an ID
+   mismatch hides the entry; other read failures show retry instead of trip data.
+4. «Вернуться» / «Вернуться к заказу» rechecks that same ID and opens the existing
+   `/active-ride?role=driver&tripId=<encoded-id>`. There is no `status` query,
+   new acceptance, reseed or lifecycle write from the return control, so the
+   existing waiting timestamps and status survive the navigation.
+
+The adapter refreshes while menus are open and is disposed with its screen.
+It does not discover trips without a local hint or automatically open a ride
+after passenger selection. Full eligibility, retry and lifetime rules:
+[BD-DRIVER-ACTIVE-RETURN-01](screen-contracts.md#bd-driver-active-return-01---return-to-the-drivers-active-order).
 
 ## 4. Passenger flow
 

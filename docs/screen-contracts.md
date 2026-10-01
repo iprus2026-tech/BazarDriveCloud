@@ -202,6 +202,36 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Entry points | **Notification quick-action row** `#pf2-act-notif` (the «Уведомления» row, renders a chevron) → `go('/inbox')` (BD-NOTIF-01). This replaced a prior `notificationsEnabled` toggle stub; there is **no driver notification bell** in the shipped profile. Pinned by `scripts/smoke-profile-notif-bell.mjs`. |
 | Acceptance | Driver readiness gates Feed/Post Detail accept CTAs and `/driver-map` (BD-DRIVER-02): all accept surfaces now enforce `isDriverLineReady()` via the shared rule in `state.js`. |
 
+### BD-DRIVER-ACTIVE-RETURN-01 - Return to the driver's active order
+
+**Shipped:** [PR #1015](https://github.com/iprus2026-tech/BazarDriveCloud/pull/1015),
+`main` commit `63fc916`. This is an entry to the existing Active Ride screen,
+not a new route or an order-accept action.
+
+| Field | Contract |
+|---|---|
+| Sources | Read adapter: `public/src/driver_current_trip.js`. Presentation: `public/src/driver_ride_return.js`. `app.js` installs the router's `setScreenChromeMount` callback; `router.js` mounts it after the current screen is appended and owns its disposal. `screens/profile.js` supplies the `#pf2-current-order` slot in the driver Overview pane. |
+| Menu entry | A normal-flow strip above the bottom tabbar shows «Активный заказ», the current status label and «Вернуться». The feed FAB is raised by the strip's reserved height. The strip is separate from the four existing tabs. |
+| Profile entry | The driver Overview card shows status, passenger name when present, pickup/dropoff labels and «Вернуться к заказу». Missing route labels use neutral placeholders. The online toggle and active-shift CTA keep their existing behavior. |
+| Mount exclusions | No return controls on screens with hidden chrome (`/welcome`, `/onboarding`, `/active-ride`, `/trip-confirmation`, `/ops/screens`, or before welcome is seen), in Guest read-only mode, or on a passenger-profile view. A completed onboarding and effective driver view are required; Guest accounts are excluded even with a driver smoke role. Backend mode additionally requires the stored user role to be driver and a session token. |
+| Active statuses | `ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_APPROACHING_PICKUP`, `WAITING_PASSENGER`, `IN_PROGRESS`. All other statuses, including `COMPLETED`, `CANCELED` and `NO_SHOW`, produce no return entry. |
+| Local discovery | Reads `bazardrive.active_ride.v1`. A candidate must have a nonempty `tripId` matching its store key and an active status. The default demo trip and explicit `localProvenance: 'sim_audit'` records are excluded. Backend-OFF discovery also requires `orderId`, an accepted source of `driver_map` / `post_detail` / `feed`, or the legacy driver `feed-*` shape. Stored `ride.role` may be passenger after local passenger selection. |
+| Candidate choice | Selects the latest eligible local record by `timestamps.acceptedAt`, falling back to `timestamps.createdAt` (then trip-ID ordering). A newer terminal record cannot mask an older active candidate. This is local candidate selection, not a server query for the driver's latest active ride. |
+| Backend confirmation | Local candidates are ID hints only. Backend mode permits otherwise-eligible hints without `orderId` / `acceptedSource`, as real server hydration omits those markers. `GET /api/v1/ride-state/rides/:tripId` must succeed under the current session; the returned trip ID must match and its status must remain active. Display fields come from that response. The returned `ride.role` is a stored projection, which can be passenger, and is not used as the requesting actor's identity; participant authorization belongs to the endpoint. |
+| Click / state preservation | Revalidates the displayed trip ID before navigating to `/active-ride?role=driver&tripId=<encoded-id>`, with no `status` parameter. It never substitutes another trip under a stale card. The return adapter does not accept/reseed an order, write ride/order stores, or submit a lifecycle transition. Returning preserves the existing status and waiting timestamps. |
+| Empty / failure | No eligible hint, a mismatched or terminal response, or HTTP 401/403/404 hides the controls. Other read failures and the 12-second presentation timeout show «Не удалось проверить заказ» with retry controls and no stale trip details. Retry rechecks; it does not navigate until a ready trip is subsequently clicked. No cached-success fallback is used after a failed backend read. |
+| Refresh / lifetime | Reads on mount, storage changes, focus and becoming visible; a 5-second timer refreshes while visible and no request is pending. Clicks disable both return buttons while checking. Scope changes (API base, token, role or profile identity), superseding requests and route disposal prevent stale results from painting or navigating. Disposal aborts the pending read and removes the interval, listeners and strip. |
+| Verification | `scripts/smoke-driver-current-trip.mjs`, included by `scripts/check.mjs`, has 10 behavioral cases for discovery, status/timestamp preservation, pinned identity, role isolation, API failures and stale results; backend DTO fixtures use the real `serializeRide` and `serializeRecoveredRide` functions with stubbed transport. `scripts/smoke-auth-session-bootstrap.mjs` covers the app's chrome-hook wiring. This evidence does not establish a live multi-account/backend pilot. |
+
+**Discovery limit:** the controls require an eligible stored local ride hint even
+when the backend is enabled. They do not list active rides from the server, recover
+a trip after local storage is cleared, or discover it on a fresh second device.
+Only the selected local candidate is revalidated; a rejected candidate does not
+trigger a search through other server rides. A server-read ride that has not been
+persisted locally cannot be found by these controls yet. This slice adds no new
+storage key, lifecycle status, driver-readiness grant, backend activation or
+automatic navigation after passenger selection.
+
 ### BD-PROFILE-D-05B - Driver Garage actions
 
 | Field | Contract |
