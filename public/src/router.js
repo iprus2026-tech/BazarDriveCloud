@@ -6,6 +6,12 @@ const routes = new Map();
 let pendingAction = null;
 let admissionGuard = null;
 let onAdmissionBlocked = null;
+let mountScreenChrome = null;
+
+// App-owned chrome shares the mounted screen's disposal/ownership boundary.
+export function setScreenChromeMount(mount) {
+  mountScreenChrome = typeof mount === 'function' ? mount : null;
+}
 
 // Optional synchronous boot admission, installed before start(): false pauses,
 // a route string redirects, skipWelcome admits auth entry without local UX flags.
@@ -262,6 +268,13 @@ async function render() {
   // even if appendChild throws (e.g. a malformed `view`) — do not reorder.
   currentDisposer = dispose;
   root.appendChild(view);
+
+  const disposeChrome = mountScreenChrome?.({
+    view, shell, tabbar, noChrome, guestReadOnly, isCurrent: renderContext.isCurrent, go,
+  });
+  if (typeof disposeChrome === 'function') {
+    currentDisposer = () => { disposeSafely(disposeChrome); disposeSafely(dispose); };
+  }
 
   syncTabActive(path);
 }
