@@ -982,6 +982,18 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
     assert.equal(f.c.passengerConfirmed(), false);
   });
+  await check('abandon without a replacement handoff preserves an existing authenticated session', async () => {
+    let record = { token: 'driver-token', userId: 'driver-a' }, drops = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { drops++; record = null; },
+      requestSession: async () => sessionFor('driver-a', 'driver') });
+    assert.equal(c.abandonLogin(), false);
+    assert.deepEqual(record, { token: 'driver-token', userId: 'driver-a' });
+    assert.equal(drops, 0);
+    assert.equal(c.getSnapshot().state, 'BOOT');
+  });
   await check('first login reset is distinguished from an A-to-B account switch', async () => {
     let record = null, reset = null;
     const c = create({ backendEnabled: () => true,

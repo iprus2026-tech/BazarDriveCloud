@@ -166,9 +166,10 @@ export function createAuthSessionBootstrap({
   }
 
   function abandonLogin() {
-    // Preserve the baseline anonymous Guest path: there is nothing to abandon
-    // until a credential/handoff actually exists.
-    if (!handoff && !readToken()) return false;
+    // Only credentials installed by THIS login handoff may be abandoned here.
+    // An already-authenticated actor can open onboarding/profile edit and Back
+    // out before beginLogin(); that pre-existing session must survive.
+    if (!handoff) return false;
     ++loginSequence;
     ++sequence;
     active?.cancel();
