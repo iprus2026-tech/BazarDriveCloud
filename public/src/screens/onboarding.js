@@ -616,14 +616,38 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
         });
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
         if (!ownsAttempt(attempt)) return;
-        verifiedResponseReceived = true;
         result = await accept(r, phone);
+        verifiedResponseReceived = result.handoffInstalled === true;
       }
       if (!ownsAttempt(attempt)) return;
+      if (!result.ok && result.handoffInstalled !== true) {
+        const ecode = result.code;
+        invalidateOtpAttempt();
+        const phoneIdx = steps().indexOf('phone');
+        if (phoneIdx >= 0) step = phoneIdx;
+        render();
+        setStepError(
+          ['PASSENGER_AUTHORITY_REQUIRED', 'ROLE_AUTHORITY_REQUIRED'].includes(ecode)
+            ? 'Сервер не подтвердил выбранную роль. Запросите новый код.'
+            : ecode === 'AUTH_STORAGE_FAILED'
+              ? 'Не удалось сохранить вход. Запросите новый код.'
+              : 'Не удалось подтвердить новый вход. Запросите код ещё раз.',
+        );
+        return;
+      }
       if (!result.ok) throw Object.assign(new Error('handoff failed'), { code: result.code });
       passengerIdentity = result.user;
       confirmedAttempt = attempt;
       clearSmokeRole();
+      if (!verifyPhoneOnly && (!currentUser.onboarded || accountSwitchedDuringLogin)) {
+        user.set({
+          welcomeSeen: true,
+          onboarded: false,
+          role: result.user.activeRole,
+          phoneVerified: result.user.phoneVerified,
+          phone: attempt.phone,
+        });
+      }
       if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
     } catch (err) {
       if (!ownsAttempt(attempt)) return;

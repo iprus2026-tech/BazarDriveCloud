@@ -2,6 +2,7 @@
 // app.js in fresh processes with a minimal DOM and deferred fetch; no DB/network.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 function storage() {
@@ -723,6 +724,12 @@ async function loginHandoffCase(name) {
       return;
     }
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
+    if (!verifySwitch && name !== 'account-switch') {
+      assert.equal(user.get().welcomeSeen, true,
+        'verified incomplete login skips unauthenticated Welcome on reload');
+      assert.equal(user.get().onboarded, false, 'profile completion remains required');
+      assert.equal(user.get().role, 'passenger', 'incomplete projection uses server-confirmed role');
+    }
     if (name === 'guest-after-verify') {
       // Seed account-scoped data that must not survive entering Guest.
       localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify([{ id: 'private-order' }]));
@@ -1004,6 +1011,16 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.c.abandonLogin(), true);
     assert.equal(f.record(), null);
     assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('terminal replacement rejection cannot resume the prior handoff', async () => {
+    const f = loginFixture();
+    const first = await f.begin()(verified());
+    assert.equal(first.ok, true);
+    const reject = await f.begin({ expectedRole: 'passenger' })(verified('c', 'driver'));
+    assert.equal(reject.ok, false);
+    assert.equal(reject.handoffInstalled, false);
+    assert.equal(f.c.passengerConfirmed(), false,
+      'new attempt ownership prevents old handoff UI continuation');
   });
   await check('stale handoff cannot delete a credential replaced by another tab', async () => {
     let record = { token: 'token-a', userId: 'a' };

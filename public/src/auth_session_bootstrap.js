@@ -62,12 +62,12 @@ export function createAuthSessionBootstrap({
     const owns = () => attemptGeneration === loginAttemptSequence && isCurrent();
     return async (payload, phone) => {
       if (!owns() || readToken() !== priorToken || readUserId() !== priorUserId) {
-        return { ok: false, code: 'AUTH_STALE' };
+        return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
       }
       const u = payload?.user;
       if (!authorityRole) {
         fail('SESSION_PROTOCOL');
-        return { ok: false, code: 'SESSION_PROTOCOL' };
+        return { ok: false, code: 'SESSION_PROTOCOL', handoffInstalled: false };
       }
       if (!payload || typeof payload.token !== 'string' || !payload.token.trim()
           || !u || typeof u.userId !== 'string' || !u.userId.trim()
@@ -75,13 +75,13 @@ export function createAuthSessionBootstrap({
           || typeof u.phoneVerified !== 'boolean' || !Array.isArray(u.roles)
           || u.roles.some(role => typeof role !== 'string')) {
         fail('SESSION_PROTOCOL');
-        return { ok: false, code: 'SESSION_PROTOCOL' };
+        return { ok: false, code: 'SESSION_PROTOCOL', handoffInstalled: false };
       }
       const verifiedAuthority = u.phoneVerified === true && u.activeRole === authorityRole
         && u.roles.includes(authorityRole);
       // A structurally valid OTP response is not enough to replace the current actor.
       // Validate the selected authority BEFORE clearing the old credential/profile.
-      if (!verifiedAuthority) return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED' };
+      if (!verifiedAuthority) return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
       // Never restore the old bearer if replacement fails.
       dropAuth();
       if (!priorUserId || priorUserId !== u.userId) {
@@ -91,17 +91,18 @@ export function createAuthSessionBootstrap({
           nextUserId: u.userId,
         });
       }
-      if (!owns()) return { ok: false, code: 'AUTH_STALE' };
+      if (!owns()) return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
       if (!writeAuth({ token: payload.token, userId: u.userId, phone })
           || readToken() !== payload.token || readUserId() !== u.userId) {
         dropAuth();
         fail('AUTH_STORAGE_FAILED');
-        return { ok: false, code: 'AUTH_STORAGE_FAILED' };
+        return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
       }
       const generation = ++loginSequence;
       handoff = { token: payload.token, userId: u.userId, generation, ownsUI: owns,
         expectedRole: authorityRole, authority: true };
-      return resumeLogin();
+      const resumed = await resumeLogin();
+      return { ...resumed, handoffInstalled: true };
     };
   }
 
