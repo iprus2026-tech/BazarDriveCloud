@@ -1072,13 +1072,18 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
   await check('logout/Guest stay fail-closed when credential removal cannot be confirmed', async () => {
-    let record = { token: 'token-b', userId: 'b' };
+    let record = { token: 'token-b', userId: 'b' }, allowDrop = true;
     const c = create({ backendEnabled: () => true,
       readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
       writeAuth: next => { record = next; return true; },
-      dropAuth: () => false,
+      dropAuth: () => {
+        if (!allowDrop) return false;
+        record = null;
+        return true;
+      },
       requestSession: async () => passenger('b') });
     assert.equal((await c.beginLogin()(verified())).ok, true);
+    allowDrop = false;
     assert.equal(c.abandonLogin(), false);
     assert.equal(record.token, 'token-b');
     assert.equal(record.userId, 'b');
