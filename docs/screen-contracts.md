@@ -128,9 +128,11 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Data | `listFeedPosts()` from `mock_api.js`; merges seed feed + local ride-order posts. |
 | Topbar subtitle | Derived from `user.city` + current date (`ru-RU`), with `Москва` fallback for empty city. |
 | Main states | All, trips, passenger requests, announcements, marketplace; loading skeleton (first load, `aria-busy`), zero-data (no posts at all) and filtered-empty (filter matched nothing) states. |
-| Actions | Category chips, topbar plus, global FAB; card body tap → Post Detail; per-card CTA: respond / chat / driver-accept / own-order. Search, post-menu (⋮) and like / comment / share are `data-noop` UI-only stubs. |
+| Actions | Category chips, one global FAB («Создать публикацию»); no duplicate topbar creation button; card body tap → Post Detail; per-card CTA: respond / chat / driver-accept / own-order. Search, post-menu (⋮) and like / comment / share are `data-noop` UI-only stubs. |
+| Creation entry | The shell FAB calls `requireOnboarding()` and `getCreateEntryRoute()` in `app.js`: driver → `/driver-map`; otherwise → `/new`, with `/new?type=passenger_request` for passenger smoke intent. Anonymous Guest entry goes through onboarding. |
+| Layout and keyboard | Feed-only shell: default maximum 430px, 760px from viewport width 431px, 1120px from 900px. Header, filters and list share a centered column capped at 720px (including horizontal padding). The sole `#fab` precedes `#app` in DOM order, retains its floating visual position and accessible name «Создать публикацию»; no positive tabindex. Other screens retain their own layout. |
 | Transitions | Card body tap → `/post?id=...` (BD-POST-01). Card CTA exits: respond → `/respond?postId=...`; chat → `/chat?tripId=...`; driver accept → `/active-ride?role=driver&tripId=...` (canonical ride-order also appends `&status=ACCEPTED`); owned canonical ride-order «К моему заказу» → `/responses?orderId=...` (non-canonical owned post falls back to `/post?id=...`). Feed cards never link to `/order/<id>`. |
-| Acceptance | Route opens, the active filter chip reflects `aria-pressed` (the chip row is a `role="group"` filter set, not a tablist), FAB visible only here, filters work, the zero-data and filtered-empty states are distinct, no CSP/inline regressions. |
+| Acceptance | Route opens, the active filter chip reflects `aria-pressed` (the chip row is a `role="group"` filter set, not a tablist), one FAB visible only here and reachable before feed controls by Tab, Enter activates the guarded creation entry, filters work, the zero-data and filtered-empty states are distinct, no CSP/inline regressions. |
 
 ### BD-COMPOSER-01 - Composer V2
 
