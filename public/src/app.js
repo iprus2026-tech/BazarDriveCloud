@@ -130,8 +130,12 @@ setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(
   (path, policy) => {
-    const admission = sessionRouteAdmission(bootSession.getSnapshot(), path, policy);
-    if (bootSession.hasUncommittedLogin() && path !== '/onboarding') return '/onboarding';
+    const snapshot = bootSession.getSnapshot();
+    const admission = sessionRouteAdmission(snapshot, path, policy);
+    const authenticatedIncomplete = snapshot.state === 'AUTHENTICATED'
+      && user.get().onboarded !== true;
+    if ((bootSession.hasUncommittedLogin() || authenticatedIncomplete)
+        && path !== '/onboarding') return '/onboarding';
     return admission;
   },
   () => showBootSession(bootSession.getSnapshot()),
@@ -171,21 +175,28 @@ function showBootSession(snapshot) {
     proceed.addEventListener('click', () => {
       const recoveredUser = bootSession.getSnapshot().user;
       const incomplete = user.get().onboarded !== true;
-      // Ownership must be rechecked BEFORE mutating any account-scoped cache.
-      // Another tab may have replaced the credential while this button was visible.
-      if (!bootSession.finishRecovery()) {
-        void bootSession.reconcile();
-        return;
-      }
-      if (incomplete && recoveredUser) {
+      if (incomplete) {
+        // Recheck detached ownership, but DO NOT consume it yet. The recovered
+        // bearer remains owned until the restarted onboarding either commits a
+        // replacement handoff or explicitly abandons it.
+        if (!recoveredUser || !bootSession.recoveryConfirmed()) {
+          void bootSession.reconcile();
+          return;
+        }
         user.set({
           welcomeSeen: true,
           onboarded: false,
           role: recoveredUser.activeRole,
           phoneVerified: recoveredUser.phoneVerified,
         });
+        go('/onboarding');
+        return;
       }
-      go(incomplete ? '/onboarding' : (location.hash || '#/welcome').slice(1));
+      if (!bootSession.finishRecovery()) {
+        void bootSession.reconcile();
+        return;
+      }
+      go((location.hash || '#/welcome').slice(1));
     });
     content.appendChild(proceed);
   }

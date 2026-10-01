@@ -82,14 +82,22 @@ export function createAuthSessionBootstrap({
       // A structurally valid OTP response is not enough to replace the current actor.
       // Validate the selected authority BEFORE clearing the old credential/profile.
       if (!verifiedAuthority) return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
-      // Never restore the old bearer if replacement fails.
-      dropAuth();
+      // Crossing an identity boundary must clear the previous account cache
+      // before B can ever be persisted. Same-account replacement still has to
+      // prove the old bearer was actually removed.
       if (!priorUserId || priorUserId !== u.userId) {
-        resetAccount({
+        const resetOk = resetAccount({
           accountSwitch: Boolean(priorUserId && priorUserId !== u.userId),
           priorUserId,
           nextUserId: u.userId,
         });
+        if (resetOk === false) {
+          fail('AUTH_STORAGE_FAILED');
+          return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
+        }
+      } else if (dropAuth() === false) {
+        fail('AUTH_STORAGE_FAILED');
+        return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
       }
       if (!owns()) return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
       if (!writeAuth({ token: payload.token, userId: u.userId, phone })

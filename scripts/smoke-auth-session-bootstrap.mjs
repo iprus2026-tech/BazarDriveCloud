@@ -1080,7 +1080,8 @@ if (process.argv[2] === '--repair-handoff-case') {
       requestSession: async () => passenger('b') });
     assert.equal((await c.beginLogin()(verified())).ok, true);
     assert.equal(c.abandonLogin(), false);
-    assert.deepEqual(record, { token: 'token-b', userId: 'b' });
+    assert.equal(record.token, 'token-b');
+    assert.equal(record.userId, 'b');
     assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
     assert.equal(c.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
 
@@ -1122,6 +1123,27 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(reset.accountSwitch, false);
     assert.equal(reset.priorUserId, null);
     assert.equal(reset.nextUserId, 'b');
+  });
+  await check('account switch aborts before persisting B when local reset fails', async () => {
+    let record = { token: 'token-a', userId: 'a' }, writes = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { writes++; record = next; return true; },
+      dropAuth: () => true,
+      requestSession: async () => passenger('b') });
+    const result = await c.beginLogin({ resetAccount: () => false })(verified());
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(writes, 0);
+    assert.deepEqual(record, { token: 'token-a', userId: 'a' });
+  });
+  await check('persisted authenticated-incomplete gate and retained recovery ownership are explicit', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /snapshot\.state === 'AUTHENTICATED'[\s\S]*user\.get\(\)\.onboarded !== true/);
+    assert.match(source, /if \(incomplete\) \{[\s\S]*recoveryConfirmed\(\)[\s\S]*go\('\/onboarding'\)/);
+    const incompleteBlock = source.match(/if \(incomplete\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    assert.equal(incompleteBlock.includes('finishRecovery()'), false,
+      'incomplete recovery must retain handoff ownership');
   });
   await check('ungranted verify is rejected before credential persistence or detached recovery', async () => {
     let current = true;

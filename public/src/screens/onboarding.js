@@ -603,8 +603,9 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           isCurrent: () => ownsAttempt(attempt),
           expectedRole: expectedAuthRole(),
           resetAccount: ({ accountSwitch } = {}) => {
+            const resetOk = resetLocalSession();
+            if (resetOk === false) return false;
             accountSwitchedDuringLogin = accountSwitch === true;
-            resetLocalSession();
             if (accountSwitch) {
               // The mounted onboarding instance captured A's profile before OTP.
               // Drop every account-derived draft value so B cannot inherit A's
@@ -612,6 +613,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               clearAccountDerivedDraft();
               consumePendingAction();
             }
+            return true;
           },
         });
         const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });

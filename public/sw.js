@@ -1,3 +1,4 @@
+// v351 (BD-PASSENGER-AUTHORITY-04B-B-R13): persisted incomplete gate, reset propagation, retained recovery ownership.
 // v350 (BD-PASSENGER-AUTHORITY-04B-B-R12): fail-closed credential removal and verified-abandon local reset.
 // v349 (BD-PASSENGER-AUTHORITY-04B-B-R11): pin uncommitted handoffs to onboarding and order recovery ownership.
 // v348 (BD-PASSENGER-AUTHORITY-04B-B-R10): detached-incomplete recovery and stale-attempt verification guards.
@@ -229,7 +230,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v350';
+const VERSION    = 'v351';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
