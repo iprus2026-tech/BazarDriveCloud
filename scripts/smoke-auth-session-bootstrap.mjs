@@ -1067,7 +1067,8 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
   await check('failed auth write rollback retains cleanup ownership until removal succeeds', async () => {
-    let record = { token: 'token-a', userId: 'a' }, allowDrop = true, writes = 0;
+    let record = { token: 'token-a', userId: 'a' }, writes = 0, drops = 0;
+    let allowRollbackRetry = false;
     const c = create({ backendEnabled: () => true,
       readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
       writeAuth: next => {
@@ -1076,22 +1077,24 @@ if (process.argv[2] === '--repair-handoff-case') {
         return false; // models write succeeded but readback/verification failed
       },
       dropAuth: () => {
-        if (!allowDrop) return false;
+        drops++;
+        if (drops === 1) {
+          record = null; // same-account staging removal succeeds
+          return true;
+        }
+        if (!allowRollbackRetry) return false; // rollback removal fails
         record = null;
         return true;
       },
       requestSession: async () => passenger('a') });
-    // Same-account staging removes A successfully, then rollback of the new
-    // persisted record fails and must retain cleanup ownership.
-    allowDrop = true;
-    const accept = c.beginLogin({ expectedRole: 'passenger' });
-    allowDrop = false;
-    const result = await accept(verified('a', 'passenger'));
+    const result = await c.beginLogin({ expectedRole: 'passenger' })(verified('a', 'passenger'));
     assert.equal(result.ok, false);
     assert.equal(result.code, 'AUTH_STORAGE_FAILED');
     assert.equal(writes, 1);
+    assert.equal(drops, 2);
     assert.equal(c.hasUncommittedLogin(), true);
-    allowDrop = true;
+    assert.equal(record.userId, 'a');
+    allowRollbackRetry = true;
     assert.equal(c.abandonLogin(), true);
     assert.equal(record, null);
     assert.equal(c.hasUncommittedLogin(), false);
