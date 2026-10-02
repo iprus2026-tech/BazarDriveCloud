@@ -351,6 +351,10 @@ export const user = {
   resetCacheOnly() {
     cache = normalize(buildDefaults());
   },
+  setCacheOnly(patch) {
+    load();
+    cache = normalize({ ...cache, ...patch });
+  },
 };
 
 // BD-PROFILE-D-05G — Append a single new vehicle to the persisted garage

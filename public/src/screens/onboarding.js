@@ -3,7 +3,7 @@ import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
-import { resetLocalSession } from '../mock_auth.js';
+import { resetLocalSession, AUTH_CLEAR_FOREIGN } from '../mock_auth.js';
 import { clearSmokeRole } from '../smoke_role.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
@@ -470,6 +470,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
   // Accumulated draft — cleared on finish
   const currentUser = user.get();
+  const recoveredLogin = auth?.recoveredLogin ?? null;
 
   // Deep-link support: #/onboarding?step=phone routes here from the passenger
   // "needs phone" gate (profile.js). For an already-onboarded user this runs a
@@ -478,9 +479,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   const startAtPhone = getHashQuery().get('step') === 'phone';
   // Working role: keep a real passenger/driver role; otherwise fall back to
   // passenger for the phone flow (a safe default — never persisted on its own).
-  const knownRole = (currentUser.role === 'passenger' || currentUser.role === 'driver')
-    ? currentUser.role
-    : null;
+  const knownRole = ['passenger', 'driver'].includes(recoveredLogin?.expectedRole)
+    ? recoveredLogin.expectedRole
+    : (currentUser.role === 'passenger' || currentUser.role === 'driver')
+      ? currentUser.role
+      : null;
   const verifyPhoneOnly = startAtPhone && currentUser.onboarded === true;
   const verifyReturnRoute = () => (knownRole === 'driver' ? '/profile' : '/profile?role=passenger');
   // Pre-fill the docs checklist from the canonical driverDocuments state so
@@ -500,7 +503,9 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     role: knownRole ?? (startAtPhone ? 'passenger' : (currentUser.role ?? null)),
     // Prefill the existing number for the verify flow so the user re-confirms
     // their own phone rather than typing it from scratch.
-    phone: (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
+    phone: recoveredLogin?.phone
+      ? String(recoveredLogin.phone).replace(/\D/g, '')
+      : (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
     firstName: '',
     lastName: '',
     vehicleMake: '',
@@ -515,11 +520,19 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let step = 0;
   let otpAdvanceTimer = null;
   let otpSubmitting = false;
-  let verifiedResponseReceived = false;
-  let passengerIdentity = null;
+  let verifiedResponseReceived = recoveredLogin !== null;
+  let passengerIdentity = recoveredLogin?.user ?? null;
   let otpGeneration = 0;
-  let otpAttempt = null;
-  let confirmedAttempt = null;
+  let otpAttempt = recoveredLogin ? {
+    generation: 0,
+    phone: '+7' + (draft.phone || '').slice(-10),
+    requested: true,
+  } : null;
+  let confirmedAttempt = recoveredLogin ? {
+    generation: 0,
+    phone: recoveredLogin.phone || currentUser.phone || null,
+  } : null;
+  let recoveredAuthority = recoveredLogin !== null;
   let accountSwitchedDuringLogin = false;
   let accountBoundaryResetDuringLogin = false;
   let rebuildProfileAfterVerify = false;
@@ -557,7 +570,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
 
   function canContinueAuthority() {
     const role = expectedAuthRole();
-    return ['passenger', 'driver'].includes(role) && ownsAttempt(confirmedAttempt)
+    return ['passenger', 'driver'].includes(role)
+      && (recoveredAuthority || ownsAttempt(confirmedAttempt))
       && auth?.roleConfirmed?.(role) === true;
   }
 
@@ -703,8 +717,11 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   function totalSteps() { return steps().length; }
   function currentStep() { return steps()[step]; }
 
-  // Deep-link landing: jump straight to the phone step when requested.
-  if (startAtPhone) {
+  // Explicit recovered authority resumes at profile without a second OTP.
+  if (recoveredLogin) {
+    const profileIdx = steps().indexOf('profile');
+    if (profileIdx >= 0) step = profileIdx;
+  } else if (startAtPhone) {
     const phoneIdx = steps().indexOf('phone');
     if (phoneIdx >= 0) step = phoneIdx;
   }
@@ -908,14 +925,24 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               // Guest is a clean anonymous boundary. Drop any authenticated handoff
               // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
-                if (auth?.enterGuest?.() !== true
-                    || resetLocalSession({ allowForeignDetach: true }) === false) {
+                if (auth?.enterGuest?.() !== true) {
+                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
+                  return;
+                }
+                const resetResult = resetLocalSession({ allowForeignDetach: true });
+                if (resetResult === false) {
                   setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
                   return;
                 }
                 invalidateOtpAttempt();
+                if (resetResult === AUTH_CLEAR_FOREIGN) {
+                  user.setCacheOnly({ welcomeSeen: true, role: 'guest' });
+                } else {
+                  user.set({ welcomeSeen: true, role: 'guest' });
+                }
+              } else {
+                user.set({ welcomeSeen: true, role: 'guest' });
               }
-              user.set({ welcomeSeen: true, role: 'guest' });
               consumePendingAction();
               go('/feed');
               return;

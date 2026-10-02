@@ -46,7 +46,13 @@ register('/order-map-draft', orderMapDraft);
 register('/rules',       rules);
 register('/profile',     profile);
 let onboardingHandoffOwner = null;
-register('/onboarding', (context) => onboarding(context, {
+let pendingRecoveryTransfer = false;
+register('/onboarding', (context) => {
+  const recoveredLogin = pendingRecoveryTransfer
+    ? bootSession.rebindRecoveryOwner(() => context.isCurrent())
+    : null;
+  pendingRecoveryTransfer = false;
+  return onboarding(context, {
   beginLogin(options) {
     onboardingHandoffOwner = context;
     return bootSession.beginLogin(options);
@@ -59,7 +65,9 @@ register('/onboarding', (context) => onboarding(context, {
   abandonLogin: () => bootSession.abandonLogin(),
   enterGuest: () => bootSession.enterGuest(),
   hasUncommittedLogin: () => bootSession.hasUncommittedLogin(),
-}));
+  recoveredLogin,
+  });
+});
 register('/new',         composer);
 register('/respond',     respond);
 register('/chat',        chat);
@@ -192,6 +200,7 @@ function showBootSession(snapshot) {
           phoneVerified: projection.user.phoneVerified,
           ...(projection.phone ? { phone: projection.phone } : null),
         });
+        pendingRecoveryTransfer = true;
         go('/onboarding');
         return;
       }

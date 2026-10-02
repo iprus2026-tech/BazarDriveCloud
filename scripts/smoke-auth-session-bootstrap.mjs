@@ -1214,6 +1214,42 @@ if (process.argv[2] === '--repair-handoff-case') {
     auth.clearAuth();
   });
 
+  await check('anonymous boot pin treats a later credential as foreign on clear', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    auth.pinAuthTabUser(null);
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+    assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'b');
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true);
+    auth.clearAuth();
+  });
+
+  await check('recovered handoff can transfer UI ownership and finish without a second OTP', async () => {
+    let current = true, nextCurrent = true;
+    const f = loginFixture();
+    assert.equal((await f.begin({ isCurrent: () => current })(verified(), '+79990000001')).ok, true);
+    current = false;
+    assert.ok(f.c.recoveryProjection());
+    const projection = f.c.rebindRecoveryOwner(() => nextCurrent);
+    assert.equal(projection.user.userId, 'b');
+    assert.equal(f.c.roleConfirmed('passenger'), true);
+    assert.equal(f.c.finishLogin(), true);
+    assert.equal(f.c.hasUncommittedLogin(), false);
+  });
+
+  await check('foreign-detached Guest projection stays tab-local', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /resetResult === AUTH_CLEAR_FOREIGN[\s\S]*user\.setCacheOnly/);
+    const stateSource = readFileSync(new URL('../public/src/state.js', import.meta.url), 'utf8');
+    assert.match(stateSource, /setCacheOnly\(patch\)[\s\S]*cache = normalize\(\{ \.\.\.cache, \.\.\.patch \}\)/);
+    const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(appSource, /pendingRecoveryTransfer[\s\S]*rebindRecoveryOwner/);
+  });
+
   await check('boot pins the initial actor before request and retry cannot adopt a replacement', async () => {
     let record = { token: 'token-a', userId: 'a' };
     let pinned = null;

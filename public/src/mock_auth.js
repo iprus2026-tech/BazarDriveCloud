@@ -18,6 +18,7 @@
 
 import { user } from './state.js';
 import { clearUserScopedStorage, AUTH_CLEAR_FOREIGN } from './storage_boundary.js';
+export { AUTH_CLEAR_FOREIGN };
 import { clearSmokeRole } from './smoke_role.js';
 import { go } from './router.js';
 
@@ -39,7 +40,7 @@ export function resetLocalSession({ allowForeignDetach = false } = {}) {
   if (cleared === AUTH_CLEAR_FOREIGN) {
     if (!allowForeignDetach) return false;
     user.resetCacheOnly();
-    return true;
+    return AUTH_CLEAR_FOREIGN;
   }
   user.reset();
   return true;
