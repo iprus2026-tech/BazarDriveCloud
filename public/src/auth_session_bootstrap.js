@@ -1,6 +1,7 @@
 // Boot identity and verified-login handoff. No logout/revoke or driver enrollment.
 import { isBackendEnabled } from './api_config.js';
-import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser } from './auth_token.js';
+import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser,
+  AUTH_CLEAR_FOREIGN } from './auth_token.js';
 import { getSession } from './api_client.js';
 
 function confirmedUser(payload) {
@@ -51,6 +52,21 @@ export function createAuthSessionBootstrap({
     return snapshot;
   }
 
+  function retainRemovalOwnership({ token, userId, phone, ownsUI, expectedRole }) {
+    const generation = ++loginSequence;
+    handoff = {
+      token,
+      userId,
+      phone: phone || null,
+      generation,
+      ownsUI,
+      expectedRole,
+      // Cleanup-only ownership never grants route/profile authority.
+      authority: false,
+    };
+    handoffRemovalPending = true;
+  }
+
   // Router ownership + generation defeat A->B->A and competing login responses.
   function beginLogin({ isCurrent = () => true, resetAccount = () => {}, expectedRole = 'passenger' } = {}) {
     const authorityRole = ['passenger', 'driver'].includes(expectedRole) ? expectedRole : null;
@@ -99,14 +115,34 @@ export function createAuthSessionBootstrap({
           fail('AUTH_STORAGE_FAILED');
           return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
         }
-      } else if (dropAuth() === false) {
-        fail('AUTH_STORAGE_FAILED');
-        return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
+      } else {
+        const dropResult = dropAuth();
+        if (dropResult === AUTH_CLEAR_FOREIGN) {
+          fail('AUTH_IDENTITY_MISMATCH');
+          return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
+        }
+        if (dropResult === false) {
+          fail('AUTH_STORAGE_FAILED');
+          return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
+        }
       }
       if (!owns()) return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
       if (!writeAuth({ token: payload.token, userId: u.userId, phone })
           || readToken() !== payload.token || readUserId() !== u.userId) {
-        dropAuth();
+        const rollback = dropAuth();
+        if (rollback === false) {
+          retainRemovalOwnership({
+            token: payload.token,
+            userId: u.userId,
+            phone,
+            ownsUI: owns,
+            expectedRole: authorityRole,
+          });
+        }
+        if (rollback === AUTH_CLEAR_FOREIGN) {
+          fail('AUTH_IDENTITY_MISMATCH');
+          return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
+        }
         fail('AUTH_STORAGE_FAILED');
         return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
       }
@@ -183,6 +219,27 @@ export function createAuthSessionBootstrap({
     // authority remains the same confirmed handoff.
     handoff.ownsUI = isCurrent;
     return projection;
+  }
+
+  function retainAuthenticatedCleanupOwner(isCurrent) {
+    if (handoff || typeof isCurrent !== 'function') return false;
+    if (snapshot.state !== 'AUTHENTICATED' || !snapshot.user?.userId) return false;
+    const token = readToken();
+    const userId = readUserId();
+    if (!token || userId !== snapshot.user.userId) return false;
+    const generation = ++loginSequence;
+    handoff = {
+      token,
+      userId,
+      phone: null,
+      generation,
+      ownsUI: isCurrent,
+      expectedRole: snapshot.user.activeRole,
+      // Reload reconstruction exists only so Back/Guest can clean the bearer.
+      authority: false,
+    };
+    handoffRemovalPending = false;
+    return true;
   }
 
   function finishRecovery(commit) {
@@ -395,7 +452,8 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner, finishRecovery,
+    isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner,
+    retainAuthenticatedCleanupOwner, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
     hasUncommittedLogin: () => handoff !== null,
   });

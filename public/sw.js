@@ -1,3 +1,4 @@
+// v359 (BD-PASSENGER-AUTHORITY-04B-B-R19): retain rollback cleanup ownership, recreate reload cleanup ownership, and stop foreign replacement writes.
 // v358 (BD-PASSENGER-AUTHORITY-04B-B-R18C): pin the initial boot actor once so retry cannot rebind after cross-tab replacement.
 // v357 (BD-PASSENGER-AUTHORITY-04B-B-R18B): keep foreign Guest state tab-local and transfer recovered authority into onboarding.
 // v356 (BD-PASSENGER-AUTHORITY-04B-B-R18A): pin anonymous boot tabs and support explicit recovered-handoff UI transfer.
@@ -237,7 +238,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v358';
+const VERSION    = 'v359';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

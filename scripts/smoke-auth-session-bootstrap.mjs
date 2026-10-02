@@ -1066,6 +1066,75 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(c.abandonLogin(), true);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
+  await check('failed auth write rollback retains cleanup ownership until removal succeeds', async () => {
+    let record = { token: 'token-a', userId: 'a' }, allowDrop = true, writes = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => {
+        writes++;
+        record = next;
+        return false; // models write succeeded but readback/verification failed
+      },
+      dropAuth: () => {
+        if (!allowDrop) return false;
+        record = null;
+        return true;
+      },
+      requestSession: async () => passenger('a') });
+    // Same-account staging removes A successfully, then rollback of the new
+    // persisted record fails and must retain cleanup ownership.
+    allowDrop = true;
+    const accept = c.beginLogin({ expectedRole: 'passenger' });
+    allowDrop = false;
+    const result = await accept(verified('a', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(writes, 1);
+    assert.equal(c.hasUncommittedLogin(), true);
+    allowDrop = true;
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(record, null);
+    assert.equal(c.hasUncommittedLogin(), false);
+  });
+
+  await check('same-account refresh stops when another tab owns the replacement credential', async () => {
+    let record = { token: 'token-a', userId: 'a' }, writes = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { writes++; record = next; return true; },
+      dropAuth: () => {
+        record = { token: 'token-b', userId: 'b' };
+        return 'foreign';
+      },
+      requestSession: async () => passenger('a') });
+    const result = await c.beginLogin({ expectedRole: 'passenger' })(verified('a', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STALE');
+    assert.equal(writes, 0);
+    assert.deepEqual(record, { token: 'token-b', userId: 'b' });
+  });
+
+  await check('reloaded authenticated incomplete actor can recreate cleanup ownership', async () => {
+    let record = { token: 'token-b', userId: 'b' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      dropAuth: () => { record = null; return true; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(c.retainAuthenticatedCleanupOwner(() => true), true);
+    assert.equal(c.hasUncommittedLogin(), true);
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+
+  await check('app registers rebound and reloaded onboarding contexts as handoff owners', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /if \(recoveredLogin\) \{[\s\S]*onboardingHandoffOwner = context/);
+    assert.match(source, /retainAuthenticatedCleanupOwner\(\(\) => context\.isCurrent\(\)\)[\s\S]*onboardingHandoffOwner = context/);
+  });
+
   await check('authority rejection keeps handoff pinned when terminal credential removal fails', async () => {
     let record = { token: 'token-a', userId: 'a' }, allowDrop = false;
     const c = create({ backendEnabled: () => true,

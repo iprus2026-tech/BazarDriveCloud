@@ -52,6 +52,16 @@ register('/onboarding', (context) => {
     ? bootSession.rebindRecoveryOwner(() => context.isCurrent())
     : null;
   pendingRecoveryTransfer = false;
+  if (recoveredLogin) {
+    onboardingHandoffOwner = context;
+  } else if (bootSession.getSnapshot().state === 'AUTHENTICATED'
+      && user.get().onboarded !== true
+      && !bootSession.hasUncommittedLogin()
+      && bootSession.retainAuthenticatedCleanupOwner(() => context.isCurrent())) {
+    // Reload loses the volatile handoff, but the authenticated incomplete actor
+    // still needs an explicit Back/Guest cleanup owner.
+    onboardingHandoffOwner = context;
+  }
   return onboarding(context, {
   beginLogin(options) {
     onboardingHandoffOwner = context;
