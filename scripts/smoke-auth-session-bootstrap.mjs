@@ -1364,7 +1364,11 @@ if (process.argv[2] === '--repair-handoff-case') {
   });
 
   globalThis.localStorage = storage();
-  localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token' }));
+  const realAuthForApiMapping = await import('../public/src/auth_token.js');
+  realAuthForApiMapping.clearAuth();
+  assert.equal(realAuthForApiMapping.setAuth({
+    token: 'fixture-token', userId: 'fixture-user',
+  }), true);
   globalThis.__BD_API_BASE__ = 'https://api.invalid';
   for (const kind of ['503', 'network', '401']) {
     await check('E/F: actual API mapping keeps ' + kind + ' UNKNOWN with bearer retained', async () => {
