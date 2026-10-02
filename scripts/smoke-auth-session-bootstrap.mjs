@@ -1059,7 +1059,7 @@ if (process.argv[2] === '--repair-handoff-case') {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
     assert.match(source, /function clearAccountDerivedDraft\(\)/);
     assert.match(source, /draft\.docs\.clear\(\)/);
-    assert.match(source, /accountSwitchedDuringLogin \? \{\} : \(currentUser\.driverDocuments \|\| \{\}\)/);
+    assert.match(source, /accountBoundaryResetDuringLogin \? \{\} : \(currentUser\.driverDocuments \|\| \{\}\)/);
   });
   await check('explicit Guest transition clears stored auth and publishes ANONYMOUS without a handoff', async () => {
     let record = { token: 'driver-token', userId: 'driver-a' };
