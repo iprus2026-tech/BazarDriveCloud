@@ -1143,7 +1143,8 @@ if (process.argv[2] === '--repair-handoff-case') {
   await check('verified Back abandonment clears the complete local-session boundary', async () => {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
     assert.match(source, /const hadHandoff = auth\?\.hasUncommittedLogin\?\.\(\) === true/);
-    assert.match(source, /if \(resetLocalSession\(\) === false\)/);
+    assert.match(source,
+      /if \(resetLocalSession\(\{ allowForeignDetach: true \}\) === false\)/);
   });
   await check('legacy local profile reset clears captured driver drafts without a prior bearer', async () => {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
