@@ -10,7 +10,7 @@
 // behaviourally asserts that). Bare `localStorage` access with the literal key keeps the gate able to
 // resolve it.
 export const AUTH_STORAGE_KEY = 'bazardrive.auth.v1';
-const STORAGE_KEY = AUTH_STORAGE_KEY;
+const STORAGE_KEY = 'bazardrive.auth.v1';
 export const AUTH_CLEAR_FOREIGN = 'foreign';
 // Fail closed in this tab when storage cannot replace/remove an old credential.
 let blocked = false;

@@ -988,14 +988,18 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.c.roleConfirmed('driver'), true);
     assert.equal(f.c.passengerConfirmed(), false);
   });
-  await check('authority mismatch never clears the current account before replacement is authorized', async () => {
+  await check('authority mismatch may replace identity but never grants the selected role', async () => {
     const f = loginFixture();
     const wrongRole = verified('b', 'driver');
     const result = await f.begin({ expectedRole: 'passenger' })(wrongRole);
     assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
-    assert.equal(f.record().userId, 'a');
-    assert.equal(f.record().token, 'token-a');
-    assert.equal(f.clears(), 0);
+    assert.equal(result.handoffInstalled, true);
+    assert.equal(f.record().userId, 'b');
+    assert.equal(f.record().token, 'token-b');
+    assert.equal(f.clears(), 1, 'verified B identity detaches A account cache');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.passengerConfirmed(), false,
+      'identity replacement cannot manufacture passenger authority');
   });
   await check('explicit abandon clears the minted bearer and handoff', async () => {
     const f = loginFixture();
