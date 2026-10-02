@@ -1164,12 +1164,12 @@ if (process.argv[2] === '--repair-handoff-case') {
     const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
     assert.match(source, /hasUncommittedLogin\(\) \|\| authenticatedIncomplete/);
     assert.match(source, /authenticatedIncomplete[\s\S]*path !== '\/onboarding'/);
-    const incomplete = source.indexOf('if (incomplete) {');
-    const ownership = source.indexOf('bootSession.recoveryConfirmed()', incomplete);
+    const projection = source.indexOf('const projection = bootSession.recoveryProjection()');
+    const incomplete = source.indexOf('if (incomplete) {', projection);
     const mutation = source.indexOf('user.set({', incomplete);
     const route = source.indexOf("go('/onboarding')", incomplete);
-    assert.ok(incomplete >= 0 && ownership > incomplete && mutation > ownership && route > mutation,
-      'incomplete recovery must recheck ownership before account mutation and route');
+    assert.ok(projection >= 0 && incomplete > projection && mutation > incomplete && route > mutation,
+      'incomplete recovery must obtain an ownership-checked projection before account mutation and route');
     const incompleteBlock = source.slice(incomplete, route);
     assert.equal(incompleteBlock.includes('finishRecovery()'), false,
       'incomplete recovery must retain handoff ownership until onboarding commits or abandons');
