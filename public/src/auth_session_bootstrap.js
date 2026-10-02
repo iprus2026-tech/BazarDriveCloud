@@ -175,6 +175,15 @@ export function createAuthSessionBootstrap({
     });
   }
 
+  function rebindRecoveryOwner(isCurrent) {
+    const projection = recoveryProjection();
+    if (!projection || typeof isCurrent !== 'function') return null;
+    // Explicit Continue transfers only UI ownership. Credential/user/role
+    // authority remains the same confirmed handoff.
+    handoff.ownsUI = isCurrent;
+    return projection;
+  }
+
   function finishRecovery(commit) {
     const projection = recoveryProjection();
     if (!projection) return false;
@@ -294,7 +303,9 @@ export function createAuthSessionBootstrap({
       return snapshot;
     }
     const persistedUserId = readUserId();
-    if (persistedUserId) pinTabUser(persistedUserId);
+    // Pin both authenticated and anonymous boot identity before reading the
+    // bearer or issuing /auth/session. Retry cannot adopt a later tab's actor.
+    pinTabUser(persistedUserId || null);
     const expected = handoff;
     const token = readToken();
     if (expected && !ownsCredential(expected)) {
@@ -380,7 +391,7 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, recoveryProjection, finishRecovery,
+    isLoginDetached, recoveryConfirmed, recoveryProjection, rebindRecoveryOwner, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
     hasUncommittedLogin: () => handoff !== null,
   });

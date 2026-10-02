@@ -54,9 +54,18 @@ export function getAuthUserId() {
 }
 
 export function pinAuthTabUser(userId) {
+  if (userId === null) {
+    // This tab explicitly booted anonymous. A credential that appears later
+    // belongs to another tab until this tab performs its own setAuth().
+    tabUserId = null;
+    tabDetachMode = 'anonymous';
+    blocked = false;
+    return true;
+  }
   if (typeof userId !== 'string' || !userId.trim()) return false;
   tabUserId = userId;
   tabDetachMode = null;
+  blocked = false;
   return true;
 }
 
@@ -92,6 +101,15 @@ export function clearAuth() {
     if (tabDetachMode === AUTH_CLEAR_FOREIGN) {
       blocked = false;
       return AUTH_CLEAR_FOREIGN;
+    }
+    if (tabDetachMode === 'anonymous') {
+      if (rawUserId) {
+        tabDetachMode = AUTH_CLEAR_FOREIGN;
+        blocked = false;
+        return AUTH_CLEAR_FOREIGN;
+      }
+      blocked = false;
+      return true;
     }
     if (tabDetachMode === 'own-cleared') {
       if (rawUserId) {
