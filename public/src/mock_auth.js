@@ -17,25 +17,41 @@
 // user id to scope keys under.
 
 import { user } from './state.js';
-import { clearUserScopedStorage } from './storage_boundary.js';
+import { clearUserScopedStorage, AUTH_CLEAR_FOREIGN } from './storage_boundary.js';
+export { AUTH_CLEAR_FOREIGN };
 import { clearSmokeRole } from './smoke_role.js';
 import { go } from './router.js';
+
+let localLogoutObserver = null;
+
+export function setLocalLogoutObserver(observer) {
+  localLogoutObserver = typeof observer === 'function' ? observer : null;
+}
 
 // Clears all locally persisted user-scoped state without navigating. Use this
 // for non-logout local resets (account switch staging, profile wipe) that
 // still need the same cleanup guarantees.
 // BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
 // value cannot outlive the user that set it.
-export function resetLocalSession() {
-  clearUserScopedStorage();
+export function resetLocalSession({ allowForeignDetach = false } = {}) {
+  const cleared = clearUserScopedStorage();
+  if (cleared === false) return false;
   clearSmokeRole();
+  if (cleared === AUTH_CLEAR_FOREIGN) {
+    if (!allowForeignDetach) return false;
+    user.resetCacheOnly();
+    return AUTH_CLEAR_FOREIGN;
+  }
   user.reset();
+  return true;
 }
 
 // Full mock logout: clears local user-scoped state and navigates to the
 // welcome screen. This is the single boundary that passenger and driver
 // logout handlers should call.
 export function performLocalLogout() {
-  resetLocalSession();
+  if (!resetLocalSession({ allowForeignDetach: true })) return false;
+  if (localLogoutObserver && localLogoutObserver() === false) return false;
   go('/welcome');
+  return true;
 }

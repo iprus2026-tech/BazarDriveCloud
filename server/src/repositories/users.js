@@ -52,3 +52,18 @@ export async function markPhoneVerified(db, userId) {
   );
   return rows[0] ?? null;
 }
+
+// Only called after OTP consumption, on the SAME transaction client as session creation.
+// INSERT is the first-user decision; a conflicting identity never receives new grants.
+export async function resolveVerifiedLoginUser(db, { phone }) {
+  if (!phone) throw new Error('resolveVerifiedLoginUser requires a non-empty phone');
+  const { rows } = await db.query(
+    `INSERT INTO users (phone, phone_verified, roles, active_role)
+       VALUES ($1, TRUE, ARRAY['passenger']::text[], 'passenger')
+       ON CONFLICT (phone) WHERE phone IS NOT NULL
+       DO UPDATE SET phone_verified = TRUE, updated_at = now()
+     RETURNING id, role, active_role, roles, phone, phone_verified`,
+    [phone],
+  );
+  return rows[0];
+}

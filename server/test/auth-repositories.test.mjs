@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 
-import { findUserByPhone, upsertUserByPhone, markPhoneVerified } from '../src/repositories/users.js';
+import { findUserByPhone, upsertUserByPhone, markPhoneVerified, resolveVerifiedLoginUser } from '../src/repositories/users.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../src/repositories/otps.js';
 import { insertSession, resolveLiveSessionByTokenHash } from '../src/repositories/sessions.js';
 import { hashToken, hashOtpCode, generateToken, generateOtpCode } from '../src/services/auth/tokens.js';
@@ -45,6 +45,21 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       assert.equal(u2.id, u1.id, 'same phone => SAME account id (distinct identity per phone)');
       const found = await findUserByPhone(db, phone);
       assert.equal(found.id, u1.id);
+      const existingVerified = await resolveVerifiedLoginUser(db, { phone });
+      assert.deepEqual(existingVerified.roles, [], 'existing roleless identity gets no automatic grant');
+      assert.equal(existingVerified.active_role, null);
+      const newPhone = phone + '1';
+      const passenger = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.equal(passenger.phone_verified, true);
+      assert.deepEqual(passenger.roles, ['passenger']);
+      assert.equal(passenger.active_role, 'passenger');
+      const again = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.equal(again.id, passenger.id);
+      assert.deepEqual(again.roles, ['passenger']);
+      await db.query("UPDATE users SET roles = ARRAY['driver']::text[], active_role = 'driver' WHERE id = $1", [passenger.id]);
+      const driver = await resolveVerifiedLoginUser(db, { phone: newPhone });
+      assert.deepEqual(driver.roles, ['driver']);
+      assert.equal(driver.active_role, 'driver');
 
       // OTP lifecycle. NOTE: now() is frozen for the whole transaction, so created_at is
       // stamped explicitly to give each row a distinct, deterministic recency.

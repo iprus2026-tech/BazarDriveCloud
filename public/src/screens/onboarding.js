@@ -3,7 +3,8 @@ import { go, consumePendingAction } from '../router.js';
 import { escapeHtml } from '../util.js';
 import { isBackendEnabled } from '../api_config.js';
 import { apiFetch } from '../api_client.js';
-import { setAuth } from '../auth_token.js';
+import { resetLocalSession, AUTH_CLEAR_FOREIGN } from '../mock_auth.js';
+import { clearSmokeRole } from '../smoke_role.js';
 
 // ── Inline SVG constants ─────────────────────────────────────────────────────
 const SVG_BACK = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -463,12 +464,13 @@ function renderDone(draft) {
 }
 
 // ── Main screen factory ───────────────────────────────────────────────────────
-export default function onboarding() {
+export default function onboarding(renderContext = { isCurrent: () => true }, auth = null) {
   const root = document.createElement('section');
   root.className = 'screen screen--onboarding';
 
   // Accumulated draft — cleared on finish
   const currentUser = user.get();
+  const recoveredLogin = auth?.recoveredLogin ?? null;
 
   // Deep-link support: #/onboarding?step=phone routes here from the passenger
   // "needs phone" gate (profile.js). For an already-onboarded user this runs a
@@ -477,9 +479,11 @@ export default function onboarding() {
   const startAtPhone = getHashQuery().get('step') === 'phone';
   // Working role: keep a real passenger/driver role; otherwise fall back to
   // passenger for the phone flow (a safe default — never persisted on its own).
-  const knownRole = (currentUser.role === 'passenger' || currentUser.role === 'driver')
-    ? currentUser.role
-    : null;
+  const knownRole = ['passenger', 'driver'].includes(recoveredLogin?.expectedRole)
+    ? recoveredLogin.expectedRole
+    : (currentUser.role === 'passenger' || currentUser.role === 'driver')
+      ? currentUser.role
+      : null;
   const verifyPhoneOnly = startAtPhone && currentUser.onboarded === true;
   const verifyReturnRoute = () => (knownRole === 'driver' ? '/profile' : '/profile?role=passenger');
   // Pre-fill the docs checklist from the canonical driverDocuments state so
@@ -499,7 +503,9 @@ export default function onboarding() {
     role: knownRole ?? (startAtPhone ? 'passenger' : (currentUser.role ?? null)),
     // Prefill the existing number for the verify flow so the user re-confirms
     // their own phone rather than typing it from scratch.
-    phone: (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
+    phone: recoveredLogin?.phone
+      ? String(recoveredLogin.phone).replace(/\D/g, '')
+      : (verifyPhoneOnly && currentUser.phone) ? String(currentUser.phone) : '',
     firstName: '',
     lastName: '',
     vehicleMake: '',
@@ -514,6 +520,60 @@ export default function onboarding() {
   let step = 0;
   let otpAdvanceTimer = null;
   let otpSubmitting = false;
+  let verifiedResponseReceived = recoveredLogin !== null;
+  let passengerIdentity = recoveredLogin?.user ?? null;
+  let otpGeneration = 0;
+  let otpAttempt = recoveredLogin ? {
+    generation: 0,
+    phone: '+7' + (draft.phone || '').slice(-10),
+    requested: true,
+  } : null;
+  let confirmedAttempt = recoveredLogin ? {
+    generation: 0,
+    phone: recoveredLogin.phone || currentUser.phone || null,
+  } : null;
+  let recoveredAuthority = recoveredLogin !== null;
+  let accountSwitchedDuringLogin = false;
+  let accountBoundaryResetDuringLogin = false;
+  let rebuildProfileAfterVerify = false;
+
+  const ownsScreen = () => renderContext.isCurrent();
+  const expectedAuthRole = () => (verifyPhoneOnly && !rebuildProfileAfterVerify)
+    ? (knownRole ?? 'passenger')
+    : draft.role;
+  const normalizedPhone = () => '+7' + (draft.phone || '').slice(-10);
+  const ownsAttempt = attempt => ownsScreen() && attempt !== null
+    && attempt === otpAttempt && attempt.generation === otpGeneration
+    && attempt.phone === normalizedPhone();
+
+  function invalidateOtpAttempt() {
+    ++otpGeneration;
+    otpAttempt = null;
+    confirmedAttempt = null;
+    passengerIdentity = null;
+    verifiedResponseReceived = false;
+    otpSubmitting = false;
+    clearOtpAdvanceTimer();
+  }
+
+  function clearAccountDerivedDraft() {
+    draft.firstName = '';
+    draft.lastName = '';
+    draft.vehicleMake = '';
+    draft.vehicleModel = '';
+    draft.vehicleYear = '';
+    draft.vehiclePlate = '';
+    draft.vehicleColor = '';
+    draft.vehicleBody = 'Седан';
+    draft.docs.clear();
+  }
+
+  function canContinueAuthority() {
+    const role = expectedAuthRole();
+    return ['passenger', 'driver'].includes(role)
+      && (recoveredAuthority || ownsAttempt(confirmedAttempt))
+      && auth?.roleConfirmed?.(role) === true;
+  }
 
   function clearOtpAdvanceTimer() {
     if (otpAdvanceTimer !== null) {
@@ -525,7 +585,13 @@ export default function onboarding() {
   // Inline error under the current step's footer (#ob-err exists on the phone + otp steps). Empty
   // string clears it. Only used on the live-backend path; the mock path never errors.
   function setStepError(msg) {
-    const el = root.querySelector('#ob-err');
+    let el = root.querySelector('#ob-err');
+    if (!el && msg) {
+      el = document.createElement('p');
+      el.id = 'ob-err';
+      el.setAttribute('role', 'alert');
+      root.appendChild(el);
+    }
     if (!el) return;
     el.textContent = msg || '';
     el.hidden = !msg;
@@ -535,28 +601,88 @@ export default function onboarding() {
   // (auth_token.setAuth), then run the existing success path. On failure show an inline error and let
   // the user retry. The mock path (backend OFF) is unchanged below.
   async function verifyOtpWithBackend() {
+    const attempt = otpAttempt;
+    if (!ownsAttempt(attempt) || !attempt.requested) return;
     const otpInput = root.querySelector('#ob-otp-input');
     const nextBtn  = root.querySelector('#ob-next');
     const code = otpInput ? otpInput.value.replace(/\D/g, '').slice(0, draft.otpLen || 6) : '';
-    const phone = draft.authPhone || ('+7' + (draft.phone || '').slice(-10));
+    const phone = attempt.phone;
     // Disable the field + button while the verify is in flight so an edit can't reset the
     // re-entrancy guard and fire a DUPLICATE verify (which would burn a server attempt).
     if (otpInput) otpInput.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
     try {
-      const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
-      // Stash the minted session on the draft; PERSIST it only at a commit point
-      // (completePhoneVerification / finish) so an abandoned or Guest flow never leaves a token behind.
-      draft.authToken = r.token;
-      draft.authUserId = r.user && r.user.userId;
+      if (!auth) throw Object.assign(new Error('handoff unavailable'), { code: 'SESSION_PROTOCOL' });
+      let result;
+      if (verifiedResponseReceived) {
+        result = await auth.resumeLogin();
+      } else {
+        const accept = auth.beginLogin({
+          isCurrent: () => ownsAttempt(attempt),
+          expectedRole: expectedAuthRole(),
+          resetAccount: ({ accountSwitch } = {}) => {
+            const resetOk = resetLocalSession();
+            if (resetOk === false) return false;
+            accountBoundaryResetDuringLogin = true;
+            accountSwitchedDuringLogin = accountSwitch === true;
+            // Any reset invalidates account-derived values captured before OTP,
+            // including legacy local-only profiles with no prior bearer userId.
+            clearAccountDerivedDraft();
+            if (accountSwitch) consumePendingAction();
+            return true;
+          },
+        });
+        const r = await apiFetch('/auth/otp/verify', { method: 'POST', body: { phone, code } });
+        if (!ownsAttempt(attempt)) return;
+        result = await accept(r, phone);
+        if (!ownsAttempt(attempt)) return;
+        verifiedResponseReceived = result.handoffInstalled === true;
+      }
+      if (!ownsAttempt(attempt)) return;
+      if (!result.ok && result.handoffInstalled !== true) {
+        const ecode = result.code;
+        invalidateOtpAttempt();
+        const phoneIdx = steps().indexOf('phone');
+        if (phoneIdx >= 0) step = phoneIdx;
+        render();
+        setStepError(
+          ['PASSENGER_AUTHORITY_REQUIRED', 'ROLE_AUTHORITY_REQUIRED'].includes(ecode)
+            ? 'Сервер не подтвердил выбранную роль. Запросите новый код.'
+            : ecode === 'AUTH_STORAGE_FAILED'
+              ? 'Не удалось сохранить вход. Запросите новый код.'
+              : 'Не удалось подтвердить новый вход. Запросите код ещё раз.',
+        );
+        return;
+      }
+      if (!result.ok) throw Object.assign(new Error('handoff failed'), { code: result.code });
+      passengerIdentity = result.user;
+      confirmedAttempt = attempt;
+      clearSmokeRole();
+      if (!verifyPhoneOnly && (!currentUser.onboarded || accountSwitchedDuringLogin)) {
+        user.set({
+          welcomeSeen: true,
+          onboarded: false,
+          role: result.user.activeRole,
+          phoneVerified: result.user.phoneVerified,
+          phone: attempt.phone,
+        });
+      }
       if (verifyPhoneOnly) { completePhoneVerification(); } else { next(); }
     } catch (err) {
+      if (!ownsAttempt(attempt)) return;
       otpSubmitting = false;
       if (otpInput) otpInput.disabled = false;
       if (nextBtn) nextBtn.disabled = false;
       const ecode = err && err.code;
       setStepError(
-        (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
+        verifiedResponseReceived ? (
+          ['PASSENGER_AUTHORITY_REQUIRED', 'ROLE_AUTHORITY_REQUIRED'].includes(ecode)
+            ? 'Сервер не подтвердил выбранную роль.'
+          : ecode === 'AUTH_STORAGE_FAILED' ? 'Не удалось сохранить вход. Проверьте доступ к хранилищу и запросите новый код.'
+          : ecode === 'AUTH_IDENTITY_MISMATCH' ? 'Учётная запись не совпала. Повторите проверку входа.'
+          : 'Не удалось подтвердить вход. Повторите проверку сессии.'
+        )
+        : (err && err.status === 429) || ecode === 'OTP_LOCKED' ? 'Слишком много попыток. Запросите код заново.'
         : (err && err.status === 0) || ecode === 'NETWORK' ? 'Не удалось связаться с сервером. Попробуйте ещё раз.'
         : 'Неверный код. Попробуйте ещё раз.',
       );
@@ -564,6 +690,7 @@ export default function onboarding() {
   }
 
   function advanceFromOtpOnce() {
+    if (!ownsScreen()) return;
     if (otpSubmitting) return;
     if (currentStep() !== 'otp') return;
     otpSubmitting = true;
@@ -579,46 +706,96 @@ export default function onboarding() {
     next();
   }
 
-  // Verify-only entry uses a trimmed phone→otp flow; everything else keeps the
-  // full role-based step list.
-  function steps() { return verifyPhoneOnly ? ['phone', 'otp'] : stepsFor(draft.role); }
+  // Verify-only entry starts as phone→otp. If that verification crossed an
+  // account/local-profile boundary, expand THIS mounted lifecycle into the
+  // full authoritative profile flow so the verified handoff remains owned.
+  function steps() {
+    return (verifyPhoneOnly && !rebuildProfileAfterVerify)
+      ? ['phone', 'otp']
+      : stepsFor(draft.role);
+  }
   function totalSteps() { return steps().length; }
   function currentStep() { return steps()[step]; }
 
-  // Deep-link landing: jump straight to the phone step when requested.
-  if (startAtPhone) {
+  // Explicit recovered authority resumes at profile without a second OTP.
+  if (recoveredLogin) {
+    const profileIdx = steps().indexOf('profile');
+    if (profileIdx >= 0) step = profileIdx;
+  } else if (startAtPhone) {
     const phoneIdx = steps().indexOf('phone');
     if (phoneIdx >= 0) step = phoneIdx;
   }
 
-  // Verify-only completion: persist phoneVerified (and the confirmed phone)
-  // while preserving every other field, then return to the profile so the
-  // needs-phone gate is gone. No full profile rebuild, no role mutation.
-  // Persist the bearer minted during this run, but ONLY at a commit point — so an abandoned or Guest
-  // flow never leaves a token on an anonymous/guest local session. phone = the normalized requested
-  // number used for the OTP (draft.authPhone).
-  function persistAuthIfMinted() {
-    if (draft.authToken) setAuth({ token: draft.authToken, userId: draft.authUserId, phone: draft.authPhone });
+  function returnToAuthVerification() {
+    auth?.markLoginStale?.();
+    invalidateOtpAttempt();
+    const phoneIdx = steps().indexOf('phone');
+    if (phoneIdx >= 0) step = phoneIdx;
+    render();
+    setStepError('Учётная запись изменилась. Подтвердите номер ещё раз.');
+  }
+
+  // Recheck at each UI commit; the bearer was persisted immediately after verify.
+  function canFinishAuth() {
+    if (!isBackendEnabled() || canContinueAuthority()) return true;
+    returnToAuthVerification();
+    return false;
   }
 
   function completePhoneVerification() {
+    if (!canFinishAuth()) return;
+    if (isBackendEnabled()) {
+      if (accountBoundaryResetDuringLogin) {
+        // The old account-scoped profile was intentionally cleared. Rebuild the
+        // new identity in THIS screen lifecycle so roleConfirmed()/finishLogin()
+        // keep the already-verified handoff and never require a second OTP.
+        user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
+          phone: confirmedAttempt.phone, onboarded: false, welcomeSeen: true });
+        draft.role = passengerIdentity.activeRole;
+        rebuildProfileAfterVerify = true;
+        const profileIdx = steps().indexOf('profile');
+        step = profileIdx >= 0 ? profileIdx : 0;
+        render();
+        return;
+      }
+      user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
+        phone: confirmedAttempt.phone, onboarded: true, welcomeSeen: true });
+      if (auth.finishLogin()) go(verifyReturnRoute());
+      return;
+    }
     const patch = { phoneVerified: true };
     if (draft.phone) patch.phone = draft.phone;
     user.set(patch);
-    persistAuthIfMinted();
     go(verifyReturnRoute());
   }
 
   function next() {
+    if (!ownsScreen()) return;
     clearOtpAdvanceTimer();
     step = Math.min(step + 1, totalSteps() - 1);
     render();
   }
 
   function back() {
+    if (!ownsScreen()) return;
+    if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
-      go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
+      const fullOnboardingFlow = !verifyPhoneOnly || rebuildProfileAfterVerify;
+      if (isBackendEnabled() && fullOnboardingFlow) {
+        const hadHandoff = auth?.hasUncommittedLogin?.() === true;
+        if (hadHandoff) {
+          if (auth?.abandonLogin?.() !== true) {
+            setStepError('Не удалось безопасно завершить вход. Повторите попытку.');
+            return;
+          }
+          if (resetLocalSession({ allowForeignDetach: true }) === false) {
+            setStepError('Не удалось очистить локальную сессию. Повторите попытку.');
+            return;
+          }
+        }
+      }
+      go(fullOnboardingFlow ? '/welcome' : verifyReturnRoute());
       return;
     }
     step--;
@@ -626,23 +803,20 @@ export default function onboarding() {
   }
 
   function finish() {
+    if (!canFinishAuth()) return;
+    const backend = isBackendEnabled();
+    const role = backend ? passengerIdentity.activeRole : draft.role;
+    if (backend && !auth.finishLogin()) return;
+
     const displayName = [draft.firstName, draft.lastName].filter(Boolean).join(' ')
       || draft.phone
       || 'Пользователь';
     const requiredDocIds = DOCS.filter((d) => d.required).map((d) => d.id);
-    const documentsReady = draft.role === 'driver'
+    const documentsReady = role === 'driver'
       && requiredDocIds.every((id) => draft.docs.has(id));
 
-    // Build a complete driverDocuments patch so state.js doesn't have to
-    // guess the user's intent from a single boolean. Ticking carries over
-    // `uploaded` and `review_required` (the doc already exists in a valid
-    // form). Ticking after `expired` / `missing` / `draft` or with no prior
-    // record marks the doc as freshly uploaded — `expired` deliberately
-    // does NOT carry over, otherwise a fresh driver who ticks every
-    // required checkbox would still get documentsReady=false because the
-    // default seed marks taxiRegistry expired. Un-ticking marks missing.
     const idToKey = DOC_ID_TO_KEY;
-    const prevDocs = currentUser.driverDocuments || {};
+    const prevDocs = accountBoundaryResetDuringLogin ? {} : (currentUser.driverDocuments || {});
     const driverDocuments = {};
     for (const key of REQUIRED_DOCS) {
       const onboardingId = Object.keys(idToKey).find((id) => idToKey[id] === key);
@@ -657,17 +831,16 @@ export default function onboarding() {
       }
     }
 
-    // finish() is only reachable by passenger/driver (the guest path bails out
-    // at the role step), i.e. after the phone→otp flow. Mark the phone verified
-    // when a number was confirmed in this run, and keep an already-verified
-    // status if the user re-edited onboarding without retyping their phone —
-    // so completing onboarding never drops the user back into the gate.
-    const phoneVerified = currentUser.phoneVerified || !!draft.phone;
+    const phoneVerified = backend
+      ? passengerIdentity.phoneVerified
+      : currentUser.phoneVerified || !!draft.phone;
+    const phone = backend ? confirmedAttempt.phone : draft.phone;
 
     user.set({
       onboarded: true,
-      role: draft.role,
-      phone: draft.phone,
+      welcomeSeen: true,
+      role,
+      phone,
       firstName: draft.firstName,
       lastName: draft.lastName,
       displayName,
@@ -682,13 +855,9 @@ export default function onboarding() {
       documentsReady,
       driverDocuments,
     });
-    persistAuthIfMinted();
     const pending = consumePendingAction();
-    if (pending) {
-      pending();
-    } else {
-      go(draft.role === 'driver' ? '/profile' : '/feed');
-    }
+    if (pending) pending();
+    else go(role === 'driver' ? '/profile' : '/feed');
   }
 
   function render() {
@@ -753,8 +922,27 @@ export default function onboarding() {
           nextBtn.addEventListener('click', () => {
             if (!draft.role) return;
             if (draft.role === 'guest') {
-              // Guest path: record role, clear any pending create-post action, go to feed
-              user.set({ welcomeSeen: true, role: 'guest' });
+              // Guest is a clean anonymous boundary. Drop any authenticated handoff
+              // and all user-scoped local data before entering the public surface.
+              if (isBackendEnabled()) {
+                if (auth?.enterGuest?.() !== true) {
+                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
+                  return;
+                }
+                const resetResult = resetLocalSession({ allowForeignDetach: true });
+                if (resetResult === false) {
+                  setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
+                  return;
+                }
+                invalidateOtpAttempt();
+                if (resetResult === AUTH_CLEAR_FOREIGN) {
+                  user.setCacheOnly({ welcomeSeen: true, role: 'guest' });
+                } else {
+                  user.set({ welcomeSeen: true, role: 'guest' });
+                }
+              } else {
+                user.set({ welcomeSeen: true, role: 'guest' });
+              }
               consumePendingAction();
               go('/feed');
               return;
@@ -768,7 +956,9 @@ export default function onboarding() {
         const phoneInput = root.querySelector('#ob-phone-input');
         if (phoneInput) {
           phoneInput.addEventListener('input', () => {
+            const previousPhone = normalizedPhone();
             draft.phone = phoneInput.value.replace(/\D/g, '');
+            if (isBackendEnabled() && normalizedPhone() !== previousPhone) invalidateOtpAttempt();
             setStepError('');
           });
         }
@@ -779,17 +969,22 @@ export default function onboarding() {
           // Normalize to E.164 ONCE (last 10 digits handles a 10-digit input AND an 11-digit
           // 7…/8…-prefixed one), and FREEZE the field + button while the request is in flight so the
           // requested number can't diverge from the one used to verify/persist.
-          const phone = '+7' + (draft.phone || '').slice(-10);
+          invalidateOtpAttempt();
+          const attempt = { generation: otpGeneration, phone: normalizedPhone(), requested: false };
+          otpAttempt = attempt;
+          const phone = attempt.phone;
           setStepError('');
           nextBtn.disabled = true;
           if (phoneInput) phoneInput.disabled = true;
           try {
             const resp = await apiFetch('/auth/otp/request', { method: 'POST', body: { phone } });
-            draft.authPhone = phone;
+            if (!ownsAttempt(attempt)) return;
+            attempt.requested = true;
             // Match the UI to the server's code length (dev echoes devCode; prod default is 4).
             draft.otpLen = ((resp && resp.devCode) || '').length || 4;
             next();
           } catch (err) {
+            if (!ownsAttempt(attempt)) return;
             nextBtn.disabled = false;
             if (phoneInput) phoneInput.disabled = false;
             setStepError(err && err.code === 'INVALID_PHONE'

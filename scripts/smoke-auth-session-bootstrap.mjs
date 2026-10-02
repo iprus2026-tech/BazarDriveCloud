@@ -2,6 +2,7 @@
 // app.js in fresh processes with a minimal DOM and deferred fetch; no DB/network.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 function storage() {
@@ -176,7 +177,158 @@ function installDOM({ parseIds = false, parseMarkup = false } = {}) {
     localStorage: storage(), sessionStorage: storage() });
   globalThis.MutationObserver = class { observe() {} disconnect() {} };
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
-  return { elements, Element, created, starts: () => startCount };
+  return { elements, Element, created, starts: () => startCount,
+    storageEvent: event => {
+      for (const fn of listeners.get('storage') ?? []) fn(event);
+    } };
+}
+
+async function authStorageSyncCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const { register } = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'passenger',
+    phoneVerified: true, firstName: 'Current passenger' });
+  auth.setAuth({ token: 'original-token', userId: 'a' });
+  const profile = user.get();
+  const savedProfile = localStorage.getItem('bazardrive.user.v1');
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  let products = 0;
+  register('/boot-proof', () => { products++; return new dom.Element('article'); });
+  const refresh = deferred();
+  const requests = [];
+  const session = response({ user: { ...userDTO('a'), activeRole: 'passenger' } });
+  globalThis.fetch = (url, options) => {
+    assert.ok(url.endsWith('/auth/session'), 'only session reconciliation is requested');
+    requests.push(options.headers.Authorization);
+    return requests.length === 1 ? Promise.resolve(session) : refresh.promise;
+  };
+  await import('../public/src/app.js');
+  await flush();
+  assert.equal(products, 1);
+  const route = location.hash;
+  const sameActor = name.startsWith('same-actor');
+  const next = name === 'logout' ? null : JSON.stringify({
+    token: 'refreshed-token', userId: sameActor ? 'a' : 'b', phone: null,
+  });
+  if (name === 'same-actor-rotation') {
+    const otherAuth = await import('../public/src/auth_token.js?refresh-tab');
+    const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+    const otherController = createAuthSessionBootstrap({ backendEnabled: () => true,
+      readToken: otherAuth.getAuthToken, readUserId: otherAuth.getAuthUserId,
+      writeAuth: otherAuth.setAuth, dropAuth: otherAuth.clearAuth,
+      pinTabUser: otherAuth.pinAuthTabUser,
+      requestSession: async () => ({ user: { ...userDTO('a'), activeRole: 'passenger' } }),
+    });
+    await otherController.reconcile();
+    const originalSet = localStorage.setItem, originalRemove = localStorage.removeItem;
+    const changes = [];
+    localStorage.setItem = (key, value) => {
+      originalSet(key, value);
+      if (key === auth.AUTH_STORAGE_KEY) { changes.push(value); dom.storageEvent({ key, newValue: value }); }
+    };
+    localStorage.removeItem = key => {
+      originalRemove(key);
+      if (key === auth.AUTH_STORAGE_KEY) { changes.push(null); dom.storageEvent({ key, newValue: null }); }
+    };
+    const result = await otherController.beginLogin()({ token: 'refreshed-token', user: {
+      userId: 'a', activeRole: 'passenger', phoneVerified: true, roles: ['passenger'],
+    } });
+    assert.equal(result.ok, true);
+    assert.equal(changes.length, 1, 'same-account OTP replaces the token with one write');
+    assert.notEqual(changes[0], null, 'same-account refresh never broadcasts logout');
+    localStorage.setItem = originalSet; localStorage.removeItem = originalRemove;
+  } else if (next === null) localStorage.removeItem(auth.AUTH_STORAGE_KEY);
+  else localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
+  dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: next });
+  await flush();
+  if (sameActor) {
+    assert.deepEqual(user.get(), profile, 'same-account refresh retains the mounted profile');
+    assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_RECONCILING');
+    // A second event during reconciliation must not lose the pinned actor.
+    dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: next });
+    await flush();
+    refresh.resolve(session);
+    await flush();
+    assert.equal(location.hash, route, 'same-account refresh stays on the product route');
+    assert.deepEqual(user.get(), profile);
+    assert.equal(auth.getAuthToken(), 'refreshed-token');
+    assert.ok(products > 1, 'product route resumes after reconciliation');
+    assert.ok(requests.slice(1).every(value => value === 'Bearer refreshed-token'));
+  } else {
+    assert.equal(user.get().firstName, null, 'logout/replacement clears this tab projection');
+    assert.equal(user.get().onboarded, false);
+    assert.equal(location.hash, '#/onboarding');
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(requests.length, 1, 'this tab never sends the foreign bearer');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), next);
+  }
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), savedProfile,
+    'cross-tab reconciliation never rewrites shared profile storage');
+}
+
+async function authRollbackCase(name) {
+  globalThis.localStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  let requests = 0;
+  const controller = createAuthSessionBootstrap({ backendEnabled: () => true,
+    requestSession: async () => { requests++; return { user: userDTO('a') }; } });
+  assert.equal((await controller.reconcile()).state, 'ANONYMOUS');
+  const rawGet = localStorage.getItem;
+  const rawSet = localStorage.setItem;
+  const rawRemove = localStorage.removeItem;
+  let deniedReads = 0, allowRemoval = false;
+  localStorage.setItem = (key, value) => {
+    rawSet(key, value);
+    if (key === auth.AUTH_STORAGE_KEY) deniedReads = name === 'rollback-read-denied' ? 2 : 1;
+  };
+  localStorage.getItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY && deniedReads > 0) {
+      deniedReads--;
+      if (name === 'foreign-replacement') rawSet(key,
+        JSON.stringify({ token: 'foreign-token', userId: 'b', phone: null }));
+      if (name === 'readback-null') return null;
+      throw new Error('fixture post-write read denied');
+    }
+    return rawGet(key);
+  };
+  localStorage.removeItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY && rawGet(key) && !allowRemoval) {
+      if (name === 'remove-denied') throw new Error('fixture removal denied');
+      if (name === 'remove-noop') return;
+    }
+    rawRemove(key);
+  };
+  const result = await controller.beginLogin({
+    resetAccount: name === 'anonymous-read-denied' ? () => true : () => auth.clearAuth(),
+  })({ token: 'minted-token', user: { userId: 'a', activeRole: 'passenger',
+    phoneVerified: true, roles: ['passenger'] } }, '+79990000001');
+  assert.equal(result.ok, false);
+  assert.equal(result.code, name === 'foreign-replacement' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
+  assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+  assert.equal(requests, 0, 'unverified storage cannot start session reconciliation');
+  assert.equal(auth.getAuthToken(), null);
+  if (name === 'foreign-replacement') {
+    assert.equal(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).token, 'foreign-token');
+    assert.equal(controller.hasUncommittedLogin(), false);
+    return;
+  }
+  if (['rollback-read-denied', 'remove-denied', 'remove-noop'].includes(name)) {
+    assert.equal(controller.hasUncommittedLogin(), true, 'failed cleanup retains Back ownership');
+    assert.equal(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).token, 'minted-token');
+    if (name.startsWith('remove-')) {
+      assert.equal(controller.abandonLogin(), false, 'Back cannot succeed while removal still fails');
+      assert.equal(controller.hasUncommittedLogin(), true);
+    }
+    allowRemoval = true;
+    assert.equal(controller.abandonLogin(), true, 'Back retries real token removal');
+  }
+  assert.equal(rawGet(auth.AUTH_STORAGE_KEY), null, 'rollback actually removes the minted bearer');
+  assert.equal(controller.hasUncommittedLogin(), false);
+  const reloadedAuth = await import('../public/src/auth_token.js?rollback-reload');
+  assert.equal(reloadedAuth.getAuthToken(), null, 'fresh module cannot recover an abandoned bearer');
 }
 
 async function appCase(name) {
@@ -351,7 +503,7 @@ async function appDevDocsBootCase(name) {
   user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true });
   const profileBefore = localStorage.getItem('bazardrive.user.v1');
   if (name !== 'no-bearer') localStorage.setItem('bazardrive.auth.v1',
-    JSON.stringify({ token: 'fixture-token' }));
+    JSON.stringify({ token: 'fixture-token', userId: 'user-a' }));
   const authBefore = localStorage.getItem('bazardrive.auth.v1');
   globalThis.__BD_API_BASE__ = name === 'off' ? '' : 'https://api.invalid';
   const hashEntry = name.startsWith('hash-');
@@ -452,7 +604,8 @@ async function guestPublicCase(name) {
   const guestReadOnly = !off && !pending && !unknown && name !== 'authenticated' && !negativeRole;
   globalThis.__BD_API_BASE__ = off ? '' : 'https://api.invalid';
   const hasBearer = ['user-null', 'authenticated', 'reconciling', 'unknown'].includes(name);
-  if (hasBearer) localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token' }));
+  if (hasBearer) localStorage.setItem('bazardrive.auth.v1',
+    JSON.stringify({ token: 'fixture-token', userId: 'user-a' }));
   const authBefore = localStorage.getItem('bazardrive.auth.v1');
   const session = deferred(), requests = [];
   const order = { id: 'guest-order', status: 'CREATED', pickup: { label: 'A' },
@@ -611,15 +764,318 @@ async function guestPublicCase(name) {
   await navigate('/ops/screens');
   assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
   assert.equal(dom.starts(), 1);
-  assert.equal(localStorage.getItem('bazardrive.auth.v1'), authBefore, 'credential lifecycle stays out of scope');
-  assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'no authority/cache rewrite');
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), guestReadOnly ? null : authBefore,
+    'explicit Guest selection clears any retained bearer');
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), guestReadOnly ? localStorage.getItem('bazardrive.user.v1') : originalProfile,
+    'non-Guest paths preserve the profile cache');
   assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, hasBearer ? 1 : 0);
   if (pending) { session.resolve(response({ user: null })); await flush(); }
   assert.deepEqual(errors, []);
   console.error = oldError; console.warn = oldWarn;
 }
 
-if (process.argv[2] === '--guest-public-case') {
+async function loginHandoffCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const verifySwitch = name === 'verify-switch-reonboard';
+  user.set({ welcomeSeen: true, onboarded: verifySwitch, role: 'passenger', firstName: 'Old account' });
+  if (name === 'account-switch' || verifySwitch) localStorage.setItem('bazardrive.auth.v1',
+    JSON.stringify({ token: 'old-token', userId: 'old-user' }));
+  globalThis.__BD_API_BASE__ = name === 'off-demo' ? '' : 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const pending = deferred();
+  const requests = [];
+  let sessions = 0;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
+      userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+    assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
+    if ((name === 'account-switch' || verifySwitch) && options.headers.Authorization === 'Bearer old-token') {
+      return response({ user: { userId: 'old-user', sessionId: 'old-session',
+        activeRole: 'passenger', phoneVerified: true } });
+    }
+    assert.equal(options.headers.Authorization, 'Bearer new-token');
+    sessions++;
+    if (name === 'retry' && sessions === 1) return response({ code: 'SESSION_LOOKUP_FAILED' }, 503);
+    return pending.promise;
+  };
+  await import('../public/src/app.js'); await flush();
+  if (name === 'account-switch' || verifySwitch) {
+    const { setSmokeRole } = await import('../public/src/smoke_role.js');
+    setSmokeRole('driver');
+    if (name === 'account-switch') {
+      router.setPendingAction(() => assert.fail('old account pending action must not run'));
+    }
+  }
+  let products = 0;
+  router.register('/feed', () => { products++; return new dom.Element(); });
+  const node = id => document.getElementById(id);
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  async function click(id) { assert.ok(node(id), id); node(id).click(); await flush(); }
+  input('ob-phone-input', '9990000001');
+  node('ob-next').click(); await flush();
+  const otpScreen = dom.elements.app.children[0];
+  if (name === 'storage-failure') {
+    const originalSet = localStorage.setItem;
+    localStorage.setItem = (key, value) => {
+      if (key === 'bazardrive.auth.v1') throw new Error('fixture storage denied');
+      originalSet(key, value);
+    };
+  }
+  input('ob-otp-input', name === 'off-demo' ? '123456' : '1234');
+  node('ob-next').click(); await flush();
+  if (name === 'off-demo') {
+    assert.ok(node('ob-firstname'));
+    input('ob-firstname', 'Demo');
+    node('ob-next').click(); await flush();
+    node('ob-finish').click(); await flush();
+    assert.equal(products, 1);
+    assert.equal(requests.length, 0);
+    assert.equal(localStorage.getItem('bazardrive.auth.v1'), null);
+    return;
+  }
+  if (name === 'storage-failure') {
+    assert.equal(sessions, 0);
+    assert.equal(products, 0);
+    assert.ok(node('ob-err').textContent.includes('сохранить'));
+    assert.ok(node('ob-phone-input'), 'storage failure returns to phone verification');
+    assert.equal(node('ob-otp-input'), null);
+    return;
+  }
+  assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user',
+    'verify persists before profile completion');
+  assert.equal(dom.elements.app.children[0], otpScreen, 'reconciliation cannot remount draft');
+  assert.equal(products, 0);
+  assert.notEqual(user.get().firstName, 'Old account', 'unowned local profile detached');
+  if (name === 'retry') {
+    assert.ok(node('ob-err').textContent);
+    node('ob-next').click(); await flush();
+    assert.equal(sessions, 2);
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
+  }
+  pending.resolve(response({ user: { userId: name === 'mismatch' ? 'other-user' : 'new-user',
+    sessionId: 'new-session', activeRole: 'passenger', phoneVerified: true } }));
+  await flush();
+  assert.equal(dom.starts(), 1, 'handoff never restarts router or reloads page');
+  if (name === 'mismatch') {
+    assert.ok(node('ob-otp-input'));
+    assert.ok(node('ob-err').textContent.includes('не совпала'));
+    assert.equal(products, 0);
+  } else {
+    if (verifySwitch) {
+      assert.ok(node('ob-firstname'),
+        'switched identity continues directly into profile with the verified handoff');
+      assert.equal(user.get().onboarded, false, 'switched identity must rebuild its local profile');
+      assert.notEqual(user.get().firstName, 'Old account', 'old account profile data cannot survive the switch');
+      assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user');
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1,
+        'profile rebuild must not request a second OTP');
+      input('ob-firstname', 'QA');
+      await click('ob-next');
+      await click('ob-finish');
+      assert.equal(user.get().onboarded, true);
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1,
+        'finish commits the original verified handoff');
+      assert.equal(products, 1);
+      return;
+    }
+    assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
+    if (!verifySwitch && name !== 'account-switch') {
+      assert.equal(user.get().welcomeSeen, true,
+        'verified incomplete login skips unauthenticated Welcome on reload');
+      assert.equal(user.get().onboarded, false, 'profile completion remains required');
+      assert.equal(user.get().role, 'passenger', 'incomplete projection uses server-confirmed role');
+    }
+    if (name === 'guest-after-verify') {
+      // Seed account-scoped data that must not survive entering Guest.
+      localStorage.setItem('bazardrive.ride_orders.v1', JSON.stringify([{ id: 'private-order' }]));
+      user.set({ firstName: 'Private Name' });
+      await click('ob-back'); // profile -> otp
+      await click('ob-back'); // otp -> phone, invalidates attempt
+      await click('ob-back'); // phone -> role
+      const guest = dom.elements.app.querySelector('[data-role="guest"]');
+      assert.ok(guest); guest.click(); await flush();
+      await click('ob-next');
+      assert.equal(localStorage.getItem('bazardrive.auth.v1'), null, 'Guest cannot retain the minted bearer');
+      assert.equal(localStorage.getItem('bazardrive.ride_orders.v1'), null, 'Guest clears account-scoped ride data');
+      assert.equal(user.get().firstName, null, 'Guest clears the prior profile');
+      assert.equal(user.get().role, 'guest');
+      assert.equal(products, 1, 'Guest enters the public feed only after auth is abandoned');
+      return;
+    }
+    if (name === 'back-exit-after-verify') {
+      await click('ob-back'); // profile -> otp
+      await click('ob-back'); // otp -> phone
+      await click('ob-back'); // phone -> role
+      await click('ob-back'); // role -> welcome, abandons auth
+      assert.equal(location.hash, '#/welcome');
+      assert.equal(localStorage.getItem('bazardrive.auth.v1'), null, 'back-exit clears the bearer');
+      assert.equal(products, 0);
+      return;
+    }
+    input('ob-firstname', 'QA');
+    node('ob-next').click(); await flush();
+    if (name === 'authority-loss-finish') {
+      localStorage.setItem('bazardrive.auth.v1',
+        JSON.stringify({ token: 'other-token', userId: 'other-user', phone: '+79990000999' }));
+      node('ob-finish').click(); await flush();
+      assert.ok(node('ob-phone-input'), 'authority loss returns to phone verification');
+      assert.ok(node('ob-err').textContent.includes('Подтвердите номер'));
+      assert.equal(products, 0, 'authority loss cannot enter product routes');
+      return;
+    }
+    node('ob-finish').click(); await flush();
+    assert.equal(products, 1, 'AUTHENTICATED admits passenger without reload');
+    assert.equal(user.get().role, 'passenger');
+    assert.equal(user.get().phoneVerified, true);
+    if (name === 'account-switch') {
+      const { getSmokeRole } = await import('../public/src/smoke_role.js');
+      assert.equal(getSmokeRole(), null);
+    }
+  }
+}
+
+async function repairHandoffCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: false, role: 'passenger', firstName: 'Untouched draft' });
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  location.hash = '#/onboarding?step=phone';
+  const oldVerify = deferred(), oldSession = deferred(), retrySession = deferred();
+  const routeCase = name.startsWith('retry-');
+  const lateSession = name === 'late-session';
+  const requests = [];
+  let verifies = 0, sessions = 0, products = 0, welcomeEntries = 0;
+  const verified = id => ({ token: 'fixture-token-' + id, user: {
+    userId: id, roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+  const session = id => response({ user: { userId: id, sessionId: 'fixture-session',
+    activeRole: 'passenger', phoneVerified: true } });
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) {
+      verifies++;
+      if (verifies === 1) return routeCase || lateSession ? response(verified('a')) : oldVerify.promise;
+      return response(verified(name === 'same-phone-request' ? 'a' : 'b'));
+    }
+    assert.ok(url.endsWith('/auth/session'), 'repair only exercises auth endpoints');
+    sessions++;
+    if (routeCase) return sessions === 1 ? oldSession.promise : retrySession.promise;
+    if (lateSession && sessions === 1) return oldSession.promise;
+    return session(name === 'same-phone-request' ? 'a' : 'b');
+  };
+  await import('../public/src/app.js'); await flush();
+  router.register('/feed', () => { products++; return new dom.Element(); });
+  router.register('/welcome', () => { welcomeEntries++; return new dom.Element(); });
+  const node = id => document.getElementById(id);
+  function input(id, value) {
+    const element = node(id); assert.ok(element, id);
+    element.value = value;
+    for (const fn of element.handlers.input ?? []) fn({ target: element });
+  }
+  async function click(id) { assert.ok(node(id), id); node(id).click(); await flush(); }
+  input('ob-phone-input', '9990000001'); await click('ob-next');
+  input('ob-otp-input', '1234'); await click('ob-next');
+
+  if (routeCase) {
+    assert.equal(auth.getAuthUserId(), 'a'); assert.equal(sessions, 1);
+    router.go('/feed'); await flush();
+    oldSession.resolve(session('a')); await flush();
+    assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
+    assert.equal(products, 0); assert.equal(node('ob-firstname'), null);
+    if (name === 'retry-credential-before') auth.setAuth({ token: 'fixture-token-c', userId: 'c' });
+    await click('auth-boot-retry');
+    if (name === 'retry-credential-before') {
+      assert.equal(sessions, 1, 'obsolete credential ownership cannot send a retry');
+    } else {
+      assert.equal(sessions, 2, 'exactly one new session GET');
+      if (name === 'retry-credential-during') auth.setAuth({ token: 'fixture-token-c', userId: 'c' });
+      retrySession.resolve(session(name === 'retry-mismatch' ? 'other' : 'a'));
+      await flush();
+    }
+    assert.equal(verifies, 1);
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/request')).length, 1);
+    assert.equal(products, 0, 'retry cannot automatically enter passenger UI');
+    assert.equal(node('ob-firstname'), null, 'disposed onboarding cannot resume');
+    if (name === 'retry-match') {
+      assert.equal(dom.elements.app.children[0].dataset.authBootState, 'AUTHENTICATED');
+      assert.equal(welcomeEntries, 0);
+      await click('auth-boot-continue');
+      assert.equal(location.hash, '#/onboarding',
+        'authenticated-incomplete recovery returns to authoritative onboarding');
+      assert.equal(welcomeEntries, 0, 'recovery never enters unauthenticated Welcome Start');
+      assert.equal(user.get().welcomeSeen, true);
+      assert.equal(user.get().onboarded, false);
+      assert.equal(user.get().role, 'passenger');
+      assert.equal(products, 0, 'recovery does not fabricate a completed local profile');
+    } else {
+      assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_UNKNOWN');
+      assert.equal(node('auth-boot-continue'), null);
+    }
+    assert.equal(dom.starts(), 1);
+    return;
+  }
+
+  await click('ob-back');
+  if (name !== 'back-only') {
+    if (name !== 'same-phone-request') input('ob-phone-input', '9990000002');
+    await click('ob-next');
+  }
+  const currentScreen = dom.elements.app.children[0];
+  const beforeLateAuth = localStorage.getItem('bazardrive.auth.v1');
+  const beforeLateProfile = {
+    role: user.get().role, phone: user.get().phone, firstName: user.get().firstName,
+    onboarded: user.get().onboarded, welcomeSeen: user.get().welcomeSeen,
+  };
+  if (lateSession) oldSession.resolve(session('a'));
+  else oldVerify.resolve(response(verified('a')));
+  await flush();
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), beforeLateAuth, name + ': late A cannot save auth');
+  assert.deepEqual({
+    role: user.get().role, phone: user.get().phone, firstName: user.get().firstName,
+    onboarded: user.get().onboarded, welcomeSeen: user.get().welcomeSeen,
+  }, beforeLateProfile, name + ': late A cannot reset the current account');
+  assert.equal(dom.elements.app.children[0], currentScreen);
+  assert.equal(products, 0); assert.equal(node('ob-firstname'), null);
+  assert.equal(sessions, lateSession ? 1 : 0, 'stale verify cannot reconcile');
+  if (name === 'back-only') {
+    assert.ok(node('ob-phone-input')); assert.equal(auth.getAuthToken(), null);
+    return;
+  }
+  assert.ok(node('ob-otp-input'), 'the new OTP attempt remains mounted');
+  input('ob-otp-input', '1234'); await click('ob-next');
+  assert.ok(node('ob-firstname'), 'the current generation still works');
+  const expectedId = name === 'same-phone-request' ? 'a' : 'b';
+  const expectedPhone = name === 'same-phone-request' ? '+79990000001' : '+79990000002';
+  assert.equal(auth.getAuthUserId(), expectedId);
+  assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).phone, expectedPhone);
+  input('ob-firstname', 'QA'); await click('ob-next'); await click('ob-finish');
+  assert.equal(user.get().phone, expectedPhone, 'profile phone comes from the confirmed attempt');
+  assert.equal(products, 1); assert.equal(dom.starts(), 1);
+}
+
+if (process.argv[2] === '--storage-sync-case') {
+  await authStorageSyncCase(process.argv[3]);
+  console.log('PASS actual app cross-tab storage: ' + process.argv[3]);
+} else if (process.argv[2] === '--auth-rollback-case') {
+  await authRollbackCase(process.argv[3]);
+  console.log('PASS real auth-token rollback: ' + process.argv[3]);
+} else if (process.argv[2] === '--repair-handoff-case') {
+  await repairHandoffCase(process.argv[3]);
+  console.log('PASS actual app OTP/retry repair: ' + process.argv[3]);
+} else if (process.argv[2] === '--login-handoff-case') {
+  await loginHandoffCase(process.argv[3]);
+  console.log('PASS actual app/onboarding handoff — ' + process.argv[3]);
+} else if (process.argv[2] === '--guest-public-case') {
   await guestPublicCase(process.argv[3]);
   console.log('PASS actual app/router/screens Guest boundary — ' + process.argv[3]);
 } else if (process.argv[2] === '--app-dev-docs-case') {
@@ -635,9 +1091,654 @@ if (process.argv[2] === '--guest-public-case') {
   const { createAuthSessionBootstrap: create, sessionRouteAdmission: admit } =
     await import('../public/src/auth_session_bootstrap.js');
   let count = 0;
-  async function check(name, fn) { await fn(); count++; console.log('PASS — ' + name); }
+  async function check(name, fn) {
+    try {
+      await fn();
+      count++;
+      console.log('PASS — ' + name);
+    } catch (error) {
+      const summary = String(error?.message || error).split('\n')[0];
+      throw new Error('FAIL — ' + name + ': ' + summary);
+    }
+  }
   const fixture = overrides => create({ backendEnabled: () => true,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
+
+  const verified = (id = 'b', role = 'passenger') => ({ token: 'token-' + id,
+    user: { userId: id, activeRole: role, phoneVerified: true, roles: [role] } });
+  const sessionFor = (id, role = 'passenger') => ({
+    user: { ...userDTO(id), activeRole: role, phoneVerified: true },
+  });
+  const passenger = id => sessionFor(id, 'passenger');
+  function loginFixture(overrides = {}) {
+    let record = { token: 'token-a', userId: 'a' }, clears = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b'), ...overrides });
+    return { c, record: () => record, clears: () => clears,
+      begin: options => c.beginLogin({ resetAccount: () => clears++, ...options }) };
+  }
+  await check('handoff A->B persists B, clears old profile boundary, authenticates without reload', async () => {
+    const f = loginFixture();
+    const states = [];
+    f.c.subscribe(s => states.push(s.state));
+    assert.equal((await f.begin()(verified(), '+15550000001')).ok, true);
+    assert.equal(f.record().userId, 'b'); assert.equal(f.record().token, 'token-b');
+    assert.equal(f.clears(), 1);
+    assert.deepEqual(states, ['SESSION_RECONCILING', 'AUTHENTICATED']);
+    assert.equal(f.c.passengerConfirmed(), true);
+  });
+  await check('mismatched identity drops the credential and never authenticates after reload/retry', async () => {
+    const f = loginFixture({ requestSession: async () => passenger('other') });
+    const states = []; f.c.subscribe(s => states.push(s.state));
+    assert.equal((await f.begin()(verified())).code, 'AUTH_IDENTITY_MISMATCH');
+    assert.equal(f.record(), null, 'terminal identity mismatch drops the persisted bearer');
+    assert.equal((await f.c.resumeLogin()).ok, false);
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('role-aware handoff accepts an existing granted driver without granting passenger', async () => {
+    const f = loginFixture({ requestSession: async () => sessionFor('b', 'driver') });
+    assert.equal((await f.begin({ expectedRole: 'driver' })(verified('b', 'driver'))).ok, true);
+    assert.equal(f.c.roleConfirmed('driver'), true);
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('authority mismatch may replace identity but never grants the selected role', async () => {
+    const f = loginFixture();
+    const wrongRole = verified('b', 'driver');
+    const result = await f.begin({ expectedRole: 'passenger' })(wrongRole);
+    assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(result.handoffInstalled, true);
+    assert.equal(f.record().userId, 'b');
+    assert.equal(f.record().token, 'token-b');
+    assert.equal(f.clears(), 1, 'verified B identity detaches A account cache');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.passengerConfirmed(), false,
+      'identity replacement cannot manufacture passenger authority');
+  });
+  await check('explicit abandon clears the minted bearer and handoff', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.c.passengerConfirmed(), true);
+    assert.equal(f.c.abandonLogin(), true);
+    assert.equal(f.record(), null);
+    assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
+    assert.equal(f.c.passengerConfirmed(), false);
+  });
+  await check('abandon without a replacement handoff preserves an existing authenticated session', async () => {
+    let record = { token: 'driver-token', userId: 'driver-a' }, drops = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { drops++; record = null; },
+      requestSession: async () => sessionFor('driver-a', 'driver') });
+    assert.equal(c.abandonLogin(), false);
+    assert.deepEqual(record, { token: 'driver-token', userId: 'driver-a' });
+    assert.equal(drops, 0);
+    assert.equal(c.getSnapshot().state, 'BOOT');
+  });
+  await check('failed replacement attempt retains prior handoff ownership for Back exit', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.record().userId, 'b');
+    // Starting a second OTP attempt must not erase the committed handoff before
+    // that replacement verify returns successfully.
+    f.begin();
+    assert.equal(f.c.abandonLogin(), true);
+    assert.equal(f.record(), null);
+    assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('identity-only replacement cannot resume or inherit prior passenger authority', async () => {
+    let sessions = 0;
+    const f = loginFixture({ requestSession: async () => (
+      ++sessions === 1 ? passenger('b') : sessionFor('c', 'driver')
+    ) });
+    const first = await f.begin()(verified());
+    assert.equal(first.ok, true);
+    assert.equal(f.c.passengerConfirmed(), true);
+
+    const replacement = await f.begin({ expectedRole: 'passenger' })(verified('c', 'driver'));
+    assert.equal(replacement.ok, false);
+    assert.equal(replacement.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(replacement.handoffInstalled, true);
+    assert.equal(f.record().userId, 'c');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.getSnapshot().user.userId, 'c');
+    assert.equal(f.c.passengerConfirmed(), false,
+      'new identity-only handoff supersedes old passenger authority');
+  });
+  await check('stale handoff cannot delete a credential replaced by another tab', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin()(verified())).ok, true);
+    record = { token: 'token-c', userId: 'c' }; // another tab/account won
+    c.markLoginStale();
+    assert.equal(c.abandonLogin(), false);
+    assert.deepEqual(record, { token: 'token-c', userId: 'c' });
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+  });
+  await check('terminal handoff with an already-removed bearer can exit ANONYMOUS', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; },
+      requestSession: async () => ({ user: null }) });
+    const result = await c.beginLogin()(verified());
+    assert.equal(result.ok, false);
+    assert.equal(record, null, 'terminal reconciliation removed its bearer');
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('failed auth write rollback retains cleanup ownership until removal succeeds', async () => {
+    let record = { token: 'token-a', userId: 'a' }, writes = 0, drops = 0;
+    let allowRollbackRetry = false;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => {
+        writes++;
+        record = next;
+        return false; // models write succeeded but readback/verification failed
+      },
+      dropAuth: () => {
+        drops++;
+        if (!allowRollbackRetry) return false; // rollback removal fails
+        record = null;
+        return true;
+      },
+      requestSession: async () => passenger('a') });
+    const result = await c.beginLogin({ expectedRole: 'passenger' })(verified('a', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(writes, 1);
+    assert.equal(drops, 1, 'only rollback removes a same-account token');
+    assert.equal(c.hasUncommittedLogin(), true);
+    assert.equal(record.userId, 'a');
+    allowRollbackRetry = true;
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(record, null);
+    assert.equal(c.hasUncommittedLogin(), false);
+  });
+
+  await check('same-account refresh stops when another tab owns the replacement credential', async () => {
+    let record = { token: 'token-a', userId: 'a' }, writes = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { writes++; record = next; return true; },
+      dropAuth: () => { throw new Error('stale refresh must not delete a foreign token'); },
+      requestSession: async () => passenger('a') });
+    const accept = c.beginLogin({ expectedRole: 'passenger' });
+    record = { token: 'token-b', userId: 'b' };
+    const result = await accept(verified('a', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STALE');
+    assert.equal(writes, 0);
+    assert.deepEqual(record, { token: 'token-b', userId: 'b' });
+  });
+
+  await check('reloaded authenticated incomplete actor can recreate cleanup ownership', async () => {
+    let record = { token: 'token-b', userId: 'b' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      dropAuth: () => { record = null; return true; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(c.retainAuthenticatedCleanupOwner(() => true), true);
+    assert.equal(c.hasUncommittedLogin(), true);
+    assert.equal(c.abandonLogin(), true);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+
+  await check('app registers rebound and reloaded onboarding contexts as handoff owners', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /if \(recoveredLogin\) \{[\s\S]*onboardingHandoffOwner = context/);
+    assert.match(source, /retainAuthenticatedCleanupOwner\(\(\) => context\.isCurrent\(\)\)[\s\S]*onboardingHandoffOwner = context/);
+  });
+  for (const scenario of ['same-actor', 'same-actor-rotation', 'foreign-actor', 'logout']) {
+    await check('actual app cross-tab storage: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-sync-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['anonymous-read-denied', 'readback-null', 'rollback-read-denied',
+    'remove-denied', 'remove-noop', 'foreign-replacement']) {
+    await check('real auth-token rollback: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--auth-rollback-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+
+  await check('authority rejection keeps handoff pinned when terminal credential removal fails', async () => {
+    let record = { token: 'token-a', userId: 'a' }, allowDrop = false;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => {
+        if (!allowDrop) return false;
+        record = null;
+        return true;
+      },
+      requestSession: async () => sessionFor('b', 'driver') });
+    const result = await c.beginLogin({
+      expectedRole: 'passenger',
+      resetAccount: () => true,
+    })(verified('b', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(c.hasUncommittedLogin(), true,
+      'failed terminal removal must retain handoff ownership');
+    assert.equal(record.token, 'token-b');
+    assert.equal(record.userId, 'b');
+    allowDrop = true;
+    assert.equal(c.abandonLogin(), true, 'Back retries the pending credential removal');
+    assert.equal(record, null);
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('full-flow account switch cannot reuse previous driver draft data', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /function clearAccountDerivedDraft\(\)/);
+    assert.match(source, /draft\.docs\.clear\(\)/);
+    assert.match(source, /accountBoundaryResetDuringLogin \? \{\} : \(currentUser\.driverDocuments \|\| \{\}\)/);
+  });
+  await check('explicit Guest transition clears stored auth and publishes ANONYMOUS without a handoff', async () => {
+    let record = { token: 'driver-token', userId: 'driver-a' };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      dropAuth: () => { record = null; },
+      requestSession: async () => sessionFor('driver-a', 'driver') });
+    assert.equal(c.enterGuest(), true);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
+  await check('logout/Guest stay fail-closed when credential removal cannot be confirmed', async () => {
+    let record = { token: 'token-b', userId: 'b' }, allowDrop = true;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => {
+        if (!allowDrop) return false;
+        record = null;
+        return true;
+      },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin()(verified())).ok, true);
+    allowDrop = false;
+    assert.equal(c.abandonLogin(), false);
+    assert.equal(c.hasUncommittedLogin(), true, 'failed removal keeps handoff ownership for retry');
+    assert.equal(record.token, 'token-b');
+    assert.equal(record.userId, 'b');
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+    allowDrop = true;
+    assert.equal(c.abandonLogin(), true, 'second Back can retry credential removal');
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+
+    const guest = create({ backendEnabled: () => true,
+      readToken: () => 'driver-token', readUserId: () => 'driver-a',
+      dropAuth: () => false });
+    assert.equal(guest.enterGuest(), false);
+    assert.equal(guest.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(guest.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+  });
+  await check('verified Back abandonment clears the complete local-session boundary', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /const hadHandoff = auth\?\.hasUncommittedLogin\?\.\(\) === true/);
+    assert.match(source,
+      /if \(resetLocalSession\(\{ allowForeignDetach: true \}\) === false\)/);
+  });
+  await check('legacy local profile reset clears captured driver drafts without a prior bearer', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /accountBoundaryResetDuringLogin = true/);
+    assert.match(source, /clearAccountDerivedDraft\(\)/);
+    assert.match(source, /const prevDocs = accountBoundaryResetDuringLogin \? \{\}/);
+  });
+  await check('detached recovery exposes confirmed phone and commits it before consuming ownership', async () => {
+    let current = true, record = { token: 'token-a', userId: 'a' }, committed = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; return true; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin({ isCurrent: () => current })(verified(), '+15550000009')).ok, true);
+    current = false;
+    const projection = c.recoveryProjection();
+    assert.equal(projection.phone, '+15550000009');
+    assert.equal(projection.user.phoneVerified, true);
+    assert.equal(c.finishRecovery(p => { committed = p; }), true);
+    assert.equal(committed.phone, '+15550000009');
+    assert.equal(c.hasUncommittedLogin(), false);
+  });
+  await check('normal local logout can publish ANONYMOUS in the boot controller', async () => {
+    let record = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null });
+    assert.equal(c.adoptAnonymousAfterExternalLogout(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+    const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(appSource,
+      /setLocalLogoutObserver\(\(\) => !isBackendEnabled\(\)[\s\S]*adoptAnonymousAfterExternalLogout\(\)\)/,
+      'backend OFF logout preserves LOCAL_DEMO_BOOT instead of adopting ANONYMOUS');
+  });
+  await check('per-tab auth pin blocks a bearer replaced by another tab', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    assert.equal(auth.setAuth({ token: 'token-a', userId: 'a' }), true);
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(auth.getAuthUserId(), null);
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true,
+      'explicit same-tab replacement can claim the new actor');
+    assert.equal(auth.getAuthToken(), 'token-b');
+    auth.clearAuth();
+  });
+  await check('foreign-tab logout preserves the replacement credential and shared cache', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    const boundary = await import('../public/src/storage_boundary.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    assert.equal(auth.setAuth({ token: 'token-a', userId: 'a' }), true);
+    localStorage.setItem('bazardrive.ride_orders.v1',
+      JSON.stringify([{ id: 'b-private-order' }]));
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+
+    const cleared = boundary.clearUserScopedStorage();
+    assert.equal(cleared, auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'b');
+    assert.ok(localStorage.getItem('bazardrive.ride_orders.v1').includes('b-private-order'));
+    assert.equal(auth.getAuthToken(), null);
+
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true);
+    auth.clearAuth();
+  });
+
+  await check('anonymous boot pin treats a later credential as foreign on clear', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    auth.pinAuthTabUser(null);
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+    assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'b');
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true);
+    auth.clearAuth();
+  });
+
+  await check('recovered handoff can transfer UI ownership and finish without a second OTP', async () => {
+    let current = true, nextCurrent = true;
+    const f = loginFixture();
+    assert.equal((await f.begin({ isCurrent: () => current })(verified(), '+79990000001')).ok, true);
+    current = false;
+    assert.ok(f.c.recoveryProjection());
+    const projection = f.c.rebindRecoveryOwner(() => nextCurrent);
+    assert.equal(projection.user.userId, 'b');
+    assert.equal(f.c.roleConfirmed('passenger'), true);
+    assert.equal(f.c.finishLogin(), true);
+    assert.equal(f.c.hasUncommittedLogin(), false);
+  });
+
+  await check('foreign-detached Guest projection stays tab-local', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /resetResult === AUTH_CLEAR_FOREIGN[\s\S]*user\.setCacheOnly/);
+    const stateSource = readFileSync(new URL('../public/src/state.js', import.meta.url), 'utf8');
+    assert.match(stateSource, /setCacheOnly\(patch\)[\s\S]*cache = normalize\(\{ \.\.\.cache, \.\.\.patch \}\)/);
+    const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(appSource, /pendingRecoveryTransfer[\s\S]*rebindRecoveryOwner/);
+  });
+
+  await check('boot pins the initial actor before request and retry cannot adopt a replacement', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    let pinned = null;
+    let calls = 0;
+    const pendingBoot = deferred();
+    const readOwned = key => {
+      if (pinned && record?.userId !== pinned) return null;
+      return record?.[key] ?? null;
+    };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => readOwned('token'),
+      readUserId: () => readOwned('userId'),
+      pinTabUser: userId => { pinned = userId; return true; },
+      requestSession: async () => { calls++; return pendingBoot.promise; } });
+
+    const first = c.reconcile();
+    await flush();
+    assert.equal(pinned, 'a');
+    assert.equal(calls, 1);
+
+    record = { token: 'token-b', userId: 'b' };
+    pendingBoot.resolve(sessionFor('a', 'passenger'));
+    await first;
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_IDENTITY_MISMATCH');
+
+    const retry = await c.reconcile();
+    assert.equal(retry.state, 'ANONYMOUS');
+    assert.equal(calls, 1);
+    assert.equal(pinned, 'a');
+  });
+  await check('uncommitted handoff sentinel remains true until finishLogin commits', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()(verified())).ok, true);
+    assert.equal(f.c.hasUncommittedLogin(), true);
+    assert.equal(f.c.finishLogin(), true);
+    assert.equal(f.c.hasUncommittedLogin(), false);
+  });
+  await check('app pins incomplete authority and verifies recovery before profile mutation', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /hasUncommittedLogin\(\) \|\| authenticatedIncomplete/);
+    assert.match(source, /authenticatedIncomplete[\s\S]*path !== '\/onboarding'/);
+    const projection = source.indexOf('const projection = bootSession.recoveryProjection()');
+    const incomplete = source.indexOf('if (incomplete) {', projection);
+    const mutation = source.indexOf('user.set({', incomplete);
+    const route = source.indexOf("go('/onboarding')", incomplete);
+    assert.ok(projection >= 0 && incomplete > projection && mutation > incomplete && route > mutation,
+      'incomplete recovery must obtain an ownership-checked projection before account mutation and route');
+    const incompleteBlock = source.slice(incomplete, route);
+    assert.equal(incompleteBlock.includes('finishRecovery()'), false,
+      'incomplete recovery must retain handoff ownership until onboarding commits or abandons');
+  });
+  await check('first login reset is distinguished from an A-to-B account switch', async () => {
+    let record = null, reset = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; }, dropAuth: () => { record = null; },
+      requestSession: async () => passenger('b') });
+    const result = await c.beginLogin({ resetAccount: info => { reset = info; } })(verified(), '+15550000001');
+    assert.equal(result.ok, true);
+    assert.equal(reset.accountSwitch, false);
+    assert.equal(reset.priorUserId, null);
+    assert.equal(reset.nextUserId, 'b');
+  });
+  await check('account switch aborts before persisting B when local reset fails', async () => {
+    let record = { token: 'token-a', userId: 'a' }, writes = 0;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { writes++; record = next; return true; },
+      dropAuth: () => true,
+      requestSession: async () => passenger('b') });
+    const result = await c.beginLogin({ resetAccount: () => false })(verified());
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(writes, 0);
+    assert.deepEqual(record, { token: 'token-a', userId: 'a' });
+  });
+  await check('persisted authenticated-incomplete gate and retained recovery ownership are explicit', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /snapshot\.state === 'AUTHENTICATED'[\s\S]*user\.get\(\)\.onboarded !== true/);
+    assert.match(source, /const projection = bootSession\.recoveryProjection\(\)[\s\S]*if \(incomplete\) \{[\s\S]*go\('\/onboarding'\)/);
+    const incompleteBlock = source.match(/if \(incomplete\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    assert.equal(incompleteBlock.includes('finishRecovery()'), false,
+      'incomplete recovery must retain handoff ownership');
+  });
+  await check('ungranted verify retains authenticated identity without granting selected role', async () => {
+    let current = true;
+    const rolelessVerify = { token: 'token-b', user: {
+      userId: 'b', activeRole: null, phoneVerified: true, roles: [] } };
+    const f = loginFixture({ requestSession: async () => ({
+      user: { userId: 'b', sessionId: 'session-b', activeRole: null, phoneVerified: true },
+    }) });
+    const result = await f.begin({ isCurrent: () => current })(rolelessVerify);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(result.handoffInstalled, true,
+      'verified identity is retained while role authority remains absent');
+    assert.equal(f.record().userId, 'b');
+    assert.equal(f.record().token, 'token-b');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.getSnapshot().user.activeRole, null);
+    assert.equal(f.c.passengerConfirmed(), false);
+    current = false;
+    assert.equal(f.c.recoveryConfirmed(), false,
+      'detaching cannot turn identity-only authentication into role authority');
+    assert.equal(f.c.finishRecovery(), false);
+  });
+  await check('session retry uses stored identity without repeating verify or account cleanup', async () => {
+    let requests = 0;
+    const f = loginFixture({ requestSession: async () => {
+      if (++requests === 1) throw Object.assign(new Error('fixture'), { code: 'SESSION_LOOKUP_FAILED' });
+      return passenger('b');
+    } });
+    assert.equal((await f.begin()(verified())).ok, false);
+    assert.equal((await f.c.resumeLogin()).ok, true);
+    assert.equal(requests, 2); assert.equal(f.clears(), 1);
+  });
+  await check('identity may survive verify-role mismatch but authority requires both responses', async () => {
+    for (const change of [
+      p => { p.user.roles = []; },
+      p => { p.user.activeRole = null; },
+      p => { p.user.activeRole = 'driver'; },
+    ]) {
+      const f = loginFixture(), payload = verified(); change(payload);
+      const result = await f.begin()(payload);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+      assert.equal(result.handoffInstalled, true);
+      assert.equal(f.record().userId, 'b', 'verified identity B replaces A');
+      assert.equal(f.record().token, 'token-b');
+      assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+      assert.equal(f.c.passengerConfirmed(), false,
+        'verify-role mismatch cannot grant passenger authority');
+    }
+
+    {
+      const f = loginFixture(), payload = verified();
+      payload.user.phoneVerified = false;
+      const result = await f.begin()(payload);
+      assert.equal(result.ok, false);
+      assert.equal(result.handoffInstalled, false);
+      assert.equal(f.record().userId, 'a',
+        'unverified identity cannot replace the current actor');
+      assert.equal(f.record().token, 'token-a');
+    }
+
+    for (const change of [p => { p.user.activeRole = null; }, p => { p.user.phoneVerified = false; }]) {
+      const session = passenger('b'); change(session);
+      const f = loginFixture({ requestSession: async () => session });
+      assert.equal((await f.begin()(verified())).ok, false,
+        'post-verify session must retain role + phone authority');
+      assert.equal(f.c.passengerConfirmed(), false);
+    }
+  });
+  await check('stale OTP completion and late session cannot install an older actor', async () => {
+    const f = loginFixture();
+    const old = f.begin(), latest = f.begin();
+    assert.equal((await old(verified('old'))).code, 'AUTH_STALE');
+    assert.equal(f.record().userId, 'a');
+    assert.equal((await latest(verified())).ok, true);
+    const late = deferred(); let current = true;
+    const g = loginFixture({ requestSession: () => late.promise });
+    const task = g.begin({ isCurrent: () => current })(verified());
+    await flush(); current = false;
+    late.resolve(passenger('b'));
+    assert.equal((await task).ok, false);
+    assert.notEqual(g.c.getSnapshot().state, 'AUTHENTICATED');
+  });
+  await check('malformed verify never persists or clears another account', async () => {
+    const f = loginFixture();
+    assert.equal((await f.begin()({ token: 'incomplete', user: {} })).ok, false);
+    assert.equal(f.record().userId, 'a'); assert.equal(f.clears(), 0);
+  });
+  await check('real clearAuth reports a retained credential instead of completing logout', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    const sticky = storage();
+    globalThis.localStorage = sticky;
+    assert.equal(auth.setAuth({ token: 'sticky-token', userId: 'sticky-user' }), true);
+    const originalRemove = localStorage.removeItem;
+    localStorage.removeItem = key => {
+      if (key === 'bazardrive.auth.v1') return;
+      originalRemove(key);
+    };
+    assert.equal(auth.clearAuth(), false);
+    assert.ok(sticky.getItem('bazardrive.auth.v1'));
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+  });
+  for (const failure of ['write', 'readback', 'wrong-user']) {
+    await check('real auth_token storage failure blocks handoff: ' + failure, async () => {
+      const auth = await import('../public/src/auth_token.js');
+      globalThis.localStorage = storage();
+      auth.clearAuth();
+      assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+      const originalSet = localStorage.setItem;
+      localStorage.setItem = (key, value) => {
+        if (failure === 'write') throw new Error('fixture storage denied');
+        originalSet(key, failure === 'wrong-user'
+          ? JSON.stringify({ ...JSON.parse(value), userId: 'wrong' }) : value);
+      };
+      if (failure === 'readback') {
+        const originalGet = localStorage.getItem;
+        localStorage.getItem = key => {
+          const value = originalGet(key);
+          if (value?.includes('token-b')) throw new Error('fixture read denied');
+          return value;
+        };
+      }
+      let requests = 0;
+      const c = create({ backendEnabled: () => true,
+        requestSession: async () => { requests++; return passenger('b'); } });
+      const result = await c.beginLogin()(verified());
+      assert.equal(result.code, failure === 'wrong-user' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
+      assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+      assert.equal(c.passengerConfirmed(), false); assert.equal(requests, 0);
+      assert.equal(auth.getAuthToken(), null);
+      if (failure === 'wrong-user') {
+        const raw = JSON.parse(localStorage.getItem('bazardrive.auth.v1'));
+        assert.equal(raw.userId, 'wrong', 'foreign credential is preserved, not deleted/overwritten');
+      }
+      globalThis.localStorage = storage(); auth.clearAuth();
+    });
+  }
+  for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure',
+    'authority-loss-finish', 'verify-switch-reonboard', 'guest-after-verify', 'back-exit-after-verify',
+    'off-demo']) {
+    await check('actual app/onboarding handoff: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['phone-switch', 'back-only', 'same-phone-request', 'late-session',
+    'retry-match', 'retry-mismatch', 'retry-credential-before', 'retry-credential-during']) {
+    await check('actual app OTP/retry repair: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--repair-handoff-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
 
   await check('A: backend OFF skips token lookup and all session requests', async () => {
     const c = fixture({ backendEnabled: () => false,
@@ -674,7 +1775,11 @@ if (process.argv[2] === '--guest-public-case') {
   });
 
   globalThis.localStorage = storage();
-  localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token' }));
+  const realAuthForApiMapping = await import('../public/src/auth_token.js');
+  realAuthForApiMapping.clearAuth();
+  assert.equal(realAuthForApiMapping.setAuth({
+    token: 'fixture-token', userId: 'fixture-user',
+  }), true);
   globalThis.__BD_API_BASE__ = 'https://api.invalid';
   for (const kind of ['503', 'network', '401']) {
     await check('E/F: actual API mapping keeps ' + kind + ' UNKNOWN with bearer retained', async () => {
@@ -764,27 +1869,27 @@ if (process.argv[2] === '--guest-public-case') {
   for (const scenario of ['off', 'no-token', 'valid', 'anonymous', 'retry-503', 'retry-network', 'retry-malformed']) {
     await check('actual app/router integration: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['no-bearer', 'user-null', 'reconciling', 'unknown', 'off']) {
     await check('real router dev/docs exemption and product admission: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--dev-docs-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['valid', 'user-null', '503', 'network', 'malformed', 'no-bearer',
     'off', 'leave-pending', 'leave-unknown', 'hash-pending', 'hash-unknown']) {
     await check('actual app ScreenOps boot: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-dev-docs-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['no-bearer', 'user-null', 'role-null', 'role-passenger', 'role-driver',
     'reconciling', 'unknown', 'authenticated', 'off']) {
     await check('actual app/router/screens Guest boundary: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--guest-public-case', scenario],
-        { stdio: 'pipe', timeout: 15000 });
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   console.log('auth-session-bootstrap: ' + count + ' behavioral checks PASS');

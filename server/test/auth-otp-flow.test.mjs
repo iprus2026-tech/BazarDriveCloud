@@ -29,6 +29,36 @@ async function cleanupPhone(client, phone) {
 
 const post = (app, url, payload) => app.inject({ method: 'POST', url, payload });
 
+test('session transaction failure rolls back new passenger and OTP consumption in Postgres',
+  { skip: SKIP }, async (t) => {
+    const app = await buildApp({ config: baseConfig });
+    const phone = '+1556' + String(process.pid).padStart(7, '0');
+    const diagnostic = new pg.Client({ connectionString: DATABASE_URL });
+    await diagnostic.connect();
+    t.after(async () => { await cleanupPhone(diagnostic, phone); await diagnostic.end(); await app.close(); });
+    const request = await post(app, '/api/v1/auth/otp/request', { phone });
+    assert.equal(request.statusCode, 200);
+    const originalTx = app.db.tx;
+    // Inject failure AFTER the real repository statements but BEFORE real COMMIT.
+    app.db.tx = fn => originalTx(async client => {
+      await fn(client);
+      throw new Error('test-only transaction failure');
+    });
+    const failed = await post(app, '/api/v1/auth/otp/verify',
+      { phone, code: request.json().devCode });
+    assert.equal(failed.statusCode, 500);
+    const identity = await diagnostic.query('SELECT id FROM users WHERE phone = $1', [phone]);
+    assert.equal(identity.rows.length, 0, 'no user or grant survives rollback');
+    const otp = await diagnostic.query('SELECT consumed_at, attempts FROM auth_otp WHERE phone = $1', [phone]);
+    assert.equal(otp.rows[0].consumed_at, null);
+    assert.equal(otp.rows[0].attempts, 1, 'attempt counter remains outside successful-login transaction');
+    app.db.tx = originalTx;
+    const retry = await post(app, '/api/v1/auth/otp/verify',
+      { phone, code: request.json().devCode });
+    assert.equal(retry.statusCode, 200);
+    assert.deepEqual(retry.json().user.roles, ['passenger']);
+  });
+
 test('OTP request -> verify -> session round-trip; one-time code; one identity per phone', { skip: SKIP }, async (t) => {
   const app = await buildApp({ config: baseConfig });
   const phone = `+1555${String(process.pid).padStart(7, '0')}`;
@@ -56,6 +86,8 @@ test('OTP request -> verify -> session round-trip; one-time code; one identity p
   assert.match(okBody.token, /^[A-Za-z0-9_-]+$/, 'mints a URL-safe opaque bearer');
   assert.ok(okBody.user.userId, 'returns a distinct identity id');
   assert.equal(okBody.user.phoneVerified, true);
+  assert.deepEqual(okBody.user.roles, ['passenger']);
+  assert.equal(okBody.user.activeRole, 'passenger');
 
   // the bearer resolves a live session (proves only the HASH was stored, yet the token works).
   const sess = await app.inject({
@@ -65,6 +97,7 @@ test('OTP request -> verify -> session round-trip; one-time code; one identity p
   assert.equal(sess.statusCode, 200);
   assert.equal(sess.json().user.userId, okBody.user.userId);
   assert.equal(sess.json().user.phoneVerified, true);
+  assert.equal(sess.json().user.activeRole, 'passenger');
 
   // one-time: replaying the now-consumed code fails.
   const replay = await post(app, '/api/v1/auth/otp/verify', { phone, code: reqBody.devCode });
@@ -76,6 +109,7 @@ test('OTP request -> verify -> session round-trip; one-time code; one identity p
   const ok2 = await post(app, '/api/v1/auth/otp/verify', { phone, code: code2 });
   assert.equal(ok2.statusCode, 200);
   assert.equal(ok2.json().user.userId, okBody.user.userId, 'same phone => same account id');
+  assert.deepEqual(ok2.json().user.roles, ['passenger'], 'repeat login cannot duplicate grant');
   assert.notEqual(ok2.json().token, okBody.token, 'each verify mints a fresh token');
 });
 

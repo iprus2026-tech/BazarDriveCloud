@@ -1,3 +1,27 @@
+// v362 (BD-PASSENGER-AUTHORITY-04B-B-R21): preserve same-actor profiles and verify failed-auth-write cleanup.
+// v361 (BD-PASSENGER-AUTHORITY-04B-B-R20A): precache sync after auth storage-key/static-gate alignment.
+// v360 (BD-PASSENGER-AUTHORITY-04B-B-R20): retain verified roleless identity and reconcile cross-tab auth storage changes before shared-cache exposure.
+// v359 (BD-PASSENGER-AUTHORITY-04B-B-R19): retain rollback cleanup ownership, recreate reload cleanup ownership, and stop foreign replacement writes.
+// v358 (BD-PASSENGER-AUTHORITY-04B-B-R18C): pin the initial boot actor once so retry cannot rebind after cross-tab replacement.
+// v357 (BD-PASSENGER-AUTHORITY-04B-B-R18B): keep foreign Guest state tab-local and transfer recovered authority into onboarding.
+// v356 (BD-PASSENGER-AUTHORITY-04B-B-R18A): pin anonymous boot tabs and support explicit recovered-handoff UI transfer.
+// v355 (BD-PASSENGER-AUTHORITY-04B-B-R17): preserve foreign-tab credentials and pin the initial boot actor before reconciliation.
+// v354 (BD-PASSENGER-AUTHORITY-04B-B-R16): retain handoff ownership when terminal reconciliation cannot remove its credential.
+// v353 (BD-PASSENGER-AUTHORITY-04B-B-R15): preserve local-demo logout authority and retain verify-only handoff through profile rebuild.
+// v352 (BD-PASSENGER-AUTHORITY-04B-B-R14): retryable detach, logout snapshot, legacy draft boundary, recovery phone, cross-tab actor pin.
+// v351 (BD-PASSENGER-AUTHORITY-04B-B-R13): persisted incomplete gate, reset propagation, retained recovery ownership.
+// v350 (BD-PASSENGER-AUTHORITY-04B-B-R12): fail-closed credential removal and verified-abandon local reset.
+// v349 (BD-PASSENGER-AUTHORITY-04B-B-R11): pin uncommitted handoffs to onboarding and order recovery ownership.
+// v348 (BD-PASSENGER-AUTHORITY-04B-B-R10): detached-incomplete recovery and stale-attempt verification guards.
+// v347 (BD-PASSENGER-AUTHORITY-04B-B-R9): replacement rejection and authenticated-incomplete reload guards.
+// v346 (BD-PASSENGER-AUTHORITY-04B-B-R8): terminal-handoff exit and account-switch draft isolation.
+// v345 (BD-PASSENGER-AUTHORITY-04B-B-R7): replacement-handoff ownership, cross-tab abandon, Guest snapshot fixes.
+// v344 (BD-PASSENGER-AUTHORITY-04B-B-R6): preserve pre-existing session when onboarding edit is canceled.
+// v343 (BD-PASSENGER-AUTHORITY-04B-B-R5): abandon auth on onboarding exit and clear Guest account state.
+// v342 (BD-PASSENGER-AUTHORITY-04B-B-R4): preserve baseline Guest profile flags after auth abandon.
+// v341 (BD-PASSENGER-AUTHORITY-04B-B-R3): preserve anonymous Guest while abandoning authenticated handoffs.
+// v340 (BD-PASSENGER-AUTHORITY-04B-B-R2): account-switch and Guest auth-boundary review fixes.
+// v339 (BD-PASSENGER-AUTHORITY-04B-B-R1): role-aware auth handoff and recovery review fixes.
 // v337 (BD-DRIVER-ACTIVE-RETURN-01-R1): resume passenger-selected server rides without local accept markers.
 // v336 (BD-DRIVER-ACTIVE-RETURN-01): restore the driver's active order from menus and profile.
 // v335 (BD-FEED-RESPONSIVE-01-R1): make the sole create action early in keyboard order and clarify its accessible name.
@@ -217,7 +241,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v337';
+const VERSION    = 'v362';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [
