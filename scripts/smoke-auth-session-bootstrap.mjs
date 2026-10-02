@@ -1192,6 +1192,58 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(auth.getAuthToken(), 'token-b');
     auth.clearAuth();
   });
+  await check('foreign-tab logout preserves the replacement credential and shared cache', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    const boundary = await import('../public/src/storage_boundary.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    assert.equal(auth.setAuth({ token: 'token-a', userId: 'a' }), true);
+    localStorage.setItem('bazardrive.ride_orders.v1',
+      JSON.stringify([{ id: 'b-private-order' }]));
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+
+    const cleared = boundary.clearUserScopedStorage();
+    assert.equal(cleared, auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'b');
+    assert.ok(localStorage.getItem('bazardrive.ride_orders.v1').includes('b-private-order'));
+    assert.equal(auth.getAuthToken(), null);
+
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true);
+    auth.clearAuth();
+  });
+
+  await check('boot pins the initial actor before request and retry cannot adopt a replacement', async () => {
+    let record = { token: 'token-a', userId: 'a' };
+    let pinned = null;
+    let calls = 0;
+    const pendingBoot = deferred();
+    const readOwned = key => {
+      if (pinned && record?.userId !== pinned) return null;
+      return record?.[key] ?? null;
+    };
+    const c = create({ backendEnabled: () => true,
+      readToken: () => readOwned('token'),
+      readUserId: () => readOwned('userId'),
+      pinTabUser: userId => { pinned = userId; return true; },
+      requestSession: async () => { calls++; return pendingBoot.promise; } });
+
+    const first = c.reconcile();
+    await flush();
+    assert.equal(pinned, 'a');
+    assert.equal(calls, 1);
+
+    record = { token: 'token-b', userId: 'b' };
+    pendingBoot.resolve(sessionFor('a', 'passenger'));
+    await first;
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_IDENTITY_MISMATCH');
+
+    const retry = await c.reconcile();
+    assert.equal(retry.state, 'ANONYMOUS');
+    assert.equal(calls, 1);
+    assert.equal(pinned, 'a');
+  });
   await check('uncommitted handoff sentinel remains true until finishLogin commits', async () => {
     const f = loginFixture();
     assert.equal((await f.begin()(verified())).ok, true);

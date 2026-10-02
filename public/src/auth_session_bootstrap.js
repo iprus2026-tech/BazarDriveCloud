@@ -293,6 +293,8 @@ export function createAuthSessionBootstrap({
       publish('LOCAL_DEMO_BOOT');
       return snapshot;
     }
+    const persistedUserId = readUserId();
+    if (persistedUserId) pinTabUser(persistedUserId);
     const expected = handoff;
     const token = readToken();
     if (expected && !ownsCredential(expected)) {

@@ -10,20 +10,27 @@
 // behaviourally asserts that). Bare `localStorage` access with the literal key keeps the gate able to
 // resolve it.
 const STORAGE_KEY = 'bazardrive.auth.v1';
+export const AUTH_CLEAR_FOREIGN = 'foreign';
 // Fail closed in this tab when storage cannot replace/remove an old credential.
 let blocked = false;
 // Module-local tab ownership. A different tab may replace the origin-wide
 // localStorage record, but this tab must never attach that other actor's bearer.
 let tabUserId = null;
+// A detached tab must not auto-adopt a later origin-wide credential.
+let tabDetachMode = null;
 
-function load() {
-  if (blocked) return {};
+function loadRaw() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch {
     return {};
   }
+}
+
+function load() {
+  if (blocked || tabDetachMode) return {};
+  return loadRaw();
 }
 
 function loadForTab() {
@@ -49,6 +56,7 @@ export function getAuthUserId() {
 export function pinAuthTabUser(userId) {
   if (typeof userId !== 'string' || !userId.trim()) return false;
   tabUserId = userId;
+  tabDetachMode = null;
   return true;
 }
 
@@ -66,20 +74,47 @@ export function setAuth({ token, userId, phone } = {}) {
         || saved?.phone !== (phone || null)) return false;
     blocked = false;
     tabUserId = userId;
+    tabDetachMode = null;
     return true;
   } catch {
     return false;
   }
 }
 
-// Drop the session (logout boundary).
+// Drop only the credential owned by this tab. If another tab has already
+// replaced the origin-wide record, detach locally but preserve that replacement.
 export function clearAuth() {
   blocked = true;
   try {
+    const raw = loadRaw();
+    const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
+
+    if (tabDetachMode === AUTH_CLEAR_FOREIGN) {
+      blocked = false;
+      return AUTH_CLEAR_FOREIGN;
+    }
+    if (tabDetachMode === 'own-cleared') {
+      if (rawUserId) {
+        tabDetachMode = AUTH_CLEAR_FOREIGN;
+        blocked = false;
+        return AUTH_CLEAR_FOREIGN;
+      }
+      blocked = false;
+      return true;
+    }
+    if (tabUserId && rawUserId && rawUserId !== tabUserId) {
+      tabUserId = null;
+      tabDetachMode = AUTH_CLEAR_FOREIGN;
+      blocked = false;
+      return AUTH_CLEAR_FOREIGN;
+    }
+
     localStorage.removeItem(STORAGE_KEY);
     blocked = localStorage.getItem(STORAGE_KEY) !== null;
-    if (!blocked) tabUserId = null;
-    return !blocked;
+    if (blocked) return false;
+    tabUserId = null;
+    tabDetachMode = 'own-cleared';
+    return true;
   } catch {
     return false;
   }
