@@ -1202,7 +1202,7 @@ if (process.argv[2] === '--repair-handoff-case') {
   await check('persisted authenticated-incomplete gate and retained recovery ownership are explicit', async () => {
     const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
     assert.match(source, /snapshot\.state === 'AUTHENTICATED'[\s\S]*user\.get\(\)\.onboarded !== true/);
-    assert.match(source, /if \(incomplete\) \{[\s\S]*recoveryConfirmed\(\)[\s\S]*go\('\/onboarding'\)/);
+    assert.match(source, /const projection = bootSession\.recoveryProjection\(\)[\s\S]*if \(incomplete\) \{[\s\S]*go\('\/onboarding'\)/);
     const incompleteBlock = source.match(/if \(incomplete\) \{([\s\S]*?)\n      \}/)?.[1] || '';
     assert.equal(incompleteBlock.includes('finishRecovery()'), false,
       'incomplete recovery must retain handoff ownership');
