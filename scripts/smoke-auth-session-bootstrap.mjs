@@ -1065,6 +1065,33 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(c.abandonLogin(), true);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
+  await check('authority rejection keeps handoff pinned when terminal credential removal fails', async () => {
+    let record = { token: 'token-a', userId: 'a' }, allowDrop = false;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => {
+        if (!allowDrop) return false;
+        record = null;
+        return true;
+      },
+      requestSession: async () => sessionFor('b', 'driver') });
+    const result = await c.beginLogin({
+      expectedRole: 'passenger',
+      resetAccount: () => true,
+    })(verified('b', 'passenger'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(c.hasUncommittedLogin(), true,
+      'failed terminal removal must retain handoff ownership');
+    assert.equal(record.token, 'token-b');
+    assert.equal(record.userId, 'b');
+    allowDrop = true;
+    assert.equal(c.abandonLogin(), true, 'Back retries the pending credential removal');
+    assert.equal(record, null);
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+  });
   await check('full-flow account switch cannot reuse previous driver draft data', async () => {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
     assert.match(source, /function clearAccountDerivedDraft\(\)/);

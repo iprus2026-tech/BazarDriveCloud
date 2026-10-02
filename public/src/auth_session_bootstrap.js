@@ -332,19 +332,31 @@ export function createAuthSessionBootstrap({
 
       if (result.kind === 'response') {
         if (result.payload?.user === null) {
-          if (expected) dropAuth();
-          publish('ANONYMOUS');
+          if (expected && dropAuth() === false) {
+            handoffRemovalPending = true;
+            fail('AUTH_STORAGE_FAILED');
+          } else {
+            publish('ANONYMOUS');
+          }
         }
         else {
           const user = confirmedUser(result.payload);
           if (user && expected && user.userId !== expected.userId) {
-            dropAuth();
-            fail('AUTH_IDENTITY_MISMATCH');
+            if (dropAuth() === false) {
+              handoffRemovalPending = true;
+              fail('AUTH_STORAGE_FAILED');
+            } else {
+              fail('AUTH_IDENTITY_MISMATCH');
+            }
           } else if (user && expected
               && (!expected.authority || user.activeRole !== expected.expectedRole
                 || user.phoneVerified !== true)) {
-            dropAuth();
-            fail('ROLE_AUTHORITY_REQUIRED');
+            if (dropAuth() === false) {
+              handoffRemovalPending = true;
+              fail('AUTH_STORAGE_FAILED');
+            } else {
+              fail('ROLE_AUTHORITY_REQUIRED');
+            }
           } else if (user) publish('AUTHENTICATED', user);
           else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
         }
