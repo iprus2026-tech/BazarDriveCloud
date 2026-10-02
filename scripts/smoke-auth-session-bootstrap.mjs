@@ -1462,21 +1462,41 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal((await f.c.resumeLogin()).ok, true);
     assert.equal(requests, 2); assert.equal(f.clears(), 1);
   });
-  await check('grant, role and phone must agree in BOTH responses', async () => {
+  await check('identity may survive verify-role mismatch but authority requires both responses', async () => {
     for (const change of [
-      p => { p.user.roles = []; }, p => { p.user.activeRole = null; },
-      p => { p.user.activeRole = 'driver'; }, p => { p.user.phoneVerified = false; },
+      p => { p.user.roles = []; },
+      p => { p.user.activeRole = null; },
+      p => { p.user.activeRole = 'driver'; },
     ]) {
       const f = loginFixture(), payload = verified(); change(payload);
-      assert.equal((await f.begin()(payload)).ok, false);
-      assert.equal(f.c.passengerConfirmed(), false);
-      assert.equal(f.record().userId, 'a', 'rejected replacement keeps the current account');
+      const result = await f.begin()(payload);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
+      assert.equal(result.handoffInstalled, true);
+      assert.equal(f.record().userId, 'b', 'verified identity B replaces A');
+      assert.equal(f.record().token, 'token-b');
+      assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+      assert.equal(f.c.passengerConfirmed(), false,
+        'verify-role mismatch cannot grant passenger authority');
+    }
+
+    {
+      const f = loginFixture(), payload = verified();
+      payload.user.phoneVerified = false;
+      const result = await f.begin()(payload);
+      assert.equal(result.ok, false);
+      assert.equal(result.handoffInstalled, false);
+      assert.equal(f.record().userId, 'a',
+        'unverified identity cannot replace the current actor');
       assert.equal(f.record().token, 'token-a');
     }
+
     for (const change of [p => { p.user.activeRole = null; }, p => { p.user.phoneVerified = false; }]) {
       const session = passenger('b'); change(session);
       const f = loginFixture({ requestSession: async () => session });
-      assert.equal((await f.begin()(verified())).ok, false);
+      assert.equal((await f.begin()(verified())).ok, false,
+        'post-verify session must retain role + phone authority');
+      assert.equal(f.c.passengerConfirmed(), false);
     }
   });
   await check('stale OTP completion and late session cannot install an older actor', async () => {
