@@ -1507,10 +1507,14 @@ if (process.argv[2] === '--repair-handoff-case') {
       const c = create({ backendEnabled: () => true,
         requestSession: async () => { requests++; return passenger('b'); } });
       const result = await c.beginLogin()(verified());
-      assert.equal(result.code, 'AUTH_STORAGE_FAILED');
+      assert.equal(result.code, failure === 'wrong-user' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
       assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
       assert.equal(c.passengerConfirmed(), false); assert.equal(requests, 0);
       assert.equal(auth.getAuthToken(), null);
+      if (failure === 'wrong-user') {
+        const raw = JSON.parse(localStorage.getItem('bazardrive.auth.v1'));
+        assert.equal(raw.userId, 'wrong', 'foreign credential is preserved, not deleted/overwritten');
+      }
       globalThis.localStorage = storage(); auth.clearAuth();
     });
   }
