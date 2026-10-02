@@ -1137,6 +1137,15 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.match(source, /if \(recoveredLogin\) \{[\s\S]*onboardingHandoffOwner = context/);
     assert.match(source, /retainAuthenticatedCleanupOwner\(\(\) => context\.isCurrent\(\)\)[\s\S]*onboardingHandoffOwner = context/);
   });
+  await check('cross-tab auth storage changes detach stale cache before reconcile', async () => {
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    const listener = source.indexOf("addEventListener('storage'");
+    const reset = source.indexOf('user.resetCacheOnly()', listener);
+    const reconcile = source.indexOf('bootSession.reconcile()', reset);
+    assert.ok(listener >= 0 && reset > listener && reconcile > reset,
+      'storage auth changes clear the stale tab projection before reconciliation');
+    assert.match(source, /event\.key !== AUTH_STORAGE_KEY/);
+  });
 
   await check('authority rejection keeps handoff pinned when terminal credential removal fails', async () => {
     let record = { token: 'token-a', userId: 'a' }, allowDrop = false;
@@ -1408,19 +1417,27 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(incompleteBlock.includes('finishRecovery()'), false,
       'incomplete recovery must retain handoff ownership');
   });
-  await check('ungranted verify is rejected before credential persistence or detached recovery', async () => {
+  await check('ungranted verify retains authenticated identity without granting selected role', async () => {
     let current = true;
     const rolelessVerify = { token: 'token-b', user: {
       userId: 'b', activeRole: null, phoneVerified: true, roles: [] } };
-    const f = loginFixture();
+    const f = loginFixture({ requestSession: async () => ({
+      user: { userId: 'b', sessionId: 'session-b', activeRole: null, phoneVerified: true },
+    }) });
     const result = await f.begin({ isCurrent: () => current })(rolelessVerify);
     assert.equal(result.ok, false);
     assert.equal(result.code, 'ROLE_AUTHORITY_REQUIRED');
-    assert.equal(f.record().userId, 'a', 'current credential remains intact');
+    assert.equal(result.handoffInstalled, true,
+      'verified identity is retained while role authority remains absent');
+    assert.equal(f.record().userId, 'b');
+    assert.equal(f.record().token, 'token-b');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.getSnapshot().user.activeRole, null);
+    assert.equal(f.c.passengerConfirmed(), false);
     current = false;
-    assert.equal(f.c.recoveryConfirmed(), false);
+    assert.equal(f.c.recoveryConfirmed(), false,
+      'detaching cannot turn identity-only authentication into role authority');
     assert.equal(f.c.finishRecovery(), false);
-    assert.equal(f.c.getSnapshot().state, 'BOOT', 'no rejected handoff was installed');
   });
   await check('session retry uses stored identity without repeating verify or account cleanup', async () => {
     let requests = 0;

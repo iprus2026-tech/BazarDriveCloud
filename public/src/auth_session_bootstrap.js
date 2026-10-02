@@ -97,11 +97,15 @@ export function createAuthSessionBootstrap({
         fail('SESSION_PROTOCOL');
         return { ok: false, code: 'SESSION_PROTOCOL', handoffInstalled: false };
       }
-      const verifiedAuthority = u.phoneVerified === true && u.activeRole === authorityRole
+      const verifiedIdentity = u.phoneVerified === true;
+      const verifiedAuthority = verifiedIdentity && u.activeRole === authorityRole
         && u.roles.includes(authorityRole);
-      // A structurally valid OTP response is not enough to replace the current actor.
-      // Validate the selected authority BEFORE clearing the old credential/profile.
-      if (!verifiedAuthority) return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
+      // A roleless legacy OTP row still represents a successfully verified identity.
+      // Grant acquisition remains #830 policy; this slice must not invent a role,
+      // but it also must not discard the authenticated identity and force another OTP.
+      if (!verifiedIdentity) {
+        return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
+      }
       // Crossing an identity boundary must clear the previous account cache
       // before B can ever be persisted. Same-account replacement still has to
       // prove the old bearer was actually removed.
@@ -148,7 +152,7 @@ export function createAuthSessionBootstrap({
       }
       const generation = ++loginSequence;
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
-        generation, ownsUI: owns, expectedRole: authorityRole, authority: true };
+        generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority };
       handoffRemovalPending = false;
       const resumed = await resumeLogin();
       return { ...resumed, handoffInstalled: true };
@@ -422,9 +426,16 @@ export function createAuthSessionBootstrap({
             } else {
               fail('AUTH_IDENTITY_MISMATCH');
             }
-          } else if (user && expected
-              && (!expected.authority || user.activeRole !== expected.expectedRole
+          } else if (user && expected && expected.authority
+              && (user.activeRole !== expected.expectedRole
                 || user.phoneVerified !== true)) {
+            if (dropAuth() === false) {
+              handoffRemovalPending = true;
+              fail('AUTH_STORAGE_FAILED');
+            } else {
+              fail('ROLE_AUTHORITY_REQUIRED');
+            }
+          } else if (user && expected && !expected.authority && user.phoneVerified !== true) {
             if (dropAuth() === false) {
               handoffRemovalPending = true;
               fail('AUTH_STORAGE_FAILED');

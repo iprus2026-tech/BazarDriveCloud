@@ -9,7 +9,8 @@
 // storage_boundary.clearUserScopedStorage() calls clearAuth() (and the BD-DATA-STATIC-01 gate
 // behaviourally asserts that). Bare `localStorage` access with the literal key keeps the gate able to
 // resolve it.
-const STORAGE_KEY = 'bazardrive.auth.v1';
+export const AUTH_STORAGE_KEY = 'bazardrive.auth.v1';
+const STORAGE_KEY = AUTH_STORAGE_KEY;
 export const AUTH_CLEAR_FOREIGN = 'foreign';
 // Fail closed in this tab when storage cannot replace/remove an old credential.
 let blocked = false;

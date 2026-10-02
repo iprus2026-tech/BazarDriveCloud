@@ -7,6 +7,7 @@ import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
+import { AUTH_STORAGE_KEY } from './auth_token.js';
 import { setLocalLogoutObserver } from './mock_auth.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
@@ -148,6 +149,14 @@ document.getElementById('fab').addEventListener('click', () => {
 const bootSession = createAuthSessionBootstrap();
 setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
+window.addEventListener('storage', (event) => {
+  if (event.key !== AUTH_STORAGE_KEY) return;
+  // A storage event is emitted only into other tabs. Drop this tab's cached
+  // actor projection before reconciliation so shared stores belonging to the
+  // replacement actor cannot remain exposed under a stale AUTHENTICATED view.
+  user.resetCacheOnly();
+  void bootSession.reconcile();
+});
 setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(
