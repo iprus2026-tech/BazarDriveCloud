@@ -346,6 +346,11 @@ export const user = {
     cache = normalize(buildDefaults());
     persist();
   },
+  // Cross-tab detach: reset only this tab's in-memory projection. The foreign
+  // replacement actor owns the shared persisted profile and must not be wiped.
+  resetCacheOnly() {
+    cache = normalize(buildDefaults());
+  },
 };
 
 // BD-PROFILE-D-05G — Append a single new vehicle to the persisted garage

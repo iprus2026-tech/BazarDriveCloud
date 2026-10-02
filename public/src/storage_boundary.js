@@ -99,7 +99,8 @@ import {
   clearDriverReceiptsStore,
 } from './mock_api.js';
 import { clearDriverOfferStore } from './driver_offer_store.js';
-import { clearAuth } from './auth_token.js';
+import { clearAuth, AUTH_CLEAR_FOREIGN } from './auth_token.js';
+export { AUTH_CLEAR_FOREIGN };
 
 const TRIP_DEMO_KEY = 'profileTripDemo';
 
@@ -120,7 +121,11 @@ export function clearUserScopedStorage() {
   // Credential removal is the gate for the whole detach boundary. If the
   // bearer cannot be proven gone, preserve the rest of the account cache and
   // let the caller stay fail-closed instead of pretending logout succeeded.
-  if (clearAuth() === false) return false;
+  const authClear = clearAuth();
+  if (authClear === false) return false;
+  // A replacement tab owns the origin-wide actor. Preserve all of its shared
+  // account-scoped caches instead of letting this stale tab wipe them.
+  if (authClear === AUTH_CLEAR_FOREIGN) return AUTH_CLEAR_FOREIGN;
   clearRideHistory();
   clearFavoriteRoutes();
   clearActiveRideStore();

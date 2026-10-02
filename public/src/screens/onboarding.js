@@ -772,7 +772,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
             setStepError('Не удалось безопасно завершить вход. Повторите попытку.');
             return;
           }
-          if (resetLocalSession() === false) {
+          if (resetLocalSession({ allowForeignDetach: true }) === false) {
             setStepError('Не удалось очистить локальную сессию. Повторите попытку.');
             return;
           }
@@ -908,7 +908,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
               // Guest is a clean anonymous boundary. Drop any authenticated handoff
               // and all user-scoped local data before entering the public surface.
               if (isBackendEnabled()) {
-                if (auth?.enterGuest?.() !== true || resetLocalSession() === false) {
+                if (auth?.enterGuest?.() !== true
+                    || resetLocalSession({ allowForeignDetach: true }) === false) {
                   setStepError('Не удалось безопасно перейти в режим гостя. Повторите попытку.');
                   return;
                 }
