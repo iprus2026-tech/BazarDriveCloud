@@ -352,7 +352,7 @@ async function appDevDocsBootCase(name) {
   user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true });
   const profileBefore = localStorage.getItem('bazardrive.user.v1');
   if (name !== 'no-bearer') localStorage.setItem('bazardrive.auth.v1',
-    JSON.stringify({ token: 'fixture-token' }));
+    JSON.stringify({ token: 'fixture-token', userId: 'user-a' }));
   const authBefore = localStorage.getItem('bazardrive.auth.v1');
   globalThis.__BD_API_BASE__ = name === 'off' ? '' : 'https://api.invalid';
   const hashEntry = name.startsWith('hash-');
@@ -453,7 +453,8 @@ async function guestPublicCase(name) {
   const guestReadOnly = !off && !pending && !unknown && name !== 'authenticated' && !negativeRole;
   globalThis.__BD_API_BASE__ = off ? '' : 'https://api.invalid';
   const hasBearer = ['user-null', 'authenticated', 'reconciling', 'unknown'].includes(name);
-  if (hasBearer) localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'fixture-token' }));
+  if (hasBearer) localStorage.setItem('bazardrive.auth.v1',
+    JSON.stringify({ token: 'fixture-token', userId: 'user-a' }));
   const authBefore = localStorage.getItem('bazardrive.auth.v1');
   const session = deferred(), requests = [];
   const order = { id: 'guest-order', status: 'CREATED', pickup: { label: 'A' },
