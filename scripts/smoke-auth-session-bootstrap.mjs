@@ -177,7 +177,158 @@ function installDOM({ parseIds = false, parseMarkup = false } = {}) {
     localStorage: storage(), sessionStorage: storage() });
   globalThis.MutationObserver = class { observe() {} disconnect() {} };
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
-  return { elements, Element, created, starts: () => startCount };
+  return { elements, Element, created, starts: () => startCount,
+    storageEvent: event => {
+      for (const fn of listeners.get('storage') ?? []) fn(event);
+    } };
+}
+
+async function authStorageSyncCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const { register } = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  user.set({ welcomeSeen: true, onboarded: true, role: 'passenger',
+    phoneVerified: true, firstName: 'Current passenger' });
+  auth.setAuth({ token: 'original-token', userId: 'a' });
+  const profile = user.get();
+  const savedProfile = localStorage.getItem('bazardrive.user.v1');
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  let products = 0;
+  register('/boot-proof', () => { products++; return new dom.Element('article'); });
+  const refresh = deferred();
+  const requests = [];
+  const session = response({ user: { ...userDTO('a'), activeRole: 'passenger' } });
+  globalThis.fetch = (url, options) => {
+    assert.ok(url.endsWith('/auth/session'), 'only session reconciliation is requested');
+    requests.push(options.headers.Authorization);
+    return requests.length === 1 ? Promise.resolve(session) : refresh.promise;
+  };
+  await import('../public/src/app.js');
+  await flush();
+  assert.equal(products, 1);
+  const route = location.hash;
+  const sameActor = name.startsWith('same-actor');
+  const next = name === 'logout' ? null : JSON.stringify({
+    token: 'refreshed-token', userId: sameActor ? 'a' : 'b', phone: null,
+  });
+  if (name === 'same-actor-rotation') {
+    const otherAuth = await import('../public/src/auth_token.js?refresh-tab');
+    const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+    const otherController = createAuthSessionBootstrap({ backendEnabled: () => true,
+      readToken: otherAuth.getAuthToken, readUserId: otherAuth.getAuthUserId,
+      writeAuth: otherAuth.setAuth, dropAuth: otherAuth.clearAuth,
+      pinTabUser: otherAuth.pinAuthTabUser,
+      requestSession: async () => ({ user: { ...userDTO('a'), activeRole: 'passenger' } }),
+    });
+    await otherController.reconcile();
+    const originalSet = localStorage.setItem, originalRemove = localStorage.removeItem;
+    const changes = [];
+    localStorage.setItem = (key, value) => {
+      originalSet(key, value);
+      if (key === auth.AUTH_STORAGE_KEY) { changes.push(value); dom.storageEvent({ key, newValue: value }); }
+    };
+    localStorage.removeItem = key => {
+      originalRemove(key);
+      if (key === auth.AUTH_STORAGE_KEY) { changes.push(null); dom.storageEvent({ key, newValue: null }); }
+    };
+    const result = await otherController.beginLogin()({ token: 'refreshed-token', user: {
+      userId: 'a', activeRole: 'passenger', phoneVerified: true, roles: ['passenger'],
+    } });
+    assert.equal(result.ok, true);
+    assert.equal(changes.length, 1, 'same-account OTP replaces the token with one write');
+    assert.notEqual(changes[0], null, 'same-account refresh never broadcasts logout');
+    localStorage.setItem = originalSet; localStorage.removeItem = originalRemove;
+  } else if (next === null) localStorage.removeItem(auth.AUTH_STORAGE_KEY);
+  else localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
+  dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: next });
+  await flush();
+  if (sameActor) {
+    assert.deepEqual(user.get(), profile, 'same-account refresh retains the mounted profile');
+    assert.equal(dom.elements.app.children[0].dataset.authBootState, 'SESSION_RECONCILING');
+    // A second event during reconciliation must not lose the pinned actor.
+    dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: next });
+    await flush();
+    refresh.resolve(session);
+    await flush();
+    assert.equal(location.hash, route, 'same-account refresh stays on the product route');
+    assert.deepEqual(user.get(), profile);
+    assert.equal(auth.getAuthToken(), 'refreshed-token');
+    assert.ok(products > 1, 'product route resumes after reconciliation');
+    assert.ok(requests.slice(1).every(value => value === 'Bearer refreshed-token'));
+  } else {
+    assert.equal(user.get().firstName, null, 'logout/replacement clears this tab projection');
+    assert.equal(user.get().onboarded, false);
+    assert.equal(location.hash, '#/onboarding');
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(requests.length, 1, 'this tab never sends the foreign bearer');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), next);
+  }
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), savedProfile,
+    'cross-tab reconciliation never rewrites shared profile storage');
+}
+
+async function authRollbackCase(name) {
+  globalThis.localStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  let requests = 0;
+  const controller = createAuthSessionBootstrap({ backendEnabled: () => true,
+    requestSession: async () => { requests++; return { user: userDTO('a') }; } });
+  assert.equal((await controller.reconcile()).state, 'ANONYMOUS');
+  const rawGet = localStorage.getItem;
+  const rawSet = localStorage.setItem;
+  const rawRemove = localStorage.removeItem;
+  let deniedReads = 0, allowRemoval = false;
+  localStorage.setItem = (key, value) => {
+    rawSet(key, value);
+    if (key === auth.AUTH_STORAGE_KEY) deniedReads = name === 'rollback-read-denied' ? 2 : 1;
+  };
+  localStorage.getItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY && deniedReads > 0) {
+      deniedReads--;
+      if (name === 'foreign-replacement') rawSet(key,
+        JSON.stringify({ token: 'foreign-token', userId: 'b', phone: null }));
+      if (name === 'readback-null') return null;
+      throw new Error('fixture post-write read denied');
+    }
+    return rawGet(key);
+  };
+  localStorage.removeItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY && rawGet(key) && !allowRemoval) {
+      if (name === 'remove-denied') throw new Error('fixture removal denied');
+      if (name === 'remove-noop') return;
+    }
+    rawRemove(key);
+  };
+  const result = await controller.beginLogin({
+    resetAccount: name === 'anonymous-read-denied' ? () => true : () => auth.clearAuth(),
+  })({ token: 'minted-token', user: { userId: 'a', activeRole: 'passenger',
+    phoneVerified: true, roles: ['passenger'] } }, '+79990000001');
+  assert.equal(result.ok, false);
+  assert.equal(result.code, name === 'foreign-replacement' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
+  assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
+  assert.equal(requests, 0, 'unverified storage cannot start session reconciliation');
+  assert.equal(auth.getAuthToken(), null);
+  if (name === 'foreign-replacement') {
+    assert.equal(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).token, 'foreign-token');
+    assert.equal(controller.hasUncommittedLogin(), false);
+    return;
+  }
+  if (['rollback-read-denied', 'remove-denied', 'remove-noop'].includes(name)) {
+    assert.equal(controller.hasUncommittedLogin(), true, 'failed cleanup retains Back ownership');
+    assert.equal(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).token, 'minted-token');
+    if (name.startsWith('remove-')) {
+      assert.equal(controller.abandonLogin(), false, 'Back cannot succeed while removal still fails');
+      assert.equal(controller.hasUncommittedLogin(), true);
+    }
+    allowRemoval = true;
+    assert.equal(controller.abandonLogin(), true, 'Back retries real token removal');
+  }
+  assert.equal(rawGet(auth.AUTH_STORAGE_KEY), null, 'rollback actually removes the minted bearer');
+  assert.equal(controller.hasUncommittedLogin(), false);
+  const reloadedAuth = await import('../public/src/auth_token.js?rollback-reload');
+  assert.equal(reloadedAuth.getAuthToken(), null, 'fresh module cannot recover an abandoned bearer');
 }
 
 async function appCase(name) {
@@ -912,7 +1063,13 @@ async function repairHandoffCase(name) {
   assert.equal(products, 1); assert.equal(dom.starts(), 1);
 }
 
-if (process.argv[2] === '--repair-handoff-case') {
+if (process.argv[2] === '--storage-sync-case') {
+  await authStorageSyncCase(process.argv[3]);
+  console.log('PASS actual app cross-tab storage: ' + process.argv[3]);
+} else if (process.argv[2] === '--auth-rollback-case') {
+  await authRollbackCase(process.argv[3]);
+  console.log('PASS real auth-token rollback: ' + process.argv[3]);
+} else if (process.argv[2] === '--repair-handoff-case') {
   await repairHandoffCase(process.argv[3]);
   console.log('PASS actual app OTP/retry repair: ' + process.argv[3]);
 } else if (process.argv[2] === '--login-handoff-case') {
@@ -1091,10 +1248,6 @@ if (process.argv[2] === '--repair-handoff-case') {
       },
       dropAuth: () => {
         drops++;
-        if (drops === 1) {
-          record = null; // same-account staging removal succeeds
-          return true;
-        }
         if (!allowRollbackRetry) return false; // rollback removal fails
         record = null;
         return true;
@@ -1104,7 +1257,7 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'AUTH_STORAGE_FAILED');
     assert.equal(writes, 1);
-    assert.equal(drops, 2);
+    assert.equal(drops, 1, 'only rollback removes a same-account token');
     assert.equal(c.hasUncommittedLogin(), true);
     assert.equal(record.userId, 'a');
     allowRollbackRetry = true;
@@ -1118,12 +1271,11 @@ if (process.argv[2] === '--repair-handoff-case') {
     const c = create({ backendEnabled: () => true,
       readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
       writeAuth: next => { writes++; record = next; return true; },
-      dropAuth: () => {
-        record = { token: 'token-b', userId: 'b' };
-        return 'foreign';
-      },
+      dropAuth: () => { throw new Error('stale refresh must not delete a foreign token'); },
       requestSession: async () => passenger('a') });
-    const result = await c.beginLogin({ expectedRole: 'passenger' })(verified('a', 'passenger'));
+    const accept = c.beginLogin({ expectedRole: 'passenger' });
+    record = { token: 'token-b', userId: 'b' };
+    const result = await accept(verified('a', 'passenger'));
     assert.equal(result.ok, false);
     assert.equal(result.code, 'AUTH_STALE');
     assert.equal(writes, 0);
@@ -1150,15 +1302,19 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.match(source, /if \(recoveredLogin\) \{[\s\S]*onboardingHandoffOwner = context/);
     assert.match(source, /retainAuthenticatedCleanupOwner\(\(\) => context\.isCurrent\(\)\)[\s\S]*onboardingHandoffOwner = context/);
   });
-  await check('cross-tab auth storage changes detach stale cache before reconcile', async () => {
-    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
-    const listener = source.indexOf("addEventListener('storage'");
-    const reset = source.indexOf('user.resetCacheOnly()', listener);
-    const reconcile = source.indexOf('bootSession.reconcile()', reset);
-    assert.ok(listener >= 0 && reset > listener && reconcile > reset,
-      'storage auth changes clear the stale tab projection before reconciliation');
-    assert.match(source, /event\.key !== AUTH_STORAGE_KEY/);
-  });
+  for (const scenario of ['same-actor', 'same-actor-rotation', 'foreign-actor', 'logout']) {
+    await check('actual app cross-tab storage: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--storage-sync-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['anonymous-read-denied', 'readback-null', 'rollback-read-denied',
+    'remove-denied', 'remove-noop', 'foreign-replacement']) {
+    await check('real auth-token rollback: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--auth-rollback-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
 
   await check('authority rejection keeps handoff pinned when terminal credential removal fails', async () => {
     let record = { token: 'token-a', userId: 'a' }, allowDrop = false;

@@ -19,19 +19,20 @@ let blocked = false;
 let tabUserId = null;
 // A detached tab must not auto-adopt a later origin-wide credential.
 let tabDetachMode = null;
+// A completed write belongs to this tab even if its readback fails before the
+// new actor can be pinned. Keep that cleanup ownership until verified removal.
+let pendingWrite = null;
 
 function loadRaw() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) || {}) : {};
-  } catch {
-    return {};
-  }
+  const raw = localStorage.getItem(STORAGE_KEY);
+  // A readable but malformed record may be cleared. A failed storage read
+  // must propagate so cleanup cannot mistake an unread bearer for absence.
+  try { return raw ? (JSON.parse(raw) || {}) : {}; } catch { return {}; }
 }
 
 function load() {
   if (blocked || tabDetachMode) return {};
-  return loadRaw();
+  try { return loadRaw(); } catch { return {}; }
 }
 
 function loadForTab() {
@@ -74,17 +75,20 @@ export function pinAuthTabUser(userId) {
 export function setAuth({ token, userId, phone } = {}) {
   blocked = true;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    const next = {
       token: token || null,
       userId: userId || null,
       phone: phone || null,
-    }));
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    pendingWrite = next;
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!token || !userId || saved?.token !== token || saved?.userId !== userId
         || saved?.phone !== (phone || null)) return false;
     blocked = false;
     tabUserId = userId;
     tabDetachMode = null;
+    pendingWrite = null;
     return true;
   } catch {
     return false;
@@ -99,11 +103,20 @@ export function clearAuth() {
     const raw = loadRaw();
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
 
-    if (tabDetachMode === AUTH_CLEAR_FOREIGN) {
+    if (pendingWrite && (raw.token || rawUserId)
+        && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId)) {
+      // Another tab replaced the failed write. Never remove its credential.
+      pendingWrite = null;
+      tabUserId = null;
+      tabDetachMode = AUTH_CLEAR_FOREIGN;
       blocked = false;
       return AUTH_CLEAR_FOREIGN;
     }
-    if (tabDetachMode === 'anonymous') {
+    if (!pendingWrite && tabDetachMode === AUTH_CLEAR_FOREIGN) {
+      blocked = false;
+      return AUTH_CLEAR_FOREIGN;
+    }
+    if (!pendingWrite && tabDetachMode === 'anonymous') {
       if (rawUserId) {
         tabDetachMode = AUTH_CLEAR_FOREIGN;
         blocked = false;
@@ -112,7 +125,7 @@ export function clearAuth() {
       blocked = false;
       return true;
     }
-    if (tabDetachMode === 'own-cleared') {
+    if (!pendingWrite && tabDetachMode === 'own-cleared') {
       if (rawUserId) {
         tabDetachMode = AUTH_CLEAR_FOREIGN;
         blocked = false;
@@ -121,7 +134,7 @@ export function clearAuth() {
       blocked = false;
       return true;
     }
-    if (tabUserId && rawUserId && rawUserId !== tabUserId) {
+    if (!pendingWrite && tabUserId && rawUserId && rawUserId !== tabUserId) {
       tabUserId = null;
       tabDetachMode = AUTH_CLEAR_FOREIGN;
       blocked = false;
@@ -131,6 +144,7 @@ export function clearAuth() {
     localStorage.removeItem(STORAGE_KEY);
     blocked = localStorage.getItem(STORAGE_KEY) !== null;
     if (blocked) return false;
+    pendingWrite = null;
     tabUserId = null;
     tabDetachMode = 'own-cleared';
     return true;

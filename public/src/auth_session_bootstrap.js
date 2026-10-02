@@ -107,8 +107,9 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
       }
       // Crossing an identity boundary must clear the previous account cache
-      // before B can ever be persisted. Same-account replacement still has to
-      // prove the old bearer was actually removed.
+      // before B can ever be persisted. Same-account refresh uses setAuth's
+      // atomic replacement + readback: deleting first would emit a transient
+      // logout into other tabs and discard their same-account profiles.
       if (!priorUserId || priorUserId !== u.userId) {
         const resetOk = resetAccount({
           accountSwitch: Boolean(priorUserId && priorUserId !== u.userId),
@@ -116,16 +117,6 @@ export function createAuthSessionBootstrap({
           nextUserId: u.userId,
         });
         if (resetOk === false) {
-          fail('AUTH_STORAGE_FAILED');
-          return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
-        }
-      } else {
-        const dropResult = dropAuth();
-        if (dropResult === AUTH_CLEAR_FOREIGN) {
-          fail('AUTH_IDENTITY_MISMATCH');
-          return { ok: false, code: 'AUTH_STALE', handoffInstalled: false };
-        }
-        if (dropResult === false) {
           fail('AUTH_STORAGE_FAILED');
           return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
         }
