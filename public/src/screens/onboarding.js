@@ -522,9 +522,12 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let confirmedAttempt = null;
   let accountSwitchedDuringLogin = false;
   let accountBoundaryResetDuringLogin = false;
+  let rebuildProfileAfterVerify = false;
 
   const ownsScreen = () => renderContext.isCurrent();
-  const expectedAuthRole = () => verifyPhoneOnly ? (knownRole ?? 'passenger') : draft.role;
+  const expectedAuthRole = () => (verifyPhoneOnly && !rebuildProfileAfterVerify)
+    ? (knownRole ?? 'passenger')
+    : draft.role;
   const normalizedPhone = () => '+7' + (draft.phone || '').slice(-10);
   const ownsAttempt = attempt => ownsScreen() && attempt !== null
     && attempt === otpAttempt && attempt.generation === otpGeneration
@@ -689,9 +692,14 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     next();
   }
 
-  // Verify-only entry uses a trimmed phone→otp flow; everything else keeps the
-  // full role-based step list.
-  function steps() { return verifyPhoneOnly ? ['phone', 'otp'] : stepsFor(draft.role); }
+  // Verify-only entry starts as phone→otp. If that verification crossed an
+  // account/local-profile boundary, expand THIS mounted lifecycle into the
+  // full authoritative profile flow so the verified handoff remains owned.
+  function steps() {
+    return (verifyPhoneOnly && !rebuildProfileAfterVerify)
+      ? ['phone', 'otp']
+      : stepsFor(draft.role);
+  }
   function totalSteps() { return steps().length; }
   function currentStep() { return steps()[step]; }
 
@@ -721,11 +729,16 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (!canFinishAuth()) return;
     if (isBackendEnabled()) {
       if (accountBoundaryResetDuringLogin) {
-        // The old account-scoped profile was intentionally cleared. Do not mark
-        // the new identity complete with empty names/profile data; rebuild it.
+        // The old account-scoped profile was intentionally cleared. Rebuild the
+        // new identity in THIS screen lifecycle so roleConfirmed()/finishLogin()
+        // keep the already-verified handoff and never require a second OTP.
         user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
           phone: confirmedAttempt.phone, onboarded: false, welcomeSeen: true });
-        if (auth.finishLogin()) go('/onboarding');
+        draft.role = passengerIdentity.activeRole;
+        rebuildProfileAfterVerify = true;
+        const profileIdx = steps().indexOf('profile');
+        step = profileIdx >= 0 ? profileIdx : 0;
+        render();
         return;
       }
       user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
@@ -751,7 +764,8 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
     if (isBackendEnabled() && currentStep() === 'otp') invalidateOtpAttempt();
     clearOtpAdvanceTimer();
     if (step === 0) {
-      if (isBackendEnabled() && !verifyPhoneOnly) {
+      const fullOnboardingFlow = !verifyPhoneOnly || rebuildProfileAfterVerify;
+      if (isBackendEnabled() && fullOnboardingFlow) {
         const hadHandoff = auth?.hasUncommittedLogin?.() === true;
         if (hadHandoff) {
           if (auth?.abandonLogin?.() !== true) {
@@ -764,7 +778,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           }
         }
       }
-      go(verifyPhoneOnly ? verifyReturnRoute() : '/welcome');
+      go(fullOnboardingFlow ? '/welcome' : verifyReturnRoute());
       return;
     }
     step--;

@@ -5,6 +5,7 @@ import { initFavoriteRoutes } from './favorite_routes.js';
 import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
+import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
 import { setLocalLogoutObserver } from './mock_auth.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
@@ -127,7 +128,8 @@ document.getElementById('fab').addEventListener('click', () => {
 
 // One controller owns both boot and post-verify reconciliation.
 const bootSession = createAuthSessionBootstrap();
-setLocalLogoutObserver(() => bootSession.adoptAnonymousAfterExternalLogout());
+setLocalLogoutObserver(() => !isBackendEnabled()
+  || bootSession.adoptAnonymousAfterExternalLogout());
 setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(

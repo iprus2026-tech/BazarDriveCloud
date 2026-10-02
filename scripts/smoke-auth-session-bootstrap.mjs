@@ -718,10 +718,20 @@ async function loginHandoffCase(name) {
     assert.equal(products, 0);
   } else {
     if (verifySwitch) {
-      assert.equal(location.hash, '#/onboarding');
+      assert.ok(node('ob-firstname'),
+        'switched identity continues directly into profile with the verified handoff');
       assert.equal(user.get().onboarded, false, 'switched identity must rebuild its local profile');
       assert.notEqual(user.get().firstName, 'Old account', 'old account profile data cannot survive the switch');
       assert.equal(JSON.parse(localStorage.getItem('bazardrive.auth.v1')).userId, 'new-user');
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1,
+        'profile rebuild must not request a second OTP');
+      input('ob-firstname', 'QA');
+      await click('ob-next');
+      await click('ob-finish');
+      assert.equal(user.get().onboarded, true);
+      assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1,
+        'finish commits the original verified handoff');
+      assert.equal(products, 1);
       return;
     }
     assert.ok(node('ob-firstname'), 'verified handoff advances immediately to profile');
@@ -1137,7 +1147,9 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(c.adoptAnonymousAfterExternalLogout(), true);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
     const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
-    assert.match(appSource, /setLocalLogoutObserver\(\(\) => bootSession\.adoptAnonymousAfterExternalLogout\(\)\)/);
+    assert.match(appSource,
+      /setLocalLogoutObserver\(\(\) => !isBackendEnabled\(\)[\s\S]*adoptAnonymousAfterExternalLogout\(\)\)/,
+      'backend OFF logout preserves LOCAL_DEMO_BOOT instead of adopting ANONYMOUS');
   });
   await check('per-tab auth pin blocks a bearer replaced by another tab', async () => {
     const auth = await import('../public/src/auth_token.js');
