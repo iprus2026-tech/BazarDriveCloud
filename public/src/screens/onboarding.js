@@ -521,6 +521,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   let otpAttempt = null;
   let confirmedAttempt = null;
   let accountSwitchedDuringLogin = false;
+  let accountBoundaryResetDuringLogin = false;
 
   const ownsScreen = () => renderContext.isCurrent();
   const expectedAuthRole = () => verifyPhoneOnly ? (knownRole ?? 'passenger') : draft.role;
@@ -605,14 +606,12 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           resetAccount: ({ accountSwitch } = {}) => {
             const resetOk = resetLocalSession();
             if (resetOk === false) return false;
+            accountBoundaryResetDuringLogin = true;
             accountSwitchedDuringLogin = accountSwitch === true;
-            if (accountSwitch) {
-              // The mounted onboarding instance captured A's profile before OTP.
-              // Drop every account-derived draft value so B cannot inherit A's
-              // documents, vehicle or identity fields.
-              clearAccountDerivedDraft();
-              consumePendingAction();
-            }
+            // Any reset invalidates account-derived values captured before OTP,
+            // including legacy local-only profiles with no prior bearer userId.
+            clearAccountDerivedDraft();
+            if (accountSwitch) consumePendingAction();
             return true;
           },
         });
@@ -721,7 +720,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
   function completePhoneVerification() {
     if (!canFinishAuth()) return;
     if (isBackendEnabled()) {
-      if (accountSwitchedDuringLogin) {
+      if (accountBoundaryResetDuringLogin) {
         // The old account-scoped profile was intentionally cleared. Do not mark
         // the new identity complete with empty names/profile data; rebuild it.
         user.set({ phoneVerified: passengerIdentity.phoneVerified, role: passengerIdentity.activeRole,
@@ -786,7 +785,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
       && requiredDocIds.every((id) => draft.docs.has(id));
 
     const idToKey = DOC_ID_TO_KEY;
-    const prevDocs = accountSwitchedDuringLogin ? {} : (currentUser.driverDocuments || {});
+    const prevDocs = accountBoundaryResetDuringLogin ? {} : (currentUser.driverDocuments || {});
     const driverDocuments = {};
     for (const key of REQUIRED_DOCS) {
       const onboardingId = Object.keys(idToKey).find((id) => idToKey[id] === key);

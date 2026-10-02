@@ -6,6 +6,7 @@ import { initGlobalErrorOverlay } from './app_error_overlay.js';
 import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
+import { setLocalLogoutObserver } from './mock_auth.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
 import welcome    from './screens/welcome.js';
@@ -126,6 +127,7 @@ document.getElementById('fab').addEventListener('click', () => {
 
 // One controller owns both boot and post-verify reconciliation.
 const bootSession = createAuthSessionBootstrap();
+setLocalLogoutObserver(() => bootSession.adoptAnonymousAfterExternalLogout());
 setScreenChromeMount(mountDriverRideReturn);
 let routerStarted = false;
 setAdmissionGuard(
@@ -173,26 +175,31 @@ function showBootSession(snapshot) {
     proceed.className = 'bd-btn primary';
     proceed.textContent = 'Продолжить';
     proceed.addEventListener('click', () => {
-      const recoveredUser = bootSession.getSnapshot().user;
       const incomplete = user.get().onboarded !== true;
+      const projection = bootSession.recoveryProjection();
+      if (!projection) {
+        void bootSession.reconcile();
+        return;
+      }
       if (incomplete) {
-        // Recheck detached ownership, but DO NOT consume it yet. The recovered
-        // bearer remains owned until the restarted onboarding either commits a
-        // replacement handoff or explicitly abandons it.
-        if (!recoveredUser || !bootSession.recoveryConfirmed()) {
-          void bootSession.reconcile();
-          return;
-        }
+        // Retain recovery ownership until onboarding commits or abandons.
         user.set({
           welcomeSeen: true,
           onboarded: false,
-          role: recoveredUser.activeRole,
-          phoneVerified: recoveredUser.phoneVerified,
+          role: projection.user.activeRole,
+          phoneVerified: projection.user.phoneVerified,
+          ...(projection.phone ? { phone: projection.phone } : null),
         });
         go('/onboarding');
         return;
       }
-      if (!bootSession.finishRecovery()) {
+      if (!bootSession.finishRecovery(({ user: recoveredUser, phone }) => {
+        user.set({
+          role: recoveredUser.activeRole,
+          phoneVerified: recoveredUser.phoneVerified,
+          ...(phone ? { phone } : null),
+        });
+      })) {
         void bootSession.reconcile();
         return;
       }

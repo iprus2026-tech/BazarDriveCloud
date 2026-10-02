@@ -21,6 +21,12 @@ import { clearUserScopedStorage } from './storage_boundary.js';
 import { clearSmokeRole } from './smoke_role.js';
 import { go } from './router.js';
 
+let localLogoutObserver = null;
+
+export function setLocalLogoutObserver(observer) {
+  localLogoutObserver = typeof observer === 'function' ? observer : null;
+}
+
 // Clears all locally persisted user-scoped state without navigating. Use this
 // for non-logout local resets (account switch staging, profile wipe) that
 // still need the same cleanup guarantees.
@@ -38,6 +44,7 @@ export function resetLocalSession() {
 // logout handlers should call.
 export function performLocalLogout() {
   if (!resetLocalSession()) return false;
+  if (localLogoutObserver && localLogoutObserver() === false) return false;
   go('/welcome');
   return true;
 }

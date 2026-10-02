@@ -1085,10 +1085,16 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal((await c.beginLogin()(verified())).ok, true);
     allowDrop = false;
     assert.equal(c.abandonLogin(), false);
+    assert.equal(c.hasUncommittedLogin(), true, 'failed removal keeps handoff ownership for retry');
     assert.equal(record.token, 'token-b');
     assert.equal(record.userId, 'b');
     assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
     assert.equal(c.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+    allowDrop = true;
+    assert.equal(c.abandonLogin(), true, 'second Back can retry credential removal');
+    assert.equal(c.hasUncommittedLogin(), false);
+    assert.equal(record, null);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
 
     const guest = create({ backendEnabled: () => true,
       readToken: () => 'driver-token', readUserId: () => 'driver-a',
@@ -1101,6 +1107,51 @@ if (process.argv[2] === '--repair-handoff-case') {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
     assert.match(source, /const hadHandoff = auth\?\.hasUncommittedLogin\?\.\(\) === true/);
     assert.match(source, /if \(resetLocalSession\(\) === false\)/);
+  });
+  await check('legacy local profile reset clears captured driver drafts without a prior bearer', async () => {
+    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
+    assert.match(source, /accountBoundaryResetDuringLogin = true/);
+    assert.match(source, /clearAccountDerivedDraft\(\)/);
+    assert.match(source, /const prevDocs = accountBoundaryResetDuringLogin \? \{\}/);
+  });
+  await check('detached recovery exposes confirmed phone and commits it before consuming ownership', async () => {
+    let current = true, record = { token: 'token-a', userId: 'a' }, committed = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      writeAuth: next => { record = next; return true; },
+      dropAuth: () => { record = null; return true; },
+      requestSession: async () => passenger('b') });
+    assert.equal((await c.beginLogin({ isCurrent: () => current })(verified(), '+15550000009')).ok, true);
+    current = false;
+    const projection = c.recoveryProjection();
+    assert.equal(projection.phone, '+15550000009');
+    assert.equal(projection.user.phoneVerified, true);
+    assert.equal(c.finishRecovery(p => { committed = p; }), true);
+    assert.equal(committed.phone, '+15550000009');
+    assert.equal(c.hasUncommittedLogin(), false);
+  });
+  await check('normal local logout can publish ANONYMOUS in the boot controller', async () => {
+    let record = null;
+    const c = create({ backendEnabled: () => true,
+      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null });
+    assert.equal(c.adoptAnonymousAfterExternalLogout(), true);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+    const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(appSource, /setLocalLogoutObserver\(\(\) => bootSession\.adoptAnonymousAfterExternalLogout\(\)\)/);
+  });
+  await check('per-tab auth pin blocks a bearer replaced by another tab', async () => {
+    const auth = await import('../public/src/auth_token.js');
+    globalThis.localStorage = storage();
+    auth.clearAuth();
+    assert.equal(auth.setAuth({ token: 'token-a', userId: 'a' }), true);
+    localStorage.setItem('bazardrive.auth.v1',
+      JSON.stringify({ token: 'token-b', userId: 'b', phone: null }));
+    assert.equal(auth.getAuthToken(), null);
+    assert.equal(auth.getAuthUserId(), null);
+    assert.equal(auth.setAuth({ token: 'token-b', userId: 'b' }), true,
+      'explicit same-tab replacement can claim the new actor');
+    assert.equal(auth.getAuthToken(), 'token-b');
+    auth.clearAuth();
   });
   await check('uncommitted handoff sentinel remains true until finishLogin commits', async () => {
     const f = loginFixture();

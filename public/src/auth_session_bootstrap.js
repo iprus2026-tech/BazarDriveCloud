@@ -1,6 +1,6 @@
 // Boot identity and verified-login handoff. No logout/revoke or driver enrollment.
 import { isBackendEnabled } from './api_config.js';
-import { getAuthToken, getAuthUserId, setAuth, clearAuth } from './auth_token.js';
+import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser } from './auth_token.js';
 import { getSession } from './api_client.js';
 
 function confirmedUser(payload) {
@@ -22,6 +22,7 @@ export function createAuthSessionBootstrap({
   writeAuth = setAuth,
   dropAuth = clearAuth,
   requestSession = getSession,
+  pinTabUser = pinAuthTabUser,
   timeoutMs = 10000,
 } = {}) {
   let sequence = 0;
@@ -31,6 +32,7 @@ export function createAuthSessionBootstrap({
   let loginSequence = 0;
   let loginAttemptSequence = 0;
   let handoff = null;
+  let handoffRemovalPending = false;
 
   function makeSnapshot(state, user = null, error = null) {
     return Object.freeze({ state, user, grants: 'UNKNOWN', readiness: 'UNKNOWN',
@@ -38,6 +40,7 @@ export function createAuthSessionBootstrap({
   }
 
   function publish(state, user = null, error = null) {
+    if (state === 'AUTHENTICATED' && user?.userId) pinTabUser(user.userId);
     snapshot = makeSnapshot(state, user, error);
     for (const listener of listeners) listener(snapshot);
   }
@@ -107,8 +110,9 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'AUTH_STORAGE_FAILED', handoffInstalled: false };
       }
       const generation = ++loginSequence;
-      handoff = { token: payload.token, userId: u.userId, generation, ownsUI: owns,
-        expectedRole: authorityRole, authority: true };
+      handoff = { token: payload.token, userId: u.userId, phone: phone || null,
+        generation, ownsUI: owns, expectedRole: authorityRole, authority: true };
+      handoffRemovalPending = false;
       const resumed = await resumeLogin();
       return { ...resumed, handoffInstalled: true };
     };
@@ -143,6 +147,7 @@ export function createAuthSessionBootstrap({
   function finishLogin() {
     if (!handoff || !authorityConfirmed(handoff, { requireUI: true })) return false;
     handoff = null;
+    handoffRemovalPending = false;
     return true;
   }
 
@@ -161,9 +166,21 @@ export function createAuthSessionBootstrap({
       && authorityConfirmed(handoff, { requireUI: false });
   }
 
-  function finishRecovery() {
-    if (!recoveryConfirmed()) return false;
+  function recoveryProjection() {
+    if (!recoveryConfirmed()) return null;
+    return Object.freeze({
+      user: snapshot.user,
+      phone: handoff.phone || null,
+      expectedRole: handoff.expectedRole,
+    });
+  }
+
+  function finishRecovery(commit) {
+    const projection = recoveryProjection();
+    if (!projection) return false;
+    if (typeof commit === 'function') commit(projection);
     handoff = null;
+    handoffRemovalPending = false;
     return true;
   }
 
@@ -178,57 +195,90 @@ export function createAuthSessionBootstrap({
     return fail('AUTH_IDENTITY_MISMATCH');
   }
 
+  function finishAbandonAsAnonymous() {
+    ++loginAttemptSequence;
+    ++loginSequence;
+    ++sequence;
+    active?.cancel();
+    active = null;
+    handoff = null;
+    handoffRemovalPending = false;
+    publish('ANONYMOUS');
+    return true;
+  }
+
   function abandonLogin() {
-    // Only the credential still owned by THIS committed handoff may be removed.
-    // If another tab replaced the token/user, discard our stale handoff but
-    // never delete the unrelated actor's credential.
+    // A failed removal keeps the handoff pinned so Back can safely retry.
     const expected = handoff;
     if (!expected) return false;
+
+    if (handoffRemovalPending) {
+      if (dropAuth() === false) {
+        fail('AUTH_STORAGE_FAILED');
+        return false;
+      }
+      return finishAbandonAsAnonymous();
+    }
+
     const currentToken = readToken();
     const currentUserId = readUserId();
     const credentialOwned = expected.generation === loginSequence
       && currentToken === expected.token && currentUserId === expected.userId;
     const credentialMissing = currentToken === null && currentUserId === null;
-    ++loginAttemptSequence;
-    ++loginSequence;
-    ++sequence;
-    active?.cancel();
-    active = null;
-    handoff = null;
-    if (credentialMissing) {
-      // Reconciliation already removed this handoff's terminal credential
-      // (user:null / identity mismatch / authority rejection). Back/exit must
-      // finish as anonymous instead of stranding the router in UNKNOWN.
-      publish('ANONYMOUS');
-      return true;
-    }
+
+    if (credentialMissing) return finishAbandonAsAnonymous();
+
     if (!credentialOwned) {
-      // A different credential now belongs to another tab/account. Never drop it.
+      ++loginAttemptSequence;
+      ++loginSequence;
+      ++sequence;
+      active?.cancel();
+      active = null;
+      handoff = null;
+      handoffRemovalPending = false;
       fail('AUTH_IDENTITY_MISMATCH');
       return false;
     }
     if (dropAuth() === false) {
+      handoffRemovalPending = true;
       fail('AUTH_STORAGE_FAILED');
       return false;
     }
-    publish('ANONYMOUS');
-    return true;
+    return finishAbandonAsAnonymous();
   }
 
   function enterGuest() {
     // Explicit Guest selection is an actor-detach boundary, not merely a
-    // handoff cancellation. It must clear persisted auth AND in-memory boot
-    // authority even when no replacement handoff was started.
+    // handoff cancellation. Do not discard handoff ownership until removal
+    // is confirmed, so a failed storage operation stays retryable.
+    if (dropAuth() === false) {
+      handoffRemovalPending = handoff !== null;
+      fail('AUTH_STORAGE_FAILED');
+      return false;
+    }
     ++loginAttemptSequence;
     ++loginSequence;
     ++sequence;
     active?.cancel();
     active = null;
     handoff = null;
-    if (dropAuth() === false) {
+    handoffRemovalPending = false;
+    publish('ANONYMOUS');
+    return true;
+  }
+
+  function adoptAnonymousAfterExternalLogout() {
+    if (readToken() !== null || readUserId() !== null) {
       fail('AUTH_STORAGE_FAILED');
       return false;
     }
+    ++loginAttemptSequence;
+    ++loginSequence;
+    ++sequence;
+    active?.cancel();
+    active = null;
+    handoff = null;
+    handoffRemovalPending = false;
     publish('ANONYMOUS');
     return true;
   }
@@ -316,7 +366,8 @@ export function createAuthSessionBootstrap({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     reconcile, beginLogin, resumeLogin, roleConfirmed, passengerConfirmed, finishLogin,
-    isLoginDetached, recoveryConfirmed, finishRecovery, markLoginStale, abandonLogin, enterGuest,
+    isLoginDetached, recoveryConfirmed, recoveryProjection, finishRecovery,
+    markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
     hasUncommittedLogin: () => handoff !== null,
   });
 }
