@@ -1033,15 +1033,24 @@ if (process.argv[2] === '--repair-handoff-case') {
     assert.equal(f.record(), null);
     assert.equal(f.c.getSnapshot().state, 'ANONYMOUS');
   });
-  await check('terminal replacement rejection cannot resume the prior handoff', async () => {
-    const f = loginFixture();
+  await check('identity-only replacement cannot resume or inherit prior passenger authority', async () => {
+    let sessions = 0;
+    const f = loginFixture({ requestSession: async () => (
+      ++sessions === 1 ? passenger('b') : sessionFor('c', 'driver')
+    ) });
     const first = await f.begin()(verified());
     assert.equal(first.ok, true);
-    const reject = await f.begin({ expectedRole: 'passenger' })(verified('c', 'driver'));
-    assert.equal(reject.ok, false);
-    assert.equal(reject.handoffInstalled, false);
+    assert.equal(f.c.passengerConfirmed(), true);
+
+    const replacement = await f.begin({ expectedRole: 'passenger' })(verified('c', 'driver'));
+    assert.equal(replacement.ok, false);
+    assert.equal(replacement.code, 'ROLE_AUTHORITY_REQUIRED');
+    assert.equal(replacement.handoffInstalled, true);
+    assert.equal(f.record().userId, 'c');
+    assert.equal(f.c.getSnapshot().state, 'AUTHENTICATED');
+    assert.equal(f.c.getSnapshot().user.userId, 'c');
     assert.equal(f.c.passengerConfirmed(), false,
-      'new attempt ownership prevents old handoff UI continuation');
+      'new identity-only handoff supersedes old passenger authority');
   });
   await check('stale handoff cannot delete a credential replaced by another tab', async () => {
     let record = { token: 'token-a', userId: 'a' };
