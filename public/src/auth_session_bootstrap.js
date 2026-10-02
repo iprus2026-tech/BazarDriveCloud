@@ -33,6 +33,7 @@ export function createAuthSessionBootstrap({
   let loginAttemptSequence = 0;
   let handoff = null;
   let handoffRemovalPending = false;
+  let bootActorPinned = false;
 
   function makeSnapshot(state, user = null, error = null) {
     return Object.freeze({ state, user, grants: 'UNKNOWN', readiness: 'UNKNOWN',
@@ -302,10 +303,13 @@ export function createAuthSessionBootstrap({
       publish('LOCAL_DEMO_BOOT');
       return snapshot;
     }
-    const persistedUserId = readUserId();
-    // Pin both authenticated and anonymous boot identity before reading the
-    // bearer or issuing /auth/session. Retry cannot adopt a later tab's actor.
-    pinTabUser(persistedUserId || null);
+    if (!bootActorPinned) {
+      const persistedUserId = readUserId();
+      // Pin authenticated OR anonymous boot identity exactly once. A retry
+      // cannot downgrade/replace that initial actor after another tab changes storage.
+      pinTabUser(persistedUserId || null);
+      bootActorPinned = true;
+    }
     const expected = handoff;
     const token = readToken();
     if (expected && !ownsCredential(expected)) {
