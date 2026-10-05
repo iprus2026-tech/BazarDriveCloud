@@ -14,6 +14,7 @@ import {
   isDriverMode,
   canManageOwnOrder,
   canAcceptOrder,
+  canAcceptPassengerRequest,
   buildRouteSnapshotFromOrder,
   buildRideFromPost,
   acceptPassengerRequestFromPost,
@@ -103,18 +104,23 @@ test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order',
   assert.equal(canAcceptOrder({ type: 'trip', passenger: false }, READY_DRIVER), false);
 });
 
-for (const [label, isCurrentUser, driver, expectedOwn, expectedAccept] of [
-  ['foreign order, ready driver', false, READY_DRIVER, false, true],
-  ['own order, ready driver', true, READY_DRIVER, true, false],
-  ['foreign order, not-ready driver', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
+for (const [label, authority, isCurrentUser, driver, expectedOwn, expectedAccept] of [
+  ['local foreign order, ready driver', 'local', false, READY_DRIVER, false, true],
+  ['local own order, ready driver', 'local', true, READY_DRIVER, true, false],
+  ['local foreign order, not-ready driver', 'local', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
+  ['backend foreign order, ready driver', 'backend', false, READY_DRIVER, false, false],
+  ['backend own order, ready driver', 'backend', true, READY_DRIVER, true, false],
+  ['backend foreign order, not-ready driver', 'backend', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
 ]) {
   test(`ownership projection → action gates: ${label}`, () => {
     const post = rideOrderToFeedPost({
       id: 'order-gate', status: 'CREATED', passenger: { isCurrentUser },
-    });
+    }, { authority });
+    assert.equal(post.orderAuthority, authority);
     assert.equal(post.createdByCurrentUser, expectedOwn);
     assert.equal(canManageOwnOrder(post, driver), expectedOwn);
     assert.equal(canAcceptOrder(post, driver), expectedAccept);
+    assert.equal(canAcceptPassengerRequest(driver, post), expectedAccept);
   });
 }
 
