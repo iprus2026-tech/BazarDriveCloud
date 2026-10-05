@@ -21,7 +21,7 @@ import {
   acceptCanonicalRideOrder,
 } from '../public/src/ride_actions.js';
 import { RIDE_STATUS, findActiveRide } from '../public/src/ride_state.js';
-import { createRideOrder, listNearbyOrders, LOCAL_USER_ID } from '../public/src/mock_api.js';
+import { createRideOrder, listNearbyOrders, rideOrderToFeedPost, LOCAL_USER_ID } from '../public/src/mock_api.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../public/src/ride_waiting_policy.js';
 
 function makeLocalStorage() {
@@ -102,6 +102,21 @@ test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order',
   // a non-passenger "trip" post is not acceptable.
   assert.equal(canAcceptOrder({ type: 'trip', passenger: false }, READY_DRIVER), false);
 });
+
+for (const [label, isCurrentUser, driver, expectedOwn, expectedAccept] of [
+  ['foreign order, ready driver', false, READY_DRIVER, false, true],
+  ['own order, ready driver', true, READY_DRIVER, true, false],
+  ['foreign order, not-ready driver', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
+]) {
+  test(`ownership projection → action gates: ${label}`, () => {
+    const post = rideOrderToFeedPost({
+      id: 'order-gate', status: 'CREATED', passenger: { isCurrentUser },
+    });
+    assert.equal(post.createdByCurrentUser, expectedOwn);
+    assert.equal(canManageOwnOrder(post, driver), expectedOwn);
+    assert.equal(canAcceptOrder(post, driver), expectedAccept);
+  });
+}
 
 // ── buildRouteSnapshotFromOrder (pure) ────────────────────────────────────────
 

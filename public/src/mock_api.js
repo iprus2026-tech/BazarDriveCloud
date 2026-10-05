@@ -1085,7 +1085,7 @@ export function rideOrderToFeedPost(order) {
     body: comment || null,
     rideOrderStatus: order.status,
     createdAt: Date.parse(order.createdAt) || Date.now(),
-    createdByCurrentUser: true,
+    createdByCurrentUser: order.passenger?.isCurrentUser === true,
   };
 }
 
