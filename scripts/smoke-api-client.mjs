@@ -147,6 +147,11 @@ expect('sw.js bypasses /api (never cached) — keeps a same-origin seam read fre
 // ── R13 behavioural (Codex #786 fixes): listFeedPosts projects valid order rows, rejects
 // unexpected shapes (fails loud, no silent empty), and the OFF default never fetches. ──
 const mapi = await import(new URL('../public/src/mock_api.js', import.meta.url));
+const actions = await import(new URL('../public/src/ride_actions.js', import.meta.url));
+const readyDriver = {
+  role: 'driver', phone: '+70000000002', vehicleMake: 'E2E', vehicleModel: 'TEST', vehiclePlate: 'TEST',
+  documentsReady: true, waybillOpen: true, medicalCheckPassed: true,
+};
 const okShape = async (payload) => ({ ok: true, status: 200, async text() { return JSON.stringify(payload); } });
 
 delete globalThis.__BD_API_BASE__;
@@ -161,11 +166,16 @@ globalThis.fetch = () => okShape([orderRow]);
 const onArray = await mapi.listFeedPosts();
 expect('ON: an order array is projected to renderable feed posts (type=trip via rideOrderToFeedPost)',
   Array.isArray(onArray) && onArray.length === 1 && onArray[0].type === 'trip' && onArray[0].canonical === 'ride_order');
+expect('ON: backend rows without ownership fail closed and cannot enter local direct acceptance',
+  onArray[0].orderAuthority === 'backend' && !actions.canManageOwnOrder(onArray[0], readyDriver)
+  && !actions.canAcceptOrder(onArray[0], readyDriver));
 
 globalThis.fetch = () => okShape({ items: [orderRow] });
 const onItems = await mapi.listFeedPosts();
 expect('ON: the { items: [...] } envelope is also projected',
   Array.isArray(onItems) && onItems.length === 1 && onItems[0].type === 'trip');
+expect('ON: the items envelope also retains backend action authority',
+  onItems[0].orderAuthority === 'backend' && !actions.canAcceptOrder(onItems[0], readyDriver));
 
 globalThis.fetch = () => okShape({ orders: [orderRow] }); // unexpected envelope
 let shapeErr = null;

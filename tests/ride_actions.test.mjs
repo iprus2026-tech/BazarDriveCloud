@@ -14,6 +14,7 @@ import {
   isDriverMode,
   canManageOwnOrder,
   canAcceptOrder,
+  canAcceptPassengerRequest,
   buildRouteSnapshotFromOrder,
   buildRideFromPost,
   acceptPassengerRequestFromPost,
@@ -21,7 +22,7 @@ import {
   acceptCanonicalRideOrder,
 } from '../public/src/ride_actions.js';
 import { RIDE_STATUS, findActiveRide } from '../public/src/ride_state.js';
-import { createRideOrder, listNearbyOrders, LOCAL_USER_ID } from '../public/src/mock_api.js';
+import { createRideOrder, listNearbyOrders, rideOrderToFeedPost, LOCAL_USER_ID } from '../public/src/mock_api.js';
 import { DEFAULT_FREE_WAIT_LIMIT, DEFAULT_PAID_RATE_LABEL } from '../public/src/ride_waiting_policy.js';
 
 function makeLocalStorage() {
@@ -102,6 +103,26 @@ test('canAcceptOrder: refused for passenger mode, not-line-ready, or own order',
   // a non-passenger "trip" post is not acceptable.
   assert.equal(canAcceptOrder({ type: 'trip', passenger: false }, READY_DRIVER), false);
 });
+
+for (const [label, authority, isCurrentUser, driver, expectedOwn, expectedAccept] of [
+  ['local foreign order, ready driver', 'local', false, READY_DRIVER, false, true],
+  ['local own order, ready driver', 'local', true, READY_DRIVER, true, false],
+  ['local foreign order, not-ready driver', 'local', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
+  ['backend foreign order, ready driver', 'backend', false, READY_DRIVER, false, false],
+  ['backend own order, ready driver', 'backend', true, READY_DRIVER, true, false],
+  ['backend foreign order, not-ready driver', 'backend', false, { ...READY_DRIVER, waybillOpen: false }, false, false],
+]) {
+  test(`ownership projection → action gates: ${label}`, () => {
+    const post = rideOrderToFeedPost({
+      id: 'order-gate', status: 'CREATED', passenger: { isCurrentUser },
+    }, { authority });
+    assert.equal(post.orderAuthority, authority);
+    assert.equal(post.createdByCurrentUser, expectedOwn);
+    assert.equal(canManageOwnOrder(post, driver), expectedOwn);
+    assert.equal(canAcceptOrder(post, driver), expectedAccept);
+    assert.equal(canAcceptPassengerRequest(driver, post), expectedAccept);
+  });
+}
 
 // ── buildRouteSnapshotFromOrder (pure) ────────────────────────────────────────
 

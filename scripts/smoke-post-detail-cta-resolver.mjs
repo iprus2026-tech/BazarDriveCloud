@@ -13,6 +13,8 @@
 // network, no behaviour change.
 
 import fs from 'node:fs';
+import { rideOrderToFeedPost } from '../public/src/mock_api.js';
+import { canManageOwnOrder, canAcceptOrder, canAcceptPassengerRequest } from '../public/src/ride_actions.js';
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 const screen = read('../public/src/screens/post_detail.js');
@@ -92,6 +94,28 @@ expect("kind 'none' footer is the single Назад (#pd-cancel), no #pd-respond
   && /id="pd-cancel"/.test(footerBody));
 expect('non-none footer renders the #pd-respond primary CTA',
   /id="pd-respond"/.test(footerBody));
+
+// Exercise the shipped resolver/router with the real shared gates, without DOM or network.
+const readyDriver = {
+  role: 'driver', onboarded: true, phone: '+70000000002',
+  vehicleMake: 'E2E', vehicleModel: 'TEST', vehiclePlate: 'TEST',
+  documentsReady: true, waybillOpen: true, medicalCheckPassed: true,
+};
+const pick = new Function('canManageOwnOrder', 'canAcceptOrder', `${pickBody}; return pickCtaSpec;`)(canManageOwnOrder, canAcceptOrder);
+const foreignOrder = { id: 'order-backend', status: 'CREATED', passenger: { isCurrentUser: false } };
+const backendPost = rideOrderToFeedPost(foreignOrder, { authority: 'backend' });
+const backendSpec = pick(backendPost, readyDriver);
+expect('backend foreign order falls through to the respond CTA', backendSpec.kind === 'respond' && backendSpec.label === 'Откликнуться');
+expect('local foreign order retains the direct accept CTA', pick(rideOrderToFeedPost(foreignOrder, { authority: 'local' }), readyDriver).kind === 'accept');
+expect('backend creator retains the own-order CTA', pick(rideOrderToFeedPost({ ...foreignOrder, passenger: { isCurrentUser: true } }, { authority: 'backend' }), readyDriver).kind === 'own');
+expect('legacy local passenger retains the own-order CTA', pick(rideOrderToFeedPost({ id: 'order-legacy', status: 'CREATED' }, { authority: 'local' }), readyDriver).kind === 'own');
+const routes = [];
+const unexpected = () => { throw new Error('backend offer routing must not invoke onboarding or local accept'); };
+const run = new Function('user', 'applySmokeRole', 'go', 'setPendingAction', 'canAcceptPassengerRequest', 'acceptCanonicalRideOrder', 'acceptPassengerRequestFromPost', `${runBody}; return runCtaAction;`)(
+  { get: () => readyDriver }, (u) => u, (route) => routes.push(route), unexpected, canAcceptPassengerRequest, unexpected, unexpected,
+);
+run(backendSpec, backendPost, '/post?id=order-backend');
+expect('backend respond CTA routes the same order into the existing offer flow', routes.length === 1 && routes[0] === '/respond?postId=order-backend');
 
 console.log('\n' + (issues.length
   ? `FAIL ${issues.length} expectation(s):\n  - ` + issues.join('\n  - ')

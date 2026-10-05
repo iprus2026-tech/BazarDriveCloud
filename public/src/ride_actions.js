@@ -51,6 +51,9 @@ export function canAcceptOrder(order, u) {
   if (!order || !isDriverMode(u)) return false;
   if (!isDriverLineReady(u)) return false;
   if (canManageOwnOrder(order, u)) return false;
+  // Backend matching starts with an offer through /respond. Direct acceptance
+  // below only operates on locally stored canonical orders.
+  if (order.canonical === 'ride_order' && order.orderAuthority === 'backend') return false;
 
   if (order.canonical === 'ride_order' && order.orderId) {
     return order.type === 'trip' && order.passenger === true;

@@ -183,7 +183,7 @@ function projectOrdersResponseToFeed(payload) {
   }
   const out = [];
   for (const order of rows) {
-    const post = rideOrderToFeedPost(order);
+    const post = rideOrderToFeedPost(order, { authority: 'backend' });
     if (post) out.push(post);
   }
   return out;
@@ -1057,7 +1057,7 @@ function formatRideOrderWhen(order) {
   return formatRideOrderTime(order);
 }
 
-export function rideOrderToFeedPost(order) {
+export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
   if (!order || typeof order !== 'object') return null;
   if (order.demo) return null;
   if (order.status !== 'CREATED') return null;
@@ -1066,12 +1066,18 @@ export function rideOrderToFeedPost(order) {
   if (!id) return null;
 
   const comment = typeof order.comment === 'string' ? order.comment.trim() : '';
+  // Creation surface (source) is not authority. Only the local-store caller may
+  // preserve ownership of pre-snapshot passenger orders; unknown authority fails closed.
+  const orderAuthority = authority === 'local' ? 'local' : 'backend';
+  const legacyLocalOwner = orderAuthority === 'local' && order.passenger == null
+    && (order.createdByRole == null || order.createdByRole === 'passenger');
 
   return {
     id,
     orderId: id,
     source: order.source || 'map',
     canonical: 'ride_order',
+    orderAuthority,
     type: 'trip',
     passenger: true,
     author: 'Вы',
@@ -1085,7 +1091,7 @@ export function rideOrderToFeedPost(order) {
     body: comment || null,
     rideOrderStatus: order.status,
     createdAt: Date.parse(order.createdAt) || Date.now(),
-    createdByCurrentUser: true,
+    createdByCurrentUser: order.passenger?.isCurrentUser === true || legacyLocalOwner,
   };
 }
 
@@ -1094,7 +1100,7 @@ export function listRideOrdersAsFeedPosts() {
   if (!Array.isArray(raw) || !raw.length) return [];
   const out = [];
   for (const order of raw) {
-    const projected = rideOrderToFeedPost(order);
+    const projected = rideOrderToFeedPost(order, { authority: 'local' });
     if (projected) out.push(projected);
   }
   out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
