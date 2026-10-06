@@ -12,11 +12,9 @@
 // VIEWER from the order's owner (passenger_id) vs the authenticated viewer; an anonymous viewer
 // always gets false.
 //
-// R18 NOTE (Codex #789): the client feed mapper (mock_api.rideOrderToFeedPost) still HARDCODES
-// createdByCurrentUser:true and ignores this flag — fine today because the R13 feed seam is
-// flag-OFF. The R18 read cutover MUST switch that mapper to consume order.passenger.isCurrentUser,
-// otherwise multi-user orders would all render as the viewer's own (hiding accept/respond). The
-// server side (this flag) is already correct; the fix is client-only and owned by R18.
+// The server computes passenger.isCurrentUser per viewer. The client feed mapper
+// (mock_api.rideOrderToFeedPost) consumes it for backend ownership and author labels;
+// the public /orders projection exposes no passenger PII.
 export function serializeOrder(row, { viewerId = null } = {}) {
   if (!row) return null;
   const ownerId = row.passenger_id ?? null;

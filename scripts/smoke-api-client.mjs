@@ -169,6 +169,7 @@ expect('ON: an order array is projected to renderable feed posts (type=trip via 
 expect('ON: backend rows without ownership fail closed and cannot enter local direct acceptance',
   onArray[0].orderAuthority === 'backend' && !actions.canManageOwnOrder(onArray[0], readyDriver)
   && !actions.canAcceptOrder(onArray[0], readyDriver));
+expect('ON: array rows without ownership use the neutral passenger label', onArray[0].author === 'Пассажир');
 
 globalThis.fetch = () => okShape({ items: [orderRow] });
 const onItems = await mapi.listFeedPosts();
@@ -176,6 +177,22 @@ expect('ON: the { items: [...] } envelope is also projected',
   Array.isArray(onItems) && onItems.length === 1 && onItems[0].type === 'trip');
 expect('ON: the items envelope also retains backend action authority',
   onItems[0].orderAuthority === 'backend' && !actions.canAcceptOrder(onItems[0], readyDriver));
+expect('ON: items rows without ownership use the neutral passenger label', onItems[0].author === 'Пассажир');
+
+for (const [shape, wrap] of [['array', (rows) => rows], ['items', (rows) => ({ items: rows })]]) {
+  const rows = [
+    { ...orderRow, id: 'ord-foreign', passenger: { isCurrentUser: false } },
+    { ...orderRow, id: 'ord-own', passenger: { isCurrentUser: true } },
+  ];
+  globalThis.fetch = () => okShape(wrap(rows));
+  const [foreign, own] = await mapi.listFeedPosts();
+  expect(`ON: ${shape} foreign backend order has a neutral author and retains offer authority`,
+    foreign.author === 'Пассажир' && foreign.orderAuthority === 'backend'
+    && !actions.canManageOwnOrder(foreign, readyDriver) && !actions.canAcceptOrder(foreign, readyDriver));
+  expect(`ON: ${shape} own backend order keeps the viewer label and own-order authority`,
+    own.author === 'Вы' && own.orderAuthority === 'backend'
+    && actions.canManageOwnOrder(own, readyDriver) && !actions.canAcceptOrder(own, readyDriver));
+}
 
 globalThis.fetch = () => okShape({ orders: [orderRow] }); // unexpected envelope
 let shapeErr = null;

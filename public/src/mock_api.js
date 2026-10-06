@@ -1071,6 +1071,7 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
   const orderAuthority = authority === 'local' ? 'local' : 'backend';
   const legacyLocalOwner = orderAuthority === 'local' && order.passenger == null
     && (order.createdByRole == null || order.createdByRole === 'passenger');
+  const createdByCurrentUser = order.passenger?.isCurrentUser === true || legacyLocalOwner;
 
   return {
     id,
@@ -1080,7 +1081,7 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     orderAuthority,
     type: 'trip',
     passenger: true,
-    author: 'Вы',
+    author: createdByCurrentUser ? 'Вы' : 'Пассажир',
     role: 'Пассажир',
     time: 'Только что',
     from: pointLabel(order.pickup, 'Точка подачи'),
@@ -1091,7 +1092,7 @@ export function rideOrderToFeedPost(order, { authority = 'backend' } = {}) {
     body: comment || null,
     rideOrderStatus: order.status,
     createdAt: Date.parse(order.createdAt) || Date.now(),
-    createdByCurrentUser: order.passenger?.isCurrentUser === true || legacyLocalOwner,
+    createdByCurrentUser,
   };
 }
 
