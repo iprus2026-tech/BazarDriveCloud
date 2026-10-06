@@ -8,12 +8,41 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 
-import { findUserByPhone, upsertUserByPhone, markPhoneVerified, resolveVerifiedLoginUser } from '../src/repositories/users.js';
+import { findUserByPhone, findUserAuthorityById, upsertUserByPhone, markPhoneVerified, resolveVerifiedLoginUser } from '../src/repositories/users.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../src/repositories/otps.js';
 import { insertSession, resolveLiveSessionByTokenHash } from '../src/repositories/sessions.js';
 import { hashToken, hashOtpCode, generateToken, generateOtpCode } from '../src/services/auth/tokens.js';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
+
+test('findUserAuthorityById selects only current authority by id without writes or legacy fallback', async () => {
+  const row = { id: 'account-1', roles: ['passenger', 'driver'], phone_verified: true };
+  let calls = 0;
+  const db = { query: async (sql, params) => {
+    calls += 1;
+    assert.equal(sql.replace(/\s+/g, ' ').trim(),
+      'SELECT id, roles, phone_verified FROM users WHERE id = $1 LIMIT 1');
+    assert.deepEqual(params, [row.id]);
+    return { rows: [row] };
+  } };
+  assert.deepEqual(await findUserAuthorityById(db, row.id), row);
+  assert.equal(calls, 1, 'one SELECT, no grant/account/session writes');
+});
+
+test('findUserAuthorityById returns empty grants and unverified state without repair', async () => {
+  const row = { id: 'account-1', roles: [], phone_verified: false };
+  assert.deepEqual(await findUserAuthorityById({ query: async () => ({ rows: [row] }) }, row.id), row);
+});
+
+test('findUserAuthorityById returns null for a missing account', async () => {
+  assert.equal(await findUserAuthorityById({ query: async () => ({ rows: [] }) }, 'missing'), null);
+});
+
+test('findUserAuthorityById propagates lookup errors to the authority boundary', async () => {
+  const error = new Error('database unavailable');
+  await assert.rejects(() => findUserAuthorityById({ query: async () => { throw error; } }, 'account-1'),
+    (caught) => caught === error);
+});
 
 // Hermetic (no DB): upsertUserByPhone must reject a null/empty phone BEFORE any query, so a
 // missing phone can't silently INSERT an anonymous row (one-identity-per-phone guard).
@@ -41,6 +70,9 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       assert.ok(u1.id, 'upsert returns an id');
       assert.equal(u1.phone, phone);
       assert.equal(u1.phone_verified, false, 'new account is unverified');
+      assert.deepEqual(await findUserAuthorityById(db, u1.id),
+        { id: u1.id, roles: [], phone_verified: false });
+      assert.equal(await findUserAuthorityById(db, '00000000-0000-0000-0000-000000000000'), null);
       const u2 = await upsertUserByPhone(db, { phone });
       assert.equal(u2.id, u1.id, 'same phone => SAME account id (distinct identity per phone)');
       const found = await findUserByPhone(db, phone);
@@ -60,6 +92,8 @@ test('auth repositories round-trip against real Postgres (rolled back)',
       const driver = await resolveVerifiedLoginUser(db, { phone: newPhone });
       assert.deepEqual(driver.roles, ['driver']);
       assert.equal(driver.active_role, 'driver');
+      assert.deepEqual(await findUserAuthorityById(db, passenger.id),
+        { id: passenger.id, roles: ['driver'], phone_verified: true }, 'reader observes changed current grants');
 
       // OTP lifecycle. NOTE: now() is frozen for the whole transaction, so created_at is
       // stamped explicitly to give each row a distinct, deterministic recency.

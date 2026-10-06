@@ -19,6 +19,17 @@ export async function findUserByPhone(db, phone) {
   return rows[0] ?? null;
 }
 
+export async function findUserAuthorityById(db, userId) {
+  const { rows } = await db.query(
+    `SELECT id, roles, phone_verified
+       FROM users
+      WHERE id = $1
+      LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
 // Find-or-create the account for a phone, atomically. The uq_users_phone partial unique
 // index is the arbiter, so a repeat phone returns the SAME row id — two devices verifying
 // the same number resolve to ONE account (this is what replaces the identical hardcoded
