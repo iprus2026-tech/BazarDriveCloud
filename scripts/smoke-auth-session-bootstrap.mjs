@@ -757,7 +757,14 @@ async function guestPublicCase(name) {
     assert.ok(feed !== dom.elements.app.children[0]);
   } else if (off || name === 'authenticated') {
     const detail = await navigate('/post?id=' + postId);
-    assert.ok(/href="tel:/.test(detail.innerHTML), 'existing onboarded demo/confirmed contact remains');
+    if (off) {
+      assert.ok(/href="tel:/.test(detail.innerHTML), 'existing onboarded demo contact remains');
+    } else {
+      assert.equal(detail.innerHTML.includes('post-detail__contact'), false,
+        'authenticated backend canonical order without phone has no contact block');
+      assert.equal(/href="tel:/.test(detail.innerHTML), false,
+        'authenticated backend canonical order without phone has no dialable contact');
+    }
     assert.ok(detail.querySelector('#pd-respond'));
     await navigate('/new'); assert.equal(protectedLoads, 1);
   }

@@ -146,6 +146,9 @@ function renderContactBlock(p, onboarded) {
   // revealedPhone()'s mock «+7 (900) 000-00-00» fallback as a fabricated, dialable
   // «Контакт автора» on administrative / system content — so gate it here.
   if (p.type !== 'trip') return '';
+  // Canonical orders must not inherit the seed posts' fabricated contact.
+  if (p.canonical === 'ride_order'
+      && !(typeof p.phone === 'string' && p.phone.trim())) return '';
   if (onboarded) {
     return `
       <div class="bd-alert success post-detail__contact">
