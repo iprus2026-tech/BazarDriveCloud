@@ -107,6 +107,7 @@ test('rideOrderToFeedPost: projects a CREATED order into a canonical feed post',
   assert.equal(post.source, 'feed');
   assert.equal(post.rideOrderStatus, 'CREATED');
   assert.equal(post.createdByCurrentUser, false, 'missing viewer identity fails closed');
+  assert.equal(post.author, 'Пассажир');
   assert.equal(post.body, 'hi');               // comment trimmed
   assert.equal(typeof post.from, 'string');
   assert.equal(typeof post.to, 'string');
@@ -119,17 +120,19 @@ test('OWN_CREATOR: local passenger snapshot remains own through the stored feed 
   });
   assert.equal(order.passenger.isCurrentUser, true);
   assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).createdByCurrentUser, true);
+  assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).author, 'Вы');
   assert.equal(listRideOrdersAsFeedPosts()[0].createdByCurrentUser, true);
+  assert.equal(listRideOrdersAsFeedPosts()[0].author, 'Вы');
 });
 
-for (const [label, fields, expected] of [
-  ['current foreign snapshot', { passenger: { isCurrentUser: false } }, false],
-  ['legacy passenger without role', {}, true],
-  ['legacy passenger with role', { createdByRole: 'passenger' }, true],
-  ['legacy passenger with null snapshot', { passenger: null }, true],
-  ['legacy driver test', { createdByRole: 'driver' }, false],
-  ['legacy driver test with null snapshot', { createdByRole: 'driver', passenger: null }, false],
-  ['snapshot without ownership flag', { passenger: {} }, false],
+for (const [label, fields, expected, expectedAuthor] of [
+  ['current foreign snapshot', { passenger: { isCurrentUser: false } }, false, 'Пассажир'],
+  ['legacy passenger without role', {}, true, 'Вы'],
+  ['legacy passenger with role', { createdByRole: 'passenger' }, true, 'Вы'],
+  ['legacy passenger with null snapshot', { passenger: null }, true, 'Вы'],
+  ['legacy driver test', { createdByRole: 'driver' }, false, 'Пассажир'],
+  ['legacy driver test with null snapshot', { createdByRole: 'driver', passenger: null }, false, 'Пассажир'],
+  ['snapshot without ownership flag', { passenger: {} }, false, 'Пассажир'],
 ]) {
   test(`LOCAL: ${label} preserves the intended ownership without persisting authority`, () => {
     const order = { id: 'order-local', status: 'CREATED', ...fields };
@@ -138,7 +141,9 @@ for (const [label, fields, expected] of [
     const [post] = listRideOrdersAsFeedPosts();
     assert.equal(post.orderAuthority, 'local');
     assert.equal(post.createdByCurrentUser, expected);
+    assert.equal(post.author, expectedAuthor);
     assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).createdByCurrentUser, expected);
+    assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).author, expectedAuthor);
     assert.equal(globalThis.localStorage.getItem(RIDE_ORDERS_KEY), before);
   });
 }
@@ -147,16 +152,19 @@ test('authority is explicit and independent of the map/feed creation surface', (
   for (const source of ['map', 'feed']) {
     const order = { id: 'order-surface', status: 'CREATED', source };
     assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).createdByCurrentUser, true);
+    assert.equal(rideOrderToFeedPost(order, { authority: 'local' }).author, 'Вы');
     assert.equal(rideOrderToFeedPost(order, { authority: 'backend' }).createdByCurrentUser, false);
+    assert.equal(rideOrderToFeedPost(order, { authority: 'backend' }).author, 'Пассажир');
     assert.equal(rideOrderToFeedPost(order).createdByCurrentUser, false, 'unknown provenance fails closed');
+    assert.equal(rideOrderToFeedPost(order).author, 'Пассажир');
   }
 });
 
-for (const [label, viewerId, expected] of [
-  ['OWN_CREATOR', 'passenger-owner', true],
-  ['FOREIGN_DRIVER', 'driver-other', false],
-  ['FOREIGN_PASSENGER', 'passenger-other', false],
-  ['UNKNOWN_VIEWER', null, false],
+for (const [label, viewerId, expected, expectedAuthor] of [
+  ['OWN_CREATOR', 'passenger-owner', true, 'Вы'],
+  ['FOREIGN_DRIVER', 'driver-other', false, 'Пассажир'],
+  ['FOREIGN_PASSENGER', 'passenger-other', false, 'Пассажир'],
+  ['UNKNOWN_VIEWER', null, false, 'Пассажир'],
 ]) {
   test(`${label}: backend per-viewer ownership survives the feed projection`, () => {
     const order = serializeOrder({
@@ -167,6 +175,7 @@ for (const [label, viewerId, expected] of [
     const post = rideOrderToFeedPost(order, { authority: 'backend' });
     assert.equal(post.orderAuthority, 'backend');
     assert.equal(post.createdByCurrentUser, expected);
+    assert.equal(post.author, expectedAuthor);
   });
 }
 
@@ -174,6 +183,7 @@ test('UNKNOWN_VIEWER: missing passenger or ownership flag fails closed', () => {
   for (const passenger of [undefined, null, {}]) {
     const post = rideOrderToFeedPost({ id: 'order-unknown', status: 'CREATED', passenger }, { authority: 'backend' });
     assert.equal(post.createdByCurrentUser, false);
+    assert.equal(post.author, 'Пассажир');
   }
 });
 
@@ -183,6 +193,7 @@ test('NON_BOOLEAN_FAIL_SAFE: truthy or null ownership flags are not proof of own
       id: 'order-non-boolean', status: 'CREATED', passenger: { isCurrentUser },
     }, { authority: 'backend' });
     assert.equal(post.createdByCurrentUser, false);
+    assert.equal(post.author, 'Пассажир');
   }
 });
 
