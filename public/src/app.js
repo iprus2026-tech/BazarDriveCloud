@@ -146,7 +146,11 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 // One controller owns both boot and post-verify reconciliation.
-const bootSession = createAuthSessionBootstrap();
+const bootSession = createAuthSessionBootstrap({
+  onRejectedSession: () => {
+    if (user.get().role !== 'guest') user.resetCacheOnly();
+  },
+});
 setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
 window.addEventListener('storage', (event) => {

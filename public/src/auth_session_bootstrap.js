@@ -24,6 +24,7 @@ export function createAuthSessionBootstrap({
   dropAuth = clearAuth,
   requestSession = getSession,
   pinTabUser = pinAuthTabUser,
+  onRejectedSession = () => {},
   timeoutMs = 10000,
 } = {}) {
   let sequence = 0;
@@ -401,10 +402,12 @@ export function createAuthSessionBootstrap({
 
       if (result.kind === 'response') {
         if (result.payload?.user === null) {
-          if (expected && dropAuth() === false) {
-            handoffRemovalPending = true;
+          if (dropAuth() === false) {
+            handoffRemovalPending = expected !== null;
             fail('AUTH_STORAGE_FAILED');
           } else {
+            // Owned removal or AUTH_CLEAR_FOREIGN safely detaches this tab.
+            onRejectedSession();
             publish('ANONYMOUS');
           }
         }
