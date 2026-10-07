@@ -1,8 +1,8 @@
 // /server/src/repositories/sessions.js — the ONLY module that runs SQL against
 // auth_session (migration 0002). Repositories are the single SQL seam (ADR BD-DOCS-041).
 // Phase-1 surface: resolve a presented token hash to its LIVE session — not revoked, not
-// expired (mirrors the idx_auth_session_live partial index). Listing / revoke land with
-// the profile "active sessions" surface.
+// expired (mirrors the idx_auth_session_live partial index). Revocation by server-known
+// id is a DARK repository primitive; HTTP wiring and session listing remain deferred.
 export async function resolveLiveSessionByTokenHash(db, tokenHash) {
   const { rows } = await db.query(
     `SELECT id, user_id, active_role, phone_verified, issued_at, expires_at, revoked_at
@@ -12,6 +12,18 @@ export async function resolveLiveSessionByTokenHash(db, tokenHash) {
         AND (expires_at IS NULL OR expires_at > now())
       LIMIT 1`,
     [tokenHash],
+  );
+  return rows[0] ?? null;
+}
+
+// Preserve the first revocation stamp, including on retries and expired sessions.
+export async function revokeSessionById(db, sessionId) {
+  const { rows } = await db.query(
+    `UPDATE auth_session
+        SET revoked_at = COALESCE(revoked_at, now())
+      WHERE id = $1
+      RETURNING id, user_id, active_role, phone_verified, issued_at, expires_at, revoked_at`,
+    [sessionId],
   );
   return rows[0] ?? null;
 }
