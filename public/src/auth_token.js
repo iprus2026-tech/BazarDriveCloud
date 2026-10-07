@@ -12,6 +12,16 @@
 export const AUTH_STORAGE_KEY = 'bazardrive.auth.v1';
 const STORAGE_KEY = 'bazardrive.auth.v1';
 export const AUTH_CLEAR_FOREIGN = 'foreign';
+const REJECTED_PROJECTION_KEY = 'bazardrive.auth.rejected_projection.v1';
+let rejectedDetached = false;
+try {
+  if (typeof sessionStorage !== 'undefined') {
+    rejectedDetached = sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== null;
+  }
+} catch {
+  // An unreadable tab marker cannot authorize adopting shared credentials.
+  rejectedDetached = true;
+}
 // Fail closed in this tab when storage cannot replace/remove an old credential.
 let blocked = false;
 // Module-local tab ownership. A different tab may replace the origin-wide
@@ -31,7 +41,7 @@ function loadRaw() {
 }
 
 function load() {
-  if (blocked || tabDetachMode) return {};
+  if (rejectedDetached || blocked || tabDetachMode) return {};
   try { return loadRaw(); } catch { return {}; }
 }
 
@@ -56,6 +66,7 @@ export function getAuthUserId() {
 }
 
 export function pinAuthTabUser(userId) {
+  if (rejectedDetached) return false;
   if (userId === null) {
     // This tab explicitly booted anonymous. A credential that appears later
     // belongs to another tab until this tab performs its own setAuth().
@@ -69,6 +80,27 @@ export function pinAuthTabUser(userId) {
   tabDetachMode = null;
   blocked = false;
   return true;
+}
+
+export function isAuthTabRejected() {
+  return rejectedDetached;
+}
+
+// Rejection is tab-local: Web Storage has no atomic shared compare-and-delete.
+// Block getters before persisting; a failed write remains blocked and retryable.
+export function detachRejectedAuth() {
+  rejectedDetached = true;
+  blocked = true;
+  tabUserId = null;
+  tabDetachMode = 'rejected';
+  try {
+    sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1');
+    if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== '1') return false;
+    blocked = false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Persist the minted session (called by the onboarding otp-verify success path).
@@ -85,36 +117,36 @@ export function setAuth({ token, userId, phone } = {}) {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!token || !userId || saved?.token !== token || saved?.userId !== userId
         || saved?.phone !== (phone || null)) return false;
+    if (rejectedDetached) {
+      sessionStorage.removeItem(REJECTED_PROJECTION_KEY);
+      if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== null) return false;
+    }
+    rejectedDetached = false;
     blocked = false;
     tabUserId = userId;
     tabDetachMode = null;
     pendingWrite = null;
     return true;
   } catch {
+    if (rejectedDetached) {
+      try { sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1'); } catch {}
+    }
     return false;
   }
 }
 
 // Drop only the credential owned by this tab. If another tab has already
 // replaced the origin-wide record, detach locally but preserve that replacement.
-export function clearAuth(expectedCredential) {
+export function clearAuth() {
   blocked = true;
+  if (rejectedDetached) return AUTH_CLEAR_FOREIGN;
   try {
-    if (expectedCredential !== undefined
-        && (!expectedCredential || typeof expectedCredential.expectedToken !== 'string'
-          || !expectedCredential.expectedToken.trim()
-          || (expectedCredential.expectedUserId !== null
-            && (typeof expectedCredential.expectedUserId !== 'string'
-              || !expectedCredential.expectedUserId.trim())))) return false;
     const raw = loadRaw();
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
 
-    if ((expectedCredential && (raw.token || rawUserId)
-          && (raw.token !== expectedCredential.expectedToken
-            || rawUserId !== expectedCredential.expectedUserId))
-        || (pendingWrite && (raw.token || rawUserId)
-          && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId))) {
-      // Rejection owns one exact credential, including same-user replacements.
+    if (pendingWrite && (raw.token || rawUserId)
+        && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId)) {
+      // Another tab replaced the failed write. Never remove its credential.
       pendingWrite = null;
       tabUserId = null;
       tabDetachMode = AUTH_CLEAR_FOREIGN;

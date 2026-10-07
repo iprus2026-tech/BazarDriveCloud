@@ -7,7 +7,7 @@ import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
-import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId } from './auth_token.js';
+import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
 import { setLocalLogoutObserver } from './mock_auth.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
@@ -146,26 +146,13 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 // One controller owns both boot and post-verify reconciliation.
-const REJECTED_PROJECTION_KEY = 'bazardrive.auth.rejected_projection.v1';
-function clearRejectedProjectionMarker() {
-  try { sessionStorage.removeItem(REJECTED_PROJECTION_KEY); } catch {}
-}
 // Keep a rejected projection invalidated across this tab's reload without
 // overwriting the origin-wide profile owned by another tab.
-if (isBackendEnabled() && (!getAuthToken() || !getAuthUserId())) {
-  try {
-    if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) === '1'
-        && user.get().role !== 'guest') user.resetCacheOnly();
-  } catch {}
-}
+if (isBackendEnabled() && isAuthTabRejected()
+    && user.get().role !== 'guest') user.resetCacheOnly();
 const bootSession = createAuthSessionBootstrap({
   onRejectedSession: () => {
-    if (user.get().role === 'guest') {
-      clearRejectedProjectionMarker();
-      return;
-    }
-    try { sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1'); } catch {}
-    user.resetCacheOnly();
+    if (user.get().role !== 'guest') user.resetCacheOnly();
   },
 });
 setLocalLogoutObserver(() => !isBackendEnabled()
@@ -174,7 +161,8 @@ window.addEventListener('storage', (event) => {
   if (event.key !== AUTH_STORAGE_KEY) return;
   // The tab pin accepts a replacement token only for the same actor. Keep its
   // profile while reconciling; logout/foreign replacement drops the projection.
-  if (!getAuthToken() || !getAuthUserId()) user.resetCacheOnly();
+  if ((!getAuthToken() || !getAuthUserId())
+      && !(isAuthTabRejected() && user.get().role === 'guest')) user.resetCacheOnly();
   void bootSession.reconcile();
 });
 setScreenChromeMount(mountDriverRideReturn);
@@ -281,7 +269,6 @@ function onBootHashChange() {
 // Until routing starts, a direct hash navigation can still reach dev/docs.
 window.addEventListener('hashchange', onBootHashChange);
 bootSession.subscribe((snapshot) => {
-  if (snapshot.state === 'AUTHENTICATED') clearRejectedProjectionMarker();
   // Keep the current OTP/profile draft mounted while its owner awaits handoff.
   // A later route generation cannot suppress the normal boot/admission UI.
   if (onboardingHandoffOwner?.isCurrent()) return;

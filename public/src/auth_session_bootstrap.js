@@ -1,7 +1,7 @@
 // Boot identity and verified-login handoff. No logout/revoke or driver enrollment.
 import { isBackendEnabled } from './api_config.js';
 import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser,
-  AUTH_CLEAR_FOREIGN } from './auth_token.js';
+  detachRejectedAuth, isAuthTabRejected, AUTH_CLEAR_FOREIGN } from './auth_token.js';
 import { getSession } from './api_client.js';
 
 function confirmedUser(payload) {
@@ -22,6 +22,8 @@ export function createAuthSessionBootstrap({
   readUserId = getAuthUserId,
   writeAuth = setAuth,
   dropAuth = clearAuth,
+  detachAuth = detachRejectedAuth,
+  tabRejected = isAuthTabRejected,
   requestSession = getSession,
   pinTabUser = pinAuthTabUser,
   onRejectedSession = () => {},
@@ -35,7 +37,7 @@ export function createAuthSessionBootstrap({
   let loginAttemptSequence = 0;
   let handoff = null;
   let handoffRemovalPending = false;
-  let rejectedRemovalPending = null;
+  let rejectedDetachPending = false;
   let bootActorPinned = false;
 
   function makeSnapshot(state, user = null, error = null) {
@@ -54,15 +56,15 @@ export function createAuthSessionBootstrap({
     return snapshot;
   }
 
-  function removeRejectedCredential(credential) {
-    if (dropAuth(credential) === false) {
-      rejectedRemovalPending = credential;
-      handoffRemovalPending = handoff !== null;
+  function detachRejectedSession() {
+    if (detachAuth() !== true) {
+      rejectedDetachPending = true;
       return fail('AUTH_STORAGE_FAILED');
     }
-    rejectedRemovalPending = null;
+    rejectedDetachPending = false;
     handoffRemovalPending = false;
-    // Exact removal or AUTH_CLEAR_FOREIGN safely detaches this tab.
+    bootActorPinned = true;
+    // Durable tab detachment precedes projection invalidation and admission.
     onRejectedSession();
     publish('ANONYMOUS');
     return snapshot;
@@ -161,7 +163,7 @@ export function createAuthSessionBootstrap({
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
         generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority };
       handoffRemovalPending = false;
-      rejectedRemovalPending = null;
+      rejectedDetachPending = false;
       const resumed = await resumeLogin();
       return { ...resumed, handoffInstalled: true };
     };
@@ -282,12 +284,13 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
-    rejectedRemovalPending = null;
+    rejectedDetachPending = false;
     publish('ANONYMOUS');
     return true;
   }
 
   function abandonLogin() {
+    if (rejectedDetachPending && detachRejectedSession().state !== 'ANONYMOUS') return false;
     // A failed removal keeps the handoff pinned so Back can safely retry.
     const expected = handoff;
     if (!expected) return false;
@@ -328,6 +331,7 @@ export function createAuthSessionBootstrap({
   }
 
   function enterGuest() {
+    if (rejectedDetachPending && detachRejectedSession().state !== 'ANONYMOUS') return false;
     // Explicit Guest selection is an actor-detach boundary, not merely a
     // handoff cancellation. Do not discard handoff ownership until removal
     // is confirmed, so a failed storage operation stays retryable.
@@ -343,12 +347,13 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
-    rejectedRemovalPending = null;
+    rejectedDetachPending = false;
     publish('ANONYMOUS');
     return true;
   }
 
   function adoptAnonymousAfterExternalLogout() {
+    if (rejectedDetachPending && detachRejectedSession().state !== 'ANONYMOUS') return false;
     if (readToken() !== null || readUserId() !== null) {
       fail('AUTH_STORAGE_FAILED');
       return false;
@@ -360,7 +365,7 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
-    rejectedRemovalPending = null;
+    rejectedDetachPending = false;
     publish('ANONYMOUS');
     return true;
   }
@@ -375,8 +380,8 @@ export function createAuthSessionBootstrap({
       publish('LOCAL_DEMO_BOOT');
       return snapshot;
     }
-    // A blocked token read is not proof that a failed physical removal succeeded.
-    if (rejectedRemovalPending) return removeRejectedCredential(rejectedRemovalPending);
+    // Missing getters are not proof that durable tab detachment succeeded.
+    if (rejectedDetachPending || (!bootActorPinned && tabRejected())) return detachRejectedSession();
     if (!bootActorPinned) {
       const persistedUserId = readUserId();
       // Pin authenticated OR anonymous boot identity exactly once. A retry
@@ -419,42 +424,40 @@ export function createAuthSessionBootstrap({
       }).catch((error) => ({ kind: 'error', error }));
       const result = await Promise.race([request, cancelled, timeout]);
       if (ownSequence !== sequence || result.kind === 'cancelled') return snapshot;
+      // This response rejects the captured request, even if shared auth changed
+      // while it was in flight. Detach this tab without touching that record.
+      if (result.kind === 'response' && result.payload?.user === null) return detachRejectedSession();
       if (token !== readToken() || userId !== readUserId()
           || (expected && !ownsCredential(expected))) return fail('AUTH_IDENTITY_MISMATCH');
       if (uiContinuation && expected && !expected.ownsUI()) return fail('AUTH_UI_STALE');
 
       if (result.kind === 'response') {
-        if (result.payload?.user === null) {
-          removeRejectedCredential({ expectedToken: token, expectedUserId: userId });
-        }
-        else {
-          const user = confirmedUser(result.payload);
-          if (user && expected && user.userId !== expected.userId) {
-            if (dropAuth() === false) {
-              handoffRemovalPending = true;
-              fail('AUTH_STORAGE_FAILED');
-            } else {
-              fail('AUTH_IDENTITY_MISMATCH');
-            }
-          } else if (user && expected && expected.authority
-              && (user.activeRole !== expected.expectedRole
-                || user.phoneVerified !== true)) {
-            if (dropAuth() === false) {
-              handoffRemovalPending = true;
-              fail('AUTH_STORAGE_FAILED');
-            } else {
-              fail('ROLE_AUTHORITY_REQUIRED');
-            }
-          } else if (user && expected && !expected.authority && user.phoneVerified !== true) {
-            if (dropAuth() === false) {
-              handoffRemovalPending = true;
-              fail('AUTH_STORAGE_FAILED');
-            } else {
-              fail('ROLE_AUTHORITY_REQUIRED');
-            }
-          } else if (user) publish('AUTHENTICATED', user);
-          else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
-        }
+        const user = confirmedUser(result.payload);
+        if (user && expected && user.userId !== expected.userId) {
+          if (dropAuth() === false) {
+            handoffRemovalPending = true;
+            fail('AUTH_STORAGE_FAILED');
+          } else {
+            fail('AUTH_IDENTITY_MISMATCH');
+          }
+        } else if (user && expected && expected.authority
+            && (user.activeRole !== expected.expectedRole
+              || user.phoneVerified !== true)) {
+          if (dropAuth() === false) {
+            handoffRemovalPending = true;
+            fail('AUTH_STORAGE_FAILED');
+          } else {
+            fail('ROLE_AUTHORITY_REQUIRED');
+          }
+        } else if (user && expected && !expected.authority && user.phoneVerified !== true) {
+          if (dropAuth() === false) {
+            handoffRemovalPending = true;
+            fail('AUTH_STORAGE_FAILED');
+          } else {
+            fail('ROLE_AUTHORITY_REQUIRED');
+          }
+        } else if (user) publish('AUTHENTICATED', user);
+        else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
       } else {
         const code = result.kind === 'timeout' ? 'SESSION_TIMEOUT'
           : result.error?.code || 'NETWORK';
