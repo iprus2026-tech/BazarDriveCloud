@@ -97,15 +97,24 @@ export function setAuth({ token, userId, phone } = {}) {
 
 // Drop only the credential owned by this tab. If another tab has already
 // replaced the origin-wide record, detach locally but preserve that replacement.
-export function clearAuth() {
+export function clearAuth(expectedCredential) {
   blocked = true;
   try {
+    if (expectedCredential !== undefined
+        && (!expectedCredential || typeof expectedCredential.expectedToken !== 'string'
+          || !expectedCredential.expectedToken.trim()
+          || (expectedCredential.expectedUserId !== null
+            && (typeof expectedCredential.expectedUserId !== 'string'
+              || !expectedCredential.expectedUserId.trim())))) return false;
     const raw = loadRaw();
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
 
-    if (pendingWrite && (raw.token || rawUserId)
-        && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId)) {
-      // Another tab replaced the failed write. Never remove its credential.
+    if ((expectedCredential && (raw.token || rawUserId)
+          && (raw.token !== expectedCredential.expectedToken
+            || rawUserId !== expectedCredential.expectedUserId))
+        || (pendingWrite && (raw.token || rawUserId)
+          && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId))) {
+      // Rejection owns one exact credential, including same-user replacements.
       pendingWrite = null;
       tabUserId = null;
       tabDetachMode = AUTH_CLEAR_FOREIGN;

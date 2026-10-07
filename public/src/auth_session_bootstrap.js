@@ -35,6 +35,7 @@ export function createAuthSessionBootstrap({
   let loginAttemptSequence = 0;
   let handoff = null;
   let handoffRemovalPending = false;
+  let rejectedRemovalPending = null;
   let bootActorPinned = false;
 
   function makeSnapshot(state, user = null, error = null) {
@@ -50,6 +51,20 @@ export function createAuthSessionBootstrap({
 
   function fail(code) {
     publish('SESSION_UNKNOWN', null, { code, retryable: true });
+    return snapshot;
+  }
+
+  function removeRejectedCredential(credential) {
+    if (dropAuth(credential) === false) {
+      rejectedRemovalPending = credential;
+      handoffRemovalPending = handoff !== null;
+      return fail('AUTH_STORAGE_FAILED');
+    }
+    rejectedRemovalPending = null;
+    handoffRemovalPending = false;
+    // Exact removal or AUTH_CLEAR_FOREIGN safely detaches this tab.
+    onRejectedSession();
+    publish('ANONYMOUS');
     return snapshot;
   }
 
@@ -146,6 +161,7 @@ export function createAuthSessionBootstrap({
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
         generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority };
       handoffRemovalPending = false;
+      rejectedRemovalPending = null;
       const resumed = await resumeLogin();
       return { ...resumed, handoffInstalled: true };
     };
@@ -266,6 +282,7 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
+    rejectedRemovalPending = null;
     publish('ANONYMOUS');
     return true;
   }
@@ -326,6 +343,7 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
+    rejectedRemovalPending = null;
     publish('ANONYMOUS');
     return true;
   }
@@ -342,6 +360,7 @@ export function createAuthSessionBootstrap({
     active = null;
     handoff = null;
     handoffRemovalPending = false;
+    rejectedRemovalPending = null;
     publish('ANONYMOUS');
     return true;
   }
@@ -356,6 +375,8 @@ export function createAuthSessionBootstrap({
       publish('LOCAL_DEMO_BOOT');
       return snapshot;
     }
+    // A blocked token read is not proof that a failed physical removal succeeded.
+    if (rejectedRemovalPending) return removeRejectedCredential(rejectedRemovalPending);
     if (!bootActorPinned) {
       const persistedUserId = readUserId();
       // Pin authenticated OR anonymous boot identity exactly once. A retry
@@ -365,6 +386,7 @@ export function createAuthSessionBootstrap({
     }
     const expected = handoff;
     const token = readToken();
+    const userId = readUserId();
     if (expected && !ownsCredential(expected)) {
       return fail('AUTH_IDENTITY_MISMATCH');
     }
@@ -397,19 +419,13 @@ export function createAuthSessionBootstrap({
       }).catch((error) => ({ kind: 'error', error }));
       const result = await Promise.race([request, cancelled, timeout]);
       if (ownSequence !== sequence || result.kind === 'cancelled') return snapshot;
-      if (token !== readToken() || (expected && !ownsCredential(expected))) return fail('AUTH_IDENTITY_MISMATCH');
+      if (token !== readToken() || userId !== readUserId()
+          || (expected && !ownsCredential(expected))) return fail('AUTH_IDENTITY_MISMATCH');
       if (uiContinuation && expected && !expected.ownsUI()) return fail('AUTH_UI_STALE');
 
       if (result.kind === 'response') {
         if (result.payload?.user === null) {
-          if (dropAuth() === false) {
-            handoffRemovalPending = expected !== null;
-            fail('AUTH_STORAGE_FAILED');
-          } else {
-            // Owned removal or AUTH_CLEAR_FOREIGN safely detaches this tab.
-            onRejectedSession();
-            publish('ANONYMOUS');
-          }
+          removeRejectedCredential({ expectedToken: token, expectedUserId: userId });
         }
         else {
           const user = confirmedUser(result.payload);

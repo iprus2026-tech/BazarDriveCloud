@@ -146,9 +146,26 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 // One controller owns both boot and post-verify reconciliation.
+const REJECTED_PROJECTION_KEY = 'bazardrive.auth.rejected_projection.v1';
+function clearRejectedProjectionMarker() {
+  try { sessionStorage.removeItem(REJECTED_PROJECTION_KEY); } catch {}
+}
+// Keep a rejected projection invalidated across this tab's reload without
+// overwriting the origin-wide profile owned by another tab.
+if (isBackendEnabled() && (!getAuthToken() || !getAuthUserId())) {
+  try {
+    if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) === '1'
+        && user.get().role !== 'guest') user.resetCacheOnly();
+  } catch {}
+}
 const bootSession = createAuthSessionBootstrap({
   onRejectedSession: () => {
-    if (user.get().role !== 'guest') user.resetCacheOnly();
+    if (user.get().role === 'guest') {
+      clearRejectedProjectionMarker();
+      return;
+    }
+    try { sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1'); } catch {}
+    user.resetCacheOnly();
   },
 });
 setLocalLogoutObserver(() => !isBackendEnabled()
@@ -264,6 +281,7 @@ function onBootHashChange() {
 // Until routing starts, a direct hash navigation can still reach dev/docs.
 window.addEventListener('hashchange', onBootHashChange);
 bootSession.subscribe((snapshot) => {
+  if (snapshot.state === 'AUTHENTICATED') clearRejectedProjectionMarker();
   // Keep the current OTP/profile draft mounted while its owner awaits handoff.
   // A later route generation cannot suppress the normal boot/admission UI.
   if (onboardingHandoffOwner?.isCurrent()) return;
