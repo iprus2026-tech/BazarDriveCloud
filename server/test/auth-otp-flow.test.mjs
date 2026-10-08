@@ -7,8 +7,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import { randomUUID } from 'node:crypto';
+import Fastify from 'fastify';
+import fp from 'fastify-plugin';
 
 import { buildApp } from '../src/server.js';
+import { hashToken } from '../src/services/auth/tokens.js';
+import authService from '../src/services/auth/index.js';
+import authPlugin from '../src/plugins/auth.js';
+import errorHandler from '../src/plugins/error-handler.js';
+import { loggerOptions } from '../src/infra/logger.js';
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const SKIP = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -28,6 +36,299 @@ async function cleanupPhone(client, phone) {
 }
 
 const post = (app, url, payload) => app.inject({ method: 'POST', url, payload });
+
+const logoutUrl = '/api/v1/auth/logout';
+const bearer = token => ({ authorization: `Bearer ${token}` });
+const logout = (app, token) => app.inject({ method: 'POST', url: logoutUrl, headers: bearer(token) });
+const readSession = (app, token) => app.inject({
+  method: 'GET', url: '/api/v1/auth/session', headers: bearer(token),
+});
+function assertLogoutSuccess(response) {
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { ok: true });
+}
+
+// Exercise real routes/resolver/repository SQL without connecting a database.
+async function logoutFixture(t, { logged = false } = {}) {
+  const token = 'logout-plaintext-token-canary';
+  const row = {
+    id: randomUUID(), user_id: randomUUID(), active_role: null,
+    phone_verified: false, token_hash: hashToken(token), revoked_at: null, expires_at: null,
+  };
+  const state = { lookupFails: false, writeFails: false, missing: false };
+  const calls = [];
+  const logs = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    if (/^\s*SELECT\b/.test(sql) && sql.includes('FROM auth_session')) {
+      assert.deepEqual(params, [hashToken(token)]);
+      assert.ok(sql.includes('revoked_at IS NULL'));
+      assert.ok(sql.includes('expires_at > now()'));
+      if (state.lookupFails) throw new Error('diagnostic lookup failure');
+      return { rows: row.revoked_at || row.expires_at ? [] : [{ ...row }] };
+    }
+    assert.match(sql, /^\s*UPDATE auth_session\b/);
+    assert.match(sql, /WHERE id = \$1/);
+    assert.deepEqual(params, [row.id]);
+    if (state.writeFails) {
+      throw new Error(`SQL detail must not leak: ${token} ${row.token_hash} ${row.id} ${row.user_id}`);
+    }
+    if (state.missing) return { rows: [] };
+    row.revoked_at ??= new Date();
+    return { rows: [{ ...row }] };
+  };
+  let app;
+  if (logged) {
+    app = Fastify({
+      logger: { ...loggerOptions({ logLevel: 'info' }), stream: { write: line => logs.push(line) } },
+      ajv: { customOptions: { coerceTypes: false, removeAdditional: false } },
+    });
+    app.decorate('config', baseConfig);
+    await app.register(fp(async instance => {
+      instance.decorate('db', { query });
+    }, { name: 'db' }));
+    await app.register(errorHandler);
+    await app.register(authPlugin);
+    await app.register(authService, { prefix: '/api/v1/auth' });
+  } else {
+    app = await buildApp({ config: { ...baseConfig, databaseUrl: '' } });
+    app.db.query = query;
+    app.db.ready = async () => true;
+  }
+  t.after(() => app.close());
+  await app.ready();
+  return { app, row, token, state, calls, logs };
+}
+
+test('logout: live server-resolved session only, hash-only lookup, generic reply and repeat', async t => {
+  const { app, token, row, calls } = await logoutFixture(t);
+  assertLogoutSuccess(await logout(app, token));
+  assert.ok(row.revoked_at);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(call => call.params), [[hashToken(token)], [row.id]]);
+  assert.ok(!JSON.stringify(calls).includes(token));
+  const firstRevokedAt = row.revoked_at;
+  const session = await readSession(app, token);
+  assert.equal(session.statusCode, 200);
+  assert.deepEqual(session.json(), { user: null });
+  assertLogoutSuccess(await logout(app, token));
+  assert.equal(row.revoked_at, firstRevokedAt);
+  assert.equal(calls.filter(call => /UPDATE auth_session/.test(call.sql)).length, 1);
+});
+
+test('logout: every supplied JSON body or query is rejected before auth lookup', async t => {
+  const { app, token, calls } = await logoutFixture(t);
+  for (const payload of [{}, { sessionId: randomUUID() }, { userId: randomUUID() }, { token }, null, [], '', false, 0]) {
+    const response = await app.inject({
+      method: 'POST', url: logoutUrl,
+      headers: { ...bearer(token), 'content-type': 'application/json' },
+      payload: JSON.stringify(payload),
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().code, 'VALIDATION');
+    assert.equal(response.json().retryable, false);
+    assert.equal(calls.length, 0);
+  }
+  for (const query of ['sessionId=foreign', 'userId=foreign', 'token=foreign', 'anything=', 'sessionId=a&sessionId=b']) {
+    const response = await app.inject({ method: 'POST', url: `${logoutUrl}?${query}`, headers: bearer(token) });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().code, 'VALIDATION');
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('logout: absent and non-parsing Authorization stay anonymous with zero DB calls', async t => {
+  const { app, calls } = await logoutFixture(t);
+  for (const authorization of [undefined, 'Basic credentials', 'Bearer', 'Bearer   ', '']) {
+    assertLogoutSuccess(await app.inject({
+      method: 'POST', url: logoutUrl, headers: authorization === undefined ? {} : { authorization },
+    }));
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('logout: unknown bearer returns the same success with no write', async t => {
+  const { app, token, calls } = await logoutFixture(t);
+  app.db.query = async (sql, params) => {
+    calls.push({ sql, params });
+    assert.deepEqual(params, [hashToken(token)]);
+    assert.match(sql, /^\s*SELECT\b/);
+    return { rows: [] };
+  };
+  assertLogoutSuccess(await logout(app, token));
+  assert.equal(calls.length, 1);
+});
+
+test('logout: expired and revoked lookup outcomes never issue a write', async t => {
+  const { app, token, row, calls } = await logoutFixture(t);
+  row.expires_at = new Date(0);
+  assertLogoutSuccess(await logout(app, token));
+  row.expires_at = null;
+  row.revoked_at = new Date(0);
+  assertLogoutSuccess(await logout(app, token));
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => /^\s*SELECT\b/.test(call.sql)));
+});
+
+test('logout: lookup outage stays retryable 503, including token content accepted by parser', async t => {
+  const { app, token, state, calls } = await logoutFixture(t);
+  state.lookupFails = true;
+  const response = await logout(app, token);
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), {
+    error: 'session lookup failed', code: 'SESSION_LOOKUP_FAILED', retryable: true,
+  });
+  assert.equal(calls.length, 1);
+  app.db.query = async () => { throw new Error('lookup unavailable'); };
+  const malformedContent = await logout(app, 'invalid token with spaces');
+  assert.equal(malformedContent.statusCode, 503);
+  assert.deepEqual(malformedContent.json(), response.json());
+});
+
+test('logout: write outage stays retryable 503, no response/log secrets, retry recovers', async t => {
+  const { app, token, row, state, logs } = await logoutFixture(t, { logged: true });
+  state.writeFails = true;
+  const response = await logout(app, token);
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), {
+    error: 'session revoke failed', code: 'SESSION_REVOKE_FAILED', retryable: true,
+  });
+  assert.equal(row.revoked_at, null);
+  state.writeFails = false;
+  assertLogoutSuccess(await logout(app, token));
+  assert.ok(logs.some(line => line.includes('auth session revoke failed')));
+  for (const secret of [token, row.token_hash, row.id, row.user_id, 'SQL detail']) {
+    assert.ok(!logs.join('').includes(secret), `no ${secret} in logs`);
+    assert.ok(!response.body.includes(secret));
+  }
+});
+
+test('logout: row deleted after successful lookup is idempotent success', async t => {
+  const { app, token, state, calls } = await logoutFixture(t);
+  state.missing = true;
+  assertLogoutSuccess(await logout(app, token));
+  assert.equal(calls.length, 2);
+});
+
+test('logout: operational routes keep lazy auth and independent readiness', async t => {
+  const { app, token, calls } = await logoutFixture(t);
+  for (const [url, status] of [['/api/v1/health', 200], ['/api/v1/readyz', 200], ['/metrics', 501]]) {
+    const response = await app.inject({ method: 'GET', url, headers: bearer(token) });
+    assert.equal(response.statusCode, status);
+  }
+  assert.equal(calls.length, 0);
+});
+
+async function mintSession(app, phone) {
+  const request = await post(app, '/api/v1/auth/otp/request', { phone });
+  assert.equal(request.statusCode, 200);
+  const verified = await post(app, '/api/v1/auth/otp/verify', { phone, code: request.json().devCode });
+  assert.equal(verified.statusCode, 200);
+  return verified.json();
+}
+
+test('logout Postgres: OTP round-trip, sibling/foreign isolation, retry and hash at rest', { skip: SKIP }, async t => {
+  const app = await buildApp({ config: baseConfig });
+  const phones = [0, 1].map(i => `+1559${String(process.pid).padStart(7, '0')}${i}`);
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  t.after(async () => {
+    for (const phone of phones) await cleanupPhone(db, phone);
+    await db.end(); await app.close();
+  });
+  const a = await mintSession(app, phones[0]);
+  const sibling = await mintSession(app, phones[0]);
+  const foreign = await mintSession(app, phones[1]);
+  assert.equal(a.user.userId, sibling.user.userId);
+  assert.notEqual(a.user.userId, foreign.user.userId);
+  const live = await readSession(app, a.token);
+  assert.equal(live.statusCode, 200);
+  const sessionId = live.json().user.sessionId;
+  assert.equal(live.json().user.userId, a.user.userId);
+  const snapshot = () => db.query(
+    'SELECT * FROM auth_session WHERE user_id = ANY($1::uuid[]) ORDER BY id',
+    [[a.user.userId, foreign.user.userId]],
+  );
+  const before = (await snapshot()).rows;
+  assert.equal(before.length, 3);
+  assert.ok(before.every(row => row.revoked_at === null));
+  for (const actor of [a, sibling, foreign]) {
+    const stored = before.find(row => row.token_hash === hashToken(actor.token));
+    assert.ok(stored, 'only token hash is persisted');
+    assert.ok(!JSON.stringify(before).includes(actor.token));
+  }
+  assertLogoutSuccess(await logout(app, a.token));
+  assert.deepEqual((await readSession(app, a.token)).json(), { user: null });
+  for (const actor of [sibling, foreign]) {
+    const response = await readSession(app, actor.token);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().user.userId, actor.user.userId);
+  }
+  const after = (await snapshot()).rows;
+  const target = after.find(row => row.id === sessionId);
+  assert.ok(target.revoked_at);
+  for (const row of after.filter(row => row.id !== sessionId)) {
+    assert.deepEqual(row, before.find(old => old.id === row.id), 'non-target row remains unchanged');
+  }
+  assertLogoutSuccess(await logout(app, a.token));
+  assert.deepEqual((await snapshot()).rows, after, 'retry preserves first timestamp and all rows');
+});
+
+test('logout Postgres: unknown, expired and pre-revoked bearer share success without resurrection', { skip: SKIP }, async t => {
+  const app = await buildApp({ config: baseConfig });
+  const phone = `+1559${String(process.pid).padStart(7, '0')}2`;
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  t.after(async () => { await cleanupPhone(db, phone); await db.end(); await app.close(); });
+  const expired = await mintSession(app, phone);
+  const revoked = await mintSession(app, phone);
+  await db.query("UPDATE auth_session SET expires_at = now() - interval '1 hour' WHERE token_hash = $1", [hashToken(expired.token)]);
+  await db.query("UPDATE auth_session SET revoked_at = now() - interval '1 hour' WHERE token_hash = $1", [hashToken(revoked.token)]);
+  const before = (await db.query('SELECT * FROM auth_session WHERE user_id = $1 ORDER BY id', [expired.user.userId])).rows;
+  for (const token of [randomUUID(), expired.token, revoked.token]) {
+    assertLogoutSuccess(await logout(app, token));
+    const response = await readSession(app, token);
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { user: null });
+  }
+  const after = (await db.query('SELECT * FROM auth_session WHERE user_id = $1 ORDER BY id', [expired.user.userId])).rows;
+  assert.deepEqual(after, before, 'non-live sessions are neither rewritten nor resurrected');
+});
+
+test('logout Postgres: concurrent resolved requests preserve first revocation', { skip: SKIP }, async t => {
+  const app = await buildApp({ config: baseConfig });
+  const phone = `+1559${String(process.pid).padStart(7, '0')}3`;
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  t.after(async () => { await cleanupPhone(db, phone); await db.end(); await app.close(); });
+  const actor = await mintSession(app, phone);
+  const originalQuery = app.db.query;
+  let resolveCount = 0;
+  let release;
+  const bothResolved = new Promise(resolve => { release = resolve; });
+  const stamps = [];
+  app.db.query = async (sql, params) => {
+    const result = await originalQuery(sql, params);
+    if (/^\s*SELECT\b/.test(sql) && sql.includes('FROM auth_session')) {
+      assert.equal(result.rows.length, 1);
+      resolveCount += 1;
+      if (resolveCount === 2) release();
+      await bothResolved;
+    }
+    if (/^\s*UPDATE auth_session\b/.test(sql)) stamps.push(result.rows[0].revoked_at.getTime());
+    return result;
+  };
+  try {
+    const responses = await Promise.all([logout(app, actor.token), logout(app, actor.token)]);
+    responses.forEach(assertLogoutSuccess);
+    assert.equal(resolveCount, 2);
+    assert.equal(stamps.length, 2);
+    assert.equal(stamps[0], stamps[1]);
+  } finally {
+    app.db.query = originalQuery;
+  }
+  assert.deepEqual((await readSession(app, actor.token)).json(), { user: null });
+});
 
 test('session transaction failure rolls back new passenger and OTP consumption in Postgres',
   { skip: SKIP }, async (t) => {

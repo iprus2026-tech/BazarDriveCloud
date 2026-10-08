@@ -1,8 +1,9 @@
 // /server/src/services/auth/index.js — BD-DOCS-032 phone+OTP + session service (ADR
-// BD-DOCS-041 §API). All three routes are now LIVE (R02 of #784):
+// BD-DOCS-041 §API). All four routes are LIVE (OTP R02; logout #829 B1):
 //   GET  /api/v1/auth/session       -> { user } (null when anonymous)            [LIVE]
 //   POST /api/v1/auth/otp/request   -> { ok, expiresInSeconds, devCode? }        [LIVE]
 //   POST /api/v1/auth/otp/verify    -> { token, user }                           [LIVE]
+//   POST /api/v1/auth/logout        -> { ok: true }                             [LIVE]
 //
 // request mints a numeric code, stores ONLY its hash (auth_otp), and — in dev-mode — echoes
 // the plaintext in the response (there is no SMS provider yet; BD-DOCS-032 open question).
@@ -20,7 +21,7 @@ import { generateToken, generateOtpCode, hashOtpCode, hashToken, hashesEqual } f
 import { normalizePhone, isValidPhone } from './phone.js';
 import { insertOtp, findLatestLiveOtpByPhone, markOtpConsumed, incrementOtpAttempts } from '../../repositories/otps.js';
 import { resolveVerifiedLoginUser } from '../../repositories/users.js';
-import { insertSession } from '../../repositories/sessions.js';
+import { insertSession, revokeSessionById } from '../../repositories/sessions.js';
 
 // Uniform problem shape { error, code, retryable } — matches plugins/error-handler.js so the
 // client loadResource overlay reads these the same as a thrown error.
@@ -82,6 +83,40 @@ export default async function authService(app) {
       });
     }
     return { user: user ?? null };
+  });
+
+  app.post('/logout', {
+    // Reject all client-selected targets before validation or session lookup.
+    preValidation: async (req, reply) => {
+      if (req.body !== undefined || Object.keys(req.query).length > 0) {
+        return problem(reply, 400, 'VALIDATION', 'logout requires no body or query parameters');
+      }
+    },
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['ok'],
+          properties: { ok: { type: 'boolean', const: true } },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const user = await req.resolveUser();
+    if (req.authError) {
+      return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
+    }
+    if (user) {
+      try {
+        // Missing rows count as concurrent deletion success; never revoke siblings.
+        await revokeSessionById(app.db, user.sessionId);
+      } catch {
+        req.log.warn('auth session revoke failed');
+        return problem(reply, 503, 'SESSION_REVOKE_FAILED', 'session revoke failed', true);
+      }
+    }
+    return { ok: true };
   });
 
   // POST /otp/request — mint + store a hashed code for a phone; dev-mode echoes it.
