@@ -17,7 +17,8 @@
 // user id to scope keys under.
 
 import { user } from './state.js';
-import { clearUserScopedStorage, AUTH_CLEAR_FOREIGN } from './storage_boundary.js';
+import { clearUserScopedStorage, clearUserScopedCachesPreservingAuth,
+  AUTH_CLEAR_FOREIGN } from './storage_boundary.js';
 export { AUTH_CLEAR_FOREIGN };
 import { clearSmokeRole } from './smoke_role.js';
 import { go } from './router.js';
@@ -33,13 +34,17 @@ export function setLocalLogoutObserver(observer) {
 // still need the same cleanup guarantees.
 // BD-ROLE-05 — also clear the per-tab role override so a stale getSmokeRole()
 // value cannot outlive the user that set it.
-export function resetLocalSession({ allowForeignDetach = false } = {}) {
+export function resetLocalSession({ allowForeignDetach = false,
+  clearAccountStateOnForeignDetach = false } = {}) {
   const cleared = clearUserScopedStorage();
   if (cleared === false) return false;
   clearSmokeRole();
   if (cleared === AUTH_CLEAR_FOREIGN) {
     if (!allowForeignDetach) return false;
-    user.resetCacheOnly();
+    if (clearAccountStateOnForeignDetach) {
+      clearUserScopedCachesPreservingAuth();
+      user.reset();
+    } else user.resetCacheOnly();
     return AUTH_CLEAR_FOREIGN;
   }
   user.reset();

@@ -60,11 +60,18 @@ function loadRaw() {
   try { return raw ? (JSON.parse(raw) || {}) : {}; } catch { return {}; }
 }
 
+function recordOwned(record) {
+  if (!Object.hasOwn(record, 'ownerVersion')) return marker === null;
+  return typeof record.ownerVersion === 'string' && OWNER_VERSION.test(record.ownerVersion)
+    && ['candidate', 'bound'].includes(marker?.state)
+    && record.ownerVersion === marker.ownerVersion;
+}
+
 function load() {
   if (marker?.state === 'rejected' || blocked || tabDetachMode || !markerMatches()) return {};
   try {
     const record = loadRaw();
-    return marker && record.ownerVersion !== marker.ownerVersion ? {} : record;
+    return recordOwned(record) ? record : {};
   } catch { return {}; }
 }
 
@@ -106,9 +113,8 @@ export function pinAuthTabUser(userId) {
 }
 
 export function isAuthTabRejected() {
-  if (!marker) return !markerMatches();
-  if (marker.state === 'rejected' || blocked || !markerMatches()) return true;
-  try { return loadRaw().ownerVersion !== marker.ownerVersion; } catch { return true; }
+  if (marker?.state === 'rejected' || (marker && blocked) || !markerMatches()) return true;
+  try { return !recordOwned(loadRaw()); } catch { return true; }
 }
 
 export function getAuthOwnerVersion() {
@@ -154,12 +160,12 @@ export function detachRejectedAuth() {
 
 // Persist the minted session (called by the onboarding otp-verify success path).
 export function setAuth({ token, userId, phone } = {}) {
+  const previousMarker = markerMatches() ? marker : { state: 'rejected' };
   blocked = true;
-  const needsMarker = marker !== null || !markerMatches();
   let succeeded = false;
   try {
     const ownerVersion = globalThis.crypto.randomUUID();
-    if (needsMarker && !persistMarker({ state: 'candidate', ownerVersion })) return false;
+    if (!persistMarker({ state: 'candidate', ownerVersion })) return false;
     const next = {
       token: token || null,
       userId: userId || null,
@@ -180,9 +186,19 @@ export function setAuth({ token, userId, phone } = {}) {
   } catch {
     return false;
   } finally {
-    if (needsMarker && !succeeded) {
-      marker = { state: 'rejected' };
-      try { persistMarker(marker); } catch {}
+    if (!succeeded) {
+      try {
+        if (previousMarker) {
+          if (!persistMarker(previousMarker)) throw new Error('Auth marker restore failed');
+        } else {
+          marker = null;
+          sessionStorage.removeItem(REJECTED_PROJECTION_KEY);
+          if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== null) throw new Error('Auth marker restore failed');
+        }
+      } catch {
+        marker = { state: 'rejected' };
+        try { persistMarker(marker); } catch {}
+      }
     }
   }
 }
@@ -197,6 +213,9 @@ export function clearAuth() {
     const raw = loadRaw();
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
 
+    if (Object.hasOwn(raw, 'ownerVersion') && !recordOwned(raw)) {
+      return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
+    }
     if (marker && raw.ownerVersion !== marker.ownerVersion
         && !(tabDetachMode === 'own-cleared' && !raw.token && !rawUserId)) {
       return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;

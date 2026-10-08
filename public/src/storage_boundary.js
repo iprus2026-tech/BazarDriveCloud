@@ -126,6 +126,12 @@ export function clearUserScopedStorage() {
   // A replacement tab owns the origin-wide actor. Preserve all of its shared
   // account-scoped caches instead of letting this stale tab wipe them.
   if (authClear === AUTH_CLEAR_FOREIGN) return AUTH_CLEAR_FOREIGN;
+  return clearUserScopedCachesPreservingAuth();
+}
+
+// Explicit OTP account takeover reuses the ordinary cache boundary without
+// removing the shared credential before this tab installs its verified actor.
+export function clearUserScopedCachesPreservingAuth() {
   clearRideHistory();
   clearFavoriteRoutes();
   clearActiveRideStore();
