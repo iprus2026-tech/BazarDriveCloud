@@ -1,7 +1,8 @@
 // Boot identity and verified-login handoff. No logout/revoke or driver enrollment.
 import { isBackendEnabled } from './api_config.js';
 import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser,
-  detachRejectedAuth, isAuthTabRejected, AUTH_CLEAR_FOREIGN } from './auth_token.js';
+  detachRejectedAuth, isAuthTabRejected, getAuthOwnerVersion, isAuthCandidate, commitAuthCandidate,
+  AUTH_CLEAR_FOREIGN } from './auth_token.js';
 import { getSession } from './api_client.js';
 
 function confirmedUser(payload) {
@@ -24,6 +25,9 @@ export function createAuthSessionBootstrap({
   dropAuth = clearAuth,
   detachAuth = detachRejectedAuth,
   tabRejected = isAuthTabRejected,
+  readOwnerVersion = getAuthOwnerVersion,
+  authCandidate = isAuthCandidate,
+  commitCandidate = commitAuthCandidate,
   requestSession = getSession,
   pinTabUser = pinAuthTabUser,
   onRejectedSession = () => {},
@@ -46,7 +50,11 @@ export function createAuthSessionBootstrap({
   }
 
   function publish(state, user = null, error = null) {
-    if (state === 'AUTHENTICATED' && user?.userId) pinTabUser(user.userId);
+    if (state === 'AUTHENTICATED' && user?.userId && pinTabUser(user.userId) === false) {
+      state = 'SESSION_UNKNOWN';
+      user = null;
+      error = { code: 'AUTH_IDENTITY_MISMATCH', retryable: true };
+    }
     snapshot = makeSnapshot(state, user, error);
     for (const listener of listeners) listener(snapshot);
   }
@@ -125,8 +133,8 @@ export function createAuthSessionBootstrap({
         return { ok: false, code: 'ROLE_AUTHORITY_REQUIRED', handoffInstalled: false };
       }
       // Crossing an identity boundary must clear the previous account cache
-      // before B can ever be persisted. Same-account refresh uses setAuth's
-      // atomic replacement + readback: deleting first would emit a transient
+      // before B can ever be persisted. Same-account refresh replaces the
+      // record without deleting first, which would emit a transient
       // logout into other tabs and discard their same-account profiles.
       if (!priorUserId || priorUserId !== u.userId) {
         const resetOk = resetAccount({
@@ -161,6 +169,7 @@ export function createAuthSessionBootstrap({
       }
       const generation = ++loginSequence;
       handoff = { token: payload.token, userId: u.userId, phone: phone || null,
+        ownerVersion: readOwnerVersion(),
         generation, ownsUI: owns, expectedRole: authorityRole, authority: verifiedAuthority };
       handoffRemovalPending = false;
       rejectedDetachPending = false;
@@ -182,6 +191,7 @@ export function createAuthSessionBootstrap({
   function authorityConfirmed(expected, { requireUI = true } = {}) {
     return !!expected && expected === handoff && (!requireUI || expected.ownsUI())
       && expected.authority && readToken() === expected.token && readUserId() === expected.userId
+      && (expected.ownerVersion || null) === readOwnerVersion()
       && snapshot.state === 'AUTHENTICATED' && snapshot.user?.userId === expected.userId
       && snapshot.user.activeRole === expected.expectedRole && snapshot.user.phoneVerified === true;
   }
@@ -205,7 +215,8 @@ export function createAuthSessionBootstrap({
   // Credential ownership survives disposal of the OTP screen; its continuation does not.
   function ownsCredential(expected) {
     return expected === handoff && expected.generation === loginSequence
-      && readToken() === expected.token && readUserId() === expected.userId;
+      && readToken() === expected.token && readUserId() === expected.userId
+      && (expected.ownerVersion || null) === readOwnerVersion();
   }
 
   function isLoginDetached() {
@@ -246,6 +257,7 @@ export function createAuthSessionBootstrap({
       token,
       userId,
       phone: null,
+      ownerVersion: readOwnerVersion(),
       generation,
       ownsUI: isCurrent,
       expectedRole: snapshot.user.activeRole,
@@ -309,7 +321,13 @@ export function createAuthSessionBootstrap({
       && currentToken === expected.token && currentUserId === expected.userId;
     const credentialMissing = currentToken === null && currentUserId === null;
 
-    if (credentialMissing) return finishAbandonAsAnonymous();
+    if (credentialMissing) {
+      if (expected.ownerVersion && dropAuth() === false) {
+        fail('AUTH_STORAGE_FAILED');
+        return false;
+      }
+      return finishAbandonAsAnonymous();
+    }
 
     if (!credentialOwned) {
       ++loginAttemptSequence;
@@ -392,6 +410,8 @@ export function createAuthSessionBootstrap({
     const expected = handoff;
     const token = readToken();
     const userId = readUserId();
+    const ownerVersion = readOwnerVersion();
+    const candidate = authCandidate();
     if (expected && !ownsCredential(expected)) {
       return fail('AUTH_IDENTITY_MISMATCH');
     }
@@ -428,6 +448,7 @@ export function createAuthSessionBootstrap({
       // while it was in flight. Detach this tab without touching that record.
       if (result.kind === 'response' && result.payload?.user === null) return detachRejectedSession();
       if (token !== readToken() || userId !== readUserId()
+          || ownerVersion !== readOwnerVersion()
           || (expected && !ownsCredential(expected))) return fail('AUTH_IDENTITY_MISMATCH');
       if (uiContinuation && expected && !expected.ownsUI()) return fail('AUTH_UI_STALE');
 
@@ -456,8 +477,14 @@ export function createAuthSessionBootstrap({
           } else {
             fail('ROLE_AUTHORITY_REQUIRED');
           }
-        } else if (user) publish('AUTHENTICATED', user);
-        else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
+        } else if (user) {
+          if (ownerVersion && (user.userId !== userId || (candidate && user.phoneVerified !== true)
+              || !commitCandidate(ownerVersion) || readOwnerVersion() !== ownerVersion
+              || token !== readToken() || userId !== readUserId())) {
+            return fail('AUTH_IDENTITY_MISMATCH');
+          }
+          publish('AUTHENTICATED', user);
+        } else publish('SESSION_UNKNOWN', null, { code: 'SESSION_PROTOCOL', retryable: true });
       } else {
         const code = result.kind === 'timeout' ? 'SESSION_TIMEOUT'
           : result.error?.code || 'NETWORK';

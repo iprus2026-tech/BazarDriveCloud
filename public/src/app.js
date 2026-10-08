@@ -146,8 +146,8 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 // One controller owns both boot and post-verify reconciliation.
-// Keep a rejected projection invalidated across this tab's reload without
-// overwriting the origin-wide profile owned by another tab.
+// Rejected or mismatching candidate/bound ownership invalidates only this tab's
+// projection. A matching candidate still waits for server-confirmed admission.
 if (isBackendEnabled() && isAuthTabRejected()
     && user.get().role !== 'guest') user.resetCacheOnly();
 const bootSession = createAuthSessionBootstrap({
@@ -159,8 +159,8 @@ setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
 window.addEventListener('storage', (event) => {
   if (event.key !== AUTH_STORAGE_KEY) return;
-  // The tab pin accepts a replacement token only for the same actor. Keep its
-  // profile while reconciling; logout/foreign replacement drops the projection.
+  // Legacy tabs keep their actor pin; rejected-tab logins also pin the opaque
+  // write version. Even same-actor replacement must not adopt another write.
   if ((!getAuthToken() || !getAuthUserId())
       && !(isAuthTabRejected() && user.get().role === 'guest')) user.resetCacheOnly();
   void bootSession.reconcile();

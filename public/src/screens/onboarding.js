@@ -621,7 +621,7 @@ export default function onboarding(renderContext = { isCurrent: () => true }, au
           isCurrent: () => ownsAttempt(attempt),
           expectedRole: expectedAuthRole(),
           resetAccount: ({ accountSwitch } = {}) => {
-            const resetOk = resetLocalSession();
+            const resetOk = resetLocalSession({ allowForeignDetach: true });
             if (resetOk === false) return false;
             accountBoundaryResetDuringLogin = true;
             accountSwitchedDuringLogin = accountSwitch === true;

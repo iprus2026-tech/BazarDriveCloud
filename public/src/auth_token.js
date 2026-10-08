@@ -1,6 +1,6 @@
 // public/src/auth_token.js — R17 / CUT-2 of #784 (frontend auth-token cutover).
 //
-// Owns the bearer-token store behind `bazardrive.auth.v1` ({ token, userId, phone }). This is the
+// Owns `bazardrive.auth.v1` ({ token, userId, phone, optional ownerVersion }). This is the
 // single source for api_config.getSessionToken(), so apiFetch attaches `Authorization: Bearer …`
 // once a real session exists. The token is minted by the onboarding phone→otp flow against the live
 // POST /auth/otp/verify (BD-DOCS-032 / R02).
@@ -13,14 +13,34 @@ export const AUTH_STORAGE_KEY = 'bazardrive.auth.v1';
 const STORAGE_KEY = 'bazardrive.auth.v1';
 export const AUTH_CLEAR_FOREIGN = 'foreign';
 const REJECTED_PROJECTION_KEY = 'bazardrive.auth.rejected_projection.v1';
-let rejectedDetached = false;
-try {
-  if (typeof sessionStorage !== 'undefined') {
-    rejectedDetached = sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== null;
-  }
-} catch {
-  // An unreadable tab marker cannot authorize adopting shared credentials.
-  rejectedDetached = true;
+const OWNER_VERSION = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function readMarker() {
+  try {
+    const value = typeof sessionStorage === 'undefined' ? null
+      : sessionStorage.getItem(REJECTED_PROJECTION_KEY);
+    if (value === null) return null;
+    const [state, ownerVersion, extra] = value.split(':');
+    if (['candidate', 'bound'].includes(state) && OWNER_VERSION.test(ownerVersion || '')
+        && extra === undefined) return { state, ownerVersion };
+  } catch {}
+  // Legacy rejection, malformed and unreadable markers all fail closed.
+  return { state: 'rejected' };
+}
+
+let marker = readMarker();
+
+function markerMatches() {
+  const persisted = readMarker();
+  return marker === null ? persisted === null
+    : persisted?.state === marker.state && persisted.ownerVersion === marker.ownerVersion;
+}
+
+function persistMarker(next) {
+  marker = next;
+  const value = next.state === 'rejected' ? '1' : `${next.state}:${next.ownerVersion}`;
+  sessionStorage.setItem(REJECTED_PROJECTION_KEY, value);
+  return sessionStorage.getItem(REJECTED_PROJECTION_KEY) === value;
 }
 // Fail closed in this tab when storage cannot replace/remove an old credential.
 let blocked = false;
@@ -41,8 +61,11 @@ function loadRaw() {
 }
 
 function load() {
-  if (rejectedDetached || blocked || tabDetachMode) return {};
-  try { return loadRaw(); } catch { return {}; }
+  if (marker?.state === 'rejected' || blocked || tabDetachMode || !markerMatches()) return {};
+  try {
+    const record = loadRaw();
+    return marker && record.ownerVersion !== marker.ownerVersion ? {} : record;
+  } catch { return {}; }
 }
 
 function loadForTab() {
@@ -66,7 +89,7 @@ export function getAuthUserId() {
 }
 
 export function pinAuthTabUser(userId) {
-  if (rejectedDetached) return false;
+  if (isAuthTabRejected()) return false;
   if (userId === null) {
     // This tab explicitly booted anonymous. A credential that appears later
     // belongs to another tab until this tab performs its own setAuth().
@@ -83,19 +106,45 @@ export function pinAuthTabUser(userId) {
 }
 
 export function isAuthTabRejected() {
-  return rejectedDetached;
+  if (!marker) return !markerMatches();
+  if (marker.state === 'rejected' || blocked || !markerMatches()) return true;
+  try { return loadRaw().ownerVersion !== marker.ownerVersion; } catch { return true; }
+}
+
+export function getAuthOwnerVersion() {
+  return marker?.ownerVersion && loadForTab().ownerVersion === marker.ownerVersion ? marker.ownerVersion : null;
+}
+
+export function isAuthCandidate() {
+  return marker?.state === 'candidate';
+}
+
+// The controller calls this only after /auth/session confirms the captured
+// credential. Keep the version pin even after confirmation and across reload.
+export function commitAuthCandidate(ownerVersion) {
+  if (!ownerVersion || getAuthOwnerVersion() !== ownerVersion) return false;
+  if (marker.state === 'bound') return true;
+  const candidate = marker;
+  try {
+    if (!persistMarker({ state: 'bound', ownerVersion })) throw new Error('Auth marker write failed');
+    return getAuthOwnerVersion() === ownerVersion;
+  } catch {
+    // Retain the same safe candidate for a manual server-confirmation retry.
+    marker = candidate;
+    try { persistMarker(candidate); } catch {}
+    return false;
+  }
 }
 
 // Rejection is tab-local: Web Storage has no atomic shared compare-and-delete.
 // Block getters before persisting; a failed write remains blocked and retryable.
 export function detachRejectedAuth() {
-  rejectedDetached = true;
+  marker = { state: 'rejected' };
   blocked = true;
   tabUserId = null;
   tabDetachMode = 'rejected';
   try {
-    sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1');
-    if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== '1') return false;
+    if (!persistMarker(marker)) return false;
     blocked = false;
     return true;
   } catch {
@@ -106,32 +155,35 @@ export function detachRejectedAuth() {
 // Persist the minted session (called by the onboarding otp-verify success path).
 export function setAuth({ token, userId, phone } = {}) {
   blocked = true;
+  const needsMarker = marker !== null || !markerMatches();
+  let succeeded = false;
   try {
+    const ownerVersion = globalThis.crypto.randomUUID();
+    if (needsMarker && !persistMarker({ state: 'candidate', ownerVersion })) return false;
     const next = {
       token: token || null,
       userId: userId || null,
       phone: phone || null,
+      ownerVersion,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     pendingWrite = next;
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!token || !userId || saved?.token !== token || saved?.userId !== userId
-        || saved?.phone !== (phone || null)) return false;
-    if (rejectedDetached) {
-      sessionStorage.removeItem(REJECTED_PROJECTION_KEY);
-      if (sessionStorage.getItem(REJECTED_PROJECTION_KEY) !== null) return false;
-    }
-    rejectedDetached = false;
+        || saved?.phone !== (phone || null) || saved?.ownerVersion !== ownerVersion) return false;
     blocked = false;
     tabUserId = userId;
     tabDetachMode = null;
     pendingWrite = null;
+    succeeded = true;
     return true;
   } catch {
-    if (rejectedDetached) {
-      try { sessionStorage.setItem(REJECTED_PROJECTION_KEY, '1'); } catch {}
-    }
     return false;
+  } finally {
+    if (needsMarker && !succeeded) {
+      marker = { state: 'rejected' };
+      try { persistMarker(marker); } catch {}
+    }
   }
 }
 
@@ -139,10 +191,21 @@ export function setAuth({ token, userId, phone } = {}) {
 // replaced the origin-wide record, detach locally but preserve that replacement.
 export function clearAuth() {
   blocked = true;
-  if (rejectedDetached) return AUTH_CLEAR_FOREIGN;
+  if (marker?.state === 'rejected') return AUTH_CLEAR_FOREIGN;
+  if (marker && !markerMatches()) return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
   try {
     const raw = loadRaw();
     const rawUserId = typeof raw.userId === 'string' && raw.userId ? raw.userId : null;
+
+    if (marker && raw.ownerVersion !== marker.ownerVersion
+        && !(tabDetachMode === 'own-cleared' && !raw.token && !rawUserId)) {
+      return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
+    }
+    if (marker?.state === 'candidate') {
+      // An unconfirmed login can be abandoned without compare-and-delete of
+      // shared storage. Explicit Guest performs a cache-only detach.
+      return detachRejectedAuth() ? AUTH_CLEAR_FOREIGN : false;
+    }
 
     if (pendingWrite && (raw.token || rawUserId)
         && (raw.token !== pendingWrite.token || rawUserId !== pendingWrite.userId)) {

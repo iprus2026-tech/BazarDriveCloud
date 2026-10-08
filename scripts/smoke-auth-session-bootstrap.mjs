@@ -479,7 +479,7 @@ async function rejectedReloadCase(role, saved) {
     if (guest || ['off', 'valid'].includes(role)) {
       assert.equal(user.get().role, guest ? 'guest' : 'passenger');
       assert.equal(user.get().onboarded, true);
-      if (role === 'valid') assert.equal(sessionStorage.getItem(rejectionMarkerKey), null);
+      if (role === 'valid') assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
     } else {
       assert.equal(user.get().role, null, 'rejected authenticated projection must stay invalidated after reload');
       assert.equal(user.get().onboarded, false);
@@ -606,7 +606,9 @@ async function rejectedDetachRetryCase(name) {
   assert.equal(settled.state, 'ANONYMOUS'); assert.equal(drops, 3); assert.equal(callbacks, 1);
   assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), replacement, 'durable detach never mutates shared auth');
   assert.equal(auth.getAuthToken(), null, 'replacement cannot be adopted by the stale tab');
-  assert.equal(auth.getAuthUserId(), null); assert.equal(requests, 1);
+  assert.equal(auth.getAuthUserId(), null);
+  assert.equal(requests, name === 'read-denied' ? 0 : 1,
+    'an unreadable marker blocks even the initial session request');
   assert.equal((await c.reconcile()).state, 'ANONYMOUS'); assert.equal(drops, 3); assert.equal(callbacks, 1);
 }
 
@@ -664,7 +666,7 @@ async function rejectedLoginCase(name) {
   assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN, 'logout cannot delete rejected shared auth or lift detach');
   assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), original);
   const rawSet = localStorage.setItem, rawGet = localStorage.getItem;
-  const rawRemoveMarker = sessionStorage.removeItem, rawGetMarker = sessionStorage.getItem;
+  const rawSetMarker = sessionStorage.setItem, rawGetMarker = sessionStorage.getItem;
   let verificationSawMarker = false;
   if (name !== 'success' && name !== 'otp') {
     localStorage.setItem = (key, value) => {
@@ -677,20 +679,22 @@ async function rejectedLoginCase(name) {
       if (key === auth.AUTH_STORAGE_KEY && name === 'read-noop') return null;
       return rawGet(key);
     };
-    sessionStorage.removeItem = key => {
-      if (key === rejectionMarkerKey && name === 'clear-denied') throw new Error('fixture marker clear denied');
-      if (key === rejectionMarkerKey && name === 'clear-noop') return;
-      rawRemoveMarker(key);
+    sessionStorage.setItem = (key, value) => {
+      if (key === rejectionMarkerKey && value.startsWith('candidate:')) {
+        if (name === 'marker-write-denied') throw new Error('fixture marker write denied');
+        if (name === 'marker-write-noop') return;
+      }
+      rawSetMarker(key, value);
     };
     sessionStorage.getItem = key => {
-      if (key === rejectionMarkerKey && name === 'clear-read-denied') throw new Error('fixture marker read denied');
+      if (key === rejectionMarkerKey && name === 'marker-read-denied') throw new Error('fixture marker read denied');
       return rawGetMarker(key);
     };
     assert.equal(auth.setAuth({ token: 'intended-token', userId: 'intended-user' }), false);
     assert.equal(rawGetMarker(rejectionMarkerKey), '1', 'failed login retains durable marker');
     assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
     localStorage.setItem = rawSet; localStorage.getItem = rawGet;
-    sessionStorage.removeItem = rawRemoveMarker; sessionStorage.getItem = rawGetMarker;
+    sessionStorage.setItem = rawSetMarker; sessionStorage.getItem = rawGetMarker;
     // A later complete foreign bearer must stay unusable even after failed login.
     rawSet(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'foreign-token', userId: 'b' }));
     const reloadedAuth = await import('../public/src/auth_token.js?failed-login-reload');
@@ -698,8 +702,8 @@ async function rejectedLoginCase(name) {
   }
   localStorage.getItem = key => {
     if (key === auth.AUTH_STORAGE_KEY) {
-      verificationSawMarker = rawGetMarker(rejectionMarkerKey) === '1';
-      assert.equal(verificationSawMarker, true, 'new record is verified before detach is cleared');
+      verificationSawMarker = rawGetMarker(rejectionMarkerKey)?.startsWith('candidate:');
+      assert.equal(verificationSawMarker, true, 'candidate ownership is persisted before new record readback');
     }
     return rawGet(key);
   };
@@ -718,7 +722,7 @@ async function rejectedLoginCase(name) {
   } else assert.equal(auth.setAuth({ token: 'intended-token', userId: 'intended-user' }), true);
   localStorage.getItem = rawGet;
   assert.equal(verificationSawMarker, true);
-  assert.equal(sessionStorage.getItem(rejectionMarkerKey), null);
+  assert.match(sessionStorage.getItem(rejectionMarkerKey), name === 'otp' ? /^bound:/ : /^candidate:/);
   assert.equal(auth.isAuthTabRejected(), false);
   assert.equal(auth.getAuthToken(), 'intended-token'); assert.equal(auth.getAuthUserId(), 'intended-user');
 }
@@ -748,6 +752,284 @@ async function rejectedMarkerReadCase() {
   assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
   assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
   assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
+}
+
+async function racedLoginWriteCase(name) {
+  globalThis.localStorage = storage(); globalThis.sessionStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  assert.equal(auth.detachRejectedAuth(), true);
+  const rawGet = localStorage.getItem;
+  const replacement = JSON.stringify({ token: 'replacement-token', userId: name === 'same-user' ? 'a' : 'b', phone: null });
+  let raced = false;
+  localStorage.getItem = key => {
+    const value = rawGet(key);
+    if (key === auth.AUTH_STORAGE_KEY && !raced && JSON.parse(value || 'null')?.token === 'intended-token') {
+      raced = true;
+      localStorage.setItem(key, replacement);
+    }
+    return value;
+  };
+  auth.setAuth({ token: 'intended-token', userId: 'a' });
+  localStorage.getItem = rawGet;
+  assert.equal(raced, true, 'replacement follows successful candidate readback');
+  assert.equal(rawGet(auth.AUTH_STORAGE_KEY), replacement, 'replacement is byte-identical');
+  const markerMissing = sessionStorage.getItem(rejectionMarkerKey) === null;
+  const reloaded = await import('../public/src/auth_token.js?raced-login-reload');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  let requests = 0;
+  const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+    readToken: reloaded.getAuthToken, readUserId: reloaded.getAuthUserId,
+    pinTabUser: reloaded.pinAuthTabUser,
+    tabRejected: reloaded.isAuthTabRejected, detachAuth: reloaded.detachRejectedAuth,
+    requestSession: async () => { requests++; return { user: userDTO(name === 'same-user' ? 'a' : 'b') }; } });
+  const s = await c.reconcile();
+  assert.equal(requests, 0, 'reload must not adopt B after raced readback; markerMissing=' + markerMissing + ', state=' + s.state);
+  assert.equal(markerMissing, false);
+  assert.equal(reloaded.getAuthToken(), null); assert.equal(reloaded.getAuthUserId(), null);
+}
+
+async function ownerVersionCase(name, saved) {
+  const dom = installDOM({ parseMarkup: true });
+  if (saved) {
+    const stores = JSON.parse(Buffer.from(saved, 'base64').toString());
+    for (const [key, value] of Object.entries(stores.local)) localStorage.setItem(key, value);
+    for (const [key, value] of Object.entries(stores.session)) sessionStorage.setItem(key, value);
+  }
+  const malformed = name.startsWith('malformed-');
+  if (malformed) {
+    const values = { empty: '', unknown: 'other', version: 'candidate:not-a-uuid',
+      extra: 'bound:00000000-0000-4000-8000-000000000001:extra', json: '{"state":"bound"}' };
+    sessionStorage.setItem(rejectionMarkerKey, values[name.slice('malformed-'.length)]);
+    localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'foreign-token', userId: 'b' }));
+  }
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap: create, sessionRouteAdmission: admit } =
+    await import('../public/src/auth_session_bootstrap.js');
+  const session = () => ({ user: { ...userDTO('a'), activeRole: 'passenger', phoneVerified: true } });
+  if (malformed) {
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    const c = create({ backendEnabled: () => true, requestSession: () => assert.fail('malformed marker must not send a bearer') });
+    assert.equal((await c.reconcile()).state, 'ANONYMOUS');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
+    return;
+  }
+  if (!saved) {
+    assert.equal(auth.setAuth({ token: 'old-token', userId: 'old-user' }), true);
+    assert.equal(auth.detachRejectedAuth(), true);
+    const oldRaw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), oldRaw);
+    assert.equal(auth.setAuth({ token: 'candidate-token', userId: 'a', phone: '+79990000001' }), true);
+  }
+  let record = JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY));
+  let version = record.ownerVersion;
+  assert.match(version, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  const marker = sessionStorage.getItem(rejectionMarkerKey);
+  if (!saved) assert.equal(marker, 'candidate:' + version);
+  assert.ok(![record.token, record.userId, record.phone].filter(Boolean).some(v => marker.includes(v + ':') || marker.endsWith(':' + v)),
+    'marker contains only orchestration state and opaque UUID, never credential or PII');
+
+  function replace(sameUser = false) {
+    const next = JSON.stringify({ token: sameUser ? 'candidate-token' : 'foreign-token',
+      userId: sameUser ? 'a' : 'b', phone: null, ownerVersion: crypto.randomUUID() });
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
+    return next;
+  }
+  function detached(raw) {
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw, 'replacement is preserved byte-for-byte');
+  }
+  if (name === 'bound-identity-only') {
+    const c = create({ backendEnabled: () => true, requestSession: async () => session() });
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    const next = create({ backendEnabled: () => true,
+      requestSession: async () => ({ user: { ...userDTO('a'), activeRole: null, phoneVerified: false } }) });
+    assert.equal((await next.reconcile()).state, 'AUTHENTICATED', 'bound boot preserves baseline identity-only session semantics');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    return;
+  }
+  if (name.startsWith('reload-')) {
+    const bound = name.includes('-bound-'), mismatch = !name.endsWith('-match');
+    if (!saved) {
+      if (bound) {
+        const c = create({ backendEnabled: () => true, requestSession: async () => session() });
+        assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+        assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+      }
+      if (mismatch) replace(name.endsWith('-same-user'));
+      const encoded = Buffer.from(JSON.stringify({ local: localStorage.snapshot(), session: sessionStorage.snapshot() })).toString('base64');
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--owner-version-case', name, encoded],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+      return;
+    }
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    let requests = 0;
+    const pending = deferred();
+    const c = create({ backendEnabled: () => true, requestSession: () => { requests++; return pending.promise; } });
+    const work = c.reconcile(); await flush();
+    if (mismatch) {
+      assert.equal(requests, 0); assert.equal((await work).state, 'ANONYMOUS'); detached(raw);
+    } else {
+      assert.equal(requests, 1); assert.equal(c.getSnapshot().state, 'SESSION_RECONCILING');
+      assert.equal(admit(c.getSnapshot(), '/feed'), false);
+      pending.resolve(session());
+      assert.equal((await work).state, 'AUTHENTICATED');
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+      assert.equal(auth.getAuthToken(), record.token);
+    }
+    return;
+  }
+  if (name.startsWith('storage-')) {
+    const { user } = await import('../public/src/state.js');
+    const { register, go } = await import('../public/src/router.js');
+    const { apiFetch } = await import('../public/src/api_client.js');
+    user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true });
+    const profile = localStorage.getItem('bazardrive.user.v1');
+    globalThis.__BD_API_BASE__ = 'https://api.invalid';
+    location.hash = '#/ops/screens';
+    const pending = deferred(), requests = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, bearer: options.headers.Authorization });
+      return url.endsWith('/auth/session') ? pending.promise : response({ items: [] });
+    };
+    await import('../public/src/app.js'); await flush();
+    assert.equal(requests.length, 1);
+    if (name === 'storage-bound') {
+      pending.resolve(response(session())); await flush();
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    }
+    let products = 0;
+    register('/boot-proof', () => { products++; return new dom.Element(); });
+    for (const kind of ['foreign', 'same-user', 'arbitrary', 'remove']) {
+      let raw;
+      if (kind === 'remove') { localStorage.removeItem(auth.AUTH_STORAGE_KEY); raw = null; }
+      else if (kind === 'arbitrary') {
+        raw = JSON.stringify({ token: 'candidate-token', userId: 'a' });
+        localStorage.setItem(auth.AUTH_STORAGE_KEY, raw);
+      } else raw = replace(kind === 'same-user');
+      dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: raw }); await flush();
+      detached(raw);
+      assert.equal(user.get().role, null);
+      assert.equal(localStorage.getItem('bazardrive.user.v1'), profile, 'replacement invalidates cache only');
+      await apiFetch('/orders'); assert.equal(requests.at(-1).bearer, undefined);
+      go('/boot-proof'); await flush(); assert.equal(products, 0);
+      go('/ops/screens'); await flush();
+    }
+    pending.resolve(response(session())); await flush();
+    assert.equal(products, 0);
+    assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, 1);
+    return;
+  }
+  let requests = 0, racedRaw = null;
+  const pending = deferred();
+  const c = create({ backendEnabled: () => true, timeoutMs: name === 'timeout' ? 5 : 10000,
+    requestSession: () => {
+      requests++;
+      if (['401', '503', 'network'].includes(name)) return Promise.reject({ code: name === 'network' ? 'NETWORK' : 'HTTP_' + name });
+      if (name === 'protocol') return Promise.resolve({ user: { userId: 'a' } });
+      return pending.promise;
+    },
+    commitCandidate: owner => {
+      if (name.startsWith('pre-commit-')) racedRaw = replace(name.endsWith('same-user'));
+      return auth.commitAuthCandidate(owner);
+    },
+  });
+  const states = [];
+  c.subscribe(s => states.push(s.state));
+  let work;
+  if (name.startsWith('pre-commit-')) {
+    work = c.beginLogin({ resetAccount: () => true })({ token: 'candidate-token',
+      user: { userId: 'a', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } }, '+79990000001');
+    record = JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)); version = record.ownerVersion;
+  } else work = c.reconcile();
+  await flush();
+  if (['401', '503', 'network', 'timeout', 'protocol'].includes(name)) {
+    const result = await work;
+    assert.equal(result.state, 'SESSION_UNKNOWN');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+    assert.equal(auth.getAuthToken(), record.token);
+    assert.equal(admit(result, '/feed'), false);
+    // Retry confirms the same candidate, not a replacement or invented identity.
+    name = 'retry'; pending.resolve(session());
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    return;
+  }
+  assert.equal(c.getSnapshot().state, 'SESSION_RECONCILING');
+  assert.equal(admit(c.getSnapshot(), '/feed'), false);
+  assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+  if (name.startsWith('guest') || name.startsWith('abandon')) {
+    if (name.startsWith('abandon')) {
+      // A mounted explicit login owns its handoff even while reconciliation waits.
+      work = c.beginLogin({ resetAccount: () => true })({ token: 'candidate-token',
+        user: { userId: 'a', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+      await flush();
+    }
+    const abandonedRaw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    if (name.includes('-')) racedRaw = replace(name.endsWith('same-user'));
+    if (name.startsWith('abandon')) {
+      assert.equal(c.abandonLogin(), true);
+    } else assert.equal(c.enterGuest(), true);
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.ok(raw); assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1'); detached(raw);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+    pending.resolve(session()); await work;
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    if (racedRaw) assert.equal(raw, racedRaw);
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, abandonedRaw);
+    const reloaded = await import('../public/src/auth_token.js?abandoned-candidate-reload');
+    assert.equal(reloaded.getAuthToken(), null, 'abandon/Guest cannot reopen the old candidate after reload');
+    return;
+  }
+  if (name.startsWith('response-race-')) racedRaw = replace(name.endsWith('same-user'));
+  const originalMarkerSet = sessionStorage.setItem;
+  const originalMarkerGet = sessionStorage.getItem;
+  if (name.startsWith('bound-write-') || name.startsWith('bound-marker-')) {
+    sessionStorage.setItem = (key, value) => {
+      if (value.startsWith('bound:')) {
+        if (name === 'bound-marker-denied') throw new Error('fixture bound marker denied');
+        if (name === 'bound-marker-noop') return;
+        if (name.startsWith('bound-write-')) racedRaw = replace(name.endsWith('same-user'));
+      }
+      originalMarkerSet(key, value);
+    };
+    sessionStorage.getItem = key => {
+      const value = originalMarkerGet(key);
+      if (value?.startsWith('bound:')) {
+        if (name === 'bound-marker-read-denied') throw new Error('fixture bound marker read denied');
+        if (name === 'bound-marker-read-noop') return 'candidate:' + version;
+      }
+      return value;
+    };
+  }
+  pending.resolve(session());
+  const result = await work;
+  if (name === 'success') {
+    assert.equal(result.state, 'AUTHENTICATED');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    assert.equal(auth.getAuthOwnerVersion(), version); assert.equal(requests, 1);
+    assert.equal(auth.clearAuth(), true, 'confirmed own logout retains baseline cleanup');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+    const replacement = replace(true); detached(replacement);
+    const reloaded = await import('../public/src/auth_token.js?bound-logout-reload');
+    assert.equal(reloaded.getAuthToken(), null, 'logout cannot reopen adoption on reload');
+  } else {
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_IDENTITY_MISMATCH');
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    assert.equal(admit(c.getSnapshot(), '/feed'), false);
+    assert.ok(sessionStorage.getItem(rejectionMarkerKey), 'commit never deletes ownership marker');
+    if (racedRaw) detached(racedRaw);
+    if (name.startsWith('bound-marker-')) {
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+      sessionStorage.setItem = originalMarkerSet;
+      sessionStorage.getItem = originalMarkerGet;
+      assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    }
+  }
 }
 
 async function appCase(name) {
@@ -1259,7 +1541,7 @@ async function loginHandoffCase(name) {
   const { user } = await import('../public/src/state.js');
   const verifySwitch = name === 'verify-switch-reonboard';
   user.set({ welcomeSeen: true, onboarded: verifySwitch, role: 'passenger', firstName: 'Old account' });
-  if (name === 'account-switch' || verifySwitch) localStorage.setItem('bazardrive.auth.v1',
+  if (name === 'account-switch' || verifySwitch || name === 'rejected-fresh') localStorage.setItem('bazardrive.auth.v1',
     JSON.stringify({ token: 'old-token', userId: 'old-user' }));
   globalThis.__BD_API_BASE__ = name === 'off-demo' ? '' : 'https://api.invalid';
   location.hash = '#/onboarding?step=phone';
@@ -1272,6 +1554,7 @@ async function loginHandoffCase(name) {
     if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
       userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
     assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
+    if (name === 'rejected-fresh' && options.headers.Authorization === 'Bearer old-token') return response({ user: null });
     if ((name === 'account-switch' || verifySwitch) && options.headers.Authorization === 'Bearer old-token') {
       return response({ user: { userId: 'old-user', sessionId: 'old-session',
         activeRole: 'passenger', phoneVerified: true } });
@@ -1282,6 +1565,24 @@ async function loginHandoffCase(name) {
     return pending.promise;
   };
   await import('../public/src/app.js'); await flush();
+  if (name === 'rejected-fresh') {
+    const auth = await import('../public/src/auth_token.js');
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+    const shared = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    const rawRemove = localStorage.removeItem, rawSet = localStorage.setItem;
+    localStorage.removeItem = key => {
+      assert.notEqual(key, auth.AUTH_STORAGE_KEY, 'explicit reset must accept a foreign cache-only detach');
+      rawRemove(key);
+    };
+    localStorage.setItem = (key, value) => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        assert.equal(localStorage.getItem(key), shared, 'foreign auth is preserved until intentional candidate write');
+        assert.match(sessionStorage.getItem(rejectionMarkerKey), /^candidate:/);
+      }
+      rawSet(key, value);
+    };
+  }
   if (name === 'account-switch' || verifySwitch) {
     const { setSmokeRole } = await import('../public/src/smoke_role.js');
     setSmokeRole('driver');
@@ -1310,6 +1611,12 @@ async function loginHandoffCase(name) {
   }
   input('ob-otp-input', name === 'off-demo' ? '123456' : '1234');
   node('ob-next').click(); await flush();
+  if (name === 'rejected-fresh') {
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
+    assert.equal(sessions, 1, 'rejected fresh OTP is blocked before session reconciliation: ' + node('ob-err')?.textContent);
+    assert.match(sessionStorage.getItem(rejectionMarkerKey), /^candidate:/);
+    assert.equal(products, 0, 'candidate must not admit product routes before session confirmation');
+  }
   if (name === 'off-demo') {
     assert.ok(node('ob-firstname'));
     input('ob-firstname', 'Demo');
@@ -1342,6 +1649,7 @@ async function loginHandoffCase(name) {
   pending.resolve(response({ user: { userId: name === 'mismatch' ? 'other-user' : 'new-user',
     sessionId: 'new-session', activeRole: 'passenger', phoneVerified: true } }));
   await flush();
+  if (name === 'rejected-fresh') assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
   assert.equal(dom.starts(), 1, 'handoff never restarts router or reloads page');
   if (name === 'mismatch') {
     assert.ok(node('ob-otp-input'));
@@ -1542,7 +1850,13 @@ async function repairHandoffCase(name) {
   assert.equal(products, 1); assert.equal(dom.starts(), 1);
 }
 
-if (process.argv[2] === '--rejected-compare-delete-case') {
+if (process.argv[2] === '--owner-version-case') {
+  await ownerVersionCase(process.argv[3], process.argv[4]);
+  console.log('PASS opaque owner-version boundary: ' + process.argv[3]);
+} else if (process.argv[2] === '--raced-login-write-case') {
+  await racedLoginWriteCase(process.argv[3]);
+  console.log('PASS raced fresh-login readback: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-compare-delete-case') {
   await rejectedCompareDeleteCase(process.argv[3]);
   console.log('PASS rejected compare/delete race: ' + process.argv[3]);
 } else if (process.argv[2] === '--rejected-marker-read-case') {
@@ -1605,6 +1919,32 @@ if (process.argv[2] === '--rejected-compare-delete-case') {
     detachAuth: () => true, tabRejected: () => false,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
 
+  for (const scenario of ['foreign', 'same-user']) {
+    await check('raced fresh-login readback retains marker: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--raced-login-write-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  await check('real rejected onboarding accepts foreign cache-only reset and confirms fresh OTP', async () => {
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', 'rejected-fresh'],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  });
+  for (const scenario of ['success', 'bound-identity-only', 'guest', 'abandon',
+    'guest-foreign', 'guest-same-user', 'abandon-foreign', 'abandon-same-user',
+    '401', '503', 'network', 'timeout', 'protocol',
+    'pre-commit-foreign', 'pre-commit-same-user', 'response-race-foreign', 'response-race-same-user',
+    'bound-write-foreign', 'bound-write-same-user', 'bound-marker-denied', 'bound-marker-noop',
+    'bound-marker-read-denied', 'bound-marker-read-noop',
+    'reload-candidate-match', 'reload-candidate-foreign', 'reload-candidate-same-user',
+    'reload-bound-match', 'reload-bound-foreign', 'reload-bound-same-user',
+    'storage-candidate', 'storage-bound',
+    'malformed-empty', 'malformed-unknown', 'malformed-version', 'malformed-extra', 'malformed-json']) {
+    await check('opaque owner-version boundary: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--owner-version-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+
   await check('rejected marker read failure blocks adoption and anonymous exits until retry', async () => {
     execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-marker-read-case'],
       { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
@@ -1616,7 +1956,7 @@ if (process.argv[2] === '--rejected-compare-delete-case') {
     });
   }
   for (const scenario of ['success', 'otp', 'write-denied', 'write-noop', 'read-denied', 'read-noop',
-    'clear-denied', 'clear-noop', 'clear-read-denied']) {
+    'marker-write-denied', 'marker-write-noop', 'marker-read-denied']) {
     await check('rejected same-tab login: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-login-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
