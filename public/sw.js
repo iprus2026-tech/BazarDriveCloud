@@ -1,3 +1,8 @@
+// v370 (BD-AUTH-SESSION-01-829-A2 R6): make versioned auth records tab-owned and clear prior account caches before explicit foreign-detach re-login.
+// v369 (BD-AUTH-SESSION-01-829-A2 R5): bind rejected-tab fresh login to an opaque per-write owner version and commit that ownership only after server-confirmed handoff.
+// v368 (BD-AUTH-SESSION-01-829-A2 R4): persist rejected tab detachment across reload and stop race-prone shared credential deletion.
+// v367 (BD-AUTH-SESSION-01-829-A2 R3): retain tab-local rejection across reload, retry bearer removal, and preserve same-user replacement credentials.
+// v366 (BD-AUTH-SESSION-01-829-A2): rejected server session clears the owned bearer and tab-local authenticated projection.
 // v365 (BD-POST-BACKEND-CONTACT-TRUTH-01A): hide canonical order contacts without a supplied phone.
 // v364 (BD-FEED-BACKEND-AUTHOR-LABEL-01A): derive ride-order author labels from current ownership.
 // v362 (BD-PASSENGER-AUTHORITY-04B-B-R21): preserve same-actor profiles and verify failed-auth-write cleanup.
@@ -243,7 +248,7 @@
 // v329 (BD-MAP-MARFINO-STYLE-01A-R2): refresh precached mapbox_config.js for Marfino style/center.
 // v330 (BD-MAP-REALITY-COPY-01A-R1): refresh precached map.js after production Mapbox reality-copy cleanup.
 // v331 (BD-OFFLINE-BANNER-LAYOUT-01A-R1): refresh cloud.css so connection banners reserve header space.
-const VERSION    = 'v365';
+const VERSION    = 'v370';
 const CACHE_NAME = `bazardrive-${VERSION}`;
 
 const PRECACHE = [

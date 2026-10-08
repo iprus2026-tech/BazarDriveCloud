@@ -7,7 +7,7 @@ import { initAppConnectionStatus } from './app_connection_status.js';
 import { getSmokeRole, resolveRole } from './smoke_role.js';
 import { isBackendEnabled } from './api_config.js';
 import { createAuthSessionBootstrap, sessionRouteAdmission } from './auth_session_bootstrap.js';
-import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId } from './auth_token.js';
+import { AUTH_STORAGE_KEY, getAuthToken, getAuthUserId, isAuthTabRejected } from './auth_token.js';
 import { setLocalLogoutObserver } from './mock_auth.js';
 import { mountDriverRideReturn } from './driver_ride_return.js';
 
@@ -146,14 +146,23 @@ document.getElementById('fab').addEventListener('click', () => {
 });
 
 // One controller owns both boot and post-verify reconciliation.
-const bootSession = createAuthSessionBootstrap();
+// Rejected or mismatching candidate/bound ownership invalidates only this tab's
+// projection. A matching candidate still waits for server-confirmed admission.
+if (isBackendEnabled() && isAuthTabRejected()
+    && user.get().role !== 'guest') user.resetCacheOnly();
+const bootSession = createAuthSessionBootstrap({
+  onRejectedSession: () => {
+    if (user.get().role !== 'guest') user.resetCacheOnly();
+  },
+});
 setLocalLogoutObserver(() => !isBackendEnabled()
   || bootSession.adoptAnonymousAfterExternalLogout());
 window.addEventListener('storage', (event) => {
   if (event.key !== AUTH_STORAGE_KEY) return;
-  // The tab pin accepts a replacement token only for the same actor. Keep its
-  // profile while reconciling; logout/foreign replacement drops the projection.
-  if (!getAuthToken() || !getAuthUserId()) user.resetCacheOnly();
+  // Legacy tabs keep their actor pin; rejected-tab logins also pin the opaque
+  // write version. Even same-actor replacement must not adopt another write.
+  if ((!getAuthToken() || !getAuthUserId())
+      && !(isAuthTabRejected() && user.get().role === 'guest')) user.resetCacheOnly();
   void bootSession.reconcile();
 });
 setScreenChromeMount(mountDriverRideReturn);

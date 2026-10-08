@@ -9,7 +9,8 @@ function storage() {
   const values = new Map();
   return { getItem: k => values.get(k) ?? null,
     setItem: (k, v) => values.set(k, String(v)),
-    removeItem: k => values.delete(k), clear: () => values.clear() };
+    removeItem: k => values.delete(k), clear: () => values.clear(),
+    snapshot: () => Object.fromEntries(values) };
 }
 function deferred() {
   let resolve, reject;
@@ -190,7 +191,7 @@ async function authStorageSyncCase(name) {
   const auth = await import('../public/src/auth_token.js');
   user.set({ welcomeSeen: true, onboarded: true, role: 'passenger',
     phoneVerified: true, firstName: 'Current passenger' });
-  auth.setAuth({ token: 'original-token', userId: 'a' });
+  localStorage.setItem(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'original-token', userId: 'a', phone: null }));
   const profile = user.get();
   const savedProfile = localStorage.getItem('bazardrive.user.v1');
   globalThis.__BD_API_BASE__ = 'https://api.invalid';
@@ -208,17 +209,22 @@ async function authStorageSyncCase(name) {
   await flush();
   assert.equal(products, 1);
   const route = location.hash;
-  const sameActor = name.startsWith('same-actor');
-  const next = name === 'logout' ? null : JSON.stringify({
+  const sameActor = name === 'same-actor';
+  let next = name === 'logout' ? null : JSON.stringify({
     token: 'refreshed-token', userId: sameActor ? 'a' : 'b', phone: null,
   });
   if (name === 'same-actor-rotation') {
+    const thisTabSession = sessionStorage;
+    globalThis.sessionStorage = storage();
     const otherAuth = await import('../public/src/auth_token.js?refresh-tab');
     const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
     const otherController = createAuthSessionBootstrap({ backendEnabled: () => true,
       readToken: otherAuth.getAuthToken, readUserId: otherAuth.getAuthUserId,
       writeAuth: otherAuth.setAuth, dropAuth: otherAuth.clearAuth,
       pinTabUser: otherAuth.pinAuthTabUser,
+      readOwnerVersion: otherAuth.getAuthOwnerVersion, authCandidate: otherAuth.isAuthCandidate,
+      commitCandidate: otherAuth.commitAuthCandidate,
+      tabRejected: otherAuth.isAuthTabRejected, detachAuth: otherAuth.detachRejectedAuth,
       requestSession: async () => ({ user: { ...userDTO('a'), activeRole: 'passenger' } }),
     });
     await otherController.reconcile();
@@ -226,11 +232,11 @@ async function authStorageSyncCase(name) {
     const changes = [];
     localStorage.setItem = (key, value) => {
       originalSet(key, value);
-      if (key === auth.AUTH_STORAGE_KEY) { changes.push(value); dom.storageEvent({ key, newValue: value }); }
+      if (key === auth.AUTH_STORAGE_KEY) changes.push(value);
     };
     localStorage.removeItem = key => {
       originalRemove(key);
-      if (key === auth.AUTH_STORAGE_KEY) { changes.push(null); dom.storageEvent({ key, newValue: null }); }
+      if (key === auth.AUTH_STORAGE_KEY) changes.push(null);
     };
     const result = await otherController.beginLogin()({ token: 'refreshed-token', user: {
       userId: 'a', activeRole: 'passenger', phoneVerified: true, roles: ['passenger'],
@@ -238,6 +244,9 @@ async function authStorageSyncCase(name) {
     assert.equal(result.ok, true);
     assert.equal(changes.length, 1, 'same-account OTP replaces the token with one write');
     assert.notEqual(changes[0], null, 'same-account refresh never broadcasts logout');
+    assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
+    next = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    globalThis.sessionStorage = thisTabSession;
     localStorage.setItem = originalSet; localStorage.removeItem = originalRemove;
   } else if (next === null) localStorage.removeItem(auth.AUTH_STORAGE_KEY);
   else localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
@@ -269,17 +278,37 @@ async function authStorageSyncCase(name) {
 }
 
 async function authRollbackCase(name) {
-  globalThis.localStorage = storage();
+  globalThis.localStorage = storage(); globalThis.sessionStorage = storage();
   const auth = await import('../public/src/auth_token.js');
   const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
   let requests = 0;
   const controller = createAuthSessionBootstrap({ backendEnabled: () => true,
-    requestSession: async () => { requests++; return { user: userDTO('a') }; } });
+    requestSession: async () => { requests++; return { user: { ...userDTO('a'), activeRole: 'passenger' } }; } });
   assert.equal((await controller.reconcile()).state, 'ANONYMOUS');
+  if (name.startsWith('remove-')) {
+    const login = controller.beginLogin({ resetAccount: () => true });
+    assert.equal((await login({ token: 'minted-token', user: { userId: 'a', activeRole: 'passenger',
+      phoneVerified: true, roles: ['passenger'] } })).ok, true);
+    assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
+    const remove = localStorage.removeItem;
+    localStorage.removeItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        if (name === 'remove-denied') throw new Error('fixture removal denied');
+        return;
+      }
+      remove(key);
+    };
+    assert.equal(controller.abandonLogin(), false);
+    assert.equal(controller.hasUncommittedLogin(), true, 'confirmed cleanup retains ownership on removal failure');
+    assert.equal(controller.getSnapshot().error.code, 'AUTH_STORAGE_FAILED');
+    localStorage.removeItem = remove;
+    assert.equal(controller.abandonLogin(), true);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+    return;
+  }
   const rawGet = localStorage.getItem;
   const rawSet = localStorage.setItem;
-  const rawRemove = localStorage.removeItem;
-  let deniedReads = 0, allowRemoval = false;
+  let deniedReads = 0;
   localStorage.setItem = (key, value) => {
     rawSet(key, value);
     if (key === auth.AUTH_STORAGE_KEY) deniedReads = name === 'rollback-read-denied' ? 2 : 1;
@@ -294,19 +323,12 @@ async function authRollbackCase(name) {
     }
     return rawGet(key);
   };
-  localStorage.removeItem = key => {
-    if (key === auth.AUTH_STORAGE_KEY && rawGet(key) && !allowRemoval) {
-      if (name === 'remove-denied') throw new Error('fixture removal denied');
-      if (name === 'remove-noop') return;
-    }
-    rawRemove(key);
-  };
   const result = await controller.beginLogin({
     resetAccount: name === 'anonymous-read-denied' ? () => true : () => auth.clearAuth(),
   })({ token: 'minted-token', user: { userId: 'a', activeRole: 'passenger',
     phoneVerified: true, roles: ['passenger'] } }, '+79990000001');
   assert.equal(result.ok, false);
-  assert.equal(result.code, name === 'foreign-replacement' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
+  assert.equal(result.code, name === 'rollback-read-denied' ? 'AUTH_STORAGE_FAILED' : 'AUTH_STALE');
   assert.equal(controller.getSnapshot().state, 'SESSION_UNKNOWN');
   assert.equal(requests, 0, 'unverified storage cannot start session reconciliation');
   assert.equal(auth.getAuthToken(), null);
@@ -315,30 +337,858 @@ async function authRollbackCase(name) {
     assert.equal(controller.hasUncommittedLogin(), false);
     return;
   }
-  if (['rollback-read-denied', 'remove-denied', 'remove-noop'].includes(name)) {
+  if (name === 'rollback-read-denied') {
     assert.equal(controller.hasUncommittedLogin(), true, 'failed cleanup retains Back ownership');
     assert.equal(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).token, 'minted-token');
-    if (name.startsWith('remove-')) {
-      assert.equal(controller.abandonLogin(), false, 'Back cannot succeed while removal still fails');
-      assert.equal(controller.hasUncommittedLogin(), true);
-    }
-    allowRemoval = true;
-    assert.equal(controller.abandonLogin(), true, 'Back retries real token removal');
+    assert.equal(controller.abandonLogin(), true, 'Back retries durable candidate detachment');
   }
-  assert.equal(rawGet(auth.AUTH_STORAGE_KEY), null, 'rollback actually removes the minted bearer');
+  assert.ok(JSON.parse(rawGet(auth.AUTH_STORAGE_KEY)).ownerVersion, 'failed unconfirmed candidate may remain but is tab-unowned');
   assert.equal(controller.hasUncommittedLogin(), false);
   const reloadedAuth = await import('../public/src/auth_token.js?rollback-reload');
   assert.equal(reloadedAuth.getAuthToken(), null, 'fresh module cannot recover an abandoned bearer');
+}
+
+async function rejectedBootCase(name) {
+  globalThis.localStorage = storage();
+  globalThis.sessionStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  const { user } = await import('../public/src/state.js');
+  const { createAuthSessionBootstrap, sessionRouteAdmission } =
+    await import('../public/src/auth_session_bootstrap.js');
+  const { apiFetch } = await import('../public/src/api_client.js');
+  assert.equal(auth.setAuth({ token: 'rejected-token', userId: 'a' }), true);
+  user.set({ welcomeSeen: true, onboarded: true, role: 'driver', phoneVerified: true });
+  const profileBefore = user.get();
+  const savedProfile = localStorage.getItem('bazardrive.user.v1');
+  localStorage.setItem('bazardrive.ride_orders.v1', '[{"id":"preserved-order"}]');
+  const savedOrders = localStorage.getItem('bazardrive.ride_orders.v1');
+  const savedAuth = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  const replacement = ['foreign', 'same-user'].includes(name);
+  const foreignAuth = JSON.stringify({ token: 'foreign-token', userId: name === 'same-user' ? 'a' : 'b', phone: null });
+  const rawRemove = localStorage.removeItem;
+  const rawSet = sessionStorage.setItem;
+  let removals = 0, drops = 0, callbacks = 0;
+  localStorage.removeItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY) {
+      removals++;
+    }
+    rawRemove(key);
+  };
+  sessionStorage.setItem = (key, value) => {
+    if (key === rejectionMarkerKey) {
+      if (name === 'detach-denied') throw new Error('fixture detach denied');
+      if (name === 'detach-noop') return;
+    }
+    rawSet(key, value);
+  };
+  globalThis.__BD_API_BASE__ = name === 'off' ? '' : 'https://api.invalid';
+  const pending = deferred(), requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, bearer: options.headers.Authorization });
+    return url.endsWith('/auth/session') ? pending.promise : response({ items: [] });
+  };
+  const c = createAuthSessionBootstrap({ timeoutMs: name === 'timeout' ? 5 : 10000,
+    detachAuth: () => {
+      drops++;
+      // Shared auth can change after the response and before durable detach.
+      if (replacement) localStorage.setItem(auth.AUTH_STORAGE_KEY, foreignAuth);
+      return auth.detachRejectedAuth();
+    },
+    onRejectedSession: () => { callbacks++; user.resetCacheOnly(); },
+  });
+  c.subscribe(s => {
+    if (s.state === 'ANONYMOUS') {
+      assert.equal(callbacks, 1, 'projection cleanup precedes anonymous publication');
+      assert.equal(auth.getAuthToken(), null);
+      assert.equal(user.get().onboarded, false);
+    }
+  });
+  const boot = c.reconcile();
+  await flush();
+  if (name === 'network') pending.reject(new TypeError('fixture offline'));
+  else if (['401', '403', '503'].includes(name))
+    pending.resolve(response({ code: name === '503' ? 'SESSION_LOOKUP_FAILED' : 'UNAUTHORIZED' }, Number(name)));
+  else if (name === 'malformed') pending.resolve(response({ user: {} }));
+  else if (name !== 'timeout') pending.resolve(response({ user: name === 'valid' ? userDTO('a') : null }));
+  const s = await boot;
+  const rejected = name === 'ordinary' || replacement;
+  const removalFailed = ['detach-denied', 'detach-noop'].includes(name);
+  assert.equal(s.state, name === 'off' ? 'LOCAL_DEMO_BOOT'
+    : name === 'valid' ? 'AUTHENTICATED' : rejected ? 'ANONYMOUS' : 'SESSION_UNKNOWN');
+  assert.equal(callbacks, rejected ? 1 : 0);
+  assert.equal(drops, rejected || removalFailed ? 1 : 0);
+  assert.equal(removals, 0, 'rejected cleanup never mutates shared auth');
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), replacement ? foreignAuth : savedAuth);
+  assert.equal(auth.getAuthToken(), rejected || removalFailed ? null : 'rejected-token');
+  if (rejected) {
+    assert.equal(user.get().role, null);
+    assert.equal(user.get().phoneVerified, false);
+  } else assert.deepEqual(user.get(), profileBefore);
+  if (removalFailed) assert.equal(s.error.code, 'AUTH_STORAGE_FAILED');
+  if (name === 'timeout') {
+    assert.equal(s.error.code, 'SESSION_TIMEOUT');
+    pending.resolve(response({ user: null })); await flush();
+    assert.equal(c.getSnapshot(), s, 'late rejection cannot clean up a timed-out request');
+    assert.equal(callbacks, 0);
+  }
+  if (!['off', 'valid'].includes(name)) {
+    assert.notEqual(sessionRouteAdmission(s, '/driver-map'), true, 'product authority cannot resume');
+    assert.equal(c.passengerConfirmed(), false);
+  }
+  if (rejected) {
+    assert.equal((await c.reconcile()).state, 'ANONYMOUS');
+    assert.equal(callbacks, 1, 'retry without a bearer does not repeat rejection cleanup');
+  }
+  assert.equal(requests.length, name === 'off' ? 0 : 1);
+  if (name !== 'off') {
+    assert.equal(requests[0].bearer, 'Bearer rejected-token');
+    await apiFetch('/orders');
+    assert.equal(requests[1].bearer, rejected || removalFailed ? undefined : 'Bearer rejected-token');
+    assert.equal(requests.some(r => r.bearer === 'Bearer foreign-token'), false);
+  }
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), savedProfile, 'shared profile is never rewritten');
+  assert.equal(localStorage.getItem('bazardrive.ride_orders.v1'), savedOrders, 'no user-scoped store wipe');
+}
+
+const rejectionMarkerKey = 'bazardrive.auth.rejected_projection.v1';
+const takeoverCacheKeys = ['bazardrive.ride_history.v1', 'bazardrive.favorite_routes.v1',
+  'bazardrive.favorite_route_notice.v1', 'bazardrive.active_ride.v1', 'bazardrive.chat.v1',
+  'bazardrive.responses.v1', 'bazardrive.respond.v1', 'bazardrive.trip_confirmation.v1',
+  'bazardrive.driver_handoff_snapshot.v1', 'bazardrive.draft.v2', 'bazardrive.repeat_route.v1',
+  'bazardrive.route_draft.v1', 'bazardrive.order_form.v1', 'bazardrive.ride_orders.v1',
+  'bazardrive.driver_receipts.v1', 'bazardrive.myposts.v1', 'bazardrive.driver_offers.v1',
+  'bazardrive.order_overlay.v1', 'profileTripDemo'];
+
+async function markerlessVersionedCase(name, saved) {
+  installDOM({ parseMarkup: true });
+  if (saved) {
+    for (const [key, value] of Object.entries(JSON.parse(Buffer.from(saved, 'base64').toString()))) localStorage.setItem(key, value);
+    assert.deepEqual(sessionStorage.snapshot(), {});
+  }
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap: create } = await import('../public/src/auth_session_bootstrap.js');
+  const session = () => ({ user: { ...userDTO('a'), activeRole: 'passenger', phoneVerified: true } });
+  if (name === 'legacy' || name.startsWith('invalid-')) {
+    const record = { token: 'legacy-token', userId: 'a', phone: null };
+    if (name !== 'legacy') {
+      const values = { null: null, empty: '', text: 'not-a-uuid', number: 17, object: {}, array: [] };
+      record.ownerVersion = values[name.slice('invalid-'.length)];
+    }
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, JSON.stringify(record));
+    let requests = 0;
+    const c = create({ backendEnabled: () => true, requestSession: async () => { requests++; return session(); } });
+    assert.equal(auth.getAuthToken(), name === 'legacy' ? record.token : null);
+    assert.equal(auth.getAuthUserId(), name === 'legacy' ? record.userId : null);
+    assert.equal((await c.reconcile()).state, name === 'legacy' ? 'AUTHENTICATED' : 'ANONYMOUS');
+    assert.equal(requests, name === 'legacy' ? 1 : 0);
+    return;
+  }
+  if (!saved) {
+    const rawSet = localStorage.setItem;
+    let markerBeforeWrite = null;
+    localStorage.setItem = (key, value) => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        markerBeforeWrite = sessionStorage.getItem(rejectionMarkerKey);
+        assert.equal(markerBeforeWrite, 'candidate:' + JSON.parse(value).ownerVersion);
+      }
+      rawSet(key, value);
+    };
+    assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+    assert.ok(markerBeforeWrite, 'ordinary markerless setAuth must establish matching candidate ownership first');
+    localStorage.setItem = rawSet;
+    assert.equal(auth.detachRejectedAuth(), true);
+    const pending = deferred();
+    const c = create({ backendEnabled: () => true, requestSession: () => pending.promise });
+    const work = c.beginLogin({ resetAccount: () => true })({ token: 'candidate-token',
+      user: { userId: 'a', activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
+    await flush();
+    if (name === 'bound') { pending.resolve(session()); assert.equal((await work).ok, true); }
+    else {
+      assert.equal(name === 'abandon' ? c.abandonLogin() : c.enterGuest(), true);
+      pending.resolve(session()); await work;
+      assert.equal(auth.getAuthToken(), null);
+    }
+    assert.ok(JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)).ownerVersion, 'raw versioned record may remain');
+    if (name.endsWith('-user')) localStorage.setItem('bazardrive.user.v1', JSON.stringify({
+      userId: name === 'guest-same-user' ? 'a' : 'b', onboarded: true, role: 'passenger',
+    }));
+    const encoded = Buffer.from(JSON.stringify(localStorage.snapshot())).toString('base64');
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--markerless-versioned-case', name, encoded],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    return;
+  }
+  const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  assert.equal(auth.isAuthTabRejected(), true);
+  assert.equal(auth.getAuthToken(), null, 'markerless getters block the token before bootstrap');
+  assert.equal(auth.getAuthUserId(), null, 'markerless getters block the user before bootstrap');
+  let requests = 0;
+  const c = create({ backendEnabled: () => true, requestSession: async () => { requests++; return session(); } });
+  const result = await c.reconcile();
+  assert.equal(requests, 0, 'markerless new tab must not adopt retained versioned auth; state=' + result.state);
+  assert.equal(result.state, 'ANONYMOUS');
+  assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
+}
+
+async function authOwnershipFailureCase(name) {
+  installDOM({ parseMarkup: true });
+  const auth = await import('../public/src/auth_token.js');
+  const [previous, failure] = name.split(':');
+  if (previous !== 'null') {
+    assert.equal(auth.setAuth({ token: 'previous-token', userId: 'a' }), true);
+    if (previous === 'rejected') assert.equal(auth.detachRejectedAuth(), true);
+    else {
+      const { createAuthSessionBootstrap: create } = await import('../public/src/auth_session_bootstrap.js');
+      const c = create({ backendEnabled: () => true,
+        requestSession: async () => ({ user: { ...userDTO('a'), activeRole: 'passenger', phoneVerified: true } }) });
+      assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    }
+  }
+  const priorMarker = sessionStorage.getItem(rejectionMarkerKey);
+  const before = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  const rawSet = localStorage.setItem, rawGet = localStorage.getItem;
+  const markerSet = sessionStorage.setItem, markerGet = sessionStorage.getItem, markerRemove = sessionStorage.removeItem;
+  let candidateWritten = false, markerFirst = false;
+  let restoreDenied = false;
+  sessionStorage.setItem = (key, value) => {
+    if (value.startsWith('candidate:') && failure === 'marker-write') throw new Error('fixture candidate marker denied');
+    if (value === priorMarker && failure === 'restore' && !restoreDenied) {
+      restoreDenied = true;
+      throw new Error('fixture previous marker restore denied');
+    }
+    markerSet(key, value);
+  };
+  sessionStorage.removeItem = key => {
+    if (failure === 'restore') return;
+    markerRemove(key);
+  };
+  localStorage.setItem = (key, value) => {
+    markerFirst = markerGet(rejectionMarkerKey) === 'candidate:' + JSON.parse(value).ownerVersion;
+    if (failure === 'write') throw new Error('fixture auth write denied');
+    rawSet(key, value); candidateWritten = true;
+  };
+  localStorage.getItem = key => candidateWritten && key === auth.AUTH_STORAGE_KEY ? null : rawGet(key);
+  assert.equal(auth.setAuth({ token: 'new-token', userId: 'c' }), false);
+  localStorage.setItem = rawSet; localStorage.getItem = rawGet;
+  sessionStorage.setItem = markerSet; sessionStorage.getItem = markerGet; sessionStorage.removeItem = markerRemove;
+  if (failure !== 'marker-write') assert.equal(markerFirst, true, 'every write establishes candidate ownership first');
+  assert.equal(sessionStorage.getItem(rejectionMarkerKey), failure === 'restore' ? '1' : priorMarker);
+  assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+  const reloaded = await import('../public/src/auth_token.js?failed-owner-restore');
+  const unchangedBound = previous === 'bound' && rawGet(auth.AUTH_STORAGE_KEY) === before && failure !== 'restore';
+  assert.equal(reloaded.getAuthToken(), unchangedBound ? 'previous-token' : null);
+  if (candidateWritten) {
+    const encoded = Buffer.from(JSON.stringify(localStorage.snapshot())).toString('base64');
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--markerless-versioned-case', 'failed-write', encoded],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  }
+}
+
+async function rejectedReloadCase(role, saved) {
+  const dom = installDOM({ parseMarkup: true });
+  // Hydrate surviving browser storage before any runtime module initializes.
+  if (saved) {
+    const stores = JSON.parse(Buffer.from(saved, 'base64').toString());
+    for (const [key, value] of Object.entries(stores.local)) localStorage.setItem(key, value);
+    for (const [key, value] of Object.entries(stores.session)) sessionStorage.setItem(key, value);
+  }
+  const replacementReload = ['foreign', 'same-user', 'guest-foreign', 'driver-foreign'].includes(role);
+  const guest = role === 'guest' || role === 'guest-foreign';
+  const { user } = await import('../public/src/state.js');
+  const { register, go } = await import('../public/src/router.js');
+  globalThis.__BD_API_BASE__ = role === 'off' ? '' : 'https://api.invalid';
+  location.hash = '#/ops/screens';
+  let products = 0;
+  register('/boot-proof', () => { products++; return new dom.Element(); });
+  if (saved) {
+    const profile = localStorage.getItem('bazardrive.user.v1');
+    const requests = [];
+    if (replacementReload) {
+      globalThis.fetch = async (url, options) => {
+        requests.push({ url, bearer: options.headers.Authorization });
+        return response({ user: userDTO(role === 'same-user' ? 'a' : 'b') });
+      };
+    } else if (role === 'off') {
+      globalThis.fetch = () => { throw new Error('backend OFF reload must not request a session'); };
+    } else if (role === 'valid') {
+      const { setAuth } = await import('../public/src/auth_token.js');
+      assert.equal(setAuth({ token: 'valid-token', userId: 'a' }), true);
+      globalThis.fetch = async () => response({ user: { ...userDTO('a'), activeRole: 'passenger' } });
+    } else globalThis.fetch = () => { throw new Error('rejected reload must have no bearer'); };
+    await import('../public/src/app.js'); await flush();
+    if (replacementReload) {
+      assert.equal(requests.length, 0, 'marked reload must not reconcile a replacement bearer: ' + JSON.stringify(requests));
+    }
+    const auth = await import('../public/src/auth_token.js');
+    if (!['off', 'valid'].includes(role)) {
+      assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+    }
+    if (guest || ['off', 'valid'].includes(role)) {
+      assert.equal(user.get().role, guest ? 'guest' : 'passenger');
+      assert.equal(user.get().onboarded, true);
+      if (role === 'valid') assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
+    } else {
+      assert.equal(user.get().role, null, 'rejected authenticated projection must stay invalidated after reload');
+      assert.equal(user.get().onboarded, false);
+      assert.equal(user.get().phoneVerified, false);
+      go('/boot-proof'); await flush();
+      assert.equal(products, 0); assert.equal(location.hash, '#/onboarding');
+    }
+    assert.equal(localStorage.getItem('bazardrive.user.v1'), profile, 'reload cannot overwrite the shared profile');
+    if (replacementReload) {
+      const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+      const { apiFetch } = await import('../public/src/api_client.js');
+      await apiFetch('/orders');
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].bearer, undefined, 'public read does not send the replacement bearer');
+      assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw, 'reload keeps replacement byte-identical');
+    }
+    return;
+  }
+  const initialRole = guest ? 'guest' : role === 'driver-foreign' ? 'driver'
+    : ['off', 'valid'].includes(role) || replacementReload ? 'passenger' : role;
+  user.set({ welcomeSeen: true, onboarded: true, role: initialRole, phoneVerified: true });
+  const profile = localStorage.getItem('bazardrive.user.v1');
+  const { setAuth, getAuthToken } = await import('../public/src/auth_token.js');
+  assert.equal(setAuth({ token: 'rejected-token', userId: 'a' }), true);
+  const authBefore = localStorage.getItem('bazardrive.auth.v1');
+  // The first load always obtains the authoritative rejection, even for the OFF reload case.
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  globalThis.fetch = async () => response({ user: null });
+  await import('../public/src/app.js'); await flush();
+  assert.equal(getAuthToken(), null);
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), authBefore, 'raw rejected auth may remain, but getters detach');
+  assert.equal(user.get().role, guest ? 'guest' : null);
+  assert.equal(localStorage.getItem('bazardrive.user.v1'), profile);
+  if (replacementReload) localStorage.setItem('bazardrive.auth.v1',
+    JSON.stringify({ token: 'replacement-token', userId: role === 'same-user' ? 'a' : 'b', phone: null }));
+  const encoded = Buffer.from(JSON.stringify({ local: localStorage.snapshot(), session: sessionStorage.snapshot() })).toString('base64');
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-reload-case', role, encoded],
+    { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1', 'marker carries only a sentinel, including Guest');
+}
+
+async function rejectedCompareDeleteCase(name) {
+  globalThis.localStorage = storage();
+  globalThis.sessionStorage = storage();
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  const replacement = JSON.stringify({ token: 'replacement-token', userId: name === 'same-user' ? 'a' : 'b', phone: null });
+  const rawRemove = localStorage.removeItem, rawSet = sessionStorage.setItem;
+  let raced = false, authRemovals = 0;
+  const replace = () => { raced = true; localStorage.setItem(auth.AUTH_STORAGE_KEY, replacement); };
+  // Old cleanup races immediately before deletion; durable detach races at its
+  // tab-local marker write. Neither transition may mutate the replacement.
+  localStorage.removeItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY) { authRemovals++; replace(); }
+    rawRemove(key);
+  };
+  sessionStorage.setItem = (key, value) => {
+    if (key === rejectionMarkerKey) replace();
+    rawSet(key, value);
+  };
+  const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+    requestSession: async () => ({ user: null }) });
+  assert.equal((await c.reconcile()).state, 'ANONYMOUS');
+  assert.equal(raced, true, 'fixture interleaves a real replacement during rejected cleanup');
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), replacement, 'compare/delete race must preserve B byte-for-byte');
+  assert.equal(authRemovals, 0, 'rejected cleanup must never delete shared auth');
+  assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+  const { apiFetch } = await import('../public/src/api_client.js');
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers.Authorization, undefined, 'stale tab cannot attach replacement');
+    return response({ items: [] });
+  };
+  await apiFetch('/orders');
+}
+
+async function rejectedDetachRetryCase(name) {
+  globalThis.localStorage = storage();
+  globalThis.sessionStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  const rawSet = sessionStorage.setItem, rawGet = sessionStorage.getItem;
+  const original = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  let allowDetach = false, writes = 0, drops = 0, callbacks = 0, requests = 0;
+  localStorage.removeItem = () => { throw new Error('rejected cleanup must not remove shared auth'); };
+  sessionStorage.setItem = (key, value) => {
+    if (key === rejectionMarkerKey) {
+      writes++;
+      if (!allowDetach && !name.startsWith('read-')) {
+        if (name === 'denied') throw new Error('fixture detach denied');
+        return;
+      }
+    }
+    rawSet(key, value);
+  };
+  sessionStorage.getItem = key => {
+    if (key === rejectionMarkerKey && !allowDetach && name.startsWith('read-')) {
+      if (name === 'read-denied') throw new Error('fixture detach read denied');
+      return null;
+    }
+    return rawGet(key);
+  };
+  const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+    requestSession: async () => { requests++; return { user: null }; },
+    detachAuth: () => { drops++; return auth.detachRejectedAuth(); },
+    onRejectedSession: () => callbacks++,
+  });
+  assert.equal((await c.reconcile()).error.code, 'AUTH_STORAGE_FAILED');
+  assert.equal(drops, 1); assert.equal(callbacks, 0); assert.equal(auth.getAuthToken(), null);
+  const retry = await c.reconcile();
+  assert.equal(drops, 2, 'retry must establish durable detach before anonymous admission');
+  assert.equal(retry.state, 'SESSION_UNKNOWN'); assert.equal(retry.error.code, 'AUTH_STORAGE_FAILED');
+  assert.equal(callbacks, 0); assert.equal(writes, 2);
+  assert.ok(localStorage.getItem(auth.AUTH_STORAGE_KEY), 'raw rejected bearer still exists');
+  let replacement = original;
+  if (['same-user', 'foreign'].includes(name)) {
+    replacement = JSON.stringify({ token: 'new-token', userId: name === 'same-user' ? 'a' : 'b', phone: null });
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, replacement);
+  }
+  allowDetach = true;
+  const settled = await c.reconcile();
+  assert.equal(settled.state, 'ANONYMOUS'); assert.equal(drops, 3); assert.equal(callbacks, 1);
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), replacement, 'durable detach never mutates shared auth');
+  assert.equal(auth.getAuthToken(), null, 'replacement cannot be adopted by the stale tab');
+  assert.equal(auth.getAuthUserId(), null);
+  assert.equal(requests, name.startsWith('read-') ? 0 : 1,
+    'an unreadable marker blocks even the initial session request');
+  assert.equal((await c.reconcile()).state, 'ANONYMOUS'); assert.equal(drops, 3); assert.equal(callbacks, 1);
+}
+
+async function rejectedStorageCase(role) {
+  const dom = installDOM({ parseMarkup: true });
+  globalThis.__BD_API_BASE__ = 'https://api.invalid';
+  location.hash = '#/ops/screens';
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  const { go, register } = await import('../public/src/router.js');
+  const { apiFetch } = await import('../public/src/api_client.js');
+  user.set({ welcomeSeen: true, onboarded: true, role, phoneVerified: true });
+  const profile = localStorage.getItem('bazardrive.user.v1');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  const original = localStorage.getItem(auth.AUTH_STORAGE_KEY), requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, bearer: options.headers.Authorization });
+    return response(url.endsWith('/auth/session') ? { user: null } : { items: [] });
+  };
+  await import('../public/src/app.js'); await flush();
+  assert.equal(requests.length, 1);
+  let protectedLoads = 0;
+  register('/boot-proof', () => { protectedLoads++; return new dom.Element(); });
+  for (const next of [
+    JSON.stringify({ token: 'foreign-token', userId: 'b', phone: null }),
+    JSON.stringify({ token: 'rotated-token', userId: 'a', phone: null }),
+    original, null,
+    JSON.stringify({ token: 'later-token', userId: 'c', phone: null }),
+  ]) {
+    if (next === null) localStorage.removeItem(auth.AUTH_STORAGE_KEY);
+    else localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
+    dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: next }); await flush();
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+    assert.equal(user.get().role, role === 'guest' ? 'guest' : null);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), next, 'storage event preserves shared record exactly');
+    assert.equal(localStorage.getItem('bazardrive.user.v1'), profile);
+    await apiFetch('/orders');
+    assert.equal(requests.at(-1).bearer, undefined);
+    go('/boot-proof'); await flush();
+    assert.equal(protectedLoads, 0); assert.equal(location.hash, '#/onboarding');
+    go('/ops/screens'); await flush();
+  }
+  assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, 1);
+  assert.ok(requests.slice(1).every(r => r.bearer === undefined));
+}
+
+async function rejectedLoginCase(name) {
+  globalThis.localStorage = storage(); globalThis.sessionStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  assert.equal(auth.detachRejectedAuth(), true);
+  const original = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+  assert.equal(auth.pinAuthTabUser('b'), false, 'pinning cannot lift rejected detach');
+  assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN, 'logout cannot delete rejected shared auth or lift detach');
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), original);
+  const rawSet = localStorage.setItem, rawGet = localStorage.getItem;
+  const rawSetMarker = sessionStorage.setItem, rawGetMarker = sessionStorage.getItem;
+  let verificationSawMarker = false;
+  if (name !== 'success' && name !== 'otp') {
+    localStorage.setItem = (key, value) => {
+      if (key === auth.AUTH_STORAGE_KEY && name === 'write-denied') throw new Error('fixture write denied');
+      if (key === auth.AUTH_STORAGE_KEY && name === 'write-noop') return;
+      rawSet(key, value);
+    };
+    localStorage.getItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY && name === 'read-denied') throw new Error('fixture read denied');
+      if (key === auth.AUTH_STORAGE_KEY && name === 'read-noop') return null;
+      return rawGet(key);
+    };
+    sessionStorage.setItem = (key, value) => {
+      if (key === rejectionMarkerKey && value.startsWith('candidate:')) {
+        if (name === 'marker-write-denied') throw new Error('fixture marker write denied');
+        if (name === 'marker-write-noop') return;
+      }
+      rawSetMarker(key, value);
+    };
+    sessionStorage.getItem = key => {
+      if (key === rejectionMarkerKey && name === 'marker-read-denied') throw new Error('fixture marker read denied');
+      return rawGetMarker(key);
+    };
+    assert.equal(auth.setAuth({ token: 'intended-token', userId: 'intended-user' }), false);
+    assert.equal(rawGetMarker(rejectionMarkerKey), '1', 'failed login retains durable marker');
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    localStorage.setItem = rawSet; localStorage.getItem = rawGet;
+    sessionStorage.setItem = rawSetMarker; sessionStorage.getItem = rawGetMarker;
+    // A later complete foreign bearer must stay unusable even after failed login.
+    rawSet(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'foreign-token', userId: 'b' }));
+    const reloadedAuth = await import('../public/src/auth_token.js?failed-login-reload');
+    assert.equal(reloadedAuth.getAuthToken(), null); assert.equal(reloadedAuth.getAuthUserId(), null);
+  }
+  localStorage.getItem = key => {
+    if (key === auth.AUTH_STORAGE_KEY) {
+      verificationSawMarker = rawGetMarker(rejectionMarkerKey)?.startsWith('candidate:');
+      assert.equal(verificationSawMarker, true, 'candidate ownership is persisted before new record readback');
+    }
+    return rawGet(key);
+  };
+  if (name === 'otp') {
+    const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+    // Stop instrumenting readback after the intended write verification, before
+    // the controller reads its new authority for handoff reconciliation.
+    const verifyRead = localStorage.getItem;
+    localStorage.getItem = key => { const value = verifyRead(key); localStorage.getItem = rawGet; return value; };
+    const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+      requestSession: async () => ({ user: { ...userDTO('intended-user'), activeRole: 'passenger' } }) });
+    const login = c.beginLogin({ resetAccount: () => true });
+    const result = await login({ token: 'intended-token', user: { userId: 'intended-user',
+      activeRole: 'passenger', phoneVerified: true, roles: ['passenger'] } });
+    assert.equal(result.ok, true); assert.equal(c.passengerConfirmed(), true);
+  } else assert.equal(auth.setAuth({ token: 'intended-token', userId: 'intended-user' }), true);
+  localStorage.getItem = rawGet;
+  assert.equal(verificationSawMarker, true);
+  assert.match(sessionStorage.getItem(rejectionMarkerKey), name === 'otp' ? /^bound:/ : /^candidate:/);
+  assert.equal(auth.isAuthTabRejected(), false);
+  assert.equal(auth.getAuthToken(), 'intended-token'); assert.equal(auth.getAuthUserId(), 'intended-user');
+}
+
+async function rejectedMarkerReadCase() {
+  installDOM({ parseMarkup: true });
+  const rawGet = sessionStorage.getItem;
+  sessionStorage.setItem(rejectionMarkerKey, '1');
+  const raw = JSON.stringify({ token: 'foreign-token', userId: 'b' });
+  localStorage.setItem('bazardrive.auth.v1', raw);
+  sessionStorage.getItem = () => { throw new Error('fixture marker unreadable'); };
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  let callbacks = 0;
+  const states = [];
+  const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+    requestSession: () => { throw new Error('unreadable marker cannot start an authenticated request'); },
+    onRejectedSession: () => callbacks++ });
+  c.subscribe(s => states.push(s.state));
+  assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+  assert.equal((await c.reconcile()).error.code, 'AUTH_STORAGE_FAILED');
+  assert.equal(c.enterGuest(), false, 'Guest cannot publish anonymous before durable detach');
+  assert.equal(c.adoptAnonymousAfterExternalLogout(), false, 'external logout cannot bypass failed detach');
+  assert.equal(callbacks, 0); assert.ok(states.every(s => s === 'SESSION_UNKNOWN'));
+  sessionStorage.getItem = rawGet;
+  assert.equal((await c.reconcile()).state, 'ANONYMOUS'); assert.equal(callbacks, 1);
+  assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+  assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+  assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
+}
+
+async function racedLoginWriteCase(name) {
+  globalThis.localStorage = storage(); globalThis.sessionStorage = storage();
+  const auth = await import('../public/src/auth_token.js');
+  assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+  assert.equal(auth.detachRejectedAuth(), true);
+  const rawGet = localStorage.getItem;
+  const replacement = JSON.stringify({ token: 'replacement-token', userId: name === 'same-user' ? 'a' : 'b', phone: null });
+  let raced = false;
+  localStorage.getItem = key => {
+    const value = rawGet(key);
+    if (key === auth.AUTH_STORAGE_KEY && !raced && JSON.parse(value || 'null')?.token === 'intended-token') {
+      raced = true;
+      localStorage.setItem(key, replacement);
+    }
+    return value;
+  };
+  auth.setAuth({ token: 'intended-token', userId: 'a' });
+  localStorage.getItem = rawGet;
+  assert.equal(raced, true, 'replacement follows successful candidate readback');
+  assert.equal(rawGet(auth.AUTH_STORAGE_KEY), replacement, 'replacement is byte-identical');
+  const markerMissing = sessionStorage.getItem(rejectionMarkerKey) === null;
+  const reloaded = await import('../public/src/auth_token.js?raced-login-reload');
+  const { createAuthSessionBootstrap } = await import('../public/src/auth_session_bootstrap.js');
+  let requests = 0;
+  const c = createAuthSessionBootstrap({ backendEnabled: () => true,
+    readToken: reloaded.getAuthToken, readUserId: reloaded.getAuthUserId,
+    pinTabUser: reloaded.pinAuthTabUser,
+    tabRejected: reloaded.isAuthTabRejected, detachAuth: reloaded.detachRejectedAuth,
+    requestSession: async () => { requests++; return { user: userDTO(name === 'same-user' ? 'a' : 'b') }; } });
+  const s = await c.reconcile();
+  assert.equal(requests, 0, 'reload must not adopt B after raced readback; markerMissing=' + markerMissing + ', state=' + s.state);
+  assert.equal(markerMissing, false);
+  assert.equal(reloaded.getAuthToken(), null); assert.equal(reloaded.getAuthUserId(), null);
+}
+
+async function ownerVersionCase(name, saved) {
+  const dom = installDOM({ parseMarkup: true });
+  if (saved) {
+    const stores = JSON.parse(Buffer.from(saved, 'base64').toString());
+    for (const [key, value] of Object.entries(stores.local)) localStorage.setItem(key, value);
+    for (const [key, value] of Object.entries(stores.session)) sessionStorage.setItem(key, value);
+  }
+  const malformed = name.startsWith('malformed-');
+  if (malformed) {
+    const values = { empty: '', unknown: 'other', version: 'candidate:not-a-uuid',
+      extra: 'bound:00000000-0000-4000-8000-000000000001:extra', json: '{"state":"bound"}' };
+    sessionStorage.setItem(rejectionMarkerKey, values[name.slice('malformed-'.length)]);
+    localStorage.setItem('bazardrive.auth.v1', JSON.stringify({ token: 'foreign-token', userId: 'b' }));
+  }
+  const auth = await import('../public/src/auth_token.js');
+  const { createAuthSessionBootstrap: create, sessionRouteAdmission: admit } =
+    await import('../public/src/auth_session_bootstrap.js');
+  const session = () => ({ user: { ...userDTO('a'), activeRole: 'passenger', phoneVerified: true } });
+  if (malformed) {
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    const c = create({ backendEnabled: () => true, requestSession: () => assert.fail('malformed marker must not send a bearer') });
+    assert.equal((await c.reconcile()).state, 'ANONYMOUS');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw);
+    return;
+  }
+  if (!saved) {
+    assert.equal(auth.setAuth({ token: 'old-token', userId: 'old-user' }), true);
+    assert.equal(auth.detachRejectedAuth(), true);
+    const oldRaw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.equal(auth.clearAuth(), auth.AUTH_CLEAR_FOREIGN);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), oldRaw);
+    assert.equal(auth.setAuth({ token: 'candidate-token', userId: 'a', phone: '+79990000001' }), true);
+  }
+  let record = JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY));
+  let version = record.ownerVersion;
+  assert.match(version, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  const marker = sessionStorage.getItem(rejectionMarkerKey);
+  if (!saved) assert.equal(marker, 'candidate:' + version);
+  assert.ok(![record.token, record.userId, record.phone].filter(Boolean).some(v => marker.includes(v + ':') || marker.endsWith(':' + v)),
+    'marker contains only orchestration state and opaque UUID, never credential or PII');
+
+  function replace(sameUser = false) {
+    const next = JSON.stringify({ token: sameUser ? 'candidate-token' : 'foreign-token',
+      userId: sameUser ? 'a' : 'b', phone: null, ownerVersion: crypto.randomUUID() });
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, next);
+    return next;
+  }
+  function detached(raw) {
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), raw, 'replacement is preserved byte-for-byte');
+  }
+  if (name === 'bound-identity-only') {
+    const c = create({ backendEnabled: () => true, requestSession: async () => session() });
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    const next = create({ backendEnabled: () => true,
+      requestSession: async () => ({ user: { ...userDTO('a'), activeRole: null, phoneVerified: false } }) });
+    assert.equal((await next.reconcile()).state, 'AUTHENTICATED', 'bound boot preserves baseline identity-only session semantics');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    return;
+  }
+  if (name.startsWith('reload-')) {
+    const bound = name.includes('-bound-'), mismatch = !name.endsWith('-match');
+    if (!saved) {
+      if (bound) {
+        const c = create({ backendEnabled: () => true, requestSession: async () => session() });
+        assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+        assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+      }
+      if (mismatch) replace(name.endsWith('-same-user'));
+      const encoded = Buffer.from(JSON.stringify({ local: localStorage.snapshot(), session: sessionStorage.snapshot() })).toString('base64');
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--owner-version-case', name, encoded],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+      return;
+    }
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    let requests = 0;
+    const pending = deferred();
+    const c = create({ backendEnabled: () => true, requestSession: () => { requests++; return pending.promise; } });
+    const work = c.reconcile(); await flush();
+    if (mismatch) {
+      assert.equal(requests, 0); assert.equal((await work).state, 'ANONYMOUS'); detached(raw);
+    } else {
+      assert.equal(requests, 1); assert.equal(c.getSnapshot().state, 'SESSION_RECONCILING');
+      assert.equal(admit(c.getSnapshot(), '/feed'), false);
+      pending.resolve(session());
+      assert.equal((await work).state, 'AUTHENTICATED');
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+      assert.equal(auth.getAuthToken(), record.token);
+    }
+    return;
+  }
+  if (name.startsWith('storage-')) {
+    const { user } = await import('../public/src/state.js');
+    const { register, go } = await import('../public/src/router.js');
+    const { apiFetch } = await import('../public/src/api_client.js');
+    user.set({ welcomeSeen: true, onboarded: true, role: 'passenger', phoneVerified: true });
+    const profile = localStorage.getItem('bazardrive.user.v1');
+    globalThis.__BD_API_BASE__ = 'https://api.invalid';
+    location.hash = '#/ops/screens';
+    const pending = deferred(), requests = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, bearer: options.headers.Authorization });
+      return url.endsWith('/auth/session') ? pending.promise : response({ items: [] });
+    };
+    await import('../public/src/app.js'); await flush();
+    assert.equal(requests.length, 1);
+    if (name === 'storage-bound') {
+      pending.resolve(response(session())); await flush();
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    }
+    let products = 0;
+    register('/boot-proof', () => { products++; return new dom.Element(); });
+    for (const kind of ['foreign', 'same-user', 'arbitrary', 'remove']) {
+      let raw;
+      if (kind === 'remove') { localStorage.removeItem(auth.AUTH_STORAGE_KEY); raw = null; }
+      else if (kind === 'arbitrary') {
+        raw = JSON.stringify({ token: 'candidate-token', userId: 'a' });
+        localStorage.setItem(auth.AUTH_STORAGE_KEY, raw);
+      } else raw = replace(kind === 'same-user');
+      dom.storageEvent({ key: auth.AUTH_STORAGE_KEY, newValue: raw }); await flush();
+      detached(raw);
+      assert.equal(user.get().role, null);
+      assert.equal(localStorage.getItem('bazardrive.user.v1'), profile, 'replacement invalidates cache only');
+      await apiFetch('/orders'); assert.equal(requests.at(-1).bearer, undefined);
+      go('/boot-proof'); await flush(); assert.equal(products, 0);
+      go('/ops/screens'); await flush();
+    }
+    pending.resolve(response(session())); await flush();
+    assert.equal(products, 0);
+    assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, 1);
+    return;
+  }
+  let requests = 0, racedRaw = null;
+  const pending = deferred();
+  const c = create({ backendEnabled: () => true, timeoutMs: name === 'timeout' ? 5 : 10000,
+    requestSession: () => {
+      requests++;
+      if (['401', '503', 'network'].includes(name)) return Promise.reject({ code: name === 'network' ? 'NETWORK' : 'HTTP_' + name });
+      if (name === 'protocol') return Promise.resolve({ user: { userId: 'a' } });
+      return pending.promise;
+    },
+    commitCandidate: owner => {
+      if (name.startsWith('pre-commit-')) racedRaw = replace(name.endsWith('same-user'));
+      return auth.commitAuthCandidate(owner);
+    },
+  });
+  const states = [];
+  c.subscribe(s => states.push(s.state));
+  let work;
+  if (name.startsWith('pre-commit-')) {
+    work = c.beginLogin({ resetAccount: () => true })({ token: 'candidate-token',
+      user: { userId: 'a', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } }, '+79990000001');
+    record = JSON.parse(localStorage.getItem(auth.AUTH_STORAGE_KEY)); version = record.ownerVersion;
+  } else work = c.reconcile();
+  await flush();
+  if (['401', '503', 'network', 'timeout', 'protocol'].includes(name)) {
+    const result = await work;
+    assert.equal(result.state, 'SESSION_UNKNOWN');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+    assert.equal(auth.getAuthToken(), record.token);
+    assert.equal(admit(result, '/feed'), false);
+    // Retry confirms the same candidate, not a replacement or invented identity.
+    name = 'retry'; pending.resolve(session());
+    assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    return;
+  }
+  assert.equal(c.getSnapshot().state, 'SESSION_RECONCILING');
+  assert.equal(admit(c.getSnapshot(), '/feed'), false);
+  assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+  if (name.startsWith('guest') || name.startsWith('abandon')) {
+    if (name.startsWith('abandon')) {
+      // A mounted explicit login owns its handoff even while reconciliation waits.
+      work = c.beginLogin({ resetAccount: () => true })({ token: 'candidate-token',
+        user: { userId: 'a', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+      await flush();
+    }
+    const abandonedRaw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    if (name.includes('-')) racedRaw = replace(name.endsWith('same-user'));
+    if (name.startsWith('abandon')) {
+      assert.equal(c.abandonLogin(), true);
+    } else assert.equal(c.enterGuest(), true);
+    const raw = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    assert.ok(raw); assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1'); detached(raw);
+    assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+    pending.resolve(session()); await work;
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    if (racedRaw) assert.equal(raw, racedRaw);
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, abandonedRaw);
+    const reloaded = await import('../public/src/auth_token.js?abandoned-candidate-reload');
+    assert.equal(reloaded.getAuthToken(), null, 'abandon/Guest cannot reopen the old candidate after reload');
+    return;
+  }
+  if (name.startsWith('response-race-')) racedRaw = replace(name.endsWith('same-user'));
+  const originalMarkerSet = sessionStorage.setItem;
+  const originalMarkerGet = sessionStorage.getItem;
+  if (name.startsWith('bound-write-') || name.startsWith('bound-marker-')) {
+    sessionStorage.setItem = (key, value) => {
+      if (value.startsWith('bound:')) {
+        if (name === 'bound-marker-denied') throw new Error('fixture bound marker denied');
+        if (name === 'bound-marker-noop') return;
+        if (name.startsWith('bound-write-')) racedRaw = replace(name.endsWith('same-user'));
+      }
+      originalMarkerSet(key, value);
+    };
+    sessionStorage.getItem = key => {
+      const value = originalMarkerGet(key);
+      if (value?.startsWith('bound:')) {
+        if (name === 'bound-marker-read-denied') throw new Error('fixture bound marker read denied');
+        if (name === 'bound-marker-read-noop') return 'candidate:' + version;
+      }
+      return value;
+    };
+  }
+  pending.resolve(session());
+  const result = await work;
+  if (name === 'success') {
+    assert.equal(result.state, 'AUTHENTICATED');
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    assert.equal(auth.getAuthOwnerVersion(), version); assert.equal(requests, 1);
+    assert.equal(auth.clearAuth(), true, 'confirmed own logout retains baseline cleanup');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), null);
+    const replacement = replace(true); detached(replacement);
+    const reloaded = await import('../public/src/auth_token.js?bound-logout-reload');
+    assert.equal(reloaded.getAuthToken(), null, 'logout cannot reopen adoption on reload');
+  } else {
+    assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
+    assert.equal(c.getSnapshot().error.code, 'AUTH_IDENTITY_MISMATCH');
+    assert.equal(states.includes('AUTHENTICATED'), false);
+    assert.equal(admit(c.getSnapshot(), '/feed'), false);
+    assert.ok(sessionStorage.getItem(rejectionMarkerKey), 'commit never deletes ownership marker');
+    if (racedRaw) detached(racedRaw);
+    if (name.startsWith('bound-marker-')) {
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'candidate:' + version);
+      sessionStorage.setItem = originalMarkerSet;
+      sessionStorage.getItem = originalMarkerGet;
+      assert.equal((await c.reconcile()).state, 'AUTHENTICATED');
+      assert.equal(sessionStorage.getItem(rejectionMarkerKey), 'bound:' + version);
+    }
+  }
 }
 
 async function appCase(name) {
   const dom = installDOM({ parseMarkup: true });
   const { register, go, setScreenChromeMount } = await import('../public/src/router.js');
   const { user } = await import('../public/src/state.js');
+  const rejected = ['anonymous', 'anonymous-passenger'].includes(name);
   // Contradictory legacy flags must not grant authentication or cause a
   // welcome/onboarding redirect loop. OFF/confirmed retain existing UX guards.
-  user.set({ welcomeSeen: name !== 'no-token' && name !== 'anonymous',
-    onboarded: true, role: 'driver', phoneVerified: true });
+  user.set({ welcomeSeen: name !== 'no-token' && !rejected,
+    onboarded: true, role: name === 'anonymous-passenger' ? 'passenger' : 'driver', phoneVerified: true });
   const originalProfile = localStorage.getItem('bazardrive.user.v1');
   if (name !== 'no-token') localStorage.setItem('bazardrive.auth.v1',
     JSON.stringify({ token: 'fixture-token', userId: 'cached-id' }));
@@ -380,7 +1230,7 @@ async function appCase(name) {
     assert.equal(products, 0); assert.equal(dom.starts(), 0);
 
     if (name === 'valid') first.resolve(response({ user: userDTO() }));
-    else if (name === 'anonymous') first.resolve(response({ user: null }));
+    else if (rejected) first.resolve(response({ user: null }));
     else if (name === 'retry-network') first.reject(new TypeError('fixture network'));
     else if (name === 'retry-malformed') first.resolve(response({ user: { userId: 'incomplete' } }));
     else first.resolve(response({ code: 'SESSION_LOOKUP_FAILED', retryable: true }, 503));
@@ -398,14 +1248,19 @@ async function appCase(name) {
       assert.equal(dom.starts(), 0); assert.equal(products, 0);
       next.resolve(response({ user: userDTO('retry-user') })); await flush();
     }
-    if (name === 'anonymous') {
+    if (rejected) {
       assert.equal(products, 0); assert.equal(location.hash, '#/onboarding');
+      assert.equal(user.get().onboarded, false, 'rejected boot invalidates the app projection');
+      assert.equal(user.get().role, null);
+      const { getAuthToken } = await import('../public/src/auth_token.js');
+      assert.equal(getAuthToken(), null, 'rejected bearer is unavailable to future requests');
     } else {
       assert.equal(products, 1); assert.equal(location.hash, '#/boot-proof?deep=2');
     }
   }
   assert.equal(dom.starts(), 1, 'router.start adds exactly one hashchange listener');
-  assert.equal(localStorage.getItem('bazardrive.auth.v1'), originalAuth, 'R1 never deletes/replaces credentials');
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), originalAuth,
+    'authoritative rejection detaches without deleting shared auth');
   assert.equal(localStorage.getItem('bazardrive.user.v1'), originalProfile, 'R1 never migrates/deletes user.v1');
   assert.deepEqual(errors, [], 'app smoke emits no console errors/warnings');
   console.error = originalError; console.warn = originalWarn;
@@ -585,6 +1440,12 @@ async function appDevDocsBootCase(name) {
   }
   assert.equal(dom.starts(), 1);
   assert.equal(localStorage.getItem('bazardrive.auth.v1'), authBefore);
+  if (name === 'user-null') {
+    assert.equal(user.get().onboarded, false);
+    const auth = await import('../public/src/auth_token.js');
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+  }
   assert.equal(localStorage.getItem('bazardrive.user.v1'), profileBefore);
   assert.deepEqual(errors, []);
   console.error = oldError; console.warn = oldWarn;
@@ -598,12 +1459,17 @@ async function guestPublicCase(name) {
   const negativeRole = name.startsWith('role-');
   const role = negativeRole ? (name === 'role-null' ? null : name.slice(5)) : 'guest';
   user.set({ welcomeSeen: true, onboarded: true, phoneVerified: true, role });
+  const originalProjection = user.get();
   const originalProfile = localStorage.getItem('bazardrive.user.v1');
+  const rejectedBearer = ['user-null', 'user-null-foreign'].includes(name);
+  const foreignRejected = name === 'user-null-foreign';
+  const foreignAuth = JSON.stringify({ token: 'foreign-token', userId: 'foreign-user', phone: null });
+  const foreignProfile = JSON.stringify({ ...originalProjection, role: 'driver', firstName: 'Foreign driver' });
   const off = name === 'off';
   const pending = name === 'reconciling', unknown = name === 'unknown';
   const guestReadOnly = !off && !pending && !unknown && name !== 'authenticated' && !negativeRole;
   globalThis.__BD_API_BASE__ = off ? '' : 'https://api.invalid';
-  const hasBearer = ['user-null', 'authenticated', 'reconciling', 'unknown'].includes(name);
+  const hasBearer = rejectedBearer || ['authenticated', 'reconciling', 'unknown'].includes(name);
   if (hasBearer) localStorage.setItem('bazardrive.auth.v1',
     JSON.stringify({ token: 'fixture-token', userId: 'user-a' }));
   const authBefore = localStorage.getItem('bazardrive.auth.v1');
@@ -626,9 +1492,27 @@ async function guestPublicCase(name) {
   await import('../public/src/app.js'); await flush();
   assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
   if (hasBearer && !pending) {
-    session.resolve(unknown ? response({ code: 'SESSION_LOOKUP_FAILED' }, 503)
-      : response({ user: name === 'authenticated' ? userDTO() : null }));
+    const reply = unknown ? response({ code: 'SESSION_LOOKUP_FAILED' }, 503)
+      : response({ user: name === 'authenticated' ? userDTO() : null });
+    if (foreignRejected) {
+      const rawSet = sessionStorage.setItem;
+      sessionStorage.setItem = (key, value) => {
+        if (key === rejectionMarkerKey) {
+          localStorage.setItem('bazardrive.auth.v1', foreignAuth);
+          localStorage.setItem('bazardrive.user.v1', foreignProfile);
+        }
+        rawSet(key, value);
+      };
+    }
+    session.resolve(reply);
     await flush();
+    if (rejectedBearer) {
+      const { getAuthToken } = await import('../public/src/auth_token.js');
+      assert.equal(getAuthToken(), null, 'Guest cannot attach the rejected or foreign bearer');
+      assert.deepEqual(user.get(), originalProjection, 'explicit Guest projection survives rejection unchanged');
+      assert.equal(localStorage.getItem('bazardrive.auth.v1'), foreignRejected ? foreignAuth : authBefore);
+      assert.equal(localStorage.getItem('bazardrive.user.v1'), foreignRejected ? foreignProfile : originalProfile);
+    }
   }
   const loads = new Map();
   // Module naming exceptions, not a second public-route allowlist. Every route
@@ -667,6 +1551,24 @@ async function guestPublicCase(name) {
     else assert.equal(view.dataset.authBootState, pending ? 'SESSION_RECONCILING' : 'SESSION_UNKNOWN');
   }
 
+  if (foreignRejected) {
+    await navigate('/profile');
+    assert.equal(dom.elements.app.querySelectorAll('.pf-guest-card').length, 1);
+    for (const destination of protectedDestinations) {
+      await navigate(destination);
+      assert.equal(location.hash, '#/onboarding', 'foreign-detached Guest cannot enter protected routes');
+    }
+    assert.equal(protectedLoads, 0);
+    assert.equal(localStorage.getItem('bazardrive.auth.v1'), foreignAuth);
+    assert.equal(localStorage.getItem('bazardrive.user.v1'), foreignProfile);
+    assert.equal(user.get().role, 'guest');
+    assert.ok(requests.every(r => r.options.method === 'GET'), 'no server mutation');
+    assert.ok(requests.every(r => r.options.headers.Authorization !== 'Bearer foreign-token'), 'no foreign actor adoption');
+    assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, 1);
+    assert.deepEqual(errors, []);
+    console.error = oldError; console.warn = oldWarn;
+    return;
+  }
   if (guestReadOnly) {
     // Real onboarding Guest choice must terminate at Feed, including retained
     // local completion flags. No token cleanup/OTP lifecycle is introduced.
@@ -771,8 +1673,8 @@ async function guestPublicCase(name) {
   await navigate('/ops/screens');
   assert.equal(dom.elements.app.children[0].className, 'screen screen--ops-screens');
   assert.equal(dom.starts(), 1);
-  assert.equal(localStorage.getItem('bazardrive.auth.v1'), guestReadOnly ? null : authBefore,
-    'explicit Guest selection clears any retained bearer');
+  assert.equal(localStorage.getItem('bazardrive.auth.v1'), rejectedBearer ? authBefore : guestReadOnly ? null : authBefore,
+    'Guest detaches rejected auth; non-rejected explicit Guest retains its existing cleanup');
   assert.equal(localStorage.getItem('bazardrive.user.v1'), guestReadOnly ? localStorage.getItem('bazardrive.user.v1') : originalProfile,
     'non-Guest paths preserve the profile cache');
   assert.equal(requests.filter(r => r.url.endsWith('/auth/session')).length, hasBearer ? 1 : 0);
@@ -786,8 +1688,15 @@ async function loginHandoffCase(name) {
   const router = await import('../public/src/router.js');
   const { user } = await import('../public/src/state.js');
   const verifySwitch = name === 'verify-switch-reonboard';
+  const rejectedFresh = ['rejected-fresh', 'foreign-cache-takeover'].includes(name);
+  let cacheBoundary = null;
+  const preservedDeviceState = {
+    'bazardrive.posts.v1': JSON.stringify([{ id: 'global-demo-post' }]),
+    'bazardrive.map_prefs.v1': JSON.stringify({ mode: 'hybrid' }),
+    'bazardrive.debug.publish': '1',
+  };
   user.set({ welcomeSeen: true, onboarded: verifySwitch, role: 'passenger', firstName: 'Old account' });
-  if (name === 'account-switch' || verifySwitch) localStorage.setItem('bazardrive.auth.v1',
+  if (name === 'account-switch' || verifySwitch || rejectedFresh) localStorage.setItem('bazardrive.auth.v1',
     JSON.stringify({ token: 'old-token', userId: 'old-user' }));
   globalThis.__BD_API_BASE__ = name === 'off-demo' ? '' : 'https://api.invalid';
   location.hash = '#/onboarding?step=phone';
@@ -800,6 +1709,7 @@ async function loginHandoffCase(name) {
     if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
       userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
     assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
+    if (rejectedFresh && options.headers.Authorization === 'Bearer old-token') return response({ user: null });
     if ((name === 'account-switch' || verifySwitch) && options.headers.Authorization === 'Bearer old-token') {
       return response({ user: { userId: 'old-user', sessionId: 'old-session',
         activeRole: 'passenger', phoneVerified: true } });
@@ -810,6 +1720,45 @@ async function loginHandoffCase(name) {
     return pending.promise;
   };
   await import('../public/src/app.js'); await flush();
+  if (rejectedFresh) {
+    const auth = await import('../public/src/auth_token.js');
+    assert.equal(auth.getAuthToken(), null); assert.equal(auth.getAuthUserId(), null);
+    assert.equal(sessionStorage.getItem(rejectionMarkerKey), '1');
+    if (name === 'foreign-cache-takeover') {
+      localStorage.setItem(auth.AUTH_STORAGE_KEY, JSON.stringify({ token: 'foreign-token', userId: 'b', ownerVersion: crypto.randomUUID() }));
+      user.set({ firstName: 'Foreign profile', role: 'driver', onboarded: true });
+      for (const key of takeoverCacheKeys) localStorage.setItem(key, JSON.stringify({ foreignAccount: 'b' }));
+      for (const [key, value] of Object.entries(preservedDeviceState)) localStorage.setItem(key, value);
+      const foreignProfile = localStorage.getItem('bazardrive.user.v1');
+      const { resetLocalSession, AUTH_CLEAR_FOREIGN } = await import('../public/src/mock_auth.js');
+      assert.equal(resetLocalSession({ allowForeignDetach: true }), AUTH_CLEAR_FOREIGN);
+      for (const key of takeoverCacheKeys) assert.ok(localStorage.getItem(key), 'default detach must preserve foreign caches');
+      assert.equal(localStorage.getItem('bazardrive.user.v1'), foreignProfile, 'default detach preserves the foreign persisted profile');
+    }
+    const shared = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    const rawRemove = localStorage.removeItem, rawSet = localStorage.setItem;
+    localStorage.removeItem = key => {
+      assert.notEqual(key, auth.AUTH_STORAGE_KEY, 'explicit reset must accept a foreign cache-only detach');
+      rawRemove(key);
+    };
+    localStorage.setItem = (key, value) => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        assert.equal(localStorage.getItem(key), shared, 'foreign auth is preserved until intentional candidate write');
+        assert.match(sessionStorage.getItem(rejectionMarkerKey), /^candidate:/);
+        if (name === 'foreign-cache-takeover') {
+          cacheBoundary = { survivors: takeoverCacheKeys.filter(k => {
+            const value = localStorage.getItem(k);
+            return value !== null && value !== '{}';
+          }),
+            profile: JSON.parse(localStorage.getItem('bazardrive.user.v1')), onboarded: user.get().onboarded };
+          for (const [key, value] of Object.entries(preservedDeviceState)) {
+            assert.equal(localStorage.getItem(key), value, 'account takeover preserves device/global state');
+          }
+        }
+      }
+      rawSet(key, value);
+    };
+  }
   if (name === 'account-switch' || verifySwitch) {
     const { setSmokeRole } = await import('../public/src/smoke_role.js');
     setSmokeRole('driver');
@@ -838,6 +1787,18 @@ async function loginHandoffCase(name) {
   }
   input('ob-otp-input', name === 'off-demo' ? '123456' : '1234');
   node('ob-next').click(); await flush();
+  if (name === 'foreign-cache-takeover') {
+    assert.ok(cacheBoundary, 'candidate write boundary was observed');
+    assert.deepEqual(cacheBoundary.survivors, [], 'foreign account caches survive BEFORE candidate C write');
+    assert.notEqual(cacheBoundary.profile.firstName, 'Foreign profile');
+    assert.equal(cacheBoundary.onboarded, false);
+  }
+  if (rejectedFresh) {
+    assert.equal(requests.filter(r => r.url.endsWith('/otp/verify')).length, 1);
+    assert.equal(sessions, 1, 'rejected fresh OTP is blocked before session reconciliation: ' + node('ob-err')?.textContent);
+    assert.match(sessionStorage.getItem(rejectionMarkerKey), /^candidate:/);
+    assert.equal(products, 0, 'candidate must not admit product routes before session confirmation');
+  }
   if (name === 'off-demo') {
     assert.ok(node('ob-firstname'));
     input('ob-firstname', 'Demo');
@@ -870,6 +1831,7 @@ async function loginHandoffCase(name) {
   pending.resolve(response({ user: { userId: name === 'mismatch' ? 'other-user' : 'new-user',
     sessionId: 'new-session', activeRole: 'passenger', phoneVerified: true } }));
   await flush();
+  if (rejectedFresh) assert.match(sessionStorage.getItem(rejectionMarkerKey), /^bound:/);
   assert.equal(dom.starts(), 1, 'handoff never restarts router or reloads page');
   if (name === 'mismatch') {
     assert.ok(node('ob-otp-input'));
@@ -1070,7 +2032,40 @@ async function repairHandoffCase(name) {
   assert.equal(products, 1); assert.equal(dom.starts(), 1);
 }
 
-if (process.argv[2] === '--storage-sync-case') {
+if (process.argv[2] === '--auth-ownership-failure-case') {
+  await authOwnershipFailureCase(process.argv[3]);
+  console.log('PASS candidate ownership failure: ' + process.argv[3]);
+} else if (process.argv[2] === '--markerless-versioned-case') {
+  await markerlessVersionedCase(process.argv[3], process.argv[4]);
+  console.log('PASS markerless versioned record: ' + process.argv[3]);
+} else if (process.argv[2] === '--owner-version-case') {
+  await ownerVersionCase(process.argv[3], process.argv[4]);
+  console.log('PASS opaque owner-version boundary: ' + process.argv[3]);
+} else if (process.argv[2] === '--raced-login-write-case') {
+  await racedLoginWriteCase(process.argv[3]);
+  console.log('PASS raced fresh-login readback: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-compare-delete-case') {
+  await rejectedCompareDeleteCase(process.argv[3]);
+  console.log('PASS rejected compare/delete race: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-marker-read-case') {
+  await rejectedMarkerReadCase();
+  console.log('PASS rejected marker read failure');
+} else if (process.argv[2] === '--rejected-storage-case') {
+  await rejectedStorageCase(process.argv[3]);
+  console.log('PASS rejected storage event: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-login-case') {
+  await rejectedLoginCase(process.argv[3]);
+  console.log('PASS rejected same-tab login: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-reload-case') {
+  await rejectedReloadCase(process.argv[3], process.argv[4]);
+  console.log('PASS rejected projection reload: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-detach-retry-case') {
+  await rejectedDetachRetryCase(process.argv[3]);
+  console.log('PASS rejected detach retry: ' + process.argv[3]);
+} else if (process.argv[2] === '--rejected-boot-case') {
+  await rejectedBootCase(process.argv[3]);
+  console.log('PASS rejected boot cleanup: ' + process.argv[3]);
+} else if (process.argv[2] === '--storage-sync-case') {
   await authStorageSyncCase(process.argv[3]);
   console.log('PASS actual app cross-tab storage: ' + process.argv[3]);
 } else if (process.argv[2] === '--auth-rollback-case') {
@@ -1095,8 +2090,14 @@ if (process.argv[2] === '--storage-sync-case') {
   await appCase(process.argv[3]);
   console.log('PASS app — ' + process.argv[3]);
 } else {
-  const { createAuthSessionBootstrap: create, sessionRouteAdmission: admit } =
+  const { createAuthSessionBootstrap: createRuntime, sessionRouteAdmission: admit } =
     await import('../public/src/auth_session_bootstrap.js');
+  // Unit fixtures own their synthetic credential source; real tab ownership is
+  // exercised by the isolated browser-storage cases above.
+  const create = options => createRuntime({ pinTabUser: () => true,
+    readOwnerVersion: () => null, authCandidate: () => false,
+    tabRejected: () => false, detachAuth: () => true, ...options });
+  globalThis.sessionStorage = storage();
   let count = 0;
   async function check(name, fn) {
     try {
@@ -1109,7 +2110,107 @@ if (process.argv[2] === '--storage-sync-case') {
     }
   }
   const fixture = overrides => create({ backendEnabled: () => true,
+    detachAuth: () => true, tabRejected: () => false,
     readToken: () => 'fixture-token', requestSession: async () => ({ user: userDTO() }), ...overrides });
+
+  await check('explicit foreign OTP takeover clears account caches/profile before installing C', async () => {
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', 'foreign-cache-takeover'],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  });
+  for (const scenario of ['guest', 'abandon', 'bound', 'guest-same-user', 'guest-foreign-user', 'legacy',
+    'invalid-null', 'invalid-empty', 'invalid-text', 'invalid-number', 'invalid-object', 'invalid-array']) {
+    await check('markerless auth compatibility and tab-owned isolation: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--markerless-versioned-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const previous of ['null', 'bound', 'rejected']) {
+    for (const failure of ['marker-write', 'write', 'readback', 'restore']) {
+      const scenario = previous + ':' + failure;
+      await check('candidate ownership failure restores a safe marker: ' + scenario, async () => {
+        execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--auth-ownership-failure-case', scenario],
+          { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+      });
+    }
+  }
+
+  for (const scenario of ['foreign', 'same-user']) {
+    await check('raced fresh-login readback retains marker: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--raced-login-write-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  await check('real rejected onboarding accepts foreign cache-only reset and confirms fresh OTP', async () => {
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', 'rejected-fresh'],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  });
+  for (const scenario of ['success', 'bound-identity-only', 'guest', 'abandon',
+    'guest-foreign', 'guest-same-user', 'abandon-foreign', 'abandon-same-user',
+    '401', '503', 'network', 'timeout', 'protocol',
+    'pre-commit-foreign', 'pre-commit-same-user', 'response-race-foreign', 'response-race-same-user',
+    'bound-write-foreign', 'bound-write-same-user', 'bound-marker-denied', 'bound-marker-noop',
+    'bound-marker-read-denied', 'bound-marker-read-noop',
+    'reload-candidate-match', 'reload-candidate-foreign', 'reload-candidate-same-user',
+    'reload-bound-match', 'reload-bound-foreign', 'reload-bound-same-user',
+    'storage-candidate', 'storage-bound',
+    'malformed-empty', 'malformed-unknown', 'malformed-version', 'malformed-extra', 'malformed-json']) {
+    await check('opaque owner-version boundary: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--owner-version-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+
+  await check('rejected marker read failure blocks adoption and anonymous exits until retry', async () => {
+    execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-marker-read-case'],
+      { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+  });
+  for (const scenario of ['passenger', 'driver', 'guest']) {
+    await check('rejected storage event: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-storage-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['success', 'otp', 'write-denied', 'write-noop', 'read-denied', 'read-noop',
+    'marker-write-denied', 'marker-write-noop', 'marker-read-denied']) {
+    await check('rejected same-tab login: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-login-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const role of ['passenger', 'driver', 'guest', 'off', 'valid', 'foreign', 'same-user', 'guest-foreign', 'driver-foreign']) {
+    await check('rejected projection reload: ' + role, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-reload-case', role],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['foreign', 'same-user']) {
+    await check('rejected compare/delete race: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-compare-delete-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['denied', 'noop', 'same-user', 'foreign', 'read-denied', 'read-noop']) {
+    await check('rejected detach retry: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-detach-retry-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  for (const scenario of ['ordinary', 'foreign', 'same-user', 'detach-denied', 'detach-noop',
+    '401', '403', '503', 'network', 'timeout', 'malformed', 'valid', 'off']) {
+    await check('rejected boot credential/projection boundary: ' + scenario, async () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--rejected-boot-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
+    });
+  }
+  await check('ordinary rejected boot fails closed when injected detachAuth returns false', async () => {
+    let callbacks = 0, drops = 0;
+    const c = fixture({ requestSession: async () => ({ user: null }),
+      detachAuth: () => { drops++; return false; }, onRejectedSession: () => callbacks++ });
+    const s = await c.reconcile();
+    assert.equal(drops, 1); assert.equal(callbacks, 0);
+    assert.equal(s.state, 'SESSION_UNKNOWN'); assert.equal(s.error.code, 'AUTH_STORAGE_FAILED');
+    assert.equal(admit(s, '/driver-map'), false);
+  });
 
   const verified = (id = 'b', role = 'passenger') => ({ token: 'token-' + id,
     user: { userId: id, activeRole: role, phoneVerified: true, roles: [role] } });
@@ -1230,16 +2331,20 @@ if (process.argv[2] === '--storage-sync-case') {
     assert.deepEqual(record, { token: 'token-c', userId: 'c' });
     assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
   });
-  await check('terminal handoff with an already-removed bearer can exit ANONYMOUS', async () => {
+  await check('terminal handoff with a rejected detached bearer can exit ANONYMOUS', async () => {
     let record = { token: 'token-a', userId: 'a' };
+    let detached = false;
     const c = create({ backendEnabled: () => true,
-      readToken: () => record?.token ?? null, readUserId: () => record?.userId ?? null,
+      readToken: () => detached ? null : record?.token ?? null,
+      readUserId: () => detached ? null : record?.userId ?? null,
       writeAuth: next => { record = next; return true; },
+      detachAuth: () => { detached = true; return true; }, tabRejected: () => detached,
       dropAuth: () => { record = null; },
       requestSession: async () => ({ user: null }) });
     const result = await c.beginLogin()(verified());
     assert.equal(result.ok, false);
-    assert.equal(record, null, 'terminal reconciliation removed its bearer');
+    assert.equal(detached, true, 'terminal reconciliation detaches without physical deletion');
+    assert.equal(record.token, 'token-b');
     assert.equal(c.abandonLogin(), true);
     assert.equal(c.getSnapshot().state, 'ANONYMOUS');
   });
@@ -1686,6 +2791,10 @@ if (process.argv[2] === '--storage-sync-case') {
     const sticky = storage();
     globalThis.localStorage = sticky;
     assert.equal(auth.setAuth({ token: 'sticky-token', userId: 'sticky-user' }), true);
+    const confirmed = createRuntime({ backendEnabled: () => true,
+      requestSession: async () => passenger('sticky-user') });
+    assert.equal((await confirmed.reconcile()).state, 'AUTHENTICATED');
+    assert.equal(auth.isAuthCandidate(), false);
     const originalRemove = localStorage.removeItem;
     localStorage.removeItem = key => {
       if (key === 'bazardrive.auth.v1') return;
@@ -1702,6 +2811,9 @@ if (process.argv[2] === '--storage-sync-case') {
       globalThis.localStorage = storage();
       auth.clearAuth();
       assert.equal(auth.setAuth({ token: 'old-token', userId: 'a' }), true);
+      const prior = createRuntime({ backendEnabled: () => true,
+        requestSession: async () => passenger('a') });
+      assert.equal((await prior.reconcile()).state, 'AUTHENTICATED');
       const originalSet = localStorage.setItem;
       localStorage.setItem = (key, value) => {
         if (failure === 'write') throw new Error('fixture storage denied');
@@ -1717,10 +2829,11 @@ if (process.argv[2] === '--storage-sync-case') {
         };
       }
       let requests = 0;
-      const c = create({ backendEnabled: () => true,
+      const c = createRuntime({ backendEnabled: () => true,
         requestSession: async () => { requests++; return passenger('b'); } });
       const result = await c.beginLogin()(verified());
-      assert.equal(result.code, failure === 'wrong-user' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED');
+      assert.equal(result.code, failure === 'wrong-user' ? 'AUTH_STALE' : 'AUTH_STORAGE_FAILED',
+        'storage failure or a foreign replacement must block the handoff');
       assert.equal(c.getSnapshot().state, 'SESSION_UNKNOWN');
       assert.equal(c.passengerConfirmed(), false); assert.equal(requests, 0);
       assert.equal(auth.getAuthToken(), null);
@@ -1795,7 +2908,7 @@ if (process.argv[2] === '--storage-sync-case') {
         return response({ code: kind === '503' ? 'SESSION_LOOKUP_FAILED' : 'UNAUTHORIZED',
           retryable: kind === '503' }, Number(kind));
       };
-      const c = create();
+      const c = createRuntime();
       const s = await c.reconcile();
       assert.equal(s.state, 'SESSION_UNKNOWN'); assert.equal(s.user, null);
       assert.equal(s.error.retryable, true);
@@ -1873,7 +2986,7 @@ if (process.argv[2] === '--storage-sync-case') {
     router.setAdmissionGuard(null);
   });
 
-  for (const scenario of ['off', 'no-token', 'valid', 'anonymous', 'retry-503', 'retry-network', 'retry-malformed']) {
+  for (const scenario of ['off', 'no-token', 'valid', 'anonymous', 'anonymous-passenger', 'retry-503', 'retry-network', 'retry-malformed']) {
     await check('actual app/router integration: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--app-case', scenario],
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
@@ -1892,7 +3005,7 @@ if (process.argv[2] === '--storage-sync-case') {
         { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
-  for (const scenario of ['no-bearer', 'user-null', 'role-null', 'role-passenger', 'role-driver',
+  for (const scenario of ['no-bearer', 'user-null', 'user-null-foreign', 'role-null', 'role-passenger', 'role-driver',
     'reconciling', 'unknown', 'authenticated', 'off']) {
     await check('actual app/router/screens Guest boundary: ' + scenario, async () => {
       execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--guest-public-case', scenario],

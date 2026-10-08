@@ -69,6 +69,7 @@ const CLEARED = [
 const NOT_CLEARED = [
   { key: 'bazardrive.user.v1', documented: true },            // reset by auth flow (user.reset)
   { key: 'bazardrive.smoke_role.v1', documented: true, session: true }, // reset by auth flow (clearSmokeRole)
+  { key: 'bazardrive.auth.rejected_projection.v1', documented: false, session: true }, // tab-local auth orchestration marker
   { key: 'bazardrive.posts.v1', documented: true },           // global cache, survives
   { key: 'bazardrive.map_prefs.v1', documented: true },       // device pref, survives
   { key: 'bazardrive.debug.publish', documented: true },      // dev flag, survives
