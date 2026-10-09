@@ -130,11 +130,71 @@ test('logout: every supplied JSON body or query is rejected before auth lookup',
     assert.equal(calls.length, 0);
   }
   for (const query of ['sessionId=foreign', 'userId=foreign', 'token=foreign', 'anything=', 'sessionId=a&sessionId=b']) {
-    const response = await app.inject({ method: 'POST', url: `${logoutUrl}?${query}`, headers: bearer(token) });
+    for (const headers of [bearer(token), { ...bearer(token), 'content-type': 'application/json' }]) {
+      const response = await app.inject({ method: 'POST', url: `${logoutUrl}?${query}`, headers });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().code, 'VALIDATION');
+      assert.equal(calls.length, 0);
+    }
+  }
+});
+
+test('logout: zero-byte JSON framing revokes a live session just like ordinary bodyless logout', async t => {
+  const { app, token, row, calls } = await logoutFixture(t);
+  const live = await readSession(app, token);
+  assert.equal(live.statusCode, 200);
+  assert.equal(live.json().user.sessionId, row.id);
+  assertLogoutSuccess(await app.inject({
+    method: 'POST', url: logoutUrl,
+    headers: { ...bearer(token), 'content-type': 'application/json' },
+  }));
+  assert.ok(row.revoked_at);
+  assert.deepEqual((await readSession(app, token)).json(), { user: null });
+  assert.equal(calls.filter(call => /UPDATE auth_session/.test(call.sql)).length, 1);
+  for (const headers of [
+    { ...bearer(token), 'content-type': 'application/json; charset=utf-8', 'content-length': '0' },
+    { 'content-type': 'application/json' },
+  ]) {
+    assertLogoutSuccess(await app.inject({ method: 'POST', url: logoutUrl, headers }));
+  }
+});
+
+test('logout: non-empty malformed JSON never becomes bodyless success or performs auth I/O', async t => {
+  const { app, token, calls } = await logoutFixture(t);
+  for (const payload of ['{', 'null trailing', '   ', '{"__proto__":{"sessionId":"foreign"}}']) {
+    const response = await app.inject({
+      method: 'POST', url: logoutUrl,
+      headers: { ...bearer(token), 'content-type': 'application/json' }, payload,
+    });
     assert.equal(response.statusCode, 400);
-    assert.equal(response.json().code, 'VALIDATION');
+    assert.equal(response.json().code, 'FST_ERR_CTP_INVALID_JSON_BODY');
     assert.equal(calls.length, 0);
   }
+});
+
+test('logout parser is isolated: OTP and orders retain the default JSON boundary', async t => {
+  const { app, token, calls } = await logoutFixture(t);
+  for (const url of ['/api/v1/auth/otp/request', '/api/v1/auth/otp/verify', '/api/v1/orders']) {
+    const response = await app.inject({
+      method: 'POST', url, headers: { ...bearer(token), 'content-type': 'application/json' },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().code, 'FST_ERR_CTP_EMPTY_JSON_BODY');
+  }
+  for (const url of ['/api/v1/auth/otp/request', '/api/v1/auth/otp/verify']) {
+    for (const [payload, code] of [['{', 'FST_ERR_CTP_INVALID_JSON_BODY'], ['{}', 'VALIDATION']]) {
+      const response = await app.inject({
+        method: 'POST', url, headers: { 'content-type': 'application/json' }, payload,
+      });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().code, code);
+    }
+    const payload = url.endsWith('/verify') ? { phone: 'invalid', code: '1234' } : { phone: 'invalid' };
+    const response = await post(app, url, payload);
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().code, 'INVALID_PHONE', 'valid JSON still reaches the OTP handler');
+  }
+  assert.equal(calls.length, 0);
 });
 
 test('logout: absent and non-parsing Authorization stay anonymous with zero DB calls', async t => {
@@ -226,6 +286,28 @@ async function mintSession(app, phone) {
   assert.equal(verified.statusCode, 200);
   return verified.json();
 }
+
+test('logout Postgres: zero-byte JSON-framed request revokes its live bearer', { skip: SKIP }, async t => {
+  const app = await buildApp({ config: baseConfig });
+  const phone = `+1559${String(process.pid).padStart(7, '0')}4`;
+  const db = new pg.Client({ connectionString: DATABASE_URL });
+  await db.connect();
+  t.after(async () => { await cleanupPhone(db, phone); await db.end(); await app.close(); });
+  const actor = await mintSession(app, phone);
+  const live = await readSession(app, actor.token);
+  assert.equal(live.statusCode, 200);
+  assert.equal(live.json().user.userId, actor.user.userId);
+  const sessionId = live.json().user.sessionId;
+  assertLogoutSuccess(await app.inject({
+    method: 'POST', url: logoutUrl,
+    headers: { ...bearer(actor.token), 'content-type': 'application/json' },
+  }));
+  const stored = (await db.query('SELECT revoked_at FROM auth_session WHERE id = $1', [sessionId])).rows[0];
+  assert.ok(stored.revoked_at);
+  const anonymous = await readSession(app, actor.token);
+  assert.equal(anonymous.statusCode, 200);
+  assert.deepEqual(anonymous.json(), { user: null });
+});
 
 test('logout Postgres: OTP round-trip, sibling/foreign isolation, retry and hash at rest', { skip: SKIP }, async t => {
   const app = await buildApp({ config: baseConfig });

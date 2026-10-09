@@ -2,7 +2,8 @@
 // auth_session (migration 0002). Repositories are the single SQL seam (ADR BD-DOCS-041).
 // Phase-1 surface: resolve a presented token hash to its LIVE session — not revoked, not
 // expired (mirrors the idx_auth_session_live partial index). Revocation by server-known
-// id is a DARK repository primitive; HTTP wiring and session listing remain deferred.
+// id is wired to current-session HTTP logout. Session listing, logout-all and device
+// management remain deferred.
 export async function resolveLiveSessionByTokenHash(db, tokenHash) {
   const { rows } = await db.query(
     `SELECT id, user_id, active_role, phone_verified, issued_at, expires_at, revoked_at

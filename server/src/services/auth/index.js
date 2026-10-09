@@ -85,38 +85,50 @@ export default async function authService(app) {
     return { user: user ?? null };
   });
 
-  app.post('/logout', {
-    // Reject all client-selected targets before validation or session lookup.
-    preValidation: async (req, reply) => {
-      if (req.body !== undefined || Object.keys(req.query).length > 0) {
-        return problem(reply, 400, 'VALIDATION', 'logout requires no body or query parameters');
-      }
-    },
-    schema: {
-      response: {
-        200: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['ok'],
-          properties: { ok: { type: 'boolean', const: true } },
+  app.register(async logoutApp => {
+    // Only logout accepts zero-byte JSON framing; non-empty JSON uses Fastify's parser.
+    const parseJson = logoutApp.getDefaultJsonParser(
+      app.initialConfig.onProtoPoisoning, app.initialConfig.onConstructorPoisoning,
+    );
+    logoutApp.removeContentTypeParser('application/json');
+    logoutApp.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+      if (body.length === 0) return done(null, undefined);
+      return parseJson(req, body, done);
+    });
+
+    logoutApp.post('/logout', {
+      // Reject all client-selected targets before validation or session lookup.
+      preValidation: async (req, reply) => {
+        if (req.body !== undefined || Object.keys(req.query).length > 0) {
+          return problem(reply, 400, 'VALIDATION', 'logout requires no body or query parameters');
+        }
+      },
+      schema: {
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['ok'],
+            properties: { ok: { type: 'boolean', const: true } },
+          },
         },
       },
-    },
-  }, async (req, reply) => {
-    const user = await req.resolveUser();
-    if (req.authError) {
-      return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
-    }
-    if (user) {
-      try {
-        // Missing rows count as concurrent deletion success; never revoke siblings.
-        await revokeSessionById(app.db, user.sessionId);
-      } catch {
-        req.log.warn('auth session revoke failed');
-        return problem(reply, 503, 'SESSION_REVOKE_FAILED', 'session revoke failed', true);
+    }, async (req, reply) => {
+      const user = await req.resolveUser();
+      if (req.authError) {
+        return problem(reply, 503, 'SESSION_LOOKUP_FAILED', 'session lookup failed', true);
       }
-    }
-    return { ok: true };
+      if (user) {
+        try {
+          // Missing rows count as concurrent deletion success; never revoke siblings.
+          await revokeSessionById(app.db, user.sessionId);
+        } catch {
+          req.log.warn('auth session revoke failed');
+          return problem(reply, 503, 'SESSION_REVOKE_FAILED', 'session revoke failed', true);
+        }
+      }
+      return { ok: true };
+    });
   });
 
   // POST /otp/request — mint + store a hashed code for a phone; dev-mode echoes it.
