@@ -1,4 +1,4 @@
-// Boot identity and verified-login handoff. No logout/revoke or driver enrollment.
+// Boot identity, verified-login handoff and detach leases. Transport stays external.
 import { isBackendEnabled } from './api_config.js';
 import { getAuthToken, getAuthUserId, setAuth, clearAuth, pinAuthTabUser,
   detachRejectedAuth, isAuthTabRejected, getAuthOwnerVersion, isAuthCandidate, commitAuthCandidate,
@@ -521,6 +521,22 @@ export function createAuthSessionBootstrap({
     return true;
   }
 
+  function beginOnboardingDetach(auth) {
+    const expected = handoff;
+    const generation = loginSequence;
+    const valid = !auth.token || !expected || (auth.token === expected.token
+      && auth.userId === expected.userId
+      && auth.ownerVersion === (expected.ownerVersion || null));
+    const lease = beginExplicitLogout();
+    return Object.freeze({ isCurrent: () => valid && lease.isCurrent()
+      && handoff === expected && loginSequence === generation });
+  }
+
+  function commitOnboardingDetach(lease) {
+    if (!lease.isCurrent()) return false;
+    return adoptAnonymousAfterExternalLogout();
+  }
+
   return Object.freeze({
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
@@ -529,6 +545,7 @@ export function createAuthSessionBootstrap({
     retainAuthenticatedCleanupOwner, finishRecovery,
     markLoginStale, abandonLogin, enterGuest, adoptAnonymousAfterExternalLogout,
     beginExplicitLogout, failExplicitLogout,
+    beginOnboardingDetach, commitOnboardingDetach,
     hasUncommittedLogin: () => handoff !== null,
   });
 }

@@ -1789,6 +1789,12 @@ async function loginHandoffCase(name) {
     if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
     if (url.endsWith('/otp/verify')) return response({ token: 'new-token', user: {
       userId: 'new-user', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+    if (url.endsWith('/auth/logout')) {
+      assert.ok(['guest-after-verify', 'back-exit-after-verify'].includes(name));
+      assert.equal(options.headers.Authorization, 'Bearer new-token');
+      assert.ok(localStorage.getItem('bazardrive.auth.v1'), 'revoke precedes local detach');
+      return response({ ok: true });
+    }
     assert.ok(url.endsWith('/auth/session'), 'handoff cannot call domain endpoints');
     if (rejectedFresh && options.headers.Authorization === 'Bearer old-token') return response({ user: null });
     if ((name === 'account-switch' || verifySwitch) && options.headers.Authorization === 'Bearer old-token') {
@@ -1992,6 +1998,202 @@ async function loginHandoffCase(name) {
   }
 }
 
+async function onboardingDetachCase(name) {
+  const dom = installDOM({ parseMarkup: true });
+  const router = await import('../public/src/router.js');
+  const { user } = await import('../public/src/state.js');
+  const auth = await import('../public/src/auth_token.js');
+  const kind = name.split('-')[0], abandon = name.includes('abandon'), off = kind === 'off';
+  const installed = ['stable', 'recovered', 'verifyonly'].includes(kind);
+  user.set({ welcomeSeen: true, onboarded: kind === 'stable' || kind === 'verifyonly',
+    role: 'passenger', firstName: 'Private A', phone: '9990000001' });
+  if (installed) {
+    assert.equal(auth.setAuth({ token: 'A', userId: 'a' }), true);
+    assert.equal(auth.commitAuthCandidate(auth.getAuthOwnerVersion()), true);
+  }
+  globalThis.__BD_API_BASE__ = off ? '' : 'https://api.invalid';
+  location.hash = kind === 'verifyonly' ? '#/onboarding?step=phone' : '#/onboarding';
+  let pending = deferred();
+  const lateVerify = deferred();
+  let posts = 0, verifies = 0, feed = 0, welcome = 0;
+  const originalSet = user.set;
+  user.set = patch => {
+    if (patch.role === 'guest' && !off) assert.equal(auth.getAuthToken(), null);
+    originalSet(patch);
+  };
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith('/auth/logout')) {
+      posts++;
+      assert.equal(options.headers.Authorization, 'Bearer A', 'never revoke B');
+      assert.equal(auth.getAuthToken(), 'A', 'bearer retained before revoke');
+      assert.notEqual(user.get().role, 'guest');
+      return pending.promise;
+    }
+    if (url.endsWith('/otp/request')) return response({ ok: true, expiresInSeconds: 300, devCode: '1234' });
+    if (url.endsWith('/otp/verify')) {
+      verifies++;
+      return kind === 'deferred' ? lateVerify.promise : response({ token: 'A', user: {
+        userId: 'a', roles: ['passenger'], activeRole: 'passenger', phoneVerified: true } });
+    }
+    assert.ok(url.endsWith('/auth/session'), url);
+    return kind === 'candidate' ? response({ code: 'SESSION_LOOKUP_FAILED' }, 503)
+      : response({ user: { userId: 'a', sessionId: 'session-a', activeRole: 'passenger', phoneVerified: true } });
+  };
+  await import('../public/src/app.js'); await flush();
+  router.register('/feed', context => {
+    if (!off) assert.equal(context.guestReadOnly, true, 'Guest admission requires bootstrap ANONYMOUS');
+    feed++; return new dom.Element();
+  });
+  router.register('/welcome', () => { welcome++; return new dom.Element(); });
+  router.register('/profile', () => new dom.Element());
+  router.register('/ops/screens', () => new dom.Element());
+  const node = id => document.getElementById(id);
+  async function click(id) { assert.ok(node(id), id); node(id).click(); await flush(); }
+  function input(id, value) {
+    const el = node(id); assert.ok(el, id); el.value = value;
+    for (const fn of el.handlers.input ?? []) fn({ target: el });
+  }
+  async function requestOtp() {
+    dom.elements.app.querySelector('[data-role="passenger"]').click();
+    await click('ob-next'); input('ob-phone-input', '9990000001'); await click('ob-next');
+  }
+  if (kind === 'verifyonly') {
+    const before = localStorage.getItem(auth.AUTH_STORAGE_KEY);
+    await click('ob-back');
+    assert.equal(location.hash, '#/profile?role=passenger');
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), before);
+    assert.equal(posts, 0); return;
+  }
+  if (kind === 'requested') {
+    await requestOtp(); await click('ob-back');
+    assert.ok(node('ob-phone-input')); assert.equal(posts, 0);
+    assert.equal(auth.getAuthToken(), null); return;
+  }
+  if (['handoff', 'candidate', 'deferred'].includes(kind)) {
+    await requestOtp(); input('ob-otp-input', '1234'); await click('ob-next');
+    if (kind === 'handoff') { assert.ok(node('ob-firstname')); await click('ob-back'); }
+    await click('ob-back'); await click('ob-back');
+    assert.equal(posts, 0, 'ordinary step Back never revokes');
+  }
+  const cacheKey = 'bazardrive.ride_orders.v1';
+  localStorage.setItem(cacheKey, '[{"private":"A"}]');
+  const action = () => assert.fail('Guest/abandon must not execute pending action');
+  router.setPendingAction(action);
+  let sharedB, profileB;
+  function replace() {
+    sharedB = JSON.stringify({ token: 'B', userId: name.includes('rotation') ? 'a' : 'b',
+      ownerVersion: crypto.randomUUID() });
+    localStorage.setItem(auth.AUTH_STORAGE_KEY, sharedB);
+    user.set({ firstName: 'Private B', role: 'driver' });
+    profileB = localStorage.getItem('bazardrive.user.v1');
+    localStorage.setItem(cacheKey, '[{"private":"B"}]');
+  }
+  const preforeign = name.includes('preforeign') || name.includes('prerotation');
+  if (preforeign) replace();
+  const remove = localStorage.removeItem, read = localStorage.getItem;
+  let readFailure = false;
+  const storageFailure = name.includes('storage') || name.includes('ambiguous');
+  if (storageFailure) {
+    localStorage.removeItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY) {
+        if (name.includes('storage')) throw new Error('fixture denied');
+        remove(key); readFailure = true; return;
+      }
+      remove(key);
+    };
+    localStorage.getItem = key => {
+      if (key === auth.AUTH_STORAGE_KEY && readFailure) {
+        readFailure = false; throw new Error('ambiguous verification');
+      }
+      return read(key);
+    };
+  }
+  if (!abandon) dom.elements.app.querySelector('[data-role="guest"]').click();
+  const button = node(abandon ? 'ob-back' : 'ob-next');
+  button.click();
+  if (!off) button.click();
+  await flush();
+  const localOnly = !installed && !['handoff', 'candidate'].includes(kind);
+  if (!off && !localOnly && !preforeign) {
+    assert.equal(posts, 1, 'duplicate detach is coalesced');
+    assert.equal(button.disabled, true);
+    assert.equal(auth.getAuthToken(), 'A');
+    assert.equal(localStorage.getItem(cacheKey), '[{"private":"A"}]');
+    assert.notEqual(user.get().role, 'guest');
+    assert.equal(location.hash, '#/onboarding');
+    assert.equal(router.consumePendingAction(), action); router.setPendingAction(action);
+    const failure = name.endsWith('lookup') ? 'SESSION_LOOKUP_FAILED'
+      : name.endsWith('revoke') ? 'SESSION_REVOKE_FAILED'
+      : name.endsWith('network') ? 'NETWORK' : name.endsWith('abort') ? 'ABORTED'
+      : name.endsWith('protocol') ? 'SESSION_PROTOCOL' : null;
+    const disposed = name.endsWith('disposed'), oldError = node('ob-err');
+    const oldMessage = oldError.textContent;
+    if (disposed) { router.go('/ops/screens'); await flush(); }
+    if ((name.includes('foreign') || name.includes('rotation')) && !storageFailure) replace();
+    if (failure === 'NETWORK' || failure === 'ABORTED') pending.reject({ code: failure });
+    else pending.resolve(failure === 'SESSION_PROTOCOL' ? response({ ok: false })
+      : failure ? response({ code: failure }, 503) : response({ ok: true }));
+    await flush();
+    if (failure) {
+      assert.equal(auth.getAuthToken(), 'A');
+      assert.equal(localStorage.getItem(cacheKey), '[{"private":"A"}]');
+      assert.notEqual(user.get().role, 'guest'); assert.equal(feed, 0); assert.equal(welcome, 0);
+      assert.equal(router.consumePendingAction(), action); router.setPendingAction(action);
+      assert.match(node('ob-err').textContent, /Повторите/);
+      assert.notEqual(button.disabled, true);
+      pending = deferred(); button.click(); await flush();
+      assert.equal(posts, 2, 'retry revokes the same captured A');
+      pending.resolve(response({ ok: true })); await flush();
+    }
+    if (storageFailure) {
+      assert.equal(posts, 1); assert.notEqual(user.get().role, 'guest');
+      assert.equal(feed, 0); assert.equal(welcome, 0); assert.equal(auth.getAuthToken(), null);
+      assert.equal(localStorage.getItem(cacheKey), '[{"private":"A"}]');
+      assert.equal(router.consumePendingAction(), action); router.setPendingAction(action);
+      assert.match(node('ob-err').textContent, /Повторите/);
+      localStorage.removeItem = remove; localStorage.getItem = read;
+      if (name.includes('foreign') || name.includes('rotation')) replace();
+      button.click(); await flush(); assert.equal(posts, 1, 'repair does not repeat revoke');
+    }
+    if (sharedB) {
+      assert.equal(read(auth.AUTH_STORAGE_KEY), sharedB);
+      assert.equal(localStorage.getItem('bazardrive.user.v1'), profileB);
+      assert.equal(localStorage.getItem(cacheKey), '[{"private":"B"}]');
+      assert.equal(feed, 0); assert.equal(welcome, 0);
+      assert.equal(router.consumePendingAction(), action); return;
+    }
+    if (disposed) {
+      assert.equal(location.hash, '#/ops/screens'); assert.equal(oldError.textContent, oldMessage);
+      assert.notEqual(user.get().role, 'guest');
+      assert.equal(router.consumePendingAction(), action);
+      assert.equal(feed, 0); assert.equal(welcome, 0);
+      assert.equal(read(auth.AUTH_STORAGE_KEY), null); return;
+    }
+  } else assert.equal(posts, 0, 'local/foreign/OFF paths never invent revoke authority');
+  if (kind === 'deferred') {
+    lateVerify.resolve(response({ token: 'late-S', user: { userId: 's', roles: ['passenger'],
+      activeRole: 'passenger', phoneVerified: true } }));
+    await flush();
+    assert.equal(posts, 0, 'DEFERRED B2-B2: unaccepted late OTP token is not cleaned by B2-B1');
+    assert.equal(auth.getAuthToken(), null, 'late response cannot install authority');
+  }
+  if (preforeign) {
+    assert.equal(localStorage.getItem(auth.AUTH_STORAGE_KEY), sharedB);
+    assert.equal(localStorage.getItem('bazardrive.user.v1'), profileB);
+    assert.equal(localStorage.getItem(cacheKey), '[{"private":"B"}]');
+  } else if (!off && !localOnly) {
+    assert.equal(read(auth.AUTH_STORAGE_KEY), null); assert.equal(localStorage.getItem(cacheKey), null);
+  }
+  if (abandon) {
+    assert.equal(location.hash, '#/welcome'); assert.equal(router.consumePendingAction(), action);
+    assert.equal(feed, 0); assert.equal(welcome, 1);
+  } else {
+    assert.equal(user.get().role, 'guest'); assert.equal(location.hash, '#/feed');
+    assert.equal(router.consumePendingAction(), null); assert.equal(feed, 1);
+  }
+  assert.equal(verifies, ['handoff', 'candidate', 'deferred'].includes(kind) ? 1 : 0);
+}
+
 async function repairHandoffCase(name) {
   const dom = installDOM({ parseMarkup: true });
   const router = await import('../public/src/router.js');
@@ -2113,7 +2315,10 @@ async function repairHandoffCase(name) {
   assert.equal(products, 1); assert.equal(dom.starts(), 1);
 }
 
-if (process.argv[2] === '--auth-ownership-failure-case') {
+if (process.argv[2] === '--onboarding-detach-case') {
+  await onboardingDetachCase(process.argv[3]);
+  console.log('PASS B2-B1 actual onboarding detach: ' + process.argv[3]);
+} else if (process.argv[2] === '--auth-ownership-failure-case') {
   await authOwnershipFailureCase(process.argv[3]);
   console.log('PASS candidate ownership failure: ' + process.argv[3]);
 } else if (process.argv[2] === '--markerless-versioned-case') {
@@ -2271,6 +2476,50 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
     assert.equal(token, 'A');
   });
 
+  for (const mode of ['stable', 'handoff', 'recovered', 'rebound']) {
+    await check('B2-B1 bootstrap detach lease preserves and commits ' + mode, async () => {
+      let record = mode === 'handoff' || mode === 'rebound' ? null : { token: 'A', userId: 'a' };
+      let mounted = true;
+      const c = fixture({ readToken: () => record?.token ?? null,
+        readUserId: () => record?.userId ?? null, readOwnerVersion: () => null,
+        writeAuth: next => { record = next; return true; },
+        pinTabUser: () => true, requestSession: async () => ({ user: userDTO('a') }) });
+      if (mode === 'handoff' || mode === 'rebound') {
+        const accept = c.beginLogin({ expectedRole: 'driver', isCurrent: () => mounted });
+        assert.equal((await accept({ token: 'A', user: { userId: 'a', roles: ['driver'],
+          activeRole: 'driver', phoneVerified: true } })).ok, true);
+        if (mode === 'rebound') {
+          mounted = false; assert.ok(c.rebindRecoveryOwner(() => true));
+        }
+      } else {
+        await c.reconcile();
+        if (mode === 'recovered') assert.equal(c.retainAuthenticatedCleanupOwner(() => true), true);
+      }
+      const handoff = c.hasUncommittedLogin();
+      const accept = c.beginLogin({ expectedRole: 'driver' });
+      const lease = c.beginOnboardingDetach({ token: 'A', userId: 'a', ownerVersion: null });
+      assert.equal(lease.isCurrent(), true);
+      assert.equal(c.getSnapshot().state, 'AUTHENTICATED');
+      assert.equal(c.hasUncommittedLogin(), handoff);
+      assert.equal(record.token, 'A');
+      assert.equal((await accept({ token: 'B', user: { userId: 'b', roles: ['driver'],
+        activeRole: 'driver', phoneVerified: true } })).code, 'AUTH_STALE');
+      assert.equal(c.finishLogin(), false);
+      assert.equal(c.commitOnboardingDetach(lease), false, 'retained bearer blocks anonymous commit');
+      record = null;
+      assert.equal(c.commitOnboardingDetach(lease), true);
+      assert.equal(c.getSnapshot().state, 'ANONYMOUS');
+      assert.equal(c.hasUncommittedLogin(), false);
+      assert.equal(lease.isCurrent(), false);
+    });
+  }
+  await check('B2-B1 newer login invalidates captured detach lease', async () => {
+    const c = fixture();
+    const lease = c.beginOnboardingDetach({ token: 'A', userId: 'a', ownerVersion: null });
+    c.beginLogin();
+    assert.equal(lease.isCurrent(), false);
+    assert.equal(c.commitOnboardingDetach(lease), false);
+  });
   await check('explicit foreign OTP takeover clears account caches/profile before installing C', async () => {
     execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--login-handoff-case', 'foreign-cache-takeover'],
       { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
@@ -2664,8 +2913,10 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
   await check('verified Back abandonment clears the complete local-session boundary', async () => {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
     assert.match(source, /const hadHandoff = auth\?\.hasUncommittedLogin\?\.\(\) === true/);
-    assert.match(source,
-      /if \(resetLocalSession\(\{ allowForeignDetach: true \}\) === false\)/);
+    assert.match(source, /void detach\('abandon'\)/);
+    const app = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(app, /resetLocalSession\(\{ allowForeignDetach: true, expectedAuth \}\)/);
+    assert.match(app, /commitOnboardingDetach\(controller\)/);
   });
   await check('legacy local profile reset clears captured driver drafts without a prior bearer', async () => {
     const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
@@ -2763,8 +3014,8 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
   });
 
   await check('foreign-detached Guest projection stays tab-local', async () => {
-    const source = readFileSync(new URL('../public/src/screens/onboarding.js', import.meta.url), 'utf8');
-    assert.match(source, /resetResult === AUTH_CLEAR_FOREIGN[\s\S]*user\.setCacheOnly/);
+    const source = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
+    assert.match(source, /result === AUTH_CLEAR_FOREIGN[\s\S]*user\.setCacheOnly/);
     const stateSource = readFileSync(new URL('../public/src/state.js', import.meta.url), 'utf8');
     assert.match(stateSource, /setCacheOnly\(patch\)[\s\S]*cache = normalize\(\{ \.\.\.cache, \.\.\.patch \}\)/);
     const appSource = readFileSync(new URL('../public/src/app.js', import.meta.url), 'utf8');
@@ -3000,6 +3251,19 @@ if (process.argv[2] === '--auth-ownership-failure-case') {
         assert.equal(raw.userId, 'wrong', 'foreign credential is preserved, not deleted/overwritten');
       }
       globalThis.localStorage = storage(); auth.clearAuth();
+    });
+  }
+  for (const scenario of ['stable-guest', 'handoff-guest', 'recovered-guest', 'candidate-guest',
+    'handoff-abandon', 'recovered-abandon', 'stable-guest-lookup', 'handoff-guest-revoke',
+    'handoff-guest-network', 'stable-guest-abort', 'stable-guest-protocol', 'handoff-abandon-revoke',
+    'stable-guest-storage', 'candidate-guest-storage', 'candidate-guest-ambiguous', 'stable-guest-ambiguous',
+    'stable-guest-ambiguous-foreign', 'stable-guest-ambiguous-rotation', 'stable-guest-foreign',
+    'stable-guest-rotation', 'handoff-abandon-foreign', 'stable-guest-preforeign', 'stable-guest-prerotation',
+    'handoff-abandon-preforeign', 'stable-guest-disposed', 'handoff-abandon-disposed', 'anonymous-guest',
+    'off-guest', 'anonymous-abandon', 'requested-back', 'verifyonly-back', 'deferred-guest']) {
+    await check('B2-B1 actual app/onboarding: ' + scenario, () => {
+      execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--onboarding-detach-case', scenario],
+        { stdio: 'pipe', encoding: 'utf8', timeout: 15000 });
     });
   }
   for (const scenario of ['success', 'account-switch', 'mismatch', 'retry', 'storage-failure',

@@ -54,8 +54,25 @@ network/timeout/abort and protocol failures retain auth/caches on the current
 route with Retry. Post-revoke local removal failure stays fail-closed until
 durable detach succeeds. Stale screen completions cannot update successor UI
 or force its navigation. Backend-OFF Profile remains local; Settings remains
-demo-only. Guest/Back-abandon (B2-B) and account switch (B2-C) are still
-local-only boundaries, not server-revoking transitions.
+demo-only. B2-B1 shares this lifecycle for already-owned Guest and actual
+full-onboarding root abandonment, with the distinct success targets below.
+
+### Owned onboarding detach (B2-B1)
+
+Backend ON stable/installed handoff/recovered incomplete actor:
+`Guest -> revoke -> durable auth detach -> account cleanup -> ANONYMOUS ->
+Guest projection -> consume pending action without execution -> /feed`.
+Actual full-onboarding root abandonment follows the same revoke/cleanup ordering
+but retains pending action and navigates to `/welcome`.
+
+Failures retain actor/caches/pending action and remain on onboarding with Retry.
+Post-revoke local failure retries only local detach. Disposal cannot trigger stale
+Guest projection, pending-action consumption or navigation. Foreign/newer auth,
+including same-user rotation, survives; already-foreign Guest admission is
+tab-local and performs no revoke. Ordinary step Back and verify-phone-only Back
+retain existing navigation and do not revoke. Backend-OFF is unchanged.
+Late/unaccepted OTP cleanup (B2-B2), lost-response server cleanup guarantee and
+account switch (B2-C) remain deferred.
 
 ### Guest
 

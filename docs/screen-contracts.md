@@ -158,6 +158,10 @@ The routines audit established `public/src/storage_boundary.js` as the authorita
 | Main states | Welcome, role, phone, OTP mock, profile, car, documents, done passenger, done driver. |
 | Actions | Begin, guest entry, role pick, phone mock, profile save, vehicle/docs save, finish. |
 | Acceptance | Pending action survives onboarding; driver lands where the pending action expects. |
+| Backend Guest (B2-B1) | Already-owned stable/installed/recovered session: capture lease, revoke, durable auth detach, account reset, ANONYMOUS, Guest projection, consume pending action without executing it, then Feed. Anonymous/rejected/foreign paths invent no revoke authority; foreign Guest projection is cache-only. |
+| Actual abandonment (B2-B1) | Full-onboarding root Back with an unfinished owned handoff revokes before durable local cleanup, ANONYMOUS and Welcome. Pending action is retained. Ordinary step Back and verify-phone-only Back do not revoke; their existing targets are unchanged. Recovered incomplete actors do not require another OTP to detach. |
+| Detach pending/error | Guest/Back coalesce and disable pending controls. Revoke uncertainty retains credential/handoff/caches/pending action and offers inline retry; post-revoke AUTH_STORAGE_FAILED retains a local-only repair lease. Disposed screens cannot project Guest, consume pending action or navigate; newer/foreign token versions survive. Backend-OFF remains local/demo. |
+| Deferred boundaries | B2-B2 late/unaccepted OTP response cleanup, lost-response server cleanup guarantee and B2-C account switch are not implemented by B2-B1. |
 
 ### BD-ONBOARDING-01 - Welcome render gate
 
@@ -1323,7 +1327,7 @@ The driver D1 view's standalone **«Пожаловаться»** CTA (`data-acti
 | Main states | A default list · B language/theme controls · C push on + sound row revealed · D account actions (logout/delete confirm) · E save feedback (`Сохранить` → «Сохранено» toast `#settings-toast`) · F error notice (`?state=error` → `#settings-error` «Не удалось сохранить — попробуйте ещё раз»). |
 | Actions | `Сохранить` shows the «Сохранено» toast; «Назад» (`#settings-back`) → role-correct profile. Backend ON `#settings-logout` shares Profile confirmation/pending/retry and server-first logout; backend OFF keeps the demo-only logout toast. Delete Account and payment actions remain demo-only. |
 | Precache | `public/src/screens/settings.js` is in the `public/sw.js` PRECACHE list. |
-| Acceptance | Reachable from both profile gears; B2-A backend-enabled logout is real, but delete/push/payment remain demo-only; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs` and executable app/Settings cases in `scripts/smoke-auth-session-bootstrap.mjs`. Guest/Back/account-switch server revoke is not covered by B2-A. |
+| Acceptance | Reachable from both profile gears; B2-A backend-enabled logout is real, but delete/push/payment remain demo-only; driver security pane not orphaned. Pinned by `scripts/smoke-settings.mjs` and executable app/Settings cases in `scripts/smoke-auth-session-bootstrap.mjs`. Already-owned Guest/actual onboarding abandon is B2-B1; late/unaccepted OTP cleanup (B2-B2) and account switch (B2-C) remain deferred. |
 
 ### BD-OPS-SCREENS-01 - ScreenOps
 
